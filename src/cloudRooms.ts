@@ -87,3 +87,20 @@ export async function connectCloudAgent(roomId: string, name: string): Promise<s
   if (error) throw error;
   return data as string;
 }
+
+export type AgentConnection = {
+  id: string; room_id: string; participant_id: string;
+  expires_at: string; revoked_at: string | null;
+};
+export async function listAgentConnections(roomId: string): Promise<AgentConnection[]> {
+  const { data, error } = await client().from('agent_connections')
+    .select('id,room_id,participant_id,expires_at,revoked_at')
+    .eq('room_id', roomId).order('created_at', { ascending: false });
+  if (error) throw error;
+  return data as AgentConnection[];
+}
+export async function revokeCloudAgent(connectionId: string): Promise<boolean> {
+  const { data, error } = await client().rpc('revoke_external_agent', { connection_id: connectionId });
+  if (error) throw error;
+  return data as boolean;
+}
