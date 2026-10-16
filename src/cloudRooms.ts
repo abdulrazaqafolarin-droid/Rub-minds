@@ -13,8 +13,25 @@ function client() {
   if (!supabase) throw new Error('Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
   return supabase;
 }
-export async function signInWithEmail(email: string) {
-  const { error } = await client().auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.href } });
+export async function signInWithPassword(email: string, password: string) {
+  const { error } = await client().auth.signInWithPassword({ email, password });
+  if (error) throw error;
+}
+export async function signUpWithPassword(email: string, password: string) {
+  const { data, error } = await client().auth.signUp({
+    email, password, options: { emailRedirectTo: window.location.origin + '/' },
+  });
+  if (error) throw error;
+  return { confirmationRequired: !data.session };
+}
+export async function requestPasswordReset(email: string) {
+  const { error } = await client().auth.resetPasswordForEmail(email, {
+    redirectTo: window.location.origin + '/?reset=password',
+  });
+  if (error) throw error;
+}
+export async function updateAccountPassword(password: string) {
+  const { error } = await client().auth.updateUser({ password });
   if (error) throw error;
 }
 export async function signOut() {
