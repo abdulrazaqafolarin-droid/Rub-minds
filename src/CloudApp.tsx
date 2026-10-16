@@ -30,7 +30,10 @@ export default function CloudApp() {
 
   useEffect(() => {
     if (!supabase) return;
-    void supabase.auth.getUser().then(({ data }) => { setUser(data.user); setReady(true); });
+    void supabase.auth.getUser().then(({ data, error: authError }) => {
+      setUser(data.user);
+      if (authError) setError('Could not restore your session. Please sign in again.');
+    }).catch(() => setError('Could not reach authentication. Please refresh and try again.')).finally(() => setReady(true));
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user || null);
     });
