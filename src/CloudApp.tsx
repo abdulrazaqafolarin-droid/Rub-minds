@@ -26,6 +26,7 @@ export default function CloudApp() {
   const [busy, setBusy] = useState(false);
   const [inviteToken, setInviteToken] = useState(() => new URLSearchParams(location.search).get('invite') || '');
   const [joining, setJoining] = useState(false);
+  const [inviteLink, setInviteLink] = useState('');
 
   useEffect(() => {
     if (!supabase) return;
@@ -63,8 +64,9 @@ export default function CloudApp() {
       const token = await createCloudInvite(room.id);
       const link = new URL('/', window.location.origin);
       link.searchParams.set('invite', token);
-      await navigator.clipboard.writeText(link.toString());
-      window.alert('Secure invitation copied. It expires in 24 hours and allows up to 10 joins.');
+      setInviteLink(link.toString());
+      try { await navigator.clipboard.writeText(link.toString()); }
+      catch { /* Show the link for manual copying if clipboard access is denied. */ }
     } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
     finally { setBusy(false); }
   }
@@ -78,7 +80,7 @@ export default function CloudApp() {
     finally { setJoining(false); }
   }
   function navigate(id: string) {
-    setSelected(id); setError('');
+    setSelected(id); setError(''); setInviteLink('');
     history.replaceState(null, '', id ? '/?room=' + encodeURIComponent(id) : '/');
   }
   async function login(e: FormEvent) {
@@ -116,13 +118,14 @@ export default function CloudApp() {
     </aside>
     <main className="main">
       {error && <p className="error" role="alert">{error}</p>}
+      {inviteLink && <div className="invite-share" role="status"><strong>Invitation created</strong><p>Valid for 24 hours, up to 10 joins. Anyone with this link can request to join.</p><input aria-label="Shareable invitation URL" readOnly value={inviteLink} onFocus={e => e.target.select()}/><button onClick={() => { void navigator.clipboard.writeText(inviteLink).catch(() => setError('Select and copy the invitation URL manually.')); }}>Copy invitation</button><button onClick={() => setInviteLink('')}>Close</button></div>}
       {inviteToken ? <section className="empty"><Link2 size={40}/><h1>Join a Rub Minds group</h1><p>You have received a group invitation. Join to participate in the conversation with your signed-in account.</p><button className="primary" onClick={() => { void joinInvite(); }} disabled={joining}>{joining ? 'Joining…' : 'Accept invitation'}</button><p className="disclaimer">Invitations expire after 24 hours or 10 successful joins.</p></section>
       : selected && room ? <>
         <header className="room-header"><button className="back" onClick={() => navigate('')}><ArrowLeft size={18}/></button><div className="room-heading"><h2>{room.title}</h2><span><span className="status-dot"/> {participants.length} participants · {messages.length} messages</span></div>{room.owner_id === user.id && <button className="invite" disabled={busy} onClick={() => { void makeInvite(); }}><Link2 size={17}/> Invite members</button>}</header>
         <div className="objective"><Sparkles size={17}/><div><strong>Group objective</strong><p>{room.objective || 'Collaborate together.'}</p></div></div>
         <div className="messages" aria-live="polite">{messages.map(m => { const p = participants.find(p => p.id === m.sender_id); return <div className="message" key={m.id}><div className="avatar">{p?.kind === 'human' ? (p.display_name[0] || 'H') : <Bot size={18}/>}</div><div><div className="message-meta"><strong>{p?.display_name || 'Participant'}</strong><time>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div><p>{m.body}</p></div></div>; })}</div>
         <div className="composer-area"><form className="composer" onSubmit={send}><input aria-label="Message" placeholder="Message your group…" value={draft} onChange={e => setDraft(e.target.value)} maxLength={10000}/><button disabled={busy || !draft.trim()} aria-label="Send"><Send size={18}/></button></form><p className="disclaimer">Live room · Owner-created invitations support signed-in humans. External AI joining is not yet available.</p></div>
-      </> : selected ? <section className="empty"><h2>Room unavailable</h2><p>You may not have permission to view this room. Invitation redemption isn't available yet.</p><button className="primary" onClick={() => navigate('')}>Back to groups</button></section>
+      </> : selected ? <section className="empty"><h2>Room unavailable</h2><p>You may not have permission to view this room. Ask the room owner for an invitation link.</p><button className="primary" onClick={() => navigate('')}>Back to groups</button></section>
       : <section className="welcome"><div className="eyebrow"><Sparkles size={15}/> LIVE COLLABORATION</div><h1>Different minds.<br/><em>One conversation.</em></h1><p>Create a secure group to begin. AI invitation and autonomous collaboration are being developed next.</p><button className="primary" onClick={() => setCreating(true)}><Plus size={18}/> Create your first group</button></section>}
     </main>
     {creating && <div className="modal-backdrop" onClick={() => setCreating(false)}><form className="modal" onClick={e => e.stopPropagation()} onSubmit={create}><div className="modal-icon"><Users/></div><h2>Create a live group</h2><p>Start a shared collaboration space.</p><label>Group name<input autoFocus required maxLength={80} value={title} onChange={e => setTitle(e.target.value)}/></label><label>Objective<textarea rows={3} maxLength={500} value={objective} onChange={e => setObjective(e.target.value)}/></label><div className="modal-actions"><button type="button" onClick={() => setCreating(false)}>Cancel</button><button className="primary" disabled={busy}>Create group</button></div></form></div>}
