@@ -4,7 +4,7 @@ import type { User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import {
   createCloudRoom, createCloudInvite, redeemCloudInvite, connectCloudAgent, listAgentConnections, revokeCloudAgent, getCloudRoom, listCloudMessages, listCloudParticipants,
-  listCloudRooms, postCloudMessage, signInWithEmail, signOut,
+  listCloudRooms, postCloudMessage, signInWithPassword, signUpWithPassword, requestPasswordReset, updateAccountPassword, signOut,
   subscribeToCloudMessages, type CloudRoom, type CloudMessage, type CloudParticipant, type AgentConnection,
 } from './cloudRooms';
 
@@ -12,7 +12,10 @@ export default function CloudApp() {
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
   const [email, setEmail] = useState('');
-  const [sent, setSent] = useState(false);
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [authMode, setAuthMode] = useState<'signin' | 'signup' | 'forgot' | 'reset'>(() => new URLSearchParams(location.search).get('reset') === 'password' ? 'reset' : 'signin');
+  const [authNotice, setAuthNotice] = useState('');
   const [error, setError] = useState('');
   const [rooms, setRooms] = useState<CloudRoom[]>([]);
   const [selected, setSelected] = useState(() => new URLSearchParams(location.search).get('room') || '');
@@ -38,7 +41,8 @@ export default function CloudApp() {
       setUser(data.user);
       if (authError) setError('Could not restore your session. Please sign in again.');
     }).catch(() => setError('Could not reach authentication. Please refresh and try again.')).finally(() => setReady(true));
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') setAuthMode('reset');
       setUser(session?.user || null);
     });
     return () => subscription.unsubscribe();
@@ -114,9 +118,30 @@ export default function CloudApp() {
     history.replaceState(null, '', id ? '/?room=' + encodeURIComponent(id) : '/');
   }
   async function login(e: FormEvent) {
-    e.preventDefault(); setBusy(true); setError('');
-    try { await signInWithEmail(email.trim()); setSent(true); }
-    catch (e) { setError(String(e instanceof Error ? e.message : e)); }
+    e.preventDefault(); setBusy(true); setError(''); setAuthNotice('');
+    try {
+      if (authMode === 'signin') {
+        await signInWithPassword(email.trim(), password);
+      } else if (authMode === 'signup') {
+        if (password.length < 8) throw new Error('Use at least 8 characters for your password.');
+        if (password !== confirmPassword) throw new Error('Passwords do not match.');
+        const result = await signUpWithPassword(email.trim(), password);
+        setAuthNotice(result.confirmationRequired
+          ? 'Account created. Check your email for a verification link before signing in. If email delivery is not configured, contact the administrator.'
+          : 'Account created. You can now use Rub Minds.');
+      } else if (authMode === 'forgot') {
+        await requestPasswordReset(email.trim());
+        setAuthNotice('If an account exists for this address, a password reset email will be sent.');
+      } else {
+        if (password.length < 8) throw new Error('Use at least 8 characters for your password.');
+        if (password !== confirmPassword) throw new Error('Passwords do not match.');
+        await updateAccountPassword(password);
+        setAuthNotice('Password updated successfully.');
+        setAuthMode('signin');
+        setPassword(''); setConfirmPassword('');
+        history.replaceState(null, '', '/');
+      }
+    } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
     finally { setBusy(false); }
   }
   async function create(e: FormEvent) {
@@ -137,7 +162,23 @@ export default function CloudApp() {
     finally { setBusy(false); }
   }
   if (!ready) return <div className="empty"><h2>Loading Rub Minds…</h2></div>;
-  if (!user) return <main className="auth-page"><div className="auth-panel"><div className="brand-icon"><Sparkles/></div><h1>Welcome to Rub Minds</h1><p>Sign in to create live collaboration groups. We'll send you a secure email sign-in link.</p>{sent ? <div className="objective"><Sparkles size={18}/><span>Check your email for your sign-in link.</span></div> : <form onSubmit={login}><label>Email address<input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com"/></label><button className="primary" disabled={busy}>{busy ? 'Sending…' : 'Continue with email'}</button></form>}{error && <p className="error" role="alert">{error}</p>}</div></main>;
+  if (!user || authMode === 'reset') return <main className="auth-page"><div className="auth-panel">
+    <div className="brand-icon"><Sparkles/></div>
+    <h1>{authMode === 'signup' ? 'Create your Rub Minds account' : authMode === 'forgot' ? 'Reset your password' : authMode === 'reset' ? 'Choose a new password' : 'Welcome to Rub Minds'}</h1>
+    <p>{authMode === 'signup' ? 'Sign up with your email and a secure password.' : authMode === 'forgot' ? 'Enter your account email to request a reset link.' : authMode === 'reset' ? 'Enter a new password to secure your account.' : 'Sign in with your email and password to collaborate.'}</p>
+    <form onSubmit={login}>
+      {authMode !== 'reset' && <label>Email address<input type="email" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com"/></label>}
+      {authMode !== 'forgot' && <label>Password<input type="password" autoComplete={authMode === 'signin' ? 'current-password' : 'new-password'} required minLength={authMode === 'signin' ? undefined : 8} value={password} onChange={e => setPassword(e.target.value)} placeholder="Your password"/></label>}
+      {(authMode === 'signup' || authMode === 'reset') && <label>Confirm password<input type="password" autoComplete="new-password" required minLength={8} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Repeat password"/></label>}
+      <button className="primary" disabled={busy}>{busy ? 'Please wait…' : authMode === 'signup' ? 'Create account' : authMode === 'forgot' ? 'Send reset link' : authMode === 'reset' ? 'Update password' : 'Sign in'}</button>
+    </form>
+    {authNotice && <p className="objective" role="status">{authNotice}</p>}
+    {error && <p className="error" role="alert">{error}</p>}
+    <div className="auth-switch">
+      {authMode !== 'signin' && <button type="button" onClick={() => { setAuthMode('signin'); setError(''); setAuthNotice(''); }}>Back to sign in</button>}
+      {authMode === 'signin' && <><button type="button" onClick={() => { setAuthMode('signup'); setError(''); setAuthNotice(''); }}>Create an account</button><button type="button" onClick={() => { setAuthMode('forgot'); setError(''); setAuthNotice(''); }}>Forgot password?</button></>}
+    </div>
+  </div></main>;
   return <div className="app">
     <aside className="sidebar">
       <div className="brand"><div className="brand-icon"><Sparkles size={22}/></div><div><strong>Rub Minds</strong><small>Live collaboration</small></div></div>
