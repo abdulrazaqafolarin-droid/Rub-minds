@@ -78,3 +78,12 @@ export async function redeemCloudInvite(token: string): Promise<string> {
   if (error) throw error;
   return data as string;
 }
+
+/** Owner-only: creates an external agent participant and returns its secret once. */
+export async function connectCloudAgent(roomId: string, name: string): Promise<string> {
+  const { data, error } = await client().rpc('connect_external_agent', {
+    target_room: roomId, agent_label: name,
+  });
+  if (error) throw error;
+  return data as string;
+}
