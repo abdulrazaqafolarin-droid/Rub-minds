@@ -14,7 +14,7 @@ function client() {
   return supabase;
 }
 export async function signInWithEmail(email: string) {
-  const { error } = await client().auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
+  const { error } = await client().auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.href } });
   if (error) throw error;
 }
 export async function signOut() {
