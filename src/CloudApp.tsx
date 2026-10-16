@@ -3,7 +3,7 @@ import { ArrowLeft, Bot, Link2, LogOut, Plus, Send, Sparkles, Users } from 'luci
 import type { User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import {
-  createCloudRoom, createCloudInvite, redeemCloudInvite, getCloudRoom, listCloudMessages, listCloudParticipants,
+  createCloudRoom, createCloudInvite, redeemCloudInvite, connectCloudAgent, getCloudRoom, listCloudMessages, listCloudParticipants,
   listCloudRooms, postCloudMessage, signInWithEmail, signOut,
   subscribeToCloudMessages, type CloudRoom, type CloudMessage, type CloudParticipant,
 } from './cloudRooms';
@@ -27,6 +27,8 @@ export default function CloudApp() {
   const [inviteToken, setInviteToken] = useState(() => new URLSearchParams(location.search).get('invite') || '');
   const [joining, setJoining] = useState(false);
   const [inviteLink, setInviteLink] = useState('');
+  const [agentSecret, setAgentSecret] = useState('');
+  const [agentName, setAgentName] = useState('');
 
   useEffect(() => {
     if (!supabase) return;
@@ -73,6 +75,18 @@ export default function CloudApp() {
     } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
     finally { setBusy(false); }
   }
+  async function addAgent() {
+    if (!room) return;
+    const name = window.prompt('Name this AI agent (for example, Research Agent):');
+    if (!name?.trim()) return;
+    setBusy(true); setError('');
+    try {
+      const secret = await connectCloudAgent(room.id, name.trim());
+      setAgentName(name.trim()); setAgentSecret(secret);
+      setParticipants(await listCloudParticipants(room.id));
+    } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
+    finally { setBusy(false); }
+  }
   async function joinInvite() {
     if (!inviteToken) return;
     setJoining(true); setError('');
@@ -83,7 +97,7 @@ export default function CloudApp() {
     finally { setJoining(false); }
   }
   function navigate(id: string) {
-    setSelected(id); setError(''); setInviteLink('');
+    setSelected(id); setError(''); setInviteLink(''); setAgentSecret('');
     history.replaceState(null, '', id ? '/?room=' + encodeURIComponent(id) : '/');
   }
   async function login(e: FormEvent) {
@@ -121,13 +135,14 @@ export default function CloudApp() {
     </aside>
     <main className="main">
       {error && <p className="error" role="alert">{error}</p>}
+      {agentSecret && <div className="invite-share" role="status"><strong>{agentName} — agent connection created</strong><p>Copy this credential now. It is displayed only here, expires in 7 days, and grants access to this room's messages. Treat it like a password.</p><input readOnly aria-label="Agent credential" value={agentSecret} onFocus={e => e.target.select()}/><button onClick={() => { void navigator.clipboard.writeText(agentSecret).catch(() => setError('Select and copy the credential manually.')); }}>Copy credential</button><p>API endpoint: https://zucaeevlbwhcvjwbhwmq.supabase.co/functions/v1/agent-messages — use Authorization: Bearer YOUR_CREDENTIAL. GET reads messages; POST with JSON body sends one.</p><button onClick={() => setAgentSecret('')}>I've saved it</button></div>}
       {inviteLink && <div className="invite-share" role="status"><strong>Invitation created</strong><p>Valid for 24 hours, up to 10 joins. Anyone with this link can request to join.</p><input aria-label="Shareable invitation URL" readOnly value={inviteLink} onFocus={e => e.target.select()}/><button onClick={() => { void navigator.clipboard.writeText(inviteLink).catch(() => setError('Select and copy the invitation URL manually.')); }}>Copy invitation</button><button onClick={() => setInviteLink('')}>Close</button></div>}
       {inviteToken ? <section className="empty"><Link2 size={40}/><h1>Join a Rub Minds group</h1><p>You have received a group invitation. Join to participate in the conversation with your signed-in account.</p><button className="primary" onClick={() => { void joinInvite(); }} disabled={joining}>{joining ? 'Joining…' : 'Accept invitation'}</button><p className="disclaimer">Invitations expire after 24 hours or 10 successful joins.</p></section>
       : selected && room ? <>
-        <header className="room-header"><button className="back" onClick={() => navigate('')}><ArrowLeft size={18}/></button><div className="room-heading"><h2>{room.title}</h2><span><span className="status-dot"/> {participants.length} participants · {messages.length} messages</span></div>{room.owner_id === user.id && <button className="invite" disabled={busy} onClick={() => { void makeInvite(); }}><Link2 size={17}/> Invite members</button>}</header>
+        <header className="room-header"><button className="back" onClick={() => navigate('')}><ArrowLeft size={18}/></button><div className="room-heading"><h2>{room.title}</h2><span><span className="status-dot"/> {participants.length} participants · {messages.length} messages</span></div>{room.owner_id === user.id && <><button className="invite" disabled={busy} onClick={() => { void makeInvite(); }}><Link2 size={17}/> Invite members</button><button className="invite" disabled={busy} onClick={() => { void addAgent(); }}><Bot size={17}/> Connect AI</button></>}</header>
         <div className="objective"><Sparkles size={17}/><div><strong>Group objective</strong><p>{room.objective || 'Collaborate together.'}</p></div></div>
         <div className="messages" aria-live="polite">{messages.map(m => { const p = participants.find(p => p.id === m.sender_id); return <div className="message" key={m.id}><div className="avatar">{p?.kind === 'human' ? (p.display_name[0] || 'H') : <Bot size={18}/>}</div><div><div className="message-meta"><strong>{p?.display_name || 'Participant'}</strong><time>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div><p>{m.body}</p></div></div>; })}</div>
-        <div className="composer-area"><form className="composer" onSubmit={send}><input aria-label="Message" placeholder="Message your group…" value={draft} onChange={e => setDraft(e.target.value)} maxLength={10000}/><button disabled={busy || !draft.trim()} aria-label="Send"><Send size={18}/></button></form><p className="disclaimer">Live room · Owner-created invitations support signed-in humans. External AI joining is not yet available.</p></div>
+        <div className="composer-area"><form className="composer" onSubmit={send}><input aria-label="Message" placeholder="Message your group…" value={draft} onChange={e => setDraft(e.target.value)} maxLength={10000}/><button disabled={busy || !draft.trim()} aria-label="Send"><Send size={18}/></button></form><p className="disclaimer">Live room · Owner-created invitations support signed-in humans. External agents can connect using owner-created API credentials. An active agent runtime is required.</p></div>
       </> : selected ? <section className="empty"><h2>Room unavailable</h2><p>You may not have permission to view this room. Ask the room owner for an invitation link.</p><button className="primary" onClick={() => navigate('')}>Back to groups</button></section>
       : <section className="welcome"><div className="eyebrow"><Sparkles size={15}/> LIVE COLLABORATION</div><h1>Different minds.<br/><em>One conversation.</em></h1><p>Create a secure group to begin. AI invitation and autonomous collaboration are being developed next.</p><button className="primary" onClick={() => setCreating(true)}><Plus size={18}/> Create your first group</button></section>}
     </main>
