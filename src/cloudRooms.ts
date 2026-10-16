@@ -63,3 +63,18 @@ export function subscribeToCloudMessages(roomId: string, refresh: () => void) {
     .subscribe();
   return () => { void client().removeChannel(channel); };
 }
+
+/** Returns a one-time-visible raw invitation token; only a room owner can create it. */
+export async function createCloudInvite(roomId: string): Promise<string> {
+  const { data, error } = await client().rpc('create_room_invite', {
+    target_room: roomId, valid_hours: 24, allowed_uses: 10,
+  });
+  if (error) throw error;
+  return data as string;
+}
+/** Redeem after authentication. Invalid, expired, revoked, or exhausted tokens fail. */
+export async function redeemCloudInvite(token: string): Promise<string> {
+  const { data, error } = await client().rpc('redeem_room_invite', { invite_token: token });
+  if (error) throw error;
+  return data as string;
+}
