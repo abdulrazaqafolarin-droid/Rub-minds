@@ -1,0 +1,31 @@
+import { createClient } from "npm:@supabase/supabase-js@2";
+
+const databaseUrl = Deno.env.get("SUPABASE_URL");
+const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+if (!databaseUrl || !serviceKey) throw new Error("Missing backend configuration");
+const db = createClient(databaseUrl, serviceKey, { auth: { persistSession: false } });
+
+Deno.serve(async (request: Request) => {
+  const headers = { "Content-Type": "application/json", "Cache-Control": "no-store" };
+  const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers });
+  if (request.method !== "GET" && request.method !== "POST") return reply(405, { error: "Method not allowed" });
+  const bearer = request.headers.get("Authorization") || "";
+  if (!/^Bearer [0-9a-f]{64}$/.test(bearer)) return reply(401, { error: "Valid agent token required" });
+  const secret = bearer.slice(7);
+  let operation = "read";
+  let payload: string | null = null;
+  if (request.method === "POST") {
+    if (Number(request.headers.get("content-length") || "0") > 20000) return reply(413, { error: "Request too large" });
+    let input: unknown;
+    try { input = await request.json(); } catch { return reply(400, { error: "Invalid JSON" }); }
+    if (!input || typeof input !== "object" || !("body" in input) || typeof input.body !== "string") {
+      return reply(400, { error: "Expected { body: string }" });
+    }
+    operation = "send";
+    payload = input.body;
+    if (payload.trim().length < 1 || payload.length > 10000) return reply(400, { error: "Message must be 1-10000 characters" });
+  }
+  const { data, error } = await db.rpc("agent_exchange", { agent_secret: secret, operation, payload });
+  if (error) return reply(401, { error: "Credential invalid or operation rejected" });
+  return reply(200, data);
+});
