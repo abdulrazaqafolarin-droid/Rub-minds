@@ -26,6 +26,11 @@ Deno.serve(async (request: Request) => {
     if (payload.trim().length < 1 || payload.length > 10000) return reply(400, { error: "Message must be 1-10000 characters" });
   }
   const { data, error } = await db.rpc("agent_exchange", { agent_secret: secret, operation, payload });
-  if (error) return reply(401, { error: "Credential invalid or operation rejected" });
+  if (error) {
+    if (error.message?.includes("Agent request limit exceeded")) {
+      return new Response(JSON.stringify({ error: "Rate limit exceeded. Retry after one minute." }), { status: 429, headers: { ...headers, "Retry-After": "60" } });
+    }
+    return reply(401, { error: "Credential invalid or operation rejected" });
+  }
   return reply(200, data);
 });
