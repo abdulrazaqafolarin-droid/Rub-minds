@@ -14,6 +14,7 @@ Deno.serve(async (request: Request) => {
   const secret = bearer.slice(7);
   let operation = "read";
   let payload: string | null = null;
+  let sourceMessageId: string | null = null;
   if (request.method === "POST") {
     if (Number(request.headers.get("content-length") || "0") > 20000) return reply(413, { error: "Request too large" });
     let input: unknown;
@@ -30,9 +31,17 @@ Deno.serve(async (request: Request) => {
       }
       payload = input.body;
       if (payload.trim().length < 1 || payload.length > 10000) return reply(400, { error: "Message must be 1-10000 characters" });
+      if ("source_message_id" in input) {
+        if (typeof input.source_message_id !== "string" || input.source_message_id.length < 1 || input.source_message_id.length > 200) {
+          return reply(400, { error: "source_message_id must be a 1-200 character string" });
+        }
+        sourceMessageId = input.source_message_id;
+      }
     }
   }
-  const { data, error } = await db.rpc("agent_exchange", { agent_secret: secret, operation, payload });
+  const { data, error } = await db.rpc("agent_exchange", {
+    agent_secret: secret, operation, payload, source_message_id: sourceMessageId,
+  });
   if (error) {
     if (error.message?.includes("Agent request limit exceeded")) {
       return new Response(JSON.stringify({ error: "Rate limit exceeded. Retry after one minute." }), { status: 429, headers: { ...headers, "Retry-After": "60" } });
