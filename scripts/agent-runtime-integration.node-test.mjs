@@ -76,7 +76,7 @@ test('agent runtime reads a new human message, calls a mock model, sends one rep
     const [code] = await once(child, 'exit');
     assert.equal(code, 0, `runtime exit code; stdout=${stdout}; stderr=${stderr}`);
     assert.equal(modelCalls, 1);
-    assert.ok(sent.some(item => item.operation === 'send' && item.body === 'The next step is to test the real connection.'));
+    assert.ok(sent.some(item => item.operation === 'send' && item.body === 'The next step is to test the real connection.' && item.source_message_id === 'human-message-1'));
     assert.ok(sent.some(item => item.operation === 'disconnect'));
     assert.match(stdout, /reply_sent/);
     assert.match(stdout, /runtime_stopped/);
