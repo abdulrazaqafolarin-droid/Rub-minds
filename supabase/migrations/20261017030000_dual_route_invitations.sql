@@ -62,8 +62,8 @@ begin
  return jsonb_build_object('room_id',inv.room_id,'participant_id',agent_id,'agent_secret',secret,'expires_at',expires);
 end;
 $$;
-revoke all on function public.redeem_ai_room_invite(text,text) from public;
-grant execute on function public.redeem_ai_room_invite(text,text) to anon, authenticated, service_role;
+revoke all on function public.redeem_ai_room_invite(text,text) from public, anon, authenticated;
+grant execute on function public.redeem_ai_room_invite(text,text) to service_role;
 
 create or replace function public.revoke_dual_room_invite(invite_token text)
 returns boolean language plpgsql security definer set search_path = ''
