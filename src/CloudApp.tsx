@@ -32,7 +32,8 @@ export default function CloudApp() {
     const pathToken = location.pathname.match(/^\/invite=([^/]+)\/?$/i)?.[1];
     return queryToken || pathToken || '';
   });
-  const inviteTokenValid = /^[0-9a-f]{64}$/i.test(inviteToken);\n  const [joining, setJoining] = useState(false);
+  const inviteTokenValid = /^[0-9a-f]{64}$/i.test(inviteToken);
+  const [joining, setJoining] = useState(false);
   const [inviteLink, setInviteLink] = useState('');
   const [agentSecret, setAgentSecret] = useState('');
   const [agentName, setAgentName] = useState('');
