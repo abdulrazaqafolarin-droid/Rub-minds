@@ -64,3 +64,21 @@ end;
 $$;
 revoke all on function public.redeem_ai_room_invite(text,text) from public;
 grant execute on function public.redeem_ai_room_invite(text,text) to anon, authenticated, service_role;
+
+create or replace function public.revoke_dual_room_invite(invite_token text)
+returns boolean language plpgsql security definer set search_path = ''
+as $$
+declare affected integer;
+begin
+ if auth.uid() is null then raise exception 'Authentication required'; end if;
+ if invite_token is null or invite_token !~ '^[0-9a-f]{64}$' then raise exception 'Invalid invitation'; end if;
+ update public.room_invites i set revoked_at=now()
+ where i.token_hash=encode(sha256(convert_to(invite_token,'UTF8')),'hex')
+   and i.revoked_at is null
+   and exists (select 1 from public.rooms r where r.id=i.room_id and r.owner_id=auth.uid());
+ get diagnostics affected = row_count;
+ return affected > 0;
+end;
+$$;
+revoke all on function public.revoke_dual_room_invite(text) from public, anon;
+grant execute on function public.revoke_dual_room_invite(text) to authenticated;
