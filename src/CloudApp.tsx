@@ -4,7 +4,7 @@ import type { User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import { isValidInviteToken, readInviteToken } from './inviteLinks';
 import {
-  createCloudRoom, createCloudInvite, redeemCloudInvite, connectCloudAgent, listAgentConnections, revokeCloudAgent, getCloudRoom, listCloudMessages, listCloudParticipants,
+  createCloudRoom, createCloudInvite, redeemCloudInvite, redeemAIInvite, revokeCloudInvite, connectCloudAgent, listAgentConnections, revokeCloudAgent, getCloudRoom, listCloudMessages, listCloudParticipants,
   listCloudRooms, postCloudMessage, signInWithPassword, signUpWithPassword, requestPasswordReset, updateAccountPassword, signOut,
   subscribeToCloudMessages, type CloudRoom, type CloudMessage, type CloudParticipant, type AgentConnection,
 } from './cloudRooms';
@@ -31,7 +31,12 @@ export default function CloudApp() {
   const [inviteToken, setInviteToken] = useState(() => readInviteToken(location.search, location.pathname));
   const inviteTokenValid = isValidInviteToken(inviteToken);
   const [joining, setJoining] = useState(false);
+  const [inviteRoute, setInviteRoute] = useState<'choose' | 'human' | 'ai'>('choose');
+  const [aiInviteName, setAiInviteName] = useState('');
+  const [aiInviteConsent, setAiInviteConsent] = useState(false);
+  const [autoJoinAttempted, setAutoJoinAttempted] = useState('');
   const [inviteLink, setInviteLink] = useState('');
+  const [inviteAIEnabled, setInviteAIEnabled] = useState(false);
   const [agentSecret, setAgentSecret] = useState('');
   const [agentName, setAgentName] = useState('');
   const [agentConnections, setAgentConnections] = useState<AgentConnection[]>([]);
@@ -76,10 +81,13 @@ export default function CloudApp() {
     if (!room) return;
     setBusy(true); setError('');
     try {
-      const token = await createCloudInvite(room.id);
+      const allowAI = window.confirm('Enable the AI authorization route for this invitation? If enabled, up to 3 AI participants can join with separate credentials. Choose Cancel for a human-only invitation.');
+      const token = await createCloudInvite(room.id, allowAI, allowAI ? 3 : 0);
+      setInviteAIEnabled(allowAI);
       const link = new URL('/', window.location.origin);
       link.searchParams.set('invite', token);
       setInviteLink(link.toString());
+      setInviteRoute('choose');
       try { await navigator.clipboard.writeText(link.toString()); }
       catch { /* Show the link for manual copying if clipboard access is denied. */ }
     } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
@@ -114,6 +122,30 @@ export default function CloudApp() {
     try {
       const id = await redeemCloudInvite(inviteToken);
       setInviteToken(''); setRooms(await listCloudRooms()); navigate(id);
+    } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
+    finally { setJoining(false); }
+  }
+  async function revokeInviteLink() {
+    if (!inviteLink || !window.confirm('Revoke this invitation now? New human and AI joins will be blocked. Existing AI credentials remain active until separately revoked or expired.')) return;
+    const token = new URL(inviteLink).searchParams.get('invite');
+    if (!token) { setError('Could not read the invitation token.'); return; }
+    setBusy(true); setError('');
+    try {
+      await revokeCloudInvite(token);
+      setInviteLink('');
+      setError('Invitation revoked. Existing AI credentials must be revoked separately.');
+    } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
+    finally { setBusy(false); }
+  }
+  async function joinAsAI() {
+    if (!inviteToken || !inviteTokenValid || !aiInviteConsent || !aiInviteName.trim()) return;
+    setJoining(true); setError('');
+    try {
+      const result = await redeemAIInvite(inviteToken, aiInviteName.trim());
+      setAgentName(aiInviteName.trim());
+      setAgentSecret(result.agent_secret);
+      setInviteToken('');
+      setAuthNotice('AI participant created. Save this credential now; it will not be shown again.');
     } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
     finally { setJoining(false); }
   }
@@ -165,7 +197,43 @@ export default function CloudApp() {
     } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
     finally { setBusy(false); }
   }
+  useEffect(() => {
+    if (!ready || !user || !inviteToken || !inviteTokenValid || inviteRoute !== 'human' || autoJoinAttempted === inviteToken) return;
+    setAutoJoinAttempted(inviteToken);
+    void joinInvite();
+  }, [ready, user, inviteToken, inviteTokenValid, inviteRoute, autoJoinAttempted]);
+
   if (!ready) return <div className="empty"><h2>Loading Rub Minds…</h2></div>;
+  if (inviteToken && inviteTokenValid && inviteRoute === 'choose' && !agentSecret) return <main className="auth-page"><div className="auth-panel">
+    <div className="brand-icon"><Link2/></div>
+    <h1>Join a Rub Minds group</h1>
+    <p>This invitation supports two separate routes. Choose the identity you are joining with.</p>
+    <div className="objective"><Users size={18}/><span><strong>Human participant</strong><br/>Use your own Rub Minds account. New visitors can sign up; signed-in members can join directly.</span></div>
+    <button className="primary" onClick={() => { setInviteRoute('human'); if (!user) setAuthMode('signin'); }}>Continue as a human</button>
+    <div className="objective"><Bot size={18}/><span><strong>AI participant</strong><br/>Use a separate, room-scoped credential. This route may be disabled or out of AI slots for this invitation.</span></div>
+    <button onClick={() => { setInviteRoute('ai'); setAiInviteConsent(false); setError(''); }}>Continue as an AI agent</button>
+    {error && <p className="error" role="alert">{error}</p>}
+  </div></main>;
+  if (inviteToken && inviteTokenValid && inviteRoute === 'ai' && !agentSecret) return <main className="auth-page"><div className="auth-panel">
+    <div className="brand-icon"><Bot/></div>
+    <h1>AI participant authorization</h1>
+    <p>This route creates a separate AI participant. The invitation owner must have enabled AI access and reserved an available AI slot.</p>
+    <form onSubmit={e => { e.preventDefault(); void joinAsAI(); }}>
+      <label>AI participant name<input required maxLength={80} value={aiInviteName} onChange={e => setAiInviteName(e.target.value)} placeholder="e.g. Research Agent"/></label>
+      <label className="objective"><input type="checkbox" checked={aiInviteConsent} onChange={e => setAiInviteConsent(e.target.checked)}/> I confirm I am connecting an AI agent with authorization to participate in this group.</label>
+      <button className="primary" disabled={joining || !aiInviteConsent || !aiInviteName.trim()}>{joining ? 'Authorizing AI…' : 'Create AI credential'}</button>
+    </form>
+    {error && <p className="error" role="alert">{error}</p>}
+    <button onClick={() => { setInviteRoute('choose'); setError(''); }}>Back to route selection</button>
+  </div></main>;
+  if (!user && agentSecret) return <main className="auth-page"><div className="auth-panel">
+    <div className="brand-icon"><Bot/></div><h1>AI credential created</h1>
+    <p>This one-time credential belongs to <strong>{agentName}</strong>. Save it privately now. It is scoped to the invited room and expires no later than the invitation expiry or seven days.</p>
+    <label>Private AI credential<input readOnly aria-label="Private AI credential" value={agentSecret} onFocus={e => e.target.select()}/></label>
+    <button className="primary" onClick={() => { void navigator.clipboard.writeText(agentSecret).catch(() => setError('Select and copy the credential manually.')); }}>Copy credential</button>
+    <p className="disclaimer">Use it as an Authorization: Bearer credential with the Rub Minds agent-messages endpoint. A runtime and model provider are still required for automatic replies.</p>
+    {error && <p className="error" role="alert">{error}</p>}
+  </div></main>;
   if (!user || authMode === 'reset') return <main className="auth-page"><div className="auth-panel">
     <div className="brand-icon"><Sparkles/></div>
     <h1>{authMode === 'signup' ? 'Create your Rub Minds account' : authMode === 'forgot' ? 'Reset your password' : authMode === 'reset' ? 'Choose a new password' : inviteToken ? (inviteTokenValid ? 'You’re invited to Rub Minds' : 'Invitation link looks incomplete') : 'Welcome to Rub Minds'}</h1>
@@ -196,13 +264,13 @@ export default function CloudApp() {
       {error && <p className="error" role="alert">{error}</p>}
       {showAgents && <div className="invite-share"><strong>External agent connections</strong>{agentConnections.length ? agentConnections.map(a => <div key={a.id} style={{width:'100%',display:'flex',gap:12,alignItems:'center',justifyContent:'space-between'}}><span>{participants.find(p => p.id === a.participant_id)?.display_name || 'Agent'} — {a.revoked_at ? 'Revoked' : new Date(a.expires_at) <= new Date() ? 'Expired' : 'Active credential'}</span>{!a.revoked_at && <button onClick={() => { void revokeAgent(a.id); }}>Revoke</button>}</div>) : <p>No external agents connected yet.</p>}<button onClick={() => setShowAgents(false)}>Close</button></div>}
       {agentSecret && <div className="invite-share" role="status"><strong>{agentName} — agent connection created</strong><p>Copy this credential now. It is displayed only here, expires in 7 days, and grants access to this room's messages. Treat it like a password.</p><input readOnly aria-label="Agent credential" value={agentSecret} onFocus={e => e.target.select()}/><button onClick={() => { void navigator.clipboard.writeText(agentSecret).catch(() => setError('Select and copy the credential manually.')); }}>Copy credential</button><p>API endpoint: https://zucaeevlbwhcvjwbhwmq.supabase.co/functions/v1/agent-messages — use Authorization: Bearer YOUR_CREDENTIAL. GET reads messages; POST with JSON body sends one.</p><button onClick={() => setAgentSecret('')}>I've saved it</button></div>}
-      {inviteLink && <div className="invite-share" role="status"><strong>Invitation created</strong><p>Valid for 24 hours, up to 10 joins. Anyone with this link can request to join.</p><input aria-label="Shareable invitation URL" readOnly value={inviteLink} onFocus={e => e.target.select()}/><button onClick={() => { void navigator.clipboard.writeText(inviteLink).catch(() => setError('Select and copy the invitation URL manually.')); }}>Copy invitation</button><button onClick={() => setInviteLink('')}>Close</button></div>}
+      {inviteLink && <div className="invite-share" role="status"><strong>Invitation created</strong><p>Valid for 24 hours and up to 10 human joins. {inviteAIEnabled ? 'AI route enabled: up to 3 AI participants.' : 'AI route disabled for this invitation.'}</p><input aria-label="Shareable invitation URL" readOnly value={inviteLink} onFocus={e => e.target.select()}/><button onClick={() => { void navigator.clipboard.writeText(inviteLink).catch(() => setError('Select and copy the invitation URL manually.')); }}>Copy invitation</button><button disabled={busy} onClick={() => { void revokeInviteLink(); }}>Revoke invitation</button><button onClick={() => setInviteLink('')}>Close</button></div>}
       {inviteToken ? <section className="empty"><Link2 size={40}/><h1>{inviteTokenValid ? 'Join a Rub Minds group' : 'Invitation link looks incomplete'}</h1><p>{inviteTokenValid ? 'You have received a group invitation. Join to participate in the conversation with your signed-in account.' : `This link contains ${inviteToken.length} characters, but a valid invitation needs 64. Ask the group owner to create and send a new link.`}</p><button className="primary" onClick={() => { void joinInvite(); }} disabled={joining || !inviteTokenValid}>{joining ? 'Joining…' : 'Accept invitation'}</button><p className="disclaimer">Invitations expire after 24 hours or 10 successful joins.</p></section>
       : selected && room ? <>
         <header className="room-header"><button className="back" onClick={() => navigate('')}><ArrowLeft size={18}/></button><div className="room-heading"><h2>{room.title}</h2><span><span className="status-dot"/> {participants.length} participants · {messages.length} messages</span></div>{room.owner_id === user.id && <><button className="invite" disabled={busy} onClick={() => { void makeInvite(); }}><Link2 size={17}/> Invite members</button><button className="invite" disabled={busy} onClick={() => { void addAgent(); }}><Bot size={17}/> Connect AI</button><button className="invite" onClick={() => { void manageAgents(); }}>Manage agents</button></>}</header>
         <div className="objective"><Sparkles size={17}/><div><strong>Group objective</strong><p>{room.objective || 'Collaborate together.'}</p></div></div>
         <div className="messages" aria-live="polite">{messages.map(m => { const p = participants.find(p => p.id === m.sender_id); return <div className="message" key={m.id}><div className="avatar">{p?.kind === 'human' ? (p.display_name[0] || 'H') : <Bot size={18}/>}</div><div><div className="message-meta"><strong>{p?.display_name || 'Participant'}</strong><time>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div><p>{m.body}</p></div></div>; })}</div>
-        <div className="composer-area"><form className="composer" onSubmit={send}><input aria-label="Message" placeholder="Message your group…" value={draft} onChange={e => setDraft(e.target.value)} maxLength={10000}/><button disabled={busy || !draft.trim()} aria-label="Send"><Send size={18}/></button></form><p className="disclaimer">Live room · Owner-created invitations support signed-in humans. External agents can connect using owner-created API credentials. An active agent runtime is required.</p></div>
+        <div className="composer-area"><form className="composer" onSubmit={send}><input aria-label="Message" placeholder="Message your group…" value={draft} onChange={e => setDraft(e.target.value)} maxLength={10000}/><button disabled={busy || !draft.trim()} aria-label="Send"><Send size={18}/></button></form><p className="disclaimer">Live room · Invitations support account-bound human access and, when enabled by the owner, capped AI credentials. An active agent runtime is required for AI replies.</p></div>
       </> : selected ? <section className="empty"><h2>Room unavailable</h2><p>You may not have permission to view this room. Ask the room owner for an invitation link.</p><button className="primary" onClick={() => navigate('')}>Back to groups</button></section>
       : <section className="welcome"><div className="eyebrow"><Sparkles size={15}/> LIVE COLLABORATION</div><h1>Different minds.<br/><em>One conversation.</em></h1><p>Create a secure group to begin. AI invitation and autonomous collaboration are being developed next.</p><button className="primary" onClick={() => setCreating(true)}><Plus size={18}/> Create your first group</button></section>}
     </main>

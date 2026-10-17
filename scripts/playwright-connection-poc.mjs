@@ -72,9 +72,14 @@ try {
     <main>
       <h1>Mock Rub Minds invitation</h1>
       <p>Room: Controlled Playwright test room</p>
-      <label><input type="checkbox" id="authorize" /> I authorize this test agent to accept this invitation and send messages in this mock room.</label>
-      <button id="accept" disabled>Accept invitation</button>
-      <p id="status" role="status">Waiting for explicit authorization</p>
+      <button id="human-route">Join as a human</button>
+      <button id="ai-route">Connect as an AI</button>
+      <section id="human-panel" hidden><p>Human route selected: sign-in or sign-up is required.</p></section>
+      <section id="ai-panel" hidden>
+        <label><input type="checkbox" id="authorize" /> I authorize this test agent to accept this invitation and send messages in this mock room.</label>
+        <button id="accept" disabled>Accept invitation</button>
+      </section>
+      <p id="status" role="status">Choose an authorization route</p>
       <section id="room" hidden>
         <h2>Room messages</h2>
         <ol id="messages"><li>Owner: Welcome to the controlled test.</li></ol>
@@ -85,9 +90,24 @@ try {
       <script>
         const authorize = document.querySelector('#authorize');
         const accept = document.querySelector('#accept');
-        authorize.addEventListener('change', () => { accept.disabled = !authorize.checked; });
+        document.querySelector('#human-route').addEventListener('click', () => {
+          document.querySelector('#human-panel').hidden = false;
+          document.querySelector('#ai-panel').hidden = true;
+          document.querySelector('#status').textContent = 'Human route selected: sign-in required';
+        });
+        document.querySelector('#ai-route').addEventListener('click', () => {
+          document.querySelector('#human-panel').hidden = true;
+          document.querySelector('#ai-panel').hidden = false;
+          document.querySelector('#status').textContent = 'AI route selected: separate credential required';
+        });
+        authorize.addEventListener('change', () => {
+          accept.disabled = !authorize.checked;
+          document.querySelector('#status').textContent = authorize.checked
+            ? 'Explicit AI authorization granted'
+            : 'Authorization withdrawn; sending disabled';
+        });
         accept.addEventListener('click', () => {
-          if (!authorize.checked) return;
+          if (!authorize.checked || document.querySelector('#ai-panel').hidden) return;
           document.querySelector('#room').hidden = false;
           document.querySelector('#status').textContent = 'Invitation accepted with explicit authorization';
           accept.disabled = true;
@@ -105,6 +125,13 @@ try {
       </script>
     </main>
   `);
+
+  // The same invite offers two explicit routes; the human route does not silently become AI auth.
+  await roomPage.getByRole('button', { name: 'Join as a human' }).click();
+  await roomPage.getByText('Human route selected: sign-in required').waitFor();
+  assert.equal(await roomPage.locator('#room').isHidden(), true);
+  await roomPage.getByRole('button', { name: 'Connect as an AI' }).click();
+  await roomPage.getByText('AI route selected: separate credential required').waitFor();
 
   // No consent: joining must remain impossible.
   assert.equal(await roomPage.getByRole('button', { name: 'Accept invitation' }).isDisabled(), true);
@@ -132,7 +159,7 @@ try {
     'Prior decision: use a bounded, opt-in test.');
   assert.match(await roomPage.locator('#messages').innerText(), /Owner: Welcome/);
   assert.match(await roomPage.locator('#messages').innerText(), /Mock AI: I joined/);
-  assert.match(await roomPage.getByRole('status').innerText(), /explicit authorization/);
+  assert.match(await roomPage.getByRole('status').innerText(), /Authorization withdrawn; sending disabled/);
 
   // Also exercise the actual Rub Minds frontend in local demo mode. This is
   // a real Vite-served app page, not a setContent mock. No Supabase credentials
@@ -169,7 +196,7 @@ try {
     await vite.close();
   }
 
-  console.log('PASS: mock origin allowlist; malformed/missing invitation rejected; explicit consent and revocation gates; mock room message; original context retained; real Rub Minds demo UI creates a room, sends a message, and clearly labels its simulated agent.');
+  console.log('PASS: mock origin allowlist; malformed/missing invitation rejected; separate human/AI routes; explicit consent and revocation gates; mock room message; original context retained; real Rub Minds demo UI creates a room, sends a message, and clearly labels its simulated agent.');
   console.log('SCOPE: local test server and mock pages only. No production credentials, real invitations, or provider sessions are accessed.');
   await context.close();
 } finally {
