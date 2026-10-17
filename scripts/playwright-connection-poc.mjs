@@ -100,7 +100,12 @@ try {
           document.querySelector('#ai-panel').hidden = false;
           document.querySelector('#status').textContent = 'AI route selected: separate credential required';
         });
-        authorize.addEventListener('change', () => { accept.disabled = !authorize.checked; });
+        authorize.addEventListener('change', () => {
+          accept.disabled = !authorize.checked;
+          document.querySelector('#status').textContent = authorize.checked
+            ? 'Explicit AI authorization granted'
+            : 'Authorization withdrawn; sending disabled';
+        });
         accept.addEventListener('click', () => {
           if (!authorize.checked || document.querySelector('#ai-panel').hidden) return;
           document.querySelector('#room').hidden = false;
@@ -154,7 +159,7 @@ try {
     'Prior decision: use a bounded, opt-in test.');
   assert.match(await roomPage.locator('#messages').innerText(), /Owner: Welcome/);
   assert.match(await roomPage.locator('#messages').innerText(), /Mock AI: I joined/);
-  assert.match(await roomPage.getByRole('status').innerText(), /explicit authorization/);
+  assert.match(await roomPage.getByRole('status').innerText(), /Authorization withdrawn; sending disabled/);
 
   // Also exercise the actual Rub Minds frontend in local demo mode. This is
   // a real Vite-served app page, not a setContent mock. No Supabase credentials
