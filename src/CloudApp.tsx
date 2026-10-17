@@ -41,8 +41,10 @@ export default function CloudApp() {
 
   useEffect(() => {
     if (!supabase) return;
-    void supabase.auth.getUser().then(({ data, error: authError }) => {
-      setUser(data.user);
+    // getSession() is appropriate during startup: getUser() makes a server request
+    // and can return AuthSessionMissingError for a normal first-time visitor.
+    void supabase.auth.getSession().then(({ data, error: authError }) => {
+      setUser(data.session?.user ?? null);
       if (authError) setError('Could not restore your session. Please sign in again.');
     }).catch(() => setError('Could not reach authentication. Please refresh and try again.')).finally(() => setReady(true));
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
