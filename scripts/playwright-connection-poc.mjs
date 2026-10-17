@@ -122,7 +122,6 @@ try {
   // a real Vite-served app page, not a setContent mock. No Supabase credentials
   // are supplied, so no real account or production data is touched.
   const vite = await createServer({
-    configFile: false,
     root: process.cwd(),
     server: { host: '127.0.0.1', port: 0, strictPort: false },
     logLevel: 'error',
