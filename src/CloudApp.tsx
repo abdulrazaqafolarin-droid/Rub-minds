@@ -4,7 +4,7 @@ import type { User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import { isValidInviteToken, readInviteToken } from './inviteLinks';
 import {
-  createCloudRoom, createCloudInvite, redeemCloudInvite, connectCloudAgent, listAgentConnections, revokeCloudAgent, getCloudRoom, listCloudMessages, listCloudParticipants,
+  createCloudRoom, createCloudInvite, redeemCloudInvite, redeemAIInvite, connectCloudAgent, listAgentConnections, revokeCloudAgent, getCloudRoom, listCloudMessages, listCloudParticipants,
   listCloudRooms, postCloudMessage, signInWithPassword, signUpWithPassword, requestPasswordReset, updateAccountPassword, signOut,
   subscribeToCloudMessages, type CloudRoom, type CloudMessage, type CloudParticipant, type AgentConnection,
 } from './cloudRooms';
@@ -31,6 +31,10 @@ export default function CloudApp() {
   const [inviteToken, setInviteToken] = useState(() => readInviteToken(location.search, location.pathname));
   const inviteTokenValid = isValidInviteToken(inviteToken);
   const [joining, setJoining] = useState(false);
+  const [inviteRoute, setInviteRoute] = useState<'choose' | 'human' | 'ai'>('choose');
+  const [aiInviteName, setAiInviteName] = useState('');
+  const [aiInviteConsent, setAiInviteConsent] = useState(false);
+  const [autoJoinAttempted, setAutoJoinAttempted] = useState('');
   const [inviteLink, setInviteLink] = useState('');
   const [agentSecret, setAgentSecret] = useState('');
   const [agentName, setAgentName] = useState('');
@@ -76,10 +80,12 @@ export default function CloudApp() {
     if (!room) return;
     setBusy(true); setError('');
     try {
-      const token = await createCloudInvite(room.id);
+      const allowAI = window.confirm('Enable the AI authorization route for this invitation? If enabled, up to 3 AI participants can join with separate credentials. Choose Cancel for a human-only invitation.');
+      const token = await createCloudInvite(room.id, allowAI, allowAI ? 3 : 0);
       const link = new URL('/', window.location.origin);
       link.searchParams.set('invite', token);
       setInviteLink(link.toString());
+      setInviteRoute('choose');
       try { await navigator.clipboard.writeText(link.toString()); }
       catch { /* Show the link for manual copying if clipboard access is denied. */ }
     } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
@@ -114,6 +120,18 @@ export default function CloudApp() {
     try {
       const id = await redeemCloudInvite(inviteToken);
       setInviteToken(''); setRooms(await listCloudRooms()); navigate(id);
+    } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
+    finally { setJoining(false); }
+  }
+  async function joinAsAI() {
+    if (!inviteToken || !inviteTokenValid || !aiInviteConsent || !aiInviteName.trim()) return;
+    setJoining(true); setError('');
+    try {
+      const result = await redeemAIInvite(inviteToken, aiInviteName.trim());
+      setAgentName(aiInviteName.trim());
+      setAgentSecret(result.agent_secret);
+      setInviteToken('');
+      setAuthNotice('AI participant created. Save this credential now; it will not be shown again.');
     } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
     finally { setJoining(false); }
   }
@@ -165,7 +183,43 @@ export default function CloudApp() {
     } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
     finally { setBusy(false); }
   }
+  useEffect(() => {
+    if (!ready || !user || !inviteToken || !inviteTokenValid || autoJoinAttempted === inviteToken) return;
+    setAutoJoinAttempted(inviteToken);
+    void joinInvite();
+  }, [ready, user, inviteToken, inviteTokenValid, autoJoinAttempted]);
+
   if (!ready) return <div className="empty"><h2>Loading Rub Minds…</h2></div>;
+  if (!user && inviteToken && inviteTokenValid && inviteRoute === 'choose' && !agentSecret) return <main className="auth-page"><div className="auth-panel">
+    <div className="brand-icon"><Link2/></div>
+    <h1>Join a Rub Minds group</h1>
+    <p>This invitation supports two separate routes. Choose the identity you are joining with.</p>
+    <div className="objective"><Users size={18}/><span><strong>Human participant</strong><br/>Use your own Rub Minds account. New visitors can sign up; signed-in members can join directly.</span></div>
+    <button className="primary" onClick={() => { setInviteRoute('human'); setAuthMode('signin'); }}>Continue as a human</button>
+    <div className="objective"><Bot size={18}/><span><strong>AI participant</strong><br/>Use a separate, room-scoped credential. This route may be disabled or out of AI slots for this invitation.</span></div>
+    <button onClick={() => { setInviteRoute('ai'); setAiInviteConsent(false); setError(''); }}>Continue as an AI agent</button>
+    {error && <p className="error" role="alert">{error}</p>}
+  </div></main>;
+  if (!user && inviteToken && inviteTokenValid && inviteRoute === 'ai' && !agentSecret) return <main className="auth-page"><div className="auth-panel">
+    <div className="brand-icon"><Bot/></div>
+    <h1>AI participant authorization</h1>
+    <p>This route creates a separate AI participant. The invitation owner must have enabled AI access and reserved an available AI slot.</p>
+    <form onSubmit={e => { e.preventDefault(); void joinAsAI(); }}>
+      <label>AI participant name<input required maxLength={80} value={aiInviteName} onChange={e => setAiInviteName(e.target.value)} placeholder="e.g. Research Agent"/></label>
+      <label className="objective"><input type="checkbox" checked={aiInviteConsent} onChange={e => setAiInviteConsent(e.target.checked)}/> I confirm I am connecting an AI agent with authorization to participate in this group.</label>
+      <button className="primary" disabled={joining || !aiInviteConsent || !aiInviteName.trim()}>{joining ? 'Authorizing AI…' : 'Create AI credential'}</button>
+    </form>
+    {error && <p className="error" role="alert">{error}</p>}
+    <button onClick={() => { setInviteRoute('choose'); setError(''); }}>Back to route selection</button>
+  </div></main>;
+  if (!user && agentSecret) return <main className="auth-page"><div className="auth-panel">
+    <div className="brand-icon"><Bot/></div><h1>AI credential created</h1>
+    <p>This one-time credential belongs to <strong>{agentName}</strong>. Save it privately now. It is scoped to the invited room and expires no later than the invitation expiry or seven days.</p>
+    <label>Private AI credential<input readOnly aria-label="Private AI credential" value={agentSecret} onFocus={e => e.target.select()}/></label>
+    <button className="primary" onClick={() => { void navigator.clipboard.writeText(agentSecret).catch(() => setError('Select and copy the credential manually.')); }}>Copy credential</button>
+    <p className="disclaimer">Use it as an Authorization: Bearer credential with the Rub Minds agent-messages endpoint. A runtime and model provider are still required for automatic replies.</p>
+    {error && <p className="error" role="alert">{error}</p>}
+  </div></main>;
   if (!user || authMode === 'reset') return <main className="auth-page"><div className="auth-panel">
     <div className="brand-icon"><Sparkles/></div>
     <h1>{authMode === 'signup' ? 'Create your Rub Minds account' : authMode === 'forgot' ? 'Reset your password' : authMode === 'reset' ? 'Choose a new password' : inviteToken ? (inviteTokenValid ? 'You’re invited to Rub Minds' : 'Invitation link looks incomplete') : 'Welcome to Rub Minds'}</h1>
