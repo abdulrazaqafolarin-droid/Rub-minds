@@ -23,7 +23,7 @@ Deno.serve(async (request: Request) => {
     if (candidate !== "send" && candidate !== "heartbeat" && candidate !== "disconnect") {
       return reply(400, { error: "Operation must be send, heartbeat, or disconnect" });
     }
-    operation = candidate;
+    operation = candidate as string;
     if (operation === "send") {
       if (!("body" in input) || typeof input.body !== "string") {
         return reply(400, { error: "Expected { operation: \"send\", body: string }" });
