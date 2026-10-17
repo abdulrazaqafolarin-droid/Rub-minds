@@ -118,7 +118,10 @@ async function main() {
         for (const message of incoming) {
           if (stopped || Date.now() >= deadline || replyCount >= config.maxReplies) break;
           try {
-            const reply = await generateReply(room.messages || []);
+            const history = room.messages || [];
+            const messageIndex = history.findIndex(item => item.id === message.id);
+            const context = messageIndex >= 0 ? history.slice(0, messageIndex + 1) : [message];
+            const reply = await generateReply(context);
             await apiRequest('POST', { operation: 'send', body: reply });
             replyCount += 1;
             console.log(JSON.stringify({
