@@ -131,7 +131,7 @@ export default function CloudApp() {
     try {
       await revokeCloudInvite(token);
       setInviteLink('');
-      setAuthNotice('Invitation revoked. Existing AI credentials must be revoked separately.');
+      setError('Invitation revoked. Existing AI credentials must be revoked separately.');
     } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
     finally { setBusy(false); }
   }
