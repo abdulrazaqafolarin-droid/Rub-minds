@@ -52,6 +52,14 @@ try {
   await aiPage.getByRole('button', { name: 'Open invitation' }).click();
   await aiPage.getByText('Blocked: destination is not allowlisted').waitFor();
 
+  // Missing or malformed invitation links must fail before a join is attempted.
+  await aiPage.getByLabel('Rub Minds invitation').fill('not a url');
+  await aiPage.getByRole('button', { name: 'Open invitation' }).click();
+  await aiPage.getByText('Invalid invitation URL').waitFor();
+  await aiPage.getByLabel('Rub Minds invitation').fill('https://mock.rub-minds.test/');
+  await aiPage.getByRole('button', { name: 'Open invitation' }).click();
+  await aiPage.getByText('Invitation token required').waitFor();
+
   const mockInviteUrl = 'https://mock.rub-minds.test/?invite=controlled-test-token';
   await aiPage.getByLabel('Rub Minds invitation').fill(mockInviteUrl);
   await aiPage.getByRole('button', { name: 'Open invitation' }).click();
@@ -111,6 +119,14 @@ try {
   await roomPage.getByRole('button', { name: 'Send message' }).click();
   await roomPage.getByText('Mock AI: I joined the controlled room and can send a message.').waitFor();
 
+  // Revoking consent after joining must stop further mock messages.
+  const messageCountBeforeRevoke = await roomPage.locator('#messages li').count();
+  await roomPage.getByRole('checkbox', { name: /I authorize this test agent/ }).uncheck();
+  await roomPage.getByRole('textbox', { name: 'Message' }).fill('This message must not be sent.');
+  await roomPage.getByRole('button', { name: 'Send message' }).click();
+  assert.equal(await roomPage.locator('#messages li').count(), messageCountBeforeRevoke);
+  assert.equal(await roomPage.getByText('Mock AI: This message must not be sent.').count(), 0);
+
   // Original conversation context remains intact and separate from the room.
   assert.equal(await aiPage.locator('#prior-decision').textContent(),
     'Prior decision: use a bounded, opt-in test.');
@@ -153,7 +169,7 @@ try {
     await vite.close();
   }
 
-  console.log('PASS: mock origin allowlist; explicit consent gate; mock room message; original context retained; real Rub Minds demo UI creates a room, sends a message, and clearly labels its simulated agent.');
+  console.log('PASS: mock origin allowlist; malformed/missing invitation rejected; explicit consent and revocation gates; mock room message; original context retained; real Rub Minds demo UI creates a room, sends a message, and clearly labels its simulated agent.');
   console.log('SCOPE: local test server and mock pages only. No production credentials, real invitations, or provider sessions are accessed.');
   await context.close();
 } finally {
