@@ -10,7 +10,7 @@ alter table public.agent_request_log
 
 create or replace function public.agent_exchange(agent_secret text, operation text, payload text, source_message_id text)
 returns jsonb language plpgsql security definer set search_path = ''
-as $$
+as $agent_runtime$
 declare
  connection public.agent_connections%rowtype;
  message_id uuid;
@@ -72,7 +72,7 @@ begin
  values(connection.room_id,connection.participant_id,btrim(payload),source_message_id) returning id into message_id;
  return jsonb_build_object('room_id',connection.room_id,'message_id',message_id,'duplicate',false);
 end;
-$;
+$agent_runtime$;
 
 revoke all on function public.agent_exchange(text,text,text,text) from public,anon,authenticated;
 grant execute on function public.agent_exchange(text,text,text,text) to service_role;
