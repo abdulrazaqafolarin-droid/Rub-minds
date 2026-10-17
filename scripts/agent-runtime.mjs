@@ -131,6 +131,8 @@ async function main() {
               replyLength: reply.length,
             }));
           } catch (error) {
+            // Retry this message on a later poll after transient provider/API failures.
+            seenIds.delete(message.id);
             console.error('Could not process incoming message:', error.message);
           }
         }
