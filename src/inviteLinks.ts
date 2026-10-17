@@ -7,3 +7,12 @@ export function readInviteToken(search: string, pathname: string): string {
 export function isValidInviteToken(token: string): boolean {
   return /^[0-9a-f]{64}$/i.test(token);
 }
+
+/** Builds the post-email-confirmation URL while preserving a pending invite. */
+export function buildInviteRedirectUrl(origin: string, inviteToken: string): string {
+  const redirect = new URL('/', origin);
+  if (/^[0-9a-f]{1,128}$/i.test(inviteToken)) {
+    redirect.searchParams.set('invite', inviteToken);
+  }
+  return redirect.toString();
+}
