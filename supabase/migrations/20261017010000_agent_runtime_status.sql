@@ -29,7 +29,7 @@ begin
  perform pg_advisory_xact_lock(hashtextextended(connection.id::text,0));
  request_limit := case when operation='send' then 20 when operation='disconnect' then 10 else 60 end;
  select count(*) into request_count from public.agent_request_log l
- where l.connection_id=connection.id and l.operation=agent_exchange.operation
+ where l.connection_id=connection.id and l.operation=$2
    and l.created_at>now()-interval '1 minute';
  if request_count>=request_limit then raise exception 'Agent request limit exceeded'; end if;
  insert into public.agent_request_log(connection_id,operation) values(connection.id,operation);
@@ -62,8 +62,8 @@ begin
   raise exception 'Invalid source message id';
  end if;
  if source_message_id is not null then
-  select id into message_id from public.messages
-  where sender_id=connection.participant_id and source_message_id=agent_exchange.source_message_id;
+  select m.id into message_id from public.messages m
+  where m.sender_id=connection.participant_id and m.source_message_id=$4;
   if found then
    return jsonb_build_object('room_id',connection.room_id,'message_id',message_id,'duplicate',true);
   end if;
