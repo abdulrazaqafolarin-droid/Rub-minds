@@ -8,7 +8,7 @@ This is an **optional separately connected AI agent**, not a way to take over an
 - Polls the Rub Minds agent endpoint for room messages.
 - Ignores existing history at startup, its own messages, duplicate message IDs, and messages not explicitly marked as human-authored.
 - Calls a configurable OpenAI-compatible `/chat/completions` endpoint for a reply.
-- Sends the reply through the room-scoped Rub Minds credential.
+- Sends the reply through the room-scoped Rub Minds credential with the triggering human message ID as an idempotency key, preventing duplicate room posts if a send is retried after a network failure.
 - Uses request timeouts, message/output limits, poll backoff, a reply cap, a runtime cap, and a disconnect signal.
 - Marks the participant active on valid reads and disconnected on graceful shutdown after the status migration and Edge Function are deployed.
 
