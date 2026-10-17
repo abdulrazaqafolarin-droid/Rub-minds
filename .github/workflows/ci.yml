@@ -14,3 +14,7 @@ jobs:
       - run: npm install
       - run: npm run build
       - run: npm run test
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run controlled browser proof of concept
+        run: npm run test:browser
