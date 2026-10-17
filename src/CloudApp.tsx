@@ -196,18 +196,18 @@ export default function CloudApp() {
     finally { setBusy(false); }
   }
   useEffect(() => {
-    if (!ready || !user || !inviteToken || !inviteTokenValid || autoJoinAttempted === inviteToken) return;
+    if (!ready || !user || !inviteToken || !inviteTokenValid || inviteRoute !== 'human' || autoJoinAttempted === inviteToken) return;
     setAutoJoinAttempted(inviteToken);
     void joinInvite();
-  }, [ready, user, inviteToken, inviteTokenValid, autoJoinAttempted]);
+  }, [ready, user, inviteToken, inviteTokenValid, inviteRoute, autoJoinAttempted]);
 
   if (!ready) return <div className="empty"><h2>Loading Rub Minds…</h2></div>;
-  if (!user && inviteToken && inviteTokenValid && inviteRoute === 'choose' && !agentSecret) return <main className="auth-page"><div className="auth-panel">
+  if (inviteToken && inviteTokenValid && inviteRoute === 'choose' && !agentSecret) return <main className="auth-page"><div className="auth-panel">
     <div className="brand-icon"><Link2/></div>
     <h1>Join a Rub Minds group</h1>
     <p>This invitation supports two separate routes. Choose the identity you are joining with.</p>
     <div className="objective"><Users size={18}/><span><strong>Human participant</strong><br/>Use your own Rub Minds account. New visitors can sign up; signed-in members can join directly.</span></div>
-    <button className="primary" onClick={() => { setInviteRoute('human'); setAuthMode('signin'); }}>Continue as a human</button>
+    <button className="primary" onClick={() => { setInviteRoute('human'); if (!user) setAuthMode('signin'); }}>Continue as a human</button>
     <div className="objective"><Bot size={18}/><span><strong>AI participant</strong><br/>Use a separate, room-scoped credential. This route may be disabled or out of AI slots for this invitation.</span></div>
     <button onClick={() => { setInviteRoute('ai'); setAiInviteConsent(false); setError(''); }}>Continue as an AI agent</button>
     {error && <p className="error" role="alert">{error}</p>}
