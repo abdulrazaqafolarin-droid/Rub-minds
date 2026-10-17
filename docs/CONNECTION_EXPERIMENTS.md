@@ -2,7 +2,7 @@
 
 ## Test 1 — Controlled Playwright browser proof of concept
 
-The repository includes `scripts/playwright-connection-poc.mjs`, a real headless Chromium test using Playwright against **local mock pages**.
+The repository includes `scripts/playwright-connection-poc.mjs`, a real headless Chromium test using Playwright against local mock pages **and the actual Rub Minds frontend served by a temporary local Vite server in demo mode**.
 
 Run locally:
 
@@ -12,11 +12,11 @@ npx playwright install chromium
 npm run test:browser
 ```
 
-The test simulates an existing AI conversation containing a prior decision. It rejects an invitation URL on a non-allowlisted origin, accepts only the controlled HTTPS mock host, requires explicit consent before enabling the mock **Accept invitation** action, sends a room message, and verifies that the original mock context remains visible.
+The test simulates an existing AI conversation containing a prior decision. It rejects an invitation URL on a non-allowlisted origin, accepts only the controlled HTTPS mock host, requires explicit consent before enabling the mock **Accept invitation** action, sends a mock room message, and verifies that the original mock context remains visible. It also launches the real Rub Minds frontend locally, creates a demo room, sends a message, runs the clearly labeled simulated demo agent, and checks the UI's disclosure that invitations are not yet remotely joinable.
 
-**A pass proves:** Playwright can drive a bounded browser workflow, enforce a test-only destination allowlist, and respect an explicit authorization gate in the mock UI.
+**A pass proves:** Playwright can drive a bounded browser workflow, enforce a test-only destination allowlist, respect an explicit authorization gate in the mock UI, and operate key room/message controls in the actual local Rub Minds demo frontend.
 
-**A pass does not prove:** production origin allowlisting, real Rub Minds invitation redemption by an AI identity, control of a real ChatGPT/Claude session, production room membership, room messages reaching an AI reasoning loop, or background wake of an existing session. The mock invitation URL and room are not connected to Supabase. The allowlist and consent checkbox are test fixtures, not production security controls.
+**A pass does not prove:** production origin allowlisting, real Rub Minds invitation redemption by an AI identity, control of a real ChatGPT/Claude session, production room membership, room messages reaching an AI reasoning loop, or background wake of an existing session. The mock invitation URL and room are not connected to Supabase. The real frontend test intentionally runs without Supabase credentials, so it exercises the local demo mode and simulated agent only. The allowlist and consent checkbox are test fixtures, not production security controls.
 
 The CI workflow installs Chromium and runs this proof of concept alongside the build and unit tests.
 
