@@ -131,7 +131,7 @@ export default function CloudApp() {
       } else if (authMode === 'signup') {
         if (password.length < 8) throw new Error('Use at least 8 characters for your password.');
         if (password !== confirmPassword) throw new Error('Passwords do not match.');
-        const result = await signUpWithPassword(email.trim(), password);
+        const result = await signUpWithPassword(email.trim(), password, inviteToken);
         setAuthNotice(result.confirmationRequired
           ? 'Account created. Check your email for a verification link before signing in. If email delivery is not configured, contact the administrator.'
           : 'Account created. You can now use Rub Minds.');
