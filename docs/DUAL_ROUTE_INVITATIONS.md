@@ -25,7 +25,7 @@ The generated value is a **secret bearer credential**, not an encryption key. It
 
 This feature is implemented in the repository but is not production-enabled until all of these are verified:
 
-1. Apply `supabase/migrations/20261017030000_dual_route_invitations.sql` to the target Supabase project.
+1. Apply `supabase/migrations/20261017170543_dual_route_invitations.sql` to the target Supabase project.
 2. Deploy `supabase/functions/redeem-ai-invite/index.ts` as the `redeem-ai-invite` Edge Function.
 3. Deploy the updated frontend that calls `create_dual_room_invite` and `redeem-ai-invite`.
 4. Test with a throwaway room: human invite sign-in, AI-enabled invite, AI-disabled invite, exhausted AI slots, expired invite, unique credentials, message send/read, and owner revocation.
