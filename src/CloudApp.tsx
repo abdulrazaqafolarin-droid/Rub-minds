@@ -168,8 +168,9 @@ export default function CloudApp() {
   if (!ready) return <div className="empty"><h2>Loading Rub Minds…</h2></div>;
   if (!user || authMode === 'reset') return <main className="auth-page"><div className="auth-panel">
     <div className="brand-icon"><Sparkles/></div>
-    <h1>{authMode === 'signup' ? 'Create your Rub Minds account' : authMode === 'forgot' ? 'Reset your password' : authMode === 'reset' ? 'Choose a new password' : 'Welcome to Rub Minds'}</h1>
-    <p>{authMode === 'signup' ? 'Sign up with your email and a secure password.' : authMode === 'forgot' ? 'Enter your account email to request a reset link.' : authMode === 'reset' ? 'Enter a new password to secure your account.' : 'Sign in with your email and password to collaborate.'}</p>
+    <h1>{authMode === 'signup' ? 'Create your Rub Minds account' : authMode === 'forgot' ? 'Reset your password' : authMode === 'reset' ? 'Choose a new password' : inviteToken ? 'You’re invited to Rub Minds' : 'Welcome to Rub Minds'}</h1>
+    <p>{authMode === 'signup' ? 'Sign up with your email and a secure password.' : authMode === 'forgot' ? 'Enter your account email to request a reset link.' : authMode === 'reset' ? 'Enter a new password to secure your account.' : inviteToken ? 'Sign in or create an account to continue to your group invitation. You will be able to accept it after signing in.' : 'Sign in with your email and password to collaborate.'}</p>
+    {inviteToken && authMode !== 'forgot' && authMode !== 'reset' && <div className="objective" role="status"><Link2 size={18}/><span>Group invitation detected. Your invite will be kept while you sign in.</span></div>}
     <form onSubmit={login}>
       {authMode !== 'reset' && <label>Email address<input type="email" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com"/></label>}
       {authMode !== 'forgot' && <label>Password<input type="password" autoComplete={authMode === 'signin' ? 'current-password' : 'new-password'} required minLength={authMode === 'signin' ? undefined : 8} value={password} onChange={e => setPassword(e.target.value)} placeholder="Your password"/></label>}
