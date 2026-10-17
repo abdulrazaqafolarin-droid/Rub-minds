@@ -17,9 +17,13 @@ export async function signInWithPassword(email: string, password: string) {
   const { error } = await client().auth.signInWithPassword({ email, password });
   if (error) throw error;
 }
-export async function signUpWithPassword(email: string, password: string) {
+export async function signUpWithPassword(email: string, password: string, inviteToken = '') {
+  // Keep the pending invitation through Supabase email confirmation so new users
+  // return to the room invite instead of landing on the generic home page.
+  const redirect = new URL('/', window.location.origin);
+  if (/^[0-9a-f]{64}$/i.test(inviteToken)) redirect.searchParams.set('invite', inviteToken);
   const { data, error } = await client().auth.signUp({
-    email, password, options: { emailRedirectTo: window.location.origin + '/' },
+    email, password, options: { emailRedirectTo: redirect.toString() },
   });
   if (error) throw error;
   return { confirmationRequired: !data.session };
