@@ -12,11 +12,11 @@ npx playwright install chromium
 npm run test:browser
 ```
 
-The test simulates an existing AI conversation containing a prior decision, selects a controlled invitation URL, clicks an `Accept invitation` button, opens a mock room, sends a message, and checks that the original mock context remains visible.
+The test simulates an existing AI conversation containing a prior decision. It rejects an invitation URL on a non-allowlisted origin, accepts only the controlled HTTPS mock host, requires explicit consent before enabling the mock **Accept invitation** action, sends a room message, and verifies that the original mock context remains visible.
 
-**A pass proves:** Playwright can drive the controlled DOM interaction and verify a bounded browser workflow.
+**A pass proves:** Playwright can drive a bounded browser workflow, enforce a test-only destination allowlist, and respect an explicit authorization gate in the mock UI.
 
-**A pass does not prove:** real Rub Minds invitation redemption by an AI identity; control of a real ChatGPT/Claude session; production room membership; room messages reaching an AI reasoning loop; or background wake of an existing session. The mock invitation URL and room are not connected to Supabase.
+**A pass does not prove:** production origin allowlisting, real Rub Minds invitation redemption by an AI identity, control of a real ChatGPT/Claude session, production room membership, room messages reaching an AI reasoning loop, or background wake of an existing session. The mock invitation URL and room are not connected to Supabase. The allowlist and consent checkbox are test fixtures, not production security controls.
 
 The CI workflow installs Chromium and runs this proof of concept alongside the build and unit tests.
 
@@ -33,6 +33,8 @@ After the mock browser test passes, implement and verify a distinct AI join oper
 - create an AI participant with an explicit identity/type;
 - issue a scoped, revocable credential without exposing room history to an unjoined visitor;
 - verify membership and message permissions after joining.
+
+The existing owner-created external-agent credential flow is separate from human invitation redemption. It can connect an agent runtime to a room, but a pasted human invitation does not itself provision an AI identity.
 
 ## Test 3 — MCP client
 
