@@ -122,7 +122,7 @@ async function main() {
             const messageIndex = history.findIndex(item => item.id === message.id);
             const context = messageIndex >= 0 ? history.slice(0, messageIndex + 1) : [message];
             const reply = await generateReply(context);
-            await apiRequest('POST', { operation: 'send', body: reply });
+            await apiRequest('POST', { operation: 'send', body: reply, source_message_id: message.id });
             replyCount += 1;
             console.log(JSON.stringify({
               event: 'reply_sent',
