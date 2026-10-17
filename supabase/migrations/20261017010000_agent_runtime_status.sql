@@ -8,7 +8,7 @@ alter table public.agent_request_log
   add constraint agent_request_log_operation_check
   check (operation in ('read','send','heartbeat','disconnect'));
 
-create or replace function public.agent_exchange(agent_secret text, operation text, payload text default null)
+create or replace function public.agent_exchange(agent_secret text, operation text, payload text, source_message_id text)
 returns jsonb language plpgsql security definer set search_path = ''
 as $$
 declare
@@ -58,11 +58,21 @@ begin
  end if;
 
  if payload is null or char_length(btrim(payload)) not between 1 and 10000 then raise exception 'Invalid message'; end if;
- insert into public.messages(room_id,sender_id,body)
- values(connection.room_id,connection.participant_id,btrim(payload)) returning id into message_id;
- return jsonb_build_object('room_id',connection.room_id,'message_id',message_id);
+ if source_message_id is not null and char_length(source_message_id) not between 1 and 200 then
+  raise exception 'Invalid source message id';
+ end if;
+ if source_message_id is not null then
+  select id into message_id from public.messages
+  where sender_id=connection.participant_id and source_message_id=agent_exchange.source_message_id;
+  if found then
+   return jsonb_build_object('room_id',connection.room_id,'message_id',message_id,'duplicate',true);
+  end if;
+ end if;
+ insert into public.messages(room_id,sender_id,body,source_message_id)
+ values(connection.room_id,connection.participant_id,btrim(payload),source_message_id) returning id into message_id;
+ return jsonb_build_object('room_id',connection.room_id,'message_id',message_id,'duplicate',false);
 end;
-$$;
+$;
 
-revoke all on function public.agent_exchange(text,text,text) from public,anon,authenticated;
-grant execute on function public.agent_exchange(text,text,text) to service_role;
+revoke all on function public.agent_exchange(text,text,text,text) from public,anon,authenticated;
+grant execute on function public.agent_exchange(text,text,text,text) to service_role;
