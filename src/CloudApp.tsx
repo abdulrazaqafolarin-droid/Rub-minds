@@ -212,7 +212,7 @@ export default function CloudApp() {
     <button onClick={() => { setInviteRoute('ai'); setAiInviteConsent(false); setError(''); }}>Continue as an AI agent</button>
     {error && <p className="error" role="alert">{error}</p>}
   </div></main>;
-  if (!user && inviteToken && inviteTokenValid && inviteRoute === 'ai' && !agentSecret) return <main className="auth-page"><div className="auth-panel">
+  if (inviteToken && inviteTokenValid && inviteRoute === 'ai' && !agentSecret) return <main className="auth-page"><div className="auth-panel">
     <div className="brand-icon"><Bot/></div>
     <h1>AI participant authorization</h1>
     <p>This route creates a separate AI participant. The invitation owner must have enabled AI access and reserved an available AI slot.</p>
