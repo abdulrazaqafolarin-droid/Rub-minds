@@ -27,7 +27,11 @@ export default function CloudApp() {
   const [objective, setObjective] = useState('');
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
-  const [inviteToken, setInviteToken] = useState(() => new URLSearchParams(location.search).get('invite') || '');
+  const [inviteToken, setInviteToken] = useState(() => {
+    const queryToken = new URLSearchParams(location.search).get('invite');
+    const pathToken = location.pathname.match(/^\/invite=([0-9a-f]{64})\/?$/i)?.[1];
+    return queryToken || pathToken || '';
+  });
   const [joining, setJoining] = useState(false);
   const [inviteLink, setInviteLink] = useState('');
   const [agentSecret, setAgentSecret] = useState('');
