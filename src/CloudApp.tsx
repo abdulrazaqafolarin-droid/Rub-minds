@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { ArrowLeft, Bot, Link2, LogOut, Plus, Send, Sparkles, Users } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
+import { isValidInviteToken, readInviteToken } from './inviteLinks';
 import {
   createCloudRoom, createCloudInvite, redeemCloudInvite, connectCloudAgent, listAgentConnections, revokeCloudAgent, getCloudRoom, listCloudMessages, listCloudParticipants,
   listCloudRooms, postCloudMessage, signInWithPassword, signUpWithPassword, requestPasswordReset, updateAccountPassword, signOut,
@@ -27,12 +28,8 @@ export default function CloudApp() {
   const [objective, setObjective] = useState('');
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
-  const [inviteToken, setInviteToken] = useState(() => {
-    const queryToken = new URLSearchParams(location.search).get('invite');
-    const pathToken = location.pathname.match(/^\/invite=([^/]+)\/?$/i)?.[1];
-    return queryToken || pathToken || '';
-  });
-  const inviteTokenValid = /^[0-9a-f]{64}$/i.test(inviteToken);
+  const [inviteToken, setInviteToken] = useState(() => readInviteToken(location.search, location.pathname));
+  const inviteTokenValid = isValidInviteToken(inviteToken);
   const [joining, setJoining] = useState(false);
   const [inviteLink, setInviteLink] = useState('');
   const [agentSecret, setAgentSecret] = useState('');
