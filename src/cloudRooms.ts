@@ -101,6 +101,13 @@ export async function redeemCloudInvite(token: string): Promise<string> {
   return data as string;
 }
 
+/** Owner-only: revokes this invitation token so it cannot create new memberships. */
+export async function revokeCloudInvite(token: string): Promise<boolean> {
+  const { data, error } = await client().rpc('revoke_dual_room_invite', { invite_token: token });
+  if (error) throw error;
+  return data as boolean;
+}
+
 /** Redeems the AI route of a dual invitation and returns a unique scoped credential once. */
 export type AIInviteRedemption = {
   room_id: string; participant_id: string; agent_secret: string; expires_at: string;
