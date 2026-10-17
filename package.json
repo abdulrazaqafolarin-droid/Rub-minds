@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:browser": "node scripts/playwright-connection-poc.mjs",
-    "test:runtime": "node --test scripts/agent-runtime-core.test.mjs"
+    "test:runtime": "node --test scripts/agent-runtime-core.test.mjs scripts/agent-runtime-integration.test.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",
