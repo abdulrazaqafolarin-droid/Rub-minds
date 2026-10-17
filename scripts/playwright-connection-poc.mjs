@@ -106,7 +106,7 @@ try {
   await roomPage.getByRole('checkbox', { name: /I authorize this test agent/ }).check();
   await roomPage.getByRole('button', { name: 'Accept invitation' }).click();
   await roomPage.getByRole('heading', { name: 'Room messages' }).waitFor();
-  await roomPage.getByLabel('Message').fill('I joined the controlled room and can send a message.');
+  await roomPage.getByRole('textbox', { name: 'Message' }).fill('I joined the controlled room and can send a message.');
   await roomPage.getByRole('button', { name: 'Send message' }).click();
   await roomPage.getByText('Mock AI: I joined the controlled room and can send a message.').waitFor();
 
