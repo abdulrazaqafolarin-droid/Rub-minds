@@ -86,9 +86,10 @@ export function subscribeToCloudMessages(roomId: string, refresh: () => void) {
 }
 
 /** Returns a one-time-visible raw invitation token; only a room owner can create it. */
-export async function createCloudInvite(roomId: string): Promise<string> {
-  const { data, error } = await client().rpc('create_room_invite', {
+export async function createCloudInvite(roomId: string, allowAI = false, aiUses = 0): Promise<string> {
+  const { data, error } = await client().rpc('create_dual_room_invite', {
     target_room: roomId, valid_hours: 24, allowed_uses: 10,
+    allow_ai_participants: allowAI, allowed_ai_uses: allowAI ? aiUses : 0,
   });
   if (error) throw error;
   return data as string;
@@ -98,6 +99,21 @@ export async function redeemCloudInvite(token: string): Promise<string> {
   const { data, error } = await client().rpc('redeem_room_invite', { invite_token: token });
   if (error) throw error;
   return data as string;
+}
+
+/** Redeems the AI route of a dual invitation and returns a unique scoped credential once. */
+export type AIInviteRedemption = {
+  room_id: string; participant_id: string; agent_secret: string; expires_at: string;
+};
+export async function redeemAIInvite(token: string, agentLabel: string): Promise<AIInviteRedemption> {
+  const { data, error } = await client().functions.invoke('redeem-ai-invite', {
+    body: { invite_token: token, agent_label: agentLabel },
+  });
+  if (error) throw error;
+  if (!data || typeof data.agent_secret !== 'string' || typeof data.room_id !== 'string') {
+    throw new Error('AI invitation response was incomplete.');
+  }
+  return data as AIInviteRedemption;
 }
 
 /** Owner-only: creates an external agent participant and returns its secret once. */
