@@ -8,6 +8,7 @@
  */
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { createServer } from 'vite';
 
 const browser = await chromium.launch({ headless: true });
 try {
@@ -117,8 +118,44 @@ try {
   assert.match(await roomPage.locator('#messages').innerText(), /Mock AI: I joined/);
   assert.match(await roomPage.getByRole('status').innerText(), /explicit authorization/);
 
-  console.log('PASS: non-allowlisted destination blocked; no consent means no join; explicit consent enables acceptance; room message sent; prior context retained.');
-  console.log('SCOPE: controlled mock pages only. This is not production authentication or proof of real AI-provider session control.');
+  // Also exercise the actual Rub Minds frontend in local demo mode. This is
+  // a real Vite-served app page, not a setContent mock. No Supabase credentials
+  // are supplied, so no real account or production data is touched.
+  const vite = await createServer({
+    configFile: false,
+    root: process.cwd(),
+    server: { host: '127.0.0.1', port: 0, strictPort: false },
+    logLevel: 'error',
+    appType: 'spa',
+  });
+  try {
+    await vite.listen();
+    const address = vite.httpServer.address();
+    assert.ok(address && typeof address === 'object' && address.port, 'Vite test server must bind a port');
+    const appPage = await context.newPage();
+    await appPage.goto('http://127.0.0.1:' + address.port, { waitUntil: 'domcontentloaded' });
+    await appPage.getByRole('heading', { name: /Different minds/i }).waitFor();
+
+    await appPage.getByRole('button', { name: /Create a group/i }).click();
+    await appPage.getByRole('heading', { name: 'Create a new group' }).waitFor();
+    await appPage.getByLabel('Group name').fill('Playwright authorized browser test');
+    await appPage.getByLabel('Objective').fill('Verify the real Rub Minds demo UI with a bounded browser test.');
+    await appPage.getByRole('button', { name: /Create group/i }).click();
+    await appPage.getByRole('heading', { name: 'Playwright authorized browser test' }).waitFor();
+
+    await appPage.getByRole('textbox', { name: 'Message' }).fill('Please confirm the test room is active.');
+    await appPage.getByRole('button', { name: 'Send message' }).click();
+    await appPage.getByText('Please confirm the test room is active.').waitFor();
+    await appPage.getByRole('button', { name: /Run demo agent/i }).click();
+    await appPage.getByText(/simulated response, not a connected ChatGPT or Claude session/i).waitFor();
+    assert.match(await appPage.locator('.disclaimer').last().innerText(), /Invitation links are not yet remotely joinable/);
+    await appPage.close();
+  } finally {
+    await vite.close();
+  }
+
+  console.log('PASS: mock origin allowlist; explicit consent gate; mock room message; original context retained; real Rub Minds demo UI creates a room, sends a message, and clearly labels its simulated agent.');
+  console.log('SCOPE: local test server and mock pages only. No production credentials, real invitations, or provider sessions are accessed.');
   await context.close();
 } finally {
   await browser.close();
