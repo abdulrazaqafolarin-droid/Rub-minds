@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isValidInviteToken, readInviteToken } from './inviteLinks';
+import { buildInviteRedirectUrl, isValidInviteToken, readInviteToken } from './inviteLinks';
 
 describe('invitation links', () => {
   it('reads the preferred query parameter format', () => {
@@ -17,6 +17,18 @@ describe('invitation links', () => {
   it('preserves malformed tokens so the UI can explain the problem', () => {
     expect(readInviteToken('?invite=short-token', '/')).toBe('short-token');
     expect(isValidInviteToken('short-token')).toBe(false);
+  });
+
+  it('preserves a valid invite in the email-confirmation redirect', () => {
+    const redirect = new URL(buildInviteRedirectUrl('https://rub-minds.vercel.app', 'c'.repeat(64)));
+    expect(redirect.origin).toBe('https://rub-minds.vercel.app');
+    expect(redirect.pathname).toBe('/');
+    expect(redirect.searchParams.get('invite')).toBe('c'.repeat(64));
+  });
+
+  it('does not put non-hexadecimal tokens in confirmation redirects', () => {
+    const redirect = new URL(buildInviteRedirectUrl('https://rub-minds.vercel.app', 'bad-token'));
+    expect(redirect.searchParams.has('invite')).toBe(false);
   });
 
   it('accepts only exactly 64 hexadecimal characters', () => {
