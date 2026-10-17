@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { buildInviteRedirectUrl } from './inviteLinks';
 
 export type CloudRoom = {
   id: string; owner_id: string; title: string; objective: string; created_at: string;
@@ -20,10 +21,9 @@ export async function signInWithPassword(email: string, password: string) {
 export async function signUpWithPassword(email: string, password: string, inviteToken = '') {
   // Keep the pending invitation through Supabase email confirmation so new users
   // return to the room invite instead of landing on the generic home page.
-  const redirect = new URL('/', window.location.origin);
-  if (/^[0-9a-f]{1,128}$/i.test(inviteToken)) redirect.searchParams.set('invite', inviteToken);
+  const redirect = buildInviteRedirectUrl(window.location.origin, inviteToken);
   const { data, error } = await client().auth.signUp({
-    email, password, options: { emailRedirectTo: redirect.toString() },
+    email, password, options: { emailRedirectTo: redirect },
   });
   if (error) throw error;
   return { confirmationRequired: !data.session };
