@@ -108,8 +108,61 @@ Deno.serve(async (request: Request) => {
       return reply(400, { error: "Expected a JSON object" }, headers);
     }
     const record = input as Record<string, unknown>;
+    if (record.operation === "remember") {
+      const allowedTypes = new Set(["goal", "insight", "decision", "open_question", "progress", "summary"]);
+      if (typeof record.entry_type !== "string" || !allowedTypes.has(record.entry_type)) {
+        return reply(400, { error: "Invalid memory entry_type" }, headers);
+      }
+      if (record.visibility !== "private" && record.visibility !== "group") {
+        return reply(400, { error: "visibility must explicitly be private or group" }, headers);
+      }
+      if (typeof record.content !== "string" || record.content.trim().length < 1 || record.content.length > 12000) {
+        return reply(400, { error: "content must be 1-12000 characters" }, headers);
+      }
+      if (typeof record.idempotency_key !== "string" || record.idempotency_key.length < 8 || record.idempotency_key.length > 200) {
+        return reply(400, { error: "idempotency_key must be 8-200 characters" }, headers);
+      }
+      let sourceMessageIds: string[] = [];
+      if (record.source_message_ids !== undefined) {
+        if (!Array.isArray(record.source_message_ids) || record.source_message_ids.length > 50 ||
+          record.source_message_ids.some(id => typeof id !== "string" || !/^[0-9a-f-]{36}$/i.test(id))) {
+          return reply(400, { error: "source_message_ids must be an array of at most 50 UUIDs" }, headers);
+        }
+        sourceMessageIds = record.source_message_ids as string[];
+      }
+      let sourceImportId: string | null = null;
+      if (record.source_import_id !== undefined && record.source_import_id !== null) {
+        if (typeof record.source_import_id !== "string" || !/^[0-9a-f-]{36}$/i.test(record.source_import_id)) {
+          return reply(400, { error: "source_import_id must be a UUID" }, headers);
+        }
+        const { data: sourceImport } = await db.from("room_session_imports")
+          .select("id")
+          .eq("id", record.source_import_id)
+          .eq("room_id", connection.room_id)
+          .eq("participant_id", connection.participant_id)
+          .maybeSingle();
+        if (!sourceImport) return reply(404, { error: "Session import not found for this participant" }, headers);
+        sourceImportId = sourceImport.id;
+      }
+      const { data, error } = await db.from("room_memory_entries").insert({
+        room_id: connection.room_id,
+        source_import_id: sourceImportId,
+        created_by_participant_id: connection.participant_id,
+        owner_id: connection.owner_id,
+        entry_type: record.entry_type,
+        visibility: record.visibility,
+        content: record.content.trim(),
+        source_message_ids: sourceMessageIds,
+        idempotency_key: record.idempotency_key,
+      }).select("id, entry_type, visibility, content, source_message_ids, created_at").single();
+      if (error || !data) {
+        if (error?.code === "23505") return reply(409, { error: "Memory entry already recorded for this idempotency key" }, headers);
+        return reply(500, { error: "Could not save memory entry. Ensure the session-memory migration is applied." }, headers);
+      }
+      return reply(201, { remembered: true, entry: data }, headers);
+    }
     if (record.operation !== "import") {
-      return reply(400, { error: "Operation must be import" }, headers);
+      return reply(400, { error: "Operation must be import or remember" }, headers);
     }
     const validated = validateDocument(record.document);
     if (!validated) {
@@ -153,7 +206,7 @@ Deno.serve(async (request: Request) => {
     .from("room_memory_entries")
     .select("id, entry_type, visibility, content, source_message_ids, created_at, updated_at")
     .eq("room_id", connection.room_id)
-    .or("visibility.eq.group,created_by_participant_id.eq." + connection.owner_id)
+    .or("visibility.eq.group,created_by_participant_id.eq." + connection.participant_id)
     .order("updated_at", { ascending: false })
     .limit(100);
   if (memoryError) return reply(500, { error: "Could not load group memory" }, headers);
