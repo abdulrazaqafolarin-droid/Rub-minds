@@ -56,7 +56,7 @@ create policy "session_import_owner_insert"
     and exists (
       select 1 from public.participants p
       where p.id = participant_id
-        and p.room_id = room_id
+        and p.room_id = room_session_imports.room_id
         and p.user_id = (select auth.uid())
     )
   );
@@ -84,7 +84,7 @@ create policy "room_memory_participant_select"
       visibility = 'group'
       and exists (
         select 1 from public.participants p
-        where p.room_id = room_id
+        where p.room_id = room_memory_entries.room_id
           and p.user_id = (select auth.uid())
           and p.status in ('connected','active','autonomous')
       )
@@ -98,7 +98,7 @@ create policy "room_memory_owner_insert"
     owner_id = (select auth.uid())
     and exists (
       select 1 from public.participants p
-      where p.room_id = room_id and p.user_id = (select auth.uid())
+      where p.room_id = room_memory_entries.room_id and p.user_id = (select auth.uid())
     )
   );
 
