@@ -82,16 +82,25 @@ export class PlaywrightSessionBridge {
       if (Number.isInteger(message.turn_depth) && message.turn_depth >= 8) continue;
 
       processed++;
-      const response = await this.adapter.ask(this.page, message.body, {
-        messageId: message.id,
-        senderKind: message.sender_kind,
-        senderName: message.display_name ?? null,
-      });
-      if (typeof response !== "string" || !response.trim()) continue;
+      try {
+        const response = await this.adapter.ask(this.page, message.body, {
+          messageId: message.id,
+          senderKind: message.sender_kind,
+          senderName: message.display_name ?? null,
+        });
+        if (typeof response !== "string" || !response.trim()) continue;
 
-      await this.sendMessage(response.trim(), message.id);
-      this.replies++;
-      sent++;
+        // The transport should use source message IDs as idempotency keys. If
+        // the send result is ambiguous, a retry must not create a duplicate.
+        await this.sendMessage(response.trim(), message.id);
+        this.replies++;
+        sent++;
+      } catch (error) {
+        // Provider failures are safe to retry. For ambiguous send failures the
+        // backend's source_message_id dedupe is the final protection.
+        this.seen.delete(message.id);
+        throw error;
+      }
     }
     return { status: "ok", sent, processed };
   }
