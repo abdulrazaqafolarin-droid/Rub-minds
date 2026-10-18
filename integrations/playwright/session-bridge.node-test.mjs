@@ -73,3 +73,18 @@ test("does not reply to unknown sender kinds or excessive server-supplied turn d
   assert.equal(result.sent, 0);
   assert.equal(calls.length, 0);
 });
+
+test("retries a message after a transient provider failure", async () => {
+  const { bridge, sent } = makeBridge({ messages: [{ id: "retry-me", body: "continue", sender_kind: "human" }] });
+  let attempts = 0;
+  bridge.adapter.ask = async () => {
+    attempts++;
+    if (attempts === 1) throw new Error("temporary provider failure");
+    return "recovered reply";
+  };
+  await assert.rejects(() => bridge.step({ approved: true }), /temporary provider failure/);
+  const result = await bridge.step({ approved: true });
+  assert.equal(result.sent, 1);
+  assert.equal(attempts, 2);
+  assert.equal(sent.length, 1);
+});
