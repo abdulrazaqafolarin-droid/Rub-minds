@@ -23,7 +23,7 @@ test("prefers original session and never creates fallback when original is ready
 });
 
 test("waits for original if fallback was not approved", async () => {
-  const coordinator = new HybridSessionCoordinator({ originalSession: { ready: async () => false } });
+  const coordinator = new HybridSessionCoordinator({ originalSession: { ready: async () => false, step: async () => ({ status: "should_not_run" }) } });
   assert.deepEqual(await coordinator.start({ approved: true }), { mode: "waiting_for_original", status: "waiting_for_original" });
   assert.deepEqual(await coordinator.step({ approved: true }), { mode: "waiting_for_original", status: "not_connected" });
 });
