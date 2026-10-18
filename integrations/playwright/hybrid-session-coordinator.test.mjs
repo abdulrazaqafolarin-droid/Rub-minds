@@ -32,7 +32,7 @@ test("fallback is created only when explicitly enabled and is separate", async (
   let received;
   const independent = { ready: async () => true, step: async () => ({ status: "ok", sent: 1 }), close: async () => {} };
   const coordinator = new HybridSessionCoordinator({
-    originalSession: { ready: async () => false },
+    originalSession: { ready: async () => false, step: async () => ({ status: "should_not_run" }) },
     independentSessionFactory: async (args) => { received = args; return independent; },
   });
   assert.deepEqual(await coordinator.start({ approved: true, allowIndependentFallback: true, contextBrief: "approved summary" }), { mode: "independent", status: "ready" });
