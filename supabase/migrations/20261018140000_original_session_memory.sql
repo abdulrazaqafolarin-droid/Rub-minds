@@ -31,12 +31,17 @@ create table if not exists public.room_memory_entries (
   visibility text not null default 'private' check (visibility in ('private','group')),
   content text not null check (char_length(content) between 1 and 12000),
   source_message_ids uuid[] not null default '{}'::uuid[],
+  idempotency_key text check (idempotency_key is null or char_length(idempotency_key) between 8 and 200),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
 create index if not exists room_memory_entries_room_visibility_updated_idx
   on public.room_memory_entries(room_id, visibility, updated_at desc);
+
+create unique index if not exists room_memory_entries_participant_idempotency_idx
+  on public.room_memory_entries(created_by_participant_id, idempotency_key)
+  where idempotency_key is not null;
 
 alter table public.room_session_imports enable row level security;
 alter table public.room_memory_entries enable row level security;
