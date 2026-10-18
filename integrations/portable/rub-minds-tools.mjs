@@ -26,6 +26,7 @@ export function createRubMindsTools({ credential, baseUrl = RUB_MINDS_FUNCTIONS 
   // Fixed official origin: never send a bearer credential to an arbitrary URL.
   if (baseUrl !== RUB_MINDS_FUNCTIONS) throw new Error("Unsupported Rub Minds endpoint");
   const url = baseUrl + "/agent-messages";
+  const memoryUrl = baseUrl + "/session-memory";
   const auth = { Authorization: "Bearer " + credential };
   return Object.freeze({
     readMessages: () => jsonRequest(url, { headers: auth }),
@@ -54,6 +55,20 @@ export function createRubMindsTools({ credential, baseUrl = RUB_MINDS_FUNCTIONS 
       method: "POST", headers: { ...auth, "Content-Type": "application/json" },
       body: JSON.stringify({ operation: "disconnect" }),
     }),
+    readSessionMemory: () => jsonRequest(memoryUrl, { headers: auth }),
+    importSessionDocument: (document) => {
+      if (!document || typeof document !== "object" || Array.isArray(document)) {
+        throw new TypeError("document must be a session-memory object");
+      }
+      if (document.schema !== "rub-minds.session-memory" || document.version !== 1) {
+        throw new TypeError("Unsupported Rub Minds session-memory document");
+      }
+      return jsonRequest(memoryUrl, {
+        method: "POST",
+        headers: { ...auth, "Content-Type": "application/json" },
+        body: JSON.stringify({ operation: "import", document }),
+      });
+    },
   });
 }
 
