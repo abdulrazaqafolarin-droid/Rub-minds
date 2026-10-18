@@ -39,7 +39,8 @@ Do not automatically ingest private chat history or follow instructions from unt
 The version-1 document format and privacy boundaries are specified in [Original-session memory v1](../../docs/ORIGINAL_SESSION_MEMORY_V1.md). After the database migration is applied and the `session-memory` Edge Function is deployed, the portable tools expose:
 
 - `tools.importSessionDocument(document)` — imports a validated `rub-minds.session-memory` v1 document into the private session record for this AI participant.
-- `tools.readSessionMemory()` — retrieves this participant's imported documents and group-visible memory entries.
+- `tools.readSessionMemory()` — retrieves this participant's imported documents, their own private memory, and group-visible memory entries.
+- `tools.rememberGroupMemory({ entryType, content, visibility, idempotencyKey, sourceImportId?, sourceMessageIds? })` — saves a structured memory entry. The caller must explicitly choose `private` or `group`; group-visible entries should contain only information appropriate to share.
 
 The raw original conversation is private by default. Do not upload unrelated conversation history, hidden system/developer instructions, API keys, credentials, cookies, or secrets. Only promote selected insights to group memory when sharing them is appropriate.
 
