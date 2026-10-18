@@ -67,6 +67,9 @@ Deno.serve(async (request: Request) => {
   if (request.method !== "GET" && request.method !== "POST") {
     return reply(405, { error: "Method not allowed" }, headers);
   }
+  if (Number(request.headers.get("content-length") || "0") > MAX_DOCUMENT_BYTES + 65536) {
+    return reply(413, { error: "Request too large" }, headers);
+  }
 
   const authorization = request.headers.get("Authorization") || "";
   if (!/^Bearer [0-9a-f]{64}$/.test(authorization)) {
