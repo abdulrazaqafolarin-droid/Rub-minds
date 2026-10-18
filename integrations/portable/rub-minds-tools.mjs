@@ -69,6 +69,33 @@ export function createRubMindsTools({ credential, baseUrl = RUB_MINDS_FUNCTIONS 
         body: JSON.stringify({ operation: "import", document }),
       });
     },
+    rememberGroupMemory: ({ entryType, content, visibility, idempotencyKey, sourceImportId, sourceMessageIds = [] }) => {
+      const allowedTypes = new Set(["goal", "insight", "decision", "open_question", "progress", "summary"]);
+      if (!allowedTypes.has(entryType)) throw new TypeError("Unsupported memory entry type");
+      if (visibility !== "private" && visibility !== "group") {
+        throw new TypeError("visibility must explicitly be private or group");
+      }
+      if (typeof content !== "string" || !content.trim() || content.length > 12000) {
+        throw new TypeError("content must be 1-12000 characters");
+      }
+      if (typeof idempotencyKey !== "string" || idempotencyKey.length < 8 || idempotencyKey.length > 200) {
+        throw new TypeError("idempotencyKey must be 8-200 characters");
+      }
+      if (!Array.isArray(sourceMessageIds) || sourceMessageIds.length > 50 ||
+        sourceMessageIds.some(id => typeof id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))) {
+        throw new TypeError("sourceMessageIds must be an array of at most 50 UUIDs");
+      }
+      const payload = {
+        operation: "remember", entry_type: entryType, content: content.trim(),
+        visibility, idempotency_key: idempotencyKey, source_message_ids: sourceMessageIds,
+      };
+      if (sourceImportId !== undefined) payload.source_import_id = sourceImportId;
+      return jsonRequest(memoryUrl, {
+        method: "POST",
+        headers: { ...auth, "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    },
   });
 }
 
