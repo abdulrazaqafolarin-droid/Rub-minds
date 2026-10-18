@@ -149,7 +149,7 @@ Deno.serve(async (request: Request) => {
     .from("room_memory_entries")
     .select("id, entry_type, visibility, content, source_message_ids, created_at, updated_at")
     .eq("room_id", connection.room_id)
-    .or("visibility.eq.group,owner_id.eq." + connection.owner_id)
+    .or("visibility.eq.group,created_by_participant_id.eq." + connection.owner_id)
     .order("updated_at", { ascending: false })
     .limit(100);
   if (memoryError) return reply(500, { error: "Could not load group memory" }, headers);
