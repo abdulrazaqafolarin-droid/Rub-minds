@@ -46,7 +46,14 @@ alter table public.room_memory_entries enable row level security;
 drop policy if exists "session_import_owner_select" on public.room_session_imports;
 create policy "session_import_owner_select"
   on public.room_session_imports for select to authenticated
-  using (owner_id = (select auth.uid()));
+  using (
+    owner_id = (select auth.uid())
+    and exists (
+      select 1 from public.participants p
+      where p.id = room_session_imports.participant_id
+        and p.user_id = (select auth.uid())
+    )
+  );
 
 drop policy if exists "session_import_owner_insert" on public.room_session_imports;
 create policy "session_import_owner_insert"
@@ -64,13 +71,34 @@ create policy "session_import_owner_insert"
 drop policy if exists "session_import_owner_update" on public.room_session_imports;
 create policy "session_import_owner_update"
   on public.room_session_imports for update to authenticated
-  using (owner_id = (select auth.uid()))
-  with check (owner_id = (select auth.uid()));
+  using (
+    owner_id = (select auth.uid())
+    and exists (
+      select 1 from public.participants p
+      where p.id = room_session_imports.participant_id
+        and p.user_id = (select auth.uid())
+    )
+  )
+  with check (
+    owner_id = (select auth.uid())
+    and exists (
+      select 1 from public.participants p
+      where p.id = room_session_imports.participant_id
+        and p.user_id = (select auth.uid())
+    )
+  );
 
 drop policy if exists "session_import_owner_delete" on public.room_session_imports;
 create policy "session_import_owner_delete"
   on public.room_session_imports for delete to authenticated
-  using (owner_id = (select auth.uid()));
+  using (
+    owner_id = (select auth.uid())
+    and exists (
+      select 1 from public.participants p
+      where p.id = room_session_imports.participant_id
+        and p.user_id = (select auth.uid())
+    )
+  );
 
 -- All authenticated participants in a room may read group-visible memory.
 -- Private memory remains visible only to its owner. Service-role Edge Functions
@@ -79,7 +107,11 @@ drop policy if exists "room_memory_participant_select" on public.room_memory_ent
 create policy "room_memory_participant_select"
   on public.room_memory_entries for select to authenticated
   using (
-    owner_id = (select auth.uid())
+    exists (
+      select 1 from public.participants p
+      where p.id = room_memory_entries.created_by_participant_id
+        and p.user_id = (select auth.uid())
+    )
     or (
       visibility = 'group'
       and exists (
@@ -98,20 +130,41 @@ create policy "room_memory_owner_insert"
     owner_id = (select auth.uid())
     and exists (
       select 1 from public.participants p
-      where p.room_id = room_memory_entries.room_id and p.user_id = (select auth.uid())
+      where p.id = room_memory_entries.created_by_participant_id
+        and p.room_id = room_memory_entries.room_id
+        and p.user_id = (select auth.uid())
     )
   );
 
 drop policy if exists "room_memory_owner_update" on public.room_memory_entries;
 create policy "room_memory_owner_update"
   on public.room_memory_entries for update to authenticated
-  using (owner_id = (select auth.uid()))
-  with check (owner_id = (select auth.uid()));
+  using (
+    exists (
+      select 1 from public.participants p
+      where p.id = room_memory_entries.created_by_participant_id
+        and p.user_id = (select auth.uid())
+    )
+  )
+  with check (
+    owner_id = (select auth.uid())
+    and exists (
+      select 1 from public.participants p
+      where p.id = room_memory_entries.created_by_participant_id
+        and p.user_id = (select auth.uid())
+    )
+  );
 
 drop policy if exists "room_memory_owner_delete" on public.room_memory_entries;
 create policy "room_memory_owner_delete"
   on public.room_memory_entries for delete to authenticated
-  using (owner_id = (select auth.uid()));
+  using (
+    exists (
+      select 1 from public.participants p
+      where p.id = room_memory_entries.created_by_participant_id
+        and p.user_id = (select auth.uid())
+    )
+  );
 
 comment on table public.room_session_imports is
   'Private-by-default, versioned import of an AI original-session memory document.';
