@@ -56,6 +56,7 @@ create policy "session_import_owner_select"
     and exists (
       select 1 from public.participants p
       where p.id = room_session_imports.participant_id
+        and p.room_id = room_session_imports.room_id
         and p.user_id = (select auth.uid())
     )
   );
@@ -81,6 +82,7 @@ create policy "session_import_owner_update"
     and exists (
       select 1 from public.participants p
       where p.id = room_session_imports.participant_id
+        and p.room_id = room_session_imports.room_id
         and p.user_id = (select auth.uid())
     )
   )
@@ -89,6 +91,7 @@ create policy "session_import_owner_update"
     and exists (
       select 1 from public.participants p
       where p.id = room_session_imports.participant_id
+        and p.room_id = room_session_imports.room_id
         and p.user_id = (select auth.uid())
     )
   );
@@ -101,6 +104,7 @@ create policy "session_import_owner_delete"
     and exists (
       select 1 from public.participants p
       where p.id = room_session_imports.participant_id
+        and p.room_id = room_session_imports.room_id
         and p.user_id = (select auth.uid())
     )
   );
@@ -115,6 +119,7 @@ create policy "room_memory_participant_select"
     exists (
       select 1 from public.participants p
       where p.id = room_memory_entries.created_by_participant_id
+        and p.room_id = room_memory_entries.room_id
         and p.user_id = (select auth.uid())
     )
     or (
@@ -148,6 +153,7 @@ create policy "room_memory_owner_update"
     exists (
       select 1 from public.participants p
       where p.id = room_memory_entries.created_by_participant_id
+        and p.room_id = room_memory_entries.room_id
         and p.user_id = (select auth.uid())
     )
   )
@@ -156,6 +162,7 @@ create policy "room_memory_owner_update"
     and exists (
       select 1 from public.participants p
       where p.id = room_memory_entries.created_by_participant_id
+        and p.room_id = room_memory_entries.room_id
         and p.user_id = (select auth.uid())
     )
   );
@@ -167,6 +174,7 @@ create policy "room_memory_owner_delete"
     exists (
       select 1 from public.participants p
       where p.id = room_memory_entries.created_by_participant_id
+        and p.room_id = room_memory_entries.room_id
         and p.user_id = (select auth.uid())
     )
   );
