@@ -15,6 +15,12 @@ jobs:
       - run: npm run build
       - run: npm run test
       - run: npm run test:runtime
+      - name: Set up Deno for Supabase Edge Functions
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Type-check session-memory Edge Function
+        run: deno check supabase/functions/session-memory/index.ts
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
       - name: Run controlled browser proof of concept
