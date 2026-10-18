@@ -62,3 +62,40 @@ test("reads session memory using the same scoped credential and fixed endpoint",
     globalThis.fetch = originalFetch;
   }
 });
+
+test("requires explicit visibility and idempotency for memory writes", () => {
+  const tools = createRubMindsTools({ credential });
+  assert.throws(() => tools.rememberGroupMemory({
+    entryType: "insight", content: "Useful insight", idempotencyKey: "insight-key-0001",
+  }), /visibility/);
+});
+
+test("writes a selected group memory entry with provenance and idempotency", async () => {
+  const originalFetch = globalThis.fetch;
+  let captured;
+  globalThis.fetch = async (url, options) => {
+    captured = { url: String(url), options };
+    return new Response(JSON.stringify({ remembered: true }), {
+      status: 201, headers: { "Content-Type": "application/json" },
+    });
+  };
+  try {
+    const tools = createRubMindsTools({ credential });
+    await tools.rememberGroupMemory({
+      entryType: "decision",
+      content: "Use a staged rollout",
+      visibility: "group",
+      idempotencyKey: "decision-rollout-0001",
+      sourceMessageIds: ["123e4567-e89b-12d3-a456-426614174000"],
+    });
+    const payload = JSON.parse(captured.options.body);
+    assert.equal(payload.operation, "remember");
+    assert.equal(payload.visibility, "group");
+    assert.equal(payload.entry_type, "decision");
+    assert.equal(payload.content, "Use a staged rollout");
+    assert.equal(payload.idempotency_key, "decision-rollout-0001");
+    assert.deepEqual(payload.source_message_ids, ["123e4567-e89b-12d3-a456-426614174000"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
