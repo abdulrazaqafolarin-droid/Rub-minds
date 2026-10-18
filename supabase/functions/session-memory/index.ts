@@ -125,7 +125,7 @@ Deno.serve(async (request: Request) => {
       let sourceMessageIds: string[] = [];
       if (record.source_message_ids !== undefined) {
         if (!Array.isArray(record.source_message_ids) || record.source_message_ids.length > 50 ||
-          record.source_message_ids.some(id => typeof id !== "string" || !/^[0-9a-f-]{36}$/i.test(id))) {
+          record.source_message_ids.some(id => typeof id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))) {
           return reply(400, { error: "source_message_ids must be an array of at most 50 UUIDs" }, headers);
         }
         sourceMessageIds = record.source_message_ids as string[];
