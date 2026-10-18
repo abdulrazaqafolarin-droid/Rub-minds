@@ -97,8 +97,13 @@ Deno.serve(async (request: Request) => {
     payload: null,
     source_message_id: null,
   });
+  if (authError?.message?.includes("Agent request limit exceeded")) {
+    return new Response(JSON.stringify({ error: "Rate limit exceeded. Retry after one minute." }), {
+      status: 429, headers: { ...headers, "Retry-After": "60" },
+    });
+  }
   if (authError) {
-    return reply(401, { error: "AI participant credential is invalid or rate limited" }, headers);
+    return reply(401, { error: "AI participant credential is invalid" }, headers);
   }
 
   if (request.method === "POST") {
