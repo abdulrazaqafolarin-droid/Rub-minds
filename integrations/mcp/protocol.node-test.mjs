@@ -7,6 +7,8 @@ import {
   rpcResult,
   validateSessionMemoryDocument,
   validateToolArguments,
+  isAllowedMcpOrigin,
+  validateProtocolVersionHeader,
 } from "./protocol.mjs";
 
 test("advertises invitation, messaging, and memory tools", () => {
@@ -15,6 +17,16 @@ test("advertises invitation, messaging, and memory tools", () => {
     "join_group", "read_group_messages", "send_group_message",
     "read_session_memory", "import_session_memory", "remember_memory",
   ]);
+});
+
+test("transport validates negotiated protocol version and supplied origins", () => {
+  assert.equal(validateProtocolVersionHeader("initialize", null), null);
+  assert.equal(validateProtocolVersionHeader("tools/list", MCP_PROTOCOL_VERSION), null);
+  assert.match(validateProtocolVersionHeader("tools/list", null), /MCP-Protocol-Version/);
+  assert.equal(isAllowedMcpOrigin(null), true);
+  assert.equal(isAllowedMcpOrigin("https://chatgpt.com"), true);
+  assert.equal(isAllowedMcpOrigin("https://claude.ai"), true);
+  assert.equal(isAllowedMcpOrigin("https://attacker.example"), false);
 });
 
 test("join requires a valid invitation and explicit confirmation", () => {
