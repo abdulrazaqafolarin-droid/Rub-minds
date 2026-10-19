@@ -115,6 +115,21 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
   }
   const credential = await decryptCredential(encryptedCredential, credentialEncryptionKey, session.session_digest as string);
 
+  if (name === "read_group_context") {
+    // Validate the credential (including revocation/expiry) before exposing room metadata.
+    await invokeAgent(credential, "read");
+    const { data: room, error: roomError } = await db.from("rooms")
+      .select("id, title, objective, created_at")
+      .eq("id", session.room_id as string).maybeSingle();
+    if (roomError || !room) throw new Error("Could not load the joined group context.");
+    const { data: participants, error: participantError } = await db.from("participants")
+      .select("display_name, kind, status, created_at")
+      .eq("room_id", session.room_id as string)
+      .order("created_at", { ascending: true }).limit(100);
+    if (participantError) throw new Error("Could not load group participants.");
+    return { room, participants: participants || [] };
+  }
+
   if (name === "read_group_messages") {
     const data = await invokeAgent(credential, "read");
     if (isRecord(data) && Array.isArray(data.messages)) {
