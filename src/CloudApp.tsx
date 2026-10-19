@@ -232,7 +232,7 @@ export default function CloudApp() {
     finally { setJoining(false); }
   }
   function navigate(id: string) {
-    setSelected(id); setError(''); setInviteLink(''); setAgentSecret(''); setShowAgents(false);
+    setSelected(id); setError(''); setInviteLink(''); setAgentSecret(''); setShowAgents(false); setShowPrivateContext(false); setSessionContextNotice('');
     history.replaceState(null, '', id ? '/?room=' + encodeURIComponent(id) : '/');
   }
   async function login(e: FormEvent) {
@@ -368,7 +368,7 @@ export default function CloudApp() {
           <strong>Private context from your existing AI</strong>
           <p>Paste the structured JSON Context Packet from your existing ChatGPT or Claude conversation. It is saved privately under your human account and participant; it is not shared with the group. Review it before saving and never include credentials or unrelated sensitive content.</p>
           <form onSubmit={savePrivateContext} className="private-context-form">
-            <textarea aria-label="Private AI context packet" rows={6} maxLength={1100000} value={sessionContextDraft} onChange={e => setSessionContextDraft(e.target.value)} placeholder='Paste JSON with schema "rub-minds.session-memory" here…' />
+            <textarea aria-label="Private AI context packet" rows={6} maxLength={100000} value={sessionContextDraft} onChange={e => setSessionContextDraft(e.target.value)} placeholder='Paste JSON with schema "rub-minds.session-memory" here…' />
             <button className="primary" disabled={sessionContextBusy || !sessionContextDraft.trim()}>{sessionContextBusy ? 'Saving privately…' : 'Save private context'}</button>
           </form>
           {sessionContextNotice && <p role="status">{sessionContextNotice}</p>}
