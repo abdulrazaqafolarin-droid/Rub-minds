@@ -107,7 +107,11 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       throw new Error("Invitation is invalid, expired, revoked, or no longer permits another AI participant.");
     }
     const credentialExpiry = Date.parse(data.expires_at);
-    if (!Number.isFinite(credentialExpiry) || credentialExpiry <= Date.now()) throw new Error("The AI invitation credential has already expired.");
+    if (!Number.isFinite(credentialExpiry) || credentialExpiry <= Date.now()) {
+      await db.from("agent_connections").update({ revoked_at: new Date().toISOString() })
+        .eq("credential_digest", await sha256(data.agent_secret)).is("revoked_at", null);
+      throw new Error("The AI invitation credential has already expired.");
+    }
     const expiresAt = new Date(Math.min(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000, credentialExpiry)).toISOString();
     let encryptedCredential: string;
     try {
