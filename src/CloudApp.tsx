@@ -7,7 +7,7 @@ import { isValidInviteToken, readInviteToken } from './inviteLinks';
 import {
   createCloudRoom, createCloudInvite, redeemCloudInvite, redeemAIInvite, revokeCloudInvite, connectCloudAgent, listAgentConnections, revokeCloudAgent, getCloudRoom, listCloudMessages, listCloudParticipants,
   listCloudRooms, postCloudMessage, signInWithPassword, signUpWithPassword, requestPasswordReset, updateAccountPassword, signOut,
-  subscribeToCloudMessages, savePrivateSessionContext, listPrivateSessionContexts, deletePrivateSessionContext, type PrivateSessionImport, type CloudRoom, type CloudMessage, type CloudParticipant, type AgentConnection,
+  subscribeToCloudMessages, subscribeToGroupMemoryEntries, savePrivateSessionContext, listPrivateSessionContexts, deletePrivateSessionContext, listGroupMemoryEntries, saveGroupMemoryEntry, deleteGroupMemoryEntry, type PrivateSessionImport, type GroupMemoryEntry, type CloudRoom, type CloudMessage, type CloudParticipant, type AgentConnection,
 } from './cloudRooms';
 
 export default function CloudApp() {
@@ -40,6 +40,12 @@ export default function CloudApp() {
   const [sessionContextBusy, setSessionContextBusy] = useState(false);
   const [sessionContextNotice, setSessionContextNotice] = useState('');
   const [privateImports, setPrivateImports] = useState<PrivateSessionImport[]>([]);
+  const [showSharedMemory, setShowSharedMemory] = useState(false);
+  const [groupMemories, setGroupMemories] = useState<GroupMemoryEntry[]>([]);
+  const [shareMemoryType, setShareMemoryType] = useState<GroupMemoryEntry['entry_type']>('insight');
+  const [shareMemoryDraft, setShareMemoryDraft] = useState('');
+  const [sharedMemoryBusy, setSharedMemoryBusy] = useState(false);
+  const [sharedMemoryNotice, setSharedMemoryNotice] = useState('');
   const [aiInviteName, setAiInviteName] = useState('');
   const [aiInviteConsent, setAiInviteConsent] = useState(false);
   const [autoJoinAttempted, setAutoJoinAttempted] = useState('');
@@ -71,12 +77,12 @@ export default function CloudApp() {
     return () => { active = false; };
   }, [user]);
   useEffect(() => {
-    if (!user || !selected) { setRoom(null); setMessages([]); setParticipants([]); setPrivateImports([]); return; }
+    if (!user || !selected) { setRoom(null); setMessages([]); setParticipants([]); setPrivateImports([]); setGroupMemories([]); return; }
     let active = true;
     async function refresh() {
       try {
-        const [nextRoom, nextMessages, nextParticipants] = await Promise.all([
-          getCloudRoom(selected), listCloudMessages(selected), listCloudParticipants(selected),
+        const [nextRoom, nextMessages, nextParticipants, nextGroupMemories] = await Promise.all([
+          getCloudRoom(selected), listCloudMessages(selected), listCloudParticipants(selected), listGroupMemoryEntries(selected),
         ]);
         const humanParticipant = nextParticipants.find(p => p.room_id === selected && p.user_id === user?.id && p.kind === 'human');
         let nextPrivateImports: PrivateSessionImport[] = [];
@@ -86,13 +92,14 @@ export default function CloudApp() {
         }
         if (active) {
           setRoom(nextRoom); setMessages(nextMessages); setParticipants(nextParticipants);
-          setPrivateImports(nextPrivateImports);
+          setPrivateImports(nextPrivateImports); setGroupMemories(nextGroupMemories);
         }
       } catch (e) { if (active) setError(String(e instanceof Error ? e.message : e)); }
     }
     void refresh();
     const unsubscribe = subscribeToCloudMessages(selected, () => { void refresh(); });
-    return () => { active = false; unsubscribe(); };
+    const unsubscribeMemory = subscribeToGroupMemoryEntries(selected, () => { void refresh(); });
+    return () => { active = false; unsubscribe(); unsubscribeMemory(); };
   }, [user, selected]);
   async function makeInvite() {
     if (!room) return;
@@ -175,7 +182,7 @@ export default function CloudApp() {
       sender: participants.find(p => p.id === message.sender_id)?.display_name || 'Participant',
       body: message.body,
       createdAt: message.created_at,
-    })));
+    })), groupMemories.map(memory => ({ type: memory.entry_type, content: memory.content, updatedAt: memory.updated_at })));
     try {
       await navigator.clipboard.writeText(prompt);
       setRelayCopied(true);
@@ -200,6 +207,28 @@ export default function CloudApp() {
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
     } finally { setSessionContextBusy(false); }
+  }
+  async function shareGroupMemory(e: FormEvent) {
+    e.preventDefault();
+    if (!room || !currentHumanParticipant || !shareMemoryDraft.trim()) return;
+    if (!window.confirm("Share only this selected insight with every group participant and connected AI agent? It will be visible to the group.")) return;
+    setSharedMemoryBusy(true); setError(''); setSharedMemoryNotice('');
+    try {
+      const saved = await saveGroupMemoryEntry(room.id, currentHumanParticipant.id, shareMemoryType, shareMemoryDraft);
+      setGroupMemories(previous => [saved, ...previous.filter(item => item.id !== saved.id)].slice(0, 50));
+      setShareMemoryDraft('');
+      setSharedMemoryNotice("Selected insight shared with the group.");
+    } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
+    finally { setSharedMemoryBusy(false); }
+  }
+  async function removeGroupMemory(memory: GroupMemoryEntry) {
+    if (!room || !currentHumanParticipant || memory.created_by_participant_id !== currentHumanParticipant.id) return;
+    if (!window.confirm("Delete this shared group memory entry for everyone?")) return;
+    try {
+      await deleteGroupMemoryEntry(room.id, currentHumanParticipant.id, memory.id);
+      setGroupMemories(previous => previous.filter(item => item.id !== memory.id));
+      setSharedMemoryNotice("Shared group memory entry deleted.");
+    } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
   }
   async function copyPrivateContextToAI(item: PrivateSessionImport) {
     if (!window.confirm("Copy this private AI context packet to your clipboard? It may contain private project context. Only paste it into the intended AI conversation.")) return;
@@ -232,7 +261,7 @@ export default function CloudApp() {
     finally { setJoining(false); }
   }
   function navigate(id: string) {
-    setSelected(id); setError(''); setInviteLink(''); setAgentSecret(''); setShowAgents(false); setShowPrivateContext(false); setSessionContextNotice(''); setSessionContextDraft('');
+    setSelected(id); setError(''); setInviteLink(''); setAgentSecret(''); setShowAgents(false); setShowPrivateContext(false); setShowSharedMemory(false); setSessionContextNotice(''); setSessionContextDraft(''); setSharedMemoryNotice(''); setShareMemoryDraft('');
     history.replaceState(null, '', id ? '/?room=' + encodeURIComponent(id) : '/');
   }
   async function login(e: FormEvent) {
@@ -362,7 +391,7 @@ export default function CloudApp() {
       {inviteLink && <div className="invite-share" role="status"><strong>Invitation created</strong><p>Valid for 24 hours and up to 10 human joins. {inviteAIEnabled ? 'AI route enabled: up to 3 AI participants.' : 'AI route disabled for this invitation.'}</p><input aria-label="Shareable invitation URL" readOnly value={inviteLink} onFocus={e => e.target.select()}/><button onClick={() => { void navigator.clipboard.writeText(inviteLink).catch(() => setError('Select and copy the invitation URL manually.')); }}>Copy invitation</button><button disabled={busy} onClick={() => { void revokeInviteLink(); }}>Revoke invitation</button><button onClick={() => setInviteLink('')}>Close</button></div>}
       {inviteToken ? <section className="empty"><Link2 size={40}/><h1>{inviteTokenValid ? 'Join a Rub Minds group' : 'Invitation link looks incomplete'}</h1><p>{inviteTokenValid ? 'You have received a group invitation. Join to participate in the conversation with your signed-in account.' : `This link contains ${inviteToken.length} characters, but a valid invitation needs 64. Ask the group owner to create and send a new link.`}</p><button className="primary" onClick={() => { void joinInvite(); }} disabled={joining || !inviteTokenValid}>{joining ? 'Joining…' : 'Accept invitation'}</button><p className="disclaimer">Invitations expire after 24 hours or 10 successful joins.</p></section>
       : selected && room ? <>
-        <header className="room-header"><button className="back" onClick={() => navigate('')}><ArrowLeft size={18}/></button><div className="room-heading"><h2>{room.title}</h2><span><span className="status-dot"/> {participants.length} participants · {messages.length} messages</span></div><button className="invite" onClick={() => { void copyGroupRelayContext(); }}><Copy size={17}/> {relayCopied ? 'Copied for AI' : 'Copy group context for AI'}</button><button className="invite" onClick={() => setShowPrivateContext(value => !value)}><Sparkles size={17}/> {showPrivateContext ? 'Close private context' : 'Private AI context'}</button>{room.owner_id === user.id && <><button className="invite" disabled={busy} onClick={() => { void makeInvite(); }}><Link2 size={17}/> Invite members</button><button className="invite" disabled={busy} onClick={() => { void addAgent(); }}><Bot size={17}/> Connect AI</button><button className="invite" onClick={() => { void manageAgents(); }}>Manage agents</button></>}</header>
+        <header className="room-header"><button className="back" onClick={() => navigate('')}><ArrowLeft size={18}/></button><div className="room-heading"><h2>{room.title}</h2><span><span className="status-dot"/> {participants.length} participants · {messages.length} messages</span></div><button className="invite" onClick={() => { void copyGroupRelayContext(); }}><Copy size={17}/> {relayCopied ? 'Copied for AI' : 'Copy group context for AI'}</button><button className="invite" onClick={() => setShowPrivateContext(value => !value)}><Sparkles size={17}/> {showPrivateContext ? 'Close private context' : 'Private AI context'}</button><button className="invite" onClick={() => setShowSharedMemory(value => !value)}><Users size={17}/> {showSharedMemory ? 'Close shared memory' : 'Shared memory'}</button>{room.owner_id === user.id && <><button className="invite" disabled={busy} onClick={() => { void makeInvite(); }}><Link2 size={17}/> Invite members</button><button className="invite" disabled={busy} onClick={() => { void addAgent(); }}><Bot size={17}/> Connect AI</button><button className="invite" onClick={() => { void manageAgents(); }}>Manage agents</button></>}</header>
         <div className="objective"><Sparkles size={17}/><div><strong>Group objective</strong><p>{room.objective || 'Collaborate together.'}</p></div></div>
         {showPrivateContext && <section className="invite-share private-context-panel">
           <strong>Private context from your existing AI</strong>
@@ -378,6 +407,24 @@ export default function CloudApp() {
               <div><strong>{item.title}</strong><p>{item.source_platform} · {new Date(item.created_at).toLocaleDateString()}</p><p>{item.context_summary.length > 500 ? item.context_summary.slice(0, 500) + '…' : item.context_summary}</p></div>
               <button onClick={() => { void copyPrivateContextToAI(item); }}>Copy to AI</button>
               <button onClick={() => { void removePrivateContext(item); }}>Delete</button>
+            </div>)}
+          </div>
+        </section>}
+        {showSharedMemory && <section className="invite-share shared-memory-panel">
+          <strong>Shared group memory</strong>
+          <p>Entries here are visible to all human participants and connected AI agents. This is separate from your private AI context. Share only a selected, reviewed insight; never include passwords, API keys, or unrelated private details.</p>
+          <form onSubmit={shareGroupMemory} className="private-context-form">
+            <select aria-label="Shared memory type" value={shareMemoryType} onChange={e => setShareMemoryType(e.target.value as GroupMemoryEntry['entry_type'])}>
+              <option value="insight">Insight</option><option value="decision">Decision</option><option value="goal">Goal</option><option value="open_question">Open question</option><option value="progress">Progress</option><option value="summary">Summary</option>
+            </select>
+            <textarea aria-label="Selected insight to share with the group" rows={4} maxLength={12000} value={shareMemoryDraft} onChange={e => setShareMemoryDraft(e.target.value)} placeholder="Write only the insight you want the whole group to remember…"/>
+            <button className="primary" disabled={sharedMemoryBusy || !shareMemoryDraft.trim()}>{sharedMemoryBusy ? 'Sharing…' : 'Share selected insight'}</button>
+          </form>
+          {sharedMemoryNotice && <p role="status">{sharedMemoryNotice}</p>}
+          <div className="private-import-list"><strong>Shared entries ({groupMemories.length})</strong>
+            {groupMemories.length === 0 ? <p>No group memory entries yet.</p> : groupMemories.map(memory => <div className="private-import-item" key={memory.id}>
+              <div><strong>{memory.entry_type.replace('_', ' ')} · {participants.find(p => p.id === memory.created_by_participant_id)?.display_name || 'Participant'}</strong><p>{memory.content.length > 800 ? memory.content.slice(0, 800) + '…' : memory.content}</p></div>
+              {memory.created_by_participant_id === currentHumanParticipant?.id && <button onClick={() => { void removeGroupMemory(memory); }}>Delete</button>}
             </div>)}
           </div>
         </section>}
