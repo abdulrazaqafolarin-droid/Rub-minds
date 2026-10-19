@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildExistingAiJoinPrompt, buildGroupRelayPrompt } from './aiRelay';
+import { buildExistingAiJoinPrompt, buildGroupRelayPrompt, parseSessionMemoryDocument } from './aiRelay';
 
 describe('existing AI conversation relay prompts', () => {
   it('preserves the invitation and avoids claiming a direct connection', () => {
@@ -30,6 +30,31 @@ describe('existing AI conversation relay prompts', () => {
     ]);
     expect(prompt).toContain('[message truncated]');
     expect(prompt.length).toBeLessThan(5000);
+  });
+
+  it('parses a private structured session-memory packet, including fenced JSON', () => {
+    const packet = {
+      schema: 'rub-minds.session-memory', version: 1,
+      summary: 'Working on the Rub Minds invite flow.',
+      current_goal: 'Finish the guided relay.',
+      source: { platform: 'ChatGPT', session_label: 'Rub Minds build' },
+      sharing: { raw_history_visibility: 'private' },
+    };
+    expect(parseSessionMemoryDocument(JSON.stringify(packet))).toEqual(packet);
+    expect(parseSessionMemoryDocument('\\x60\\x60\\x60json\\n' + JSON.stringify(packet) + '\\n\\x60\\x60\\x60')).toEqual(packet);
+  });
+
+  it('rejects invalid, oversized, or group-visible raw session history', () => {
+    const packet = {
+      schema: 'rub-minds.session-memory', version: 1,
+      summary: 'summary', current_goal: 'goal',
+      source: { platform: 'Claude' },
+      sharing: { raw_history_visibility: 'private' },
+    };
+    expect(() => parseSessionMemoryDocument('not json')).toThrow(/valid JSON/);
+    expect(() => parseSessionMemoryDocument(JSON.stringify({ ...packet, version: 2 }))).toThrow(/schema\/version/);
+    expect(() => parseSessionMemoryDocument(JSON.stringify({ ...packet, summary: 'x'.repeat(20001) }))).toThrow(/20,000/);
+    expect(() => parseSessionMemoryDocument(JSON.stringify({ ...packet, sharing: { raw_history_visibility: 'group' } }))).toThrow(/must remain private/);
   });
 
   it('handles an empty room and objective', () => {
