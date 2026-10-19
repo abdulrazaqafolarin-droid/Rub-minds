@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import type { SessionMemoryDocument } from './aiRelay';
 import { buildInviteRedirectUrl } from './inviteLinks';
 
 export type CloudRoom = {
@@ -147,4 +148,73 @@ export async function revokeCloudAgent(connectionId: string): Promise<boolean> {
   const { data, error } = await client().rpc('revoke_external_agent', { connection_id: connectionId });
   if (error) throw error;
   return data as boolean;
+}
+
+export type PrivateSessionImport = {
+  id: string;
+  room_id: string;
+  participant_id: string;
+  source_platform: string;
+  title: string;
+  context_summary: string;
+  imported_context: SessionMemoryDocument;
+  created_at: string;
+};
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return "[" + value.map(stableJson).join(",") + "]";
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return "{" + Object.keys(record).sort().map(key => JSON.stringify(key) + ":" + stableJson(record[key])).join(",") + "}";
+  }
+  const encoded = JSON.stringify(value);
+  return encoded === undefined ? "null" : encoded;
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** Save a selected AI context packet privately under the signed-in human participant. */
+export async function savePrivateSessionContext(roomId: string, participantId: string, document: SessionMemoryDocument): Promise<PrivateSessionImport> {
+  const supabaseClient = client();
+  const { data: authData, error: authError } = await supabaseClient.auth.getUser();
+  if (authError || !authData.user) throw new Error("Sign in to save private AI context.");
+  const { data: participant, error: participantError } = await supabaseClient.from("participants")
+    .select("id, room_id, user_id, kind")
+    .eq("id", participantId).eq("room_id", roomId).eq("user_id", authData.user.id).eq("kind", "human").maybeSingle();
+  if (participantError || !participant) throw new Error("Only your own human participant can save private context for this group.");
+  const serialized = stableJson(document);
+  const { data, error } = await supabaseClient.from("room_session_imports").insert({
+    room_id: roomId,
+    participant_id: participantId,
+    owner_id: authData.user.id,
+    document_version: 1,
+    source_platform: document.source.platform,
+    title: document.source.session_label || "Imported AI session",
+    context_summary: document.summary,
+    imported_context: document,
+    content_sha256: await sha256Hex(serialized),
+  }).select("id, room_id, participant_id, source_platform, title, context_summary, imported_context, created_at").single();
+  if (error || !data) throw new Error("Could not save private AI context. Check your group membership and session-memory permissions.");
+  return data as PrivateSessionImport;
+}
+
+/** Lists only private session imports belonging to this signed-in human participant. */
+export async function listPrivateSessionContexts(roomId: string, participantId: string): Promise<PrivateSessionImport[]> {
+  const { data, error } = await client().from("room_session_imports")
+    .select("id, room_id, participant_id, source_platform, title, context_summary, imported_context, created_at")
+    .eq("room_id", roomId).eq("participant_id", participantId)
+    .order("created_at", { ascending: false }).limit(10);
+  if (error) throw error;
+  return (data || []) as PrivateSessionImport[];
+}
+
+/** Delete one of the signed-in user's private context imports. RLS enforces ownership again. */
+export async function deletePrivateSessionContext(roomId: string, participantId: string, importId: string): Promise<void> {
+  const { data, error } = await client().from("room_session_imports").delete()
+    .eq("id", importId).eq("room_id", roomId).eq("participant_id", participantId)
+    .select("id").maybeSingle();
+  if (error || !data) throw new Error("Could not delete that private context import.");
 }
