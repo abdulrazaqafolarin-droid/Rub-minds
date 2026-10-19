@@ -1,13 +1,13 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { ArrowLeft, Bot, Copy, Link2, LogOut, Plus, Send, Sparkles, Users } from 'lucide-react';
-import { buildExistingAiJoinPrompt, buildGroupRelayPrompt } from './aiRelay';
+import { buildExistingAiJoinPrompt, buildGroupRelayPrompt, parseSessionMemoryDocument } from './aiRelay';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import { isValidInviteToken, readInviteToken } from './inviteLinks';
 import {
   createCloudRoom, createCloudInvite, redeemCloudInvite, redeemAIInvite, revokeCloudInvite, connectCloudAgent, listAgentConnections, revokeCloudAgent, getCloudRoom, listCloudMessages, listCloudParticipants,
   listCloudRooms, postCloudMessage, signInWithPassword, signUpWithPassword, requestPasswordReset, updateAccountPassword, signOut,
-  subscribeToCloudMessages, type CloudRoom, type CloudMessage, type CloudParticipant, type AgentConnection,
+  subscribeToCloudMessages, savePrivateSessionContext, listPrivateSessionContexts, deletePrivateSessionContext, type PrivateSessionImport, type CloudRoom, type CloudMessage, type CloudParticipant, type AgentConnection,
 } from './cloudRooms';
 
 export default function CloudApp() {
@@ -31,9 +31,15 @@ export default function CloudApp() {
   const [busy, setBusy] = useState(false);
   const [inviteToken, setInviteToken] = useState(() => readInviteToken(location.search, location.pathname));
   const inviteTokenValid = isValidInviteToken(inviteToken);
+  const currentHumanParticipant = participants.find(p => !!room && p.room_id === room.id && p.user_id === user?.id && p.kind === 'human');
   const [joining, setJoining] = useState(false);
   const [inviteRoute, setInviteRoute] = useState<'choose' | 'human' | 'ai' | 'guided'>('choose');
   const [relayCopied, setRelayCopied] = useState(false);
+  const [showPrivateContext, setShowPrivateContext] = useState(false);
+  const [sessionContextDraft, setSessionContextDraft] = useState('');
+  const [sessionContextBusy, setSessionContextBusy] = useState(false);
+  const [sessionContextNotice, setSessionContextNotice] = useState('');
+  const [privateImports, setPrivateImports] = useState<PrivateSessionImport[]>([]);
   const [aiInviteName, setAiInviteName] = useState('');
   const [aiInviteConsent, setAiInviteConsent] = useState(false);
   const [autoJoinAttempted, setAutoJoinAttempted] = useState('');
@@ -65,14 +71,23 @@ export default function CloudApp() {
     return () => { active = false; };
   }, [user]);
   useEffect(() => {
-    if (!user || !selected) { setRoom(null); setMessages([]); setParticipants([]); return; }
+    if (!user || !selected) { setRoom(null); setMessages([]); setParticipants([]); setPrivateImports([]); return; }
     let active = true;
     async function refresh() {
       try {
         const [nextRoom, nextMessages, nextParticipants] = await Promise.all([
           getCloudRoom(selected), listCloudMessages(selected), listCloudParticipants(selected),
         ]);
-        if (active) { setRoom(nextRoom); setMessages(nextMessages); setParticipants(nextParticipants); }
+        const humanParticipant = nextParticipants.find(p => p.room_id === selected && p.user_id === user.id && p.kind === 'human');
+        let nextPrivateImports: PrivateSessionImport[] = [];
+        if (humanParticipant) {
+          try { nextPrivateImports = await listPrivateSessionContexts(selected, humanParticipant.id); }
+          catch (e) { if (active) setError("Private AI context could not be loaded: " + String(e instanceof Error ? e.message : e)); }
+        }
+        if (active) {
+          setRoom(nextRoom); setMessages(nextMessages); setParticipants(nextParticipants);
+          setPrivateImports(nextPrivateImports);
+        }
       } catch (e) { if (active) setError(String(e instanceof Error ? e.message : e)); }
     }
     void refresh();
@@ -168,6 +183,41 @@ export default function CloudApp() {
     } catch {
       window.prompt('Copy the latest group context into your existing AI conversation:', prompt);
     }
+  }
+  async function savePrivateContext(e: FormEvent) {
+    e.preventDefault();
+    if (!room || !currentHumanParticipant) {
+      setError("Join this group with your own human account before saving private AI context.");
+      return;
+    }
+    setSessionContextBusy(true); setError(''); setSessionContextNotice('');
+    try {
+      const document = parseSessionMemoryDocument(sessionContextDraft);
+      const saved = await savePrivateSessionContext(room.id, currentHumanParticipant.id, document);
+      setPrivateImports(previous => [saved, ...previous.filter(item => item.id !== saved.id)].slice(0, 10));
+      setSessionContextDraft('');
+      setSessionContextNotice("Saved privately to your account. This context is not shared with other group members or AI participants.");
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e));
+    } finally { setSessionContextBusy(false); }
+  }
+  async function copyPrivateContextToAI(item: PrivateSessionImport) {
+    if (!window.confirm("Copy this private AI context packet to your clipboard? It may contain private project context. Only paste it into the intended AI conversation.")) return;
+    const text = JSON.stringify(item.imported_context, null, 2);
+    try {
+      await navigator.clipboard.writeText(text);
+      setSessionContextNotice("Private context packet copied. Paste it only into the intended AI conversation.");
+    } catch {
+      window.prompt("Copy this private AI context packet:", text);
+    }
+  }
+  async function removePrivateContext(item: PrivateSessionImport) {
+    if (!room || !currentHumanParticipant || !window.confirm("Delete this private AI context import? This cannot be undone.")) return;
+    try {
+      await deletePrivateSessionContext(room.id, currentHumanParticipant.id, item.id);
+      setPrivateImports(previous => previous.filter(saved => saved.id !== item.id));
+      setSessionContextNotice("Private context import deleted.");
+    } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
   }
   async function joinAsAI() {
     if (!inviteToken || !inviteTokenValid || !aiInviteConsent || !aiInviteName.trim()) return;
@@ -312,8 +362,25 @@ export default function CloudApp() {
       {inviteLink && <div className="invite-share" role="status"><strong>Invitation created</strong><p>Valid for 24 hours and up to 10 human joins. {inviteAIEnabled ? 'AI route enabled: up to 3 AI participants.' : 'AI route disabled for this invitation.'}</p><input aria-label="Shareable invitation URL" readOnly value={inviteLink} onFocus={e => e.target.select()}/><button onClick={() => { void navigator.clipboard.writeText(inviteLink).catch(() => setError('Select and copy the invitation URL manually.')); }}>Copy invitation</button><button disabled={busy} onClick={() => { void revokeInviteLink(); }}>Revoke invitation</button><button onClick={() => setInviteLink('')}>Close</button></div>}
       {inviteToken ? <section className="empty"><Link2 size={40}/><h1>{inviteTokenValid ? 'Join a Rub Minds group' : 'Invitation link looks incomplete'}</h1><p>{inviteTokenValid ? 'You have received a group invitation. Join to participate in the conversation with your signed-in account.' : `This link contains ${inviteToken.length} characters, but a valid invitation needs 64. Ask the group owner to create and send a new link.`}</p><button className="primary" onClick={() => { void joinInvite(); }} disabled={joining || !inviteTokenValid}>{joining ? 'Joining…' : 'Accept invitation'}</button><p className="disclaimer">Invitations expire after 24 hours or 10 successful joins.</p></section>
       : selected && room ? <>
-        <header className="room-header"><button className="back" onClick={() => navigate('')}><ArrowLeft size={18}/></button><div className="room-heading"><h2>{room.title}</h2><span><span className="status-dot"/> {participants.length} participants · {messages.length} messages</span></div><button className="invite" onClick={() => { void copyGroupRelayContext(); }}><Copy size={17}/> {relayCopied ? 'Copied for AI' : 'Copy group context for AI'}</button>{room.owner_id === user.id && <><button className="invite" disabled={busy} onClick={() => { void makeInvite(); }}><Link2 size={17}/> Invite members</button><button className="invite" disabled={busy} onClick={() => { void addAgent(); }}><Bot size={17}/> Connect AI</button><button className="invite" onClick={() => { void manageAgents(); }}>Manage agents</button></>}</header>
+        <header className="room-header"><button className="back" onClick={() => navigate('')}><ArrowLeft size={18}/></button><div className="room-heading"><h2>{room.title}</h2><span><span className="status-dot"/> {participants.length} participants · {messages.length} messages</span></div><button className="invite" onClick={() => { void copyGroupRelayContext(); }}><Copy size={17}/> {relayCopied ? 'Copied for AI' : 'Copy group context for AI'}</button><button className="invite" onClick={() => setShowPrivateContext(value => !value)}><Sparkles size={17}/> {showPrivateContext ? 'Close private context' : 'Private AI context'}</button>{room.owner_id === user.id && <><button className="invite" disabled={busy} onClick={() => { void makeInvite(); }}><Link2 size={17}/> Invite members</button><button className="invite" disabled={busy} onClick={() => { void addAgent(); }}><Bot size={17}/> Connect AI</button><button className="invite" onClick={() => { void manageAgents(); }}>Manage agents</button></>}</header>
         <div className="objective"><Sparkles size={17}/><div><strong>Group objective</strong><p>{room.objective || 'Collaborate together.'}</p></div></div>
+        {showPrivateContext && <section className="invite-share private-context-panel">
+          <strong>Private context from your existing AI</strong>
+          <p>Paste the structured JSON Context Packet from your existing ChatGPT or Claude conversation. It is saved privately under your human account and participant; it is not shared with the group. Review it before saving and never include credentials or unrelated sensitive content.</p>
+          <form onSubmit={savePrivateContext} className="private-context-form">
+            <textarea aria-label="Private AI context packet" rows={6} maxLength={1100000} value={sessionContextDraft} onChange={e => setSessionContextDraft(e.target.value)} placeholder='Paste JSON with schema "rub-minds.session-memory" here…' />
+            <button className="primary" disabled={sessionContextBusy || !sessionContextDraft.trim()}>{sessionContextBusy ? 'Saving privately…' : 'Save private context'}</button>
+          </form>
+          {sessionContextNotice && <p role="status">{sessionContextNotice}</p>}
+          <div className="private-import-list">
+            <strong>Your saved private context ({privateImports.length})</strong>
+            {privateImports.length === 0 ? <p>No private AI context has been saved for this group yet.</p> : privateImports.map(item => <div className="private-import-item" key={item.id}>
+              <div><strong>{item.title}</strong><p>{item.source_platform} · {new Date(item.created_at).toLocaleDateString()}</p><p>{item.context_summary}</p></div>
+              <button onClick={() => { void copyPrivateContextToAI(item); }}>Copy to AI</button>
+              <button onClick={() => { void removePrivateContext(item); }}>Delete</button>
+            </div>)}
+          </div>
+        </section>}
         <div className="messages" aria-live="polite">{messages.map(m => { const p = participants.find(p => p.id === m.sender_id); return <div className="message" key={m.id}><div className="avatar">{p?.kind === 'human' ? (p.display_name[0] || 'H') : <Bot size={18}/>}</div><div><div className="message-meta"><strong>{p?.display_name || 'Participant'}</strong><time>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div><p>{m.body}</p></div></div>; })}</div>
         <div className="composer-area"><form className="composer" onSubmit={send}><input aria-label="Message" placeholder="Message your group…" value={draft} onChange={e => setDraft(e.target.value)} maxLength={10000}/><button disabled={busy || !draft.trim()} aria-label="Send"><Send size={18}/></button></form><p className="disclaimer">Live room · Invitations support account-bound human access and, when enabled by the owner, capped AI credentials. An active agent runtime is required for AI replies.</p></div>
       </> : selected ? <section className="empty"><h2>Room unavailable</h2><p>You may not have permission to view this room. Ask the room owner for an invitation link.</p><button className="primary" onClick={() => navigate('')}>Back to groups</button></section>
