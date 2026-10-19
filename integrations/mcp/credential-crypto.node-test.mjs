@@ -9,7 +9,7 @@ const context = "mcp-session-digest-123";
 test("AES-GCM credential encryption round-trips and uses a fresh nonce", async () => {
   const first = await encryptCredential(credential, key, context);
   const second = await encryptCredential(credential, key, context);
-  assert.match(first, /^v1\\.[a-f0-9]{24}\\.[a-f0-9]+$/);
+  assert.match(first, /^v1\.[a-f0-9]{24}\\.[a-f0-9]+$/);
   assert.notEqual(first, second);
   assert.equal(await decryptCredential(first, key, context), credential);
 });
