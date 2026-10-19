@@ -304,7 +304,7 @@ export default function CloudApp() {
     <p>This creates a handoff from your current conversation without replacing it. Copy the instructions below into the same ChatGPT or Claude conversation you already use.</p>
     <div className="objective"><Sparkles size={18}/><span><strong>What this does</strong><br/>It asks your AI to prepare a privacy-aware context packet and continue helping you. If that account cannot use a Rub Minds connector, you can relay group messages manually. This is not automatic two-way sync.</span></div>
     <button className="primary" onClick={() => { void copyExistingAiGuide(); }}>{relayCopied ? 'Instructions copied' : 'Copy AI joining instructions'}</button>
-    <p className="disclaimer">Share this invitation only with the intended participant. Review the context packet before posting it to the group. Never paste credentials or unrelated private conversation content.</p>
+    <p className="disclaimer">Share this invitation only with the intended participant. After joining, use Private AI context to save the JSON packet privately; share only reviewed, selected insights with the group. Never paste credentials or unrelated private conversation content.</p>
     <button onClick={() => { setInviteRoute('human'); if (!user) setAuthMode('signin'); }}>Continue to Rub Minds to join the group</button>
     <button onClick={() => { setInviteRoute('choose'); setRelayCopied(false); }}>Back to route selection</button>
     {error && <p className="error" role="alert">{error}</p>}
