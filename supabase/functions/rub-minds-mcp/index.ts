@@ -92,8 +92,16 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       throw new Error("Invitation is invalid, expired, revoked, or no longer permits another AI participant.");
     }
     const expiresAt = new Date(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000).toISOString();
+    let encryptedCredential: string;
+    try {
+      encryptedCredential = await encryptCredential(data.agent_secret, credentialEncryptionKey, session.session_digest as string);
+    } catch {
+      await db.from("agent_connections").update({ revoked_at: new Date().toISOString() })
+        .eq("credential_digest", await sha256(data.agent_secret)).is("revoked_at", null);
+      throw new Error("Could not securely bind the AI participant to this MCP session.");
+    }
     const { data: boundSession, error: bindError } = await db.from("rub_minds_mcp_sessions").update({
-      agent_credential_ciphertext: await encryptCredential(data.agent_secret, credentialEncryptionKey, session.session_digest as string),
+      agent_credential_ciphertext: encryptedCredential,
       room_id: data.room_id,
       participant_id: data.participant_id,
       expires_at: expiresAt,
