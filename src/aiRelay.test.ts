@@ -41,7 +41,8 @@ describe('existing AI conversation relay prompts', () => {
       sharing: { raw_history_visibility: 'private' },
     };
     expect(parseSessionMemoryDocument(JSON.stringify(packet))).toEqual(packet);
-    const fence = String.fromCharCode(96).repeat(3);\n    expect(parseSessionMemoryDocument(fence + 'json\\n' + JSON.stringify(packet) + '\\n' + fence)).toEqual(packet);
+    const fence = String.fromCharCode(96).repeat(3);
+    expect(parseSessionMemoryDocument(fence + 'json\n' + JSON.stringify(packet) + '\n' + fence)).toEqual(packet);
   });
 
   it('rejects invalid, oversized, or group-visible raw session history', () => {
