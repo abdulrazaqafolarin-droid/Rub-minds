@@ -32,9 +32,11 @@ export function buildExistingAiJoinPrompt(invitationUrl: string): string {
 }
 
 export function buildGroupRelayPrompt(groupTitle: string, objective: string, messages: RelayMessage[]): string {
-  const transcript = messages.slice(-30).map((message) => {
+  // Bound prompt size to protect the user's context window and token budget.
+  const transcript = messages.slice(-20).map((message) => {
     const time = message.createdAt ? " [" + message.createdAt + "]" : "";
-    return message.sender + time + ": " + message.body;
+    const body = message.body.length > 1200 ? message.body.slice(0, 1200) + "… [message truncated]" : message.body;
+    return message.sender + time + ": " + body;
   }).join("\n");
   return [
     "I am relaying messages from my Rub Minds group into this existing AI conversation. Continue using the relevant context and working style already established here.",
