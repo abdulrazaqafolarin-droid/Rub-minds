@@ -53,6 +53,7 @@ describe('existing AI conversation relay prompts', () => {
       sharing: { raw_history_visibility: 'private' },
     };
     expect(() => parseSessionMemoryDocument('not json')).toThrow(/valid JSON/);
+    expect(() => parseSessionMemoryDocument('x'.repeat(100001))).toThrow(/under 100,000/);
     expect(() => parseSessionMemoryDocument(JSON.stringify({ ...packet, version: 2 }))).toThrow(/schema\/version/);
     expect(() => parseSessionMemoryDocument(JSON.stringify({ ...packet, summary: 'x'.repeat(20001) }))).toThrow(/20,000/);
     expect(() => parseSessionMemoryDocument(JSON.stringify({ ...packet, sharing: { raw_history_visibility: 'group' } }))).toThrow(/must remain private/);
