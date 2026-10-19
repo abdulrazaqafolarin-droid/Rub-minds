@@ -19,7 +19,7 @@ describe('existing AI conversation relay prompts', () => {
     expect(prompt).toContain('OBJECTIVE: Ship the MVP');
     expect(prompt).toContain('message-34');
     expect(prompt).toContain('message-15');
-    expect(prompt).not.toContain('message-4\n');
+    expect(prompt).not.toContain('message-14\n');
     expect(prompt).toContain('I will review and paste your response');
   });
 
