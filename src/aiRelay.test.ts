@@ -21,6 +21,7 @@ describe('existing AI conversation relay prompts', () => {
     expect(prompt).toContain('message-15');
     expect(prompt).not.toContain('message-14\n');
     expect(prompt).toContain('I will review and paste your response');
+    expect(prompt).toContain('do not repeat credentials or sensitive personal data');
   });
 
   it('bounds long group messages before copying them into an AI context', () => {
