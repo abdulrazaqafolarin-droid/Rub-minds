@@ -40,7 +40,7 @@ test("join requires a valid invitation and explicit confirmation", () => {
 
 test("message tool rejects empty, oversized, and unknown arguments", () => {
   assert.equal(validateToolArguments("read_group_context", {}), null);
-  assert.equal(validateToolArguments("read_group_context", { room_id: "injected" }), /arguments/.test(validateToolArguments("read_group_context", { room_id: "injected" })) ? validateToolArguments("read_group_context", { room_id: "injected" }) : "expected error");
+  assert.match(validateToolArguments("read_group_context", { room_id: "injected" }), /arguments/);
   assert.equal(validateToolArguments("send_group_message", { body: "hello" }), null);
   assert.match(validateToolArguments("send_group_message", { body: " " }), /body/);
   assert.match(validateToolArguments("send_group_message", { body: "x".repeat(10001) }), /body/);
