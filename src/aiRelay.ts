@@ -40,8 +40,15 @@ export function buildExistingAiJoinPrompt(invitationUrl: string): string {
   ].join("\n");
 }
 
-export function buildGroupRelayPrompt(groupTitle: string, objective: string, messages: RelayMessage[]): string {
+export type RelayMemory = { type: string; content: string; updatedAt?: string };
+
+export function buildGroupRelayPrompt(groupTitle: string, objective: string, messages: RelayMessage[], sharedMemory: RelayMemory[] = []): string {
   // Bound prompt size to protect the user's context window and token budget.
+  const memoryBlock = sharedMemory.slice(0, 10).map((entry) => {
+    const time = entry.updatedAt ? " [" + entry.updatedAt + "]" : "";
+    const content = entry.content.length > 800 ? entry.content.slice(0, 800) + "… [memory truncated]" : entry.content;
+    return "[" + entry.type + "]" + time + ": " + content;
+  }).join("\n");
   const transcript = messages.slice(-20).map((message) => {
     const time = message.createdAt ? " [" + message.createdAt + "]" : "";
     const body = message.body.length > 1200 ? message.body.slice(0, 1200) + "… [message truncated]" : message.body;
@@ -52,6 +59,9 @@ export function buildGroupRelayPrompt(groupTitle: string, objective: string, mes
     "",
     "GROUP: " + groupTitle,
     "OBJECTIVE: " + (objective.trim() || "Collaborate on the group's current goal."),
+    "",
+    "SHARED GROUP MEMORY (visible to group participants and connected AI agents):",
+    memoryBlock || "(No shared memory entries.)",
     "",
     "RECENT GROUP MESSAGES (newest messages are at the bottom):",
     transcript || "(No messages included.)",
