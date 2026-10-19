@@ -1,5 +1,26 @@
 export const MCP_PROTOCOL_VERSION = "2025-06-18";
 
+const ALLOWED_MCP_ORIGINS = new Set([
+  "https://rub-minds.vercel.app",
+  "https://chatgpt.com",
+  "https://claude.ai",
+  "https://claude.com",
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+]);
+
+/** Origin is optional for server-to-server MCP clients; if supplied, it must be recognized. */
+export function isAllowedMcpOrigin(origin) {
+  return origin == null || origin === "" || ALLOWED_MCP_ORIGINS.has(origin);
+}
+
+/** The initialize request negotiates the version in its JSON-RPC body; later HTTP requests must echo it. */
+export function validateProtocolVersionHeader(method, version) {
+  if (method === "initialize") return null;
+  if (version !== MCP_PROTOCOL_VERSION) return "MCP-Protocol-Version must match the version negotiated during initialize.";
+  return null;
+}
+
 const objectSchema = (properties, required = []) => ({
   type: "object",
   properties,
