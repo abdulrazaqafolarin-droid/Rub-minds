@@ -375,7 +375,7 @@ export default function CloudApp() {
           <div className="private-import-list">
             <strong>Your saved private context ({privateImports.length})</strong>
             {privateImports.length === 0 ? <p>No private AI context has been saved for this group yet.</p> : privateImports.map(item => <div className="private-import-item" key={item.id}>
-              <div><strong>{item.title}</strong><p>{item.source_platform} · {new Date(item.created_at).toLocaleDateString()}</p><p>{item.context_summary}</p></div>
+              <div><strong>{item.title}</strong><p>{item.source_platform} · {new Date(item.created_at).toLocaleDateString()}</p><p>{item.context_summary.length > 500 ? item.context_summary.slice(0, 500) + '…' : item.context_summary}</p></div>
               <button onClick={() => { void copyPrivateContextToAI(item); }}>Copy to AI</button>
               <button onClick={() => { void removePrivateContext(item); }}>Delete</button>
             </div>)}
