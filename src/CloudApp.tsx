@@ -81,9 +81,12 @@ export default function CloudApp() {
     let active = true;
     async function refresh() {
       try {
-        const [nextRoom, nextMessages, nextParticipants, nextGroupMemories] = await Promise.all([
-          getCloudRoom(selected), listCloudMessages(selected), listCloudParticipants(selected), listGroupMemoryEntries(selected),
+        const [nextRoom, nextMessages, nextParticipants] = await Promise.all([
+          getCloudRoom(selected), listCloudMessages(selected), listCloudParticipants(selected),
         ]);
+        let nextGroupMemories: GroupMemoryEntry[] = [];
+        try { nextGroupMemories = await listGroupMemoryEntries(selected); }
+        catch (e) { if (active) setError("Shared group memory could not be loaded: " + String(e instanceof Error ? e.message : e)); }
         const humanParticipant = nextParticipants.find(p => p.room_id === selected && p.user_id === user?.id && p.kind === 'human');
         let nextPrivateImports: PrivateSessionImport[] = [];
         if (humanParticipant) {
