@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { decryptCredential, encryptCredential } from "../../../integrations/mcp/credential-crypto.mjs";
 import {
   MCP_PROTOCOL_VERSION,
   RUB_MINDS_MCP_TOOLS,
@@ -13,7 +14,10 @@ import {
 
 const databaseUrl = Deno.env.get("SUPABASE_URL");
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-if (!databaseUrl || !serviceKey) throw new Error("Missing backend configuration");
+const credentialEncryptionKey = Deno.env.get("RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY");
+if (!databaseUrl || !serviceKey || !credentialEncryptionKey) throw new Error("Missing backend configuration or MCP credential-encryption secret");
+// Validate key format at startup without retaining a second plaintext credential store.
+if (!/^[a-f0-9]{64}$/i.test(credentialEncryptionKey)) throw new Error("RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY must be 64 hexadecimal characters.");
 const db = createClient(databaseUrl, serviceKey, { auth: { persistSession: false } });
 const SESSION_TTL_HOURS = 24;
 const MAX_REQUEST_BYTES = 1_200_000;
@@ -55,7 +59,7 @@ async function findSession(sessionId: string) {
   if (!/^[a-f0-9]{64}$/.test(sessionId)) return null;
   const digest = await sha256(sessionId);
   const { data, error } = await db.from("rub_minds_mcp_sessions")
-    .select("session_digest, agent_credential, room_id, participant_id, expires_at")
+    .select("session_digest, agent_credential_ciphertext, room_id, participant_id, expires_at")
     .eq("session_digest", digest)
     .gt("expires_at", new Date().toISOString())
     .maybeSingle();
@@ -78,7 +82,7 @@ async function invokeAgent(credential: string, operation: "read" | "send", paylo
 }
 async function runTool(name: string, args: Record<string, unknown>, session: Record<string, unknown>) {
   if (name === "join_group") {
-    if (session.agent_credential) return { joined: true, room_id: session.room_id, participant_id: session.participant_id, note: "This MCP session is already joined to a group." };
+    if (session.agent_credential_ciphertext) return { joined: true, room_id: session.room_id, participant_id: session.participant_id, note: "This MCP session is already joined to a group." };
     const { data, error } = await db.rpc("redeem_ai_room_invite", {
       invite_token: args.invite_token,
       agent_label: (args.agent_label as string).trim(),
@@ -89,7 +93,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     }
     const expiresAt = new Date(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000).toISOString();
     const { data: boundSession, error: bindError } = await db.from("rub_minds_mcp_sessions").update({
-      agent_credential: data.agent_secret,
+      agent_credential_ciphertext: await encryptCredential(data.agent_secret, credentialEncryptionKey),
       room_id: data.room_id,
       participant_id: data.participant_id,
       expires_at: expiresAt,
@@ -105,10 +109,11 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     return { joined: true, room_id: data.room_id, participant_id: data.participant_id, expires_at: expiresAt };
   }
 
-  const credential = session.agent_credential;
-  if (typeof credential !== "string" || !credential) {
+  const encryptedCredential = session.agent_credential_ciphertext;
+  if (typeof encryptedCredential !== "string" || !encryptedCredential) {
     throw new Error("This MCP session has not joined a group. Call join_group with a valid invite first.");
   }
+  const credential = await decryptCredential(encryptedCredential, credentialEncryptionKey);
 
   if (name === "read_group_messages") {
     const data = await invokeAgent(credential, "read");
