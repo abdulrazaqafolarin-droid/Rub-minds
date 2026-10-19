@@ -275,3 +275,10 @@ export async function deleteGroupMemoryEntry(roomId: string, participantId: stri
     .select("id").maybeSingle();
   if (error || !data) throw new Error("Could not delete that group memory entry.");
 }
+
+export function subscribeToGroupMemoryEntries(roomId: string, refresh: () => void) {
+  const channel = client().channel("room-memory:" + roomId)
+    .on("postgres_changes", { event: "*", schema: "public", table: "room_memory_entries", filter: "room_id=eq." + roomId }, refresh)
+    .subscribe();
+  return () => { void client().removeChannel(channel); };
+}
