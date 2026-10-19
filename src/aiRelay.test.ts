@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildExistingAiJoinPrompt, buildGroupRelayPrompt, parseSessionMemoryDocument } from './aiRelay';
+import { buildExistingAiJoinPrompt, buildGroupRelayPrompt, buildRestorePrompt, parseSessionMemoryDocument } from './aiRelay';
 
 describe('existing AI conversation relay prompts', () => {
   it('preserves the invitation and avoids claiming a direct connection', () => {
@@ -57,6 +57,21 @@ describe('existing AI conversation relay prompts', () => {
     expect(() => parseSessionMemoryDocument(JSON.stringify({ ...packet, version: 2 }))).toThrow(/schema\/version/);
     expect(() => parseSessionMemoryDocument(JSON.stringify({ ...packet, summary: 'x'.repeat(20001) }))).toThrow(/20,000/);
     expect(() => parseSessionMemoryDocument(JSON.stringify({ ...packet, sharing: { raw_history_visibility: 'group' } }))).toThrow(/must remain private/);
+  });
+
+  it('wraps saved private context with safe restoration instructions', () => {
+    const packet = parseSessionMemoryDocument(JSON.stringify({
+      schema: 'rub-minds.session-memory', version: 1,
+      summary: 'Preserve the current project decisions.',
+      current_goal: 'Finish the invite flow.',
+      source: { platform: 'ChatGPT' },
+      sharing: { raw_history_visibility: 'private' },
+    }));
+    const prompt = buildRestorePrompt(packet);
+    expect(prompt).toContain('PRIVATE CONTEXT PACKET');
+    expect(prompt).toContain('Finish the invite flow.');
+    expect(prompt).toContain('Do not share this context');
+    expect(prompt).toContain('continue from the next useful step');
   });
 
   it('handles an empty room and objective', () => {
