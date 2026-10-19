@@ -70,6 +70,7 @@ export type SessionMemoryDocument = {
 };
 
 export function parseSessionMemoryDocument(raw: string): SessionMemoryDocument {
+  if (raw.length > 100000) throw new Error("Context Packet is too large; keep the JSON under 100,000 characters.");
   const trimmed = raw.trim().replace(/^\x60{3}(?:json)?\s*/i, "").replace(/\s*\x60{3}$/, "");
   let value: unknown;
   try { value = JSON.parse(trimmed); }
