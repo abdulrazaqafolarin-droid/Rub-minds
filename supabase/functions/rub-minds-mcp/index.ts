@@ -7,6 +7,8 @@ import {
   rpcResult,
   validateSessionMemoryDocument,
   validateToolArguments,
+  isAllowedMcpOrigin,
+  validateProtocolVersionHeader,
 } from "../../../integrations/mcp/protocol.mjs";
 
 const databaseUrl = Deno.env.get("SUPABASE_URL");
@@ -212,10 +214,12 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
 }
 
 Deno.serve(async (request: Request) => {
-  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "Access-Control-Allow-Methods": "POST, OPTIONS", "Access-Control-Allow-Headers": "content-type, mcp-session-id, accept" } });
+  const origin = request.headers.get("Origin");
+  if (!isAllowedMcpOrigin(origin)) return httpError(403, "Origin is not allowed.");
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "Access-Control-Allow-Methods": "POST, OPTIONS", "Access-Control-Allow-Headers": "content-type, mcp-session-id, mcp-protocol-version, accept", "Vary": "Origin" } });
   if (request.method !== "POST") return httpError(405, "MCP endpoint accepts POST requests only.");
   const accept = request.headers.get("Accept") || "";
-  if (!accept.includes("application/json") && !accept.includes("text/event-stream")) return httpError(406, "Accept must include application/json or text/event-stream.");
+  if (!accept.includes("application/json") || !accept.includes("text/event-stream")) return httpError(406, "Accept must include both application/json and text/event-stream.");
   const raw = await request.text();
   if (new TextEncoder().encode(raw).byteLength > MAX_REQUEST_BYTES) return httpError(413, "Request too large.");
   let input: unknown;
@@ -226,6 +230,8 @@ Deno.serve(async (request: Request) => {
   const id = rpc.id as string | number | undefined;
   const method = rpc.method as string;
   const params = isRecord(rpc.params) ? rpc.params : {};
+  const protocolHeaderError = validateProtocolVersionHeader(method, request.headers.get("MCP-Protocol-Version"));
+  if (protocolHeaderError) return reply(400, rpcError(id ?? null, -32600, protocolHeaderError));
 
   if (method === "initialize") {
     if (!hasId) return reply(400, rpcError(null, -32600, "initialize must be a request."));
