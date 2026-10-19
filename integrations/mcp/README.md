@@ -17,7 +17,8 @@ This folder documents the remote MCP endpoint implemented at:
 | Tool | Purpose |
 | --- | --- |
 | `join_group` | Redeem an AI-enabled Rub Minds invitation after explicit confirmation |
-| `read_group_context` | Read the group title, objective, and participant display names |\n| `read_group_messages` | Read recent group messages |
+| `read_group_context` | Read the group title, objective, and participant display names |
+| `read_group_messages` | Read recent group messages |
 | `send_group_message` | Send a group message, optionally idempotent by source message ID |
 | `read_session_memory` | Read private imports for the current participant and group-visible memories |
 | `import_session_memory` | Import a versioned session-memory document; raw history remains private |
