@@ -161,7 +161,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       participant_id: connection.participant_id,
       owner_id: connection.owner_id,
       document_version: 1,
-      source_platform: source.platform.trim().slice(0, 80),
+      source_platform: (source.platform as string).trim().slice(0, 80),
       title,
       context_summary: (document.summary as string).slice(0, 20000),
       imported_context: document,
