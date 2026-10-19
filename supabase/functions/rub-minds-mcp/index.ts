@@ -86,14 +86,15 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       throw new Error("Invitation is invalid, expired, revoked, or no longer permits another AI participant.");
     }
     const expiresAt = new Date(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000).toISOString();
-    const { error: bindError } = await db.from("rub_minds_mcp_sessions").update({
+    const { data: boundSession, error: bindError } = await db.from("rub_minds_mcp_sessions").update({
       agent_credential: data.agent_secret,
       room_id: data.room_id,
       participant_id: data.participant_id,
       expires_at: expiresAt,
       last_seen_at: new Date().toISOString(),
-    }).eq("session_digest", session.session_digest as string).is("agent_credential", null);
-    if (bindError) {
+    }).eq("session_digest", session.session_digest as string).is("agent_credential", null)
+      .select("session_digest").maybeSingle();
+    if (bindError || !boundSession) {
       await db.from("agent_connections").update({ revoked_at: new Date().toISOString() })
         .eq("credential_digest", await sha256(data.agent_secret)).is("revoked_at", null);
       throw new Error("Could not safely bind the AI participant to this MCP session.");
@@ -148,7 +149,17 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       .or("visibility.eq.group,created_by_participant_id.eq." + connection.participant_id)
       .order("updated_at", { ascending: false }).limit(100);
     if (memoryError) throw new Error("Could not load group memory.");
-    return { room_id: connection.room_id, participant_id: connection.participant_id, imports: imports || [], group_memory: memory || [] };
+    // Do not return raw imported history to every tool call; expose only the bounded summary and current goal.
+    const safeImports = (imports || []).map((entry: Record<string, unknown>) => {
+      const document = isRecord(entry.imported_context) ? entry.imported_context : {};
+      return {
+        id: entry.id, document_version: entry.document_version, source_platform: entry.source_platform,
+        title: entry.title, context_summary: entry.context_summary,
+        current_goal: typeof document.current_goal === "string" ? document.current_goal : "",
+        content_sha256: entry.content_sha256, created_at: entry.created_at,
+      };
+    });
+    return { room_id: connection.room_id, participant_id: connection.participant_id, imports: safeImports, group_memory: memory || [] };
   }
 
   if (name === "import_session_memory") {
