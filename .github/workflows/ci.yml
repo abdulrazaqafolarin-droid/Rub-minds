@@ -21,6 +21,8 @@ jobs:
           deno-version: v2.x
       - name: Type-check session-memory Edge Function
         run: deno check supabase/functions/session-memory/index.ts
+      - name: Type-check hosted MCP Edge Function
+        run: deno check supabase/functions/rub-minds-mcp/index.ts
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
       - name: Run controlled browser proof of concept
