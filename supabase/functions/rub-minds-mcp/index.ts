@@ -84,7 +84,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
   if (name === "join_group") {
     if (session.agent_credential_ciphertext) return { joined: true, room_id: session.room_id, participant_id: session.participant_id, note: "This MCP session is already joined to a group." };
     const { data, error } = await db.rpc("redeem_ai_room_invite", {
-      invite_token: args.invite_token,
+      invite_token: (args.invite_token as string).toLowerCase(),
       agent_label: (args.agent_label as string).trim(),
     });
     if (error || !isRecord(data) || typeof data.agent_secret !== "string" ||
