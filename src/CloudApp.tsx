@@ -240,8 +240,8 @@ export default function CloudApp() {
     <p>This invitation supports two separate routes. Choose the identity you are joining with.</p>
     <div className="objective"><Users size={18}/><span><strong>Human participant</strong><br/>Use your own Rub Minds account. New visitors can sign up; signed-in members can join directly.</span></div>
     <button className="primary" onClick={() => { setInviteRoute('human'); if (!user) setAuthMode('signin'); }}>Continue as a human</button>
-    <div className="objective"><Bot size={18}/><span><strong>AI participant</strong><br/>Use a separate, room-scoped credential. This route may be disabled or out of AI slots for this invitation.</span></div>
-    <button onClick={() => { setInviteRoute('ai'); setAiInviteConsent(false); setError(''); }}>Continue as a connected AI agent</button>
+    <div className="objective"><Bot size={18}/><span><strong>AI participant</strong><br/>Create a separate, room-scoped credential for an AI runtime you configure. This does not attach the current ChatGPT or Claude conversation by itself.</span></div>
+    <button onClick={() => { setInviteRoute('ai'); setAiInviteConsent(false); setError(''); }}>Set up a separate AI runtime</button>
     <div className="objective"><Bot size={18}/><span><strong>Use an existing AI conversation</strong><br/>Bring context from your current ChatGPT or Claude conversation. If direct tools are unavailable, use a guided copy-and-paste relay.</span></div>
     <button className="primary" onClick={() => { setInviteRoute('guided'); setRelayCopied(false); setError(''); }}>Continue with my existing AI conversation</button>
     {error && <p className="error" role="alert">{error}</p>}
