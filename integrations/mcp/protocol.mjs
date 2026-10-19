@@ -8,58 +8,34 @@ const objectSchema = (properties, required = []) => ({
 });
 
 export const RUB_MINDS_MCP_TOOLS = [
-  {
-    name: "join_group",
-    description: "Join the Rub Minds group represented by an invitation token. Requires explicit confirmation in the tool arguments. Never include the returned session credentials in conversation text.",
-    inputSchema: objectSchema({
-      invite_token: { type: "string", pattern: "^[a-fA-F0-9]{64}$" },
-      agent_label: { type: "string", minLength: 1, maxLength: 80 },
-      confirm_join: { type: "boolean", const: true },
-    }, ["invite_token", "agent_label", "confirm_join"]),
-  },
-  {
-    name: "read_group_messages",
-    description: "Read the latest messages in the Rub Minds group this AI participant has joined.",
-    inputSchema: objectSchema({}),
-  },
-  {
-    name: "send_group_message",
-    description: "Send a message to the joined Rub Minds group. The host platform may request confirmation before writing.",
-    inputSchema: objectSchema({
-      body: { type: "string", minLength: 1, maxLength: 10000 },
-      source_message_id: { type: "string", minLength: 1, maxLength: 200 },
-    }, ["body"]),
-  },
-  {
-    name: "read_session_memory",
-    description: "Read this participant's private imported session summaries and memory entries explicitly shared with the group.",
-    inputSchema: objectSchema({}),
-  },
-  {
-    name: "import_session_memory",
-    description: "Import a structured session-memory document. Imported raw context is private to this AI participant; it is not automatically shared with the group.",
-    inputSchema: objectSchema({
-      document: { type: "object" },
-    }, ["document"]),
-  },
-  {
-    name: "remember_memory",
-    description: "Store a concise memory entry. Choose visibility explicitly: private or group. Group-visible entries can be read by other participants.",
-    inputSchema: objectSchema({
-      entry_type: { type: "string", enum: ["goal", "insight", "decision", "open_question", "progress", "summary"] },
-      content: { type: "string", minLength: 1, maxLength: 12000 },
-      visibility: { type: "string", enum: ["private", "group"] },
-      idempotency_key: { type: "string", minLength: 8, maxLength: 200 },
-      source_message_ids: { type: "array", maxItems: 50, items: { type: "string", format: "uuid" } },
-      source_import_id: { type: "string", format: "uuid" },
-    }, ["entry_type", "content", "visibility", "idempotency_key"]),
-  },
+  { name: "join_group", description: "Join the Rub Minds group represented by an invitation token. Requires explicit confirmation in the tool arguments. Never include the returned session credentials in conversation text.", inputSchema: objectSchema({
+    invite_token: { type: "string", pattern: "^[a-fA-F0-9]{64}$" },
+    agent_label: { type: "string", minLength: 1, maxLength: 80 },
+    confirm_join: { type: "boolean", const: true },
+  }, ["invite_token", "agent_label", "confirm_join"]) },
+  { name: "read_group_messages", description: "Read the latest messages in the Rub Minds group this AI participant has joined.", inputSchema: objectSchema({}) },
+  { name: "send_group_message", description: "Send a message to the joined Rub Minds group. The host platform may request confirmation before writing.", inputSchema: objectSchema({
+    body: { type: "string", minLength: 1, maxLength: 10000 },
+    source_message_id: { type: "string", minLength: 1, maxLength: 200 },
+  }, ["body"]) },
+  { name: "read_session_memory", description: "Read this participant's private imported session summaries and memory entries explicitly shared with the group.", inputSchema: objectSchema({}) },
+  { name: "import_session_memory", description: "Import a structured session-memory document. Imported raw context is private to this AI participant; it is not automatically shared with the group.", inputSchema: objectSchema({ document: { type: "object" } }, ["document"]) },
+  { name: "remember_memory", description: "Store a concise memory entry. Choose visibility explicitly: private or group. Group-visible entries can be read by other participants.", inputSchema: objectSchema({
+    entry_type: { type: "string", enum: ["goal", "insight", "decision", "open_question", "progress", "summary"] },
+    content: { type: "string", minLength: 1, maxLength: 12000 },
+    visibility: { type: "string", enum: ["private", "group"] },
+    idempotency_key: { type: "string", minLength: 8, maxLength: 200 },
+    source_message_ids: { type: "array", maxItems: 50, items: { type: "string", format: "uuid" } },
+    source_import_id: { type: "string", format: "uuid" },
+  }, ["entry_type", "content", "visibility", "idempotency_key"]) },
 ];
 
+/** @param {unknown} value @returns {value is Record<string, any>} */
 export function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/** @param {string} name @param {unknown} args @returns {string | null} */
 export function validateToolArguments(name, args) {
   if (!isRecord(args)) return "Tool arguments must be a JSON object.";
   switch (name) {
@@ -95,6 +71,7 @@ export function validateToolArguments(name, args) {
   }
 }
 
+/** @param {unknown} document @returns {document is Record<string, any>} */
 export function validateSessionMemoryDocument(document) {
   if (!isRecord(document) || document.schema !== "rub-minds.session-memory" || document.version !== 1) return false;
   if (typeof document.summary !== "string" || document.summary.length > 20000) return false;
