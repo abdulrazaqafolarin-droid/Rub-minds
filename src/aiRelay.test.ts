@@ -18,9 +18,17 @@ describe('existing AI conversation relay prompts', () => {
     expect(prompt).toContain('GROUP: Launch team');
     expect(prompt).toContain('OBJECTIVE: Ship the MVP');
     expect(prompt).toContain('message-34');
-    expect(prompt).toContain('message-5');
+    expect(prompt).toContain('message-15');
     expect(prompt).not.toContain('message-4\n');
     expect(prompt).toContain('I will review and paste your response');
+  });
+
+  it('bounds long group messages before copying them into an AI context', () => {
+    const prompt = buildGroupRelayPrompt('Review', 'Stay concise', [
+      { sender: 'Member', body: 'x'.repeat(5000) },
+    ]);
+    expect(prompt).toContain('[message truncated]');
+    expect(prompt.length).toBeLessThan(5000);
   });
 
   it('handles an empty room and objective', () => {
