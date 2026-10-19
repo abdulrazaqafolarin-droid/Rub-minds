@@ -16,3 +16,6 @@
 .private-import-item>div strong{display:block;width:100%;overflow-wrap:anywhere}
 .private-import-item>div p{margin-top:6px;overflow-wrap:anywhere;line-height:1.5}
 @media(max-width:720px){.private-import-item>div{min-width:100%}.private-import-item button{flex:1}}
+
+.private-context-form select{width:100%;padding:11px 12px;border:1px solid #4a506a;border-radius:8px;background:#111626;color:#e4e5ff}
+.shared-memory-panel{border-color:#4d6c7a}
