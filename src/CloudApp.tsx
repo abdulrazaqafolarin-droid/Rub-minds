@@ -78,7 +78,7 @@ export default function CloudApp() {
         const [nextRoom, nextMessages, nextParticipants] = await Promise.all([
           getCloudRoom(selected), listCloudMessages(selected), listCloudParticipants(selected),
         ]);
-        const humanParticipant = nextParticipants.find(p => p.room_id === selected && p.user_id === user.id && p.kind === 'human');
+        const humanParticipant = nextParticipants.find(p => p.room_id === selected && p.user_id === user?.id && p.kind === 'human');
         let nextPrivateImports: PrivateSessionImport[] = [];
         if (humanParticipant) {
           try { nextPrivateImports = await listPrivateSessionContexts(selected, humanParticipant.id); }
