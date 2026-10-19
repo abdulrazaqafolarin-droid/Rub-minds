@@ -82,7 +82,22 @@ async function invokeAgent(credential: string, operation: "read" | "send", paylo
 }
 async function runTool(name: string, args: Record<string, unknown>, session: Record<string, unknown>) {
   if (name === "join_group") {
-    if (session.agent_credential_ciphertext) return { joined: true, room_id: session.room_id, participant_id: session.participant_id, note: "This MCP session is already joined to a group." };
+    if (typeof session.agent_credential_ciphertext === "string") {
+      const existingCredential = await decryptCredential(session.agent_credential_ciphertext, credentialEncryptionKey, session.session_digest as string);
+      const { data: activeConnection, error: activeConnectionError } = await db.from("agent_connections")
+        .select("id").eq("credential_digest", await sha256(existingCredential))
+        .is("revoked_at", null).gt("expires_at", new Date().toISOString()).maybeSingle();
+      if (activeConnectionError) throw new Error("Could not verify the existing AI participant session.");
+      if (activeConnection) return { joined: true, room_id: session.room_id, participant_id: session.participant_id, note: "This MCP session is already joined to an active group." };
+      const { error: clearError } = await db.from("rub_minds_mcp_sessions").update({
+        agent_credential_ciphertext: null, room_id: null, participant_id: null,
+      }).eq("session_digest", session.session_digest as string)
+        .eq("agent_credential_ciphertext", session.agent_credential_ciphertext);
+      if (clearError) throw new Error("Could not clear the expired or revoked AI participant binding.");
+      session.agent_credential_ciphertext = null;
+      session.room_id = null;
+      session.participant_id = null;
+    }
     const { data, error } = await db.rpc("redeem_ai_room_invite", {
       invite_token: (args.invite_token as string).toLowerCase(),
       agent_label: (args.agent_label as string).trim(),
