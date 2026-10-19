@@ -218,3 +218,60 @@ export async function deletePrivateSessionContext(roomId: string, participantId:
     .select("id").maybeSingle();
   if (error || !data) throw new Error("Could not delete that private context import.");
 }
+
+export type GroupMemoryEntry = {
+  id: string;
+  room_id: string;
+  created_by_participant_id: string;
+  entry_type: "goal" | "insight" | "decision" | "open_question" | "progress" | "summary";
+  visibility: "group";
+  content: string;
+  created_at: string;
+  updated_at: string;
+};
+
+const groupMemoryTypes = new Set(["goal", "insight", "decision", "open_question", "progress", "summary"]);
+
+/** Lists only group-visible memory; RLS keeps other participants' private entries hidden. */
+export async function listGroupMemoryEntries(roomId: string): Promise<GroupMemoryEntry[]> {
+  const { data, error } = await client().from("room_memory_entries")
+    .select("id, room_id, created_by_participant_id, entry_type, visibility, content, created_at, updated_at")
+    .eq("room_id", roomId).eq("visibility", "group")
+    .order("updated_at", { ascending: false }).limit(50);
+  if (error) throw error;
+  return (data || []) as GroupMemoryEntry[];
+}
+
+/** Share only the explicit text the human reviewed; private context is never copied automatically. */
+export async function saveGroupMemoryEntry(roomId: string, participantId: string, entryType: GroupMemoryEntry["entry_type"], content: string): Promise<GroupMemoryEntry> {
+  const cleanContent = content.trim();
+  if (!groupMemoryTypes.has(entryType)) throw new Error("Choose a supported group memory type.");
+  if (!cleanContent || cleanContent.length > 12000) throw new Error("Shared insight must be 1-12,000 characters.");
+  const supabaseClient = client();
+  const { data: authData, error: authError } = await supabaseClient.auth.getUser();
+  if (authError || !authData.user) throw new Error("Sign in before sharing group memory.");
+  const { data: participant, error: participantError } = await supabaseClient.from("participants")
+    .select("id, room_id, user_id, kind")
+    .eq("id", participantId).eq("room_id", roomId).eq("user_id", authData.user.id).eq("kind", "human").maybeSingle();
+  if (participantError || !participant) throw new Error("Only your own human participant can publish group memory.");
+  const { data, error } = await supabaseClient.from("room_memory_entries").insert({
+    room_id: roomId,
+    created_by_participant_id: participantId,
+    owner_id: authData.user.id,
+    entry_type: entryType,
+    visibility: "group",
+    content: cleanContent,
+    source_message_ids: [],
+    idempotency_key: crypto.randomUUID(),
+  }).select("id, room_id, created_by_participant_id, entry_type, visibility, content, created_at, updated_at").single();
+  if (error || !data) throw new Error("Could not share this insight. Check your group membership and memory permissions.");
+  return data as GroupMemoryEntry;
+}
+
+/** A user may delete only their own group memory entry; RLS enforces the same rule server-side. */
+export async function deleteGroupMemoryEntry(roomId: string, participantId: string, entryId: string): Promise<void> {
+  const { data, error } = await client().from("room_memory_entries").delete()
+    .eq("id", entryId).eq("room_id", roomId).eq("created_by_participant_id", participantId)
+    .select("id").maybeSingle();
+  if (error || !data) throw new Error("Could not delete that group memory entry.");
+}
