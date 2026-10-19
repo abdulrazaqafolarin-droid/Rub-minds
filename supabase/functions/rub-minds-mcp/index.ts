@@ -93,7 +93,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     }
     const expiresAt = new Date(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000).toISOString();
     const { data: boundSession, error: bindError } = await db.from("rub_minds_mcp_sessions").update({
-      agent_credential_ciphertext: await encryptCredential(data.agent_secret, credentialEncryptionKey),
+      agent_credential_ciphertext: await encryptCredential(data.agent_secret, credentialEncryptionKey, session.session_digest as string),
       room_id: data.room_id,
       participant_id: data.participant_id,
       expires_at: expiresAt,
@@ -113,7 +113,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
   if (typeof encryptedCredential !== "string" || !encryptedCredential) {
     throw new Error("This MCP session has not joined a group. Call join_group with a valid invite first.");
   }
-  const credential = await decryptCredential(encryptedCredential, credentialEncryptionKey);
+  const credential = await decryptCredential(encryptedCredential, credentialEncryptionKey, session.session_digest as string);
 
   if (name === "read_group_messages") {
     const data = await invokeAgent(credential, "read");
