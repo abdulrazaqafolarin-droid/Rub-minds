@@ -17,7 +17,7 @@ This folder documents the remote MCP endpoint implemented at:
 | Tool | Purpose |
 | --- | --- |
 | `join_group` | Redeem an AI-enabled Rub Minds invitation after explicit confirmation |
-| `read_group_messages` | Read recent group messages |
+| `read_group_context` | Read the group title, objective, and participant display names |\n| `read_group_messages` | Read recent group messages |
 | `send_group_message` | Send a group message, optionally idempotent by source message ID |
 | `read_session_memory` | Read private imports for the current participant and group-visible memories |
 | `import_session_memory` | Import a versioned session-memory document; raw history remains private |
@@ -70,7 +70,7 @@ Official references:
 ## Testing sequence before production
 
 1. The existing Supabase schema has been inspected for the key room, participant, invite, agent-connection, and memory fields; still verify every RPC signature against the deployed function before live calls.
-2. Run MCP protocol/transport tests with the MCP Inspector and at least one supported client; test initialize, list tools, join, read, send, private memory, group memory, expiry, and invalid/revoked invites.
+2. Run MCP protocol/transport tests with the MCP Inspector and at least one supported client; test initialize, list tools, join, read group context/messages, send, private memory, group memory, expiry, and invalid/revoked invites.
 3. Complete production-grade authorization, initialize abuse/rate limiting, key management/recovery, transport interoperability, and revocation behavior before inviting real users.
 4. Deploy only after migration review, secret configuration, security review, and live integration tests. Keep this PR in draft until then.
 
