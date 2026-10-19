@@ -103,10 +103,12 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       agent_label: (args.agent_label as string).trim(),
     });
     if (error || !isRecord(data) || typeof data.agent_secret !== "string" ||
-        typeof data.room_id !== "string" || typeof data.participant_id !== "string") {
+        typeof data.room_id !== "string" || typeof data.participant_id !== "string" || typeof data.expires_at !== "string") {
       throw new Error("Invitation is invalid, expired, revoked, or no longer permits another AI participant.");
     }
-    const expiresAt = new Date(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000).toISOString();
+    const credentialExpiry = Date.parse(data.expires_at);
+    if (!Number.isFinite(credentialExpiry) || credentialExpiry <= Date.now()) throw new Error("The AI invitation credential has already expired.");
+    const expiresAt = new Date(Math.min(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000, credentialExpiry)).toISOString();
     let encryptedCredential: string;
     try {
       encryptedCredential = await encryptCredential(data.agent_secret, credentialEncryptionKey, session.session_digest as string);
