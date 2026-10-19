@@ -255,6 +255,7 @@ Deno.serve(async (request: Request) => {
 
   if (method === "initialize") {
     if (!hasId) return reply(400, rpcError(null, -32600, "initialize must be a request."));
+    if (typeof params.protocolVersion !== "string") return reply(400, rpcError(id, -32602, "initialize requires params.protocolVersion."));
     const sessionId = newSessionId();
     const sessionDigest = await sha256(sessionId);
     const expiresAt = new Date(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000).toISOString();
@@ -269,13 +270,13 @@ Deno.serve(async (request: Request) => {
     }), sessionId);
   }
 
-  if (method === "notifications/initialized" || method === "notifications/cancelled") {
-    return hasId ? reply(200, rpcError(id, -32600, "Notifications must not include an id.")) : new Response(null, { status: 202, headers: { "Cache-Control": "no-store" } });
-  }
-
   const sessionId = request.headers.get("Mcp-Session-Id") || "";
   const session = await findSession(sessionId);
   if (!session) return httpError(404, "MCP session missing, expired, or invalid. Reconnect the Rub Minds MCP server.");
+
+  if (method === "notifications/initialized" || method === "notifications/cancelled") {
+    return hasId ? reply(200, rpcError(id, -32600, "Notifications must not include an id.")) : new Response(null, { status: 202, headers: { "Cache-Control": "no-store" } });
+  }
   if (!hasId) return new Response(null, { status: 202, headers: { "Cache-Control": "no-store" } });
 
   if (method === "ping") return reply(200, rpcResult(id, {}), sessionId);
