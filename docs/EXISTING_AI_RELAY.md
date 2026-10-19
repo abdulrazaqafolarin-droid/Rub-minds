@@ -19,7 +19,7 @@ The imported packet is saved under the signed-in human participant in `room_sess
 - The UI asks for confirmation before copying group content. Review the clipboard text before pasting it into an AI conversation.
 - Review the AI's response, then paste the contribution into the Rub Minds group yourself. The AI has not posted anything directly unless a real connector/tool call confirms it.
 - **Shared memory** lets a human explicitly publish a selected insight, decision, goal, progress note, question, or summary. Group-visible entries are readable by group participants and connected AI agents. Do not put secrets or private session history in this panel.
-- Shared memory updates are published through Supabase Realtime. Private session imports are intentionally not included in that publication.
+- The migration in this PR adds group-memory updates to Supabase Realtime; apply it before expecting live updates. Private session imports are intentionally not included in that publication.
 
 ## Important limitations
 
