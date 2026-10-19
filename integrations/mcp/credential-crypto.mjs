@@ -26,18 +26,18 @@ async function importKey(keyHex, usages) {
 }
 
 /** Encrypt a participant credential before it is stored in the database. */
-export async function encryptCredential(credential, keyHex) {
+export async function encryptCredential(credential, keyHex, context = "") {
   if (typeof credential !== "string" || !/^[a-f0-9]{64}$/i.test(credential)) {
     throw new Error("Invalid participant credential.");
   }
   const key = await importKey(keyHex, ["encrypt"]);
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoder.encode(credential));
+  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: encoder.encode(context) }, key, encoder.encode(credential));
   return "v1." + toHex(iv) + "." + toHex(new Uint8Array(ciphertext));
 }
 
 /** Decrypt a stored credential; authentication failure throws instead of returning corrupt data. */
-export async function decryptCredential(envelope, keyHex) {
+export async function decryptCredential(envelope, keyHex, context = "") {
   if (typeof envelope !== "string") throw new Error("Invalid encrypted credential.");
   const parts = envelope.split(".");
   if (parts.length !== 3 || parts[0] !== "v1") throw new Error("Unsupported encrypted credential version.");
@@ -45,7 +45,7 @@ export async function decryptCredential(envelope, keyHex) {
   if (iv.length !== 12) throw new Error("Invalid encrypted credential nonce.");
   const ciphertext = fromHex(parts[2]);
   const key = await importKey(keyHex, ["decrypt"]);
-  const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ciphertext);
+  const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv, additionalData: encoder.encode(context) }, key, ciphertext);
   const credential = decoder.decode(plaintext);
   if (!/^[a-f0-9]{64}$/i.test(credential)) throw new Error("Decrypted participant credential is invalid.");
   return credential;
