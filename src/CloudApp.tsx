@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { ArrowLeft, Bot, Link2, LogOut, Plus, Send, Sparkles, Users } from 'lucide-react';
+import { ArrowLeft, Bot, Copy, Link2, LogOut, Plus, Send, Sparkles, Users } from 'lucide-react';
+import { buildExistingAiJoinPrompt, buildGroupRelayPrompt } from './aiRelay';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import { isValidInviteToken, readInviteToken } from './inviteLinks';
@@ -31,7 +32,8 @@ export default function CloudApp() {
   const [inviteToken, setInviteToken] = useState(() => readInviteToken(location.search, location.pathname));
   const inviteTokenValid = isValidInviteToken(inviteToken);
   const [joining, setJoining] = useState(false);
-  const [inviteRoute, setInviteRoute] = useState<'choose' | 'human' | 'ai'>('choose');
+  const [inviteRoute, setInviteRoute] = useState<'choose' | 'human' | 'ai' | 'guided'>('choose');
+  const [relayCopied, setRelayCopied] = useState(false);
   const [aiInviteName, setAiInviteName] = useState('');
   const [aiInviteConsent, setAiInviteConsent] = useState(false);
   const [autoJoinAttempted, setAutoJoinAttempted] = useState('');
@@ -137,6 +139,33 @@ export default function CloudApp() {
     } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
     finally { setBusy(false); }
   }
+  async function copyExistingAiGuide() {
+    if (!inviteToken || !inviteTokenValid) return;
+    const invitation = new URL('/', window.location.origin);
+    invitation.searchParams.set('invite', inviteToken);
+    const prompt = buildExistingAiJoinPrompt(invitation.toString());
+    try {
+      await navigator.clipboard.writeText(prompt);
+      setRelayCopied(true);
+    } catch {
+      window.prompt('Copy these instructions into your existing ChatGPT or Claude conversation:', prompt);
+    }
+  }
+  async function copyGroupRelayContext() {
+    if (!room) return;
+    const prompt = buildGroupRelayPrompt(room.title, room.objective, messages.map(message => ({
+      sender: participants.find(p => p.id === message.sender_id)?.display_name || 'Participant',
+      body: message.body,
+      createdAt: message.created_at,
+    })));
+    try {
+      await navigator.clipboard.writeText(prompt);
+      setRelayCopied(true);
+      window.setTimeout(() => setRelayCopied(false), 2500);
+    } catch {
+      window.prompt('Copy the latest group context into your existing AI conversation:', prompt);
+    }
+  }
   async function joinAsAI() {
     if (!inviteToken || !inviteTokenValid || !aiInviteConsent || !aiInviteName.trim()) return;
     setJoining(true); setError('');
@@ -211,7 +240,20 @@ export default function CloudApp() {
     <div className="objective"><Users size={18}/><span><strong>Human participant</strong><br/>Use your own Rub Minds account. New visitors can sign up; signed-in members can join directly.</span></div>
     <button className="primary" onClick={() => { setInviteRoute('human'); if (!user) setAuthMode('signin'); }}>Continue as a human</button>
     <div className="objective"><Bot size={18}/><span><strong>AI participant</strong><br/>Use a separate, room-scoped credential. This route may be disabled or out of AI slots for this invitation.</span></div>
-    <button onClick={() => { setInviteRoute('ai'); setAiInviteConsent(false); setError(''); }}>Continue as an AI agent</button>
+    <button onClick={() => { setInviteRoute('ai'); setAiInviteConsent(false); setError(''); }}>Continue as a connected AI agent</button>
+    <div className="objective"><Bot size={18}/><span><strong>Use an existing AI conversation</strong><br/>Bring context from your current ChatGPT or Claude conversation. If direct tools are unavailable, use a guided copy-and-paste relay.</span></div>
+    <button className="primary" onClick={() => { setInviteRoute('guided'); setRelayCopied(false); setError(''); }}>Continue with my existing AI conversation</button>
+    {error && <p className="error" role="alert">{error}</p>}
+  </div></main>;
+  if (inviteToken && inviteTokenValid && inviteRoute === 'guided' && !agentSecret) return <main className="auth-page"><div className="auth-panel">
+    <div className="brand-icon"><Copy/></div>
+    <h1>Bring your existing AI into this group</h1>
+    <p>This creates a handoff from your current conversation without replacing it. Copy the instructions below into the same ChatGPT or Claude conversation you already use.</p>
+    <div className="objective"><Sparkles size={18}/><span><strong>What this does</strong><br/>It asks your AI to prepare a privacy-aware context packet and continue helping you. If that account cannot use a Rub Minds connector, you can relay group messages manually. This is not automatic two-way sync.</span></div>
+    <button className="primary" onClick={() => { void copyExistingAiGuide(); }}>{relayCopied ? 'Instructions copied' : 'Copy AI joining instructions'}</button>
+    <p className="disclaimer">Share this invitation only with the intended participant. Review the context packet before posting it to the group. Never paste credentials or unrelated private conversation content.</p>
+    <button onClick={() => { setInviteRoute('human'); if (!user) setAuthMode('signin'); }}>Continue to Rub Minds to join the group</button>
+    <button onClick={() => { setInviteRoute('choose'); setRelayCopied(false); }}>Back to route selection</button>
     {error && <p className="error" role="alert">{error}</p>}
   </div></main>;
   if (inviteToken && inviteTokenValid && inviteRoute === 'ai' && !agentSecret) return <main className="auth-page"><div className="auth-panel">
@@ -267,7 +309,7 @@ export default function CloudApp() {
       {inviteLink && <div className="invite-share" role="status"><strong>Invitation created</strong><p>Valid for 24 hours and up to 10 human joins. {inviteAIEnabled ? 'AI route enabled: up to 3 AI participants.' : 'AI route disabled for this invitation.'}</p><input aria-label="Shareable invitation URL" readOnly value={inviteLink} onFocus={e => e.target.select()}/><button onClick={() => { void navigator.clipboard.writeText(inviteLink).catch(() => setError('Select and copy the invitation URL manually.')); }}>Copy invitation</button><button disabled={busy} onClick={() => { void revokeInviteLink(); }}>Revoke invitation</button><button onClick={() => setInviteLink('')}>Close</button></div>}
       {inviteToken ? <section className="empty"><Link2 size={40}/><h1>{inviteTokenValid ? 'Join a Rub Minds group' : 'Invitation link looks incomplete'}</h1><p>{inviteTokenValid ? 'You have received a group invitation. Join to participate in the conversation with your signed-in account.' : `This link contains ${inviteToken.length} characters, but a valid invitation needs 64. Ask the group owner to create and send a new link.`}</p><button className="primary" onClick={() => { void joinInvite(); }} disabled={joining || !inviteTokenValid}>{joining ? 'Joining…' : 'Accept invitation'}</button><p className="disclaimer">Invitations expire after 24 hours or 10 successful joins.</p></section>
       : selected && room ? <>
-        <header className="room-header"><button className="back" onClick={() => navigate('')}><ArrowLeft size={18}/></button><div className="room-heading"><h2>{room.title}</h2><span><span className="status-dot"/> {participants.length} participants · {messages.length} messages</span></div>{room.owner_id === user.id && <><button className="invite" disabled={busy} onClick={() => { void makeInvite(); }}><Link2 size={17}/> Invite members</button><button className="invite" disabled={busy} onClick={() => { void addAgent(); }}><Bot size={17}/> Connect AI</button><button className="invite" onClick={() => { void manageAgents(); }}>Manage agents</button></>}</header>
+        <header className="room-header"><button className="back" onClick={() => navigate('')}><ArrowLeft size={18}/></button><div className="room-heading"><h2>{room.title}</h2><span><span className="status-dot"/> {participants.length} participants · {messages.length} messages</span></div>{<button className="invite" onClick={() => { void copyGroupRelayContext(); }}><Copy size={17}/> {relayCopied ? 'Copied for AI' : 'Copy group context for AI'}</button>}{room.owner_id === user.id && <><button className="invite" disabled={busy} onClick={() => { void makeInvite(); }}><Link2 size={17}/> Invite members</button><button className="invite" disabled={busy} onClick={() => { void addAgent(); }}><Bot size={17}/> Connect AI</button><button className="invite" onClick={() => { void manageAgents(); }}>Manage agents</button></>}</header>
         <div className="objective"><Sparkles size={17}/><div><strong>Group objective</strong><p>{room.objective || 'Collaborate together.'}</p></div></div>
         <div className="messages" aria-live="polite">{messages.map(m => { const p = participants.find(p => p.id === m.sender_id); return <div className="message" key={m.id}><div className="avatar">{p?.kind === 'human' ? (p.display_name[0] || 'H') : <Bot size={18}/>}</div><div><div className="message-meta"><strong>{p?.display_name || 'Participant'}</strong><time>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div><p>{m.body}</p></div></div>; })}</div>
         <div className="composer-area"><form className="composer" onSubmit={send}><input aria-label="Message" placeholder="Message your group…" value={draft} onChange={e => setDraft(e.target.value)} maxLength={10000}/><button disabled={busy || !draft.trim()} aria-label="Send"><Send size={18}/></button></form><p className="disclaimer">Live room · Invitations support account-bound human access and, when enabled by the owner, capped AI credentials. An active agent runtime is required for AI replies.</p></div>
