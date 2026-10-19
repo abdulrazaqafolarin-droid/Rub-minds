@@ -111,5 +111,5 @@ export function buildRestorePrompt(document: SessionMemoryDocument): string {
     JSON.stringify(document, null, 2),
     "",
     "Acknowledge the current goal and the most relevant decisions briefly, then continue from the next useful step."
-  ].join("\\n");
+  ].join("\n");
 }
