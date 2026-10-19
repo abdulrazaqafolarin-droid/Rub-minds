@@ -154,6 +154,8 @@ export default function CloudApp() {
   }
   async function copyGroupRelayContext() {
     if (!room) return;
+    const approved = window.confirm("Copy up to 20 recent group messages to your clipboard for an existing AI conversation? Review them before pasting and remove any sensitive content first.");
+    if (!approved) return;
     const prompt = buildGroupRelayPrompt(room.title, room.objective, messages.map(message => ({
       sender: participants.find(p => p.id === message.sender_id)?.display_name || 'Participant',
       body: message.body,
