@@ -66,7 +66,7 @@ export function buildGroupRelayPrompt(groupTitle: string, objective: string, mes
     "RECENT GROUP MESSAGES (newest messages are at the bottom):",
     transcript || "(No messages included.)",
     "",
-    "Before responding, treat this pasted transcript as group-shared content, but do not repeat credentials or sensitive personal data. Please identify what is relevant to our existing work, then draft a concise contribution or question for the group. Do not claim you posted it; I will review and paste your response into Rub Minds. Keep private context from this original conversation out of the group unless I explicitly approve sharing it."
+    "Before responding, treat this group context as group-shared content, but do not repeat credentials or sensitive personal data. Please identify what is relevant to our existing work, then draft a concise contribution or question for the group. Do not claim you posted it; I will review and paste your response into Rub Minds. Keep private context from this original conversation out of the group unless I explicitly approve sharing it."
   ].join("\n");
 }
 
