@@ -14,7 +14,7 @@ import {
 test("advertises invitation, messaging, and memory tools", () => {
   assert.equal(MCP_PROTOCOL_VERSION, "2025-06-18");
   assert.deepEqual(RUB_MINDS_MCP_TOOLS.map((tool) => tool.name), [
-    "join_group", "read_group_messages", "send_group_message",
+    "join_group", "read_group_context", "read_group_messages", "send_group_message",
     "read_session_memory", "import_session_memory", "remember_memory",
   ]);
 });
@@ -39,6 +39,8 @@ test("join requires a valid invitation and explicit confirmation", () => {
 });
 
 test("message tool rejects empty, oversized, and unknown arguments", () => {
+  assert.equal(validateToolArguments("read_group_context", {}), null);
+  assert.equal(validateToolArguments("read_group_context", { room_id: "injected" }), /arguments/.test(validateToolArguments("read_group_context", { room_id: "injected" })) ? validateToolArguments("read_group_context", { room_id: "injected" }) : "expected error");
   assert.equal(validateToolArguments("send_group_message", { body: "hello" }), null);
   assert.match(validateToolArguments("send_group_message", { body: " " }), /body/);
   assert.match(validateToolArguments("send_group_message", { body: "x".repeat(10001) }), /body/);
