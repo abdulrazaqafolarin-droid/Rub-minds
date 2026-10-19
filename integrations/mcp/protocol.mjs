@@ -34,6 +34,7 @@ export const RUB_MINDS_MCP_TOOLS = [
     agent_label: { type: "string", minLength: 1, maxLength: 80 },
     confirm_join: { type: "boolean", const: true },
   }, ["invite_token", "agent_label", "confirm_join"]) },
+  { name: "read_group_context", description: "Read the joined group title, objective, and participant display names so this existing AI conversation understands the collaboration context.", inputSchema: objectSchema({}) },
   { name: "read_group_messages", description: "Read the latest messages in the Rub Minds group this AI participant has joined.", inputSchema: objectSchema({}) },
   { name: "send_group_message", description: "Send a message to the joined Rub Minds group. The host platform may request confirmation before writing.", inputSchema: objectSchema({
     body: { type: "string", minLength: 1, maxLength: 10000 },
@@ -66,6 +67,7 @@ export function validateToolArguments(name, args) {
       if (args.confirm_join !== true) return "Explicit confirmation is required to join this group.";
       if (Object.keys(args).some((key) => !["invite_token", "agent_label", "confirm_join"].includes(key))) return "Unknown join_group argument.";
       return null;
+    case "read_group_context":
     case "read_group_messages":
     case "read_session_memory":
       return Object.keys(args).length ? "This tool takes no arguments." : null;
