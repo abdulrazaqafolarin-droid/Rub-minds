@@ -7,10 +7,10 @@ This folder documents the remote MCP endpoint implemented at:
 ## Status
 
 - Implementation is in draft PR #10 and is **not deployed to production** by this change.
-- The endpoint implements MCP Streamable HTTP request/response for `initialize`, `notifications/initialized`, `ping`, `tools/list`, and `tools/call`.
+- The endpoint implements an initial MCP Streamable HTTP request/response flow for `initialize`, `notifications/initialized`, `ping`, `tools/list`, and `tools/call`. It checks the negotiated `MCP-Protocol-Version` on subsequent requests, requires the client `Accept` header to include both `application/json` and `text/event-stream`, and rejects unrecognized supplied `Origin` headers.
 - No OAuth authorization server is implemented in this first version. MCP initialization is open, but an AI participant cannot read or write group data until a valid AI invitation token is redeemed.
 - The server is not an official/verified connector from OpenAI or Anthropic. Each platform must be configured and tested separately.
-- CI for commit `9d5ad58c2904c9d2518ca82491c7a9a446eab262` passed. This is code-level CI only; no live Claude/ChatGPT connector test or production deployment has been completed.
+- CI for commit `9d5ad58c2904c9d2518ca82491c7a9a446eab262` passed before the latest hardening commits. The protocol/origin checks and AES-GCM credential encryption added after that revision still require a fresh successful CI run. No live Claude/ChatGPT connector test or production deployment has been completed.
 
 ## Tools
 
@@ -45,6 +45,7 @@ The link can:
 - Raw imported context is participant-private. Sharing a memory entry requires `visibility: "group"` explicitly. The memory document validator rejects any declaration that raw history is group-visible.
 - Message and memory writes should be reviewed in the AI platform's tool approval UI. A `confirm_join: true` argument is an additional intent check, not a substitute for the platform's own approval UI.
 - The endpoint currently relies on invitation possession plus a high-entropy, expiring MCP session capability; it does **not** yet provide OAuth scopes, per-user account login, or account-level connector revocation. This should be treated as an early testing integration, not a production security certification.
+- Participant credentials are encrypted at rest with AES-256-GCM. Before deployment, configure `RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY` as a dedicated 32-byte random key encoded as 64 hexadecimal characters (for example, generate with `openssl rand -hex 32`). Store it as a Supabase Edge Function secret, never in the repository or frontend. Rotating this key invalidates existing encrypted MCP sessions; users must reconnect.
 - Deploy the Edge Function with JWT verification disabled only because the handler implements its own invite/session checks; do not disable JWT verification for other functions. Supabase API gateway deployments may require the project's **public anon/publishable key** in the `apikey` header. Never use a service-role key as a connector header.
 - Expired sessions are cleaned opportunistically on initialization; a scheduled cleanup may be added later if volume requires it.
 
@@ -68,10 +69,10 @@ Official references:
 
 ## Testing sequence before production
 
-1. Verify the existing database RPC names, argument names, return fields, and memory table columns against the actual deployed schema.
+1. The existing Supabase schema has been inspected for the key room, participant, invite, agent-connection, and memory fields; still verify every RPC signature against the deployed function before live calls.
 2. Run MCP protocol/transport tests with the MCP Inspector and at least one supported client; test initialize, list tools, join, read, send, private memory, group memory, expiry, and invalid/revoked invites.
-3. Add production-grade authentication/authorization, rate limits, origin/transport handling, and revocation before inviting real users to connect a remote server.
-4. Deploy only after migration review, security review, and live integration tests. Keep this PR in draft until then.
+3. Complete production-grade authorization, initialize abuse/rate limiting, key management/recovery, transport interoperability, and revocation behavior before inviting real users.
+4. Deploy only after migration review, secret configuration, security review, and live integration tests. Keep this PR in draft until then.
 
 ## Important product boundary
 
