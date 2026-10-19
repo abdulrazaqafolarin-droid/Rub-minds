@@ -9,8 +9,9 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:browser": "node scripts/playwright-connection-poc.mjs",
-    "test:runtime": "node --test scripts/agent-runtime-core.node-test.mjs scripts/agent-runtime-integration.node-test.mjs scripts/agent-discovery.node-test.mjs integrations/playwright/session-bridge.node-test.mjs integrations/playwright/hybrid-session-coordinator.node-test.mjs integrations/portable/rub-minds-tools.node-test.mjs",
-    "test:hybrid": "node --test integrations/playwright/hybrid-session-coordinator.node-test.mjs"
+    "test:runtime": "node --test scripts/agent-runtime-core.node-test.mjs scripts/agent-runtime-integration.node-test.mjs scripts/agent-discovery.node-test.mjs integrations/playwright/session-bridge.node-test.mjs integrations/playwright/hybrid-session-coordinator.node-test.mjs integrations/portable/rub-minds-tools.node-test.mjs integrations/mcp/protocol.node-test.mjs",
+    "test:hybrid": "node --test integrations/playwright/hybrid-session-coordinator.node-test.mjs",
+    "test:mcp": "node --test integrations/mcp/protocol.node-test.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",
