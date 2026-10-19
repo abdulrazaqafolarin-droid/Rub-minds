@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { ArrowLeft, Bot, Copy, Link2, LogOut, Plus, Send, Sparkles, Users } from 'lucide-react';
-import { buildExistingAiJoinPrompt, buildGroupRelayPrompt, parseSessionMemoryDocument } from './aiRelay';
+import { buildExistingAiJoinPrompt, buildGroupRelayPrompt, buildRestorePrompt, parseSessionMemoryDocument } from './aiRelay';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import { isValidInviteToken, readInviteToken } from './inviteLinks';
@@ -203,7 +203,7 @@ export default function CloudApp() {
   }
   async function copyPrivateContextToAI(item: PrivateSessionImport) {
     if (!window.confirm("Copy this private AI context packet to your clipboard? It may contain private project context. Only paste it into the intended AI conversation.")) return;
-    const text = JSON.stringify(item.imported_context, null, 2);
+    const text = buildRestorePrompt(item.imported_context);
     try {
       await navigator.clipboard.writeText(text);
       setSessionContextNotice("Private context packet copied. Paste it only into the intended AI conversation.");
