@@ -6,10 +6,11 @@ This folder documents the remote MCP endpoint implemented at:
 
 ## Status
 
-- Implementation is in a draft pull request and is **not deployed to production** by this change.
+- Implementation is in draft PR #10 and is **not deployed to production** by this change.
 - The endpoint implements MCP Streamable HTTP request/response for `initialize`, `notifications/initialized`, `ping`, `tools/list`, and `tools/call`.
 - No OAuth authorization server is implemented in this first version. MCP initialization is open, but an AI participant cannot read or write group data until a valid AI invitation token is redeemed.
 - The server is not an official/verified connector from OpenAI or Anthropic. Each platform must be configured and tested separately.
+- CI for commit `9d5ad58c2904c9d2518ca82491c7a9a446eab262` passed. This is code-level CI only; no live Claude/ChatGPT connector test or production deployment has been completed.
 
 ## Tools
 
@@ -21,6 +22,19 @@ This folder documents the remote MCP endpoint implemented at:
 | `read_session_memory` | Read private imports for the current participant and group-visible memories |
 | `import_session_memory` | Import a versioned session-memory document; raw history remains private |
 | `remember_memory` | Store a typed memory with explicit private/group visibility |
+
+## Invitation-link-first onboarding
+
+**Product direction:** a single Rub Minds invitation link should be the user-facing front door. Users should not need to understand MCP endpoints, session IDs, or API headers.
+
+The link can:
+1. Open the target Rub Minds group and preserve the invitation while a human signs in.
+2. Offer an AI join path and give the AI a clear group-specific joining instruction.
+3. Start a platform-appropriate flow: a native connector when the user's AI platform supports it, or a guided manual handoff when it does not.
+4. Let the user explicitly choose what context to import from their existing conversation. The import should be a compact summary/context document, not a claim that Rub Minds can silently read the platform's complete history.
+5. Keep raw session context private by default; sharing selected memories with the group must be a separate, explicit action.
+
+**Important technical boundary:** a URL pasted into a ChatGPT or Claude conversation does not install a connector, grant new tool permissions, execute JavaScript, or create background synchronization. The link can carry invite intent and guide setup, but a platform-supported connector/tool host is required for direct group reads/writes. For Free plans without custom remote MCP support, the practical fallback is a user-approved copy/paste relay: the existing AI prepares a selected context summary or group response, and the user transfers it through Rub Minds. This is a manual bridge, not live two-way sync. Do not label the fallback as an automatic AI connection.
 
 ## Security model and limits
 
@@ -42,15 +56,22 @@ Apply `supabase/migrations/20261019120000_hosted_mcp_sessions.sql` before deploy
 
 ### Claude
 
-Anthropic documents custom remote MCP connectors for Claude and Claude Desktop. Add the public HTTPS MCP URL in **Settings / Customize → Connectors → Add → Custom → Web** and configure any required request headers. Free users are limited to one custom connector according to current Anthropic help documentation. Actual Rub Minds connection and tool calls still need to be tested in a Claude account.
+Anthropic's documented custom remote MCP connectors are available on supported paid Claude plans (Pro, Max, Team, and Enterprise), not Claude Free according to the current help documentation. Therefore, for the user's current Claude Free plan, **do not assume that custom Rub Minds MCP can be connected directly**. A link-based guided/manual relay is the fallback until plan access changes or another supported host is provided. Even on an eligible plan, Rub Minds still needs a live connector test before compatibility can be claimed.
 
 ### ChatGPT
 
-OpenAI documents custom remote MCP server connections, but access and write-action support depend on the ChatGPT plan and workspace permissions. Full write/modify MCP support is documented for Business and Enterprise/Edu; Pro access is more limited to read/fetch, and Free eligibility is not confirmed. Configure the public HTTPS endpoint in the supported Plugins / Apps MCP interface, then scan tools and test a join/read/write flow. The endpoint must not be described as usable on ChatGPT Free for group writes without a successful live test.
+OpenAI documents custom remote MCP connections for eligible plans and workspaces. Full write/modify MCP support is documented for Business and Enterprise/Edu; Pro access is more limited to read/fetch. ChatGPT Free is not listed as supporting the custom write-capable MCP workflow needed for Rub Minds group participation. Therefore, for the user's current ChatGPT Free plan, **do not promise direct MCP group reads/writes**. Use the guided/manual relay unless an available supported feature is verified in their account.
 
 Official references:
 - OpenAI: https://help.openai.com/en/articles/12584461-connecting-custom-mcp-servers-in-chatgpt
 - Anthropic: https://support.anthropic.com/en/articles/11503834-building-custom-integrations-via-remote-mcp-servers
+
+## Testing sequence before production
+
+1. Verify the existing database RPC names, argument names, return fields, and memory table columns against the actual deployed schema.
+2. Run MCP protocol/transport tests with the MCP Inspector and at least one supported client; test initialize, list tools, join, read, send, private memory, group memory, expiry, and invalid/revoked invites.
+3. Add production-grade authentication/authorization, rate limits, origin/transport handling, and revocation before inviting real users to connect a remote server.
+4. Deploy only after migration review, security review, and live integration tests. Keep this PR in draft until then.
 
 ## Important product boundary
 
