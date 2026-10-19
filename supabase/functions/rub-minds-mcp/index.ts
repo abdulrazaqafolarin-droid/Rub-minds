@@ -98,7 +98,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       participant_id: data.participant_id,
       expires_at: expiresAt,
       last_seen_at: new Date().toISOString(),
-    }).eq("session_digest", session.session_digest as string).is("agent_credential", null)
+    }).eq("session_digest", session.session_digest as string).is("agent_credential_ciphertext", null)
       .select("session_digest").maybeSingle();
     if (bindError || !boundSession) {
       await db.from("agent_connections").update({ revoked_at: new Date().toISOString() })
