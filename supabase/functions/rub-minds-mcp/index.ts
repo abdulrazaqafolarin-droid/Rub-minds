@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { decryptCredential, encryptCredential } from "../../../integrations/mcp/credential-crypto.mjs";
+import { deriveModernSessionHandle } from "../../../integrations/mcp/session-handle.mjs";
 import {
   MCP_PROTOCOL_VERSION,
   MCP_MODERN_PROTOCOL_VERSION,
@@ -46,12 +47,6 @@ async function sha256(value: string) {
 function newSessionId() {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) return "[" + value.map(stableStringify).join(",") + "]";
-  if (isRecord(value)) return "{" + Object.keys(value).sort().map((key) => JSON.stringify(key) + ":" + stableStringify(value[key])).join(",") + "}";
-  const encoded = JSON.stringify(value);
-  return encoded === undefined ? "null" : encoded;
 }
 function toolResult(value: unknown, isError = false) {
   return { content: [{ type: "text", text: JSON.stringify(value) }], structuredContent: value, ...(isError ? { isError: true } : {}) };
@@ -299,27 +294,6 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
   throw new Error("Unknown tool.");
 }
 
-async function deriveModernSessionHandle(inviteToken: string, agentLabel: string, joinRequestKey: string) {
-  // Derive a deterministic, server-minted handle so retries of the same join
-  // request cannot consume a second AI invitation slot. HKDF separates this
-  // HMAC key from the AES-GCM credential-encryption key.
-  const keyBytes = new Uint8Array(32);
-  for (let i = 0; i < keyBytes.length; i++) keyBytes[i] = Number.parseInt(credentialEncryptionKey!.slice(i * 2, i * 2 + 2), 16);
-  const material = await crypto.subtle.importKey("raw", keyBytes, "HKDF", false, ["deriveKey"]);
-  const hmacKey = await crypto.subtle.deriveKey({
-    name: "HKDF", hash: "SHA-256",
-    salt: new TextEncoder().encode("rub-minds-mcp-handle-salt-v1"),
-    info: new TextEncoder().encode("rub-minds-mcp-handle-v1"),
-  }, material, { name: "HMAC", hash: "SHA-256", length: 256 }, false, ["sign"]);
-  const message = stableStringify({
-    invite_token: inviteToken.toLowerCase(),
-    agent_label: agentLabel.trim(),
-    join_request_key: joinRequestKey.toLowerCase(),
-  });
-  const signature = await crypto.subtle.sign("HMAC", hmacKey, new TextEncoder().encode(message));
-  return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
 function modernRpcError(status: number, id: string | number | null, code: number, message: string, data?: unknown) {
   return reply(status, { jsonrpc: "2.0", id, error: { code, message, ...(data === undefined ? {} : { data }) } });
 }
@@ -366,7 +340,7 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
     if (typeof joinKey !== "string" || !/^[a-f0-9]{64}$/i.test(joinKey) || typeof rawArgs.invite_token !== "string" || !/^[a-f0-9]{64}$/i.test(rawArgs.invite_token) || typeof rawArgs.agent_label !== "string") {
       return modernRpcError(400, id, -32602, "join_group requires a valid invitation token, agent_label, and 64-character hexadecimal join_request_key.");
     }
-    sessionHandle = await deriveModernSessionHandle(rawArgs.invite_token, rawArgs.agent_label, joinKey);
+    sessionHandle = await deriveModernSessionHandle(credentialEncryptionKey, rawArgs.invite_token, rawArgs.agent_label, joinKey);
     delete rawArgs.join_request_key;
     session = await findSession(sessionHandle);
     if (!session) {
