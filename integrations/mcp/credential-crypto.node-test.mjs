@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { decryptCredential, encryptCredential } from "./credential-crypto.mjs";
+import { deriveModernSessionHandle } from "./session-handle.mjs";
 
 const key = "a".repeat(64);
 const credential = "b".repeat(64);
@@ -12,6 +13,20 @@ test("AES-GCM credential encryption round-trips and uses a fresh nonce", async (
   assert.match(first, /^v1\.[a-f0-9]{24}\.[a-f0-9]+$/);
   assert.notEqual(first, second);
   assert.equal(await decryptCredential(first, key, context), credential);
+});
+
+test("stateless session handles are opaque, deterministic for retries, and input-bound", async () => {
+  const secret = "a".repeat(64);
+  const invite = "b".repeat(64);
+  const key = "c".repeat(64);
+  const handle = await deriveModernSessionHandle(secret, invite, "Research Agent", key);
+  assert.match(handle, /^[a-f0-9]{64}$/);
+  assert.equal(await deriveModernSessionHandle(secret, invite, "Research Agent", key), handle);
+  assert.equal(await deriveModernSessionHandle(secret, invite.toUpperCase(), " Research Agent ", key.toUpperCase()), handle);
+  assert.notEqual(await deriveModernSessionHandle(secret, invite, "Different Agent", key), handle);
+  assert.notEqual(await deriveModernSessionHandle(secret, invite, "Research Agent", "d".repeat(64)), handle);
+  assert.notEqual(await deriveModernSessionHandle("e".repeat(64), invite, "Research Agent", key), handle);
+  await assert.rejects(() => deriveModernSessionHandle("short", invite, "Research Agent", key));
 });
 
 test("credential ciphertext cannot be decrypted with the wrong key, context, or after tampering", async () => {
