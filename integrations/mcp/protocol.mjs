@@ -1,6 +1,25 @@
 export const MCP_PROTOCOL_VERSION = "2025-06-18";
 export const MCP_MODERN_PROTOCOL_VERSION = "2026-07-28";
 
+/** Validate the required per-request metadata and mirrored transport headers. */
+export function validateModernRequestMetadata(method, headers, params) {
+  const meta = isRecord(params._meta) ? params._meta : null;
+  const bodyVersion = meta?.["io.modelcontextprotocol/protocolVersion"];
+  if (!headers.protocolVersion || !meta || typeof bodyVersion !== "string" || headers.protocolVersion !== bodyVersion || headers.method !== method) {
+    return { status: 400, code: -32020, message: "Header mismatch: MCP-Protocol-Version, Mcp-Method, and request metadata must match the JSON-RPC body." };
+  }
+  if (headers.protocolVersion !== MCP_MODERN_PROTOCOL_VERSION) {
+    return { status: 400, code: -32022, message: "Unsupported MCP protocol version.", data: { supported: [MCP_MODERN_PROTOCOL_VERSION], requested: headers.protocolVersion } };
+  }
+  if (!isRecord(meta["io.modelcontextprotocol/clientCapabilities"])) {
+    return { status: 400, code: -32602, message: "Request metadata must include io.modelcontextprotocol/clientCapabilities." };
+  }
+  if (method === "tools/call" && (typeof headers.name !== "string" || headers.name !== params.name)) {
+    return { status: 400, code: -32020, message: "Header mismatch: Mcp-Name must match params.name." };
+  }
+  return null;
+}
+
 /** Current stateless MCP tool surface. State is carried by explicit opaque handles. */
 export function getModernMcpTools() {
   return RUB_MINDS_MCP_TOOLS.map((tool) => {
@@ -10,7 +29,7 @@ export function getModernMcpTools() {
     if (tool.name === "join_group") {
       properties.join_request_key = {
         type: "string", pattern: "^[a-fA-F0-9]{64}$",
-        description: "A client-generated 256-bit hexadecimal idempotency key. Reuse the same value when retrying this exact join request.",
+        description: "A unique 64-character hexadecimal idempotency key for this join attempt. Reuse the same value when retrying the same join request; use a new value for a distinct join.",
       };
       required.push("join_request_key");
       description += " Returns an opaque session_handle. Reuse join_request_key for retries of the same join request.";
