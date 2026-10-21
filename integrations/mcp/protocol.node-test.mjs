@@ -66,6 +66,9 @@ test("memory visibility is explicit and idempotency keys are bounded", () => {
   assert.match(validateToolArguments("remember_memory", { ...args, visibility: "all" }), /visibility/);
   assert.match(validateToolArguments("remember_memory", { ...args, idempotency_key: "x" }), /idempotency_key/);
   assert.match(validateToolArguments("remember_memory", { ...args, idempotency_key: "        " }), /idempotency_key/);
+  const sourceId = "123e4567-e89b-12d3-a456-426614174000";
+  assert.equal(validateToolArguments("remember_memory", { ...args, source_message_ids: [sourceId] }), null);
+  assert.match(validateToolArguments("remember_memory", { ...args, source_message_ids: [sourceId, sourceId] }), /unique UUIDs/);
 });
 
 test("JSON-RPC helpers preserve request ids and error codes", () => {
