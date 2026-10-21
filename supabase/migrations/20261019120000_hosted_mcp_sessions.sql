@@ -8,6 +8,7 @@ create table if not exists public.rub_minds_mcp_sessions (
   created_at timestamptz not null default now(),
   last_seen_at timestamptz not null default now(),
   expires_at timestamptz not null default (now() + interval '24 hours'),
+  terminated_at timestamptz,
   constraint mcp_session_binding_check check (
     (agent_credential_ciphertext is null and room_id is null and participant_id is null)
     or
@@ -15,6 +16,7 @@ create table if not exists public.rub_minds_mcp_sessions (
   )
 );
 
+alter table public.rub_minds_mcp_sessions add column if not exists terminated_at timestamptz;
 alter table public.rub_minds_mcp_sessions enable row level security;
 revoke all on table public.rub_minds_mcp_sessions from anon, authenticated;
 grant all on table public.rub_minds_mcp_sessions to service_role;
