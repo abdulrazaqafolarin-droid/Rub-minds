@@ -97,10 +97,18 @@ export function validateToolArguments(name, args) {
 /** @param {unknown} document @returns {document is Record<string, any>} */
 export function validateSessionMemoryDocument(document) {
   if (!isRecord(document) || document.schema !== "rub-minds.session-memory" || document.version !== 1) return false;
-  if (typeof document.summary !== "string" || document.summary.length > 20000) return false;
+  if (Object.keys(document).some((key) => !["schema", "version", "summary", "current_goal", "source", "sharing"].includes(key))) return false;
+  if (typeof document.summary !== "string" || !document.summary.trim() || document.summary.length > 20000) return false;
   if (typeof document.current_goal !== "string" || document.current_goal.length > 4000) return false;
-  if (!isRecord(document.source) || typeof document.source.platform !== "string" || !document.source.platform.trim() || document.source.platform.length > 80) return false;
-  if (isRecord(document.sharing) && document.sharing.raw_history_visibility !== undefined && document.sharing.raw_history_visibility !== "private") return false;
+  if (!isRecord(document.source) ||
+      Object.keys(document.source).some((key) => !["platform", "session_label"].includes(key)) ||
+      typeof document.source.platform !== "string" || !document.source.platform.trim() ||
+      document.source.platform.length > 80) return false;
+  if (document.source.session_label !== undefined &&
+      (typeof document.source.session_label !== "string" || document.source.session_label.length > 160)) return false;
+  if (!isRecord(document.sharing) ||
+      Object.keys(document.sharing).some((key) => key !== "raw_history_visibility") ||
+      document.sharing.raw_history_visibility !== "private") return false;
   try {
     return new TextEncoder().encode(JSON.stringify(document)).byteLength <= 1024 * 1024;
   } catch {
