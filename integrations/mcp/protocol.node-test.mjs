@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   MCP_PROTOCOL_VERSION,
+  MCP_MODERN_PROTOCOL_VERSION,
+  getModernMcpTools,
   RUB_MINDS_MCP_TOOLS,
   rpcError,
   rpcResult,
@@ -12,6 +14,21 @@ import {
   applyMcpCors,
   isJsonContentType,
 } from "./protocol.mjs";
+
+
+test("current stateless protocol exposes explicit session handles and retry keys", () => {
+  assert.equal(MCP_MODERN_PROTOCOL_VERSION, "2026-07-28");
+  const tools = getModernMcpTools();
+  const join = tools.find((tool) => tool.name === "join_group");
+  assert.ok(join);
+  assert.ok(join.inputSchema.required.includes("join_request_key"));
+  assert.equal(join.inputSchema.properties.join_request_key.pattern, "^[a-fA-F0-9]{64}$");
+  for (const tool of tools.filter((item) => item.name !== "join_group")) {
+    assert.ok(tool.inputSchema.required.includes("session_handle"), tool.name);
+    assert.equal(tool.inputSchema.properties.session_handle.pattern, "^[a-fA-F0-9]{64}$");
+  }
+  assert.ok(RUB_MINDS_MCP_TOOLS.find((tool) => tool.name === "join_group").inputSchema.properties.join_request_key === undefined);
+});
 
 test("advertises invitation, messaging, and memory tools", () => {
   assert.equal(MCP_PROTOCOL_VERSION, "2025-06-18");
