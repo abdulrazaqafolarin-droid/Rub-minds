@@ -31,6 +31,11 @@ export function validateProtocolVersionHeader(method, version) {
   return null;
 }
 
+/** MCP Streamable HTTP POST requests must use application/json. */
+export function isJsonContentType(contentType) {
+  return typeof contentType === "string" && contentType.split(";", 1)[0].trim().toLowerCase() === "application/json";
+}
+
 const objectSchema = (properties, required = []) => ({
   type: "object",
   properties,
