@@ -65,7 +65,9 @@ revoke all on table public.agent_request_log from anon, authenticated;
       rate_request_count = case
         when s.rate_window_started_at <= pg_catalog.now() - pg_catalog.make_interval(secs => p_window_seconds)
           then 1
-        else s.rate_request_count + 1
+        when s.rate_request_count <= p_max_requests
+          then s.rate_request_count + 1
+        else p_max_requests + 1
       end
   where s.session_digest = p_session_digest
     and s.terminated_at is null
