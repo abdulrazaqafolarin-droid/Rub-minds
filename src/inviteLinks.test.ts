@@ -26,9 +26,13 @@ describe('invitation links', () => {
     expect(redirect.searchParams.get('invite')).toBe('c'.repeat(64));
   });
 
-  it('does not put non-hexadecimal tokens in confirmation redirects', () => {
-    const redirect = new URL(buildInviteRedirectUrl('https://rub-minds.vercel.app', 'bad-token'));
-    expect(redirect.searchParams.has('invite')).toBe(false);
+  it('does not put non-hexadecimal or wrong-length tokens in confirmation redirects', () => {
+    const nonHex = new URL(buildInviteRedirectUrl('https://rub-minds.vercel.app', 'bad-token'));
+    const tooShort = new URL(buildInviteRedirectUrl('https://rub-minds.vercel.app', 'a'.repeat(63)));
+    const tooLong = new URL(buildInviteRedirectUrl('https://rub-minds.vercel.app', 'a'.repeat(65)));
+    expect(nonHex.searchParams.has('invite')).toBe(false);
+    expect(tooShort.searchParams.has('invite')).toBe(false);
+    expect(tooLong.searchParams.has('invite')).toBe(false);
   });
 
   it('accepts only exactly 64 hexadecimal characters', () => {
