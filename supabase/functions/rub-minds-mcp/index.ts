@@ -432,7 +432,7 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
   let session: Record<string, unknown> | null;
   if (toolName === "join_group") {
     const joinKey = rawArgs.join_request_key;
-    if (typeof joinKey !== "string" || !/^[a-f0-9]{64}$/i.test(joinKey) || typeof rawArgs.invite_token !== "string" || !/^[a-f0-9]{64}$/i.test(rawArgs.invite_token) || typeof rawArgs.agent_label !== "string") {
+    if (typeof joinKey !== "string" || !/^[a-f0-9]{64}$/i.test(joinKey) || typeof rawArgs.invite_token !== "string" || !/^[a-f0-9]{64}$/i.test(rawArgs.invite_token) || typeof rawArgs.agent_label !== "string" || !rawArgs.agent_label.trim() || [...rawArgs.agent_label.trim()].length > 80) {
       return modernRpcError(200, id, -32602, "join_group requires a valid invitation token, agent_label, and 64-character hexadecimal join_request_key.");
     }
     try {
