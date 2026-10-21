@@ -37,13 +37,54 @@ jobs:
           create role service_role nologin;
           create table public.agent_request_log(id bigint primary key);
           grant all on public.agent_request_log to anon, authenticated;
+          create table public.room_invites(
+            id uuid primary key default gen_random_uuid(),
+            token_hash text not null unique,
+            room_id uuid not null,
+            created_by uuid not null,
+            expires_at timestamptz not null,
+            revoked_at timestamptz,
+            allow_ai boolean not null default true,
+            max_ai_uses integer not null default 5,
+            ai_uses integer not null default 0
+          );
+          create table public.participants(
+            id uuid primary key default gen_random_uuid(),
+            room_id uuid not null,
+            display_name text not null,
+            kind text not null,
+            status text not null
+          );
+          create table public.agent_connections(
+            id uuid primary key default gen_random_uuid(),
+            room_id uuid not null,
+            participant_id uuid not null,
+            owner_id uuid not null,
+            credential_digest text not null unique,
+            expires_at timestamptz not null,
+            revoked_at timestamptz
+          );
           SQL
           psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261019120000_hosted_mcp_sessions.sql
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261021150000_atomic_mcp_join_idempotency.sql
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          insert into public.room_invites(token_hash, room_id, created_by, expires_at, allow_ai, max_ai_uses, ai_uses)
+            values (encode(sha256(convert_to(repeat('e',64), 'UTF8')), 'hex'),
+                    '10000000-0000-0000-0000-000000000002',
+                    '20000000-0000-0000-0000-000000000002',
+                    now() + interval '1 hour', true, 3, 0);
+          SQL
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -c "begin; select public.redeem_ai_room_invite_idempotent(repeat('e',64), 'Concurrent agent', repeat('f',64), repeat('1',64)); select pg_sleep(1); commit;" > "$RUNNER_TEMP/mcp-join-a.log" 2>&1 &
+          join_a=$!
+          sleep 0.15
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -c "select public.redeem_ai_room_invite_idempotent(repeat('e',64), 'Concurrent agent', repeat('f',64), repeat('1',64));" > "$RUNNER_TEMP/mcp-join-b.log" 2>&1 || { cat "$RUNNER_TEMP/mcp-join-b.log"; exit 1; }
+          wait "$join_a" || { cat "$RUNNER_TEMP/mcp-join-a.log"; exit 1; }
           psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
           do $test$
           declare
             allowed boolean;
             counter integer;
+            join_result jsonb;
           begin
             if not (select relrowsecurity from pg_class where oid = 'public.rub_minds_mcp_sessions'::regclass) then
               raise exception 'RLS must be enabled on MCP sessions';
@@ -86,6 +127,60 @@ jobs:
             if public.consume_mcp_session_rate_limit(repeat('a', 64), 2, 60) then
               raise exception 'Terminated sessions must not pass rate limiting';
             end if;
+
+            if not (select relrowsecurity from pg_class where oid = 'public.rub_minds_mcp_join_requests'::regclass) then
+              raise exception 'RLS must be enabled on MCP join requests';
+            end if;
+            if has_table_privilege('anon', 'public.rub_minds_mcp_join_requests', 'SELECT')
+              or has_table_privilege('authenticated', 'public.rub_minds_mcp_join_requests', 'SELECT') then
+              raise exception 'Client roles must not read MCP join requests';
+            end if;
+            if has_function_privilege('anon', 'public.redeem_ai_room_invite_idempotent(text,text,text,text)', 'EXECUTE')
+              or has_function_privilege('authenticated', 'public.redeem_ai_room_invite_idempotent(text,text,text,text)', 'EXECUTE')
+              or not has_function_privilege('service_role', 'public.redeem_ai_room_invite_idempotent(text,text,text,text)', 'EXECUTE') then
+              raise exception 'Idempotent redemption RPC grants are incorrect';
+            end if;
+
+            insert into public.room_invites(token_hash, room_id, created_by, expires_at, allow_ai, max_ai_uses, ai_uses)
+              values (encode(sha256(convert_to(repeat('b',64), 'UTF8')), 'hex'),
+                      '10000000-0000-0000-0000-000000000001',
+                      '20000000-0000-0000-0000-000000000001',
+                      now() + interval '1 hour', true, 3, 0);
+            select public.redeem_ai_room_invite_idempotent(
+              repeat('b',64), 'CI agent', repeat('c',64), repeat('d',64)) into join_result;
+            if join_result->>'replayed' <> 'false' then
+              raise exception 'First join attempt must be marked replayed=false';
+            end if;
+            select public.redeem_ai_room_invite_idempotent(
+              repeat('b',64), 'CI agent', repeat('c',64), repeat('d',64)) into join_result;
+            if join_result->>'replayed' <> 'true' then
+              raise exception 'Repeated join must be marked replayed=true';
+            end if;
+            if (select count(*) from public.participants where room_id = '10000000-0000-0000-0000-000000000001') <> 1 then
+              raise exception 'Repeated join must create exactly one participant';
+            end if;
+            if (select ai_uses from public.room_invites where token_hash = encode(sha256(convert_to(repeat('b',64), 'UTF8')), 'hex')) <> 1 then
+              raise exception 'Repeated join must consume exactly one invitation use';
+            end if;
+            if (select count(*) from public.rub_minds_mcp_join_requests where session_digest = repeat('c',64)) <> 1 then
+              raise exception 'Repeated join must retain exactly one idempotency record';
+            end if;
+            if (select count(*) from public.participants where room_id = '10000000-0000-0000-0000-000000000002') <> 1 then
+              raise exception 'Concurrent duplicate joins must create exactly one participant';
+            end if;
+            if (select ai_uses from public.room_invites where token_hash = encode(sha256(convert_to(repeat('e',64), 'UTF8')), 'hex')) <> 1 then
+              raise exception 'Concurrent duplicate joins must consume exactly one invitation use';
+            end if;
+            if (select count(*) from public.rub_minds_mcp_join_requests where session_digest = repeat('f',64)) <> 1 then
+              raise exception 'Concurrent duplicate joins must retain exactly one idempotency record';
+            end if;
+            begin
+              perform public.redeem_ai_room_invite_idempotent(
+                repeat('b',64), 'Different label', repeat('c',64), repeat('d',64));
+              raise exception 'Conflicting join retry should fail';
+            exception when others then
+              if sqlerrm = 'Conflicting join retry should fail' then raise; end if;
+            end;
           end;
           $test$;
           SQL
