@@ -343,7 +343,7 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
     return modernRpcError(400, id, -32602, "Request metadata must include io.modelcontextprotocol/clientCapabilities.");
   }
   if (method === "server/discover") {
-    if (!hasId) return modernRpcError(400, null, -32600, "server/discover must be a request.");
+    if (!hasId || id === null) return modernRpcError(400, null, -32600, "server/discover must be a request.");
     return reply(200, rpcResult(id, {
       resultType: "complete",
       supportedVersions: [MCP_MODERN_PROTOCOL_VERSION],
@@ -355,6 +355,7 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
     }));
   }
   if (!hasId) return new Response(null, { status: 202, headers: { "Cache-Control": "no-store" } });
+  if (id === null) return modernRpcError(400, null, -32600, "Request id is required.");
   if (method === "tools/list") {
     return reply(200, rpcResult(id, { resultType: "complete", tools: getModernMcpTools(), ttlMs: 300000, cacheScope: "public" }));
   }
