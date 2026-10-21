@@ -171,8 +171,10 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     }
     const credentialExpiry = Date.parse(data.expires_at);
     if (!Number.isFinite(credentialExpiry) || credentialExpiry <= Date.now()) {
-      await db.from("agent_connections").update({ revoked_at: new Date().toISOString() })
-        .eq("credential_digest", await sha256(credential)).is("revoked_at", null);
+      if (!modernIdempotentJoin) {
+        await db.from("agent_connections").update({ revoked_at: new Date().toISOString() })
+          .eq("credential_digest", await sha256(credential)).is("revoked_at", null);
+      }
       throw new Error("The AI invitation credential has already expired.");
     }
     const expiresAt = new Date(Math.min(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000, credentialExpiry)).toISOString();
@@ -180,8 +182,10 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     try {
       encryptedCredential = await encryptCredential(credential, credentialEncryptionKey, session.session_digest as string);
     } catch {
-      await db.from("agent_connections").update({ revoked_at: new Date().toISOString() })
-        .eq("credential_digest", await sha256(credential)).is("revoked_at", null);
+      if (!modernIdempotentJoin) {
+        await db.from("agent_connections").update({ revoked_at: new Date().toISOString() })
+          .eq("credential_digest", await sha256(credential)).is("revoked_at", null);
+      }
       throw new Error("Could not securely bind the AI participant to this MCP session.");
     }
     const binding = {
