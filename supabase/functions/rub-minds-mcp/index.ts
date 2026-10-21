@@ -86,6 +86,37 @@ async function findSession(sessionId: string) {
   await db.from("rub_minds_mcp_sessions").update({ last_seen_at: new Date().toISOString() }).eq("session_digest", digest);
   return data;
 }
+async function terminateMcpSession(sessionDigest: string) {
+  const { data: closingSession, error: lookupError } = await db.from("rub_minds_mcp_sessions")
+    .select("session_digest, agent_credential_ciphertext, terminated_at")
+    .eq("session_digest", sessionDigest)
+    .maybeSingle();
+  if (lookupError) throw new Error("Could not verify the MCP session before termination.");
+  if (!closingSession) return { terminated: false, alreadyTerminated: false };
+  if (closingSession.terminated_at) return { terminated: true, alreadyTerminated: true };
+  if (typeof closingSession.agent_credential_ciphertext === "string") {
+    let credential: string;
+    try {
+      credential = await decryptCredential(closingSession.agent_credential_ciphertext, credentialEncryptionKey, sessionDigest);
+    } catch {
+      throw new Error("Could not securely close the AI participant session. Retry or wait for expiry.");
+    }
+    const { error: revokeError } = await db.from("agent_connections")
+      .update({ revoked_at: new Date().toISOString() })
+      .eq("credential_digest", await sha256(credential))
+      .is("revoked_at", null);
+    if (revokeError) throw new Error("Could not revoke the AI participant session. Retry or wait for expiry.");
+  }
+  const terminatedAt = new Date().toISOString();
+  const tombstoneExpiry = new Date(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000).toISOString();
+  const { error: terminateError } = await db.from("rub_minds_mcp_sessions").update({
+    agent_credential_ciphertext: null, room_id: null, participant_id: null,
+    terminated_at: terminatedAt, expires_at: tombstoneExpiry, last_seen_at: terminatedAt,
+  }).eq("session_digest", sessionDigest).is("terminated_at", null);
+  if (terminateError) throw new Error("Could not terminate the MCP session. Retry or wait for expiry.");
+  return { terminated: true, alreadyTerminated: false };
+}
+
 async function invokeAgent(credential: string, operation: "read" | "send", payload: string | null = null, sourceMessageId: string | null = null) {
   const { data, error } = await db.rpc("agent_exchange", {
     agent_secret: credential,
@@ -172,6 +203,12 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     }
     // Critical: never return data.agent_secret to the MCP client or model.
     return { joined: true, room_id: data.room_id, participant_id: data.participant_id, expires_at: expiresAt };
+  }
+
+  if (name === "leave_group") {
+    if (args.confirm_leave !== true) throw new Error("Explicit confirmation is required to leave and revoke this group session.");
+    const outcome = await terminateMcpSession(session.session_digest as string);
+    return { left: true, already_terminated: outcome.alreadyTerminated || !outcome.terminated };
   }
 
   const encryptedCredential = session.agent_credential_ciphertext;
@@ -407,38 +444,14 @@ async function handleMcpRequest(request: Request) {
   if (!isAllowedMcpOrigin(origin)) return httpError(403, "Origin is not allowed.");
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "Access-Control-Allow-Methods": "POST, DELETE, OPTIONS", "Access-Control-Allow-Headers": "content-type, mcp-session-id, mcp-protocol-version, mcp-method, mcp-name, accept", "Vary": "Origin" } });
   if (request.method === "DELETE") {
-    // MCP clients can explicitly terminate a session. The session ID is a bearer
-    // capability, so hash it before lookup and never echo it in errors or logs.
+    // Legacy transport clients may explicitly terminate their session. The
+    // session ID is a bearer capability, so hash it before lookup.
     const sessionId = request.headers.get("Mcp-Session-Id") || "";
     if (!/^[a-f0-9]{64}$/.test(sessionId)) return httpError(404, "MCP session missing or invalid.");
-    const sessionDigest = await sha256(sessionId);
-    const { data: closingSession, error: lookupError } = await db.from("rub_minds_mcp_sessions")
-      .select("session_digest, agent_credential_ciphertext, terminated_at")
-      .eq("session_digest", sessionDigest)
-      .maybeSingle();
-    if (lookupError) return httpError(503, "Could not verify the MCP session before termination.");
-    if (closingSession?.terminated_at) return new Response(null, { status: 204, headers: { "Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache" } });
-    if (closingSession?.agent_credential_ciphertext) {
-      let credential: string;
-      try {
-        credential = await decryptCredential(closingSession.agent_credential_ciphertext, credentialEncryptionKey, sessionDigest);
-      } catch {
-        return httpError(503, "Could not securely close the AI participant session. Retry or wait for expiry.");
-      }
-      const { error: revokeError } = await db.from("agent_connections")
-        .update({ revoked_at: new Date().toISOString() })
-        .eq("credential_digest", await sha256(credential))
-        .is("revoked_at", null);
-      if (revokeError) return httpError(503, "Could not revoke the AI participant session. Retry or wait for expiry.");
-    }
-    if (closingSession) {
-      const terminatedAt = new Date().toISOString();
-      const tombstoneExpiry = new Date(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000).toISOString();
-      const { error: terminateError } = await db.from("rub_minds_mcp_sessions").update({
-        agent_credential_ciphertext: null, room_id: null, participant_id: null,
-        terminated_at: terminatedAt, expires_at: tombstoneExpiry, last_seen_at: terminatedAt,
-      }).eq("session_digest", sessionDigest).is("terminated_at", null);
-      if (terminateError) return httpError(503, "Could not terminate the MCP session. Retry or wait for expiry.");
+    try {
+      await terminateMcpSession(await sha256(sessionId));
+    } catch {
+      return httpError(503, "Could not safely terminate the MCP session. Retry or wait for expiry.");
     }
     return new Response(null, { status: 204, headers: { "Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache" } });
   }
