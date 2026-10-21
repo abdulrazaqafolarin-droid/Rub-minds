@@ -10,6 +10,7 @@ import {
   isAllowedMcpOrigin,
   validateProtocolVersionHeader,
   applyMcpCors,
+  isJsonContentType,
 } from "./protocol.mjs";
 
 test("advertises invitation, messaging, and memory tools", () => {
@@ -43,6 +44,13 @@ test("CORS exposes the MCP session capability only to allowed browser origins", 
   assert.equal(blocked.headers.get("Access-Control-Allow-Origin"), null);
   const serverToServer = applyMcpCors(new Response("ok"), null);
   assert.equal(serverToServer.headers.get("Access-Control-Allow-Origin"), null);
+});
+
+test("HTTP transport accepts only JSON request content types", () => {
+  assert.equal(isJsonContentType("application/json"), true);
+  assert.equal(isJsonContentType("Application/JSON; charset=utf-8"), true);
+  assert.equal(isJsonContentType("text/plain"), false);
+  assert.equal(isJsonContentType(null), false);
 });
 
 test("join requires a valid invitation and explicit confirmation", () => {
