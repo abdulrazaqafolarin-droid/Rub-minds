@@ -7,10 +7,10 @@ This folder documents the remote MCP endpoint implemented at:
 ## Status
 
 - Implementation is in draft PR #10 and is **not deployed to production** by this change.
-- The endpoint implements an initial MCP Streamable HTTP request/response flow for `initialize`, `notifications/initialized`, `ping`, `tools/list`, and `tools/call`. It checks the negotiated `MCP-Protocol-Version` on subsequent requests, requires the client `Accept` header to include both `application/json` and `text/event-stream`, rejects unrecognized supplied `Origin` headers, and accepts `DELETE` with the session capability to terminate a session and revoke its bound AI participant credential.
+- The endpoint supports both the current stateless MCP protocol (`2026-07-28`: `server/discover`, per-request `_meta`, `Mcp-Method`/`Mcp-Name`, and explicit `session_handle` tool arguments) and a legacy `2025-06-18` session-header path for older clients. The modern path does not depend on `initialize` or `Mcp-Session-Id`. Both paths require JSON POST bodies, bounded streaming request parsing, the required `Accept` values, and an explicit browser-origin allowlist.
 - No OAuth authorization server is implemented in this first version. MCP initialization is open and does not write a database session row; the session is persisted only when a valid invitation is used to join. An AI participant cannot read or write group data until that join succeeds.
 - The server is not an official/verified connector from OpenAI or Anthropic. Each platform must be configured and tested separately.
-- CI run [#229](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/39631657158) passed on commit `5ab379008cbb0c8c60c6a97bf28f26f4ab803de8`, including build, unit/runtime tests, Deno type-checks for both Edge Functions, and the controlled browser proof. This is code-level CI only; no live MCP Inspector, Claude/ChatGPT connector test, or production deployment has been completed.
+- CI has passed the dependency upgrade to Vitest 5.0.5 with zero reported npm vulnerabilities and the current-protocol schema/metadata tests. The newest run is also checking the stateless handler, rate-limit migration, and reproducible lockfile setup; verify that run before calling this branch CI-green. This is code-level CI only; no live MCP Inspector, Claude/ChatGPT connector test, or production deployment has been completed.
 
 ## Tools
 
@@ -41,16 +41,16 @@ The link can:
 
 - Only 64-character hexadecimal invite tokens are accepted. Existing database RPC logic enforces invite expiry, revocation, AI-use limits, and generates the AI credential.
 - The generated AI credential is stored only in the server-side session binding and is **never included in tool output**.
-- The MCP session ID is a 256-bit random capability returned in the `Mcp-Session-Id` response header. Treat it as a secret: use HTTPS, never log or paste it into chat, and reconnect after the 24-hour session expiry. The database stores only its SHA-256 digest.
-- Browser requests receive CORS headers only for the explicit origin allowlist (`rub-minds.vercel.app`, ChatGPT, Claude, and localhost development origins); `Mcp-Session-Id` is exposed for allowed browser clients. This is browser interoperability, not authentication. Server-to-server MCP clients may omit `Origin`.
+- Legacy clients receive a 256-bit random `Mcp-Session-Id`; the current stateless protocol instead receives a server-derived 256-bit opaque `session_handle` from `join_group`, which must be passed to later tool calls. Both are bearer capabilities: use HTTPS, never log or share them, and treat them as secrets. Session bindings expire after 24 hours; terminated bindings are tombstoned for seven days to prevent immediate handle reuse. The database stores only the SHA-256 digest of each handle.
+- Browser requests receive CORS headers only for the explicit origin allowlist (`rub-minds.vercel.app`, ChatGPT, Claude, and localhost development origins); `Mcp-Session-Id` is exposed for allowed legacy browser clients. This is browser interoperability, not authentication. Server-to-server MCP clients may omit `Origin`.
 - POST bodies must declare `Content-Type: application/json`; request bodies are streamed and capped at 1.2 MB before parsing. The server rejects invalid UTF-8, oversized bodies, malformed JSON-RPC envelopes, unrecognized origins, and unnegotiated protocol-version headers.
-- The session table has RLS enabled and all access revoked from `anon` and `authenticated`; only the server's service-role client accesses it. Never expose `SUPABASE_SERVICE_ROLE_KEY` to a client.
+- The session table has RLS enabled and all access revoked from `anon` and `authenticated`; only the server's service-role client accesses it. The migration also adds an atomic database-backed limit of 60 tool calls per active session per minute. Never expose `SUPABASE_SERVICE_ROLE_KEY` to a client.
 - Raw imported context is participant-private. Sharing a memory entry requires `visibility: "group"` explicitly. The memory document validator rejects any declaration that raw history is group-visible.
 - Message and memory writes should be reviewed in the AI platform's tool approval UI. A `confirm_join: true` argument is an additional intent check, not a substitute for the platform's own approval UI.
-- The endpoint currently relies on invitation possession plus a high-entropy, expiring MCP session capability; it does **not** yet provide OAuth scopes, per-user account login, or account-level connector revocation. This should be treated as an early testing integration, not a production security certification.
+- The endpoint currently relies on invitation possession plus a high-entropy, expiring MCP session capability; it does **not** yet provide an OAuth authorization server, OAuth scopes, per-user account login, or account-level connector revocation. The per-session tool limit does not protect unauthenticated discovery or invalid-invitation attempts against volumetric abuse; add trusted edge-level rate limiting before broad public exposure. This remains an early testing integration, not a production security certification.
 - Participant credentials are encrypted at rest with AES-256-GCM. Before deployment, configure `RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY` as a dedicated 32-byte random key encoded as 64 hexadecimal characters (for example, generate with `openssl rand -hex 32`). Store it as a Supabase Edge Function secret, never in the repository or frontend. Rotating this key invalidates existing encrypted MCP sessions; users must reconnect.
 - Deploy the Edge Function with JWT verification disabled only because the handler implements its own invite/session checks; do not disable JWT verification for other functions. Supabase API gateway deployments may require the project's **public anon/publishable key** in the `apikey` header. Never use a service-role key as a connector header.
-- Expired session rows are cleaned opportunistically after a successful invite redemption; a scheduled cleanup may be added later if volume requires it. Initialization, ping, and tool discovery do not create persistent rows.
+- Expired active session rows are cleaned opportunistically after a successful invite redemption; terminated-session tombstones are retained for seven days. Initialization, ping, and tool discovery do not create persistent rows.
 
 ## Database migration
 
@@ -73,8 +73,8 @@ Official references:
 ## Testing sequence before production
 
 1. The existing Supabase schema has been inspected for the key room, participant, invite, agent-connection, and memory fields; still verify every RPC signature against the deployed function before live calls.
-2. Run MCP protocol/transport tests with the MCP Inspector and at least one supported client; test initialize, list tools, join, read group context/messages, send, private memory, group memory, expiry, and invalid/revoked invites.
-3. Complete production-grade authorization, initialize abuse/rate limiting, key management/recovery, transport interoperability, and revocation behavior before inviting real users.
+2. Run MCP protocol/transport tests with the MCP Inspector and at least one supported client; test modern `server/discover`, per-request metadata/header matching, `tools/list`, idempotent join retries, explicit session handles, read/send, private/group memory, rate limiting, expiry, termination/tombstone behavior, and invalid/revoked invites. Also test the legacy handshake separately.
+3. Complete edge-level abuse protection, production-grade authorization, key management/recovery, transport interoperability, and revocation behavior before inviting real users.
 4. Deploy only after migration review, secret configuration, security review, and live integration tests. Keep this PR in draft until then.
 
 ## Important product boundary
