@@ -9,6 +9,7 @@ import {
   validateToolArguments,
   isAllowedMcpOrigin,
   validateProtocolVersionHeader,
+  applyMcpCors,
 } from "./protocol.mjs";
 
 test("advertises invitation, messaging, and memory tools", () => {
@@ -27,6 +28,21 @@ test("transport validates negotiated protocol version and supplied origins", () 
   assert.equal(isAllowedMcpOrigin("https://chatgpt.com"), true);
   assert.equal(isAllowedMcpOrigin("https://claude.ai"), true);
   assert.equal(isAllowedMcpOrigin("https://attacker.example"), false);
+});
+
+test("CORS exposes the MCP session capability only to allowed browser origins", async () => {
+  const preflight = new Response(null, { status: 204, headers: {
+    "Access-Control-Allow-Methods": "POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "content-type, mcp-session-id, mcp-protocol-version, accept",
+  } });
+  const allowed = applyMcpCors(preflight, "https://chatgpt.com");
+  assert.equal(allowed.headers.get("Access-Control-Allow-Origin"), "https://chatgpt.com");
+  assert.equal(allowed.headers.get("Access-Control-Expose-Headers"), "Mcp-Session-Id");
+  assert.equal(allowed.headers.get("Vary"), "Origin");
+  const blocked = applyMcpCors(new Response("blocked"), "https://attacker.example");
+  assert.equal(blocked.headers.get("Access-Control-Allow-Origin"), null);
+  const serverToServer = applyMcpCors(new Response("ok"), null);
+  assert.equal(serverToServer.headers.get("Access-Control-Allow-Origin"), null);
 });
 
 test("join requires a valid invitation and explicit confirmation", () => {
