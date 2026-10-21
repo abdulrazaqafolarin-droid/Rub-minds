@@ -1,26 +1,121 @@
 name: Validate Rub Minds
+permissions:
+  contents: read
 on:
   push:
     branches: [main]
   pull_request:
 jobs:
+  mcp-migration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Apply and smoke-test hosted MCP migration on isolated PostgreSQL
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          create role anon nologin;
+          create role authenticated nologin;
+          create role service_role nologin;
+          create table public.agent_request_log(id bigint primary key);
+          grant all on public.agent_request_log to anon, authenticated;
+          SQL
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261019120000_hosted_mcp_sessions.sql
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          do $test$
+          declare
+            allowed boolean;
+            counter integer;
+          begin
+            if not (select relrowsecurity from pg_class where oid = 'public.rub_minds_mcp_sessions'::regclass) then
+              raise exception 'RLS must be enabled on MCP sessions';
+            end if;
+            if has_table_privilege('anon', 'public.rub_minds_mcp_sessions', 'SELECT')
+              or has_table_privilege('authenticated', 'public.rub_minds_mcp_sessions', 'SELECT') then
+              raise exception 'Client roles must not read MCP sessions';
+            end if;
+            if has_table_privilege('anon', 'public.agent_request_log', 'SELECT')
+              or has_table_privilege('authenticated', 'public.agent_request_log', 'SELECT') then
+              raise exception 'Client roles must not read agent request logs';
+            end if;
+            if has_function_privilege('anon', 'public.consume_mcp_session_rate_limit(text,integer,integer)', 'EXECUTE')
+              or has_function_privilege('authenticated', 'public.consume_mcp_session_rate_limit(text,integer,integer)', 'EXECUTE')
+              or not has_function_privilege('service_role', 'public.consume_mcp_session_rate_limit(text,integer,integer)', 'EXECUTE') then
+              raise exception 'Rate-limit RPC grants are incorrect';
+            end if;
+
+            insert into public.rub_minds_mcp_sessions(session_digest, expires_at)
+              values (repeat('a', 64), now() + interval '1 hour');
+            if not public.consume_mcp_session_rate_limit(repeat('a', 64), 2, 60) then
+              raise exception 'First rate-limited call should be allowed';
+            end if;
+            if not public.consume_mcp_session_rate_limit(repeat('a', 64), 2, 60) then
+              raise exception 'Second rate-limited call should be allowed';
+            end if;
+            if public.consume_mcp_session_rate_limit(repeat('a', 64), 2, 60) then
+              raise exception 'Calls beyond the configured limit must be blocked';
+            end if;
+            select rate_request_count into counter from public.rub_minds_mcp_sessions where session_digest = repeat('a', 64);
+            if counter <> 3 then raise exception 'Rate counter should cap at limit + 1, got %', counter; end if;
+
+            update public.rub_minds_mcp_sessions
+              set rate_window_started_at = now() - interval '61 seconds', rate_request_count = 100
+              where session_digest = repeat('a', 64);
+            if not public.consume_mcp_session_rate_limit(repeat('a', 64), 2, 60) then
+              raise exception 'Expired rate window should reset';
+            end if;
+            update public.rub_minds_mcp_sessions set terminated_at = now() where session_digest = repeat('a', 64);
+            if public.consume_mcp_session_rate_limit(repeat('a', 64), 2, 60) then
+              raise exception 'Terminated sessions must not pass rate limiting';
+            end if;
+          end;
+          $test$;
+          SQL
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
-      - run: npm install
+      - run: npm ci
+      - name: Report dependency audit findings
+        run: |
+          npm audit --json > "$RUNNER_TEMP/npm-audit.json" || true
+          node -e 'const fs=require("node:fs"); const a=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+"/npm-audit.json","utf8")); console.log(JSON.stringify({metadata:a.metadata?.vulnerabilities, vulnerabilities:Object.entries(a.vulnerabilities??{}).map(([name,v])=>({name,severity:v.severity,isDirect:v.isDirect,range:v.range,fixAvailable:v.fixAvailable,via:v.via.map(x=>typeof x==="string"?x:x.name)}))},null,2))'
+      - name: Enforce dependency audit gate
+        run: npm audit --audit-level=moderate
       - run: npm run build
       - run: npm run test
       - run: npm run test:runtime
       - name: Set up Deno for Supabase Edge Functions
-        uses: denoland/setup-deno@v2
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
         with:
           deno-version: v2.x
       - name: Type-check session-memory Edge Function
         run: deno check supabase/functions/session-memory/index.ts
+      - name: Type-check hosted MCP Edge Function
+        run: deno check supabase/functions/rub-minds-mcp/index.ts
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
       - name: Run controlled browser proof of concept
