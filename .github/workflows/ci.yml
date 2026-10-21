@@ -68,6 +68,19 @@ jobs:
           psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261019120000_hosted_mcp_sessions.sql
           psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261021150000_atomic_mcp_join_idempotency.sql
           psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          insert into public.room_invites(token_hash, room_id, created_by, expires_at, allow_ai, max_ai_uses, ai_uses)
+            values (encode(sha256(convert_to(repeat('e',64), 'UTF8')), 'hex'),
+                    '10000000-0000-0000-0000-000000000002',
+                    '20000000-0000-0000-0000-000000000002',
+                    now() + interval '1 hour', true, 3, 0);
+          SQL
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -c "select public.redeem_ai_room_invite_idempotent(repeat('e',64), 'Concurrent agent', repeat('f',64), repeat('1',64));" > "$RUNNER_TEMP/mcp-join-a.log" 2>&1 &
+          join_a=$!
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -c "select public.redeem_ai_room_invite_idempotent(repeat('e',64), 'Concurrent agent', repeat('f',64), repeat('1',64));" > "$RUNNER_TEMP/mcp-join-b.log" 2>&1 &
+          join_b=$!
+          wait "$join_a" || { cat "$RUNNER_TEMP/mcp-join-a.log"; exit 1; }
+          wait "$join_b" || { cat "$RUNNER_TEMP/mcp-join-b.log"; exit 1; }
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
           do $test$
           declare
             allowed boolean;
@@ -145,6 +158,15 @@ jobs:
             end if;
             if (select count(*) from public.rub_minds_mcp_join_requests where session_digest = repeat('c',64)) <> 1 then
               raise exception 'Repeated join must retain exactly one idempotency record';
+            end if;
+            if (select count(*) from public.participants where room_id = '10000000-0000-0000-0000-000000000002') <> 1 then
+              raise exception 'Concurrent duplicate joins must create exactly one participant';
+            end if;
+            if (select ai_uses from public.room_invites where token_hash = encode(sha256(convert_to(repeat('e',64), 'UTF8')), 'hex')) <> 1 then
+              raise exception 'Concurrent duplicate joins must consume exactly one invitation use';
+            end if;
+            if (select count(*) from public.rub_minds_mcp_join_requests where session_digest = repeat('f',64)) <> 1 then
+              raise exception 'Concurrent duplicate joins must retain exactly one idempotency record';
             end if;
             begin
               perform public.redeem_ai_room_invite_idempotent(
