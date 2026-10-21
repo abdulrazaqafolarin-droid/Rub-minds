@@ -47,11 +47,16 @@ test("message tool rejects empty, oversized, and unknown arguments", () => {
   assert.match(validateToolArguments("send_group_message", { body: "hello", admin: true }), /Unknown/);
 });
 
-test("session memory requires private raw-history visibility and bounded fields", () => {
+test("session memory requires a strict private packet schema and bounded fields", () => {
   const valid = { schema: "rub-minds.session-memory", version: 1, summary: "summary", current_goal: "goal", source: { platform: "ChatGPT" }, sharing: { raw_history_visibility: "private" } };
   assert.equal(validateSessionMemoryDocument(valid), true);
   assert.equal(validateSessionMemoryDocument({ ...valid, sharing: { raw_history_visibility: "group" } }), false);
+  assert.equal(validateSessionMemoryDocument({ ...valid, sharing: undefined }), false);
+  assert.equal(validateSessionMemoryDocument({ ...valid, source: { platform: "ChatGPT", session_label: 200 } }), false);
+  assert.equal(validateSessionMemoryDocument({ ...valid, source: { platform: " " } }), false);
+  assert.equal(validateSessionMemoryDocument({ ...valid, unexpected_private_payload: "do not persist unknown fields" }), false);
   assert.equal(validateSessionMemoryDocument({ ...valid, version: 2 }), false);
+  assert.equal(validateSessionMemoryDocument({ ...valid, summary: " " }), false);
   assert.equal(validateSessionMemoryDocument({ ...valid, summary: "x".repeat(20001) }), false);
 });
 
