@@ -47,7 +47,7 @@ test("current stateless protocol validates request metadata and mirrored headers
 test("advertises invitation, messaging, and memory tools", () => {
   assert.equal(MCP_PROTOCOL_VERSION, "2025-06-18");
   assert.deepEqual(RUB_MINDS_MCP_TOOLS.map((tool) => tool.name), [
-    "join_group", "read_group_context", "read_group_messages", "send_group_message",
+    "join_group", "leave_group", "read_group_context", "read_group_messages", "send_group_message",
     "read_session_memory", "import_session_memory", "remember_memory",
   ]);
 });
@@ -91,6 +91,12 @@ test("join requires a valid invitation and explicit confirmation", () => {
   assert.match(validateToolArguments("join_group", { invite_token: "short", agent_label: "Claude", confirm_join: true }), /token/);
   assert.match(validateToolArguments("join_group", { invite_token: token, agent_label: " ", confirm_join: true }), /agent_label/);
   assert.match(validateToolArguments("join_group", { invite_token: token, agent_label: "Claude", confirm_join: true, credential: "leak" }), /Unknown/);
+});
+
+test("leave_group requires explicit confirmation and rejects unknown arguments", () => {
+  assert.equal(validateToolArguments("leave_group", { confirm_leave: true }), null);
+  assert.match(validateToolArguments("leave_group", {}), /confirmation/);
+  assert.match(validateToolArguments("leave_group", { confirm_leave: true, force: true }), /Unknown/);
 });
 
 test("message tool rejects empty, oversized, and unknown arguments", () => {
