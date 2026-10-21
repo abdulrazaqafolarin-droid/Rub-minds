@@ -242,6 +242,20 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       if (!sourceImport) throw new Error("Session import not found for this participant.");
       sourceImportId = sourceImport.id;
     }
+    let sourceMessageIds: string[] = [];
+    if (Array.isArray(args.source_message_ids) && args.source_message_ids.length) {
+      const requestedIds = args.source_message_ids as string[];
+      const { data: sourceMessages, error: sourceMessagesError } = await db.from("messages")
+        .select("id")
+        .eq("room_id", connection.room_id)
+        .in("id", requestedIds);
+      if (sourceMessagesError) throw new Error("Could not verify memory provenance messages.");
+      const verifiedIds = new Set((sourceMessages || []).map((message: { id: string }) => message.id));
+      if (verifiedIds.size !== requestedIds.length || requestedIds.some((id) => !verifiedIds.has(id))) {
+        throw new Error("Every source message must belong to this group.");
+      }
+      sourceMessageIds = requestedIds;
+    }
     const { data, error } = await db.from("room_memory_entries").insert({
       room_id: connection.room_id,
       source_import_id: sourceImportId,
@@ -250,7 +264,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       entry_type: args.entry_type,
       visibility: args.visibility,
       content: (args.content as string).trim(),
-      source_message_ids: args.source_message_ids || [],
+      source_message_ids: sourceMessageIds,
       idempotency_key: args.idempotency_key,
     }).select("id, entry_type, visibility, content, source_message_ids, created_at").single();
     if (error || !data) {
