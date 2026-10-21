@@ -14,6 +14,16 @@ export function isAllowedMcpOrigin(origin) {
   return origin == null || origin === "" || ALLOWED_MCP_ORIGINS.has(origin);
 }
 
+/** Apply browser CORS headers only for explicitly allowed origins. */
+export function applyMcpCors(response, origin) {
+  if (!origin || !isAllowedMcpOrigin(origin)) return response;
+  const headers = new Headers(response.headers);
+  headers.set("Access-Control-Allow-Origin", origin);
+  headers.set("Access-Control-Expose-Headers", "Mcp-Session-Id");
+  headers.set("Vary", "Origin");
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
 /** The initialize request negotiates the version in its JSON-RPC body; later HTTP requests must echo it. */
 export function validateProtocolVersionHeader(method, version) {
   if (method === "initialize") return null;
