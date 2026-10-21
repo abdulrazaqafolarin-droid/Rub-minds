@@ -10,6 +10,7 @@ import {
   validateToolArguments,
   isAllowedMcpOrigin,
   validateProtocolVersionHeader,
+  applyMcpCors,
 } from "../../../integrations/mcp/protocol.mjs";
 
 const databaseUrl = Deno.env.get("SUPABASE_URL");
@@ -436,13 +437,5 @@ async function handleMcpRequest(request: Request) {
 
 Deno.serve(async (request: Request) => {
   const response = await handleMcpRequest(request);
-  const origin = request.headers.get("Origin");
-  // Add browser CORS headers only for explicitly allowed origins. Native/server
-  // MCP clients without Origin continue to use the endpoint normally.
-  if (!origin || !isAllowedMcpOrigin(origin)) return response;
-  const headers = new Headers(response.headers);
-  headers.set("Access-Control-Allow-Origin", origin);
-  headers.set("Access-Control-Expose-Headers", "Mcp-Session-Id");
-  headers.set("Vary", "Origin");
-  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+  return applyMcpCors(response, request.headers.get("Origin"));
 });
