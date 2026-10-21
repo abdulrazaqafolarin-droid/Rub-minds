@@ -265,8 +265,17 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
 Deno.serve(async (request: Request) => {
   const origin = request.headers.get("Origin");
   if (!isAllowedMcpOrigin(origin)) return httpError(403, "Origin is not allowed.");
-  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "Access-Control-Allow-Methods": "POST, OPTIONS", "Access-Control-Allow-Headers": "content-type, mcp-session-id, mcp-protocol-version, accept", "Vary": "Origin" } });
-  if (request.method !== "POST") return httpError(405, "MCP endpoint accepts POST requests only.");
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "Access-Control-Allow-Methods": "POST, DELETE, OPTIONS", "Access-Control-Allow-Headers": "content-type, mcp-session-id, mcp-protocol-version, accept", "Vary": "Origin" } });
+  if (request.method === "DELETE") {
+    // MCP clients can explicitly terminate a session. The session ID is a bearer
+    // capability, so hash it before lookup and never echo it in errors or logs.
+    const sessionId = request.headers.get("Mcp-Session-Id") || "";
+    if (!/^[a-f0-9]{64}$/.test(sessionId)) return httpError(404, "MCP session missing or invalid.");
+    const { error } = await db.from("rub_minds_mcp_sessions").delete().eq("session_digest", await sha256(sessionId));
+    if (error) return httpError(503, "Could not terminate the MCP session. Retry or wait for expiry.");
+    return new Response(null, { status: 204, headers: { "Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache" } });
+  }
+  if (request.method !== "POST") return httpError(405, "MCP endpoint accepts POST or DELETE requests only.");
   const accept = request.headers.get("Accept") || "";
   if (!accept.includes("application/json") || !accept.includes("text/event-stream")) return httpError(406, "Accept must include both application/json and text/event-stream.");
   const raw = await request.text();
