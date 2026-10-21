@@ -404,7 +404,7 @@ Deno.serve(async (request: Request) => {
   const validationError = validateToolArguments(toolName, args);
   if (validationError) return reply(200, rpcError(id, -32602, validationError), sessionId);
 
-  let session = await findSession(sessionId);
+  let session: Record<string, unknown> | null = await findSession(sessionId);
   if (!session) {
     if (toolName !== "join_group") return httpError(404, "MCP session missing, expired, or invalid. Reconnect and join with a valid invitation.");
     const sessionDigest = await sha256(sessionId);
