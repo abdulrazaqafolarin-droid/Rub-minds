@@ -61,9 +61,10 @@ async function findSession(sessionId: string) {
   if (!/^[a-f0-9]{64}$/.test(sessionId)) return null;
   const digest = await sha256(sessionId);
   const { data, error } = await db.from("rub_minds_mcp_sessions")
-    .select("session_digest, agent_credential_ciphertext, room_id, participant_id, expires_at")
+    .select("session_digest, agent_credential_ciphertext, room_id, participant_id, expires_at, terminated_at")
     .eq("session_digest", digest)
     .gt("expires_at", new Date().toISOString())
+    .is("terminated_at", null)
     .maybeSingle();
   if (error || !data) return null;
   await db.from("rub_minds_mcp_sessions").update({ last_seen_at: new Date().toISOString() }).eq("session_digest", digest);
@@ -149,7 +150,9 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     }
     if (isNewSession) {
       // Clean old sessions only after a valid invite has been redeemed successfully.
-      await db.from("rub_minds_mcp_sessions").delete().lt("expires_at", new Date().toISOString());
+      const now = Date.now();
+      await db.from("rub_minds_mcp_sessions").delete().lt("expires_at", new Date(now).toISOString()).is("terminated_at", null);
+      await db.from("rub_minds_mcp_sessions").delete().lt("terminated_at", new Date(now - SESSION_TTL_HOURS * 60 * 60 * 1000).toISOString());
     }
     // Critical: never return data.agent_secret to the MCP client or model.
     return { joined: true, room_id: data.room_id, participant_id: data.participant_id, expires_at: expiresAt };
@@ -304,10 +307,11 @@ async function handleMcpRequest(request: Request) {
     if (!/^[a-f0-9]{64}$/.test(sessionId)) return httpError(404, "MCP session missing or invalid.");
     const sessionDigest = await sha256(sessionId);
     const { data: closingSession, error: lookupError } = await db.from("rub_minds_mcp_sessions")
-      .select("session_digest, agent_credential_ciphertext")
+      .select("session_digest, agent_credential_ciphertext, terminated_at")
       .eq("session_digest", sessionDigest)
       .maybeSingle();
     if (lookupError) return httpError(503, "Could not verify the MCP session before termination.");
+    if (closingSession?.terminated_at) return new Response(null, { status: 204, headers: { "Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache" } });
     if (closingSession?.agent_credential_ciphertext) {
       let credential: string;
       try {
@@ -321,8 +325,15 @@ async function handleMcpRequest(request: Request) {
         .is("revoked_at", null);
       if (revokeError) return httpError(503, "Could not revoke the AI participant session. Retry or wait for expiry.");
     }
-    const { error: deleteError } = await db.from("rub_minds_mcp_sessions").delete().eq("session_digest", sessionDigest);
-    if (deleteError) return httpError(503, "Could not terminate the MCP session. Retry or wait for expiry.");
+    if (closingSession) {
+      const terminatedAt = new Date().toISOString();
+      const tombstoneExpiry = new Date(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000).toISOString();
+      const { error: terminateError } = await db.from("rub_minds_mcp_sessions").update({
+        agent_credential_ciphertext: null, room_id: null, participant_id: null,
+        terminated_at: terminatedAt, expires_at: tombstoneExpiry, last_seen_at: terminatedAt,
+      }).eq("session_digest", sessionDigest).is("terminated_at", null);
+      if (terminateError) return httpError(503, "Could not terminate the MCP session. Retry or wait for expiry.");
+    }
     return new Response(null, { status: 204, headers: { "Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache" } });
   }
   if (request.method !== "POST") return httpError(405, "MCP endpoint accepts POST or DELETE requests only.");
