@@ -74,12 +74,11 @@ jobs:
                     '20000000-0000-0000-0000-000000000002',
                     now() + interval '1 hour', true, 3, 0);
           SQL
-          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -c "select public.redeem_ai_room_invite_idempotent(repeat('e',64), 'Concurrent agent', repeat('f',64), repeat('1',64));" > "$RUNNER_TEMP/mcp-join-a.log" 2>&1 &
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -c "begin; select public.redeem_ai_room_invite_idempotent(repeat('e',64), 'Concurrent agent', repeat('f',64), repeat('1',64)); select pg_sleep(1); commit;" > "$RUNNER_TEMP/mcp-join-a.log" 2>&1 &
           join_a=$!
-          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -c "select public.redeem_ai_room_invite_idempotent(repeat('e',64), 'Concurrent agent', repeat('f',64), repeat('1',64));" > "$RUNNER_TEMP/mcp-join-b.log" 2>&1 &
-          join_b=$!
+          sleep 0.15
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -c "select public.redeem_ai_room_invite_idempotent(repeat('e',64), 'Concurrent agent', repeat('f',64), repeat('1',64));" > "$RUNNER_TEMP/mcp-join-b.log" 2>&1 || { cat "$RUNNER_TEMP/mcp-join-b.log"; exit 1; }
           wait "$join_a" || { cat "$RUNNER_TEMP/mcp-join-a.log"; exit 1; }
-          wait "$join_b" || { cat "$RUNNER_TEMP/mcp-join-b.log"; exit 1; }
           psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
           do $test$
           declare
