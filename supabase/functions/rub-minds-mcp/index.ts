@@ -488,7 +488,9 @@ async function handleMcpRequest(request: Request) {
   const method = rpc.method as string;
   const params = isRecord(rpc.params) ? rpc.params : {};
   const suppliedVersion = request.headers.get("MCP-Protocol-Version");
-  if (method === "server/discover" || suppliedVersion === MCP_MODERN_PROTOCOL_VERSION || (suppliedVersion !== null && suppliedVersion !== MCP_PROTOCOL_VERSION)) {
+  const bodyMeta = isRecord(params._meta) ? params._meta : {};
+  const bodyProtocolVersion = bodyMeta["io.modelcontextprotocol/protocolVersion"];
+  if (method === "server/discover" || suppliedVersion === MCP_MODERN_PROTOCOL_VERSION || bodyProtocolVersion === MCP_MODERN_PROTOCOL_VERSION || (suppliedVersion !== null && suppliedVersion !== MCP_PROTOCOL_VERSION)) {
     return await handleModernMcpRpc(request, rpc, params, id ?? null, hasId);
   }
   const protocolHeaderError = validateProtocolVersionHeader(method, suppliedVersion);
