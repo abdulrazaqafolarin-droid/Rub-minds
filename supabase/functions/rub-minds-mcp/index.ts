@@ -45,6 +45,16 @@ async function sha256(value: string) {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+async function consumeSessionRateLimit(session: Record<string, unknown>) {
+  const { data, error } = await db.rpc("consume_mcp_session_rate_limit", {
+    p_session_digest: session.session_digest,
+    p_max_requests: 60,
+    p_window_seconds: 60,
+  });
+  if (error) throw new Error("MCP session rate limiter is unavailable; request blocked.");
+  return data === true;
+}
+
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) return "[" + value.map(stableStringify).join(",") + "]";
   if (isRecord(value)) return "{" + Object.keys(value).sort().map((key) => JSON.stringify(key) + ":" + stableStringify(value[key])).join(",") + "}";
@@ -370,6 +380,13 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
   }
   const validationError = validateToolArguments(toolName, rawArgs);
   if (validationError) return modernRpcError(400, id, -32602, validationError);
+  if (session._new_session !== true) {
+    try {
+      if (!await consumeSessionRateLimit(session)) return modernToolResult(id, { error: "Rate limit exceeded: this MCP session may make 60 tool calls per minute. Wait briefly and retry." }, true);
+    } catch {
+      return httpError(503, "MCP session rate limiter is unavailable; request blocked.");
+    }
+  }
   try {
     const result = await runTool(toolName, rawArgs, session);
     return modernToolResult(id, toolName === "join_group" && isRecord(result) ? { ...result, session_handle: sessionHandle } : result);
@@ -525,6 +542,13 @@ async function handleMcpRequest(request: Request) {
       participant_id: null,
       _new_session: true,
     };
+  }
+  if (session._new_session !== true) {
+    try {
+      if (!await consumeSessionRateLimit(session)) return reply(429, rpcError(id, -32000, "MCP session rate limit exceeded: 60 tool calls per minute. Wait briefly and retry."), sessionId);
+    } catch {
+      return reply(503, rpcError(id, -32000, "MCP session rate limiter is unavailable; request blocked."), sessionId);
+    }
   }
   try {
     const result = await runTool(toolName, args as Record<string, unknown>, session);
