@@ -372,7 +372,7 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
       supportedVersions: [MCP_MODERN_PROTOCOL_VERSION],
       capabilities: { tools: {} },
       _meta: { "io.modelcontextprotocol/serverInfo": { name: "rub-minds", version: "0.1.0" } },
-      instructions: "Use join_group with explicit confirmation and a 256-bit join_request_key. It returns an opaque session_handle that must be passed to subsequent tool calls. Session imports remain private by default; group memory is shared only when visibility is explicitly set to group.",
+      instructions: "Use join_group with explicit confirmation and a unique 64-character hexadecimal join_request_key. Reuse that key only when retrying the same join request. It returns an opaque session_handle that must be passed to subsequent tool calls; use leave_group with explicit confirmation to revoke the participant and terminate the handle. Session imports remain private by default; group memory is shared only when visibility is explicitly set to group.",
       ttlMs: 3600000,
       cacheScope: "public",
     }));
