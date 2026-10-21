@@ -2,6 +2,8 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { decryptCredential, encryptCredential } from "../../../integrations/mcp/credential-crypto.mjs";
 import {
   MCP_PROTOCOL_VERSION,
+  MCP_MODERN_PROTOCOL_VERSION,
+  getModernMcpTools,
   RUB_MINDS_MCP_TOOLS,
   isRecord,
   rpcError,
@@ -296,10 +298,118 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
   throw new Error("Unknown tool.");
 }
 
+async function deriveModernSessionHandle(inviteToken: string, agentLabel: string, joinRequestKey: string) {
+  // Derive a deterministic, server-minted handle so retries of the same join
+  // request cannot consume a second AI invitation slot. HKDF separates this
+  // HMAC key from the AES-GCM credential-encryption key.
+  const keyBytes = new Uint8Array(32);
+  for (let i = 0; i < keyBytes.length; i++) keyBytes[i] = Number.parseInt(credentialEncryptionKey!.slice(i * 2, i * 2 + 2), 16);
+  const material = await crypto.subtle.importKey("raw", keyBytes, "HKDF", false, ["deriveKey"]);
+  const hmacKey = await crypto.subtle.deriveKey({
+    name: "HKDF", hash: "SHA-256",
+    salt: new TextEncoder().encode("rub-minds-mcp-handle-salt-v1"),
+    info: new TextEncoder().encode("rub-minds-mcp-handle-v1"),
+  }, material, { name: "HMAC", hash: "SHA-256", length: 256 }, false, ["sign"]);
+  const message = stableStringify({
+    invite_token: inviteToken.toLowerCase(),
+    agent_label: agentLabel.trim(),
+    join_request_key: joinRequestKey.toLowerCase(),
+  });
+  const signature = await crypto.subtle.sign("HMAC", hmacKey, new TextEncoder().encode(message));
+  return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function modernRpcError(status: number, id: string | number | null, code: number, message: string, data?: unknown) {
+  return reply(status, { jsonrpc: "2.0", id, error: { code, message, ...(data === undefined ? {} : { data }) } });
+}
+
+function modernToolResult(id: string | number, value: unknown, isError = false) {
+  return reply(200, rpcResult(id, { resultType: "complete", ...toolResult(value, isError) }));
+}
+
+async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>, params: Record<string, unknown>, id: string | number | null, hasId: boolean) {
+  const method = rpc.method as string;
+  const headerVersion = request.headers.get("MCP-Protocol-Version");
+  const meta = isRecord(params._meta) ? params._meta : null;
+  const bodyVersion = meta?.["io.modelcontextprotocol/protocolVersion"];
+  const headerMethod = request.headers.get("Mcp-Method");
+  if (!headerVersion || !meta || typeof bodyVersion !== "string" || headerVersion !== bodyVersion || headerMethod !== method) {
+    return modernRpcError(400, id, -32020, "Header mismatch: MCP-Protocol-Version, Mcp-Method, and request metadata must match the JSON-RPC body.");
+  }
+  if (headerVersion !== MCP_MODERN_PROTOCOL_VERSION) {
+    return modernRpcError(400, id, -32022, "Unsupported MCP protocol version.", { supported: [MCP_MODERN_PROTOCOL_VERSION], requested: headerVersion });
+  }
+  if (!isRecord(meta["io.modelcontextprotocol/clientCapabilities"])) {
+    return modernRpcError(400, id, -32602, "Request metadata must include io.modelcontextprotocol/clientCapabilities.");
+  }
+  if (method === "server/discover") {
+    if (!hasId) return modernRpcError(400, null, -32600, "server/discover must be a request.");
+    return reply(200, rpcResult(id, {
+      resultType: "complete",
+      supportedVersions: [MCP_MODERN_PROTOCOL_VERSION],
+      capabilities: { tools: {} },
+      _meta: { "io.modelcontextprotocol/serverInfo": { name: "rub-minds", version: "0.2.0" } },
+      instructions: "Use join_group with explicit confirmation and a 256-bit join_request_key. It returns an opaque session_handle that must be passed to subsequent tool calls. Session imports remain private by default; group memory is shared only when visibility is explicitly set to group.",
+      ttlMs: 3600000,
+      cacheScope: "public",
+    }));
+  }
+  if (!hasId) return new Response(null, { status: 202, headers: { "Cache-Control": "no-store" } });
+  if (method === "tools/list") {
+    return reply(200, rpcResult(id, { resultType: "complete", tools: getModernMcpTools(), ttlMs: 300000, cacheScope: "public" }));
+  }
+  if (method !== "tools/call") return modernRpcError(404, id, -32601, "Method not found.");
+
+  const toolName = params.name;
+  if (typeof toolName !== "string") return modernRpcError(400, id, -32602, "Tool name is required.");
+  const headerName = request.headers.get("Mcp-Name");
+  if (!headerName || headerName !== toolName) return modernRpcError(400, id, -32020, "Header mismatch: Mcp-Name must match params.name.");
+  if (params.arguments !== undefined && !isRecord(params.arguments)) return modernRpcError(400, id, -32602, "Tool arguments must be a JSON object.");
+  const rawArgs: Record<string, unknown> = { ...(isRecord(params.arguments) ? params.arguments : {}) };
+  let sessionHandle: string;
+  let session: Record<string, unknown> | null;
+  if (toolName === "join_group") {
+    const joinKey = rawArgs.join_request_key;
+    if (typeof joinKey !== "string" || !/^[a-f0-9]{64}$/i.test(joinKey) || typeof rawArgs.invite_token !== "string" || !/^[a-f0-9]{64}$/i.test(rawArgs.invite_token) || typeof rawArgs.agent_label !== "string") {
+      return modernRpcError(400, id, -32602, "join_group requires a valid invitation token, agent_label, and 64-character hexadecimal join_request_key.");
+    }
+    sessionHandle = await deriveModernSessionHandle(rawArgs.invite_token, rawArgs.agent_label, joinKey);
+    delete rawArgs.join_request_key;
+    session = await findSession(sessionHandle);
+    if (!session) {
+      const sessionDigest = await sha256(sessionHandle);
+      const { data: priorSession, error: lookupError } = await db.from("rub_minds_mcp_sessions")
+        .select("session_digest")
+        .eq("session_digest", sessionDigest)
+        .maybeSingle();
+      if (lookupError) return httpError(503, "Could not verify the join handle before joining.");
+      if (priorSession) return modernToolResult(id, { error: "This join handle has expired or was terminated. Start a new join request with a new join_request_key." }, true);
+      session = { session_digest: sessionDigest, agent_credential_ciphertext: null, room_id: null, participant_id: null, _new_session: true };
+    }
+  } else {
+    const handle = rawArgs.session_handle;
+    if (typeof handle !== "string" || !/^[a-f0-9]{64}$/i.test(handle)) return modernRpcError(400, id, -32602, "A valid session_handle returned by join_group is required.");
+    sessionHandle = handle.toLowerCase();
+    delete rawArgs.session_handle;
+    session = await findSession(sessionHandle);
+    if (!session) return modernToolResult(id, { error: "Session handle is missing, expired, or terminated. Call join_group again with a fresh join_request_key." }, true);
+  }
+  const validationError = validateToolArguments(toolName, rawArgs);
+  if (validationError) return modernRpcError(400, id, -32602, validationError);
+  try {
+    const result = await runTool(toolName, rawArgs, session);
+    return modernToolResult(id, toolName === "join_group" && isRecord(result) ? { ...result, session_handle: sessionHandle } : result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Tool call failed.";
+    const safe = message.length > 300 ? message.slice(0, 300) : message;
+    return modernToolResult(id, { error: safe }, true);
+  }
+}
+
 async function handleMcpRequest(request: Request) {
   const origin = request.headers.get("Origin");
   if (!isAllowedMcpOrigin(origin)) return httpError(403, "Origin is not allowed.");
-  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "Access-Control-Allow-Methods": "POST, DELETE, OPTIONS", "Access-Control-Allow-Headers": "content-type, mcp-session-id, mcp-protocol-version, accept", "Vary": "Origin" } });
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "Access-Control-Allow-Methods": "POST, DELETE, OPTIONS", "Access-Control-Allow-Headers": "content-type, mcp-session-id, mcp-protocol-version, mcp-method, mcp-name, accept", "Vary": "Origin" } });
   if (request.method === "DELETE") {
     // MCP clients can explicitly terminate a session. The session ID is a bearer
     // capability, so hash it before lookup and never echo it in errors or logs.
@@ -381,7 +491,11 @@ async function handleMcpRequest(request: Request) {
   const id = rpc.id as string | number | undefined;
   const method = rpc.method as string;
   const params = isRecord(rpc.params) ? rpc.params : {};
-  const protocolHeaderError = validateProtocolVersionHeader(method, request.headers.get("MCP-Protocol-Version"));
+  const suppliedVersion = request.headers.get("MCP-Protocol-Version");
+  if (method === "server/discover" || suppliedVersion === MCP_MODERN_PROTOCOL_VERSION || (suppliedVersion !== null && suppliedVersion !== MCP_PROTOCOL_VERSION)) {
+    return await handleModernMcpRpc(request, rpc, params, id ?? null, hasId);
+  }
+  const protocolHeaderError = validateProtocolVersionHeader(method, suppliedVersion);
   if (protocolHeaderError) return reply(400, rpcError(id ?? null, -32600, protocolHeaderError));
 
   if (method === "initialize") {
