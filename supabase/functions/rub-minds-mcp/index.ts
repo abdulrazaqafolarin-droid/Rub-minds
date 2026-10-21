@@ -26,6 +26,7 @@ if (!databaseUrl || !serviceKey || !credentialEncryptionKey) throw new Error("Mi
 if (!/^[a-f0-9]{64}$/i.test(credentialEncryptionKey)) throw new Error("RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY must be 64 hexadecimal characters.");
 const db = createClient(databaseUrl, serviceKey, { auth: { persistSession: false } });
 const SESSION_TTL_HOURS = 24;
+const TERMINATED_TOMBSTONE_HOURS = 168;
 const MAX_REQUEST_BYTES = 1_200_000;
 
 const reply = (status: number, body: unknown, sessionId?: string) => {
@@ -167,7 +168,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       // Clean old sessions only after a valid invite has been redeemed successfully.
       const now = Date.now();
       await db.from("rub_minds_mcp_sessions").delete().lt("expires_at", new Date(now).toISOString()).is("terminated_at", null);
-      await db.from("rub_minds_mcp_sessions").delete().lt("terminated_at", new Date(now - SESSION_TTL_HOURS * 60 * 60 * 1000).toISOString());
+      await db.from("rub_minds_mcp_sessions").delete().lt("terminated_at", new Date(now - TERMINATED_TOMBSTONE_HOURS * 60 * 60 * 1000).toISOString());
     }
     // Critical: never return data.agent_secret to the MCP client or model.
     return { joined: true, room_id: data.room_id, participant_id: data.participant_id, expires_at: expiresAt };
