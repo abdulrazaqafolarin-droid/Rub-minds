@@ -40,7 +40,7 @@ jobs:
           SQL
           psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261019120000_hosted_mcp_sessions.sql
           psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
-          do $
+          do $test$
           declare
             allowed boolean;
             counter integer;
@@ -87,7 +87,7 @@ jobs:
               raise exception 'Terminated sessions must not pass rate limiting';
             end if;
           end;
-          $;
+          $test$;
           SQL
   build:
     runs-on: ubuntu-latest
