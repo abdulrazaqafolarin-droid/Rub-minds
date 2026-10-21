@@ -8,7 +8,7 @@ This folder documents the remote MCP endpoint implemented at:
 
 - Implementation is in draft PR #10 and is **not deployed to production** by this change.
 - The endpoint implements an initial MCP Streamable HTTP request/response flow for `initialize`, `notifications/initialized`, `ping`, `tools/list`, and `tools/call`. It checks the negotiated `MCP-Protocol-Version` on subsequent requests, requires the client `Accept` header to include both `application/json` and `text/event-stream`, rejects unrecognized supplied `Origin` headers, and accepts `DELETE` with the session capability to terminate a session and revoke its bound AI participant credential.
-- No OAuth authorization server is implemented in this first version. MCP initialization is open, but an AI participant cannot read or write group data until a valid AI invitation token is redeemed.
+- No OAuth authorization server is implemented in this first version. MCP initialization is open and does not write a database session row; the session is persisted only when a valid invitation is used to join. An AI participant cannot read or write group data until that join succeeds.
 - The server is not an official/verified connector from OpenAI or Anthropic. Each platform must be configured and tested separately.
 - CI passed on commit `90a7f6f8c7e4d5943d731a4f4f7d9a5491aa39a6`, including build, unit/runtime tests, Deno type-checks for the Edge Functions, and the controlled browser proof. This is code-level CI only; no live MCP Inspector, Claude/ChatGPT connector test, or production deployment has been completed.
 
