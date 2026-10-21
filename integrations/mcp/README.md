@@ -10,7 +10,7 @@ This folder documents the remote MCP endpoint implemented at:
 - The endpoint implements an initial MCP Streamable HTTP request/response flow for `initialize`, `notifications/initialized`, `ping`, `tools/list`, and `tools/call`. It checks the negotiated `MCP-Protocol-Version` on subsequent requests, requires the client `Accept` header to include both `application/json` and `text/event-stream`, rejects unrecognized supplied `Origin` headers, and accepts `DELETE` with the session capability to terminate a session and revoke its bound AI participant credential.
 - No OAuth authorization server is implemented in this first version. MCP initialization is open and does not write a database session row; the session is persisted only when a valid invitation is used to join. An AI participant cannot read or write group data until that join succeeds.
 - The server is not an official/verified connector from OpenAI or Anthropic. Each platform must be configured and tested separately.
-- CI passed on commit `90a7f6f8c7e4d5943d731a4f4f7d9a5491aa39a6`, including build, unit/runtime tests, Deno type-checks for the Edge Functions, and the controlled browser proof. This is code-level CI only; no live MCP Inspector, Claude/ChatGPT connector test, or production deployment has been completed.
+- CI run [#229](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/39631657158) passed on commit `5ab379008cbb0c8c60c6a97bf28f26f4ab803de8`, including build, unit/runtime tests, Deno type-checks for both Edge Functions, and the controlled browser proof. This is code-level CI only; no live MCP Inspector, Claude/ChatGPT connector test, or production deployment has been completed.
 
 ## Tools
 
@@ -50,7 +50,7 @@ The link can:
 - The endpoint currently relies on invitation possession plus a high-entropy, expiring MCP session capability; it does **not** yet provide OAuth scopes, per-user account login, or account-level connector revocation. This should be treated as an early testing integration, not a production security certification.
 - Participant credentials are encrypted at rest with AES-256-GCM. Before deployment, configure `RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY` as a dedicated 32-byte random key encoded as 64 hexadecimal characters (for example, generate with `openssl rand -hex 32`). Store it as a Supabase Edge Function secret, never in the repository or frontend. Rotating this key invalidates existing encrypted MCP sessions; users must reconnect.
 - Deploy the Edge Function with JWT verification disabled only because the handler implements its own invite/session checks; do not disable JWT verification for other functions. Supabase API gateway deployments may require the project's **public anon/publishable key** in the `apikey` header. Never use a service-role key as a connector header.
-- Expired sessions are cleaned opportunistically on initialization; a scheduled cleanup may be added later if volume requires it.
+- Expired session rows are cleaned opportunistically after a successful invite redemption; a scheduled cleanup may be added later if volume requires it. Initialization, ping, and tool discovery do not create persistent rows.
 
 ## Database migration
 
