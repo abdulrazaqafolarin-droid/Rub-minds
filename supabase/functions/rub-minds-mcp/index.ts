@@ -441,7 +441,7 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
         rawArgs.invite_token,
         rawArgs.agent_label,
         joinKey,
-        async (candidateHandle) => {
+        async (candidateHandle: string) => {
           const candidateDigest = await sha256(candidateHandle);
           const { data: existingSession, error: sessionLookupError } = await db.from("rub_minds_mcp_sessions")
             .select("session_digest").eq("session_digest", candidateDigest).maybeSingle();
