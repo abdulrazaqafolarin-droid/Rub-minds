@@ -85,6 +85,7 @@ jobs:
           declare
             allowed boolean;
             counter integer;
+            join_result jsonb;
           begin
             if not (select relrowsecurity from pg_class where oid = 'public.rub_minds_mcp_sessions'::regclass) then
               raise exception 'RLS must be enabled on MCP sessions';
@@ -146,10 +147,16 @@ jobs:
                       '10000000-0000-0000-0000-000000000001',
                       '20000000-0000-0000-0000-000000000001',
                       now() + interval '1 hour', true, 3, 0);
-            perform public.redeem_ai_room_invite_idempotent(
-              repeat('b',64), 'CI agent', repeat('c',64), repeat('d',64));
-            perform public.redeem_ai_room_invite_idempotent(
-              repeat('b',64), 'CI agent', repeat('c',64), repeat('d',64));
+            select public.redeem_ai_room_invite_idempotent(
+              repeat('b',64), 'CI agent', repeat('c',64), repeat('d',64)) into join_result;
+            if join_result->>'replayed' <> 'false' then
+              raise exception 'First join attempt must be marked replayed=false';
+            end if;
+            select public.redeem_ai_room_invite_idempotent(
+              repeat('b',64), 'CI agent', repeat('c',64), repeat('d',64)) into join_result;
+            if join_result->>'replayed' <> 'true' then
+              raise exception 'Repeated join must be marked replayed=true';
+            end if;
             if (select count(*) from public.participants where room_id = '10000000-0000-0000-0000-000000000001') <> 1 then
               raise exception 'Repeated join must create exactly one participant';
             end if;
