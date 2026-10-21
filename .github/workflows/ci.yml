@@ -12,6 +12,13 @@ jobs:
         with:
           node-version: '22'
       - run: npm install
+      - name: Export generated lockfile for pinning
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-package-lock
+          path: package-lock.json
+          if-no-files-found: error
+          retention-days: 1
       - name: Report dependency audit findings
         run: |
           npm audit --json > "$RUNNER_TEMP/npm-audit.json" || true
