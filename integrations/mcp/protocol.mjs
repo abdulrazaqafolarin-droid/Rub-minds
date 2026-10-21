@@ -130,6 +130,10 @@ export function validateToolArguments(name, args) {
       if (args.confirm_join !== true) return "Explicit confirmation is required to join this group.";
       if (Object.keys(args).some((key) => !["invite_token", "agent_label", "confirm_join"].includes(key))) return "Unknown join_group argument.";
       return null;
+    case "leave_group":
+      if (args.confirm_leave !== true) return "Explicit confirmation is required to leave and revoke this group session.";
+      if (Object.keys(args).some((key) => key !== "confirm_leave")) return "Unknown leave_group argument.";
+      return null;
     case "read_group_context":
     case "read_group_messages":
     case "read_session_memory":
