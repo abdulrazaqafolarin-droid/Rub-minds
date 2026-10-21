@@ -358,7 +358,11 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
     if (typeof joinKey !== "string" || !/^[a-f0-9]{64}$/i.test(joinKey) || typeof rawArgs.invite_token !== "string" || !/^[a-f0-9]{64}$/i.test(rawArgs.invite_token) || typeof rawArgs.agent_label !== "string") {
       return modernRpcError(400, id, -32602, "join_group requires a valid invitation token, agent_label, and 64-character hexadecimal join_request_key.");
     }
-    sessionHandle = await deriveModernSessionHandle(credentialEncryptionKey, rawArgs.invite_token, rawArgs.agent_label, joinKey);
+    try {
+      sessionHandle = await deriveModernSessionHandle(credentialEncryptionKey, rawArgs.invite_token, rawArgs.agent_label, joinKey);
+    } catch {
+      return modernRpcError(500, id, -32603, "Could not securely derive the join handle.");
+    }
     delete rawArgs.join_request_key;
     session = await findSession(sessionHandle);
     if (!session) {
@@ -367,7 +371,7 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
         .select("session_digest")
         .eq("session_digest", sessionDigest)
         .maybeSingle();
-      if (lookupError) return httpError(503, "Could not verify the join handle before joining.");
+      if (lookupError) return modernRpcError(503, id, -32000, "Could not verify the join handle before joining.");
       if (priorSession) return modernToolResult(id, { error: "This join handle has expired or was terminated. Start a new join request with a new join_request_key." }, true);
       session = { session_digest: sessionDigest, agent_credential_ciphertext: null, room_id: null, participant_id: null, _new_session: true };
     }
@@ -385,7 +389,7 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
     try {
       if (!await consumeSessionRateLimit(session)) return modernToolResult(id, { error: "Rate limit exceeded: this MCP session may make 60 tool calls per minute. Wait briefly and retry." }, true);
     } catch {
-      return httpError(503, "MCP session rate limiter is unavailable; request blocked.");
+      return modernRpcError(503, id, -32000, "MCP session rate limiter is unavailable; request blocked.");
     }
   }
   try {
