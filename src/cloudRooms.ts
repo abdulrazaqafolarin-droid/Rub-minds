@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import type { SessionMemoryDocument } from './aiRelay';
 import { buildInviteRedirectUrl } from './inviteLinks';
 
 export type CloudRoom = {
@@ -147,4 +148,137 @@ export async function revokeCloudAgent(connectionId: string): Promise<boolean> {
   const { data, error } = await client().rpc('revoke_external_agent', { connection_id: connectionId });
   if (error) throw error;
   return data as boolean;
+}
+
+export type PrivateSessionImport = {
+  id: string;
+  room_id: string;
+  participant_id: string;
+  source_platform: string;
+  title: string;
+  context_summary: string;
+  imported_context: SessionMemoryDocument;
+  created_at: string;
+};
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return "[" + value.map(stableJson).join(",") + "]";
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return "{" + Object.keys(record).sort().map(key => JSON.stringify(key) + ":" + stableJson(record[key])).join(",") + "}";
+  }
+  const encoded = JSON.stringify(value);
+  return encoded === undefined ? "null" : encoded;
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** Save a selected AI context packet privately under the signed-in human participant. */
+export async function savePrivateSessionContext(roomId: string, participantId: string, document: SessionMemoryDocument): Promise<PrivateSessionImport> {
+  const supabaseClient = client();
+  const { data: authData, error: authError } = await supabaseClient.auth.getUser();
+  if (authError || !authData.user) throw new Error("Sign in to save private AI context.");
+  const { data: participant, error: participantError } = await supabaseClient.from("participants")
+    .select("id, room_id, user_id, kind")
+    .eq("id", participantId).eq("room_id", roomId).eq("user_id", authData.user.id).eq("kind", "human").maybeSingle();
+  if (participantError || !participant) throw new Error("Only your own human participant can save private context for this group.");
+  const serialized = stableJson(document);
+  const { data, error } = await supabaseClient.from("room_session_imports").insert({
+    room_id: roomId,
+    participant_id: participantId,
+    owner_id: authData.user.id,
+    document_version: 1,
+    source_platform: document.source.platform,
+    title: document.source.session_label || "Imported AI session",
+    context_summary: document.summary,
+    imported_context: document,
+    content_sha256: await sha256Hex(serialized),
+  }).select("id, room_id, participant_id, source_platform, title, context_summary, imported_context, created_at").single();
+  if (error || !data) throw new Error("Could not save private AI context. Check your group membership and session-memory permissions.");
+  return data as PrivateSessionImport;
+}
+
+/** Lists only private session imports belonging to this signed-in human participant. */
+export async function listPrivateSessionContexts(roomId: string, participantId: string): Promise<PrivateSessionImport[]> {
+  const { data, error } = await client().from("room_session_imports")
+    .select("id, room_id, participant_id, source_platform, title, context_summary, imported_context, created_at")
+    .eq("room_id", roomId).eq("participant_id", participantId)
+    .order("created_at", { ascending: false }).limit(10);
+  if (error) throw error;
+  return (data || []) as PrivateSessionImport[];
+}
+
+/** Delete one of the signed-in user's private context imports. RLS enforces ownership again. */
+export async function deletePrivateSessionContext(roomId: string, participantId: string, importId: string): Promise<void> {
+  const { data, error } = await client().from("room_session_imports").delete()
+    .eq("id", importId).eq("room_id", roomId).eq("participant_id", participantId)
+    .select("id").maybeSingle();
+  if (error || !data) throw new Error("Could not delete that private context import.");
+}
+
+export type GroupMemoryEntry = {
+  id: string;
+  room_id: string;
+  created_by_participant_id: string;
+  entry_type: "goal" | "insight" | "decision" | "open_question" | "progress" | "summary";
+  visibility: "group";
+  content: string;
+  created_at: string;
+  updated_at: string;
+};
+
+const groupMemoryTypes = new Set(["goal", "insight", "decision", "open_question", "progress", "summary"]);
+
+/** Lists only group-visible memory; RLS keeps other participants' private entries hidden. */
+export async function listGroupMemoryEntries(roomId: string): Promise<GroupMemoryEntry[]> {
+  const { data, error } = await client().from("room_memory_entries")
+    .select("id, room_id, created_by_participant_id, entry_type, visibility, content, created_at, updated_at")
+    .eq("room_id", roomId).eq("visibility", "group")
+    .order("updated_at", { ascending: false }).limit(50);
+  if (error) throw error;
+  return (data || []) as GroupMemoryEntry[];
+}
+
+/** Share only the explicit text the human reviewed; private context is never copied automatically. */
+export async function saveGroupMemoryEntry(roomId: string, participantId: string, entryType: GroupMemoryEntry["entry_type"], content: string): Promise<GroupMemoryEntry> {
+  const cleanContent = content.trim();
+  if (!groupMemoryTypes.has(entryType)) throw new Error("Choose a supported group memory type.");
+  if (!cleanContent || cleanContent.length > 12000) throw new Error("Shared insight must be 1-12,000 characters.");
+  const supabaseClient = client();
+  const { data: authData, error: authError } = await supabaseClient.auth.getUser();
+  if (authError || !authData.user) throw new Error("Sign in before sharing group memory.");
+  const { data: participant, error: participantError } = await supabaseClient.from("participants")
+    .select("id, room_id, user_id, kind")
+    .eq("id", participantId).eq("room_id", roomId).eq("user_id", authData.user.id).eq("kind", "human").maybeSingle();
+  if (participantError || !participant) throw new Error("Only your own human participant can publish group memory.");
+  const { data, error } = await supabaseClient.from("room_memory_entries").insert({
+    room_id: roomId,
+    created_by_participant_id: participantId,
+    owner_id: authData.user.id,
+    entry_type: entryType,
+    visibility: "group",
+    content: cleanContent,
+    source_message_ids: [],
+    idempotency_key: crypto.randomUUID(),
+  }).select("id, room_id, created_by_participant_id, entry_type, visibility, content, created_at, updated_at").single();
+  if (error || !data) throw new Error("Could not share this insight. Check your group membership and memory permissions.");
+  return data as GroupMemoryEntry;
+}
+
+/** A user may delete only their own group memory entry; RLS enforces the same rule server-side. */
+export async function deleteGroupMemoryEntry(roomId: string, participantId: string, entryId: string): Promise<void> {
+  const { data, error } = await client().from("room_memory_entries").delete()
+    .eq("id", entryId).eq("room_id", roomId).eq("created_by_participant_id", participantId)
+    .select("id").maybeSingle();
+  if (error || !data) throw new Error("Could not delete that group memory entry.");
+}
+
+export function subscribeToGroupMemoryEntries(roomId: string, refresh: () => void) {
+  const channel = client().channel("room-memory:" + roomId)
+    .on("postgres_changes", { event: "*", schema: "public", table: "room_memory_entries", filter: "room_id=eq." + roomId }, refresh)
+    .subscribe();
+  return () => { void client().removeChannel(channel); };
 }
