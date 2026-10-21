@@ -94,6 +94,9 @@ export const RUB_MINDS_MCP_TOOLS = [
     agent_label: { type: "string", minLength: 1, maxLength: 80 },
     confirm_join: { type: "boolean", const: true },
   }, ["invite_token", "agent_label", "confirm_join"]) },
+  { name: "leave_group", description: "Revoke this AI participant credential and terminate the current Rub Minds session. Requires explicit confirmation.", inputSchema: objectSchema({
+    confirm_leave: { type: "boolean", const: true },
+  }, ["confirm_leave"]) },
   { name: "read_group_context", description: "Read the joined group title, objective, and participant display names so this existing AI conversation understands the collaboration context.", inputSchema: objectSchema({}) },
   { name: "read_group_messages", description: "Read the latest messages in the Rub Minds group this AI participant has joined.", inputSchema: objectSchema({}) },
   { name: "send_group_message", description: "Send a message to the joined Rub Minds group. The host platform may request confirmation before writing.", inputSchema: objectSchema({
