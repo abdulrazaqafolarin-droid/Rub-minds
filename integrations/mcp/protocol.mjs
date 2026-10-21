@@ -85,7 +85,12 @@ export function validateToolArguments(name, args) {
       if (typeof args.content !== "string" || !args.content.trim() || args.content.length > 12000) return "content must contain 1-12000 characters.";
       if (!["private", "group"].includes(args.visibility)) return "visibility must explicitly be private or group.";
       if (typeof args.idempotency_key !== "string" || !args.idempotency_key.trim() || args.idempotency_key.length < 8 || args.idempotency_key.length > 200) return "idempotency_key must be 8-200 characters.";
-      if (args.source_message_ids !== undefined && (!Array.isArray(args.source_message_ids) || args.source_message_ids.length > 50 || args.source_message_ids.some((id) => typeof id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)))) return "source_message_ids must be at most 50 UUIDs.";
+      if (args.source_message_ids !== undefined && (
+        !Array.isArray(args.source_message_ids) ||
+        args.source_message_ids.length > 50 ||
+        args.source_message_ids.some((id) => typeof id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) ||
+        new Set(args.source_message_ids).size !== args.source_message_ids.length
+      )) return "source_message_ids must contain at most 50 unique UUIDs.";
       if (args.source_import_id !== undefined && (typeof args.source_import_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(args.source_import_id))) return "source_import_id must be a UUID.";
       if (Object.keys(args).some((key) => !["entry_type", "content", "visibility", "idempotency_key", "source_message_ids", "source_import_id"].includes(key))) return "Unknown remember_memory argument.";
       return null;
