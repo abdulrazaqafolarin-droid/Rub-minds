@@ -207,7 +207,10 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
           participant_id: data.participant_id,
           expires_at: expiresAt,
           last_seen_at: new Date().toISOString(),
-        }).eq("session_digest", session.session_digest as string).is("agent_credential_ciphertext", null)
+        }).eq("session_digest", session.session_digest as string)
+          .is("agent_credential_ciphertext", null)
+          .is("terminated_at", null)
+          .gt("expires_at", new Date().toISOString())
           .select("session_digest").maybeSingle();
     if (bindError || !boundSession) {
       if (modernIdempotentJoin) {
