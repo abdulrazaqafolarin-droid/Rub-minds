@@ -285,8 +285,27 @@ Deno.serve(async (request: Request) => {
     // capability, so hash it before lookup and never echo it in errors or logs.
     const sessionId = request.headers.get("Mcp-Session-Id") || "";
     if (!/^[a-f0-9]{64}$/.test(sessionId)) return httpError(404, "MCP session missing or invalid.");
-    const { error } = await db.from("rub_minds_mcp_sessions").delete().eq("session_digest", await sha256(sessionId));
-    if (error) return httpError(503, "Could not terminate the MCP session. Retry or wait for expiry.");
+    const sessionDigest = await sha256(sessionId);
+    const { data: closingSession, error: lookupError } = await db.from("rub_minds_mcp_sessions")
+      .select("session_digest, agent_credential_ciphertext")
+      .eq("session_digest", sessionDigest)
+      .maybeSingle();
+    if (lookupError) return httpError(503, "Could not verify the MCP session before termination.");
+    if (closingSession?.agent_credential_ciphertext) {
+      let credential: string;
+      try {
+        credential = await decryptCredential(closingSession.agent_credential_ciphertext, credentialEncryptionKey, sessionDigest);
+      } catch {
+        return httpError(503, "Could not securely close the AI participant session. Retry or wait for expiry.");
+      }
+      const { error: revokeError } = await db.from("agent_connections")
+        .update({ revoked_at: new Date().toISOString() })
+        .eq("credential_digest", await sha256(credential))
+        .is("revoked_at", null);
+      if (revokeError) return httpError(503, "Could not revoke the AI participant session. Retry or wait for expiry.");
+    }
+    const { error: deleteError } = await db.from("rub_minds_mcp_sessions").delete().eq("session_digest", sessionDigest);
+    if (deleteError) return httpError(503, "Could not terminate the MCP session. Retry or wait for expiry.");
     return new Response(null, { status: 204, headers: { "Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache" } });
   }
   if (request.method !== "POST") return httpError(405, "MCP endpoint accepts POST or DELETE requests only.");
