@@ -42,6 +42,7 @@ The link can:
 - Only 64-character hexadecimal invite tokens are accepted. Existing database RPC logic enforces invite expiry, revocation, AI-use limits, and generates the AI credential.
 - The generated AI credential is stored only in the server-side session binding and is **never included in tool output**.
 - The MCP session ID is a 256-bit random capability returned in the `Mcp-Session-Id` response header. Treat it as a secret: use HTTPS, never log or paste it into chat, and reconnect after the 24-hour session expiry. The database stores only its SHA-256 digest.
+- Browser requests receive CORS headers only for the explicit origin allowlist (`rub-minds.vercel.app`, ChatGPT, Claude, and localhost development origins); `Mcp-Session-Id` is exposed for allowed browser clients. This is browser interoperability, not authentication. Server-to-server MCP clients may omit `Origin`.
 - The session table has RLS enabled and all access revoked from `anon` and `authenticated`; only the server's service-role client accesses it. Never expose `SUPABASE_SERVICE_ROLE_KEY` to a client.
 - Raw imported context is participant-private. Sharing a memory entry requires `visibility: "group"` explicitly. The memory document validator rejects any declaration that raw history is group-visible.
 - Message and memory writes should be reviewed in the AI platform's tool approval UI. A `confirm_join: true` argument is an additional intent check, not a substitute for the platform's own approval UI.
