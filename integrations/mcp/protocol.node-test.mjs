@@ -4,6 +4,7 @@ import {
   MCP_PROTOCOL_VERSION,
   MCP_MODERN_PROTOCOL_VERSION,
   getModernMcpTools,
+  validateModernRequestMetadata,
   RUB_MINDS_MCP_TOOLS,
   rpcError,
   rpcResult,
@@ -30,6 +31,19 @@ test("current stateless protocol exposes explicit session handles and retry keys
   assert.ok(RUB_MINDS_MCP_TOOLS.find((tool) => tool.name === "join_group").inputSchema.properties.join_request_key === undefined);
 });
 
+test("current stateless protocol validates request metadata and mirrored headers", () => {
+  const meta = { _meta: {
+    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+    "io.modelcontextprotocol/clientCapabilities": {},
+  } };
+  assert.equal(validateModernRequestMetadata("tools/list", { protocolVersion: "2026-07-28", method: "tools/list" }, meta), null);
+  assert.equal(validateModernRequestMetadata("tools/list", { protocolVersion: "2026-07-28", method: "tools/call" }, meta).code, -32020);
+  assert.equal(validateModernRequestMetadata("tools/list", { protocolVersion: "2026-07-28", method: "tools/list" }, { _meta: { ...meta._meta, "io.modelcontextprotocol/protocolVersion": "2025-11-25" } }).code, -32020);
+  assert.equal(validateModernRequestMetadata("tools/list", { protocolVersion: "2025-11-25", method: "tools/list" }, { _meta: { ...meta._meta, "io.modelcontextprotocol/protocolVersion": "2025-11-25" } }).code, -32022);
+  assert.equal(validateModernRequestMetadata("tools/call", { protocolVersion: "2026-07-28", method: "tools/call", name: "read_group_context" }, { ...meta, name: "read_group_messages" }).code, -32020);
+  assert.equal(validateModernRequestMetadata("tools/list", { protocolVersion: "2026-07-28", method: "tools/list" }, { _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28" } }).code, -32602);
+});
+
 test("advertises invitation, messaging, and memory tools", () => {
   assert.equal(MCP_PROTOCOL_VERSION, "2025-06-18");
   assert.deepEqual(RUB_MINDS_MCP_TOOLS.map((tool) => tool.name), [
@@ -51,7 +65,7 @@ test("transport validates negotiated protocol version and supplied origins", () 
 test("CORS exposes the MCP session capability only to allowed browser origins", async () => {
   const preflight = new Response(null, { status: 204, headers: {
     "Access-Control-Allow-Methods": "POST, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "content-type, mcp-session-id, mcp-protocol-version, accept",
+    "Access-Control-Allow-Headers": "content-type, mcp-session-id, mcp-protocol-version, mcp-method, mcp-name, accept",
   } });
   const allowed = applyMcpCors(preflight, "https://chatgpt.com");
   assert.equal(allowed.headers.get("Access-Control-Allow-Origin"), "https://chatgpt.com");
