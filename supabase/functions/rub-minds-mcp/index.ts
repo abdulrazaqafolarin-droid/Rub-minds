@@ -11,6 +11,7 @@ import {
   isAllowedMcpOrigin,
   validateProtocolVersionHeader,
   applyMcpCors,
+  isJsonContentType,
 } from "../../../integrations/mcp/protocol.mjs";
 
 const databaseUrl = Deno.env.get("SUPABASE_URL");
@@ -325,6 +326,7 @@ async function handleMcpRequest(request: Request) {
     return new Response(null, { status: 204, headers: { "Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache" } });
   }
   if (request.method !== "POST") return httpError(405, "MCP endpoint accepts POST or DELETE requests only.");
+  if (!isJsonContentType(request.headers.get("Content-Type"))) return httpError(415, "Content-Type must be application/json.");
   const accept = request.headers.get("Accept") || "";
   if (!accept.includes("application/json") || !accept.includes("text/event-stream")) return httpError(406, "Accept must include both application/json and text/event-stream.");
   const declaredLength = request.headers.get("Content-Length");
