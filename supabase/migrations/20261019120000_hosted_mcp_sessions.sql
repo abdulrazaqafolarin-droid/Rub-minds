@@ -21,3 +21,8 @@ grant all on table public.rub_minds_mcp_sessions to service_role;
 
 create index if not exists rub_minds_mcp_sessions_expiry_idx
   on public.rub_minds_mcp_sessions (expires_at);
+
+-- Agent request logs are server-managed and have no client-facing policies.
+-- Remove direct client grants as defense in depth; privileged database functions
+-- and service-role backend operations remain responsible for writing these rows.
+revoke all on table public.agent_request_log from anon, authenticated;
