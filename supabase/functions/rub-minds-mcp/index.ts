@@ -204,8 +204,25 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
         }).eq("session_digest", session.session_digest as string).is("agent_credential_ciphertext", null)
           .select("session_digest").maybeSingle();
     if (bindError || !boundSession) {
-      await db.from("agent_connections").update({ revoked_at: new Date().toISOString() })
-        .eq("credential_digest", await sha256(data.agent_secret)).is("revoked_at", null);
+      if (modernIdempotentJoin) {
+        // A concurrent retry may have won the unique session_digest insert.
+        // Re-read and accept only the exact same atomic join result; never revoke
+        // the shared deterministic credential just because this duplicate insert lost.
+        const { data: concurrentBinding, error: concurrentLookupError } = await db.from("rub_minds_mcp_sessions")
+          .select("session_digest, room_id, participant_id, terminated_at, expires_at")
+          .eq("session_digest", session.session_digest as string)
+          .maybeSingle();
+        if (!concurrentLookupError && concurrentBinding &&
+            concurrentBinding.room_id === data.room_id &&
+            concurrentBinding.participant_id === data.participant_id &&
+            concurrentBinding.terminated_at === null &&
+            Date.parse(concurrentBinding.expires_at) > Date.now()) {
+          return { joined: true, room_id: data.room_id, participant_id: data.participant_id, expires_at: concurrentBinding.expires_at, replayed: true };
+        }
+      } else {
+        await db.from("agent_connections").update({ revoked_at: new Date().toISOString() })
+          .eq("credential_digest", await sha256(credential)).is("revoked_at", null);
+      }
       throw new Error("Could not safely bind the AI participant to this MCP session.");
     }
     if (isNewSession) {
