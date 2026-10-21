@@ -206,6 +206,33 @@ jobs:
               if sqlerrm = 'Exhausted invitation unexpectedly redeemed' then raise; end if;
             end;
 
+            -- Malformed tokens and retries against revoked/expired prior joins must fail closed.
+            begin
+              perform public.redeem_ai_room_invite_idempotent('not-a-valid-token', 'Malformed agent', repeat('8',64), repeat('9',64));
+              raise exception 'Malformed invitation unexpectedly redeemed';
+            exception when others then
+              if sqlerrm = 'Malformed invitation unexpectedly redeemed' then raise; end if;
+            end;
+
+            update public.agent_connections set revoked_at = now()
+              where credential_digest = repeat('d',64);
+            begin
+              perform public.redeem_ai_room_invite_idempotent(repeat('b',64), 'CI agent', repeat('c',64), repeat('d',64));
+              raise exception 'Revoked prior join unexpectedly replayed';
+            exception when others then
+              if sqlerrm = 'Revoked prior join unexpectedly replayed' then raise; end if;
+            end;
+            update public.agent_connections set revoked_at = null
+              where credential_digest = repeat('d',64);
+            update public.rub_minds_mcp_join_requests set expires_at = now() - interval '1 second'
+              where session_digest = repeat('c',64);
+            begin
+              perform public.redeem_ai_room_invite_idempotent(repeat('b',64), 'CI agent', repeat('c',64), repeat('d',64));
+              raise exception 'Expired prior join unexpectedly replayed';
+            exception when others then
+              if sqlerrm = 'Expired prior join unexpectedly replayed' then raise; end if;
+            end;
+
             begin
               perform public.redeem_ai_room_invite_idempotent(
                 repeat('b',64), 'Different label', repeat('c',64), repeat('d',64));
