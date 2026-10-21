@@ -334,7 +334,7 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
       resultType: "complete",
       supportedVersions: [MCP_MODERN_PROTOCOL_VERSION],
       capabilities: { tools: {} },
-      _meta: { "io.modelcontextprotocol/serverInfo": { name: "rub-minds", version: "0.2.0" } },
+      _meta: { "io.modelcontextprotocol/serverInfo": { name: "rub-minds", version: "0.1.0" } },
       instructions: "Use join_group with explicit confirmation and a 256-bit join_request_key. It returns an opaque session_handle that must be passed to subsequent tool calls. Session imports remain private by default; group memory is shared only when visibility is explicitly set to group.",
       ttlMs: 3600000,
       cacheScope: "public",
