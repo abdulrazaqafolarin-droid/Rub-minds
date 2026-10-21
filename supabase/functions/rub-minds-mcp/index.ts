@@ -348,15 +348,15 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
   if (method !== "tools/call") return modernRpcError(404, id, -32601, "Method not found.");
 
   const toolName = params.name;
-  if (typeof toolName !== "string") return modernRpcError(400, id, -32602, "Tool name is required.");
-  if (params.arguments !== undefined && !isRecord(params.arguments)) return modernRpcError(400, id, -32602, "Tool arguments must be a JSON object.");
+  if (typeof toolName !== "string") return modernRpcError(200, id, -32602, "Tool name is required.");
+  if (params.arguments !== undefined && !isRecord(params.arguments)) return modernRpcError(200, id, -32602, "Tool arguments must be a JSON object.");
   const rawArgs: Record<string, unknown> = { ...(isRecord(params.arguments) ? params.arguments : {}) };
   let sessionHandle: string;
   let session: Record<string, unknown> | null;
   if (toolName === "join_group") {
     const joinKey = rawArgs.join_request_key;
     if (typeof joinKey !== "string" || !/^[a-f0-9]{64}$/i.test(joinKey) || typeof rawArgs.invite_token !== "string" || !/^[a-f0-9]{64}$/i.test(rawArgs.invite_token) || typeof rawArgs.agent_label !== "string") {
-      return modernRpcError(400, id, -32602, "join_group requires a valid invitation token, agent_label, and 64-character hexadecimal join_request_key.");
+      return modernRpcError(200, id, -32602, "join_group requires a valid invitation token, agent_label, and 64-character hexadecimal join_request_key.");
     }
     try {
       sessionHandle = await deriveModernSessionHandle(credentialEncryptionKey, rawArgs.invite_token, rawArgs.agent_label, joinKey);
@@ -377,14 +377,14 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
     }
   } else {
     const handle = rawArgs.session_handle;
-    if (typeof handle !== "string" || !/^[a-f0-9]{64}$/i.test(handle)) return modernRpcError(400, id, -32602, "A valid session_handle returned by join_group is required.");
+    if (typeof handle !== "string" || !/^[a-f0-9]{64}$/i.test(handle)) return modernRpcError(200, id, -32602, "A valid session_handle returned by join_group is required.");
     sessionHandle = handle.toLowerCase();
     delete rawArgs.session_handle;
     session = await findSession(sessionHandle);
     if (!session) return modernToolResult(id, { error: "Session handle is missing, expired, or terminated. Call join_group again with a fresh join_request_key." }, true);
   }
   const validationError = validateToolArguments(toolName, rawArgs);
-  if (validationError) return modernRpcError(400, id, -32602, validationError);
+  if (validationError) return modernRpcError(200, id, -32602, validationError);
   if (session._new_session !== true) {
     try {
       if (!await consumeSessionRateLimit(session)) return modernToolResult(id, { error: "Rate limit exceeded: this MCP session may make 60 tool calls per minute. Wait briefly and retry." }, true);
