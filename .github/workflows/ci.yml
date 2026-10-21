@@ -1,6 +1,6 @@
 name: Validate Rub Minds
 permissions:
-  contents: write
+  contents: read
 on:
   push:
     branches: [main]
@@ -9,20 +9,13 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
-      - run: npm install
-      - name: Export generated lockfile for pinning
-        uses: actions/upload-artifact@v4
-        with:
-          name: npm-package-lock
-          path: package-lock.json
-          if-no-files-found: error
-          retention-days: 1
+      - run: npm ci
       - name: Report dependency audit findings
         run: |
           npm audit --json > "$RUNNER_TEMP/npm-audit.json" || true
@@ -33,7 +26,7 @@ jobs:
       - run: npm run test
       - run: npm run test:runtime
       - name: Set up Deno for Supabase Edge Functions
-        uses: denoland/setup-deno@v2
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
         with:
           deno-version: v2.x
       - name: Type-check session-memory Edge Function
@@ -44,24 +37,3 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Run controlled browser proof of concept
         run: npm run test:browser
-      - name: Bootstrap package lockfile on the MCP branch
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feature/hosted-rub-minds-mcp'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BRANCH: ${{ github.head_ref }}
-        run: |
-          cp package-lock.json "$RUNNER_TEMP/package-lock.json"
-          rm package-lock.json
-          TOKEN_B64="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
-          git -c "http.extraheader=AUTHORIZATION: basic $TOKEN_B64" fetch origin "$BRANCH"
-          git checkout -B "$BRANCH" "origin/$BRANCH"
-          cp "$RUNNER_TEMP/package-lock.json" package-lock.json
-          git add package-lock.json
-          if git diff --cached --quiet; then
-            echo "package-lock.json is already current"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore(deps): pin npm dependency tree"
-          git -c "http.extraheader=AUTHORIZATION: basic $TOKEN_B64" push origin "HEAD:$BRANCH"
