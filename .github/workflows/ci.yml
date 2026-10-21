@@ -1,4 +1,6 @@
 name: Validate Rub Minds
+permissions:
+  contents: write
 on:
   push:
     branches: [main]
@@ -8,6 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -40,3 +44,24 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Run controlled browser proof of concept
         run: npm run test:browser
+      - name: Bootstrap package lockfile on the MCP branch
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feature/hosted-rub-minds-mcp'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          cp package-lock.json "$RUNNER_TEMP/package-lock.json"
+          rm package-lock.json
+          git fetch origin "$BRANCH"
+          git checkout -B "$BRANCH" "origin/$BRANCH"
+          cp "$RUNNER_TEMP/package-lock.json" package-lock.json
+          git add package-lock.json
+          if git diff --cached --quiet; then
+            echo "package-lock.json is already current"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(deps): pin npm dependency tree"
+          TOKEN_B64="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c "http.extraheader=AUTHORIZATION: basic $TOKEN_B64" push origin "HEAD:$BRANCH"
