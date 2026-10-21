@@ -354,7 +354,11 @@ function modernRpcError(status: number, id: string | number | null, code: number
 }
 
 function modernToolResult(id: string | number, value: unknown, isError = false) {
-  return reply(200, rpcResult(id, { resultType: "complete", ...toolResult(value, isError) }));
+  return reply(200, rpcResult(id, {
+    resultType: "complete",
+    _meta: { "io.modelcontextprotocol/serverInfo": { name: "rub-minds", version: "0.1.0" } },
+    ...toolResult(value, isError),
+  }));
 }
 
 async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>, params: Record<string, unknown>, id: string | number | null, hasId: boolean) {
@@ -380,7 +384,7 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
   if (!hasId) return new Response(null, { status: 202, headers: { "Cache-Control": "no-store" } });
   if (id === null) return modernRpcError(400, null, -32600, "Request id is required.");
   if (method === "tools/list") {
-    return reply(200, rpcResult(id, { resultType: "complete", tools: getModernMcpTools(), ttlMs: 300000, cacheScope: "public" }));
+    return reply(200, rpcResult(id, { resultType: "complete", tools: getModernMcpTools(), ttlMs: 300000, cacheScope: "public", _meta: { "io.modelcontextprotocol/serverInfo": { name: "rub-minds", version: "0.1.0" } } }));
   }
   if (method !== "tools/call") return modernRpcError(404, id, -32601, "Method not found.");
 
