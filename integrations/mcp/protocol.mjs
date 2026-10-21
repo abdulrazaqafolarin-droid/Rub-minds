@@ -1,4 +1,30 @@
 export const MCP_PROTOCOL_VERSION = "2025-06-18";
+export const MCP_MODERN_PROTOCOL_VERSION = "2026-07-28";
+
+/** Current stateless MCP tool surface. State is carried by explicit opaque handles. */
+export function getModernMcpTools() {
+  return RUB_MINDS_MCP_TOOLS.map((tool) => {
+    const properties = { ...tool.inputSchema.properties };
+    const required = [...(tool.inputSchema.required || [])];
+    let description = tool.description;
+    if (tool.name === "join_group") {
+      properties.join_request_key = {
+        type: "string", pattern: "^[a-fA-F0-9]{64}$",
+        description: "A client-generated 256-bit hexadecimal idempotency key. Reuse the same value when retrying this exact join request.",
+      };
+      required.push("join_request_key");
+      description += " Returns an opaque session_handle. Reuse join_request_key for retries of the same join request.";
+    } else {
+      properties.session_handle = {
+        type: "string", pattern: "^[a-fA-F0-9]{64}$",
+        description: "Opaque bearer handle returned by join_group; treat as a secret, use only for this group's calls, and never share it.",
+      };
+      required.push("session_handle");
+      description += " Requires the session_handle returned by join_group; this is a short-lived bearer secret and must not be shared.";
+    }
+    return { ...tool, description, inputSchema: { ...tool.inputSchema, properties, required } };
+  });
+}
 
 const ALLOWED_MCP_ORIGINS = new Set([
   "https://rub-minds.vercel.app",
