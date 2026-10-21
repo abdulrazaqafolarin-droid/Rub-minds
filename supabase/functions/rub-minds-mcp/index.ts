@@ -358,12 +358,11 @@ Deno.serve(async (request: Request) => {
   if (method === "initialize") {
     if (!hasId) return reply(400, rpcError(null, -32600, "initialize must be a request."));
     if (typeof params.protocolVersion !== "string") return reply(400, rpcError(id, -32602, "initialize requires params.protocolVersion."));
+    // Do not write to the database for unauthenticated initialization. The
+    // opaque 256-bit capability is persisted only when the client attempts to
+    // redeem a valid group invitation, preventing init-only request floods from
+    // growing the session table.
     const sessionId = newSessionId();
-    const sessionDigest = await sha256(sessionId);
-    const expiresAt = new Date(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000).toISOString();
-    const { error } = await db.from("rub_minds_mcp_sessions").insert({ session_digest: sessionDigest, expires_at: expiresAt });
-    if (error) return reply(503, rpcError(id, -32603, "Could not create an MCP session."));
-    await db.from("rub_minds_mcp_sessions").delete().lt("expires_at", new Date().toISOString());
     return reply(200, rpcResult(id, {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: { tools: {} },
@@ -373,8 +372,7 @@ Deno.serve(async (request: Request) => {
   }
 
   const sessionId = request.headers.get("Mcp-Session-Id") || "";
-  const session = await findSession(sessionId);
-  if (!session) return httpError(404, "MCP session missing, expired, or invalid. Reconnect the Rub Minds MCP server.");
+  if (!/^[a-f0-9]{64}$/.test(sessionId)) return httpError(404, "MCP session missing or invalid. Reconnect the Rub Minds MCP server.");
 
   if (method === "notifications/initialized" || method === "notifications/cancelled") {
     return hasId ? reply(200, rpcError(id, -32600, "Notifications must not include an id.")) : new Response(null, { status: 202, headers: { "Cache-Control": "no-store" } });
@@ -390,6 +388,25 @@ Deno.serve(async (request: Request) => {
   if (typeof toolName !== "string") return reply(200, rpcError(id, -32602, "Tool name is required."), sessionId);
   const validationError = validateToolArguments(toolName, args);
   if (validationError) return reply(200, rpcError(id, -32602, validationError), sessionId);
+
+  let session = await findSession(sessionId);
+  if (!session) {
+    if (toolName !== "join_group") return httpError(404, "MCP session missing, expired, or invalid. Reconnect and join with a valid invitation.");
+    const sessionDigest = await sha256(sessionId);
+    const { data: priorSession, error: lookupError } = await db.from("rub_minds_mcp_sessions")
+      .select("session_digest")
+      .eq("session_digest", sessionDigest)
+      .maybeSingle();
+    if (lookupError) return httpError(503, "Could not verify the MCP session before joining.");
+    if (priorSession) return httpError(404, "MCP session expired or invalid. Reconnect the Rub Minds MCP server.");
+    const expiresAt = new Date(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000).toISOString();
+    const { error: insertError } = await db.from("rub_minds_mcp_sessions").insert({ session_digest: sessionDigest, expires_at: expiresAt });
+    if (insertError && insertError.code !== "23505") return httpError(503, "Could not create the MCP session.");
+    session = await findSession(sessionId);
+    if (!session) return httpError(404, "MCP session expired or invalid. Reconnect the Rub Minds MCP server.");
+    // Opportunistic cleanup runs only after a valid invitation holder starts joining.
+    await db.from("rub_minds_mcp_sessions").delete().lt("expires_at", new Date().toISOString());
+  }
   try {
     const result = await runTool(toolName, args as Record<string, unknown>, session);
     return reply(200, rpcResult(id, toolResult(result)), sessionId);
