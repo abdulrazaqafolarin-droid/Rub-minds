@@ -121,18 +121,33 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
         .eq("credential_digest", await sha256(data.agent_secret)).is("revoked_at", null);
       throw new Error("Could not securely bind the AI participant to this MCP session.");
     }
-    const { data: boundSession, error: bindError } = await db.from("rub_minds_mcp_sessions").update({
+    const binding = {
+      session_digest: session.session_digest as string,
       agent_credential_ciphertext: encryptedCredential,
       room_id: data.room_id,
       participant_id: data.participant_id,
       expires_at: expiresAt,
       last_seen_at: new Date().toISOString(),
-    }).eq("session_digest", session.session_digest as string).is("agent_credential_ciphertext", null)
-      .select("session_digest").maybeSingle();
+    };
+    const isNewSession = session._new_session === true;
+    const { data: boundSession, error: bindError } = isNewSession
+      ? await db.from("rub_minds_mcp_sessions").insert(binding).select("session_digest").maybeSingle()
+      : await db.from("rub_minds_mcp_sessions").update({
+          agent_credential_ciphertext: encryptedCredential,
+          room_id: data.room_id,
+          participant_id: data.participant_id,
+          expires_at: expiresAt,
+          last_seen_at: new Date().toISOString(),
+        }).eq("session_digest", session.session_digest as string).is("agent_credential_ciphertext", null)
+          .select("session_digest").maybeSingle();
     if (bindError || !boundSession) {
       await db.from("agent_connections").update({ revoked_at: new Date().toISOString() })
         .eq("credential_digest", await sha256(data.agent_secret)).is("revoked_at", null);
       throw new Error("Could not safely bind the AI participant to this MCP session.");
+    }
+    if (isNewSession) {
+      // Clean old sessions only after a valid invite has been redeemed successfully.
+      await db.from("rub_minds_mcp_sessions").delete().lt("expires_at", new Date().toISOString());
     }
     // Critical: never return data.agent_secret to the MCP client or model.
     return { joined: true, room_id: data.room_id, participant_id: data.participant_id, expires_at: expiresAt };
@@ -399,13 +414,15 @@ Deno.serve(async (request: Request) => {
       .maybeSingle();
     if (lookupError) return httpError(503, "Could not verify the MCP session before joining.");
     if (priorSession) return httpError(404, "MCP session expired or invalid. Reconnect the Rub Minds MCP server.");
-    const expiresAt = new Date(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000).toISOString();
-    const { error: insertError } = await db.from("rub_minds_mcp_sessions").insert({ session_digest: sessionDigest, expires_at: expiresAt });
-    if (insertError && insertError.code !== "23505") return httpError(503, "Could not create the MCP session.");
-    session = await findSession(sessionId);
-    if (!session) return httpError(404, "MCP session expired or invalid. Reconnect the Rub Minds MCP server.");
-    // Opportunistic cleanup runs only after a valid invitation holder starts joining.
-    await db.from("rub_minds_mcp_sessions").delete().lt("expires_at", new Date().toISOString());
+    // Keep the not-yet-joined session in memory only. An invalid invite must not
+    // create a persistent row; runTool persists it only after redemption succeeds.
+    session = {
+      session_digest: sessionDigest,
+      agent_credential_ciphertext: null,
+      room_id: null,
+      participant_id: null,
+      _new_session: true,
+    };
   }
   try {
     const result = await runTool(toolName, args as Record<string, unknown>, session);
