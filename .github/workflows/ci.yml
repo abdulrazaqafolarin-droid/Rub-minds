@@ -52,7 +52,8 @@ jobs:
         run: |
           cp package-lock.json "$RUNNER_TEMP/package-lock.json"
           rm package-lock.json
-          git fetch origin "$BRANCH"
+          TOKEN_B64="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c "http.extraheader=AUTHORIZATION: basic $TOKEN_B64" fetch origin "$BRANCH"
           git checkout -B "$BRANCH" "origin/$BRANCH"
           cp "$RUNNER_TEMP/package-lock.json" package-lock.json
           git add package-lock.json
@@ -63,5 +64,4 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "chore(deps): pin npm dependency tree"
-          TOKEN_B64="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
           git -c "http.extraheader=AUTHORIZATION: basic $TOKEN_B64" push origin "HEAD:$BRANCH"
