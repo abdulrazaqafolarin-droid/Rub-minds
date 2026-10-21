@@ -1,6 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { decryptCredential, encryptCredential } from "../../../integrations/mcp/credential-crypto.mjs";
-import { deriveModernSessionHandle } from "../../../integrations/mcp/session-handle.mjs";
+import { decryptWithKeyRing, encryptWithKeyRing, validateCredentialKeyRing } from "../../../integrations/mcp/credential-keyring.mjs";
+import { selectSessionHandleForRetry } from "../../../integrations/mcp/session-handle-keyring.mjs";
 import { deriveJoinCredential } from "../../../integrations/mcp/join-credential.mjs";
 import {
   MCP_PROTOCOL_VERSION,
@@ -23,8 +23,10 @@ const databaseUrl = Deno.env.get("SUPABASE_URL");
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 const credentialEncryptionKey = Deno.env.get("RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY");
 if (!databaseUrl || !serviceKey || !credentialEncryptionKey) throw new Error("Missing backend configuration or MCP credential-encryption secret");
-// Validate key format at startup without retaining a second plaintext credential store.
-if (!/^[a-f0-9]{64}$/i.test(credentialEncryptionKey)) throw new Error("RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY must be 64 hexadecimal characters.");
+// Previous keys are optional, decryption/retry-only. Keep them configured through the maximum session/idempotency lifetime.
+const previousKeySetting = Deno.env.get("RUB_MINDS_MCP_SESSION_ENCRYPTION_KEYS_PREVIOUS") || "";
+const previousEncryptionKeys = previousKeySetting ? previousKeySetting.split(",").map((key) => key.trim()).filter(Boolean) : [];
+const credentialEncryptionKeys = validateCredentialKeyRing(credentialEncryptionKey, previousEncryptionKeys);
 const db = createClient(databaseUrl, serviceKey, { auth: { persistSession: false } });
 const SESSION_TTL_HOURS = 24;
 const TERMINATED_TOMBSTONE_HOURS = 168;
@@ -98,7 +100,7 @@ async function terminateMcpSession(sessionDigest: string) {
   if (typeof closingSession.agent_credential_ciphertext === "string") {
     let credential: string;
     try {
-      credential = await decryptCredential(closingSession.agent_credential_ciphertext, credentialEncryptionKey, sessionDigest);
+      credential = await decryptWithKeyRing(closingSession.agent_credential_ciphertext, credentialEncryptionKey, previousEncryptionKeys, sessionDigest);
     } catch {
       throw new Error("Could not securely close the AI participant session. Retry or wait for expiry.");
     }
@@ -134,7 +136,7 @@ async function invokeAgent(credential: string, operation: "read" | "send", paylo
 async function runTool(name: string, args: Record<string, unknown>, session: Record<string, unknown>) {
   if (name === "join_group") {
     if (typeof session.agent_credential_ciphertext === "string") {
-      const existingCredential = await decryptCredential(session.agent_credential_ciphertext, credentialEncryptionKey, session.session_digest as string);
+      const existingCredential = await decryptWithKeyRing(session.agent_credential_ciphertext, credentialEncryptionKey, previousEncryptionKeys, session.session_digest as string);
       const { data: activeConnection, error: activeConnectionError } = await db.from("agent_connections")
         .select("id").eq("credential_digest", await sha256(existingCredential))
         .is("revoked_at", null).gt("expires_at", new Date().toISOString()).maybeSingle();
@@ -151,7 +153,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     }
     const modernIdempotentJoin = session._modern_idempotent_join === true;
     const deterministicCredential = modernIdempotentJoin
-      ? await deriveJoinCredential(credentialEncryptionKey, session.session_handle as string)
+      ? await deriveJoinCredential((session._session_handle_key as string) || credentialEncryptionKey, session.session_handle as string)
       : null;
     const { data, error } = modernIdempotentJoin
       ? await db.rpc("redeem_ai_room_invite_idempotent", {
@@ -180,7 +182,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     const expiresAt = new Date(Math.min(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000, credentialExpiry)).toISOString();
     let encryptedCredential: string;
     try {
-      encryptedCredential = await encryptCredential(credential, credentialEncryptionKey, session.session_digest as string);
+      encryptedCredential = await encryptWithKeyRing(credential, credentialEncryptionKey, session.session_digest as string);
     } catch {
       if (!modernIdempotentJoin) {
         await db.from("agent_connections").update({ revoked_at: new Date().toISOString() })
@@ -205,7 +207,10 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
           participant_id: data.participant_id,
           expires_at: expiresAt,
           last_seen_at: new Date().toISOString(),
-        }).eq("session_digest", session.session_digest as string).is("agent_credential_ciphertext", null)
+        }).eq("session_digest", session.session_digest as string)
+          .is("agent_credential_ciphertext", null)
+          .is("terminated_at", null)
+          .gt("expires_at", new Date().toISOString())
           .select("session_digest").maybeSingle();
     if (bindError || !boundSession) {
       if (modernIdempotentJoin) {
@@ -249,7 +254,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
   if (typeof encryptedCredential !== "string" || !encryptedCredential) {
     throw new Error("This MCP session has not joined a group. Call join_group with a valid invite first.");
   }
-  const credential = await decryptCredential(encryptedCredential, credentialEncryptionKey, session.session_digest as string);
+  const credential = await decryptWithKeyRing(encryptedCredential, credentialEncryptionKey, previousEncryptionKeys, session.session_digest as string);
 
   if (name === "read_group_context") {
     // Validate the credential (including revocation/expiry) before exposing room metadata.
@@ -430,13 +435,33 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
   let session: Record<string, unknown> | null;
   if (toolName === "join_group") {
     const joinKey = rawArgs.join_request_key;
-    if (typeof joinKey !== "string" || !/^[a-f0-9]{64}$/i.test(joinKey) || typeof rawArgs.invite_token !== "string" || !/^[a-f0-9]{64}$/i.test(rawArgs.invite_token) || typeof rawArgs.agent_label !== "string") {
+    if (typeof joinKey !== "string" || !/^[a-f0-9]{64}$/i.test(joinKey) || typeof rawArgs.invite_token !== "string" || !/^[a-f0-9]{64}$/i.test(rawArgs.invite_token) || typeof rawArgs.agent_label !== "string" || !rawArgs.agent_label.trim() || [...rawArgs.agent_label.trim()].length > 80) {
       return modernRpcError(200, id, -32602, "join_group requires a valid invitation token, agent_label, and 64-character hexadecimal join_request_key.");
     }
     try {
-      sessionHandle = await deriveModernSessionHandle(credentialEncryptionKey, rawArgs.invite_token, rawArgs.agent_label, joinKey);
+      const selection = await selectSessionHandleForRetry(
+        credentialEncryptionKeys,
+        rawArgs.invite_token,
+        rawArgs.agent_label,
+        joinKey,
+        async (candidateHandle: string) => {
+          const candidateDigest = await sha256(candidateHandle);
+          const { data: existingSession, error: sessionLookupError } = await db.from("rub_minds_mcp_sessions")
+            .select("session_digest").eq("session_digest", candidateDigest).maybeSingle();
+          if (sessionLookupError) throw new Error("Could not verify an existing session retry.");
+          if (existingSession) return true;
+          // Session rows may be cleaned after their short handle TTL while the
+          // durable idempotency record remains valid. Preserve the old key choice.
+          const { data: existingJoin, error: joinLookupError } = await db.from("rub_minds_mcp_join_requests")
+            .select("session_digest").eq("session_digest", candidateDigest).maybeSingle();
+          if (joinLookupError) throw new Error("Could not verify a durable join retry.");
+          return Boolean(existingJoin);
+        },
+      );
+      sessionHandle = selection.handle;
+      rawArgs._selected_handle_key = selection.key;
     } catch {
-      return modernRpcError(500, id, -32603, "Could not securely derive the join handle.");
+      return modernRpcError(503, id, -32000, "Could not securely resolve the join retry. Check key-ring configuration and retry.");
     }
     delete rawArgs.join_request_key;
     session = await findSession(sessionHandle);
@@ -451,6 +476,8 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
       session = { session_digest: sessionDigest, agent_credential_ciphertext: null, room_id: null, participant_id: null, _new_session: true };
     }
     session.session_handle = sessionHandle;
+    session._session_handle_key = rawArgs._selected_handle_key;
+    delete rawArgs._selected_handle_key;
     session._modern_idempotent_join = true;
   } else {
     const handle = rawArgs.session_handle;

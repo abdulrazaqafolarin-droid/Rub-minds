@@ -174,6 +174,65 @@ jobs:
             if (select count(*) from public.rub_minds_mcp_join_requests where session_digest = repeat('f',64)) <> 1 then
               raise exception 'Concurrent duplicate joins must retain exactly one idempotency record';
             end if;
+            -- Negative tests: expired, revoked, and exhausted invitations must never redeem.
+            insert into public.room_invites(token_hash, room_id, created_by, expires_at, revoked_at, allow_ai, max_ai_uses, ai_uses)
+            values
+              (encode(sha256(convert_to(repeat('1',64), 'UTF8')), 'hex'),
+               '10000000-0000-0000-0000-000000000003', '20000000-0000-0000-0000-000000000003',
+               now() - interval '1 minute', null, true, 2, 0),
+              (encode(sha256(convert_to(repeat('2',64), 'UTF8')), 'hex'),
+               '10000000-0000-0000-0000-000000000004', '20000000-0000-0000-0000-000000000004',
+               now() + interval '1 hour', now(), true, 2, 0),
+              (encode(sha256(convert_to(repeat('3',64), 'UTF8')), 'hex'),
+               '10000000-0000-0000-0000-000000000005', '20000000-0000-0000-0000-000000000005',
+               now() + interval '1 hour', null, true, 1, 1);
+
+            begin
+              perform public.redeem_ai_room_invite_idempotent(repeat('1',64), 'Expired agent', repeat('1',64), repeat('a',64));
+              raise exception 'Expired invitation unexpectedly redeemed';
+            exception when others then
+              if sqlerrm = 'Expired invitation unexpectedly redeemed' then raise; end if;
+            end;
+            begin
+              perform public.redeem_ai_room_invite_idempotent(repeat('2',64), 'Revoked agent', repeat('2',64), repeat('b',64));
+              raise exception 'Revoked invitation unexpectedly redeemed';
+            exception when others then
+              if sqlerrm = 'Revoked invitation unexpectedly redeemed' then raise; end if;
+            end;
+            begin
+              perform public.redeem_ai_room_invite_idempotent(repeat('3',64), 'Exhausted agent', repeat('3',64), repeat('c',64));
+              raise exception 'Exhausted invitation unexpectedly redeemed';
+            exception when others then
+              if sqlerrm = 'Exhausted invitation unexpectedly redeemed' then raise; end if;
+            end;
+
+            -- Malformed tokens and retries against revoked/expired prior joins must fail closed.
+            begin
+              perform public.redeem_ai_room_invite_idempotent('not-a-valid-token', 'Malformed agent', repeat('8',64), repeat('9',64));
+              raise exception 'Malformed invitation unexpectedly redeemed';
+            exception when others then
+              if sqlerrm = 'Malformed invitation unexpectedly redeemed' then raise; end if;
+            end;
+
+            update public.agent_connections set revoked_at = now()
+              where credential_digest = repeat('d',64);
+            begin
+              perform public.redeem_ai_room_invite_idempotent(repeat('b',64), 'CI agent', repeat('c',64), repeat('d',64));
+              raise exception 'Revoked prior join unexpectedly replayed';
+            exception when others then
+              if sqlerrm = 'Revoked prior join unexpectedly replayed' then raise; end if;
+            end;
+            update public.agent_connections set revoked_at = null
+              where credential_digest = repeat('d',64);
+            update public.rub_minds_mcp_join_requests set expires_at = now() - interval '1 second'
+              where session_digest = repeat('c',64);
+            begin
+              perform public.redeem_ai_room_invite_idempotent(repeat('b',64), 'CI agent', repeat('c',64), repeat('d',64));
+              raise exception 'Expired prior join unexpectedly replayed';
+            exception when others then
+              if sqlerrm = 'Expired prior join unexpectedly replayed' then raise; end if;
+            end;
+
             begin
               perform public.redeem_ai_room_invite_idempotent(
                 repeat('b',64), 'Different label', repeat('c',64), repeat('d',64));
