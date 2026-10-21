@@ -311,6 +311,14 @@ export default function CloudApp() {
     } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
     finally { setBusy(false); }
   }
+  // A signed-in human opening an invitation should join directly. Keep the
+  // explicit route picker for anonymous visitors and users choosing the AI relay.
+  useEffect(() => {
+    if (ready && user && inviteToken && inviteTokenValid && inviteRoute === 'choose') {
+      setInviteRoute('human');
+    }
+  }, [ready, user, inviteToken, inviteTokenValid, inviteRoute]);
+
   useEffect(() => {
     if (!ready || !user || !inviteToken || !inviteTokenValid || inviteRoute !== 'human' || autoJoinAttempted === inviteToken) return;
     setAutoJoinAttempted(inviteToken);
