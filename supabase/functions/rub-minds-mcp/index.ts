@@ -311,8 +311,39 @@ Deno.serve(async (request: Request) => {
   if (request.method !== "POST") return httpError(405, "MCP endpoint accepts POST or DELETE requests only.");
   const accept = request.headers.get("Accept") || "";
   if (!accept.includes("application/json") || !accept.includes("text/event-stream")) return httpError(406, "Accept must include both application/json and text/event-stream.");
-  const raw = await request.text();
-  if (new TextEncoder().encode(raw).byteLength > MAX_REQUEST_BYTES) return httpError(413, "Request too large.");
+  const declaredLength = request.headers.get("Content-Length");
+  if (declaredLength !== null) {
+    const length = Number(declaredLength);
+    if (!Number.isSafeInteger(length) || length < 0) return httpError(400, "Invalid Content-Length.");
+    if (length > MAX_REQUEST_BYTES) return httpError(413, "Request too large.");
+  }
+  if (!request.body) return httpError(400, "Request body is required.");
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_REQUEST_BYTES) {
+        await reader.cancel();
+        return httpError(413, "Request too large.");
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return httpError(400, "Could not read request body.");
+  }
+  const bodyBytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bodyBytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  let raw: string;
+  try { raw = new TextDecoder("utf-8", { fatal: true }).decode(bodyBytes); }
+  catch { return httpError(400, "Request body must be valid UTF-8."); }
   let input: unknown;
   try { input = JSON.parse(raw); } catch { return httpError(400, "Invalid JSON."); }
   if (!validRpcEnvelope(input)) return reply(400, rpcError(null, -32600, "Invalid JSON-RPC request."));
