@@ -424,8 +424,6 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
     session = await findSession(sessionHandle);
     if (!session) return modernToolResult(id, { error: "Session handle is missing, expired, or terminated. Call join_group again with a fresh join_request_key." }, true);
   }
-  const validationError = validateToolArguments(toolName, rawArgs);
-  if (validationError) return modernRpcError(200, id, -32602, validationError);
   if (session._new_session !== true) {
     try {
       if (!await consumeSessionRateLimit(session)) return modernToolResult(id, { error: "Rate limit exceeded: this MCP session may make 60 tool calls per minute. Wait briefly and retry." }, true);
@@ -433,6 +431,8 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
       return modernRpcError(503, id, -32000, "MCP session rate limiter is unavailable; request blocked.");
     }
   }
+  const validationError = validateToolArguments(toolName, rawArgs);
+  if (validationError) return modernRpcError(200, id, -32602, validationError);
   try {
     const result = await runTool(toolName, rawArgs, session);
     return modernToolResult(id, toolName === "join_group" && isRecord(result) ? { ...result, session_handle: sessionHandle } : result);
@@ -544,9 +544,6 @@ async function handleMcpRequest(request: Request) {
   const toolName = params.name;
   const args = params.arguments === undefined ? {} : params.arguments;
   if (typeof toolName !== "string") return reply(200, rpcError(id, -32602, "Tool name is required."), sessionId);
-  const validationError = validateToolArguments(toolName, args);
-  if (validationError) return reply(200, rpcError(id, -32602, validationError), sessionId);
-
   let session: Record<string, unknown> | null = await findSession(sessionId);
   if (!session) {
     if (toolName !== "join_group") return httpError(404, "MCP session missing, expired, or invalid. Reconnect and join with a valid invitation.");
@@ -574,6 +571,8 @@ async function handleMcpRequest(request: Request) {
       return reply(503, rpcError(id, -32000, "MCP session rate limiter is unavailable; request blocked."), sessionId);
     }
   }
+  const validationError = validateToolArguments(toolName, args);
+  if (validationError) return reply(200, rpcError(id, -32602, validationError), sessionId);
   try {
     const result = await runTool(toolName, args as Record<string, unknown>, session);
     return reply(200, rpcResult(id, toolResult(result)), sessionId);
