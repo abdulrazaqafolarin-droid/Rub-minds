@@ -291,7 +291,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
   throw new Error("Unknown tool.");
 }
 
-Deno.serve(async (request: Request) => {
+async function handleMcpRequest(request: Request) {
   const origin = request.headers.get("Origin");
   if (!isAllowedMcpOrigin(origin)) return httpError(403, "Origin is not allowed.");
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "Access-Control-Allow-Methods": "POST, DELETE, OPTIONS", "Access-Control-Allow-Headers": "content-type, mcp-session-id, mcp-protocol-version, accept", "Vary": "Origin" } });
@@ -432,4 +432,17 @@ Deno.serve(async (request: Request) => {
     const safe = message.length > 300 ? message.slice(0, 300) : message;
     return reply(200, rpcResult(id, toolResult({ error: safe }, true)), sessionId);
   }
+}
+
+Deno.serve(async (request: Request) => {
+  const response = await handleMcpRequest(request);
+  const origin = request.headers.get("Origin");
+  // Add browser CORS headers only for explicitly allowed origins. Native/server
+  // MCP clients without Origin continue to use the endpoint normally.
+  if (!origin || !isAllowedMcpOrigin(origin)) return response;
+  const headers = new Headers(response.headers);
+  headers.set("Access-Control-Allow-Origin", origin);
+  headers.set("Access-Control-Expose-Headers", "Mcp-Session-Id");
+  headers.set("Vary", "Origin");
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 });
