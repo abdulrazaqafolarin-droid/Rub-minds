@@ -4,6 +4,7 @@ import {
   MCP_PROTOCOL_VERSION,
   MCP_MODERN_PROTOCOL_VERSION,
   getModernMcpTools,
+  validateModernRequestMetadata,
   RUB_MINDS_MCP_TOOLS,
   isRecord,
   rpcError,
@@ -329,19 +330,12 @@ function modernToolResult(id: string | number, value: unknown, isError = false) 
 
 async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>, params: Record<string, unknown>, id: string | number | null, hasId: boolean) {
   const method = rpc.method as string;
-  const headerVersion = request.headers.get("MCP-Protocol-Version");
-  const meta = isRecord(params._meta) ? params._meta : null;
-  const bodyVersion = meta?.["io.modelcontextprotocol/protocolVersion"];
-  const headerMethod = request.headers.get("Mcp-Method");
-  if (!headerVersion || !meta || typeof bodyVersion !== "string" || headerVersion !== bodyVersion || headerMethod !== method) {
-    return modernRpcError(400, id, -32020, "Header mismatch: MCP-Protocol-Version, Mcp-Method, and request metadata must match the JSON-RPC body.");
-  }
-  if (headerVersion !== MCP_MODERN_PROTOCOL_VERSION) {
-    return modernRpcError(400, id, -32022, "Unsupported MCP protocol version.", { supported: [MCP_MODERN_PROTOCOL_VERSION], requested: headerVersion });
-  }
-  if (!isRecord(meta["io.modelcontextprotocol/clientCapabilities"])) {
-    return modernRpcError(400, id, -32602, "Request metadata must include io.modelcontextprotocol/clientCapabilities.");
-  }
+  const metadataError = validateModernRequestMetadata(method, {
+    protocolVersion: request.headers.get("MCP-Protocol-Version"),
+    method: request.headers.get("Mcp-Method"),
+    name: request.headers.get("Mcp-Name"),
+  }, params);
+  if (metadataError) return modernRpcError(metadataError.status, id, metadataError.code, metadataError.message, metadataError.data);
   if (method === "server/discover") {
     if (!hasId || id === null) return modernRpcError(400, null, -32600, "server/discover must be a request.");
     return reply(200, rpcResult(id, {
@@ -363,8 +357,6 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
 
   const toolName = params.name;
   if (typeof toolName !== "string") return modernRpcError(400, id, -32602, "Tool name is required.");
-  const headerName = request.headers.get("Mcp-Name");
-  if (!headerName || headerName !== toolName) return modernRpcError(400, id, -32020, "Header mismatch: Mcp-Name must match params.name.");
   if (params.arguments !== undefined && !isRecord(params.arguments)) return modernRpcError(400, id, -32602, "Tool arguments must be a JSON object.");
   const rawArgs: Record<string, unknown> = { ...(isRecord(params.arguments) ? params.arguments : {}) };
   let sessionHandle: string;
