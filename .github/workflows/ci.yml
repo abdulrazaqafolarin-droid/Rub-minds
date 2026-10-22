@@ -510,21 +510,56 @@ jobs:
           assert.equal(retry.structuredContent?.participant_id, joined.structuredContent.participant_id,
             "concurrent retry must not create a second participant");
 
+          // A second independent AI joins with its own idempotency key and session handle.
+          const secondJoin = await rpc("tools/call", 6, {
+            name: "join_group",
+            arguments: {
+              invite_token: inviteToken,
+              agent_label: "CI AI collaborator",
+              confirm_join: true,
+              join_request_key: "3".repeat(64),
+            },
+          });
+          assert.equal(secondJoin.isError, undefined, "second independent AI could not join: " + JSON.stringify(secondJoin));
+          assert.equal(secondJoin.structuredContent?.joined, true);
+          assert.equal(secondJoin.structuredContent?.room_id, room.id);
+          assert.notEqual(secondJoin.structuredContent?.participant_id, joined.structuredContent.participant_id,
+            "independent AI clients must have distinct participant identities");
+          assert.notEqual(secondJoin.structuredContent?.session_handle, joined.structuredContent.session_handle,
+            "independent AI clients must have distinct session handles");
+
+          // Prove a message sent by AI #1 is visible when AI #2 reads the shared group.
+          const sent = await rpc("tools/call", 7, {
+            name: "send_group_message",
+            arguments: {
+              session_handle: joined.structuredContent.session_handle,
+              body: "Message from CI AI one to the shared group",
+            },
+          });
+          assert.ok(sent.structuredContent?.message_id, "AI #1 message was not persisted");
+          const read = await rpc("tools/call", 8, {
+            name: "read_group_messages",
+            arguments: { session_handle: secondJoin.structuredContent.session_handle },
+          });
+          assert.ok(Array.isArray(read.structuredContent?.messages), "AI #2 could not read group messages");
+          assert.ok(read.structuredContent.messages.some(message => message.body === "Message from CI AI one to the shared group"),
+            "AI #2 did not receive AI #1's group message");
+
           async function getRows(path) {
             const response = await fetch(apiUrl + "/rest/v1/" + path, { headers: adminHeaders });
             const payload = await response.json();
             assert.equal(response.status, 200, "local database verification failed for " + path + ": " + JSON.stringify(payload));
             return payload;
           }
-          const participantRows = await getRows("participants?select=id&room_id=eq." + room.id + "&display_name=eq.CI%20AI%20participant");
-          assert.equal(participantRows.length, 1, "idempotent MCP join must create exactly one AI participant");
+          const participantRows = await getRows("participants?select=id,display_name&room_id=eq." + room.id + "&kind=eq.external_agent");
+          assert.equal(participantRows.length, 2, "two independent AI joins plus idempotent retries must create exactly two AI participants");
           const inviteRows = await getRows("room_invites?select=ai_uses&id=eq." + invites[0].id);
-          assert.equal(inviteRows[0]?.ai_uses, 1, "idempotent retry must consume exactly one AI invitation use");
+          assert.equal(inviteRows[0]?.ai_uses, 2, "two independent AI joins must consume exactly two invitation uses");
           const sessionRows = await getRows("rub_minds_mcp_sessions?select=session_digest&room_id=eq." + room.id);
-          assert.equal(sessionRows.length, 1, "idempotent MCP join must persist exactly one session");
+          assert.equal(sessionRows.length, 2, "two independent AI clients must persist exactly two sessions");
           const connectionRows = await getRows("agent_connections?select=id&room_id=eq." + room.id);
-          assert.equal(connectionRows.length, 1, "idempotent MCP join must create exactly one agent connection");
-          console.log("Local MCP live join + idempotent retry passed:", room.id, joined.structuredContent.participant_id);
+          assert.equal(connectionRows.length, 2, "two independent AI clients must create exactly two agent connections");
+          console.log("Local MCP two-AI join and cross-client message relay passed:", room.id, joined.structuredContent.participant_id, secondJoin.structuredContent.participant_id);
           NODE
       - name: Stop isolated Supabase services
         if: always()
