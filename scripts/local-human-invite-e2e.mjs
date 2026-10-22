@@ -173,7 +173,13 @@ try {
   await blockedPage.getByLabel('Password', { exact: true }).fill(blockedPassword);
   await blockedPage.getByRole('button', { name: 'Sign in', exact: true }).click();
   // Prove the test account authenticated before attributing the result to invite revocation.
-  await blockedPage.getByText('YOUR GROUPS', { exact: true }).waitFor({ timeout: 15000 });
+  // The invite auto-join error may replace the group-list UI quickly, so wait for
+  // the durable Supabase session rather than a transient heading in React.
+  await blockedPage.waitForFunction(() => Object.keys(localStorage).some(candidate => {
+    if (!candidate.endsWith('-auth-token')) return false;
+    try { return Boolean(JSON.parse(localStorage.getItem(candidate) || 'null')?.access_token); }
+    catch { return false; }
+  }), null, { timeout: 15000 });
   const browserAccessToken = await blockedPage.evaluate(() => {
     const key = Object.keys(localStorage).find(candidate => candidate.endsWith('-auth-token'));
     if (!key) return null;
