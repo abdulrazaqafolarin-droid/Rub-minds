@@ -31,7 +31,7 @@ declare
   current_count integer;
 begin
   if p_key_hash is null or p_key_hash !~ '^[0-9a-f]{64}$'
-     or p_bucket is null or p_bucket not in ('ai-invite-discovery', 'redeem-ai-invite')
+     or p_bucket is null or p_bucket not in ('ai-invite-discovery', 'redeem-ai-invite', 'rub-minds-mcp-requests', 'rub-minds-mcp-join')
      or p_limit is null or p_limit < 1 or p_limit > 1000
      or p_window_seconds is null or p_window_seconds < 1 or p_window_seconds > 3600 then
     raise exception 'Invalid public rate-limit parameters';
