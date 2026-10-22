@@ -38,6 +38,16 @@ const owner = await request('/auth/v1/admin/users', {
     email_confirm: true,
   }),
 });
+const existingHumanEmail = 'rub-minds-human-existing@example.test';
+const existingHumanPassword = 'Local-CI-Existing-Password-923!x';
+const existingHuman = await request('/auth/v1/admin/users', {
+  method: 'POST',
+  body: JSON.stringify({
+    email: existingHumanEmail,
+    password: existingHumanPassword,
+    email_confirm: true,
+  }),
+});
 const roomRows = await request('/rest/v1/rooms', {
   method: 'POST',
   headers: { Prefer: 'return=representation' },
@@ -100,7 +110,42 @@ try {
   assert.equal(participantRows.length, 1, 'signup should redeem the preserved invite exactly once');
   assert.equal(participantRows[0].kind, 'human');
   assert.equal(participantRows[0].room_id, room.id);
+  assert.equal(await page.getByRole('alert').count(), 0, 'a normal first-time visitor must not see a session-restore error');
   console.log('Local browser human signup, invitation preservation, and automatic room join passed:', room.id, createdUser.id);
+
+  // A pre-existing account must survive invite-page reload, sign in, and auto-join.
+  const existingPage = await browser.newPage();
+  const inviteUrl = 'http://127.0.0.1:4173/?invite=' + inviteToken;
+  await existingPage.goto(inviteUrl, { waitUntil: 'networkidle' });
+  await existingPage.getByRole('heading', { name: 'Join a Rub Minds group' }).waitFor();
+  await existingPage.reload({ waitUntil: 'networkidle' });
+  await existingPage.getByRole('heading', { name: 'Join a Rub Minds group' }).waitFor();
+  assert.equal(new URL(existingPage.url()).searchParams.get('invite'), inviteToken, 'invite token must survive reload');
+  await existingPage.getByRole('button', { name: 'Continue as a human' }).click();
+  await existingPage.getByRole('heading', { name: 'You’re invited to Rub Minds' }).waitFor();
+  await existingPage.getByRole('button', { name: 'Sign in', exact: true }).waitFor();
+  await existingPage.getByLabel('Email address').fill(existingHumanEmail);
+  await existingPage.getByLabel('Password', { exact: true }).fill(existingHumanPassword);
+  await existingPage.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await existingPage.getByRole('heading', { name: 'Local human invitation E2E', exact: true }).waitFor({ timeout: 15000 });
+
+  const existingParticipants = await request(
+    '/rest/v1/participants?select=id,room_id,user_id,kind&room_id=eq.' + room.id + '&user_id=eq.' + existingHuman.id,
+  );
+  assert.equal(existingParticipants.length, 1, 'an existing account must auto-join the invited room after sign-in');
+  assert.equal(existingParticipants[0].kind, 'human');
+  const participantCountBeforeReload = await request('/rest/v1/participants?select=id&room_id=eq.' + room.id);
+  assert.equal(participantCountBeforeReload.length, 2, 'signup and existing-account sign-in must create two human participants');
+
+  const inviteUseBeforeReload = await request('/rest/v1/room_invites?select=id,uses&token_hash=eq.' + tokenHash);
+  assert.equal(inviteUseBeforeReload.length, 1);
+  await existingPage.goto(inviteUrl, { waitUntil: 'networkidle' });
+  await existingPage.getByRole('heading', { name: 'Local human invitation E2E', exact: true }).waitFor({ timeout: 15000 });
+  const inviteUseAfterReload = await request('/rest/v1/room_invites?select=id,uses&token_hash=eq.' + tokenHash);
+  assert.equal(inviteUseAfterReload[0].uses, inviteUseBeforeReload[0].uses, 'reopening an already-accepted invite must not consume another use');
+  const participantCountAfterReload = await request('/rest/v1/participants?select=id&room_id=eq.' + room.id);
+  assert.equal(participantCountAfterReload.length, 2, 'reopening an accepted invite must not create duplicate membership');
+  console.log('Existing-account sign-in, invite reload recovery, automatic join, and idempotent re-entry passed:', room.id, existingHuman.id);
 } finally {
   if (browser) await browser.close();
   await server.close();
