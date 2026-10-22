@@ -172,7 +172,10 @@ try {
   await blockedPage.getByLabel('Email address').fill(blockedEmail);
   await blockedPage.getByLabel('Password', { exact: true }).fill(blockedPassword);
   await blockedPage.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await blockedPage.getByRole('alert').filter({ hasText: /Invitation expired or unavailable/i }).waitFor({ timeout: 15000 });
+  await blockedPage.getByRole('alert').waitFor({ timeout: 15000 });
+  const blockedAlertText = (await blockedPage.getByRole('alert').innerText()).trim();
+  assert.match(blockedAlertText, /Invitation expired or unavailable/i,
+    'revoked invite should show the database rejection, not a different auth/UI error: ' + blockedAlertText);
   const blockedMembership = await request(
     '/rest/v1/participants?select=id&room_id=eq.' + room.id + '&user_id=eq.' + blockedUser.id,
   );
