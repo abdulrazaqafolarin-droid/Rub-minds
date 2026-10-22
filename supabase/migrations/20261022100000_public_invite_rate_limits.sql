@@ -2,7 +2,7 @@
 -- Only keyed digests are stored; raw client IPs never enter the database.
 create table if not exists public.public_request_rate_limits (
   key_hash text not null check (key_hash ~ '^[0-9a-f]{64}$'),
-  bucket text not null check (bucket in ('ai-invite-discovery', 'redeem-ai-invite')),
+  bucket text not null check (bucket in ('ai-invite-discovery', 'redeem-ai-invite', 'rub-minds-mcp-requests', 'rub-minds-mcp-join')),
   window_started_at timestamptz not null,
   request_count integer not null check (request_count > 0),
   updated_at timestamptz not null default clock_timestamp(),
