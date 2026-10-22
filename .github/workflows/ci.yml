@@ -1,6 +1,9 @@
 name: Validate Rub Minds
 permissions:
   contents: read
+concurrency:
+  group: rub-minds-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 on:
   push:
     branches: [main]
