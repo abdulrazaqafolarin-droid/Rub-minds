@@ -331,6 +331,8 @@ jobs:
         run: npm ci
       - name: Install Chromium and browser dependencies
         run: npx playwright install --with-deps chromium
+      - name: Install pinned official MCP client SDK for interoperability test
+        run: npm install --no-save --package-lock=false @modelcontextprotocol/client@2.3.1
       - name: Install pinned Supabase CLI
         uses: supabase/setup-cli@v1
         with:
@@ -576,6 +578,14 @@ jobs:
           assert.equal(connectionRows.length, 2, "two independent AI clients must create exactly two agent connections");
           console.log("Local MCP two-AI join and cross-client message relay passed:", room.id, joined.structuredContent.participant_id, secondJoin.structuredContent.participant_id);
           NODE
+      - name: Test official MCP SDK client interoperability and session revocation
+        run: |
+          set -euo pipefail
+          eval "$(supabase status -o env)"
+          export LOCAL_SUPABASE_URL="${API_URL:-http://127.0.0.1:54321}"
+          export LOCAL_SUPABASE_SERVICE_ROLE_KEY="${SERVICE_ROLE_KEY:?Local service-role key missing}"
+          export LOCAL_MCP_ENDPOINT="http://127.0.0.1:54321/functions/v1/rub-minds-mcp"
+          node scripts/local-mcp-sdk-e2e.mjs
       - name: Stop isolated Supabase services
         if: always()
         run: supabase stop --no-backup
