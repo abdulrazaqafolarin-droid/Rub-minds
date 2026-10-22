@@ -1,6 +1,9 @@
 name: Validate Rub Minds
 permissions:
   contents: read
+concurrency:
+  group: rub-minds-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 on:
   push:
     branches: [main]
@@ -313,3 +316,266 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Run controlled browser proof of concept
         run: npm run test:browser
+
+  local-supabase-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Install project dependencies
+        run: npm ci
+      - name: Install Chromium and browser dependencies
+        run: npx playwright install --with-deps chromium
+      - name: Install pinned Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.119.0
+      - name: Start isolated local Supabase services
+        run: supabase start -x studio,imgproxy,logflare,vector,analytics,pg_meta,pooler,inbucket,storage
+      - name: Rebuild local database from every committed migration
+        run: supabase db reset --local
+      - name: Verify local migration history is fully applied
+        run: |
+          supabase migration list --local
+          test -f supabase/config.toml
+      - name: Test real browser signup and human invitation redemption
+        run: |
+          set -euo pipefail
+          eval "$(supabase status -o env)"
+          export LOCAL_SUPABASE_URL="${API_URL:-http://127.0.0.1:54321}"
+          export LOCAL_SUPABASE_ANON_KEY="${ANON_KEY:?Local anon key missing}"
+          export LOCAL_SUPABASE_SERVICE_ROLE_KEY="${SERVICE_ROLE_KEY:?Local service-role key missing}"
+          node scripts/local-human-invite-e2e.mjs
+      - name: Start MCP Edge Function with disposable local credentials
+        run: |
+          set -euo pipefail
+          eval "$(supabase status -o env)"
+          : "${SERVICE_ROLE_KEY:?Local Supabase service-role key was not reported}"
+          cat > "$RUNNER_TEMP/mcp.env" <<EOF
+          SUPABASE_URL=${API_URL:-http://127.0.0.1:54321}
+          SUPABASE_SERVICE_ROLE_KEY=${SERVICE_ROLE_KEY}
+          RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          EOF
+          supabase functions serve rub-minds-mcp --env-file "$RUNNER_TEMP/mcp.env" > "$RUNNER_TEMP/mcp-edge.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/mcp-edge.pid"
+          for attempt in $(seq 1 60); do
+            status_code="$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:54321/functions/v1/rub-minds-mcp || true)"
+            if [ "$status_code" = "405" ]; then exit 0; fi
+            if ! kill -0 "$(cat "$RUNNER_TEMP/mcp-edge.pid")" 2>/dev/null; then
+              cat "$RUNNER_TEMP/mcp-edge.log"
+              exit 1
+            fi
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/mcp-edge.log"
+          echo "MCP Edge Function did not become ready"
+          exit 1
+      - name: Exercise live local MCP discovery and tool catalog
+        run: |
+          eval "$(supabase status -o env)"
+          export LOCAL_SUPABASE_URL="${API_URL:-http://127.0.0.1:54321}"
+          export LOCAL_SUPABASE_SERVICE_ROLE_KEY="${SERVICE_ROLE_KEY:?Local service-role key missing}"
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          const endpoint = "http://127.0.0.1:54321/functions/v1/rub-minds-mcp";
+          const version = "2026-07-28";
+          async function rpc(method, id, tool = null) {
+            const params = {
+              _meta: {
+                "io.modelcontextprotocol/protocolVersion": version,
+                "io.modelcontextprotocol/clientCapabilities": {},
+              },
+            };
+            const headers = {
+              "Content-Type": "application/json",
+              "Accept": "application/json, text/event-stream",
+              "MCP-Protocol-Version": version,
+              "Mcp-Method": method,
+            };
+            if (tool) {
+              params.name = tool.name;
+              params.arguments = tool.arguments;
+              headers["Mcp-Name"] = tool.name;
+            }
+            const response = await fetch(endpoint, {
+              method: "POST",
+              headers,
+              body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+            });
+            const body = await response.json();
+            assert.equal(response.status, 200, method + " HTTP status: " + JSON.stringify(body));
+            assert.equal(body.id, id);
+            assert.ok(body.result, method + " returned no result");
+            return body.result;
+          }
+          const discovery = await rpc("server/discover", 1);
+          assert.equal(discovery.resultType, "complete");
+          assert.ok(discovery.supportedVersions.includes(version));
+          const catalog = await rpc("tools/list", 2);
+          assert.equal(catalog.resultType, "complete");
+          const names = catalog.tools.map(tool => tool.name);
+          assert.ok(names.includes("join_group"), "join_group missing from live tool catalog");
+          assert.ok(names.includes("leave_group"), "leave_group missing from live tool catalog");
+          const join = catalog.tools.find(tool => tool.name === "join_group");
+          assert.ok(join.inputSchema.required.includes("join_request_key"), "join_group must require idempotency key");
+
+          // Exercise the real join path against an invalid invite. This must fail closed.
+          const invalidJoin = await rpc("tools/call", 3, {
+            name: "join_group",
+            arguments: {
+              invite_token: "0".repeat(64),
+              agent_label: "CI invalid invite",
+              confirm_join: true,
+              join_request_key: "1".repeat(64),
+            },
+          });
+          assert.equal(invalidJoin.isError, true, "invalid invitation must return a tool error");
+          assert.match(invalidJoin.structuredContent?.error || "", /Invitation is invalid|expired|revoked/i);
+
+          // Use only the disposable local service-role key to prove failed joins did not persist a session or participant.
+          const restHeaders = {
+            apikey: process.env.LOCAL_SUPABASE_SERVICE_ROLE_KEY,
+            Authorization: "Bearer " + process.env.LOCAL_SUPABASE_SERVICE_ROLE_KEY,
+          };
+          const sessionsResponse = await fetch(process.env.LOCAL_SUPABASE_URL + "/rest/v1/rub_minds_mcp_sessions?select=session_digest", { headers: restHeaders });
+          assert.equal(sessionsResponse.status, 200, "could not verify local MCP session table");
+          assert.deepEqual(await sessionsResponse.json(), [], "invalid invite must not create an MCP session");
+          const participantsResponse = await fetch(process.env.LOCAL_SUPABASE_URL + "/rest/v1/participants?select=id&display_name=eq.CI%20invalid%20invite", { headers: restHeaders });
+          assert.equal(participantsResponse.status, 200, "could not verify local participants table");
+          assert.deepEqual(await participantsResponse.json(), [], "invalid invite must not create a participant");
+          console.log("Local MCP discovery, tools/list, and invalid-invite fail-closed test passed:", names.join(", "));
+
+          // Create an isolated local owner, room, and invitation, then exercise a successful AI join over the real MCP endpoint.
+          import { createHash } from "node:crypto";
+          const serviceKey = process.env.LOCAL_SUPABASE_SERVICE_ROLE_KEY;
+          const apiUrl = process.env.LOCAL_SUPABASE_URL;
+          const adminHeaders = {
+            apikey: serviceKey,
+            Authorization: "Bearer " + serviceKey,
+            "Content-Type": "application/json",
+          };
+          const ownerResponse = await fetch(apiUrl + "/auth/v1/admin/users", {
+            method: "POST",
+            headers: adminHeaders,
+            body: JSON.stringify({
+              email: "rub-minds-mcp-ci-owner@example.test",
+              password: "CI-only-Local-Password-923!x",
+              email_confirm: true,
+            }),
+          });
+          const ownerPayload = await ownerResponse.json();
+          assert.ok(ownerResponse.status === 200 || ownerResponse.status === 201,
+            "could not create disposable local owner: " + JSON.stringify(ownerPayload));
+          const roomResponse = await fetch(apiUrl + "/rest/v1/rooms", {
+            method: "POST",
+            headers: { ...adminHeaders, Prefer: "return=representation" },
+            body: JSON.stringify({
+              owner_id: ownerPayload.id,
+              title: "Local MCP end-to-end test",
+              objective: "Disposable CI fixture",
+            }),
+          });
+          const rooms = await roomResponse.json();
+          assert.equal(roomResponse.status, 201, "could not create local test room: " + JSON.stringify(rooms));
+          const room = rooms[0];
+          const inviteToken = "c".repeat(64);
+          const tokenHash = createHash("sha256").update(inviteToken, "utf8").digest("hex");
+          const inviteResponse = await fetch(apiUrl + "/rest/v1/room_invites", {
+            method: "POST",
+            headers: { ...adminHeaders, Prefer: "return=representation" },
+            body: JSON.stringify({
+              room_id: room.id,
+              created_by: ownerPayload.id,
+              token_hash: tokenHash,
+              expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+              max_uses: 3,
+              uses: 0,
+              allow_ai: true,
+              max_ai_uses: 3,
+              ai_uses: 0,
+            }),
+          });
+          const invites = await inviteResponse.json();
+          assert.equal(inviteResponse.status, 201, "could not create local test invitation: " + JSON.stringify(invites));
+
+          const joinArgs = {
+            invite_token: inviteToken,
+            agent_label: "CI AI participant",
+            confirm_join: true,
+            join_request_key: "2".repeat(64),
+          };
+          const [joined, retry] = await Promise.all([
+            rpc("tools/call", 4, { name: "join_group", arguments: joinArgs }),
+            rpc("tools/call", 5, { name: "join_group", arguments: joinArgs }),
+          ]);
+          assert.equal(joined.isError, undefined, "valid local invitation was rejected: " + JSON.stringify(joined));
+          assert.equal(retry.isError, undefined, "concurrent retry was rejected: " + JSON.stringify(retry));
+          assert.equal(joined.structuredContent?.joined, true, "MCP join did not report success");
+          assert.match(joined.structuredContent?.session_handle || "", /^[a-f0-9]{64}$/i,
+            "successful join must return an opaque session handle");
+          assert.equal(joined.structuredContent?.room_id, room.id);
+          assert.equal(retry.structuredContent?.joined, true, "concurrent idempotent retry did not preserve the joined session");
+          assert.equal(retry.structuredContent?.session_handle, joined.structuredContent.session_handle,
+            "concurrent requests with the same join key must return the same session handle");
+          assert.equal(retry.structuredContent?.participant_id, joined.structuredContent.participant_id,
+            "concurrent retry must not create a second participant");
+
+          // A second independent AI joins with its own idempotency key and session handle.
+          const secondJoin = await rpc("tools/call", 6, {
+            name: "join_group",
+            arguments: {
+              invite_token: inviteToken,
+              agent_label: "CI AI collaborator",
+              confirm_join: true,
+              join_request_key: "3".repeat(64),
+            },
+          });
+          assert.equal(secondJoin.isError, undefined, "second independent AI could not join: " + JSON.stringify(secondJoin));
+          assert.equal(secondJoin.structuredContent?.joined, true);
+          assert.equal(secondJoin.structuredContent?.room_id, room.id);
+          assert.notEqual(secondJoin.structuredContent?.participant_id, joined.structuredContent.participant_id,
+            "independent AI clients must have distinct participant identities");
+          assert.notEqual(secondJoin.structuredContent?.session_handle, joined.structuredContent.session_handle,
+            "independent AI clients must have distinct session handles");
+
+          // Prove a message sent by AI #1 is visible when AI #2 reads the shared group.
+          const sent = await rpc("tools/call", 7, {
+            name: "send_group_message",
+            arguments: {
+              session_handle: joined.structuredContent.session_handle,
+              body: "Message from CI AI one to the shared group",
+            },
+          });
+          assert.ok(sent.structuredContent?.message_id, "AI #1 message was not persisted");
+          const read = await rpc("tools/call", 8, {
+            name: "read_group_messages",
+            arguments: { session_handle: secondJoin.structuredContent.session_handle },
+          });
+          assert.ok(Array.isArray(read.structuredContent?.messages), "AI #2 could not read group messages");
+          assert.ok(read.structuredContent.messages.some(message => message.body === "Message from CI AI one to the shared group"),
+            "AI #2 did not receive AI #1's group message");
+
+          async function getRows(path) {
+            const response = await fetch(apiUrl + "/rest/v1/" + path, { headers: adminHeaders });
+            const payload = await response.json();
+            assert.equal(response.status, 200, "local database verification failed for " + path + ": " + JSON.stringify(payload));
+            return payload;
+          }
+          const participantRows = await getRows("participants?select=id,display_name&room_id=eq." + room.id + "&kind=eq.external_agent");
+          assert.equal(participantRows.length, 2, "two independent AI joins plus idempotent retries must create exactly two AI participants");
+          const inviteRows = await getRows("room_invites?select=ai_uses&id=eq." + invites[0].id);
+          assert.equal(inviteRows[0]?.ai_uses, 2, "two independent AI joins must consume exactly two invitation uses");
+          const sessionRows = await getRows("rub_minds_mcp_sessions?select=session_digest&room_id=eq." + room.id);
+          assert.equal(sessionRows.length, 2, "two independent AI clients must persist exactly two sessions");
+          const connectionRows = await getRows("agent_connections?select=id&room_id=eq." + room.id);
+          assert.equal(connectionRows.length, 2, "two independent AI clients must create exactly two agent connections");
+          console.log("Local MCP two-AI join and cross-client message relay passed:", room.id, joined.structuredContent.participant_id, secondJoin.structuredContent.participant_id);
+          NODE
+      - name: Stop isolated Supabase services
+        if: always()
+        run: supabase stop --no-backup
