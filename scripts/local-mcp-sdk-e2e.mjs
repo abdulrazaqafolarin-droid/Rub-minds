@@ -305,6 +305,115 @@ try {
     "second official client did not receive the first client's group message",
   );
 
+  // Exercise the real human-to-AI bridge with a signed-in human using the
+  // public anon key and RLS, never the service-role key for the message path.
+  const humanEmail = "rub-minds-mcp-human-bridge@example.test";
+  const humanPassword = "Local-CI-Human-Bridge-Password-923!x";
+  const humanUser = await request("/auth/v1/admin/users", {
+    method: "POST",
+    body: JSON.stringify({
+      email: humanEmail,
+      password: humanPassword,
+      email_confirm: true,
+    }),
+  });
+  const publicKey = process.env.LOCAL_SUPABASE_ANON_KEY;
+  assert.ok(publicKey, "local publishable/anon key is required for human RLS checks");
+  const humanLoginResponse = await fetch(apiUrl + "/auth/v1/token?grant_type=password", {
+    method: "POST",
+    headers: { apikey: publicKey, "Content-Type": "application/json" },
+    body: JSON.stringify({ email: humanEmail, password: humanPassword }),
+  });
+  const humanLogin = await humanLoginResponse.json();
+  assert.equal(humanLoginResponse.status, 200, "human password sign-in failed: " + JSON.stringify(humanLogin));
+  assert.ok(humanLogin.access_token, "human session has no access token");
+  const humanHeaders = {
+    apikey: publicKey,
+    Authorization: "Bearer " + humanLogin.access_token,
+    "Content-Type": "application/json",
+  };
+  async function humanRequest(path, init = {}) {
+    const response = await fetch(apiUrl + path, {
+      ...init,
+      headers: { ...humanHeaders, ...(init.headers || {}) },
+    });
+    const payload = await response.json().catch(() => null);
+    assert.ok(response.ok, "human RLS request failed " + path + " (" + response.status + "): " + JSON.stringify(payload));
+    return payload;
+  }
+  const humanRoomId = await humanRequest("/rest/v1/rpc/redeem_room_invite", {
+    method: "POST",
+    body: JSON.stringify({ invite_token: inviteToken }),
+  });
+  assert.equal(humanRoomId, room.id, "signed-in human could not redeem the same invitation as the AIs");
+  const humanParticipants = await humanRequest(
+    "/rest/v1/participants?select=id,kind,user_id&room_id=eq." + room.id + "&user_id=eq." + humanUser.id,
+  );
+  assert.equal(humanParticipants.length, 1, "human invite must create exactly one human participant");
+  assert.equal(humanParticipants[0].kind, "human");
+  const humanMessage = "Human participant asks both AI collaborators for a project update";
+  const humanPosted = await humanRequest("/rest/v1/messages", {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({
+      room_id: room.id,
+      sender_id: humanParticipants[0].id,
+      body: humanMessage,
+    }),
+  });
+  assert.equal(humanPosted.length, 1, "human message must be persisted through authenticated RLS");
+  const aiReadsHuman = await second.callTool({
+    name: "read_group_messages",
+    arguments: { session_handle: two.session_handle },
+  });
+  assert.notEqual(aiReadsHuman.isError, true, "AI could not read a human-authored group message");
+  assert.ok(
+    aiReadsHuman.structuredContent?.messages?.some(message => message.body === humanMessage),
+    "AI two did not receive the human's authenticated group message",
+  );
+  const aiReplyText = "AI two replies to the human participant via the shared room";
+  const aiRepliesHuman = await second.callTool({
+    name: "send_group_message",
+    arguments: { session_handle: two.session_handle, body: aiReplyText },
+  });
+  assert.notEqual(aiRepliesHuman.isError, true, "AI could not send a response to the human");
+  const humanReadsAi = await humanRequest(
+    "/rest/v1/messages?select=body,sender_id&room_id=eq." + room.id + "&order=created_at.asc",
+  );
+  assert.ok(humanReadsAi.some(message => message.body === aiReplyText),
+    "signed-in human did not receive the AI response through RLS");
+
+  // A different authenticated user who has not redeemed an invite must not
+  // read the room or its messages, even if the UUID is known.
+  const outsiderEmail = "rub-minds-mcp-outsider@example.test";
+  await request("/auth/v1/admin/users", {
+    method: "POST",
+    body: JSON.stringify({
+      email: outsiderEmail,
+      password: humanPassword,
+      email_confirm: true,
+    }),
+  });
+  const outsiderLoginResponse = await fetch(apiUrl + "/auth/v1/token?grant_type=password", {
+    method: "POST",
+    headers: { apikey: publicKey, "Content-Type": "application/json" },
+    body: JSON.stringify({ email: outsiderEmail, password: humanPassword }),
+  });
+  const outsiderLogin = await outsiderLoginResponse.json();
+  assert.equal(outsiderLoginResponse.status, 200, "outsider fixture could not authenticate");
+  const outsiderHeaders = { apikey: publicKey, Authorization: "Bearer " + outsiderLogin.access_token };
+  for (const path of [
+    "/rest/v1/rooms?select=id&id=eq." + room.id,
+    "/rest/v1/messages?select=id,body&room_id=eq." + room.id,
+    "/rest/v1/participants?select=id&room_id=eq." + room.id,
+  ]) {
+    const outsiderResponse = await fetch(apiUrl + path, { headers: outsiderHeaders });
+    const outsiderRows = await outsiderResponse.json();
+    assert.equal(outsiderResponse.status, 200, "outsider RLS query failed unexpectedly: " + path);
+    assert.deepEqual(outsiderRows, [], "non-member must not see private group data: " + path);
+  }
+  console.log("Authenticated human and MCP AI exchanged messages in both directions; outsider RLS denied room access.");
+
   // Race leave against an idempotent retry of the same join. Either the retry
   // observes the active join before leave wins, or it is rejected as revoked;
   // the invariant is that the old handle must be unusable after both finish.
