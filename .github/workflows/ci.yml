@@ -313,3 +313,26 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Run controlled browser proof of concept
         run: npm run test:browser
+
+  local-supabase-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install pinned Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.119.0
+      - name: Start isolated local Supabase services
+        run: supabase start
+      - name: Rebuild local database from every committed migration
+        run: supabase db reset --local
+      - name: Verify local migration history is fully applied
+        run: |
+          supabase migration list --local
+          test -f supabase/config.toml
+      - name: Stop isolated Supabase services
+        if: always()
+        run: supabase stop --no-backup
