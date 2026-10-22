@@ -245,11 +245,13 @@ try {
   });
   assert.equal(deniedAfterRace.isError, true, "a concurrent join retry must not resurrect a session after leave");
 
+  const firstSessionDigest = createHash("sha256").update(one.session_handle, "utf8").digest("hex");
   const terminatedSessions = await request(
-    "/rest/v1/rub_minds_mcp_sessions?select=participant_id,terminated_at&participant_id=eq." + one.participant_id,
+    "/rest/v1/rub_minds_mcp_sessions?select=session_digest,participant_id,terminated_at&session_digest=eq." + firstSessionDigest,
   );
-  assert.equal(terminatedSessions.length, 1, "leaving must retain the session tombstone");
+  assert.equal(terminatedSessions.length, 1, "leaving must retain the session tombstone by its digest");
   assert.ok(terminatedSessions[0].terminated_at, "leaving must mark the session as terminated");
+  assert.equal(terminatedSessions[0].participant_id, null, "a tombstoned session must no longer be bound to a participant");
   const participants = await request(
     "/rest/v1/participants?select=id,kind&room_id=eq." + room.id + "&kind=eq.external_agent",
   );
