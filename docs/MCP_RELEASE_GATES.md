@@ -2,13 +2,19 @@
 
 Status: **NOT DEPLOYED / NOT APPROVED FOR PRODUCTION**. This checklist is a record of what must be demonstrated; it is not a deployment instruction or evidence of a passing live test.
 
-## Last read-only production observations (2026-10-21)
+## Last read-only production observations (2026-10-22)
 
-- Live migration history ends at `original_session_memory`.
-- `public.rub_minds_mcp_sessions`, `public.rub_minds_mcp_join_requests`, and the four-argument `redeem_ai_room_invite_idempotent` RPC were absent in read-only checks.
-- `rub-minds-mcp` was absent from the list of deployed Edge Functions.
-- Vercel production inspection returned a team-scope 403. A GitHub merge does not prove production deployment.
-- The Supabase security advisor flagged eight authenticated-callable SECURITY DEFINER functions, leaked-password protection disabled, and nine unindexed foreign keys. Investigate whether each callable function performs correct ownership checks; do not blindly revoke required application RPCs.
+These checks used read-only GitHub, Vercel, and Supabase operations. No production schema, function, secret, or deployment was changed by the audit.
+
+- Vercel confirms the custom production alias `rub-minds.vercel.app` points to a READY production deployment built from `main` commit `cc219265532461c326bad13d218d985a0c56deb8`. This proves the frontend deployment exists; it does **not** prove the Supabase backend has been updated.
+- Supabase project `zucaeevlbwhcvjwbhwmq` is `ACTIVE_HEALTHY` in `eu-west-2`. Its applied migration history still ends at `original_session_memory` (version `20261018173826`).
+- The production database does not contain `public.rub_minds_mcp_sessions`, `public.rub_minds_mcp_join_requests`, or `public.public_request_rate_limits`. The hosted-MCP session/idempotency migrations and public rate-limit migration in the repository have not been applied to this project.
+- Deployed Edge Functions are `agent-messages`, `redeem-ai-invite`, `ai-invite-discovery`, and `session-memory`. **`rub-minds-mcp` is not deployed.**
+- The deployed `redeem-ai-invite` and `ai-invite-discovery` functions are version 1 and their live source lacks the `consumePublicRateLimit` helper that is present in the current repository source. Therefore, the source-level public rate-limiting hardening is **not live**.
+- The security advisor reports: `agent_request_log` has RLS enabled without policies (potentially intentional private logging; confirm intended access), eight SECURITY DEFINER functions executable by `authenticated`, leaked-password protection disabled, and nine foreign keys without covering indexes. Read-only ACL inspection shows the flagged functions are not executable by `PUBLIC` or `anon`; ownership checks still require review. Do not blindly revoke application RPCs or change Auth settings during this audit.
+- No Supabase development branch is provisioned. Creating one may incur charges, so it is not an acceptable default under the current zero-budget constraint.
+
+**Release impact:** live human-room functionality may be available, but hosted MCP AI joining through the new MCP endpoint is not live. Do not test real invitations against previews because their Supabase configuration may point to production. Do not apply migrations or deploy Edge Functions to production without separate explicit approval.
 
 ## Pre-deployment checks
 
