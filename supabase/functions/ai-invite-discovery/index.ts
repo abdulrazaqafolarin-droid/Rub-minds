@@ -1,3 +1,6 @@
+import { createClient } from "npm:@supabase/supabase-js@2";
+import { consumePublicRateLimit, publicRateLimitResponse } from "../_shared/public-rate-limit.ts";
+
 /**
  * Public, read-only Rub Minds invitation protocol discovery.
  *
@@ -13,11 +16,21 @@ const headers = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
 };
+const databaseUrl = Deno.env.get("SUPABASE_URL");
+const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+if (!databaseUrl || !serviceKey) throw new Error("Missing backend configuration");
+const db = createClient(databaseUrl, serviceKey, { auth: { persistSession: false } });
 const base = "https://rub-minds.vercel.app";
 const functions = "https://zucaeevlbwhcvjwbhwmq.supabase.co/functions/v1";
-Deno.serve((request: Request) => {
+Deno.serve(async (request: Request) => {
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers });
   if (request.method !== "GET") return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405, headers });
+  try {
+    const allowed = await consumePublicRateLimit(db, request, serviceKey, "ai-invite-discovery", 60, 60);
+    if (!allowed) return publicRateLimitResponse(headers);
+  } catch {
+    return new Response(JSON.stringify({ error: "Discovery service temporarily unavailable" }), { status: 503, headers });
+  }
   const url = new URL(request.url);
   const token = url.searchParams.get("invite");
   if (token !== null && !/^[0-9a-f]{64}$/i.test(token)) {
