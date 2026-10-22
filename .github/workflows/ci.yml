@@ -340,6 +340,8 @@ jobs:
         uses: supabase/setup-cli@v1
         with:
           version: 2.119.0
+      - name: Clean up stale local Supabase containers from interrupted CI jobs
+        run: supabase stop --no-backup || true
       - name: Start isolated local Supabase services
         run: supabase start -x studio,imgproxy,logflare,vector,analytics,pg_meta,pooler,inbucket,storage
       - name: Rebuild local database from every committed migration

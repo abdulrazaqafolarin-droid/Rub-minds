@@ -16,3 +16,10 @@ export function buildInviteRedirectUrl(origin: string, inviteToken: string): str
   }
   return redirect.toString();
 }
+
+/** Consistent, explicit invitation status text for both route selection and auth. */
+export function getInviteStatusMessage(token: string): string {
+  return isValidInviteToken(token)
+    ? 'Group invitation detected. Your invite will be kept while you sign in.'
+    : 'This invitation link is incomplete or invalid. Ask the group owner for a fresh link.';
+}
