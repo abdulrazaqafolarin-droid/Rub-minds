@@ -431,6 +431,34 @@ try {
     assert.equal(outsiderResponse.status, 200, "outsider RLS query failed unexpectedly: " + path);
     assert.deepEqual(outsiderRows, [], "non-member must not see private group data: " + path);
   }
+  // Anonymous visitors must not bypass the room's RLS simply by knowing
+  // its UUID. These checks use the public anon key without a user JWT.
+  const anonymousHeaders = { apikey: publicKey, Authorization: "Bearer " + publicKey };
+  for (const path of [
+    "/rest/v1/rooms?select=id&id=eq." + room.id,
+    "/rest/v1/messages?select=id,body&room_id=eq." + room.id,
+    "/rest/v1/participants?select=id&room_id=eq." + room.id,
+  ]) {
+    const response = await fetch(apiUrl + path, { headers: anonymousHeaders });
+    const rows = await response.json();
+    assert.ok(response.status === 200 || response.status === 401 || response.status === 403,
+      "unexpected anonymous access result for " + path + ": " + response.status);
+    if (response.status === 200) {
+      assert.deepEqual(rows, [], "anonymous visitors must not see private room data: " + path);
+    }
+  }
+  const anonymousPost = await fetch(apiUrl + "/rest/v1/messages", {
+    method: "POST",
+    headers: { ...anonymousHeaders, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      room_id: room.id,
+      sender_id: humanParticipants[0].id,
+      body: "CI anonymous write must be rejected",
+    }),
+  });
+  assert.ok(anonymousPost.status >= 400, "anonymous visitor must not post as a room member");
+  console.log("Anonymous read and write access denied by group RLS.");
+
   // A nonmember cannot submit a message under a member's participant ID.
   const unauthorizedPost = await fetch(apiUrl + "/rest/v1/messages", {
     method: "POST",
