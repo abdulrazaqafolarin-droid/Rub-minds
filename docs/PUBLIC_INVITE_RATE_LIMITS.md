@@ -6,7 +6,9 @@ This change adds a shared Postgres fixed-window limiter for the unauthenticated 
 
 - `ai-invite-discovery`: 60 requests per IP per 60-second window.
 - `redeem-ai-invite`: 10 requests per IP per 60-second window.
-- Rate limits apply before token parsing or invitation redemption so malformed requests also consume quota.
+- MCP transport POST/DELETE requests: 600 requests per IP per 60-second window.
+- MCP `join_group` attempts: 10 requests per IP per 60-second window, including invalid invitation attempts.
+- Rate limits apply before token parsing or invitation redemption so malformed requests also consume quota. The MCP transport limit runs before reading request bodies; its join-specific limit runs after JSON parsing but before invitation redemption.
 - The limiter fails closed with HTTP 503 if its database RPC is unavailable, and returns HTTP 429 with `Retry-After: 60` when a limit is exceeded.
 
 ## Privacy and security
