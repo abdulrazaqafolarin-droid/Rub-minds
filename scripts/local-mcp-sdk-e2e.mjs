@@ -128,17 +128,25 @@ try {
     const unchanged = await request("/rest/v1/room_invites?select=ai_uses&id=eq." + entry.invite_id);
     assert.equal(unchanged[0]?.ai_uses, 0, entry.label + " invitation consumed an AI slot");
   }
-  const noConsent = await first.callTool({
-    name: "join_group",
-    arguments: {
-      invite_token: inviteToken,
-      agent_label: "CI no consent",
-      confirm_join: false,
-      join_request_key: "4".repeat(64),
-    },
-  });
-  assert.ok(noConsent.isError === true || noConsent.structuredContent?.joined !== true,
-    "join_group must reject missing explicit consent");
+  // Invalid MCP tool arguments may be rejected as a protocol error before a
+  // tool result exists. Both protocol rejection and isError are fail-closed.
+  let consentRejected = false;
+  try {
+    const noConsent = await first.callTool({
+      name: "join_group",
+      arguments: {
+        invite_token: inviteToken,
+        agent_label: "CI no consent",
+        confirm_join: false,
+        join_request_key: "4".repeat(64),
+      },
+    });
+    consentRejected = noConsent.isError === true || noConsent.structuredContent?.joined !== true;
+  } catch (error) {
+    consentRejected = error?.code === -32602 &&
+      /explicit confirmation/i.test(String(error.message));
+  }
+  assert.equal(consentRejected, true, "join_group must reject missing explicit consent");
   const noConsentParticipants = await request(
     "/rest/v1/participants?select=id&room_id=eq." + room.id + "&display_name=eq.CI%20no%20consent",
   );
