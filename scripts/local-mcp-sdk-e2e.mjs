@@ -216,24 +216,48 @@ try {
     "second official client did not receive the first client's group message",
   );
 
-  const left = await first.callTool({
-    name: "leave_group",
-    arguments: { session_handle: one.session_handle, confirm_leave: true },
-  });
+  // Race leave against an idempotent retry of the same join. Either the retry
+  // observes the active join before leave wins, or it is rejected as revoked;
+  // the invariant is that the old handle must be unusable after both finish.
+  const [left, racingJoin] = await Promise.all([
+    first.callTool({
+      name: "leave_group",
+      arguments: { session_handle: one.session_handle, confirm_leave: true },
+    }),
+    first.callTool({
+      name: "join_group",
+      arguments: {
+        invite_token: inviteToken,
+        agent_label: "Official SDK AI one",
+        confirm_join: true,
+        join_request_key: "a".repeat(64),
+      },
+    }),
+  ]);
   assert.notEqual(left.isError, true, "official SDK client could not leave and revoke its session: " + JSON.stringify(left));
-  const deniedAfterLeave = await first.callTool({
+  assert.ok(
+    racingJoin.isError === true || racingJoin.structuredContent?.joined === true,
+    "concurrent retry must either be rejected or return the already-joined session: " + JSON.stringify(racingJoin),
+  );
+  const deniedAfterRace = await first.callTool({
     name: "read_group_messages",
     arguments: { session_handle: one.session_handle },
   });
-  assert.equal(deniedAfterLeave.isError, true, "a revoked session must not keep reading group messages");
+  assert.equal(deniedAfterRace.isError, true, "a concurrent join retry must not resurrect a session after leave");
 
+  const terminatedSessions = await request(
+    "/rest/v1/rub_minds_mcp_sessions?select=participant_id,terminated_at&participant_id=eq." + one.participant_id,
+  );
+  assert.equal(terminatedSessions.length, 1, "leaving must retain the session tombstone");
+  assert.ok(terminatedSessions[0].terminated_at, "leaving must mark the session as terminated");
   const participants = await request(
     "/rest/v1/participants?select=id,kind&room_id=eq." + room.id + "&kind=eq.external_agent",
   );
   assert.equal(participants.length, 2, "official SDK clients must create exactly two AI participants");
-  const connections = await request("/rest/v1/agent_connections?select=id,revoked_at&room_id=eq." + room.id);
+  const connections = await request("/rest/v1/agent_connections?select=id,participant_id,revoked_at&room_id=eq." + room.id);
   assert.equal(connections.length, 2, "both official SDK clients must have scoped connections");
-  assert.ok(connections.some(connection => connection.revoked_at), "leaving must revoke the first AI credential");
+  const firstConnection = connections.find(connection => connection.participant_id === one.participant_id);
+  assert.ok(firstConnection?.revoked_at, "leaving must revoke the first AI credential even when join retries race with leave");
   console.log("Official MCP SDK interoperability passed: discovery, tool catalog, two AI joins, shared message relay, and credential revocation.");
 } finally {
   await Promise.allSettled([first.close(), second.close()]);
