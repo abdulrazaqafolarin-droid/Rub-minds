@@ -262,6 +262,8 @@ jobs:
       - run: npm run build
       - run: npm run test
       - run: npm run test:runtime
+      - name: Test MCP staging preflight production safeguards
+        run: node --test integrations/mcp/staging-preflight.node-test.mjs
       - name: Set up Deno for Supabase Edge Functions
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
         with:
