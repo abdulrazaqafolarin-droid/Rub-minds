@@ -321,9 +321,11 @@ jobs:
 
   local-supabase-stack:
     runs-on: ubuntu-latest
+    # GitHub-hosted runners are isolated; serialize only superseded runs of the same PR.
+    # A global non-cancelling group can leave one queued job blocking every future local-stack test.
     concurrency:
-      group: rub-minds-local-supabase-stack
-      cancel-in-progress: false
+      group: rub-minds-local-supabase-stack-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
