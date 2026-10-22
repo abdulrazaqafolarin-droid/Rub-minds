@@ -343,6 +343,14 @@ jobs:
         run: |
           supabase migration list --local
           test -f supabase/config.toml
+      - name: Test real browser signup and human invitation redemption
+        run: |
+          set -euo pipefail
+          eval "$(supabase status -o env)"
+          export LOCAL_SUPABASE_URL="${API_URL:-http://127.0.0.1:54321}"
+          export LOCAL_SUPABASE_ANON_KEY="${ANON_KEY:?Local anon key missing}"
+          export LOCAL_SUPABASE_SERVICE_ROLE_KEY="${SERVICE_ROLE_KEY:?Local service-role key missing}"
+          node scripts/local-human-invite-e2e.mjs
       - name: Start MCP Edge Function with disposable local credentials
         run: |
           set -euo pipefail
