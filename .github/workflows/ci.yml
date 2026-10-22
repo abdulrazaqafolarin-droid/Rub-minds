@@ -333,6 +333,75 @@ jobs:
         run: |
           supabase migration list --local
           test -f supabase/config.toml
+      - name: Start MCP Edge Function with disposable local credentials
+        run: |
+          set -euo pipefail
+          eval "$(supabase status -o env)"
+          : "${SERVICE_ROLE_KEY:?Local Supabase service-role key was not reported}"
+          cat > "$RUNNER_TEMP/mcp.env" <<EOF
+          SUPABASE_URL=${API_URL:-http://127.0.0.1:54321}
+          SUPABASE_SERVICE_ROLE_KEY=${SERVICE_ROLE_KEY}
+          RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          EOF
+          supabase functions serve rub-minds-mcp --env-file "$RUNNER_TEMP/mcp.env" > "$RUNNER_TEMP/mcp-edge.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/mcp-edge.pid"
+          for attempt in $(seq 1 60); do
+            status_code="$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:54321/functions/v1/rub-minds-mcp || true)"
+            if [ "$status_code" = "405" ]; then exit 0; fi
+            if ! kill -0 "$(cat "$RUNNER_TEMP/mcp-edge.pid")" 2>/dev/null; then
+              cat "$RUNNER_TEMP/mcp-edge.log"
+              exit 1
+            fi
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/mcp-edge.log"
+          echo "MCP Edge Function did not become ready"
+          exit 1
+      - name: Exercise live local MCP discovery and tool catalog
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          const endpoint = "http://127.0.0.1:54321/functions/v1/rub-minds-mcp";
+          const version = "2026-07-28";
+          async function rpc(method, id) {
+            const response = await fetch(endpoint, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+                "MCP-Protocol-Version": version,
+                "Mcp-Method": method,
+              },
+              body: JSON.stringify({
+                jsonrpc: "2.0",
+                id,
+                method,
+                params: {
+                  _meta: {
+                    "io.modelcontextprotocol/protocolVersion": version,
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                  },
+                },
+              }),
+            });
+            const body = await response.json();
+            assert.equal(response.status, 200, method + " HTTP status: " + JSON.stringify(body));
+            assert.equal(body.id, id);
+            assert.ok(body.result, method + " returned no result");
+            return body.result;
+          }
+          const discovery = await rpc("server/discover", 1);
+          assert.equal(discovery.resultType, "complete");
+          assert.ok(discovery.supportedVersions.includes(version));
+          const catalog = await rpc("tools/list", 2);
+          assert.equal(catalog.resultType, "complete");
+          const names = catalog.tools.map(tool => tool.name);
+          assert.ok(names.includes("join_group"), "join_group missing from live tool catalog");
+          assert.ok(names.includes("leave_group"), "leave_group missing from live tool catalog");
+          const join = catalog.tools.find(tool => tool.name === "join_group");
+          assert.ok(join.inputSchema.required.includes("join_request_key"), "join_group must require idempotency key");
+          console.log("Local MCP discovery and tool catalog passed:", names.join(", "));
+          NODE
       - name: Stop isolated Supabase services
         if: always()
         run: supabase stop --no-backup
