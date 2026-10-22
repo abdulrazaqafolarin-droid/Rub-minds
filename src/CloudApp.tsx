@@ -20,10 +20,6 @@ function errorMessage(error: unknown): string {
       if (typeof value[key] === 'string' && value[key].trim()) return value[key] as string;
     }
     if (value.error && typeof value.error === 'object') return errorMessage(value.error);
-    try {
-      const serialized = JSON.stringify(error);
-      if (serialized && serialized !== '{}') return serialized;
-    } catch { /* use the safe fallback below */ }
   }
   return 'Something went wrong. Please try again.';
 }
