@@ -42,3 +42,6 @@ jwt_expiry = 3600
 enable_signup = true
 double_confirm_changes = false
 enable_confirmations = false
+
+[functions.rub-minds-mcp]
+verify_jwt = false
