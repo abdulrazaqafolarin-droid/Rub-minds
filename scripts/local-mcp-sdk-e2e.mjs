@@ -120,6 +120,83 @@ try {
   assert.notEqual(one.participant_id, two.participant_id, "independent clients must have distinct participants");
   assert.notEqual(one.session_handle, two.session_handle, "independent clients must have distinct session handles");
 
+  // Import the original conversation context privately to AI one. AI two must
+  // not receive the raw import or participant-private memory.
+  const imported = await first.callTool({
+    name: "import_session_memory",
+    arguments: {
+      session_handle: one.session_handle,
+      document: {
+        schema: "rub-minds.session-memory",
+        version: 1,
+        summary: "Private source context: prefers concise research and is investigating quantum batteries.",
+        current_goal: "Investigate quantum batteries.",
+        source: { platform: "ChatGPT", session_label: "AI one source conversation" },
+        sharing: { raw_history_visibility: "private" },
+      },
+    },
+  });
+  assert.notEqual(imported.isError, true, "official SDK client could not import private session context: " + JSON.stringify(imported));
+  assert.equal(imported.structuredContent?.imported, true);
+  assert.equal(imported.structuredContent?.visibility, "private");
+
+  const privateEntry = await first.callTool({
+    name: "remember_memory",
+    arguments: {
+      session_handle: one.session_handle,
+      entry_type: "insight",
+      content: "PRIVATE ONLY: preserve the original user's unpublished research constraint.",
+      visibility: "private",
+      idempotency_key: "sdk-private-memory-one",
+    },
+  });
+  assert.notEqual(privateEntry.isError, true, "private memory write failed: " + JSON.stringify(privateEntry));
+  const groupEntry = await first.callTool({
+    name: "remember_memory",
+    arguments: {
+      session_handle: one.session_handle,
+      entry_type: "decision",
+      content: "SHARED DECISION: compare quantum battery papers by reproducibility.",
+      visibility: "group",
+      idempotency_key: "sdk-group-memory-one",
+    },
+  });
+  assert.notEqual(groupEntry.isError, true, "group memory write failed: " + JSON.stringify(groupEntry));
+
+  const [memoryOne, memoryTwo] = await Promise.all([
+    first.callTool({
+      name: "read_session_memory",
+      arguments: { session_handle: one.session_handle },
+    }),
+    second.callTool({
+      name: "read_session_memory",
+      arguments: { session_handle: two.session_handle },
+    }),
+  ]);
+  assert.notEqual(memoryOne.isError, true, "AI one could not read its own memory");
+  assert.notEqual(memoryTwo.isError, true, "AI two could not read its memory");
+  assert.ok(
+    memoryOne.structuredContent?.imports?.some(entry => entry.context_summary?.includes("Private source context")),
+    "AI one could not read its imported source summary",
+  );
+  assert.ok(
+    memoryTwo.structuredContent?.imports?.length === 0,
+    "AI two must not see AI one's imported source context",
+  );
+  assert.ok(
+    memoryOne.structuredContent?.group_memory?.some(entry => entry.visibility === "private" && entry.content.includes("PRIVATE ONLY")),
+    "AI one must retain access to its own private memory",
+  );
+  assert.ok(
+    !memoryTwo.structuredContent?.group_memory?.some(entry => entry.content.includes("PRIVATE ONLY")),
+    "AI two must not see AI one's private memory",
+  );
+  assert.ok(
+    memoryTwo.structuredContent?.group_memory?.some(entry => entry.visibility === "group" && entry.content.includes("SHARED DECISION")),
+    "AI two must see explicitly group-shared memory",
+  );
+  console.log("Official MCP SDK private session-context and explicit group-memory isolation passed.");
+
   const sent = await first.callTool({
     name: "send_group_message",
     arguments: {
