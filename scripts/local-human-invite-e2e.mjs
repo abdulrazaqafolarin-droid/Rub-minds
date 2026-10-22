@@ -172,6 +172,8 @@ try {
   await blockedPage.getByLabel('Email address').fill(blockedEmail);
   await blockedPage.getByLabel('Password', { exact: true }).fill(blockedPassword);
   await blockedPage.getByRole('button', { name: 'Sign in', exact: true }).click();
+  // Prove the test account authenticated before attributing the result to invite revocation.
+  await blockedPage.getByText('YOUR GROUPS', { exact: true }).waitFor({ timeout: 15000 });
   await blockedPage.getByRole('alert').waitFor({ timeout: 15000 });
   const blockedAlertText = (await blockedPage.getByRole('alert').innerText()).trim();
   assert.match(blockedAlertText, /Invitation expired or unavailable/i,
