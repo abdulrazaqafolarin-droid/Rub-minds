@@ -59,10 +59,37 @@ await request("/rest/v1/room_invites", {
     max_uses: 3,
     uses: 0,
     allow_ai: true,
-    max_ai_uses: 3,
+    max_ai_uses: 2,
     ai_uses: 0,
   }),
 });
+
+// Each negative invitation uses the real database and official MCP client.
+const rejectedInvites = [
+  { label: "expired", token: "1".repeat(64), expires_at: new Date(Date.now() - 60_000).toISOString(), revoked_at: null, allow_ai: true, max_ai_uses: 2 },
+  { label: "revoked", token: "2".repeat(64), expires_at: new Date(Date.now() + 3_600_000).toISOString(), revoked_at: new Date().toISOString(), allow_ai: true, max_ai_uses: 2 },
+  { label: "human-only", token: "3".repeat(64), expires_at: new Date(Date.now() + 3_600_000).toISOString(), revoked_at: null, allow_ai: false, max_ai_uses: 0 },
+];
+for (const entry of rejectedInvites) {
+  const rows = await request("/rest/v1/room_invites", {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({
+      room_id: room.id,
+      created_by: owner.id,
+      token_hash: createHash("sha256").update(entry.token, "utf8").digest("hex"),
+      expires_at: entry.expires_at,
+      revoked_at: entry.revoked_at,
+      max_uses: 3,
+      uses: 0,
+      allow_ai: entry.allow_ai,
+      max_ai_uses: entry.max_ai_uses,
+      ai_uses: 0,
+    }),
+  });
+  assert.equal(rows.length, 1, "could not seed " + entry.label + " invitation");
+  entry.invite_id = rows[0].id;
+}
 
 const first = new Client(
   { name: "rub-minds-ci-ai-one", version: "1.0.0" },
@@ -86,6 +113,45 @@ try {
   assert.ok(names.includes("leave_group"), "official client did not discover leave_group");
   assert.ok(names.includes("send_group_message"), "official client did not discover send_group_message");
   assert.ok(names.includes("read_group_messages"), "official client did not discover read_group_messages");
+
+  for (const entry of rejectedInvites) {
+    const rejected = await first.callTool({
+      name: "join_group",
+      arguments: {
+        invite_token: entry.token,
+        agent_label: "CI rejected " + entry.label,
+        confirm_join: true,
+        join_request_key: createHash("sha256").update("negative-" + entry.label).digest("hex"),
+      },
+    });
+    assert.equal(rejected.isError, true, entry.label + " invitation unexpectedly authorized an AI join");
+    const unchanged = await request("/rest/v1/room_invites?select=ai_uses&id=eq." + entry.invite_id);
+    assert.equal(unchanged[0]?.ai_uses, 0, entry.label + " invitation consumed an AI slot");
+  }
+  // Invalid MCP tool arguments may be rejected as a protocol error before a
+  // tool result exists. Both protocol rejection and isError are fail-closed.
+  let consentRejected = false;
+  try {
+    const noConsent = await first.callTool({
+      name: "join_group",
+      arguments: {
+        invite_token: inviteToken,
+        agent_label: "CI no consent",
+        confirm_join: false,
+        join_request_key: "4".repeat(64),
+      },
+    });
+    consentRejected = noConsent.isError === true || noConsent.structuredContent?.joined !== true;
+  } catch (error) {
+    consentRejected = error?.code === -32602 &&
+      /explicit confirmation/i.test(String(error.message));
+  }
+  assert.equal(consentRejected, true, "join_group must reject missing explicit consent");
+  const noConsentParticipants = await request(
+    "/rest/v1/participants?select=id&room_id=eq." + room.id + "&display_name=eq.CI%20no%20consent",
+  );
+  assert.equal(noConsentParticipants.length, 0, "missing consent must not create a participant");
+  console.log("Official MCP SDK rejected expired, revoked, human-only, and unconfirmed AI invitations.");
 
   const [joinOne, joinTwo] = await Promise.all([
     first.callTool({
@@ -119,6 +185,29 @@ try {
   assert.ok(typeof two?.session_handle === "string" && /^[a-f0-9]{64}$/i.test(two.session_handle));
   assert.notEqual(one.participant_id, two.participant_id, "independent clients must have distinct participants");
   assert.notEqual(one.session_handle, two.session_handle, "independent clients must have distinct session handles");
+
+  // Two successful AI joins exhaust this invitation's AI quota. A third
+  // independent request must not create a participant or a scoped credential.
+  const exhausted = await first.callTool({
+    name: "join_group",
+    arguments: {
+      invite_token: inviteToken,
+      agent_label: "CI quota exceeded",
+      confirm_join: true,
+      join_request_key: "5".repeat(64),
+    },
+  });
+  assert.equal(exhausted.isError, true, "exhausted AI invitation unexpectedly authorized a third AI");
+  const inviteAfterQuota = await request(
+    "/rest/v1/room_invites?select=ai_uses,max_ai_uses&token_hash=eq." + tokenHash,
+  );
+  assert.equal(inviteAfterQuota[0]?.ai_uses, 2, "two successful AI joins should consume exactly two slots");
+  assert.equal(inviteAfterQuota[0]?.max_ai_uses, 2, "test invitation should cap AI participation at two");
+  const quotaParticipants = await request(
+    "/rest/v1/participants?select=id&room_id=eq." + room.id + "&display_name=eq.CI%20quota%20exceeded",
+  );
+  assert.equal(quotaParticipants.length, 0, "quota rejection must not create a participant");
+  console.log("Official MCP SDK enforced the AI invitation quota without creating an extra participant.");
 
   // Import the original conversation context privately to AI one. AI two must
   // not receive the raw import or participant-private memory.

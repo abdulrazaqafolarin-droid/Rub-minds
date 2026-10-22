@@ -590,6 +590,10 @@ jobs:
           export LOCAL_SUPABASE_URL="${API_URL:-http://127.0.0.1:54321}"
           export LOCAL_SUPABASE_SERVICE_ROLE_KEY="${SERVICE_ROLE_KEY:?Local service-role key missing}"
           export LOCAL_MCP_ENDPOINT="http://127.0.0.1:54321/functions/v1/rub-minds-mcp"
+          # The raw protocol smoke test and SDK test share the same local IP.
+          # Allow the real 10-joins/minute security window to reset instead of
+          # weakening production rate limits or spoofing client addresses.
+          sleep 62
           node scripts/local-mcp-sdk-e2e.mjs
       - name: Stop isolated Supabase services
         if: always()
