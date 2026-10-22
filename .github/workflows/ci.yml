@@ -329,7 +329,7 @@ jobs:
         with:
           version: 2.119.0
       - name: Start isolated local Supabase services
-        run: supabase start
+        run: supabase start -x studio,imgproxy,logflare,vector,analytics,pg_meta,pooler,inbucket,storage
       - name: Rebuild local database from every committed migration
         run: supabase db reset --local
       - name: Verify local migration history is fully applied
