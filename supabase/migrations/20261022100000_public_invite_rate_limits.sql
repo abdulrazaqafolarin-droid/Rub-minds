@@ -12,6 +12,8 @@ create table if not exists public.public_request_rate_limits (
 alter table public.public_request_rate_limits enable row level security;
 revoke all on table public.public_request_rate_limits from public, anon, authenticated;
 grant all on table public.public_request_rate_limits to service_role;
+create index if not exists public_request_rate_limits_updated_at_idx
+  on public.public_request_rate_limits (updated_at);
 
 create or replace function public.consume_public_request_rate_limit(
   p_key_hash text,
@@ -53,6 +55,12 @@ begin
       end,
       updated_at = clock_timestamp()
   returning request_count into current_count;
+
+  -- Keep a bounded retention horizon without scanning the table on every request.
+  if current_count = 1 and pg_catalog.random() < 0.01 then
+    delete from public.public_request_rate_limits
+    where updated_at < pg_catalog.clock_timestamp() - interval '2 days';
+  end if;
 
   return current_count <= p_limit;
 end;
