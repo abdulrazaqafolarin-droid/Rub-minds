@@ -196,8 +196,50 @@ try {
     await vite.close();
   }
 
-  console.log('PASS: mock origin allowlist; malformed/missing invitation rejected; separate human/AI routes; explicit consent and revocation gates; mock room message; original context retained; real Rub Minds demo UI creates a room, sends a message, and clearly labels its simulated agent.');
-  console.log('SCOPE: local test server and mock pages only. No production credentials, real invitations, or provider sessions are accessed.');
+  // Exercise the actual cloud invitation/auth UI using a fake Supabase project.
+  // getSession() reads only this fresh browser context; no sign-in or write is attempted.
+  const cloudVite = await createServer({
+    root: process.cwd(),
+    server: { host: '127.0.0.1', port: 0, strictPort: false },
+    logLevel: 'error',
+    appType: 'spa',
+    define: {
+      'import.meta.env.VITE_SUPABASE_URL': JSON.stringify('https://rub-minds-test.supabase.co'),
+      'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify('test-only-public-anon-key'),
+    },
+  });
+  try {
+    await cloudVite.listen();
+    const address = cloudVite.httpServer.address();
+    assert.ok(address && typeof address === 'object' && address.port, 'Cloud UI test server must bind a port');
+    const invitePage = await context.newPage();
+    const inviteToken = 'a'.repeat(64);
+    await invitePage.goto('http://127.0.0.1:' + address.port + '/?invite=' + inviteToken, { waitUntil: 'domcontentloaded' });
+    await invitePage.getByRole('heading', { name: 'Join a Rub Minds group' }).waitFor();
+    await invitePage.getByRole('status').getByText('Group invitation detected. Your invite will be kept while you sign in.').waitFor();
+
+    // Human route must retain the invitation context and show the invitation-specific auth copy.
+    await invitePage.getByRole('button', { name: 'Continue as a human' }).click();
+    await invitePage.getByRole('heading', { name: 'You’re invited to Rub Minds' }).waitFor();
+    await invitePage.getByRole('status').getByText('Group invitation detected. Your invite will be kept while you sign in.').waitFor();
+    assert.equal(new URL(invitePage.url()).searchParams.get('invite'), inviteToken);
+    assert.equal(await invitePage.getByText('Could not restore your session. Please sign in again.').count(), 0);
+
+    // Signup switch must not erase the invite token, and a reload must return to
+    // a clear invite route selector rather than a generic home screen.
+    await invitePage.getByRole('button', { name: 'Create an account' }).click();
+    await invitePage.getByRole('heading', { name: 'Create your Rub Minds account' }).waitFor();
+    assert.equal(new URL(invitePage.url()).searchParams.get('invite'), inviteToken);
+    await invitePage.reload({ waitUntil: 'domcontentloaded' });
+    await invitePage.getByRole('heading', { name: 'Join a Rub Minds group' }).waitFor();
+    await invitePage.getByRole('status').getByText('Group invitation detected. Your invite will be kept while you sign in.').waitFor();
+    await invitePage.close();
+  } finally {
+    await cloudVite.close();
+  }
+
+  console.log('PASS: mock origin allowlist; malformed/missing invitation rejected; separate human/AI routes; explicit consent and revocation gates; mock room message; original context retained; demo UI behavior; real CloudApp invite banner, human auth route, signup transition, URL token preservation, reload recovery, and expected no-session handling.');
+  console.log('SCOPE: local test servers, fake Supabase project URL/key, and mock pages only. No production credentials, real invitations, or provider sessions are accessed.');
   await context.close();
 } finally {
   await browser.close();
