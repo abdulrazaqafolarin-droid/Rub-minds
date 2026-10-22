@@ -423,6 +423,21 @@ try {
     }),
   });
   assert.ok(unauthorizedPost.status >= 400, "nonmember message write must be denied");
+  // Membership permits posting only as the caller's own human identity.
+  const impersonatedPost = await fetch(apiUrl + "/rest/v1/messages", {
+    method: "POST",
+    headers: { ...humanHeaders, Prefer: "return=representation" },
+    body: JSON.stringify({
+      room_id: room.id,
+      sender_id: one.participant_id,
+      body: "CI human impersonation must be rejected",
+    }),
+  });
+  assert.ok(impersonatedPost.status >= 400, "human must not post as an AI participant");
+  const forbiddenRows = await request(
+    "/rest/v1/messages?select=id&body=eq.CI%20human%20impersonation%20must%20be%20rejected",
+  );
+  assert.deepEqual(forbiddenRows, [], "rejected sender impersonation must not persist");
   console.log("Authenticated human and MCP AI exchanged messages in both directions; outsider RLS denied room access.");
 
   // Race leave against an idempotent retry of the same join. Either the retry
