@@ -90,7 +90,7 @@ try {
 
   // A local-only Auth configuration disables email confirmation so this test can
   // verify the complete post-signup invitation flow without sending real email.
-  await page.getByText('Local human invitation E2E', { exact: true }).waitFor({ timeout: 15000 });
+  await page.getByRole('heading', { name: 'Local human invitation E2E', exact: true }).waitFor({ timeout: 15000 });
   const authUser = await request('/auth/v1/admin/users?per_page=100');
   const createdUser = authUser.users?.find(user => user.email === email);
   assert.ok(createdUser, 'signup did not create the human auth user');
