@@ -174,10 +174,32 @@ try {
   await blockedPage.getByRole('button', { name: 'Sign in', exact: true }).click();
   // Prove the test account authenticated before attributing the result to invite revocation.
   await blockedPage.getByText('YOUR GROUPS', { exact: true }).waitFor({ timeout: 15000 });
+  const browserAccessToken = await blockedPage.evaluate(() => {
+    const key = Object.keys(localStorage).find(candidate => candidate.endsWith('-auth-token'));
+    if (!key) return null;
+    try { return JSON.parse(localStorage.getItem(key) || 'null')?.access_token || null; }
+    catch { return null; }
+  });
+  assert.ok(browserAccessToken, 'sign-in should persist a Supabase session in the browser');
+  // Isolate the backend's revocation guarantee from any browser-rendering issue.
+  const rejectedRedemption = await fetch(apiUrl + '/rest/v1/rpc/redeem_room_invite', {
+    method: 'POST',
+    headers: {
+      apikey: anonKey,
+      Authorization: 'Bearer ' + browserAccessToken,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ invite_token: inviteToken }),
+  });
+  const rejectedBody = await rejectedRedemption.text();
+  assert.notEqual(rejectedRedemption.status, 200,
+    'revoked human invitation must be rejected by the authenticated database RPC');
+  assert.match(rejectedBody, /Invitation expired or unavailable/i,
+    'database should explain that the revoked invitation is unavailable: ' + rejectedBody);
   await blockedPage.getByRole('alert').waitFor({ timeout: 15000 });
   const blockedAlertText = (await blockedPage.getByRole('alert').innerText()).trim();
   assert.match(blockedAlertText, /Invitation expired or unavailable/i,
-    'revoked invite should show the database rejection, not a different auth/UI error: ' + blockedAlertText);
+    'browser should display the invitation rejection, not a different auth/UI error: ' + blockedAlertText);
   const blockedMembership = await request(
     '/rest/v1/participants?select=id&room_id=eq.' + room.id + '&user_id=eq.' + blockedUser.id,
   );
