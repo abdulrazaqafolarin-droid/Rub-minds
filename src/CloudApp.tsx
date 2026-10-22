@@ -5,24 +5,12 @@ import type { User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import { getInviteStatusMessage, isValidInviteToken, readInviteToken } from './inviteLinks';
 import { shouldShowSessionRestoreError } from './authStartup';
+import { errorMessage } from './errorMessage';
 import {
   createCloudRoom, createCloudInvite, redeemCloudInvite, redeemAIInvite, revokeCloudInvite, connectCloudAgent, listAgentConnections, revokeCloudAgent, getCloudRoom, listCloudMessages, listCloudParticipants,
   listCloudRooms, postCloudMessage, signInWithPassword, signUpWithPassword, requestPasswordReset, updateAccountPassword, signOut,
   subscribeToCloudMessages, subscribeToGroupMemoryEntries, savePrivateSessionContext, listPrivateSessionContexts, deletePrivateSessionContext, listGroupMemoryEntries, saveGroupMemoryEntry, deleteGroupMemoryEntry, type PrivateSessionImport, type GroupMemoryEntry, type CloudRoom, type CloudMessage, type CloudParticipant, type AgentConnection,
 } from './cloudRooms';
-
-function errorMessage(error: unknown): string {
-  if (error instanceof Error && error.message.trim()) return error.message;
-  if (typeof error === 'string' && error.trim()) return error;
-  if (error && typeof error === 'object') {
-    const value = error as Record<string, unknown>;
-    for (const key of ['message', 'details', 'hint', 'error_description']) {
-      if (typeof value[key] === 'string' && value[key].trim()) return value[key] as string;
-    }
-    if (value.error && typeof value.error === 'object') return errorMessage(value.error);
-  }
-  return 'Something went wrong. Please try again.';
-}
 
 export default function CloudApp() {
   const [user, setUser] = useState<User | null>(null);
