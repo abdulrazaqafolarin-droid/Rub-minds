@@ -6,11 +6,13 @@ This folder documents the remote MCP endpoint implemented at:
 
 ## Status
 
-- Implementation is in draft PR #10 and is **not deployed to production** by this change.
-- The endpoint supports both the current stateless MCP protocol (`2026-07-28`: `server/discover`, per-request `_meta`, `Mcp-Method`/`Mcp-Name`, and explicit `session_handle` tool arguments) and a legacy `2025-06-18` session-header path for older clients. The modern path does not depend on `initialize` or `Mcp-Session-Id`; `join_group` returns an opaque `session_handle`, and the explicitly confirmed `leave_group` tool revokes the participant and tombstones the handle. Both paths require JSON POST bodies, bounded streaming request parsing, the required `Accept` values, and an explicit browser-origin allowlist.
-- No OAuth authorization server is implemented in this first version. MCP initialization is open and does not write a database session row; the session is persisted only when a valid invitation is used to join. An AI participant cannot read or write group data until that join succeeds.
-- The server is not an official/verified connector from OpenAI or Anthropic. Each platform must be configured and tested separately.
-- CI has passed the dependency upgrade to Vitest 5.0.5 with zero reported npm vulnerabilities and the current-protocol schema/metadata tests. The newest run is also checking the stateless handler, rate-limit migration, and reproducible lockfile setup; verify that run before calling this branch CI-green. This is code-level CI only; no live MCP Inspector, Claude/ChatGPT connector test, or production deployment has been completed.
+- Implementation and hardening are in open PRs #17–#21 and are **not merged or deployed to production**. The production endpoint URL above is a target URL, not evidence that the function is live.
+- The endpoint source supports the stateless MCP protocol (`2026-07-28`: `server/discover`, per-request `_meta`, `Mcp-Method`/`Mcp-Name`, and explicit `session_handle` tool arguments) plus the legacy `2025-06-18` session-header path. The modern path does not depend on `initialize` or `Mcp-Session-Id`; `join_group` returns an opaque `session_handle`, and the explicitly confirmed `leave_group` tool revokes the participant and terminates the handle.
+- **Verified locally in GitHub Actions:** clean Supabase migration replay; real browser signup with invite preservation and automatic human join; actual Edge Function discovery/tool calls; two independent AI participants joining one room, idempotent retry, cross-client group-message relay, and leave/revocation; official MCP TypeScript SDK v2.3.1 protocol negotiation and client interoperability. See [PR #19 full local integration run](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/39704346728) and [PR #20 official SDK run](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/39704725459).
+- PR #21 adds official-client tests for private imported session context, private memory isolation, and explicitly group-shared memory. Its CI result must pass before that privacy check is considered verified.
+- The source also contains the public invite/MCP rate-limit implementation in PR #18; it has not been deployed to the production project.
+- No OAuth authorization server is implemented in this version. MCP discovery is open and does not persist a database session; a scoped session is created only after a valid invitation is redeemed.
+- This is **not an official or production-verified connector from OpenAI or Anthropic**. Local SDK compatibility is not the same as a hosted platform integration. No live MCP Inspector test, real ChatGPT/Claude account connection, or production deployment has been completed.
 
 ## Tools
 
