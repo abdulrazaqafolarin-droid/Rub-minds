@@ -58,7 +58,13 @@ export default function CloudApp() {
   const [showAgents, setShowAgents] = useState(false);
 
   useEffect(() => {
-    if (!supabase) return;
+    if (!supabase) {
+      // Do not leave invite visitors stuck on the loading screen when preview
+      // or deployment environment variables are missing.
+      setError('Rub Minds authentication is not configured in this deployment. Please contact the administrator.');
+      setReady(true);
+      return;
+    }
     // getSession() is appropriate during startup: getUser() makes a server request
     // and can return AuthSessionMissingError for a normal first-time visitor.
     void supabase.auth.getSession().then(({ data, error: authError }) => {
