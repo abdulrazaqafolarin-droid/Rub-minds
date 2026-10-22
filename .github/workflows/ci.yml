@@ -494,20 +494,21 @@ jobs:
             confirm_join: true,
             join_request_key: "2".repeat(64),
           };
-          const joined = await rpc("tools/call", 4, { name: "join_group", arguments: joinArgs });
+          const [joined, retry] = await Promise.all([
+            rpc("tools/call", 4, { name: "join_group", arguments: joinArgs }),
+            rpc("tools/call", 5, { name: "join_group", arguments: joinArgs }),
+          ]);
           assert.equal(joined.isError, undefined, "valid local invitation was rejected: " + JSON.stringify(joined));
+          assert.equal(retry.isError, undefined, "concurrent retry was rejected: " + JSON.stringify(retry));
           assert.equal(joined.structuredContent?.joined, true, "MCP join did not report success");
           assert.match(joined.structuredContent?.session_handle || "", /^[a-f0-9]{64}$/i,
             "successful join must return an opaque session handle");
           assert.equal(joined.structuredContent?.room_id, room.id);
-          const firstHandle = joined.structuredContent.session_handle;
-
-          const retry = await rpc("tools/call", 5, { name: "join_group", arguments: joinArgs });
-          assert.equal(retry.structuredContent?.joined, true, "idempotent retry did not preserve the joined session");
-          assert.equal(retry.structuredContent?.session_handle, firstHandle,
-            "same join key must return the same session handle");
+          assert.equal(retry.structuredContent?.joined, true, "concurrent idempotent retry did not preserve the joined session");
+          assert.equal(retry.structuredContent?.session_handle, joined.structuredContent.session_handle,
+            "concurrent requests with the same join key must return the same session handle");
           assert.equal(retry.structuredContent?.participant_id, joined.structuredContent.participant_id,
-            "retry must not create a second participant");
+            "concurrent retry must not create a second participant");
 
           async function getRows(path) {
             const response = await fetch(apiUrl + "/rest/v1/" + path, { headers: adminHeaders });
