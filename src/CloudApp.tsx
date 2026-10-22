@@ -4,6 +4,7 @@ import { buildExistingAiJoinPrompt, buildGroupRelayPrompt, buildRestorePrompt, p
 import type { User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import { isValidInviteToken, readInviteToken } from './inviteLinks';
+import { shouldShowSessionRestoreError } from './authStartup';
 import {
   createCloudRoom, createCloudInvite, redeemCloudInvite, redeemAIInvite, revokeCloudInvite, connectCloudAgent, listAgentConnections, revokeCloudAgent, getCloudRoom, listCloudMessages, listCloudParticipants,
   listCloudRooms, postCloudMessage, signInWithPassword, signUpWithPassword, requestPasswordReset, updateAccountPassword, signOut,
@@ -62,7 +63,7 @@ export default function CloudApp() {
     // and can return AuthSessionMissingError for a normal first-time visitor.
     void supabase.auth.getSession().then(({ data, error: authError }) => {
       setUser(data.session?.user ?? null);
-      if (authError) setError('Could not restore your session. Please sign in again.');
+      if (shouldShowSessionRestoreError(authError)) setError('Could not restore your session. Please sign in again.');
     }).catch(() => setError('Could not reach authentication. Please refresh and try again.')).finally(() => setReady(true));
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'PASSWORD_RECOVERY') setAuthMode('reset');
