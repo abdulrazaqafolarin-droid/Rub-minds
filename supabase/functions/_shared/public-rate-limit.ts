@@ -1,4 +1,4 @@
-export type PublicRateLimitBucket = "ai-invite-discovery" | "redeem-ai-invite";
+export type PublicRateLimitBucket = "ai-invite-discovery" | "redeem-ai-invite" | "rub-minds-mcp-requests" | "rub-minds-mcp-join";
 
 type RpcClient = {
   rpc(name: string, args: Record<string, unknown>): PromiseLike<{ data: unknown; error: unknown }>;
