@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { consumePublicRateLimit, publicRateLimitResponse } from "../_shared/public-rate-limit.ts";
 import { decryptWithKeyRing, encryptWithKeyRing, validateCredentialKeyRing } from "../../../integrations/mcp/credential-keyring.mjs";
 import { selectSessionHandleForRetry } from "../../../integrations/mcp/session-handle-keyring.mjs";
 import { deriveJoinCredential } from "../../../integrations/mcp/join-credential.mjs";
@@ -23,6 +24,7 @@ const databaseUrl = Deno.env.get("SUPABASE_URL");
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 const credentialEncryptionKey = Deno.env.get("RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY");
 if (!databaseUrl || !serviceKey || !credentialEncryptionKey) throw new Error("Missing backend configuration or MCP credential-encryption secret");
+const publicRateLimitSecret: string = serviceKey;
 // Previous keys are optional, decryption/retry-only. Keep them configured through the maximum session/idempotency lifetime.
 const previousKeySetting = Deno.env.get("RUB_MINDS_MCP_SESSION_ENCRYPTION_KEYS_PREVIOUS") || "";
 const previousEncryptionKeys = previousKeySetting ? previousKeySetting.split(",").map((key) => key.trim()).filter(Boolean) : [];
@@ -510,6 +512,19 @@ async function handleMcpRequest(request: Request) {
   const origin = request.headers.get("Origin");
   if (!isAllowedMcpOrigin(origin)) return httpError(403, "Origin is not allowed.");
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "Access-Control-Allow-Methods": "POST, DELETE, OPTIONS", "Access-Control-Allow-Headers": "content-type, mcp-session-id, mcp-protocol-version, mcp-method, mcp-name, accept", "Vary": "Origin" } });
+  if (request.method === "POST" || request.method === "DELETE") {
+    try {
+      const allowed = await consumePublicRateLimit(db, request, publicRateLimitSecret, "rub-minds-mcp-requests", 600, 60);
+      if (!allowed) return publicRateLimitResponse({
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "Pragma": "no-cache",
+        "X-Content-Type-Options": "nosniff",
+      });
+    } catch {
+      return httpError(503, "MCP request rate limiter is unavailable; request blocked.");
+    }
+  }
   if (request.method === "DELETE") {
     // Legacy transport clients may explicitly terminate their session. The
     // session ID is a bearer capability, so hash it before lookup.
@@ -567,6 +582,14 @@ async function handleMcpRequest(request: Request) {
   const id = rpc.id as string | number | undefined;
   const method = rpc.method as string;
   const params = isRecord(rpc.params) ? rpc.params : {};
+  if (method === "tools/call" && params.name === "join_group") {
+    try {
+      const allowed = await consumePublicRateLimit(db, request, publicRateLimitSecret, "rub-minds-mcp-join", 10, 60);
+      if (!allowed) return reply(429, rpcError(id ?? null, -32000, "MCP join rate limit exceeded. Retry after one minute."), request.headers.get("Mcp-Session-Id") || undefined);
+    } catch {
+      return reply(503, rpcError(id ?? null, -32000, "MCP join rate limiter is unavailable; request blocked."), request.headers.get("Mcp-Session-Id") || undefined);
+    }
+  }
   const suppliedVersion = request.headers.get("MCP-Protocol-Version");
   const bodyMeta = isRecord(params._meta) ? params._meta : {};
   const bodyProtocolVersion = bodyMeta["io.modelcontextprotocol/protocolVersion"];

@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { consumePublicRateLimit, publicRateLimitResponse } from "../_shared/public-rate-limit.ts";
 
 const databaseUrl = Deno.env.get("SUPABASE_URL");
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -30,6 +31,12 @@ Deno.serve(async (request: Request) => {
   const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers });
   if (request.method === "OPTIONS") return new Response("ok", { headers });
   if (request.method !== "POST") return reply(405, { error: "Method not allowed" });
+  try {
+    const allowed = await consumePublicRateLimit(db, request, serviceKey, "redeem-ai-invite", 10, 60);
+    if (!allowed) return publicRateLimitResponse(headers);
+  } catch {
+    return reply(503, { error: "Invitation service temporarily unavailable" });
+  }
   let input: unknown;
   try { input = await request.json(); } catch { return reply(400, { error: "Invalid JSON" }); }
   if (!input || typeof input !== "object") return reply(400, { error: "Expected JSON object" });

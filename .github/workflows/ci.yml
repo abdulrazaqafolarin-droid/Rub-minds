@@ -67,6 +67,7 @@ jobs:
           SQL
           psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261019120000_hosted_mcp_sessions.sql
           psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261021150000_atomic_mcp_join_idempotency.sql
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261022100000_public_invite_rate_limits.sql
           psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
           insert into public.room_invites(token_hash, room_id, created_by, expires_at, allow_ai, max_ai_uses, ai_uses)
             values (encode(sha256(convert_to(repeat('e',64), 'UTF8')), 'hex'),
@@ -97,6 +98,40 @@ jobs:
               or has_table_privilege('authenticated', 'public.agent_request_log', 'SELECT') then
               raise exception 'Client roles must not read agent request logs';
             end if;
+            if not (select relrowsecurity from pg_class where oid = 'public.public_request_rate_limits'::regclass) then
+              raise exception 'Public request rate limits must have RLS enabled';
+            end if;
+            if has_table_privilege('anon', 'public.public_request_rate_limits', 'SELECT')
+              or has_table_privilege('authenticated', 'public.public_request_rate_limits', 'SELECT') then
+              raise exception 'Client roles must not read public rate-limit records';
+            end if;
+            if has_function_privilege('anon', 'public.consume_public_request_rate_limit(text,text,integer,integer)', 'EXECUTE')
+              or has_function_privilege('authenticated', 'public.consume_public_request_rate_limit(text,text,integer,integer)', 'EXECUTE')
+              or not has_function_privilege('service_role', 'public.consume_public_request_rate_limit(text,text,integer,integer)', 'EXECUTE') then
+              raise exception 'Public rate-limit RPC grants are incorrect';
+            end if;
+            if not public.consume_public_request_rate_limit(repeat('9',64), 'redeem-ai-invite', 2, 60) then
+              raise exception 'First public request should be allowed';
+            end if;
+            if not public.consume_public_request_rate_limit(repeat('9',64), 'redeem-ai-invite', 2, 60) then
+              raise exception 'Second public request should be allowed';
+            end if;
+            if public.consume_public_request_rate_limit(repeat('9',64), 'redeem-ai-invite', 2, 60) then
+              raise exception 'Public requests beyond the limit must be blocked';
+            end if;
+            update public.public_request_rate_limits
+              set window_started_at = now() - interval '61 seconds', request_count = 99
+              where key_hash = repeat('9',64) and bucket = 'redeem-ai-invite';
+            if not public.consume_public_request_rate_limit(repeat('9',64), 'redeem-ai-invite', 2, 60) then
+              raise exception 'Public rate-limit window must reset';
+            end if;
+            begin
+              perform public.consume_public_request_rate_limit(repeat('9',64), 'unknown-bucket', 2, 60);
+              raise exception 'Unknown public rate-limit bucket should fail';
+            exception when others then
+              if sqlerrm = 'Unknown public rate-limit bucket should fail' then raise; end if;
+            end;
+
             if has_function_privilege('anon', 'public.consume_mcp_session_rate_limit(text,integer,integer)', 'EXECUTE')
               or has_function_privilege('authenticated', 'public.consume_mcp_session_rate_limit(text,integer,integer)', 'EXECUTE')
               or not has_function_privilege('service_role', 'public.consume_mcp_session_rate_limit(text,integer,integer)', 'EXECUTE') then
@@ -266,6 +301,10 @@ jobs:
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
         with:
           deno-version: v2.x
+      - name: Test public rate-limit helper
+        run: deno test supabase/functions/_shared/public-rate-limit.deno-test.ts
+      - name: Type-check public invite Edge Functions
+        run: deno check supabase/functions/redeem-ai-invite/index.ts supabase/functions/ai-invite-discovery/index.ts
       - name: Type-check session-memory Edge Function
         run: deno check supabase/functions/session-memory/index.ts
       - name: Type-check hosted MCP Edge Function
