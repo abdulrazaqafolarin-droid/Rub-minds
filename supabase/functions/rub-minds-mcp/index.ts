@@ -474,8 +474,15 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
         .eq("session_digest", sessionDigest)
         .maybeSingle();
       if (lookupError) return modernRpcError(503, id, -32000, "Could not verify the join handle before joining.");
-      if (priorSession) return modernToolResult(id, { error: "This join handle has expired or was terminated. Start a new join request with a new join_request_key." }, true);
-      session = { session_digest: sessionDigest, agent_credential_ciphertext: null, room_id: null, participant_id: null, _new_session: true };
+      if (priorSession) {
+        // Another concurrent join may have inserted its live session between
+        // findSession() and this tombstone check. Re-read before declaring the
+        // handle expired; a terminated/expired handle still fails closed.
+        session = await findSession(sessionHandle);
+        if (!session) return modernToolResult(id, { error: "This join handle has expired or was terminated. Start a new join request with a new join_request_key." }, true);
+      } else {
+        session = { session_digest: sessionDigest, agent_credential_ciphertext: null, room_id: null, participant_id: null, _new_session: true };
+      }
     }
     session.session_handle = sessionHandle;
     session._session_handle_key = rawArgs._selected_handle_key;
