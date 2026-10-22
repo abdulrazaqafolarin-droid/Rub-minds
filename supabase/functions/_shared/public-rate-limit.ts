@@ -9,8 +9,6 @@ function clientAddress(request: Request): string {
   // final proxy-appended address rather than a caller-controlled first entry.
   const cf = request.headers.get("cf-connecting-ip")?.trim();
   if (cf) return cf;
-  const real = request.headers.get("x-real-ip")?.trim();
-  if (real) return real;
   const forwarded = request.headers.get("x-forwarded-for")
     ?.split(",").map(value => value.trim()).filter(Boolean);
   return forwarded?.at(-1) || "unknown";
