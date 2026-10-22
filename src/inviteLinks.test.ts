@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildInviteRedirectUrl, isValidInviteToken, readInviteToken } from './inviteLinks';
+import { buildInviteRedirectUrl, getInviteStatusMessage, isValidInviteToken, readInviteToken } from './inviteLinks';
 
 describe('invitation links', () => {
   it('reads the preferred query parameter format', () => {
@@ -33,6 +33,14 @@ describe('invitation links', () => {
     expect(nonHex.searchParams.has('invite')).toBe(false);
     expect(tooShort.searchParams.has('invite')).toBe(false);
     expect(tooLong.searchParams.has('invite')).toBe(false);
+  });
+
+  it('clearly identifies a valid invitation before the visitor chooses a route', () => {
+    expect(getInviteStatusMessage('a'.repeat(64))).toBe('Group invitation detected. Your invite will be kept while you sign in.');
+  });
+
+  it('explains invalid invitation links without implying the invite is retained', () => {
+    expect(getInviteStatusMessage('short-token')).toContain('incomplete or invalid');
   });
 
   it('accepts only exactly 64 hexadecimal characters', () => {

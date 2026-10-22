@@ -3,7 +3,8 @@ import { ArrowLeft, Bot, Copy, Link2, LogOut, Plus, Send, Sparkles, Users } from
 import { buildExistingAiJoinPrompt, buildGroupRelayPrompt, buildRestorePrompt, parseSessionMemoryDocument } from './aiRelay';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
-import { isValidInviteToken, readInviteToken } from './inviteLinks';
+import { getInviteStatusMessage, isValidInviteToken, readInviteToken } from './inviteLinks';
+import { shouldShowSessionRestoreError } from './authStartup';
 import {
   createCloudRoom, createCloudInvite, redeemCloudInvite, redeemAIInvite, revokeCloudInvite, connectCloudAgent, listAgentConnections, revokeCloudAgent, getCloudRoom, listCloudMessages, listCloudParticipants,
   listCloudRooms, postCloudMessage, signInWithPassword, signUpWithPassword, requestPasswordReset, updateAccountPassword, signOut,
@@ -57,12 +58,18 @@ export default function CloudApp() {
   const [showAgents, setShowAgents] = useState(false);
 
   useEffect(() => {
-    if (!supabase) return;
+    if (!supabase) {
+      // Do not leave invite visitors stuck on the loading screen when preview
+      // or deployment environment variables are missing.
+      setError('Rub Minds authentication is not configured in this deployment. Please contact the administrator.');
+      setReady(true);
+      return;
+    }
     // getSession() is appropriate during startup: getUser() makes a server request
     // and can return AuthSessionMissingError for a normal first-time visitor.
     void supabase.auth.getSession().then(({ data, error: authError }) => {
       setUser(data.session?.user ?? null);
-      if (authError) setError('Could not restore your session. Please sign in again.');
+      if (shouldShowSessionRestoreError(authError)) setError('Could not restore your session. Please sign in again.');
     }).catch(() => setError('Could not reach authentication. Please refresh and try again.')).finally(() => setReady(true));
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'PASSWORD_RECOVERY') setAuthMode('reset');
@@ -329,6 +336,7 @@ export default function CloudApp() {
   if (inviteToken && inviteTokenValid && inviteRoute === 'choose' && !agentSecret) return <main className="auth-page"><div className="auth-panel">
     <div className="brand-icon"><Link2/></div>
     <h1>Join a Rub Minds group</h1>
+    <div className="objective" role="status"><Link2 size={18}/><span>{getInviteStatusMessage(inviteToken)}</span></div>
     <p>This invitation supports two separate routes. Choose the identity you are joining with.</p>
     <div className="objective"><Users size={18}/><span><strong>Human participant</strong><br/>Use your own Rub Minds account. New visitors can sign up; signed-in members can join directly.</span></div>
     <button className="primary" onClick={() => { setInviteRoute('human'); if (!user) setAuthMode('signin'); }}>Continue as a human</button>
