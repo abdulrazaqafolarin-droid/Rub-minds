@@ -412,6 +412,17 @@ try {
     assert.equal(outsiderResponse.status, 200, "outsider RLS query failed unexpectedly: " + path);
     assert.deepEqual(outsiderRows, [], "non-member must not see private group data: " + path);
   }
+  // A nonmember cannot submit a message under a member's participant ID.
+  const unauthorizedPost = await fetch(apiUrl + "/rest/v1/messages", {
+    method: "POST",
+    headers: { ...outsiderHeaders, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      room_id: room.id,
+      sender_id: humanParticipants[0].id,
+      body: "CI nonmember write must be rejected",
+    }),
+  });
+  assert.ok(unauthorizedPost.status >= 400, "nonmember message write must be denied");
   console.log("Authenticated human and MCP AI exchanged messages in both directions; outsider RLS denied room access.");
 
   // Race leave against an idempotent retry of the same join. Either the retry
