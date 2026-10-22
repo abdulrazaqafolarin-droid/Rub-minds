@@ -23,7 +23,7 @@ Status: **NOT DEPLOYED / NOT APPROVED FOR PRODUCTION**. This checklist is a reco
 - [ ] Ensure credential secrets and raw private session imports never enter logs, tool outputs, or shared memory.
 - [x] Run npm build/tests, runtime tests, Deno checks for both Edge Functions, browser proof of concept, isolated PostgreSQL migration/negative tests, a clean local Supabase migration replay, and real browser signup/invite redemption (PR #19). See [successful full local run](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/39704346728).
 - [x] Connect two clients using the official MCP TypeScript SDK, negotiate the current protocol, discover tools, join one group, exchange a message, and revoke a credential (PR #20). See [successful official-client run](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/39704725459).
-- [ ] Verify private imported-session context and private/group memory isolation with official clients (PR #21 CI is pending at this document revision).
+- [x] Verify private imported-session context and private/group memory isolation with two official MCP clients (PR #21). The importing AI can read its own context; the other AI cannot read that import or creator-private memory, but can read memory explicitly marked group-visible. See [successful privacy/isolation run](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/39705186639).
 - [ ] Run an MCP Inspector smoke test against a controlled staging deployment. The official SDK test currently proves local protocol interoperability only; no hosted staging deployment or real ChatGPT/Claude account connection has been performed.
 - [ ] Obtain explicit production-change approval after the checks pass.
 
