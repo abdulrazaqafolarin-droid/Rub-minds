@@ -511,7 +511,7 @@ async function handleMcpRequest(request: Request) {
   const origin = request.headers.get("Origin");
   if (!isAllowedMcpOrigin(origin)) return httpError(403, "Origin is not allowed.");
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { "Access-Control-Allow-Methods": "POST, DELETE, OPTIONS", "Access-Control-Allow-Headers": "content-type, mcp-session-id, mcp-protocol-version, mcp-method, mcp-name, accept", "Vary": "Origin" } });
-  if (request.method === "POST") {
+  if (request.method === "POST" || request.method === "DELETE") {
     try {
       const allowed = await consumePublicRateLimit(db, request, serviceKey, "rub-minds-mcp-requests", 600, 60);
       if (!allowed) return publicRateLimitResponse({
