@@ -295,6 +295,25 @@ try {
     },
   });
   assert.notEqual(sent.isError, true, "official SDK client could not send a group message: " + JSON.stringify(sent));
+  // Retrying a message with the same source ID must not duplicate delivery.
+  // This protects group timelines when an AI host retries after a timeout.
+  const repeatedSend = await first.callTool({
+    name: "send_group_message",
+    arguments: {
+      session_handle: one.session_handle,
+      body: "Official MCP SDK AI one says hello to AI two",
+      source_message_id: "official-sdk-e2e-message-one",
+    },
+  });
+  assert.notEqual(repeatedSend.isError, true,
+    "idempotent message retry must succeed: " + JSON.stringify(repeatedSend));
+  const matchingMessages = await request(
+    "/rest/v1/messages?select=id,source_message_id&source_message_id=eq.official-sdk-e2e-message-one",
+  );
+  assert.equal(matchingMessages.length, 1,
+    "repeated AI delivery must persist exactly one group message");
+  console.log("MCP message retry idempotency passed: one source ID, one persisted message.");
+
   const read = await second.callTool({
     name: "read_group_messages",
     arguments: { session_handle: two.session_handle },
