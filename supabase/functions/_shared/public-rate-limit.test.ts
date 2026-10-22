@@ -27,7 +27,7 @@ Deno.test("forwarded fallback selects the final proxy-appended address", async (
   });
   const a = await publicRateLimitKey(request, "test-only-server-secret");
   const b = await publicRateLimitKey(
-    new Request("https://example.test", { headers: { "x-real-ip": "192.0.2.10" } }),
+    new Request("https://example.test", { headers: { "x-forwarded-for": "192.0.2.10" } }),
     "test-only-server-secret",
   );
   if (a !== b) throw new Error("Forwarded chain should use the final address");
