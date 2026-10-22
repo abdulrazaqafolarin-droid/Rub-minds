@@ -412,6 +412,7 @@ jobs:
             arguments: {
               invite_token: "0".repeat(64),
               agent_label: "CI invalid invite",
+              confirm_join: true,
               join_request_key: "1".repeat(64),
             },
           });
