@@ -33,8 +33,7 @@ test("rejects oversized messages before approval", async () => {
   assert.equal(approvals, 0);
 });
 
-test("returns the completed response rather than a partial streamed response", async () => {
-  const state = { assistantVisible: false, text: "", generating: false };
+function makeChatGPTPage(state) {
   const response = {
     waitFor: async () => {
       const started = Date.now();
@@ -56,11 +55,7 @@ test("returns the completed response rather than a partial streamed response", a
       return { count: async () => state.generating ? 1 : 0, isVisible: async () => state.generating };
     }
     if (selector.includes("prompt-textarea") || selector.includes("composer-input")) {
-      return {
-        count: async () => 1,
-        isVisible: async () => true,
-        fill: async () => {},
-      };
+      return { count: async () => 1, isVisible: async () => true, fill: async () => {} };
     }
     if (selector.includes("send-button") || selector.includes("Send prompt")) {
       return {
@@ -71,20 +66,33 @@ test("returns the completed response rather than a partial streamed response", a
           state.assistantVisible = true;
           state.generating = true;
           state.text = "Partial";
-          setTimeout(() => { state.text = "Complete answer"; }, 350);
-          setTimeout(() => { state.generating = false; }, 650);
+          state.onSend?.();
         },
       };
     }
     throw new Error("Unexpected selector in adapter test");
   };
-  const page = {
+  return {
     url: () => "https://chatgpt.com/c/example",
     locator: selector => {
       const item = locatorFor(selector);
       return { ...item, last: () => item };
     },
   };
+}
+
+test("returns the completed response rather than a partial streamed response", async () => {
+  const state = { assistantVisible: false, text: "", generating: false };
+  state.onSend = () => {
+    setTimeout(() => { state.text = "Complete answer"; }, 350);
+    setTimeout(() => { state.generating = false; }, 650);
+  };
   const adapter = createOriginalSessionAdapter("chatgpt", { approval: async () => true, timeoutMs: 5000 });
-  assert.equal(await adapter.ask(page, "hello"), "Complete answer");
+  assert.equal(await adapter.ask(makeChatGPTPage(state), "hello"), "Complete answer");
+});
+
+test("discards partial text if the provider keeps streaming until timeout", async () => {
+  const state = { assistantVisible: false, text: "", generating: false };
+  const adapter = createOriginalSessionAdapter("chatgpt", { approval: async () => true, timeoutMs: 5000 });
+  await assert.rejects(adapter.ask(makeChatGPTPage(state), "hello"), /partial response discarded/);
 });
