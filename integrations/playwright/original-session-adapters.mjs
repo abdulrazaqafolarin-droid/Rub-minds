@@ -9,12 +9,14 @@ const PROVIDERS = {
     composer: ['#prompt-textarea', '[contenteditable="true"][data-testid="composer-input"]'],
     send: ['button[data-testid="send-button"]', 'button[aria-label="Send prompt"]'],
     assistant: ['[data-message-author-role="assistant"]'],
+    generating: ['button[data-testid="stop-button"]', 'button[aria-label*="Stop generating"]', 'button[aria-label*="Stop response"]'],
   },
   claude: {
     hosts: new Set(["claude.ai"]),
     composer: ['[contenteditable="true"].ProseMirror', '[contenteditable="true"][data-placeholder]'],
     send: ['button[aria-label="Send message"]', 'button[data-testid="send-button"]'],
     assistant: ['[data-testid="assistant-message"]', '[data-is-streaming="false"] .font-claude-message'],
+    generating: ['button[aria-label*="Stop"]', 'button[data-testid="stop-button"]'],
   },
 };
 
@@ -40,6 +42,42 @@ async function findVisible(page, selectors) {
     if (await item.count() && await item.isVisible()) return item;
   }
   throw new Error("Provider UI changed or conversation is not ready; no message sent");
+}
+
+async function isGenerating(page, selectors) {
+  for (const selector of selectors) {
+    const item = page.locator(selector).last();
+    if (await item.count() && await item.isVisible()) return true;
+  }
+  return false;
+}
+
+/**
+ * Wait until the new response is non-empty, no provider stop/generation control
+ * is visible, and the text remains unchanged for a settling window. This reduces
+ * the chance of returning a partial streamed response; it is not a substitute
+ * for real authenticated provider-browser validation.
+ */
+async function waitForStableAnswer(page, answerLocator, config, timeoutMs) {
+  const startedAt = Date.now();
+  let previousText = "";
+  let stableSince = 0;
+  const settleMs = 1800;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const text = (await answerLocator.innerText().catch(() => "")).trim();
+    if (!text || await isGenerating(page, config.generating)) {
+      previousText = "";
+      stableSince = 0;
+    } else if (text !== previousText) {
+      previousText = text;
+      stableSince = Date.now();
+    } else if (stableSince && Date.now() - stableSince >= settleMs) {
+      return text;
+    }
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  throw new Error("Assistant response did not finish before timeout; partial response discarded");
 }
 
 export function createOriginalSessionAdapter(provider, {
@@ -68,13 +106,11 @@ export function createOriginalSessionAdapter(provider, {
       await composer.fill(prompt);
       if (!await send.isEnabled()) throw new Error("Provider send button unavailable");
       await send.click();
-      // This is deliberately conservative: require a NEW assistant message.
-      // Existing transcript text must never be mistaken for a fresh response.
+      // Require a NEW assistant message and wait for streaming to settle.
       const assistant = page.locator(config.assistant.join(", "));
-      await assistant.nth(before).waitFor({ state: "visible", timeout: timeoutMs });
-      const answer = (await assistant.nth(before).innerText()).trim();
-      if (!answer) throw new Error("Assistant response empty or still streaming");
-      return answer;
+      const response = assistant.nth(before);
+      await response.waitFor({ state: "visible", timeout: timeoutMs });
+      return waitForStableAnswer(page, response, config, timeoutMs);
     },
   });
 }
