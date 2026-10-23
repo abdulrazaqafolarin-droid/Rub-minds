@@ -32,3 +32,59 @@ test("rejects oversized messages before approval", async () => {
   await assert.rejects(adapter.ask({ url: () => "https://claude.ai/chat/123", locator() {} }, "x".repeat(10001)), /1-10000/);
   assert.equal(approvals, 0);
 });
+
+test("returns the completed response rather than a partial streamed response", async () => {
+  const state = { assistantVisible: false, text: "", generating: false };
+  const response = {
+    waitFor: async () => {
+      const started = Date.now();
+      while (!state.assistantVisible && Date.now() - started < 1000) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      if (!state.assistantVisible) throw new Error("response did not appear");
+    },
+    innerText: async () => state.text,
+  };
+  const locatorFor = selector => {
+    if (selector.includes('data-message-author-role="assistant"')) {
+      return {
+        count: async () => state.assistantVisible ? 1 : 0,
+        nth: () => response,
+      };
+    }
+    if (selector.includes("stop-button") || selector.includes("Stop generating") || selector.includes("Stop response")) {
+      return { count: async () => state.generating ? 1 : 0, isVisible: async () => state.generating };
+    }
+    if (selector.includes("prompt-textarea") || selector.includes("composer-input")) {
+      return {
+        count: async () => 1,
+        isVisible: async () => true,
+        fill: async () => {},
+      };
+    }
+    if (selector.includes("send-button") || selector.includes("Send prompt")) {
+      return {
+        count: async () => 1,
+        isVisible: async () => true,
+        isEnabled: async () => true,
+        click: async () => {
+          state.assistantVisible = true;
+          state.generating = true;
+          state.text = "Partial";
+          setTimeout(() => { state.text = "Complete answer"; }, 350);
+          setTimeout(() => { state.generating = false; }, 650);
+        },
+      };
+    }
+    throw new Error("Unexpected selector in adapter test");
+  };
+  const page = {
+    url: () => "https://chatgpt.com/c/example",
+    locator: selector => {
+      const item = locatorFor(selector);
+      return { ...item, last: () => item };
+    },
+  };
+  const adapter = createOriginalSessionAdapter("chatgpt", { approval: async () => true, timeoutMs: 5000 });
+  assert.equal(await adapter.ask(page, "hello"), "Complete answer");
+});
