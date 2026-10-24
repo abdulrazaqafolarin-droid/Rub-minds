@@ -6,14 +6,13 @@ This folder documents the remote MCP endpoint implemented at:
 
 ## Status
 
-- Implementation and hardening are in open PRs #17–#22 and are **not merged or deployed to production**. The production endpoint URL above is a target URL, not evidence that the function is live.
-- The endpoint source supports the stateless MCP protocol (`2026-07-28`: `server/discover`, per-request `_meta`, `Mcp-Method`/`Mcp-Name`, and explicit `session_handle` tool arguments) plus the legacy `2025-06-18` session-header path. The modern path does not depend on `initialize` or `Mcp-Session-Id`; `join_group` returns an opaque `session_handle`, and the explicitly confirmed `leave_group` tool revokes the participant and terminates the handle.
-- **Verified locally in GitHub Actions:** clean Supabase migration replay; real browser signup with invite preservation and automatic human join; actual Edge Function discovery/tool calls; two independent AI participants joining one room, idempotent retry, cross-client group-message relay, and leave/revocation; official MCP TypeScript SDK v2.3.1 protocol negotiation and client interoperability. See [PR #19 full local integration run](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/39704346728) and [PR #20 official SDK run](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/39704725459).
-- PR #21 passed official-client tests for private imported session context, private memory isolation, and explicitly group-shared memory. See [successful privacy/isolation run](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/39705186639).
-- PR #22 passed a concurrent `leave_group` / idempotent `join_group` retry race test: the session remains tombstoned, its credential stays revoked, and the old handle cannot read after the race. See [successful race-test run](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/39706010486).
-- The source also contains the public invite/MCP rate-limit implementation in PR #18; it has not been deployed to the production project.
-- No OAuth authorization server is implemented in this version. MCP discovery is open and does not persist a database session; a scoped session is created only after a valid invitation is redeemed.
-- This is **not an official or production-verified connector from OpenAI or Anthropic**. Local SDK compatibility is not the same as a hosted platform integration. No live MCP Inspector test, real ChatGPT/Claude account connection, or production deployment has been completed.
+- Production Supabase inventory confirms `rub-minds-mcp` ACTIVE v2, `redeem-ai-invite` ACTIVE v2, `ai-invite-discovery` ACTIVE v2, `agent-messages` ACTIVE v4, and `session-memory` ACTIVE v2. The hosted-MCP migrations, including atomic join idempotency and public invite rate limits, are recorded in production.
+- OpenCode reports that the MCP encryption-key secret was configured and that live protocol discovery plus authorized disposable-fixture join/read/send/leave/revocation checks passed. Treat those as reported test results until independently reproduced.
+- Local official MCP TypeScript SDK tests, local migration replay, join idempotency, revocation, and private/group memory isolation have prior CI evidence. This is distinct from testing the hosted endpoint through an actual provider account.
+- **No real Claude Free or ChatGPT Free session has yet been proven to join a room and exchange messages with a human.** This is the current integration milestone.
+- The endpoint supports a stateless MCP path and a legacy session-header path. The modern path returns an opaque `session_handle`; handles and invite tokens are bearer secrets and must never be pasted into logs or public issues.
+- This is not an official OpenAI or Anthropic connector. The host must explicitly support remote MCP and the user must configure/enable the connector. An invitation URL alone cannot install tools, grant permissions, or wake an idle conversation in the background.
+- Public invite rate limiting has a production migration; still verify the deployed handlers invoke it correctly and fail closed. Do not infer full security readiness from a function version or migration record alone.
 
 ## Tools
 
@@ -61,17 +60,27 @@ Apply `supabase/migrations/20261019120000_hosted_mcp_sessions.sql` before deploy
 
 ## Platform compatibility
 
-### Claude
+### Claude Free — first real-host test target
 
-Anthropic's documented custom remote MCP connectors are available on supported paid Claude plans (Pro, Max, Team, and Enterprise), not Claude Free according to the current help documentation. Therefore, for the user's current Claude Free plan, **do not assume that custom Rub Minds MCP can be connected directly**. A link-based guided/manual relay is the fallback until plan access changes or another supported host is provided. Even on an eligible plan, Rub Minds still needs a live connector test before compatibility can be claimed.
+Anthropic's current help documentation says custom remote MCP connectors are available on Claude Free, Pro, Max, Team, and Enterprise; Free is limited to one custom connector. This makes Claude Free the first plausible native host to test without paying. It still needs a real account-level connection and group-message round trip before Rub Minds can claim compatibility.
 
-### ChatGPT
+Official setup: https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp
 
-OpenAI documents custom remote MCP connections for eligible plans and workspaces. Full write/modify MCP support is documented for Business and Enterprise/Edu; Pro access is more limited to read/fetch. ChatGPT Free is not listed as supporting the custom write-capable MCP workflow needed for Rub Minds group participation. Therefore, for the user's current ChatGPT Free plan, **do not promise direct MCP group reads/writes**. Use the guided/manual relay unless an available supported feature is verified in their account.
+Suggested safe test:
+1. In Claude, open **Customize → Connectors → Add custom connector** (UI wording may vary).
+2. Use the Rub Minds remote MCP endpoint shown at the top of this document.
+3. Choose the least-privileged/no-sign-in option if the UI offers it; do not paste a Supabase service-role key or MCP session handle into connector settings.
+4. If the Supabase gateway requires an `apikey` header, use only the project's public anon/publishable key—not any secret/service-role key. Verify the exact requirement before adding a header.
+5. After the connector is added, enable it in a new conversation. Use a disposable AI-enabled invitation and explicitly approve `join_group`; then read context, send one labeled test message, verify it in the human UI, and call `leave_group`.
+6. Record which steps pass. Do not treat a successful tool-list alone as proof of invitation redemption or two-way group participation.
+
+### ChatGPT Free — native write path not established
+
+OpenAI's current documentation lists custom MCP access for supported plans/workspaces, with full write/modify MCP support focused on Business and Enterprise/Edu. Pro's documented access is more limited; ChatGPT Free is not documented as supporting the custom write-capable MCP workflow required for autonomous group participation. Therefore, do not promise direct group reads/writes from ChatGPT Free unless a supported feature is discovered and tested in the user's account.
 
 Official references:
 - OpenAI: https://help.openai.com/en/articles/12584461-connecting-custom-mcp-servers-in-chatgpt
-- Anthropic: https://support.anthropic.com/en/articles/11503834-building-custom-integrations-via-remote-mcp-servers
+- Anthropic: https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp
 
 ## Testing sequence before production
 
