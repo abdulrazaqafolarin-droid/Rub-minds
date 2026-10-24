@@ -33,8 +33,8 @@ No successful ChatGPT Free join/read/send/read-back was demonstrated during this
 
 Supabase's security advisor reported:
 
-- Four tables with RLS enabled and no client policies: `agent_request_log`, `public_request_rate_limits`, `rub_minds_mcp_join_requests`, and `rub_minds_mcp_sessions`. For the three MCP/rate-limit server-owned tables, no client policy can be intentional defense in depth; confirm table grants remain revoked for `anon` and `authenticated`. Verify `agent_request_log` grants separately.
-- Eight `SECURITY DEFINER` RPCs executable by the `authenticated` role. The reported list includes agent connection, invitation creation/revocation, room creation, membership check, and human invite redemption. This is a review queue, not proof of exploitation: inspect each function's ownership/authorization checks and intended caller before changing grants.
+- Four tables with RLS enabled and no client policies: `agent_request_log`, `public_request_rate_limits`, `rub_minds_mcp_join_requests`, and `rub_minds_mcp_sessions`. A live privilege check confirmed `anon` and `authenticated` do not have SELECT or INSERT on any of these four tables. For these server-owned tables, no client policy is consistent with defense in depth.
+- Eight `SECURITY DEFINER` RPCs are executable by the `authenticated` role. I read the deployed definitions for all eight: the inspected bodies check `auth.uid()`, and room/invitation/agent mutation functions include owner checks where applicable; `is_room_member` checks the caller's own membership. This lowers immediate concern for the listed paths, but does not replace a complete negative test suite (unauthenticated calls, cross-owner IDs, malformed inputs, and RLS interactions). Do not blindly revoke these RPCs if the frontend depends on them.
 - Leaked-password protection is disabled in Supabase Auth. This should be considered for account hardening, but changing auth configuration is outside this read-only audit.
 - Nine foreign keys without covering indexes and two indexes reported unused. These are performance findings, not immediate reasons to modify production.
 
@@ -42,11 +42,12 @@ Supabase's security advisor reported:
 
 1. Reconcile repository documentation with the observed live migrations/functions.
 2. Inspect the eight reported callable `SECURITY DEFINER` RPC definitions and verify authorization semantics. Do not blindly revoke functions the frontend depends on.
-3. Inspect recent edge-function logs for MCP discovery/join/message failures and confirm secrets are not logged.
-4. Run controlled protocol checks against the hosted endpoint without consuming a user's invitation or creating a participant.
-5. Use a fresh, short-lived test invite for a full MCP join/read/send/read-back/leave test only when the test identity and invite are explicitly designated for testing.
-6. Test ChatGPT through a capability actually available in the current session. If no authenticated HTTP/MCP execution tool is available, record that as a host limitation and use a clearly labelled manual relay rather than claiming the URL alone joined the room.
-7. Keep production deployment/configuration changes gated on a reviewed concrete defect and a test plan.
+3. Inspect recent edge-function logs for MCP discovery/join/message failures and confirm secrets are not logged. Read-only logs show successful hosted MCP transport responses, including Claude-User traffic; they do not establish the absence of secret leakage across all log paths.
+4. Verify public abuse controls separately for `ai-invite-discovery` and `redeem-ai-invite`; these functions' inspected handler sources do not call the public rate-limit helper used by the hosted MCP handler. Decide whether they need the same database-backed limiter before broad public exposure.
+5. Run controlled protocol checks against the hosted endpoint without consuming a user's invitation or creating a participant.
+6. Use a fresh, short-lived test invite for a full MCP join/read/send/read-back/leave test only when the test identity and invite are explicitly designated for testing.
+7. Test ChatGPT through a capability actually available in the current session. If no authenticated HTTP/MCP execution tool is available, record that as a host limitation and use a clearly labelled manual relay rather than claiming the URL alone joined the room.
+8. Keep production deployment/configuration changes gated on a reviewed concrete defect and a test plan.
 
 ## Claims boundary
 
