@@ -6,106 +6,108 @@ begin;
 
 do $test$
 declare
-  owner_id uuid;
-  room_id uuid;
-  human_id uuid;
-  responder_id uuid;
-  message_id uuid;
-  queued_count integer;
-  claimed_job private.ai_response_jobs%rowtype;
-  second_claim_count integer;
+  v_owner_id uuid;
+  v_room_id uuid;
+  v_human_id uuid;
+  v_responder_id uuid;
+  v_message_id uuid;
+  v_queued_count integer;
+  v_claimed_job private.ai_response_jobs%rowtype;
+  v_second_claim_count integer;
 begin
-  select u.id into owner_id
+  select u.id into v_owner_id
   from auth.users u
   order by u.created_at desc
   limit 1;
 
-  if owner_id is null then
+  if v_owner_id is null then
     raise exception 'Queue smoke test needs a disposable auth user';
   end if;
 
   insert into public.rooms(owner_id, title, objective)
-  values (owner_id, 'AI queue smoke test', 'Disposable CI fixture')
-  returning id into room_id;
+  values (v_owner_id, 'AI queue smoke test', 'Disposable CI fixture')
+  returning id into v_room_id;
 
   insert into public.participants(room_id, user_id, display_name, kind, status)
-  values (room_id, owner_id, 'Queue test human', 'human', 'connected')
-  returning id into human_id;
+  values (v_room_id, v_owner_id, 'Queue test human', 'human', 'connected')
+  returning id into v_human_id;
 
   insert into public.participants(room_id, display_name, kind, status)
-  values (room_id, 'Queue test responder', 'external_agent', 'autonomous')
-  returning id into responder_id;
+  values (v_room_id, 'Queue test responder', 'external_agent', 'autonomous')
+  returning id into v_responder_id;
 
   insert into private.room_ai_responders(room_id, participant_id, enabled, policy_version, created_by)
-  values (room_id, responder_id, true, 1, owner_id);
+  values (v_room_id, v_responder_id, true, 1, v_owner_id);
 
   insert into public.messages(room_id, sender_id, body)
-  values (room_id, human_id, 'Queue smoke test human message')
-  returning id into message_id;
+  values (v_room_id, v_human_id, 'Queue smoke test human message')
+  returning id into v_message_id;
 
-  select count(*) into queued_count
-  from private.ai_response_jobs
-  where room_id = room_id and triggering_message_id = message_id
-    and target_participant_id = responder_id and policy_version = 1;
+  select count(*) into v_queued_count
+  from private.ai_response_jobs j
+  where j.room_id = v_room_id and j.triggering_message_id = v_message_id
+    and j.target_participant_id = v_responder_id and j.policy_version = 1;
 
-  if queued_count <> 1 then
-    raise exception 'Eligible human message should enqueue exactly one job, got %', queued_count;
+  if v_queued_count <> 1 then
+    raise exception 'Eligible human message should enqueue exactly one job, got %', v_queued_count;
   end if;
 
   -- AI-authored messages must not fan out to other responders.
   insert into public.messages(room_id, sender_id, body)
-  values (room_id, responder_id, 'AI message must not fan out');
+  values (v_room_id, v_responder_id, 'AI message must not fan out');
 
-  select count(*) into queued_count
-  from private.ai_response_jobs
-  where room_id = room_id;
-  if queued_count <> 1 then
+  select count(*) into v_queued_count
+  from private.ai_response_jobs j
+  where j.room_id = v_room_id;
+  if v_queued_count <> 1 then
     raise exception 'AI-authored message unexpectedly created a job';
   end if;
 
   -- Pausing the responder must prevent future jobs.
-  update private.room_ai_responders set enabled = false
-  where room_id = room_id and participant_id = responder_id;
+  update private.room_ai_responders
+     set enabled = false
+   where room_id = v_room_id and participant_id = v_responder_id;
 
   insert into public.messages(room_id, sender_id, body)
-  values (room_id, human_id, 'Paused responder must not be queued');
+  values (v_room_id, v_human_id, 'Paused responder must not be queued');
 
-  select count(*) into queued_count
-  from private.ai_response_jobs
-  where room_id = room_id;
-  if queued_count <> 1 then
+  select count(*) into v_queued_count
+  from private.ai_response_jobs j
+  where j.room_id = v_room_id;
+  if v_queued_count <> 1 then
     raise exception 'Paused responder unexpectedly received a job';
   end if;
 
-  update private.room_ai_responders set enabled = true
-  where room_id = room_id and participant_id = responder_id;
+  update private.room_ai_responders
+     set enabled = true
+   where room_id = v_room_id and participant_id = v_responder_id;
 
   -- Claim must be atomic and a leased job must not be claimable a second time.
-  select * into claimed_job
+  select * into v_claimed_job
   from private.claim_ai_response_jobs(1, 60, 5)
   limit 1;
 
-  if claimed_job.id is null or claimed_job.status <> 'leased' or claimed_job.attempts <> 1 then
+  if v_claimed_job.id is null or v_claimed_job.status <> 'leased' or v_claimed_job.attempts <> 1 then
     raise exception 'Expected one leased job with attempts=1';
   end if;
 
-  select count(*) into second_claim_count
+  select count(*) into v_second_claim_count
   from private.claim_ai_response_jobs(1, 60, 5);
-  if second_claim_count <> 0 then
+  if v_second_claim_count <> 0 then
     raise exception 'An active lease was claimed by a second worker';
   end if;
 
-  if private.finish_ai_response_job(claimed_job.id, gen_random_uuid()) then
+  if private.finish_ai_response_job(v_claimed_job.id, gen_random_uuid()) then
     raise exception 'A wrong lease token must not complete a job';
   end if;
 
-  if not private.finish_ai_response_job(claimed_job.id, claimed_job.lease_token) then
+  if not private.finish_ai_response_job(v_claimed_job.id, v_claimed_job.lease_token) then
     raise exception 'The valid lease token should complete the job';
   end if;
 
   if not exists (
-    select 1 from private.ai_response_jobs
-    where id = claimed_job.id and status = 'completed' and completed_at is not null
+    select 1 from private.ai_response_jobs j
+    where j.id = v_claimed_job.id and j.status = 'completed' and j.completed_at is not null
   ) then
     raise exception 'Completed job state was not persisted';
   end if;
