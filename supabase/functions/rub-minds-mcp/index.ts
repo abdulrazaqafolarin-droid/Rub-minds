@@ -294,14 +294,23 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
   if (name === "wait_for_group_messages") {
     const timeoutMs = typeof args.timeout_ms === "number" ? args.timeout_ms : 10000;
     const cursor = typeof args.after_created_at === "string" ? Date.parse(args.after_created_at) : Date.now();
-    const hasNewMessages = (data: unknown) => isRecord(data) && Array.isArray(data.messages) && data.messages.some((message) =>
-      isRecord(message) && typeof message.created_at === "string" && Number.isFinite(Date.parse(message.created_at)) && Date.parse(message.created_at) >= cursor
-    );
+    const messagesAfterCursor = (data: unknown) => isRecord(data) && Array.isArray(data.messages)
+      ? data.messages.filter((message) => isRecord(message) && typeof message.created_at === "string" &&
+          Number.isFinite(Date.parse(message.created_at)) && Date.parse(message.created_at) >= cursor)
+      : [];
+    const hasNewMessages = (data: unknown) => messagesAfterCursor(data).length > 0;
+    const onlyNewMessages = async (data: unknown) => {
+      if (!isRecord(data)) return { messages: [] };
+      return await enrichGroupMessages({ ...data, messages: messagesAfterCursor(data) });
+    };
     const initial = await invokeAgent(credential, "read");
-    if (hasNewMessages(initial)) return { timed_out: false, delivery: "realtime", ...(await enrichGroupMessages(initial) as Record<string, unknown>) };
+    if (hasNewMessages(initial)) return { timed_out: false, delivery: "realtime", ...(await onlyNewMessages(initial) as Record<string, unknown>) };
 
     const roomId = session.room_id;
     if (typeof roomId !== "string" || !/^[0-9a-f-]{36}$/i.test(roomId)) throw new Error("The joined group binding is invalid.");
+    // The service credential is server-only. The channel is filtered to the
+    // authenticated session's room and payloads are never returned to the model.
+    db.realtime.setAuth(serviceKey);
     const channel = db.channel("mcp-room-wait-" + roomId + "-" + crypto.randomUUID());
     let eventSeen = false;
     let wakeWaiter: (() => void) | null = null;
@@ -326,10 +335,10 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       // Read after subscribing to close the read/subscribe race. Realtime payloads
       // are only wake-up signals; the authorized group read remains the source of truth.
       const afterSubscribe = await invokeAgent(credential, "read");
-      if (hasNewMessages(afterSubscribe)) return { timed_out: false, delivery: "realtime", ...(await enrichGroupMessages(afterSubscribe) as Record<string, unknown>) };
+      if (hasNewMessages(afterSubscribe)) return { timed_out: false, delivery: "realtime", ...(await onlyNewMessages(afterSubscribe) as Record<string, unknown>) };
       if (eventSeen) {
         const afterEvent = await invokeAgent(credential, "read");
-        if (hasNewMessages(afterEvent)) return { timed_out: false, delivery: "realtime", ...(await enrichGroupMessages(afterEvent) as Record<string, unknown>) };
+        if (hasNewMessages(afterEvent)) return { timed_out: false, delivery: "realtime", ...(await onlyNewMessages(afterEvent) as Record<string, unknown>) };
       }
       const eventOrTimeout = await new Promise<"message" | "timeout">((resolve) => {
         eventTimer = setTimeout(() => resolve("timeout"), timeoutMs);
@@ -341,7 +350,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       });
       if (eventOrTimeout === "timeout") return { timed_out: true, delivery: "realtime", messages: [] };
       const afterEvent = await invokeAgent(credential, "read");
-      return { timed_out: !hasNewMessages(afterEvent), delivery: "realtime", ...(await enrichGroupMessages(afterEvent) as Record<string, unknown>) };
+      return { timed_out: !hasNewMessages(afterEvent), delivery: "realtime", ...(await onlyNewMessages(afterEvent) as Record<string, unknown>) };
     } finally {
       if (eventTimer) clearTimeout(eventTimer);
       try { await db.removeChannel(channel); } catch { /* best-effort cleanup for this bounded subscription */ }
