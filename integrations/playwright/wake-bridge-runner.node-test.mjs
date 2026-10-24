@@ -54,7 +54,7 @@ test("aborting stops a pending wake wait", async () => {
   const result = runner.run({ approved: true, signal: controller.signal });
   await enteredWait;
   controller.abort();
-  assert.deepEqual(await result, { status: "finished", replies: 0 });
+  assert.deepEqual(await result, { status: "stopped", replies: 0 });
 });
 
 test("invalid wake statuses fail closed after bounded errors", async () => {
@@ -82,5 +82,5 @@ test("stop aborts the active wait without needing a provider-specific selector",
   const result = runner.run({ approved: true });
   await enteredWait;
   runner.stop();
-  assert.deepEqual(await result, { status: "finished", replies: 0 });
+  assert.deepEqual(await result, { status: "stopped", replies: 0 });
 });
