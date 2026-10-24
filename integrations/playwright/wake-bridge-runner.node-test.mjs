@@ -2,8 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { OriginalSessionWakeRunner } from "./wake-bridge-runner.mjs";
 
-const tick = () => new Promise(resolve => setImmediate(resolve));
-
 test("requires explicit approval and a valid bridge/wake source", async () => {
   const runner = new OriginalSessionWakeRunner({
     bridge: { step: async () => ({ sent: 0 }) },
@@ -31,14 +29,15 @@ test("wake events invoke the existing-session bridge and respect reply limits", 
 });
 
 test("heartbeat timeout still checks durable messages to recover missed notifications", async () => {
-  let steps = 0;
+  let wakeCount = 0;
+  let stepCount = 0;
   const runner = new OriginalSessionWakeRunner({
-    bridge: { step: async () => { steps++; return { status: "ok", sent: 0 }; } },
-    wakeSource: { waitForWake: async () => ({ status: ++steps === 1 ? "timeout" : "closed" }) },
+    bridge: { step: async () => { stepCount++; return { status: "ok", sent: 0 }; } },
+    wakeSource: { waitForWake: async () => ({ status: ++wakeCount === 1 ? "timeout" : "closed" }) },
     heartbeatMs: 1000,
   });
   assert.deepEqual(await runner.run({ approved: true }), { status: "finished", replies: 0 });
-  assert.equal(steps, 2);
+  assert.equal(stepCount, 1);
 });
 
 test("aborting stops a pending wake wait", async () => {
