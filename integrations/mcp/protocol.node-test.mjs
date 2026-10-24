@@ -47,7 +47,7 @@ test("current stateless protocol validates request metadata and mirrored headers
 test("advertises invitation, messaging, and memory tools", () => {
   assert.equal(MCP_PROTOCOL_VERSION, "2025-06-18");
   assert.deepEqual(RUB_MINDS_MCP_TOOLS.map((tool) => tool.name), [
-    "join_group", "leave_group", "read_group_context", "read_group_messages", "send_group_message",
+    "join_group", "leave_group", "read_group_context", "read_group_messages", "wait_for_group_messages", "send_group_message",
     "read_session_memory", "import_session_memory", "remember_memory",
   ]);
 });
@@ -97,6 +97,15 @@ test("leave_group requires explicit confirmation and rejects unknown arguments",
   assert.equal(validateToolArguments("leave_group", { confirm_leave: true }), null);
   assert.match(validateToolArguments("leave_group", {}), /confirmation/);
   assert.match(validateToolArguments("leave_group", { confirm_leave: true, force: true }), /Unknown/);
+});
+
+test("Realtime wait tool validates cursor and bounds its wait", () => {
+  assert.equal(validateToolArguments("wait_for_group_messages", {}), null);
+  assert.equal(validateToolArguments("wait_for_group_messages", { after_created_at: "2026-10-24T17:00:00.000Z", timeout_ms: 5000 }), null);
+  assert.match(validateToolArguments("wait_for_group_messages", { after_created_at: "not-a-date" }), /date-time/);
+  assert.match(validateToolArguments("wait_for_group_messages", { timeout_ms: 999 }), /1000 to 15000/);
+  assert.match(validateToolArguments("wait_for_group_messages", { timeout_ms: 15001 }), /1000 to 15000/);
+  assert.match(validateToolArguments("wait_for_group_messages", { extra: true }), /Unknown/);
 });
 
 test("message tool rejects empty, oversized, and unknown arguments", () => {
