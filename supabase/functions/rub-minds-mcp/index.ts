@@ -135,6 +135,20 @@ async function invokeAgent(credential: string, operation: "read" | "send", paylo
   }
   return data;
 }
+
+async function enrichGroupMessages(data: unknown) {
+  if (!isRecord(data) || !Array.isArray(data.messages)) return data;
+  const ids = [...new Set(data.messages.map((message) => isRecord(message) ? message.sender_id : null).filter((id) => typeof id === "string"))] as string[];
+  if (!ids.length) return data;
+  const { data: participants, error } = await db.from("participants").select("id,display_name,kind").in("id", ids);
+  if (error) throw new Error("Could not resolve group message participants.");
+  const byId = new Map((participants || []).map((p: { id: string; display_name: string; kind: string }) => [p.id, p]));
+  data.messages = data.messages.map((message: Record<string, unknown>) => {
+    const participant = byId.get(message.sender_id as string);
+    return { ...message, sender_name: participant?.display_name || "Participant", sender_kind: participant?.kind || "unknown" };
+  });
+  return data;
+}
 async function runTool(name: string, args: Record<string, unknown>, session: Record<string, unknown>) {
   if (name === "join_group") {
     if (typeof session.agent_credential_ciphertext === "string") {
@@ -274,20 +288,64 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
   }
 
   if (name === "read_group_messages") {
-    const data = await invokeAgent(credential, "read");
-    if (isRecord(data) && Array.isArray(data.messages)) {
-      const ids = [...new Set(data.messages.map((message) => isRecord(message) ? message.sender_id : null).filter((id) => typeof id === "string"))] as string[];
-      if (ids.length) {
-        const { data: participants, error } = await db.from("participants").select("id,display_name,kind").in("id", ids);
-        if (error) throw new Error("Could not resolve group message participants.");
-        const byId = new Map((participants || []).map((p: { id: string; display_name: string; kind: string }) => [p.id, p]));
-        data.messages = data.messages.map((message: Record<string, unknown>) => {
-          const p = byId.get(message.sender_id as string);
-          return { ...message, sender_name: p?.display_name || "Participant", sender_kind: p?.kind || "unknown" };
+    return await enrichGroupMessages(await invokeAgent(credential, "read"));
+  }
+
+  if (name === "wait_for_group_messages") {
+    const timeoutMs = typeof args.timeout_ms === "number" ? args.timeout_ms : 10000;
+    const cursor = typeof args.after_created_at === "string" ? Date.parse(args.after_created_at) : Date.now();
+    const hasNewMessages = (data: unknown) => isRecord(data) && Array.isArray(data.messages) && data.messages.some((message) =>
+      isRecord(message) && typeof message.created_at === "string" && Number.isFinite(Date.parse(message.created_at)) && Date.parse(message.created_at) >= cursor
+    );
+    const initial = await invokeAgent(credential, "read");
+    if (hasNewMessages(initial)) return { timed_out: false, delivery: "realtime", ...(await enrichGroupMessages(initial) as Record<string, unknown>) };
+
+    const roomId = session.room_id;
+    if (typeof roomId !== "string" || !/^[0-9a-f-]{36}$/i.test(roomId)) throw new Error("The joined group binding is invalid.");
+    const channel = db.channel("mcp-room-wait-" + roomId + "-" + crypto.randomUUID());
+    let eventSeen = false;
+    let wakeWaiter: (() => void) | null = null;
+    let eventTimer: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const subscribed = await new Promise<boolean>((resolve) => {
+        let settled = false;
+        const timer = setTimeout(() => { if (!settled) { settled = true; resolve(false); } }, 3000);
+        channel.on("postgres_changes", {
+          event: "INSERT", schema: "public", table: "messages", filter: "room_id=eq." + roomId,
+        }, () => {
+          eventSeen = true;
+          wakeWaiter?.();
+        }).subscribe((status: string) => {
+          if (settled) return;
+          if (status === "SUBSCRIBED") { settled = true; clearTimeout(timer); resolve(true); }
+          else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") { settled = true; clearTimeout(timer); resolve(false); }
         });
+      });
+      if (!subscribed) return { timed_out: true, delivery: "unavailable", messages: [], note: "Supabase Realtime subscription could not be established. Retry read_group_messages or wait_for_group_messages." };
+
+      // Read after subscribing to close the read/subscribe race. Realtime payloads
+      // are only wake-up signals; the authorized group read remains the source of truth.
+      const afterSubscribe = await invokeAgent(credential, "read");
+      if (hasNewMessages(afterSubscribe)) return { timed_out: false, delivery: "realtime", ...(await enrichGroupMessages(afterSubscribe) as Record<string, unknown>) };
+      if (eventSeen) {
+        const afterEvent = await invokeAgent(credential, "read");
+        if (hasNewMessages(afterEvent)) return { timed_out: false, delivery: "realtime", ...(await enrichGroupMessages(afterEvent) as Record<string, unknown>) };
       }
+      const eventOrTimeout = await new Promise<"message" | "timeout">((resolve) => {
+        eventTimer = setTimeout(() => resolve("timeout"), timeoutMs);
+        wakeWaiter = () => {
+          if (eventTimer) clearTimeout(eventTimer);
+          resolve("message");
+        };
+        if (eventSeen) wakeWaiter();
+      });
+      if (eventOrTimeout === "timeout") return { timed_out: true, delivery: "realtime", messages: [] };
+      const afterEvent = await invokeAgent(credential, "read");
+      return { timed_out: !hasNewMessages(afterEvent), delivery: "realtime", ...(await enrichGroupMessages(afterEvent) as Record<string, unknown>) };
+    } finally {
+      if (eventTimer) clearTimeout(eventTimer);
+      try { await db.removeChannel(channel); } catch { /* best-effort cleanup for this bounded subscription */ }
     }
-    return data;
   }
 
   if (name === "send_group_message") {
