@@ -12,7 +12,7 @@ Independently checked through the connected Supabase project metadata:
 - `agent-messages` is ACTIVE at version 4; `session-memory` is ACTIVE at version 2.
 - Migration history includes `hosted_mcp_sessions`, `group_memory_realtime`, `atomic_mcp_join_idempotency`, and `public_invite_rate_limits` (versions `20261024002156`, `20261024002200`, `20261024002204`, `20261024002207`).
 
-OpenCode reports that it added the missing `RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY` secret without printing its value and then observed successful MCP initialization/tool discovery and authorized disposable-fixture join/read/send/leave/revocation tests. This report is useful but is not an independently reproduced HTTP test from this environment. No key value belongs in this repository or any report.
+OpenCode reports that it added the missing `RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY` secret without printing its value and then observed successful MCP initialization/tool discovery and authorized disposable-fixture join/read/send/leave/revocation tests. Independently, a read-only query of Supabase request logs for the last 12 hours shows 12 HTTP 200 responses and one HTTP 202 from `rub-minds-mcp` version 2, alongside expected negative-path statuses (400, 403, 404, 405, 415). The eight HTTP 500 responses in that window came from version 1 before the fix. This corroborates live v2 HTTP activity, but logs alone do not prove each successful response was a real provider conversation or prove background sync. No key value belongs in this repository or any report.
 
 Important distinction:
 - **Backend availability:** deployed function/migrations confirmed; OpenCode reports successful live protocol and disposable-fixture tests.
@@ -32,7 +32,7 @@ Earlier observations in this PR that claimed the function was still v1, that inv
 
 ## Remaining release blockers
 
-1. **Independently reproduce a harmless live protocol smoke test.** Confirm initialization/tool discovery and sanitized error behavior without printing or persisting any bearer credential. This environment could verify deployment metadata but could not independently reach the public endpoint over direct outbound HTTP.
+1. **Complete protocol verification from a supported MCP client.** Production request logs now corroborate successful v2 HTTP responses and expected negative-path behavior. Still verify the tool list and a full initialize/discovery flow with an approved client, without printing or persisting any bearer credential.
 2. **Exercise the supported host connection path.** Claude Free currently documents custom remote MCP connectors, so test that path first. Configure the connector manually in the user's Claude account, then verify tool discovery and one disposable invite join. ChatGPT Free does not currently document the custom write-capable MCP path required for live group participation.
 3. **Prove a real group round trip.** Using a dedicated, low-use test invitation, join from the connected AI, read group context/messages, send a clearly labeled test message, confirm a human can see it, then leave/revoke and verify the handle is rejected.
 4. **Check the invitation handler and limiter behavior.** The deployed function versions and migration are confirmed, but verify malformed, expired, revoked, exhausted, and valid disposable invitations, plus rate-limit fail-closed behavior, without using a valuable user invite.
