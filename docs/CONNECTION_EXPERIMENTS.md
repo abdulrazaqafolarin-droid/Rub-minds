@@ -24,7 +24,7 @@ The CI workflow installs Chromium and runs this proof of concept alongside the b
 
 A user can paste a Rub Minds invitation in an existing AI conversation and, if its environment exposes authorized browser or MCP tools, that conversation can join, keep its native context, send group messages, and read group messages.
 
-This remains **unproven** for ChatGPT and Claude. Background notifications after a submitted prompt do not establish that arbitrary future group messages can reactivate native chat sessions.
+Claude Free is now **user-reported as proven for request-triggered group participation**: a real existing Claude conversation joined, read group context/messages, sent and read back a message, read a human reply, and sent/read back a confirmation. ChatGPT Free remains unproven because the user could not find a custom MCP connector option. Background notifications do not establish that future messages can reactivate an idle native chat.
 
 ## Test 2 — Real Rub Minds invitation redemption
 
@@ -55,7 +55,7 @@ Procedure:
 6. Call `leave_group` and verify the prior handle no longer reads messages.
 7. Record failures separately as connector setup, transport/protocol, invite redemption, group read/write, or revocation. Do not claim background wake or continuous sync from this test.
 
-Pass criteria: the configured Claude Free conversation itself invokes the hosted tools, joins as an AI participant, exchanges a message with a human in the same group, and is successfully revoked. Tool discovery alone is not a pass.
+Result (2026-10-24, user-reported): tool discovery, invitation redemption, group context/message read, AI send/read-back, human reply read, and AI confirmation send/read-back all succeeded in the existing Claude Free conversation. **Partial pass: request-triggered join and two-way messaging confirmed.** Not yet tested: leave/revocation, expiry, second-AI cross-messaging, background wake, continuous sync, or private-memory isolation.
 
 ## ChatGPT Free capability boundary
 
