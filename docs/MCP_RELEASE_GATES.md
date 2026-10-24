@@ -24,7 +24,7 @@ Earlier observations in this PR that claimed the function was still v1, that inv
 
 ## Security review notes
 
-- The production database includes the public invite rate-limit migration. Confirm the live handlers actually invoke the limiter and fail closed before broad exposure; version metadata alone is not proof of abuse resistance.
+- **Confirmed production security gap:** although the public invite rate-limit migration is present and `main` contains the shared limiter, the deployed source for `redeem-ai-invite` v2 and `ai-invite-discovery` v2 does not import or call `consumePublicRateLimit`. Their current deployed versions therefore lack the intended edge-level public rate limiting. The `rub-minds-mcp` v2 source does invoke the limiter. Do not mark invite-path abuse protection complete until the reviewed main handlers are deployed and live limiter behavior is verified.
 - The Supabase security advisor previously flagged authenticated-callable SECURITY DEFINER functions, leaked-password protection, and unindexed foreign keys. Investigate each item in context; do not apply blanket grants/revocations or schema changes.
 - No paid staging project should be created. Use local/isolated tests and carefully scoped disposable production fixtures only where necessary.
 - Preserve the active encryption key. Do not rotate or replace it casually: doing so can make existing encrypted session bindings unreadable. Confirm secure backup/recovery without printing or committing the value.
@@ -35,7 +35,7 @@ Earlier observations in this PR that claimed the function was still v1, that inv
 1. **Complete protocol verification from a supported MCP client.** Production request logs now corroborate successful v2 HTTP responses and expected negative-path behavior. Still verify the tool list and a full initialize/discovery flow with an approved client, without printing or persisting any bearer credential.
 2. **Exercise the supported host connection path.** Claude Free currently documents custom remote MCP connectors, so test that path first. Configure the connector manually in the user's Claude account, then verify tool discovery and one disposable invite join. ChatGPT Free does not currently document the custom write-capable MCP path required for live group participation.
 3. **Prove a real group round trip.** Using a dedicated, low-use test invitation, join from the connected AI, read group context/messages, send a clearly labeled test message, confirm a human can see it, then leave/revoke and verify the handle is rejected.
-4. **Check the invitation handler and limiter behavior.** The deployed function versions and migration are confirmed, but verify malformed, expired, revoked, exhausted, and valid disposable invitations, plus rate-limit fail-closed behavior, without using a valuable user invite.
+4. **Restore deployed invite-path rate limiting before broad exposure.** Live source inspection confirms `redeem-ai-invite` v2 and `ai-invite-discovery` v2 do not invoke the limiter even though the migration and main-branch implementation exist. First run the existing handler/limiter tests against the exact source bundle; then, only after explicit production-change approval, deploy the reviewed functions and verify rate-limit thresholds and fail-closed behavior using disposable fixtures.
 5. **Document provider limits accurately.** Native context preservation is limited to the conversation's context window and what the AI explicitly imports; automatic history extraction, persistent background wake, and continuous two-way sync remain unproven.
 
 ## Evidence and its limits
@@ -52,7 +52,8 @@ Earlier observations in this PR that claimed the function was still v1, that inv
 - [ ] Run an independent live initialize and tool-discovery request using an approved MCP client.
 - [ ] Connect Claude Free to the remote MCP endpoint using the documented custom connector UI; verify the eight expected tools appear.
 - [ ] Redeem only a disposable AI-enabled invite, read group context, send one test message, verify it as a human, leave, and confirm revocation.
-- [ ] Test expired/revoked/invalid invitation rejection and public rate limiting with isolated fixtures.
+- [ ] Verify invalid/expired/revoked invitation rejection with isolated fixtures.
+- [ ] Keep `redeem-ai-invite` and `ai-invite-discovery` rate limiting marked BLOCKED until reviewed handler versions are deployed and a live over-limit/fail-closed test passes.
 - [ ] Record exact client/platform, tool list, protocol version, function versions, sanitized results, and limitations.
 - [ ] Reassess ChatGPT Free only if a supported connection route is available; do not count manual copy/paste relay as autonomous participation.
 
