@@ -50,7 +50,7 @@ The link can:
 - Raw imported context is participant-private. Sharing a memory entry requires `visibility: "group"` explicitly. The memory document validator rejects any declaration that raw history is group-visible.
 - Message and memory writes should be reviewed in the AI platform's tool approval UI. A `confirm_join: true` argument is an additional intent check, not a substitute for the platform's own approval UI.
 - The endpoint currently relies on invitation possession plus a high-entropy, expiring MCP session capability; it does **not** yet provide an OAuth authorization server, OAuth scopes, per-user account login, or account-level connector revocation. The per-session tool limit does not protect unauthenticated discovery or invalid-invitation attempts against volumetric abuse; add trusted edge-level rate limiting before broad public exposure. This remains an early testing integration, not a production security certification.
-- Participant credentials are encrypted at rest with AES-256-GCM. Before deployment, configure `RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY` as a dedicated 32-byte random key encoded as 64 hexadecimal characters (for example, generate with `openssl rand -hex 32`). Store it as a Supabase Edge Function secret, never in the repository or frontend. Rotating this key invalidates existing encrypted MCP sessions; users must reconnect.
+- Participant credentials are encrypted at rest with AES-256-GCM. Production configuration uses `RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY` as a dedicated 32-byte random key encoded as 64 hexadecimal characters. OpenCode reports that this secret has been configured; never print, commit, or copy its value into chat. The key-ring supports up to four previous keys for decryption/retry only. Do not rotate casually: keep old keys configured for at least the maximum session/idempotency lifetime and prove retry behavior before removing them. Confirm a secure backup/recovery path without exposing the key.
 - Deploy the Edge Function with JWT verification disabled only because the handler implements its own invite/session checks; do not disable JWT verification for other functions. Supabase API gateway deployments may require the project's **public anon/publishable key** in the `apikey` header. Never use a service-role key as a connector header.
 - Expired active session rows are cleaned opportunistically after a successful invite redemption; terminated-session tombstones are retained for seven days. Initialization, ping, and tool discovery do not create persistent rows.
 
@@ -82,12 +82,17 @@ Official references:
 - OpenAI: https://help.openai.com/en/articles/12584461-connecting-custom-mcp-servers-in-chatgpt
 - Anthropic: https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp
 
-## Testing sequence before production
+## Live verification sequence
 
-1. The existing Supabase schema has been inspected for the key room, participant, invite, agent-connection, and memory fields; still verify every RPC signature against the deployed function before live calls.
-2. Run MCP protocol/transport tests with the MCP Inspector and at least one supported client; test modern `server/discover`, per-request metadata/header matching, `tools/list`, idempotent join retries, explicit session handles, read/send, private/group memory, rate limiting, expiry, termination/tombstone behavior, and invalid/revoked invites. Also test the legacy handshake separately.
-3. Complete edge-level abuse protection, production-grade authorization, key management/recovery, transport interoperability, and revocation behavior before inviting real users.
-4. Deploy only after migration review, secret configuration, security review, and live integration tests. Keep this PR in draft until then.
+The backend is already deployed in production. These are verification gates, not instructions to redeploy or reapply migrations.
+
+1. Independently exercise the hosted MCP endpoint with an approved client: initialize or discover tools using the protocol path that client actually supports; verify the expected tool list and sanitized negative responses.
+2. Connect Claude Free through its custom remote MCP connector UI (Free currently allows one custom connector). Confirm tool discovery inside a real Claude conversation before using an invite.
+3. Use a dedicated disposable AI-enabled invitation. Explicitly confirm join; verify participant creation, group context/message read, send one clearly labeled test message, verify it in the human UI, then leave and confirm revocation blocks the old handle.
+4. Test invalid, expired, revoked, and exhausted invitations plus rate-limit fail-closed behavior using controlled fixtures. Do not use a valuable user invitation.
+5. Verify that private imported-session context is readable only by its owner and that only explicitly group-visible memory can be read by other participants.
+6. Record provider plan/client, protocol version, tool availability, function versions, sanitized outcomes, and limitations. Tool discovery alone is not a successful end-to-end test.
+7. Only after Claude Free passes, evaluate whether any supported ChatGPT Free feature can expose the required write-capable tools. Do not assume it can; manual copy/paste is a fallback, not autonomous participation.
 
 ## Important product boundary
 
