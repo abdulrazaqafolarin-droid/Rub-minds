@@ -1,51 +1,60 @@
 # Hosted MCP release gates — live production verification
 
-Status: **DEPLOYED BUT BLOCKED — NOT READY FOR REAL AI PARTICIPATION**. The hosted endpoint exists, but a live request returned HTTP 500 because required backend configuration or the MCP credential-encryption secret is missing. This is not evidence of a successful AI join.
+Status: **BACKEND DEPLOYED; REAL PROVIDER CONNECTION STILL UNVERIFIED**. The MCP Edge Function is active in production and the required hosted-MCP migrations are present. This does not yet prove a real ChatGPT or Claude conversation has connected and participated in a group.
 
 ## Latest production observations (2026-10-24)
 
-Read-only GitHub/Supabase checks and a controlled malformed-request smoke test were used. Do not treat a deployment status as proof of end-to-end functionality.
+Independently checked through the connected Supabase project metadata:
+- Project: `zucaeevlbwhcvjwbhwmq` (production, `eu-west-2`).
+- `rub-minds-mcp` is ACTIVE at Edge Function version 2.
+- `redeem-ai-invite` is ACTIVE at version 2.
+- `ai-invite-discovery` is ACTIVE at version 2.
+- `agent-messages` is ACTIVE at version 4; `session-memory` is ACTIVE at version 2.
+- Migration history includes `hosted_mcp_sessions`, `group_memory_realtime`, `atomic_mcp_join_idempotency`, and `public_invite_rate_limits` (versions `20261024002156`, `20261024002200`, `20261024002204`, `20261024002207`).
 
-- Vercel production alias `rub-minds.vercel.app` was previously observed pointing to a READY frontend deployment. Frontend health does not prove hosted MCP readiness.
-- Supabase project `zucaeevlbwhcvjwbhwmq` is active in `eu-west-2`.
-- Production migration history includes the four hosted-MCP related migrations:
-  - `20261024002156_hosted_mcp_sessions`
-  - `20261024002200_group_memory_realtime`
-  - `20261024002204_atomic_mcp_join_idempotency`
-  - `20261024002207_public_invite_rate_limits`
-- The following tables/RPCs now exist in production: `rub_minds_mcp_sessions`, `rub_minds_mcp_join_requests`, `public_request_rate_limits`, `redeem_ai_room_invite_idempotent`, and `consume_public_request_rate_limit`. Group-memory realtime publication is present.
-- Edge Function inventory shows `rub-minds-mcp` ACTIVE at version 1; `agent-messages` v3; `redeem-ai-invite` v1; `ai-invite-discovery` v1; and `session-memory` v1.
-- The deployed `rub-minds-mcp` source bundle matches the current `main` source and its six local helper modules. However, a live POST to `/functions/v1/rub-minds-mcp` returned **HTTP 500 / WORKER_ERROR**. The function log reported: `Missing backend configuration or MCP credential-encryption secret`. This error combines configuration checks, so it does **not** establish which specific setting is missing. Check presence without printing values.
-- Live `redeem-ai-invite` and `ai-invite-discovery` v1 source is older than repository `main`: both lack the current `consumePublicRateLimit` / `publicRateLimitResponse` check. Their rate-limit schema/helper exists in production, but the updated handlers have not been deployed. An attempted deployment through the connected deployment tool was blocked before execution; function versions did not change.
-- Recent malformed/unauthenticated smoke requests returned HTTP 400 from `redeem-ai-invite` and HTTP 401 from `agent-messages` and `session-memory`. These are negative-path observations only, not proof of valid invitation redemption.
-- Security advisors report RLS-enabled tables without policies for `agent_request_log`, `public_request_rate_limits`, `rub_minds_mcp_join_requests`, and `rub_minds_mcp_sessions`; eight SECURITY DEFINER functions callable by `authenticated`; and leaked-password protection disabled. RLS-without-policy may be intentional for service-role-only internal tables, but confirm table grants and access paths before changing anything. Review each flagged RPC's body and required client behavior before revoking privileges. Do not blindly grant policies or change Auth settings.
-- No separate staging project is provisioned. Respect the zero-budget constraint; do not create paid resources or assume a staging environment exists.
+OpenCode reports that it added the missing `RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY` secret without printing its value and then observed successful MCP initialization/tool discovery and authorized disposable-fixture join/read/send/leave/revocation tests. This report is useful but is not an independently reproduced HTTP test from this environment. No key value belongs in this repository or any report.
 
-## Current release blockers
+Important distinction:
+- **Backend availability:** deployed function/migrations confirmed; OpenCode reports successful live protocol and disposable-fixture tests.
+- **MCP interoperability:** local official-SDK tests are reported passing.
+- **Real provider integration:** not yet proven. No real Claude Free or ChatGPT Free conversation has been observed joining and exchanging a message with a human.
+- **Background sync:** not proven. A request-triggered conversation/tool call does not imply the host will wake an idle chat when new group messages arrive.
 
-1. **Fix and verify runtime configuration.** Determine whether `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY` are all configured. The active encryption key must be a securely generated 64-character hex string (32 random bytes). Never print, commit, or log the secret. Preserve any existing key; do not rotate casually. Optional `RUB_MINDS_MCP_SESSION_ENCRYPTION_KEYS_PREVIOUS` holds up to four prior 64-hex keys for decryption/retry only. Keep old keys for at least the maximum session/idempotency lifetime (currently seven days) after rotation.
-2. **Re-test the live MCP endpoint** after configuration. Require valid protocol initialization and tool discovery, not merely an HTTP status. Verify expected rejection of malformed/unauthorized requests and confirm logs contain no credentials or private imported context.
-3. **Deploy current invite handlers safely.** Deploy `redeem-ai-invite` and `ai-invite-discovery` from reviewed `main` source with their `_shared/public-rate-limit.ts` dependency bundled/re-written correctly. Verify each function version advances and test the limiter, CORS/origin behavior, malformed tokens, expired/revoked invites, and valid redemption. Do not trust arbitrary client-supplied forwarding headers as IP identity.
-4. **Prove a real group flow.** Redeem one test invitation, join a test group, discover tools, read permitted group context, send and receive a message, and leave/revoke the session. Then test two distinct supported AI clients and verify private imported-session context is isolated.
-5. **Keep the platform limitation explicit.** An invite URL cannot install an MCP server or create native tools in a ChatGPT/Claude account. Direct participation requires a supported connector/client/runtime with network access and authorization.
+Earlier observations in this PR that claimed the function was still v1, that invitation handlers were stale v1, or that the key was definitely still missing are superseded by the current read-only function inventory. Do not infer HTTP health solely from the ACTIVE status.
 
-## Existing automated evidence (not production end-to-end proof)
+## Security review notes
 
-- CI previously passed build, runtime/unit tests, Deno checks, isolated PostgreSQL migration/negative tests, clean local Supabase migration replay, and browser signup/invitation tests.
-- Official MCP TypeScript SDK local integration tests negotiated the protocol, discovered tools, joined a group, exchanged messages, and revoked a credential.
-- Local privacy/isolation tests checked private imported-session context and group-visible memory separation.
-- Concurrency tests covered duplicate joins, invitation-use accounting, and leave/join races.
-- These are valuable application-level tests, but they do not prove that the hosted production endpoint is configured or that a real ChatGPT or Claude account can connect.
+- The production database includes the public invite rate-limit migration. Confirm the live handlers actually invoke the limiter and fail closed before broad exposure; version metadata alone is not proof of abuse resistance.
+- The Supabase security advisor previously flagged authenticated-callable SECURITY DEFINER functions, leaked-password protection, and unindexed foreign keys. Investigate each item in context; do not apply blanket grants/revocations or schema changes.
+- No paid staging project should be created. Use local/isolated tests and carefully scoped disposable production fixtures only where necessary.
+- Preserve the active encryption key. Do not rotate or replace it casually: doing so can make existing encrypted session bindings unreadable. Confirm secure backup/recovery without printing or committing the value.
+- OpenCode reported that temporary secret-bearing files were deleted, but earlier notes were inconsistent about whether a key backup existed. Resolve the backup/recovery question securely before any rotation. If a Supabase personal access token was exposed in an unsafe place, rotate it through the provider's supported UI; never paste it into chat.
 
-## Deployment and live proof checklist
+## Remaining release blockers
 
-- [ ] Confirm required secrets are present without exposing their values.
-- [ ] Re-run MCP initialize and tool-list calls against production; capture status/protocol outcome and relevant sanitized logs.
-- [ ] Deploy and verify current rate-limited invitation handlers.
-- [ ] Test valid, expired, revoked, exhausted, and malformed invitation cases; verify idempotent retries.
-- [ ] Verify private context, group memory, and membership authorization boundaries.
-- [ ] Connect two distinct AI clients through actually supported connection methods; exchange messages with a human participant.
-- [ ] Record function versions, migration versions, commit SHA, sanitized test results, and remaining platform limitations.
+1. **Independently reproduce a harmless live protocol smoke test.** Confirm initialization/tool discovery and sanitized error behavior without printing or persisting any bearer credential. This environment could verify deployment metadata but could not independently reach the public endpoint over direct outbound HTTP.
+2. **Exercise the supported host connection path.** Claude Free currently documents custom remote MCP connectors, so test that path first. Configure the connector manually in the user's Claude account, then verify tool discovery and one disposable invite join. ChatGPT Free does not currently document the custom write-capable MCP path required for live group participation.
+3. **Prove a real group round trip.** Using a dedicated, low-use test invitation, join from the connected AI, read group context/messages, send a clearly labeled test message, confirm a human can see it, then leave/revoke and verify the handle is rejected.
+4. **Check the invitation handler and limiter behavior.** The deployed function versions and migration are confirmed, but verify malformed, expired, revoked, exhausted, and valid disposable invitations, plus rate-limit fail-closed behavior, without using a valuable user invite.
+5. **Document provider limits accurately.** Native context preservation is limited to the conversation's context window and what the AI explicitly imports; automatic history extraction, persistent background wake, and continuous two-way sync remain unproven.
+
+## Evidence and its limits
+
+- OpenCode reports 60 passing targeted tests across MCP, runtime, rate limiting, discovery, portable tools, and Playwright/session-bridge modules. Vitest was unavailable because its local dependencies were incomplete; the reported Node/Deno test suites passed.
+- OpenCode reports successful live MCP initialize/tool discovery and authorized disposable-fixture join/read/send/leave/revocation tests after the encryption-key secret was configured.
+- The connected Supabase inventory independently confirms the MCP Edge Function is ACTIVE v2 and the four hosted-MCP migrations are recorded in production.
+- Official MCP TypeScript SDK local tests and local privacy/isolation/concurrency tests are recorded in prior CI runs. These prove local protocol/application behavior, not a connection from Claude or ChatGPT.
+- No actual Claude Free or ChatGPT Free session has yet been demonstrated joining a room and exchanging a message with a human. That remains the primary milestone.
+
+## Next verification checklist
+
+- [ ] Confirm secure recovery/backup of the existing encryption key without revealing its value.
+- [ ] Run an independent live initialize and tool-discovery request using an approved MCP client.
+- [ ] Connect Claude Free to the remote MCP endpoint using the documented custom connector UI; verify the eight expected tools appear.
+- [ ] Redeem only a disposable AI-enabled invite, read group context, send one test message, verify it as a human, leave, and confirm revocation.
+- [ ] Test expired/revoked/invalid invitation rejection and public rate limiting with isolated fixtures.
+- [ ] Record exact client/platform, tool list, protocol version, function versions, sanitized results, and limitations.
+- [ ] Reassess ChatGPT Free only if a supported connection route is available; do not count manual copy/paste relay as autonomous participation.
 
 ## Safety and cost constraints
 
