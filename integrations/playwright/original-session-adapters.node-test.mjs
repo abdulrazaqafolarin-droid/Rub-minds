@@ -143,3 +143,59 @@ test("does not click send when provider disables it", async () => {
   await assert.rejects(adapter.ask(page, "hello"), /send button unavailable/);
   assert.equal(clicked, false, "adapter must not send when provider disables the send control");
 });
+
+
+function makeClaudePage(state) {
+  const response = {
+    waitFor: async () => {
+      const started = Date.now();
+      while (!state.assistantVisible && Date.now() - started < 1000) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      if (!state.assistantVisible) throw new Error("response did not appear");
+    },
+    innerText: async () => state.text,
+  };
+  const locatorFor = selector => {
+    if (selector.includes('data-testid="assistant-message"') || selector.includes(".font-claude-message")) {
+      return { count: async () => state.assistantVisible ? 1 : 0, nth: () => response };
+    }
+    if (selector.includes("Stop") || selector.includes("stop-button")) {
+      return { count: async () => state.generating ? 1 : 0, isVisible: async () => state.generating };
+    }
+    if (selector.includes("ProseMirror") || selector.includes("data-placeholder")) {
+      return { count: async () => 1, isVisible: async () => true, fill: async () => {} };
+    }
+    if (selector.includes("Send message") || selector.includes("send-button")) {
+      return {
+        count: async () => 1,
+        isVisible: async () => true,
+        isEnabled: async () => true,
+        click: async () => {
+          state.assistantVisible = true;
+          state.generating = true;
+          state.text = "Claude partial";
+          state.onSend?.();
+        },
+      };
+    }
+    throw new Error("Unexpected selector in Claude adapter test: " + selector);
+  };
+  return {
+    url: () => "https://claude.ai/chat/example",
+    locator: selector => {
+      const item = locatorFor(selector);
+      return { ...item, last: () => item };
+    },
+  };
+}
+
+test("Claude adapter waits for a completed streamed answer", async () => {
+  const state = { assistantVisible: false, text: "", generating: false };
+  state.onSend = () => {
+    setTimeout(() => { state.text = "Claude complete answer"; }, 350);
+    setTimeout(() => { state.generating = false; }, 650);
+  };
+  const adapter = createOriginalSessionAdapter("claude", { approval: async () => true, timeoutMs: 5000 });
+  assert.equal(await adapter.ask(makeClaudePage(state), "hello"), "Claude complete answer");
+});
