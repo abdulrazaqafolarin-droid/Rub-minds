@@ -126,7 +126,8 @@ begin
          last_error_code = null
    where id = p_job_id
      and status = 'leased'
-     and lease_token = p_lease_token;
+     and lease_token = p_lease_token
+     and leased_until > now();
   get diagnostics changed = row_count;
   return changed = 1;
 end;
@@ -163,7 +164,8 @@ begin
          updated_at = now()
    where id = p_job_id
      and status = 'leased'
-     and lease_token = p_lease_token;
+     and lease_token = p_lease_token
+     and leased_until > now();
   get diagnostics changed = row_count;
   return changed = 1;
 end;
