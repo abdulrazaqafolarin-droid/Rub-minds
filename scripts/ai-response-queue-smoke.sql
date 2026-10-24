@@ -14,6 +14,7 @@ declare
   v_queued_count integer;
   v_claimed_job private.ai_response_jobs%rowtype;
   v_second_claim_count integer;
+  v_retry_job private.ai_response_jobs%rowtype;
 begin
   select u.id into v_owner_id
   from auth.users u
@@ -110,6 +111,47 @@ begin
     where j.id = v_claimed_job.id and j.status = 'completed' and j.completed_at is not null
   ) then
     raise exception 'Completed job state was not persisted';
+  end if;
+
+  -- An expired lease must not be able to finish or retry a job.
+  insert into public.messages(room_id, sender_id, body)
+  values (v_room_id, v_human_id, 'Lease expiry regression test');
+
+  select * into v_retry_job
+  from private.claim_ai_response_jobs(1, 60, 5)
+  limit 1;
+
+  if v_retry_job.id is null then
+    raise exception 'Expected a second claim for lease expiry test';
+  end if;
+
+  update private.ai_response_jobs
+     set leased_until = now() - interval '1 second'
+   where id = v_retry_job.id;
+
+  if private.finish_ai_response_job(v_retry_job.id, v_retry_job.lease_token)
+     or private.retry_ai_response_job(v_retry_job.id, v_retry_job.lease_token, 'timeout', 5) then
+    raise exception 'Expired lease token must not transition a job';
+  end if;
+
+  select * into v_retry_job
+  from private.claim_ai_response_jobs(1, 60, 5)
+  limit 1;
+
+  if v_retry_job.id is null or v_retry_job.attempts <> 2 then
+    raise exception 'Expired lease should be reclaimed with attempts=2';
+  end if;
+
+  if not private.retry_ai_response_job(v_retry_job.id, v_retry_job.lease_token, 'timeout', 5) then
+    raise exception 'Valid retry should transition the job';
+  end if;
+
+  if not exists (
+    select 1 from private.ai_response_jobs j
+    where j.id = v_retry_job.id and j.status = 'pending'
+      and j.lease_token is null and j.available_at > now()
+  ) then
+    raise exception 'Retry should clear lease and apply backoff';
   end if;
 
   if has_schema_privilege('anon', 'private', 'USAGE')
