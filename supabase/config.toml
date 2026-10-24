@@ -45,3 +45,7 @@ enable_confirmations = false
 
 [functions.rub-minds-mcp]
 verify_jwt = false
+
+# Authenticated inside the function with a separate high-entropy worker secret.
+[functions.ai-response-worker]
+verify_jwt = false
