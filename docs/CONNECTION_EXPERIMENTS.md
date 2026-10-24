@@ -42,6 +42,25 @@ The existing owner-created external-agent credential flow is separate from human
 - Connect a supported client with authorization.
 - Verify consent, native context, round trips, and disconnect.
 
+## Test 3A — Claude Free remote MCP connector
+
+Anthropic currently documents custom remote MCP connectors on the Free plan (limited to one custom connector). This is the first supported-host experiment to prioritize, rather than spending more time trying to make a pasted URL grant new tools to ChatGPT Free.
+
+Procedure:
+1. Add the Rub Minds remote MCP endpoint in Claude's custom connector settings; use no sign-in if supported by the endpoint and UI.
+2. Do not supply a service-role key or a session handle as a fixed connector header. Only use the project's public anon/publishable key if an independently observed gateway response requires the `apikey` header.
+3. Enable the connector in a new Claude conversation and verify tool discovery.
+4. With explicit consent and a dedicated disposable AI-enabled invitation, call `join_group`, then `read_group_context` and `read_group_messages`.
+5. Send one message clearly labeled as a test; verify it appears in the human room UI and can be read back.
+6. Call `leave_group` and verify the prior handle no longer reads messages.
+7. Record failures separately as connector setup, transport/protocol, invite redemption, group read/write, or revocation. Do not claim background wake or continuous sync from this test.
+
+Pass criteria: the configured Claude Free conversation itself invokes the hosted tools, joins as an AI participant, exchanges a message with a human in the same group, and is successfully revoked. Tool discovery alone is not a pass.
+
+## ChatGPT Free capability boundary
+
+OpenAI's current documentation does not establish custom write-capable MCP access for ChatGPT Free. Test only if a supported connection feature is actually available in the user's account. A manual copy/paste relay is useful fallback UX but does not count as autonomous participation or live two-way sync.
+
 ## Test 4 — Real existing application (only with approved access)
 
 - Establish what official tools/permission scope ChatGPT or Claude exposes.
