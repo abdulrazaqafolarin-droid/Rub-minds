@@ -5,6 +5,7 @@ import type { User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import { getInviteStatusMessage, isValidInviteToken, readInviteToken } from './inviteLinks';
 import { shouldShowSessionRestoreError } from './authStartup';
+import { errorMessage } from './errorMessage';
 import {
   createCloudRoom, createCloudInvite, redeemCloudInvite, redeemAIInvite, revokeCloudInvite, connectCloudAgent, listAgentConnections, revokeCloudAgent, getCloudRoom, listCloudMessages, listCloudParticipants,
   listCloudRooms, postCloudMessage, signInWithPassword, signUpWithPassword, requestPasswordReset, updateAccountPassword, signOut,
@@ -80,7 +81,7 @@ export default function CloudApp() {
   useEffect(() => {
     if (!user) { setRooms([]); setRoom(null); return; }
     let active = true;
-    void listCloudRooms().then(items => { if (active) setRooms(items); }).catch(e => { if (active) setError(String(e.message || e)); });
+    void listCloudRooms().then(items => { if (active) setRooms(items); }).catch(e => { if (active) setError(errorMessage(e)); });
     return () => { active = false; };
   }, [user]);
   useEffect(() => {
@@ -93,18 +94,18 @@ export default function CloudApp() {
         ]);
         let nextGroupMemories: GroupMemoryEntry[] = [];
         try { nextGroupMemories = await listGroupMemoryEntries(selected); }
-        catch (e) { if (active) setError("Shared group memory could not be loaded: " + String(e instanceof Error ? e.message : e)); }
+        catch (e) { if (active) setError("Shared group memory could not be loaded: " + errorMessage(e)); }
         const humanParticipant = nextParticipants.find(p => p.room_id === selected && p.user_id === user?.id && p.kind === 'human');
         let nextPrivateImports: PrivateSessionImport[] = [];
         if (humanParticipant) {
           try { nextPrivateImports = await listPrivateSessionContexts(selected, humanParticipant.id); }
-          catch (e) { if (active) setError("Private AI context could not be loaded: " + String(e instanceof Error ? e.message : e)); }
+          catch (e) { if (active) setError("Private AI context could not be loaded: " + errorMessage(e)); }
         }
         if (active) {
           setRoom(nextRoom); setMessages(nextMessages); setParticipants(nextParticipants);
           setPrivateImports(nextPrivateImports); setGroupMemories(nextGroupMemories);
         }
-      } catch (e) { if (active) setError(String(e instanceof Error ? e.message : e)); }
+      } catch (e) { if (active) setError(errorMessage(e)); }
     }
     void refresh();
     const unsubscribe = subscribeToCloudMessages(selected, () => { void refresh(); });
@@ -124,7 +125,7 @@ export default function CloudApp() {
       setInviteRoute('choose');
       try { await navigator.clipboard.writeText(link.toString()); }
       catch { /* Show the link for manual copying if clipboard access is denied. */ }
-    } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
+    } catch (e) { setError(errorMessage(e)); }
     finally { setBusy(false); }
   }
   async function addAgent() {
@@ -137,18 +138,18 @@ export default function CloudApp() {
       setAgentName(name.trim()); setAgentSecret(secret);
       setParticipants(await listCloudParticipants(room.id));
       setAgentConnections(await listAgentConnections(room.id));
-    } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
+    } catch (e) { setError(errorMessage(e)); }
     finally { setBusy(false); }
   }
   async function manageAgents() {
     if (!room) return;
     try { setAgentConnections(await listAgentConnections(room.id)); setShowAgents(true); }
-    catch (e) { setError(String(e instanceof Error ? e.message : e)); }
+    catch (e) { setError(errorMessage(e)); }
   }
   async function revokeAgent(id: string) {
     if (!room || !window.confirm('Revoke this agent credential immediately?')) return;
     try { await revokeCloudAgent(id); setAgentConnections(await listAgentConnections(room.id)); }
-    catch (e) { setError(String(e instanceof Error ? e.message : e)); }
+    catch (e) { setError(errorMessage(e)); }
   }
   async function joinInvite() {
     if (!inviteToken) return;
@@ -156,7 +157,7 @@ export default function CloudApp() {
     try {
       const id = await redeemCloudInvite(inviteToken);
       setInviteToken(''); setRooms(await listCloudRooms()); navigate(id);
-    } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
+    } catch (e) { setError(errorMessage(e)); }
     finally { setJoining(false); }
   }
   async function revokeInviteLink() {
@@ -168,7 +169,7 @@ export default function CloudApp() {
       await revokeCloudInvite(token);
       setInviteLink('');
       setError('Invitation revoked. Existing AI credentials must be revoked separately.');
-    } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
+    } catch (e) { setError(errorMessage(e)); }
     finally { setBusy(false); }
   }
   async function copyExistingAiGuide() {
@@ -215,7 +216,7 @@ export default function CloudApp() {
       setSessionContextDraft('');
       setSessionContextNotice("Saved privately to your account. This context is not shared with other group members or AI participants.");
     } catch (e) {
-      setError(String(e instanceof Error ? e.message : e));
+      setError(errorMessage(e));
     } finally { setSessionContextBusy(false); }
   }
   async function shareGroupMemory(e: FormEvent) {
@@ -228,7 +229,7 @@ export default function CloudApp() {
       setGroupMemories(previous => [saved, ...previous.filter(item => item.id !== saved.id)].slice(0, 50));
       setShareMemoryDraft('');
       setSharedMemoryNotice("Selected insight shared with the group.");
-    } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
+    } catch (e) { setError(errorMessage(e)); }
     finally { setSharedMemoryBusy(false); }
   }
   async function removeGroupMemory(memory: GroupMemoryEntry) {
@@ -238,7 +239,7 @@ export default function CloudApp() {
       await deleteGroupMemoryEntry(room.id, currentHumanParticipant.id, memory.id);
       setGroupMemories(previous => previous.filter(item => item.id !== memory.id));
       setSharedMemoryNotice("Shared group memory entry deleted.");
-    } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
+    } catch (e) { setError(errorMessage(e)); }
   }
   async function copyPrivateContextToAI(item: PrivateSessionImport) {
     if (!window.confirm("Copy this private AI context packet to your clipboard? It may contain private project context. Only paste it into the intended AI conversation.")) return;
@@ -256,7 +257,7 @@ export default function CloudApp() {
       await deletePrivateSessionContext(room.id, currentHumanParticipant.id, item.id);
       setPrivateImports(previous => previous.filter(saved => saved.id !== item.id));
       setSessionContextNotice("Private context import deleted.");
-    } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
+    } catch (e) { setError(errorMessage(e)); }
   }
   async function joinAsAI() {
     if (!inviteToken || !inviteTokenValid || !aiInviteConsent || !aiInviteName.trim()) return;
@@ -267,7 +268,7 @@ export default function CloudApp() {
       setAgentSecret(result.agent_secret);
       setInviteToken('');
       setAuthNotice('AI participant created. Save this credential now; it will not be shown again.');
-    } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
+    } catch (e) { setError(errorMessage(e)); }
     finally { setJoining(false); }
   }
   function navigate(id: string) {
@@ -298,7 +299,7 @@ export default function CloudApp() {
         setPassword(''); setConfirmPassword('');
         history.replaceState(null, '', '/');
       }
-    } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
+    } catch (e) { setError(errorMessage(e)); }
     finally { setBusy(false); }
   }
   async function create(e: FormEvent) {
@@ -306,7 +307,7 @@ export default function CloudApp() {
     try {
       const id = await createCloudRoom(title.trim(), objective.trim());
       setRooms(await listCloudRooms()); setCreating(false); setTitle(''); setObjective(''); navigate(id);
-    } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
+    } catch (e) { setError(errorMessage(e)); }
     finally { setBusy(false); }
   }
   async function send(e: FormEvent) {
@@ -315,7 +316,7 @@ export default function CloudApp() {
     try {
       await postCloudMessage(selected, draft.trim());
       setDraft(''); setMessages(await listCloudMessages(selected));
-    } catch (e) { setError(String(e instanceof Error ? e.message : e)); }
+    } catch (e) { setError(errorMessage(e)); }
     finally { setBusy(false); }
   }
   // A signed-in human opening an invitation should join directly. Keep the
@@ -401,7 +402,7 @@ export default function CloudApp() {
       <button className="new-room" onClick={() => setCreating(true)}><Plus size={18}/> New group</button>
       <div className="section-label">YOUR GROUPS <span>{rooms.length}</span></div>
       <nav className="room-list">{rooms.map(r => <button key={r.id} className={'room-link ' + (r.id === selected ? 'active' : '')} onClick={() => navigate(r.id)}><Users size={17}/><span>{r.title}</span></button>)}</nav>
-      <div className="sidebar-footer"><span className="status-dot"/> Supabase connected <button className="logout" onClick={() => { void signOut().catch(e => setError(String(e))); }}><LogOut size={14}/> Sign out</button></div>
+      <div className="sidebar-footer"><span className="status-dot"/> Supabase connected <button className="logout" onClick={() => { void signOut().catch(e => setError(errorMessage(e))); }}><LogOut size={14}/> Sign out</button></div>
     </aside>
     <main className="main">
       {error && <p className="error" role="alert">{error}</p>}
@@ -410,7 +411,7 @@ export default function CloudApp() {
       {inviteLink && <div className="invite-share" role="status"><strong>Invitation created</strong><p>Valid for 24 hours and up to 10 human joins. {inviteAIEnabled ? 'AI route enabled: up to 3 AI participants.' : 'AI route disabled for this invitation.'}</p><input aria-label="Shareable invitation URL" readOnly value={inviteLink} onFocus={e => e.target.select()}/><button onClick={() => { void navigator.clipboard.writeText(inviteLink).catch(() => setError('Select and copy the invitation URL manually.')); }}>Copy invitation</button><button disabled={busy} onClick={() => { void revokeInviteLink(); }}>Revoke invitation</button><button onClick={() => setInviteLink('')}>Close</button></div>}
       {inviteToken ? <section className="empty"><Link2 size={40}/><h1>{inviteTokenValid ? 'Join a Rub Minds group' : 'Invitation link looks incomplete'}</h1><p>{inviteTokenValid ? 'You have received a group invitation. Join to participate in the conversation with your signed-in account.' : `This link contains ${inviteToken.length} characters, but a valid invitation needs 64. Ask the group owner to create and send a new link.`}</p><button className="primary" onClick={() => { void joinInvite(); }} disabled={joining || !inviteTokenValid}>{joining ? 'Joining…' : 'Accept invitation'}</button><p className="disclaimer">Invitations expire after 24 hours or 10 successful joins.</p></section>
       : selected && room ? <>
-        <header className="room-header"><button className="back" onClick={() => navigate('')}><ArrowLeft size={18}/></button><div className="room-heading"><h2>{room.title}</h2><span><span className="status-dot"/> {participants.length} participants · {messages.length} messages</span></div><button className="invite" onClick={() => { void copyGroupRelayContext(); }}><Copy size={17}/> {relayCopied ? 'Copied for AI' : 'Copy group context for AI'}</button><button className="invite" onClick={() => setShowPrivateContext(value => !value)}><Sparkles size={17}/> {showPrivateContext ? 'Close private context' : 'Private AI context'}</button><button className="invite" onClick={() => { const next = !showSharedMemory; setShowSharedMemory(next); if (next) void listGroupMemoryEntries(room.id).then(setGroupMemories).catch(e => setError(String(e instanceof Error ? e.message : e))); }}><Users size={17}/> {showSharedMemory ? 'Close shared memory' : 'Shared memory'}</button>{room.owner_id === user.id && <><button className="invite" disabled={busy} onClick={() => { void makeInvite(); }}><Link2 size={17}/> Invite members</button><button className="invite" disabled={busy} onClick={() => { void addAgent(); }}><Bot size={17}/> Connect AI</button><button className="invite" onClick={() => { void manageAgents(); }}>Manage agents</button></>}</header>
+        <header className="room-header"><button className="back" onClick={() => navigate('')}><ArrowLeft size={18}/></button><div className="room-heading"><h2>{room.title}</h2><span><span className="status-dot"/> {participants.length} participants · {messages.length} messages</span></div><button className="invite" onClick={() => { void copyGroupRelayContext(); }}><Copy size={17}/> {relayCopied ? 'Copied for AI' : 'Copy group context for AI'}</button><button className="invite" onClick={() => setShowPrivateContext(value => !value)}><Sparkles size={17}/> {showPrivateContext ? 'Close private context' : 'Private AI context'}</button><button className="invite" onClick={() => { const next = !showSharedMemory; setShowSharedMemory(next); if (next) void listGroupMemoryEntries(room.id).then(setGroupMemories).catch(e => setError(errorMessage(e))); }}><Users size={17}/> {showSharedMemory ? 'Close shared memory' : 'Shared memory'}</button>{room.owner_id === user.id && <><button className="invite" disabled={busy} onClick={() => { void makeInvite(); }}><Link2 size={17}/> Invite members</button><button className="invite" disabled={busy} onClick={() => { void addAgent(); }}><Bot size={17}/> Connect AI</button><button className="invite" onClick={() => { void manageAgents(); }}>Manage agents</button></>}</header>
         <div className="objective"><Sparkles size={17}/><div><strong>Group objective</strong><p>{room.objective || 'Collaborate together.'}</p></div></div>
         {showPrivateContext && <section className="invite-share private-context-panel">
           <strong>Private context from your existing AI</strong>

@@ -11,6 +11,7 @@ on:
 jobs:
   mcp-migration:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     services:
       postgres:
         image: postgres:17
@@ -283,6 +284,7 @@ jobs:
           SQL
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -319,9 +321,11 @@ jobs:
 
   local-supabase-stack:
     runs-on: ubuntu-latest
+    # GitHub-hosted runners are isolated; serialize only superseded runs of the same PR.
+    # A global non-cancelling group can leave one queued job blocking every future local-stack test.
     concurrency:
-      group: rub-minds-local-supabase-stack
-      cancel-in-progress: false
+      group: rub-minds-local-supabase-stack-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -591,10 +595,14 @@ jobs:
           export LOCAL_SUPABASE_SERVICE_ROLE_KEY="${SERVICE_ROLE_KEY:?Local service-role key missing}"
           export LOCAL_SUPABASE_ANON_KEY="${ANON_KEY:?Local anon key missing}"
           export LOCAL_MCP_ENDPOINT="http://127.0.0.1:54321/functions/v1/rub-minds-mcp"
-          # The raw protocol smoke test and SDK test share the same local IP.
-          # Allow the real 10-joins/minute security window to reset instead of
-          # weakening production rate limits or spoofing client addresses.
-          sleep 62
+          # The raw protocol smoke test and SDK test share a local IP. Clear
+          # only disposable local-DB join limiter rows between independent tests;
+          # keep the real production limit and client-address handling unchanged.
+          curl --fail-with-body --silent --show-error --request DELETE \
+            "$LOCAL_SUPABASE_URL/rest/v1/public_request_rate_limits?bucket=eq.rub-minds-mcp-join" \
+            --header "apikey: $LOCAL_SUPABASE_SERVICE_ROLE_KEY" \
+            --header "Authorization: Bearer $LOCAL_SUPABASE_SERVICE_ROLE_KEY" \
+            --header "Prefer: return=minimal"
           node scripts/local-mcp-sdk-e2e.mjs
       - name: Stop isolated Supabase services
         if: always()

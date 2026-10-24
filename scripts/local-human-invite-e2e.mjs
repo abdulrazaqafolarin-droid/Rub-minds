@@ -146,6 +146,75 @@ try {
   const participantCountAfterReload = await request('/rest/v1/participants?select=id&room_id=eq.' + room.id);
   assert.equal(participantCountAfterReload.length, 2, 'reopening an accepted invite must not create duplicate membership');
   console.log('Existing-account sign-in, invite reload recovery, automatic join, and idempotent re-entry passed:', room.id, existingHuman.id);
+
+  // Revoking an invitation must block a new authenticated human without
+  // deleting existing memberships or incrementing the invitation use count.
+  const blockedEmail = 'rub-minds-human-revoked@example.test';
+  const blockedPassword = 'Local-CI-Revoked-Password-923!x';
+  const blockedUser = await request('/auth/v1/admin/users', {
+    method: 'POST',
+    body: JSON.stringify({
+      email: blockedEmail,
+      password: blockedPassword,
+      email_confirm: true,
+    }),
+  });
+  const revokeRows = await request('/rest/v1/room_invites?token_hash=eq.' + tokenHash, {
+    method: 'PATCH',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify({ revoked_at: new Date().toISOString() }),
+  });
+  assert.equal(revokeRows.length, 1, 'local invitation must be revocable');
+  const revokedUseCount = revokeRows[0].uses;
+  const blockedPage = await browser.newPage();
+  await blockedPage.goto(inviteUrl, { waitUntil: 'networkidle' });
+  await blockedPage.getByRole('button', { name: 'Continue as a human' }).click();
+  await blockedPage.getByLabel('Email address').fill(blockedEmail);
+  await blockedPage.getByLabel('Password', { exact: true }).fill(blockedPassword);
+  await blockedPage.getByRole('button', { name: 'Sign in', exact: true }).click();
+  // Prove the test account authenticated before attributing the result to invite revocation.
+  // The invite auto-join error may replace the group-list UI quickly, so wait for
+  // the durable Supabase session rather than a transient heading in React.
+  await blockedPage.waitForFunction(() => Object.keys(localStorage).some(candidate => {
+    if (!candidate.endsWith('-auth-token')) return false;
+    try { return Boolean(JSON.parse(localStorage.getItem(candidate) || 'null')?.access_token); }
+    catch { return false; }
+  }), null, { timeout: 15000 });
+  const browserAccessToken = await blockedPage.evaluate(() => {
+    const key = Object.keys(localStorage).find(candidate => candidate.endsWith('-auth-token'));
+    if (!key) return null;
+    try { return JSON.parse(localStorage.getItem(key) || 'null')?.access_token || null; }
+    catch { return null; }
+  });
+  assert.ok(browserAccessToken, 'sign-in should persist a Supabase session in the browser');
+  // Isolate the backend's revocation guarantee from any browser-rendering issue.
+  const rejectedRedemption = await fetch(apiUrl + '/rest/v1/rpc/redeem_room_invite', {
+    method: 'POST',
+    headers: {
+      apikey: anonKey,
+      Authorization: 'Bearer ' + browserAccessToken,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ invite_token: inviteToken }),
+  });
+  const rejectedBody = await rejectedRedemption.text();
+  assert.notEqual(rejectedRedemption.status, 200,
+    'revoked human invitation must be rejected by the authenticated database RPC');
+  assert.match(rejectedBody, /Invitation expired or unavailable/i,
+    'database should explain that the revoked invitation is unavailable: ' + rejectedBody);
+  await blockedPage.getByRole('alert').waitFor({ timeout: 15000 });
+  const blockedAlertText = (await blockedPage.getByRole('alert').innerText()).trim();
+  assert.match(blockedAlertText, /Invitation expired or unavailable/i,
+    'browser should display the invitation rejection, not a different auth/UI error: ' + blockedAlertText);
+  const blockedMembership = await request(
+    '/rest/v1/participants?select=id&room_id=eq.' + room.id + '&user_id=eq.' + blockedUser.id,
+  );
+  assert.equal(blockedMembership.length, 0, 'revoked invite must never create a human membership');
+  const afterRevocation = await request('/rest/v1/room_invites?select=uses&token_hash=eq.' + tokenHash);
+  assert.equal(afterRevocation[0].uses, revokedUseCount, 'failed revoked invite must not consume a use');
+  const retainedMembers = await request('/rest/v1/participants?select=id&room_id=eq.' + room.id);
+  assert.equal(retainedMembers.length, 2, 'revocation must not evict existing members');
+  console.log('Revoked human invite fails closed; memberships and invite usage remain unchanged:', room.id);
 } finally {
   if (browser) await browser.close();
   await server.close();
