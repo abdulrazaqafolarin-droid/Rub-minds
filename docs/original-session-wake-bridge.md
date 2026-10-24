@@ -35,3 +35,8 @@ npm run test:original-wake
 ```
 
 The tests use fakes and do not contact provider sites, access user sessions, or modify production.
+
+
+## Added transport adapter
+
+`SupabaseRealtimeWakeSource` subscribes to `INSERT` events for one room, queues a bounded wake signal, and supports heartbeat timeout, cancellation, and cleanup. The bridge must still perform an authorized durable message read after each wake. Realtime is a notification path, not the source of truth. The subscription requires a client authorized to receive that room's message events; the adapter does not bypass RLS or configure production publication settings.
