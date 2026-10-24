@@ -50,6 +50,9 @@ export class OriginalSessionWakeRunner {
     this.onStatus({ status: "running", replies: this.replies });
 
     try {
+      // Concrete wake sources may need an explicit subscription handshake.
+      // Starting the source here avoids a silent "running" loop with no listener.
+      await this.wakeSource.start?.();
       while (this.running && !this.controller.signal.aborted && this.replies < this.maxReplies) {
         try {
           // A timeout is a heartbeat, not a wake event. It lets the bridge recover
@@ -92,6 +95,14 @@ export class OriginalSessionWakeRunner {
       signal?.removeEventListener("abort", abort);
       this.running = false;
       this.controller = null;
+      try {
+        await this.wakeSource.close?.();
+      } catch (error) {
+        this.onStatus({
+          status: "cleanup_error",
+          message: error instanceof Error ? error.message : "Wake source cleanup failed",
+        });
+      }
       this.onStatus({ status: "stopped", replies: this.replies });
     }
   }
