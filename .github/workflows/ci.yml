@@ -1,7 +1,7 @@
 name: Validate Rub Minds
 on:
   push:
-    branches: [main]
+    branches: [main, 'feature/**', 'test/**']
   pull_request:
 jobs:
   build:
