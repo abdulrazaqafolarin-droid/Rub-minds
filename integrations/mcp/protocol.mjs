@@ -99,6 +99,10 @@ export const RUB_MINDS_MCP_TOOLS = [
   }, ["confirm_leave"]) },
   { name: "read_group_context", description: "Read the joined group title, objective, and participant display names so this existing AI conversation understands the collaboration context.", inputSchema: objectSchema({}) },
   { name: "read_group_messages", description: "Read the latest messages in the Rub Minds group this AI participant has joined.", inputSchema: objectSchema({}) },
+  { name: "wait_for_group_messages", description: "Wait briefly for new messages in this joined group using Supabase Realtime. This is a bounded wait, not an always-on listener; call again while actively participating. Supply after_created_at to avoid replaying older messages.", inputSchema: objectSchema({
+    after_created_at: { type: "string", format: "date-time" },
+    timeout_ms: { type: "integer", minimum: 1000, maximum: 15000 },
+  }) },
   { name: "send_group_message", description: "Send a message to the joined Rub Minds group. The host platform may request confirmation before writing.", inputSchema: objectSchema({
     body: { type: "string", minLength: 1, maxLength: 10000 },
     source_message_id: { type: "string", minLength: 1, maxLength: 200 },
@@ -138,6 +142,11 @@ export function validateToolArguments(name, args) {
     case "read_group_messages":
     case "read_session_memory":
       return Object.keys(args).length ? "This tool takes no arguments." : null;
+    case "wait_for_group_messages":
+      if (args.after_created_at !== undefined && (typeof args.after_created_at !== "string" || !Number.isFinite(Date.parse(args.after_created_at)))) return "after_created_at must be a valid date-time string.";
+      if (args.timeout_ms !== undefined && (!Number.isInteger(args.timeout_ms) || args.timeout_ms < 1000 || args.timeout_ms > 15000)) return "timeout_ms must be an integer from 1000 to 15000.";
+      if (Object.keys(args).some((key) => !["after_created_at", "timeout_ms"].includes(key))) return "Unknown wait_for_group_messages argument.";
+      return null;
     case "send_group_message":
       if (typeof args.body !== "string" || !args.body.trim() || args.body.length > 10000) return "body must contain 1-10000 characters.";
       if (args.source_message_id !== undefined && (typeof args.source_message_id !== "string" || !args.source_message_id.trim() || args.source_message_id.length > 200)) return "source_message_id must be 1-200 characters.";

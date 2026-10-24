@@ -113,6 +113,7 @@ try {
   assert.ok(names.includes("leave_group"), "official client did not discover leave_group");
   assert.ok(names.includes("send_group_message"), "official client did not discover send_group_message");
   assert.ok(names.includes("read_group_messages"), "official client did not discover read_group_messages");
+  assert.ok(names.includes("wait_for_group_messages"), "official client did not discover wait_for_group_messages");
 
   for (const entry of rejectedInvites) {
     const rejected = await first.callTool({
@@ -185,6 +186,39 @@ try {
   assert.ok(typeof two?.session_handle === "string" && /^[a-f0-9]{64}$/i.test(two.session_handle));
   assert.notEqual(one.participant_id, two.participant_id, "independent clients must have distinct participants");
   assert.notEqual(one.session_handle, two.session_handle, "independent clients must have distinct session handles");
+
+  // Prove the MCP tool can wait on a real Supabase Realtime Postgres Changes
+  // subscription. Delay the second client's send so the first subscription is
+  // established; a timeout or unavailable subscription must fail this test.
+  const realtimeCursor = new Date().toISOString();
+  const waitingForRealtime = first.callTool({
+    name: "wait_for_group_messages",
+    arguments: {
+      session_handle: one.session_handle,
+      after_created_at: realtimeCursor,
+      timeout_ms: 8000,
+    },
+  });
+  await new Promise(resolve => setTimeout(resolve, 3500));
+  const realtimeBody = "Realtime wake-up from official SDK AI two";
+  const realtimeSend = await second.callTool({
+    name: "send_group_message",
+    arguments: {
+      session_handle: two.session_handle,
+      body: realtimeBody,
+      source_message_id: "official-sdk-realtime-wake",
+    },
+  });
+  assert.notEqual(realtimeSend.isError, true, "second AI could not send the Realtime wake-up message");
+  const realtimeRead = await waitingForRealtime;
+  assert.notEqual(realtimeRead.isError, true, "Realtime wait tool failed: " + JSON.stringify(realtimeRead));
+  assert.equal(realtimeRead.structuredContent?.timed_out, false, "Realtime wait timed out instead of waking on a new message");
+  assert.equal(realtimeRead.structuredContent?.delivery, "realtime", "message was not delivered through the Realtime subscription");
+  assert.ok(
+    realtimeRead.structuredContent?.messages?.some(message => message.body === realtimeBody),
+    "waiting AI did not retrieve the message that woke its Realtime subscription",
+  );
+  console.log("Official MCP SDK received a new group message through the bounded Supabase Realtime wait.");
 
   // Two successful AI joins exhaust this invitation's AI quota. A third
   // independent request must not create a participant or a scoped credential.
