@@ -15,6 +15,8 @@ declare
   v_claimed_job private.ai_response_jobs%rowtype;
   v_second_claim_count integer;
   v_retry_job private.ai_response_jobs%rowtype;
+  v_reply_id uuid;
+  v_commit_job private.ai_response_jobs%rowtype;
 begin
   select u.id into v_owner_id
   from auth.users u
@@ -152,6 +154,59 @@ begin
       and j.lease_token is null and j.available_at > now()
   ) then
     raise exception 'Retry should clear lease and apply backoff';
+  end if;
+
+  -- A valid lease commits exactly one message and completes the job.
+  insert into public.messages(room_id, sender_id, body)
+  values (v_room_id, v_human_id, 'Atomic commit test');
+  select * into v_commit_job
+  from private.claim_ai_response_jobs(1, 60, 5)
+  limit 1;
+  if v_commit_job.id is null then
+    raise exception 'Expected claim for atomic commit test';
+  end if;
+  select private.commit_ai_response_job(v_commit_job.id, v_commit_job.lease_token, 'Autonomous test reply')
+    into v_reply_id;
+  if v_reply_id is null or not exists (
+    select 1 from public.messages m
+    where m.id = v_reply_id and m.room_id = v_room_id
+      and m.sender_id = v_responder_id
+      and m.source_message_id = 'auto-job:' || v_commit_job.id::text
+  ) then
+    raise exception 'Atomic commit failed to persist idempotent reply';
+  end if;
+  if (select count(*) from public.messages m
+      where m.sender_id = v_responder_id
+        and m.source_message_id = 'auto-job:' || v_commit_job.id::text) <> 1 then
+    raise exception 'Autonomous reply must be unique';
+  end if;
+  if (select status from private.ai_response_jobs where id = v_commit_job.id) <> 'completed' then
+    raise exception 'Atomic commit must complete its job';
+  end if;
+
+  -- Disabling an agent between claim and commit must block the reply.
+  insert into public.messages(room_id, sender_id, body)
+  values (v_room_id, v_human_id, 'Revocation race test');
+  select * into v_commit_job
+  from private.claim_ai_response_jobs(1, 60, 5)
+  limit 1;
+  if v_commit_job.id is null then
+    raise exception 'Expected claim for revocation test';
+  end if;
+  update private.room_ai_responders set enabled = false
+  where room_id = v_room_id and participant_id = v_responder_id;
+  begin
+    perform private.commit_ai_response_job(v_commit_job.id, v_commit_job.lease_token, 'Must be rejected');
+    raise exception 'Disabled responder unexpectedly committed a reply';
+  exception when others then
+    if sqlerrm = 'Disabled responder unexpectedly committed a reply' then raise; end if;
+  end;
+  if exists (
+    select 1 from public.messages m
+    where m.sender_id = v_responder_id
+      and m.source_message_id = 'auto-job:' || v_commit_job.id::text
+  ) then
+    raise exception 'Revoked responder reply was persisted';
   end if;
 
   if has_schema_privilege('anon', 'private', 'USAGE')
