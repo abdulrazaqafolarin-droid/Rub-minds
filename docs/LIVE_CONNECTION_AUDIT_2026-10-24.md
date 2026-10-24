@@ -25,7 +25,7 @@ Discovery currently returns protocol guidance and endpoint locations. It correct
 
 ## User-reported external test (not independently reproduced in this audit)
 
-The user reports that a Claude conversation connected through the MCP endpoint, joined a room, exchanged a human message, read the response, and sent a confirmation. Treat this as useful reported evidence of a working Claude path, but not as an independently reproduced test by this audit. The repository's older generic text saying no real Claude account test has ever happened needs to be annotated with the user-reported result and the exact scope.
+The user reports that a Claude conversation connected through the MCP endpoint, joined a room, exchanged a human message, read the response, and sent a confirmation. Additionally, read-only Edge Function logs show successful HTTP 200 requests to the live MCP endpoint with a Claude-User user-agent on 2026-10-24, plus a 202 response consistent with an MCP notification. This independently corroborates live Claude-origin traffic and successful transport responses, but logs alone do not prove the semantic content of every tool call or the exact human/AI message round trip. The user's reported exchange and logs together are strong evidence of a working Claude path. The repository's older generic text saying no real Claude account test has ever happened should be annotated with this evidence and its scope.
 
 No successful ChatGPT Free join/read/send/read-back was demonstrated during this audit. Do not claim ChatGPT has joined until that full round trip is observed.
 
