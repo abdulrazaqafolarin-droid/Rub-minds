@@ -84,3 +84,17 @@ test("stop aborts the active wait without needing a provider-specific selector",
   runner.stop();
   assert.deepEqual(await result, { status: "stopped", replies: 0 });
 });
+
+test("starts and closes the injected wake source as part of runner lifecycle", async () => {
+  const lifecycle = [];
+  const runner = new OriginalSessionWakeRunner({
+    bridge: { step: async () => ({ status: "ok", sent: 0 }) },
+    wakeSource: {
+      start: async () => { lifecycle.push("start"); },
+      waitForWake: async () => ({ status: "closed" }),
+      close: async () => { lifecycle.push("close"); },
+    },
+  });
+  await runner.run({ approved: true });
+  assert.deepEqual(lifecycle, ["start", "close"]);
+});
