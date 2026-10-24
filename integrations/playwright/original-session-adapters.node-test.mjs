@@ -96,3 +96,50 @@ test("discards partial text if the provider keeps streaming until timeout", asyn
   const adapter = createOriginalSessionAdapter("chatgpt", { approval: async () => true, timeoutMs: 5000 });
   await assert.rejects(adapter.ask(makeChatGPTPage(state), "hello"), /partial response discarded/);
 });
+
+
+test("rejects invalid response timeouts at construction", () => {
+  for (const timeoutMs of [0, 4999, 180001, 1.5, NaN]) {
+    assert.throws(
+      () => createOriginalSessionAdapter("chatgpt", { approval: () => true, timeoutMs }),
+      /timeoutMs must be between 5000 and 180000/
+    );
+  }
+});
+
+test("fails closed when no supported composer is visible", async () => {
+  let filled = false;
+  const missingComposerPage = {
+    url: () => "https://chatgpt.com/c/example",
+    locator: () => ({
+      last() { return this; },
+      count: async () => 0,
+      isVisible: async () => false,
+      fill: async () => { filled = true; },
+    }),
+  };
+  const adapter = createOriginalSessionAdapter("chatgpt", { approval: () => true, timeoutMs: 5000 });
+  await assert.rejects(adapter.ask(missingComposerPage, "hello"), /UI changed or conversation is not ready/);
+  assert.equal(filled, false, "adapter must not write if the composer cannot be located");
+});
+
+test("does not click send when provider disables it", async () => {
+  let clicked = false;
+  const page = {
+    url: () => "https://chatgpt.com/c/example",
+    locator(selector) {
+      const item = {
+        last() { return this; },
+        count: async () => 1,
+        isVisible: async () => true,
+        fill: async () => {},
+        isEnabled: async () => false,
+        click: async () => { clicked = true; },
+      };
+      return item;
+    },
+  };
+  const adapter = createOriginalSessionAdapter("chatgpt", { approval: () => true, timeoutMs: 5000 });
+  await assert.rejects(adapter.ask(page, "hello"), /send button unavailable/);
+  assert.equal(clicked, false, "adapter must not send when provider disables the send control");
+});
