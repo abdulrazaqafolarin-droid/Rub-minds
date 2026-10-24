@@ -12,7 +12,7 @@ This folder documents the remote MCP endpoint implemented at:
 - **No real Claude Free or ChatGPT Free session has yet been proven to join a room and exchange messages with a human.** This is the current integration milestone.
 - The endpoint supports a stateless MCP path and a legacy session-header path. The modern path returns an opaque `session_handle`; handles and invite tokens are bearer secrets and must never be pasted into logs or public issues.
 - This is not an official OpenAI or Anthropic connector. The host must explicitly support remote MCP and the user must configure/enable the connector. An invitation URL alone cannot install tools, grant permissions, or wake an idle conversation in the background.
-- Public invite rate limiting has a production migration; still verify the deployed handlers invoke it correctly and fail closed. Do not infer full security readiness from a function version or migration record alone.
+- **Public invite rate limiting is not complete in production:** direct inspection of deployed Edge Function source shows `redeem-ai-invite` v2 and `ai-invite-discovery` v2 do not import/call the shared limiter, although `main` contains the intended implementation and the database migration exists. The hosted `rub-minds-mcp` v2 handler does call the limiter. Keep invite-path rate limiting as a release blocker until the reviewed handlers are deployed with explicit approval and a live over-limit/fail-closed test passes. Do not infer security readiness from a function version or migration record alone.
 
 ## Tools
 
