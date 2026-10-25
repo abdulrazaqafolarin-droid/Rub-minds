@@ -58,13 +58,74 @@ async function isGenerating(page, selectors) {
  * the chance of returning a partial streamed response; it is not a substitute
  * for real authenticated provider-browser validation.
  */
-async function waitForStableAnswer(page, answerLocator, config, timeoutMs) {
+function abortError(submissionState = "unknown") {
+  const error = new Error("Original-session provider interaction was cancelled");
+  error.name = "AbortError";
+  error.submissionState = submissionState;
+  return error;
+}
+
+function throwIfAborted(signal, submissionState = "unknown") {
+  if (signal?.aborted) throw abortError(submissionState);
+}
+
+function awaitWithSignal(promise, signal, submissionState = "unknown") {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(abortError(submissionState));
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(abortError(submissionState));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    Promise.resolve(promise).then(value => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    }, error => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    });
+  });
+}
+
+function waitForTick(ms, signal) {
+  if (signal?.aborted) return Promise.reject(abortError("unknown"));
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => finish(resolve), ms);
+    const onAbort = () => finish(reject, abortError("unknown"));
+    const finish = (complete, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      complete(value);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/**
+ * Wait until the new response is non-empty, no provider stop/generation control
+ * is visible, and the text remains unchanged for a settling window. Supports
+ * AbortSignal cancellation; cancelling after submit is treated as ambiguous.
+ */
+async function waitForStableAnswer(page, answerLocator, config, timeoutMs, signal) {
   const startedAt = Date.now();
   let previousText = "";
   let stableSince = 0;
   const settleMs = 1800;
 
   while (Date.now() - startedAt < timeoutMs) {
+    throwIfAborted(signal, "unknown");
     const text = (await answerLocator.innerText().catch(() => "")).trim();
     if (!text || await isGenerating(page, config.generating)) {
       previousText = "";
@@ -73,10 +134,12 @@ async function waitForStableAnswer(page, answerLocator, config, timeoutMs) {
       previousText = text;
       stableSince = Date.now();
     } else if (stableSince && Date.now() - stableSince >= settleMs) {
+      throwIfAborted(signal, "unknown");
       return text;
     }
-    await new Promise(resolve => setTimeout(resolve, 250));
+    await waitForTick(250, signal);
   }
+  throwIfAborted(signal, "unknown");
   throw new Error("Assistant response did not finish before timeout; partial response discarded");
 }
 
@@ -93,24 +156,37 @@ export function createOriginalSessionAdapter(provider, {
   return Object.freeze({
     provider,
     async ask(page, prompt, metadata = {}) {
+      const signal = metadata.signal;
       assertPage(page, provider);
+      throwIfAborted(signal, "not_submitted");
       if (typeof prompt !== "string" || !prompt.trim() || prompt.length > 10000) {
         throw new TypeError("Prompt must be 1-10000 characters");
       }
-      const allowed = await approval({ provider, messageId: metadata.messageId ?? null, prompt });
+      const allowed = await approval({
+        provider,
+        messageId: metadata.messageId ?? null,
+        prompt,
+        signal,
+      });
+      throwIfAborted(signal, "not_submitted");
       if (allowed !== true) throw new Error("Original-session message not approved");
       // Resolve selectors BEFORE touching the composer; fail closed on UI changes.
       const composer = await findVisible(page, config.composer);
       const send = await findVisible(page, config.send);
       const before = await page.locator(config.assistant.join(", ")).count();
       await composer.fill(prompt);
+      throwIfAborted(signal, "not_submitted");
       if (!await send.isEnabled()) throw new Error("Provider send button unavailable");
+      throwIfAborted(signal, "not_submitted");
+      // After this click begins, cancellation is conservatively treated as
+      // ambiguous: the UI may have submitted even if Playwright is interrupted.
       await send.click();
+      throwIfAborted(signal, "unknown");
       // Require a NEW assistant message and wait for streaming to settle.
       const assistant = page.locator(config.assistant.join(", "));
       const response = assistant.nth(before);
-      await response.waitFor({ state: "visible", timeout: timeoutMs });
-      return waitForStableAnswer(page, response, config, timeoutMs);
+      await awaitWithSignal(response.waitFor({ state: "visible", timeout: timeoutMs }), signal, "unknown");
+      return waitForStableAnswer(page, response, config, timeoutMs, signal);
     },
   });
 }
