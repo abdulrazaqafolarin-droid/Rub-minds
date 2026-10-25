@@ -106,16 +106,22 @@ test("Realtime wait tool validates an exclusive composite cursor and bounds its 
     after_created_at: "2026-10-24T17:00:00.000Z", timeout_ms: 5000,
   }), null); // Legacy timestamp-only callers remain supported.
   assert.equal(validateToolArguments("wait_for_group_messages", {
-    after_created_at: "2026-10-24T17:00:00.000Z", after_message_id: "message-42", timeout_ms: 5000,
+    after_created_at: "2026-10-24T17:00:00.000Z", after_message_id: "00000000-0000-4000-8000-000000000042", timeout_ms: 5000,
   }), null);
   assert.match(validateToolArguments("wait_for_group_messages", { after_created_at: "not-a-date" }), /date-time/);
-  assert.match(validateToolArguments("wait_for_group_messages", { after_message_id: "message-42" }), /requires after_created_at/);
+  assert.match(validateToolArguments("wait_for_group_messages", { after_message_id: "00000000-0000-4000-8000-000000000042" }), /requires after_created_at/);
+  assert.match(validateToolArguments("wait_for_group_messages", {
+    after_created_at: "2026-10-24T17:00:00.000Z", after_message_id: "not-a-uuid",
+  }), /UUID/);
+  assert.match(validateToolArguments("wait_for_group_messages", {
+    after_created_at: "October 24, 2026", after_message_id: "00000000-0000-4000-8000-000000000042",
+  }), /ISO date-time/);
   assert.match(validateToolArguments("wait_for_group_messages", {
     after_created_at: "2026-10-24T17:00:00.000Z", after_message_id: "   ",
-  }), /non-empty/);
+  }), /UUID/);
   assert.match(validateToolArguments("wait_for_group_messages", {
     after_created_at: "2026-10-24T17:00:00.000Z", after_message_id: "x".repeat(201),
-  }), /200 characters/);
+  }), /UUID/);
   assert.match(validateToolArguments("wait_for_group_messages", { timeout_ms: 999 }), /1000 to 15000/);
   assert.match(validateToolArguments("wait_for_group_messages", { timeout_ms: 15001 }), /1000 to 15000/);
   assert.match(validateToolArguments("wait_for_group_messages", { extra: true }), /Unknown/);
