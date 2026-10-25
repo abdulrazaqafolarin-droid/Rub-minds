@@ -502,7 +502,9 @@ test('private resume-link registration is an explicit one-prompt action', async 
   assert.match(h.sent[0], /browser-resume-resume-test-id-1234/);
   assert.match(h.sent[0], /https:\/\/chatgpt\.com\/c\/mock-thread/);
   assert.match(h.sent[0], /Do not call send_group_message/);
-  assert.equal(JSON.parse(h.context.localStorage.getItem('rubMindsPrivateRecoveryMemoryV1')).idempotencyKey, 'browser-resume-resume-test-id-1234');
+  const privateReference = JSON.parse(h.context.localStorage.getItem('rubMindsPrivateRecoveryMemoryV1'));
+  assert.equal(privateReference.idempotencyKey, 'browser-resume-resume-test-id-1234');
+  assert.equal(JSON.stringify(privateReference).includes('mock-thread'), false, 'separate deletion reference must not duplicate the private URL');
   assert.match(panel.querySelector('#rm-status').textContent, /actual MCP tool result/);
 });
 
@@ -572,6 +574,16 @@ test('tampered off-origin recovery URL is cleared before it can be reopened', ()
   assert.equal(h.sent.length, 0);
 });
 
+
+test('private-memory deletion stays disabled until a private locator request exists', () => {
+  const h = makeHarness({ scenario: 'done-first', pathname: '/' });
+  const panel = h.document.getElementById('rubminds-continuation-panel');
+  const forget = panel.querySelector('#rm-forget-private');
+  assert.equal(forget.disabled, true);
+  forget.click();
+  assert.equal(h.sent.length, 0);
+  assert.match(panel.querySelector('#rm-status').textContent, /Idle/);
+});
 
 test('private-memory deletion requires a separate explicit action and targets only the saved key', async () => {
   const h = makeHarness({
