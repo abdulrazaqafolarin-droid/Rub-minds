@@ -183,9 +183,14 @@ export function createOriginalSessionAdapter(provider, {
       if (typeof prompt !== "string" || !prompt.trim() || prompt.length > 10000) {
         throw new TypeError("Prompt must be 1-10000 characters");
       }
+      const safeLabel = value => typeof value === "string"
+        ? value.replace(/[\\r\\n\\t]/g, " ").slice(0, 80)
+        : null;
       const allowed = await approval({
         provider,
         messageId: metadata.messageId ?? null,
+        senderName: safeLabel(metadata.senderName),
+        senderKind: safeLabel(metadata.senderKind),
         prompt,
         signal,
       });
