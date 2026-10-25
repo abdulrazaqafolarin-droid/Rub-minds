@@ -67,6 +67,7 @@ function makeChatGPTPage(state) {
           state.generating = true;
           state.text = "Partial";
           state.onSend?.();
+          if (state.clickError) throw state.clickError;
         },
       };
     }
@@ -118,6 +119,26 @@ test("adds explicit Rub Minds context to group prompts", async () => {
   assert.ok(state.submittedPrompt.includes(JSON.stringify(originalMessage)),
     "the original message should be safely delimited as a JSON string");
   assert.notEqual(state.submittedPrompt, originalMessage);
+});
+
+
+test("labels a rejected Playwright send click as ambiguous, never safely retryable", async () => {
+  const state = {
+    assistantVisible: false,
+    text: "",
+    generating: false,
+    clickError: new Error("Playwright click timed out after the action began"),
+  };
+  const adapter = createOriginalSessionAdapter("chatgpt", {
+    approval: async () => true,
+    timeoutMs: 5000,
+  });
+  await assert.rejects(
+    adapter.ask(makeChatGPTPage(state), "hello"),
+    error => error?.submissionState === "unknown" &&
+      /click timed out/.test(error.message),
+  );
+  assert.ok(state.submittedPrompt, "the prompt was prepared before the send action became ambiguous");
 });
 
 test("discards partial text if the provider keeps streaming until timeout", async () => {
