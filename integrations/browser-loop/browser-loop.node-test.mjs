@@ -78,7 +78,7 @@ class FakeInput extends FakeElement {
   set value(v) { this._value = String(v ?? ''); }
 }
 
-function makeHarness({ scenario, site = 'chatgpt', initialDraft = '', pathname = '/c/mock-thread', savedConversation = null, savedPrivateMemory = null }) {
+function makeHarness({ scenario, site = 'chatgpt', initialDraft = '', pathname = '/c/mock-thread', savedConversation = null, savedPrivateMemory = null, emptyConversation = false }) {
   let activePanel = null;
   const messages = [];
   const hostname = site === 'claude' ? 'claude.ai' : 'chatgpt.com';
@@ -118,8 +118,10 @@ function makeHarness({ scenario, site = 'chatgpt', initialDraft = '', pathname =
     messages.push(node);
     return node;
   }
-  addMessage('user', 'Please continue the Rub Minds task.');
-  addMessage('assistant', 'Earlier context: preserve work and check group messages.');
+  if (!emptyConversation) {
+    addMessage('user', 'Please continue the Rub Minds task.');
+    addMessage('assistant', 'Earlier context: preserve work and check group messages.');
+  }
 
   document = {
     activeElement: null,
@@ -363,6 +365,20 @@ test('active provider generation finishes before the loop sends a continuation',
   assert.match(result.status, /DONE/);
 });
 
+
+test('starting from a provider home/new-chat route never creates a replacement conversation', async () => {
+  const h = makeHarness({ scenario: 'done-first', pathname: '/' });
+  const result = await h.startAndWait();
+  assert.equal(result.sent.length, 0);
+  assert.match(result.status, /open an existing ChatGPT or Claude conversation/);
+});
+
+test('empty conversation routes are rejected even when the URL looks like a chat', async () => {
+  const h = makeHarness({ scenario: 'done-first', pathname: '/c/empty-thread', emptyConversation: true });
+  const result = await h.startAndWait();
+  assert.equal(result.sent.length, 0);
+  assert.match(result.status, /messages visible before starting/);
+});
 
 test('page load does not start a loop without a human click', () => {
   const h = makeHarness({ scenario: 'done-first' });
