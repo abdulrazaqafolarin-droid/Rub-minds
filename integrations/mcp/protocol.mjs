@@ -163,7 +163,8 @@ export function validateToolArguments(name, args) {
       return Object.keys(args).length ? "This tool takes no arguments." : null;
     case "wait_for_group_messages":
       if (args.after_created_at !== undefined && (typeof args.after_created_at !== "string" || !Number.isFinite(Date.parse(args.after_created_at)))) return "after_created_at must be a valid date-time string.";
-      if (args.after_message_id !== undefined && (typeof args.after_message_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(args.after_message_id))) return "after_message_id must be a UUID.";
+      if (args.after_message_id !== undefined && args.after_created_at === undefined) return "after_created_at is required when after_message_id is supplied.";
+      if (args.after_message_id !== undefined && (typeof args.after_message_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(args.after_message_id))) return "after_message_id must be a UUID.";
       if (args.timeout_ms !== undefined && (!Number.isInteger(args.timeout_ms) || args.timeout_ms < 1000 || args.timeout_ms > 15000)) return "timeout_ms must be an integer from 1000 to 15000.";
       if (Object.keys(args).some((key) => !["after_created_at", "after_message_id", "timeout_ms"].includes(key))) return "Unknown wait_for_group_messages argument.";
       return null;
