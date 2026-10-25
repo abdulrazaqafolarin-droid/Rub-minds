@@ -97,7 +97,7 @@ test("explicit backlog mode starts at the epoch cursor and pages older history",
   assert.deepEqual(prompts, ["oldest backlog row", "second backlog row"]);
   assert.deepEqual(sent.map(item => item.sourceMessageId), history.map(item => item.id));
   assert.deepEqual(reads.map(item => item.cursor), [
-    null,
+    { after_created_at: "1970-01-01T00:00:00.000Z", after_message_id: "00000000-0000-1000-8000-000000000000" },
     { after_created_at: "2020-01-01T00:00:00.000000Z", after_message_id: history[0].id },
   ]);
 });
