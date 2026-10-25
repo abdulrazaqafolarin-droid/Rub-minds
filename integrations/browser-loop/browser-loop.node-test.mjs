@@ -78,11 +78,12 @@ class FakeInput extends FakeElement {
   set value(v) { this._value = String(v ?? ''); }
 }
 
-function makeHarness({ scenario, site = 'chatgpt', initialDraft = '', pathname = '/c/mock-thread', savedConversation = null, savedPrivateMemory = null, emptyConversation = false }) {
+function makeHarness({ scenario, site = 'chatgpt', initialDraft = '', pathname = null, savedConversation = null, savedPrivateMemory = null, emptyConversation = false }) {
   let activePanel = null;
   const messages = [];
   const hostname = site === 'claude' ? 'claude.ai' : 'chatgpt.com';
-  const location = { hostname, origin: `https://${hostname}`, pathname, href: `https://${hostname}${pathname}` };
+  const resolvedPathname = pathname ?? (site === 'claude' ? '/chat/mock-thread' : '/c/mock-thread');
+  const location = { hostname, origin: `https://${hostname}`, pathname: resolvedPathname, href: `https://${hostname}${resolvedPathname}` };
   const sent = [];
   let initialGenerationFinished = scenario !== 'initially-generating';
   let sentBeforeInitialGenerationFinished = false;
