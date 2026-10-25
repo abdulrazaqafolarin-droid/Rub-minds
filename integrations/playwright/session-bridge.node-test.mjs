@@ -30,6 +30,7 @@ test("startup baseline ignores pre-existing messages while later messages remain
   const sent = [];
   const bridge = new PlaywrightSessionBridge({
     page: { isClosed: () => false },
+    participantId: "self",
     adapter: { ask: async (_page, body, meta) => { calls.push({ body, meta }); return "reply: " + body; } },
     readMessages: async () => ({ messages: [...messages] }),
     sendMessage: async (body, sourceMessageId) => { sent.push({ body, sourceMessageId }); },
@@ -79,6 +80,7 @@ test("concurrent bridge steps fail fast instead of prompting the same message tw
   const sent = [];
   const bridge = new PlaywrightSessionBridge({
     page: { isClosed: () => false },
+    participantId: "self",
     processExistingMessages: true,
     adapter: { ask: async (_page, body) => { calls.push(body); return "reply: " + body; } },
     readMessages: async () => {
@@ -98,6 +100,71 @@ test("concurrent bridge steps fail fast instead of prompting the same message tw
   assert.equal(firstResult.sent, 1);
   assert.deepEqual(calls, ["message"]);
   assert.deepEqual(sent, [{ body: "reply: message", sourceMessageId: "only-once" }]);
+});
+
+
+test("requires a participant identity so replies cannot be sent without self-filtering", () => {
+  assert.throws(() => new PlaywrightSessionBridge({
+    page: { isClosed: () => false },
+    adapter: { ask: async () => "answer" },
+    readMessages: async () => ({ messages: [] }),
+    sendMessage: async () => ({ ok: true }),
+  }), /participantId is required/);
+});
+
+test("retries an explicitly rejected group-send acknowledgement without asking the provider twice", async () => {
+  let askCount = 0;
+  let sendCount = 0;
+  const delivered = [];
+  const bridge = new PlaywrightSessionBridge({
+    page: { isClosed: () => false },
+    participantId: "self",
+    processExistingMessages: true,
+    adapter: { ask: async () => { askCount++; return "one answer"; } },
+    readMessages: async () => ({ messages: [
+      { id: "ack-message", body: "question", sender_id: "human-1", sender_kind: "human" },
+    ] }),
+    sendMessage: async (body, sourceMessageId) => {
+      sendCount++;
+      if (sendCount === 1) return { ok: false, error: "temporary transport rejection" };
+      delivered.push({ body, sourceMessageId });
+      return { ok: true };
+    },
+  });
+  await assert.rejects(() => bridge.step({ approved: true }), /rejected group reply delivery/);
+  assert.equal(bridge.pendingResponses.has("ack-message"), true);
+  const retry = await bridge.step({ approved: true });
+  assert.equal(retry.sent, 1);
+  assert.equal(askCount, 1);
+  assert.equal(sendCount, 2);
+  assert.deepEqual(delivered, [{ body: "one answer", sourceMessageId: "ack-message" }]);
+});
+
+test("stop aborts a standalone bridge run and preserves its completed answer for later delivery", async () => {
+  let entered;
+  const enteredAsk = new Promise(resolve => { entered = resolve; });
+  const sent = [];
+  const bridge = new PlaywrightSessionBridge({
+    page: { isClosed: () => false },
+    participantId: "self",
+    processExistingMessages: true,
+    adapter: { ask: async (_page, _body, metadata) => {
+      entered();
+      await new Promise(resolve => metadata.signal.addEventListener("abort", resolve, { once: true }));
+      return "provider finished just as stop was requested";
+    } },
+    readMessages: async () => ({ messages: [
+      { id: "stop-message", body: "question", sender_id: "human-1", sender_kind: "human" },
+    ] }),
+    sendMessage: async (body, sourceMessageId) => { sent.push({ body, sourceMessageId }); return { ok: true }; },
+    intervalMs: 1000,
+  });
+  const running = bridge.run({ approved: true });
+  await enteredAsk;
+  bridge.stop();
+  assert.deepEqual(await running, { status: "stopped", replies: 0 });
+  assert.equal(sent.length, 0);
+  assert.equal(bridge.pendingResponses.has("stop-message"), true);
 });
 
 test("requires explicit approval before reading group messages", async () => {
@@ -205,6 +272,7 @@ test("a failed group delivery retries the same saved provider response without a
   const calls = { ask: 0, send: 0, delivered: [] };
   const bridge = new PlaywrightSessionBridge({
     page: { isClosed: () => false },
+    participantId: "self",
     adapter: { ask: async () => { calls.ask++; return "answer"; } },
     readMessages: async () => ({ messages: [message] }),
     processExistingMessages: true,
@@ -256,6 +324,7 @@ test("reports partial sends when a later message has a classified transient fail
   let attempts = 0;
   const bridge = new PlaywrightSessionBridge({
     page: { isClosed: () => false },
+    participantId: "self",
     maxMessagesPerStep: 2,
     adapter: { ask: async (_page, body) => {
       attempts++;

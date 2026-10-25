@@ -70,3 +70,12 @@ The seen-ID cache is bounded (default 2,000 IDs, configurable with a hard range)
 ## Concurrent-step guard
 
 A session bridge now allows only one `step()` operation at a time. A second concurrent call returns `busy` without reading messages or submitting a second provider prompt. This prevents two overlapping wake notifications from racing the in-memory deduplication set. The guard is process-local; a distributed or crash-recoverable deployment still needs durable task claims and idempotent reply receipts.
+
+
+## Identity, acknowledgement, and stop semantics
+
+The session bridge now requires its own Rub Minds participant ID, so it can exclude its own messages rather than accidentally building a self-reply loop. The Realtime wake source accepts only UUID-form room IDs before building the `room_id=eq.<uuid>` filter, and custom channel names are length-bounded.
+
+A group-send callback must throw on transport failure or return an explicit rejection (for example `{ ok: false }`). Negative acknowledgements are treated as failures: the completed provider answer stays pending and is retried with the same source-message ID, without asking the provider a second time. Undefined results remain compatible with existing callbacks, so the adapter must not silently resolve on failed sends.
+
+Calling `stop()` now aborts the standalone `PlaywrightSessionBridge.run()` loop, including its polling wait, and passes that signal to message/provider callbacks. If the provider has already completed an answer at the time cancellation arrives, the answer remains in the in-memory pending-delivery map and is not sent after the cancellation check. Provider adapters and transport callbacks must honor their supplied `AbortSignal`; the browser UI itself can still have an already-submitted operation in flight, which remains an ambiguous outcome that should fail closed.

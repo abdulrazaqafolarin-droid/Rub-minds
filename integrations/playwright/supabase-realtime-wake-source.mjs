@@ -1,3 +1,5 @@
+const ROOM_UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+
 /**
  * Supabase Realtime wake source for a live, authorized original-session runner.
  *
@@ -10,7 +12,11 @@
 export class SupabaseRealtimeWakeSource {
   constructor({ client, roomId, maxQueuedWakes = 1, channelName, subscriptionTimeoutMs = 10000 } = {}) {
     if (!client || typeof client.channel !== "function") throw new TypeError("Supabase client.channel is required");
-    if (typeof roomId !== "string" || !roomId.trim()) throw new TypeError("roomId is required");
+    if (typeof roomId !== "string" || !ROOM_UUID.test(roomId)) throw new TypeError("roomId must be a UUID");
+    if (channelName !== undefined && channelName !== null &&
+        (typeof channelName !== "string" || !channelName.trim() || channelName.length > 200)) {
+      throw new TypeError("channelName must be a non-empty string of at most 200 characters");
+    }
     if (!Number.isInteger(maxQueuedWakes) || maxQueuedWakes < 1 || maxQueuedWakes > 100) {
       throw new RangeError("maxQueuedWakes must be between 1 and 100");
     }

@@ -24,13 +24,46 @@ function errorOutcome(error, sent, processed) {
   };
 }
 
+function assertDeliveryAccepted(result) {
+  if (result === false) throw new Error("Rub Minds rejected group reply delivery");
+  if (result && typeof result === "object" && (
+    result.ok === false ||
+    result.success === false ||
+    result.delivered === false ||
+    result.isError === true ||
+    (result.error !== undefined && result.error !== null)
+  )) {
+    throw new Error("Rub Minds rejected group reply delivery");
+  }
+}
+
+function waitForInterval(intervalMs, signal) {
+  return new Promise(resolve => {
+    let timer;
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      signal?.removeEventListener("abort", finish);
+      resolve();
+    };
+    if (signal?.aborted) {
+      finish();
+      return;
+    }
+    timer = setTimeout(finish, intervalMs);
+    signal?.addEventListener("abort", finish, { once: true });
+  });
+}
+
 export class PlaywrightSessionBridge {
   constructor({
     page,
     adapter,
     readMessages,
     sendMessage,
-    participantId = null,
+    participantId,
     intervalMs = 5000,
     maxReplies = 20,
     maxMessagesPerStep = 1,
@@ -43,9 +76,10 @@ export class PlaywrightSessionBridge {
     if (typeof readMessages !== "function" || typeof sendMessage !== "function") {
       throw new TypeError("Message transport functions required");
     }
-    if (participantId !== null && (typeof participantId !== "string" || !participantId)) {
-      throw new TypeError("participantId must be a non-empty string when provided");
+    if (typeof participantId !== "string" || !participantId.trim()) {
+      throw new TypeError("participantId is required to prevent the bridge from replying to itself");
     }
+    participantId = participantId.trim();
     if (!Number.isInteger(intervalMs) || intervalMs < 1000) {
       throw new RangeError("intervalMs must be >= 1000");
     }
@@ -67,6 +101,7 @@ export class PlaywrightSessionBridge {
       intervalMs, maxReplies, maxMessagesPerStep, processExistingMessages, maxSeenMessageIds,
     });
     this.running = false;
+    this.runController = null;
     this.stepInProgress = false;
     this.initialized = false;
     this.replies = 0;
@@ -264,7 +299,8 @@ export class PlaywrightSessionBridge {
       if (signal?.aborted) return { status: "cancelled", sent, processed, pendingDelivery: true };
 
       try {
-        await this.sendMessage(response.trim(), message.id, { signal });
+        const acknowledgement = await this.sendMessage(response.trim(), message.id, { signal });
+        assertDeliveryAccepted(acknowledgement);
       } catch (error) {
         if (sent > 0) return errorOutcome(error, sent, processed);
         throw error;
@@ -281,28 +317,48 @@ export class PlaywrightSessionBridge {
     if (!approved) throw new Error("Explicit approval required");
     if (this.running) throw new Error("Bridge already running");
     this.running = true;
+    this.runController = new AbortController();
+    const abort = () => this.runController?.abort();
+    if (signal?.aborted) abort();
+    else signal?.addEventListener("abort", abort, { once: true });
+    const runSignal = this.runController.signal;
+    let finalStatus = "stopped";
     try {
-      const initialization = await this.initialize({ approved, signal });
-      if (initialization.status === "cancelled" || initialization.status === "browser_closed") {
-        return { status: initialization.status, replies: this.replies };
+      const initialization = await this.initialize({ approved, signal: runSignal });
+      if (initialization.status === "browser_closed") {
+        finalStatus = "browser_closed";
+        return { status: finalStatus, replies: this.replies };
       }
-      while (this.running && !signal?.aborted && this.replies < this.maxReplies) {
+      if (initialization.status === "cancelled" || runSignal.aborted) {
+        finalStatus = "stopped";
+        return { status: finalStatus, replies: this.replies };
+      }
+      while (this.running && !runSignal.aborted && this.replies < this.maxReplies) {
         const outcome = await this.step({
           approved,
           remainingReplies: this.maxReplies - this.replies,
-          signal,
+          signal: runSignal,
         });
         if ([
           "browser_closed", "limit_reached", "blocked", "cancelled",
-        ].includes(outcome.status)) break;
-        await new Promise(resolve => setTimeout(resolve, this.intervalMs));
+        ].includes(outcome.status)) {
+          finalStatus = outcome.status;
+          break;
+        }
+        await waitForInterval(this.intervalMs, runSignal);
       }
+      if (runSignal.aborted) finalStatus = "stopped";
+      else if (this.replies >= this.maxReplies) finalStatus = "limit_reached";
+      return { status: finalStatus, replies: this.replies };
     } finally {
+      signal?.removeEventListener("abort", abort);
       this.running = false;
+      this.runController = null;
     }
   }
 
   stop() {
     this.running = false;
+    this.runController?.abort();
   }
 }

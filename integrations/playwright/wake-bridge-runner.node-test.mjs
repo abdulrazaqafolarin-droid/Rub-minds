@@ -205,6 +205,7 @@ test("wake runner establishes history baseline before subscribing and processes 
   let messages = [...history];
   const sessionBridge = new PlaywrightSessionBridge({
     page: { isClosed: () => false },
+    participantId: "original-session-test",
     adapter: { ask: async (_page, body, metadata) => {
       prompts.push({ body, metadata });
       return "reply to: " + body;
