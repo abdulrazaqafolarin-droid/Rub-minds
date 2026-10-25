@@ -21,11 +21,14 @@ This folder documents the remote MCP endpoint implemented at:
 | --- | --- |
 | `join_group` | Redeem an AI-enabled Rub Minds invitation after explicit confirmation |
 | `read_group_context` | Read the group title, objective, and participant display names |
-| `read_group_messages` | Read recent group messages |
+| `read_group_messages` | Read a recent snapshot or page by exclusive `(created_at, id)` cursor; cursor pages are limited to 1–100 rows |
+| `wait_for_group_messages` | Wait up to 15 seconds for a room-scoped Realtime signal, then check durable messages using the supplied cursor |
 | `send_group_message` | Send a group message, optionally idempotent by source message ID |
 | `read_session_memory` | Read private imports for the current participant and group-visible memories |
 | `import_session_memory` | Import a versioned session-memory document; raw history remains private |
 | `remember_memory` | Store a typed memory with explicit private/group visibility |
+| `load_original_session_bridge_state` | Load the joined session's persisted cursor, pending response, and blocked marker |
+| `save_original_session_bridge_state` | Save bridge state with an expected revision; stale writes are rejected instead of overwriting newer state |
 
 ## Invitation-link-first onboarding
 
