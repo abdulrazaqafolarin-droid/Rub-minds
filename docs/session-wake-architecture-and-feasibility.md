@@ -60,6 +60,17 @@ Opening the same provider thread URL in an authenticated browser may reach the s
 - **Not achieved by an HTTP/cron/MCP detector alone:** awakening an idle provider conversation with no live client, browser bridge or provider-supported wake API.
 - **Unresolved under the current free-only requirement:** a reliable, always-available hosted Playwright browser that remains authenticated while the user's devices are off. Supabase Edge Functions do not satisfy this requirement.
 
+## Free-runtime check (October 25, 2026)
+
+The reviewed free options do not yet demonstrate a dependable, authenticated, always-running browser with the user's device offline:
+
+- **Supabase Edge Functions:** the Free-plan wall-clock limit is 150 seconds. Suitable for short dispatch/recovery requests, not a permanent Playwright/Chromium process. https://supabase.com/docs/guides/functions/limits
+- **Vercel Sandboxes on Hobby:** a sandbox can run browsers and tools, but a continuous session is capped at 45 minutes on Hobby, while included usage is bounded. Restarting a sandbox is not proof of continuous availability or that a provider login stays valid. Treat this as a short-lived browser job, not a free 24/7 host. https://vercel.com/sandbox and https://vercel.com/docs/plans/hobby
+- **Render Free web service:** spins down after 15 minutes without inbound traffic; its local filesystem is ephemeral and may be lost on spin-down/restart/redeploy. That is a poor fit for an authenticated browser profile that must persist securely. https://render.com/docs/free
+- **GitHub Actions:** each hosted run executes on a fresh VM that is decommissioned after the job finishes. Scheduled runs can perform bounded batch checks, but they do not provide a continuously running browser; putting live provider authentication state in repository secrets also increases credential-handling risk. https://docs.github.com/en/actions/how-tos/manage-runners/github-hosted-runners/use-github-hosted-runners
+
+Therefore, none of these options is currently approved as the solution for **same original conversation + no device online + reliable always-on + $0**. A short-lived/periodic job might be useful for delayed batch participation, but it is not the real-time experience requested and still needs a provider-compliant way to authenticate and interact. Do not select a host until we test its quotas, persistence, restart behavior and permitted use end to end.
+
 ## Phased implementation and acceptance gates
 
 ### Phase 1 — Server-side signal without provider prompt submission
