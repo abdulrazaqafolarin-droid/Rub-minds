@@ -221,3 +221,19 @@ test("wake runner composes with the real PlaywrightSessionBridge contract", asyn
   assert.equal(prompts[0].metadata.messageId, "message-42");
   assert.deepEqual(sent, [{ body: "reply to: please collaborate", sourceMessageId: "message-42" }]);
 });
+
+
+test("partial successful replies remain counted when a bridge step reports an error", async () => {
+  let calls = 0;
+  const runner = new OriginalSessionWakeRunner({
+    bridge: { step: async () => {
+      calls++;
+      return { status: "error", sent: 1, processed: 2, message: "second message failed safely" };
+    } },
+    wakeSource: { waitForWake: async () => ({ status: "wake" }), close: async () => {} },
+    maxReplies: 1,
+    maxConsecutiveErrors: 3,
+  });
+  assert.deepEqual(await runner.run({ approved: true }), { status: "error", replies: 1 });
+  assert.equal(calls, 1);
+});
