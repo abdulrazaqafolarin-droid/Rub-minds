@@ -75,3 +75,17 @@ test("removes the channel when subscription fails", async () => {
   assert.equal(removed, 1);
   assert.equal(source.channel, null);
 });
+
+test("bounds a subscription handshake that never reports a status", async () => {
+  let removed = 0;
+  const channel = { on: () => channel, subscribe: () => channel };
+  const client = {
+    channel: () => channel,
+    removeChannel: async value => { assert.equal(value, channel); removed++; },
+  };
+  const source = new SupabaseRealtimeWakeSource({ client, roomId: "r", subscriptionTimeoutMs: 100 });
+  await assert.rejects(() => source.start(), /local handshake timeout/);
+  assert.equal(removed, 1);
+  assert.equal(source.channel, null);
+});
+
