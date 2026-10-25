@@ -623,7 +623,26 @@ jobs:
           assert.equal(cursorMessages.at(-1)?.id, cursorBacklog.at(-1).id, "cursor should return the last unread row in the batch");
           assert.ok(cursorMessages.every(message => message.body !== "Cursor anchor"),
             "cursor result must exclude the anchor message itself");
-          console.log("Local MCP exclusive composite cursor returned all 60 tied-timestamp rows in order.");
+          assert.deepEqual(cursorRead.structuredContent?.next_cursor, {
+            after_created_at: cursorTimestamp,
+            after_message_id: cursorBacklog.at(-1).id,
+          }, "next_cursor must point to the last row returned in the page");
+
+          const idleWait = await rpc("tools/call", 10, {
+            name: "wait_for_group_messages",
+            arguments: {
+              session_handle: joined.structuredContent.session_handle,
+              ...cursorRead.structuredContent.next_cursor,
+              timeout_ms: 1000,
+              limit: 25,
+            },
+          });
+          assert.equal(idleWait.isError, undefined, "timeout cursor continuation failed: " + JSON.stringify(idleWait));
+          assert.equal(idleWait.structuredContent?.timed_out, true, "empty cursor page should time out");
+          assert.deepEqual(idleWait.structuredContent?.messages, [], "empty cursor page should not replay earlier messages");
+          assert.deepEqual(idleWait.structuredContent?.next_cursor, cursorRead.structuredContent.next_cursor,
+            "timeout must preserve the latest cursor so clients can retry without losing their position");
+          console.log("Local MCP exclusive composite cursor returned all 60 tied-timestamp rows, then preserved its cursor on timeout.");
 
           const participantRows = await getRows("participants?select=id,display_name&room_id=eq." + room.id + "&kind=eq.external_agent");
           assert.equal(participantRows.length, 2, "two independent AI joins plus idempotent retries must create exactly two AI participants");

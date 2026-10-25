@@ -99,10 +99,11 @@ export const RUB_MINDS_MCP_TOOLS = [
   }, ["confirm_leave"]) },
   { name: "read_group_context", description: "Read the joined group title, objective, and participant display names so this existing AI conversation understands the collaboration context.", inputSchema: objectSchema({}) },
   { name: "read_group_messages", description: "Read the latest messages in the Rub Minds group this AI participant has joined.", inputSchema: objectSchema({}) },
-  { name: "wait_for_group_messages", description: "Wait up to 15 seconds for new messages in this joined group using Supabase Realtime. For exact cursor advancement, pass both after_created_at and after_message_id from the last processed message; messages are ordered by created_at then id, and the cursor is exclusive. Repeat only while the user asked for listening and this assistant turn remains active. This cannot wake an idle model or start a new turn after the host ends the turn.", inputSchema: objectSchema({
+  { name: "wait_for_group_messages", description: "Wait up to 15 seconds for new messages in this joined group using Supabase Realtime. Returns a next_cursor on both message and timeout responses. After processing every returned message, pass both next_cursor fields into the next call; the cursor is exclusive and ordered by created_at then id. Optional limit bounds the page to 1-100 messages. Repeat only while the user asked for listening and this assistant turn remains active. This cannot wake an idle model or start a new turn after the host ends the turn.", inputSchema: objectSchema({
     after_created_at: { type: "string", format: "date-time" },
     after_message_id: { type: "string", format: "uuid" },
     timeout_ms: { type: "integer", minimum: 1000, maximum: 15000 },
+    limit: { type: "integer", minimum: 1, maximum: 100 },
   }) },
   { name: "send_group_message", description: "Send a message to the joined Rub Minds group. The host platform may request confirmation before writing.", inputSchema: objectSchema({
     body: { type: "string", minLength: 1, maxLength: 10000 },
@@ -243,7 +244,8 @@ export function validateToolArguments(name, args) {
           !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(args.after_message_id))) return "after_message_id must be a UUID.";
       if (args.after_message_id !== undefined && args.after_created_at === undefined) return "after_message_id requires after_created_at so the message cursor can be ordered safely.";
       if (args.timeout_ms !== undefined && (!Number.isInteger(args.timeout_ms) || args.timeout_ms < 1000 || args.timeout_ms > 15000)) return "timeout_ms must be an integer from 1000 to 15000.";
-      if (Object.keys(args).some((key) => !["after_created_at", "after_message_id", "timeout_ms"].includes(key))) return "Unknown wait_for_group_messages argument.";
+      if (args.limit !== undefined && (!Number.isInteger(args.limit) || args.limit < 1 || args.limit > 100)) return "limit must be an integer from 1 to 100.";
+      if (Object.keys(args).some((key) => !["after_created_at", "after_message_id", "timeout_ms", "limit"].includes(key))) return "Unknown wait_for_group_messages argument.";
       return null;
     case "send_group_message":
       if (typeof args.body !== "string" || !args.body.trim() || args.body.length > 10000) return "body must contain 1-10000 characters.";

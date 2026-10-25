@@ -89,3 +89,6 @@ This is still an in-memory cursor, not a durable task ledger. It can prevent gap
 
 
 Cursor validation now requires both a parseable timestamp (with timezone and microsecond precision) and a stable non-empty message ID. Rows missing either part are not allowed to advance the exclusive cursor, even if their timestamp would otherwise sort later. The wake runner recognizes a concurrent `busy` bridge result as a non-fatal state; it waits for the next bounded signal rather than counting normal serialization as an adapter failure.
+
+
+The MCP wait tool returns an explicit `next_cursor` on successful message pages and empty timeout/unavailable responses. A timeout or Realtime subscription failure triggers one final authorized durable read, so messages whose notifications were missed are still returned when present. The caller should keep the returned cursor unchanged on an empty timeout and advance to the cursor from a non-empty page only after processing every returned row. Page size is configurable from 1 to 100 (default 100).

@@ -140,3 +140,10 @@ The old timestamp-only cursor remains accepted for compatibility and retains its
 ## Cursor-aware browser bridge reads
 
 The Playwright bridge now hands its exact composite cursor to the injected `readMessages` adapter and expects rows ordered by `(created_at, id)`. It advances through the prefix it has safely handled, leaving a failed or ambiguously delivered message at or after the cursor for controlled recovery. This cursor and the pending-response map are process-local and do not provide crash recovery; durable per-participant cursor/task rows are still required for unattended delivery. The legacy `read_group_messages` call returns the latest 50 messages; `wait_for_group_messages` supports an exclusive composite cursor and returns at most 100 rows per call, so clients must advance to the last processed row before requesting the next page.
+
+
+## MCP cursor continuity and timeout recovery
+
+`wait_for_group_messages` returns an explicit `next_cursor` for both non-empty pages and timeouts. If the caller starts with no cursor, the server snapshots the latest message and returns its composite watermark even when no previous rows exist (timestamp-only fallback). The caller should advance to `next_cursor` only after it has processed every message in the returned page. A timeout or failed Realtime handshake now performs a final durable read before returning, then includes the current cursor so a client can retry from the same position instead of re-baselining and skipping messages. The optional `limit` argument bounds a page from 1 to 100 rows; the default is 100.
+
+This improves recovery from missed Realtime notifications but still does not reactivate an idle model after its host turn ends.

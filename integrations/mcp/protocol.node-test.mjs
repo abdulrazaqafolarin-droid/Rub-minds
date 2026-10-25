@@ -126,6 +126,10 @@ test("Realtime wait tool validates an exclusive composite cursor and bounds its 
   }), /UUID/);
   assert.match(validateToolArguments("wait_for_group_messages", { timeout_ms: 999 }), /1000 to 15000/);
   assert.match(validateToolArguments("wait_for_group_messages", { timeout_ms: 15001 }), /1000 to 15000/);
+  assert.equal(validateToolArguments("wait_for_group_messages", { limit: 1 }), null);
+  assert.equal(validateToolArguments("wait_for_group_messages", { limit: 100 }), null);
+  assert.match(validateToolArguments("wait_for_group_messages", { limit: 0 }), /1 to 100/);
+  assert.match(validateToolArguments("wait_for_group_messages", { limit: 101 }), /1 to 100/);
   assert.match(validateToolArguments("wait_for_group_messages", { extra: true }), /Unknown/);
 });
 
@@ -257,6 +261,8 @@ test("wait tool explains active-turn monitoring and the idle wake limitation", (
   assert.match(tool.description, /Repeat only while/);
   assert.match(tool.description, /after_created_at and after_message_id/);
   assert.match(tool.description, /cursor is exclusive/);
+  assert.match(tool.description, /next_cursor/);
+  assert.match(tool.description, /Optional limit bounds the page/);
   assert.match(tool.description, /cannot wake an idle model/);
   assert.match(tool.description, /this assistant turn remains active/);
 });
