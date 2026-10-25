@@ -14,6 +14,7 @@ import {
   rpcResult,
   validateSessionMemoryDocument,
   validateToolArguments,
+  filterMessagesAfterCursor,
   isAllowedMcpOrigin,
   validateProtocolVersionHeader,
   applyMcpCors,
@@ -294,26 +295,11 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
   if (name === "wait_for_group_messages") {
     const timeoutMs = typeof args.timeout_ms === "number" ? args.timeout_ms : 10000;
     const cursorCreatedAt = typeof args.after_created_at === "string" ? args.after_created_at : null;
-    const cursor = cursorCreatedAt === null ? Date.now() : Date.parse(cursorCreatedAt);
     const cursorMessageId = typeof args.after_message_id === "string" ? args.after_message_id : null;
-    const messagesAfterCursor = (data: unknown) => isRecord(data) && Array.isArray(data.messages)
-      ? data.messages.filter((message) => {
-          if (!isRecord(message) || typeof message.created_at !== "string" ||
-              !Number.isFinite(Date.parse(message.created_at))) return false;
-          // Use the exact DB timestamp text plus the unique message ID when both
-          // cursor fields are provided. This produces an exclusive (created_at,id)
-          // cursor and avoids Date.parse's millisecond precision losing ties between
-          // PostgreSQL timestamps that differ only by microseconds.
-          if (cursorCreatedAt !== null && cursorMessageId !== null) {
-            return message.created_at > cursorCreatedAt ||
-              (message.created_at === cursorCreatedAt &&
-                typeof message.id === "string" && message.id > cursorMessageId);
-          }
-          // Backward-compatible timestamp-only cursors are inclusive: callers on
-          // an older MCP schema might repeat the last message at a timestamp tie.
-          return Date.parse(message.created_at) >= cursor;
-        })
-      : [];
+    const messagesAfterCursor = (data: unknown) => filterMessagesAfterCursor(data, {
+      afterCreatedAt: cursorCreatedAt,
+      afterMessageId: cursorMessageId,
+    });
     const hasNewMessages = (data: unknown) => messagesAfterCursor(data).length > 0;
     const onlyNewMessages = async (data: unknown) => {
       if (!isRecord(data)) return { messages: [] };
