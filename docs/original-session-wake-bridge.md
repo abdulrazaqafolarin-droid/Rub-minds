@@ -40,3 +40,12 @@ The tests use fakes and do not contact provider sites, access user sessions, or 
 ## Added transport adapter
 
 `SupabaseRealtimeWakeSource` subscribes to `INSERT` events for one room, queues a bounded wake signal, and supports heartbeat timeout, cancellation, and cleanup. The bridge must still perform an authorized durable message read after each wake. Realtime is a notification path, not the source of truth. The subscription requires a client authorized to receive that room's message events; the adapter does not bypass RLS or configure production publication settings.
+
+
+## Runner adapter contract
+
+The runner is deliberately single-use: it closes its wake source during cleanup, so a restart must construct a new runner and a fresh source. `bridge.step` receives an `AbortSignal`, `wakeReason` (`wake` or `timeout`) and `remainingReplies`. The provider adapter must honor cancellation, check/claim durable work before submitting anything, and return a typed result with an integer `sent` count no greater than the supplied remaining cap.
+
+Recognized non-retry terminal states are `browser_closed`, `limit_reached`, `blocked`, `auth_required`, `thread_mismatch`, and `cancelled`. An `error` result or thrown exception uses the bounded retry/error threshold; unknown statuses or invalid reply counts fail closed. Timeout heartbeats only trigger a queue check, not prompt submission. The returned status preserves terminal blockers so an operator can distinguish an authentication challenge from a normal stop.
+
+The unit tests now cover an already-aborted signal, cancellation during the provider adapter call, single-use lifecycle, malformed reply counts, adapter error results, terminal provider blockers, and cleanup after startup failure. These remain simulated adapter tests; they do not prove that a real ChatGPT or Claude page can be woken.
