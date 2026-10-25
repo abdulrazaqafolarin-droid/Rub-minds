@@ -432,6 +432,7 @@ jobs:
           const names = catalog.tools.map(tool => tool.name);
           assert.ok(names.includes("join_group"), "join_group missing from live tool catalog");
           assert.ok(names.includes("leave_group"), "leave_group missing from live tool catalog");
+          assert.ok(names.includes("wait_for_group_messages"), "wait_for_group_messages missing from live tool catalog");
           const join = catalog.tools.find(tool => tool.name === "join_group");
           assert.ok(join.inputSchema.required.includes("join_request_key"), "join_group must require idempotency key");
 
@@ -571,12 +572,59 @@ jobs:
           assert.ok(read.structuredContent.messages.some(message => message.body === "Message from CI AI one to the shared group"),
             "AI #2 did not receive AI #1's group message");
 
+          // Prove composite cursor reads are not truncated by the legacy latest-50 RPC.
+          // All 60 messages share an exact timestamp and sort after a known cursor ID,
+          // exercising the (created_at, id) tie-breaker against the real local PostgREST API.
           async function getRows(path) {
             const response = await fetch(apiUrl + "/rest/v1/" + path, { headers: adminHeaders });
             const payload = await response.json();
             assert.equal(response.status, 200, "local database verification failed for " + path + ": " + JSON.stringify(payload));
             return payload;
           }
+          const sentRows = await getRows("messages?select=id,created_at,sender_id&id=eq." + sent.structuredContent.message_id);
+          assert.equal(sentRows.length, 1, "could not find the source message for the cursor fixture");
+          const cursorAnchorId = "10000000-0000-4000-8000-000000000001";
+          const cursorTimestamp = new Date(Date.parse(sentRows[0].created_at) + 2000).toISOString();
+          const cursorBacklog = Array.from({ length: 60 }, (_, index) => ({
+            id: "20000000-0000-4000-8000-" + String(index + 1).padStart(12, "0"),
+            room_id: room.id,
+            sender_id: joined.structuredContent.participant_id,
+            body: "Cursor backlog " + String(index + 1).padStart(3, "0"),
+            created_at: cursorTimestamp,
+          }));
+          const cursorRows = [{
+            id: cursorAnchorId,
+            room_id: room.id,
+            sender_id: joined.structuredContent.participant_id,
+            body: "Cursor anchor",
+            created_at: cursorTimestamp,
+          }, ...cursorBacklog];
+          const cursorInsert = await fetch(apiUrl + "/rest/v1/messages", {
+            method: "POST",
+            headers: { ...adminHeaders, Prefer: "return=minimal" },
+            body: JSON.stringify(cursorRows),
+          });
+          assert.equal(cursorInsert.status, 201, "could not create cursor backlog: " + await cursorInsert.text());
+          const cursorRead = await rpc("tools/call", 9, {
+            name: "wait_for_group_messages",
+            arguments: {
+              session_handle: joined.structuredContent.session_handle,
+              after_created_at: cursorTimestamp,
+              after_message_id: cursorAnchorId,
+              timeout_ms: 1000,
+            },
+          });
+          assert.equal(cursorRead.isError, undefined, "composite cursor read failed: " + JSON.stringify(cursorRead));
+          const cursorMessages = cursorRead.structuredContent?.messages;
+          assert.ok(Array.isArray(cursorMessages), "cursor tool did not return a message array");
+          assert.equal(cursorMessages.length, 60,
+            "composite cursor must return all 60 unread messages instead of truncating to the latest 50");
+          assert.equal(cursorMessages[0]?.id, cursorBacklog[0].id, "cursor should return messages in ascending composite-key order");
+          assert.equal(cursorMessages.at(-1)?.id, cursorBacklog.at(-1).id, "cursor should return the last unread row in the batch");
+          assert.ok(cursorMessages.every(message => message.body !== "Cursor anchor"),
+            "cursor result must exclude the anchor message itself");
+          console.log("Local MCP exclusive composite cursor returned all 60 tied-timestamp rows in order.");
+
           const participantRows = await getRows("participants?select=id,display_name&room_id=eq." + room.id + "&kind=eq.external_agent");
           assert.equal(participantRows.length, 2, "two independent AI joins plus idempotent retries must create exactly two AI participants");
           const inviteRows = await getRows("room_invites?select=ai_uses&id=eq." + invites[0].id);
