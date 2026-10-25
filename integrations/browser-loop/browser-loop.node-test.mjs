@@ -559,7 +559,7 @@ test('saved recovery link can be explicitly forgotten from a different provider 
   assert.equal(h.context.localStorage.getItem('rubMindsConversationBindingV1'), null);
   assert.ok(h.context.localStorage.getItem('rubMindsPrivateRecoveryMemoryV1'), 'private-memory deletion reference must survive local URL removal');
   assert.match(panel.querySelector('#rm-recovery').textContent, /No recovery link saved/);
-  assert.match(panel.querySelector('#rm-status').textContent, /removed from this browser/);
+  assert.match(panel.querySelector('#rm-status').textContent, /Local recovery link removed/);
   assert.equal(h.sent.length, 0);
 });
 
