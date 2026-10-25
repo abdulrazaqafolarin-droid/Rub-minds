@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { OriginalSessionWakeRunner } from "./wake-bridge-runner.mjs";
+import { PlaywrightSessionBridge } from "./session-bridge.mjs";
 
 test("requires explicit approval and a valid bridge/wake source", async () => {
   const runner = new OriginalSessionWakeRunner({
@@ -192,4 +193,31 @@ test("subscription startup failure reports error and still cleans up", async () 
   await assert.rejects(() => runner.run({ approved: true }), /subscription handshake timeout/);
   assert.equal(closed, 1);
   assert.equal(statuses.at(-1), "error");
+});
+
+
+test("wake runner composes with the real PlaywrightSessionBridge contract", async () => {
+  const sent = [];
+  const prompts = [];
+  const sessionBridge = new PlaywrightSessionBridge({
+    page: { isClosed: () => false },
+    adapter: { ask: async (_page, body, metadata) => {
+      prompts.push({ body, metadata });
+      return "reply to: " + body;
+    } },
+    readMessages: async () => ({
+      messages: [{ id: "message-42", body: "please collaborate", sender_id: "human-42", sender_kind: "human" }],
+    }),
+    sendMessage: async (body, sourceMessageId) => { sent.push({ body, sourceMessageId }); },
+    maxReplies: 5,
+  });
+  const runner = new OriginalSessionWakeRunner({
+    bridge: sessionBridge,
+    wakeSource: { waitForWake: async () => ({ status: "wake" }), close: async () => {} },
+    maxReplies: 1,
+  });
+  assert.deepEqual(await runner.run({ approved: true }), { status: "limit_reached", replies: 1 });
+  assert.equal(prompts.length, 1);
+  assert.equal(prompts[0].metadata.messageId, "message-42");
+  assert.deepEqual(sent, [{ body: "reply to: please collaborate", sourceMessageId: "message-42" }]);
 });
