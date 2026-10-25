@@ -8,7 +8,8 @@ A manually started userscript for an **already-open ChatGPT or Claude conversati
 - Shows **Start, Pause, Resume and Stop**, three participation modes (**Smart**, **Mentions only**, **Task focus**), an editable prompt, delay, reply timeout and a hard 1–20 cycle cap (default: 5).
 - Prompts the conversation to check its already-connected Rub Minds MCP tools, decide naturally whether to contribute, and continue its existing work. It also tells the AI to use the existing bounded `wait_for_group_messages` MCP tool when available, allowing a response to incoming group activity during a running cycle instead of relying only on repeated reads.
 - Stops if a person types during the loop, the conversation changes, the composer has a draft, or the output cannot be verified.
-- Makes no network requests itself. It persists only cycle-limit settings and the selected participation mode by default; custom prompt text is not persisted. Conversation recovery is a separate, explicit opt-in and stores only the current provider HTTPS origin/path locally, with query strings and fragments removed. It does not persist an invite token, MCP credential or conversation history.
+- Makes no network requests itself. It persists only non-sensitive control settings and the selected participation mode by default; custom prompt text is not persisted. Conversation recovery is a separate, explicit opt-in and stores only an allowlisted provider chat URL locally, with query strings and fragments removed. It does not persist an invite token, MCP credential or conversation history.
+- **Optional private Rub Minds recovery:** clicking **Save link privately in Rub Minds** sends one prompt to the existing AI conversation asking it to call `remember_memory` with `visibility=private`. This is participant-private memory, not a group message; verify the returned MCP tool result before relying on it. The link is not shared automatically.
 
 ## What it does not do
 
@@ -23,8 +24,9 @@ A manually started userscript for an **already-open ChatGPT or Claude conversati
 2. Create a new script in the manager and replace its contents with \`rub-minds-continuation.user.js\`. Save it and reload the AI conversation.
 3. Confirm the **Rub Minds · Continuation** panel appears. Review the prompt and confirm Rub Minds MCP tools are available to the conversation.
 4. Start manually with a low cycle cap. Keep the tab open and monitor it.
-5. Optionally enable **Remember this conversation on this browser for recovery** while viewing a specific chat. If you later open the provider home page or another thread, use **Reopen saved conversation** to return to it. This URL stays on the same provider origin in local browser storage; it is not sent to Rub Minds or the group. Uncheck the option to delete it.
-6. Use **Pause**, **Resume** or **Stop** as needed. Do not leave it unattended.
+5. Optionally enable **Remember this conversation on this browser for recovery** while viewing a specific chat. If you later open the provider home page or another thread, use **Reopen saved conversation** to return to it. This URL stays in that provider origin's local browser storage and is not uploaded automatically. Uncheck the option to delete it.
+6. If you also want a recovery locator in Rub Minds, click **Save link privately in Rub Minds** while the saved conversation is open. This sends one prompt to the original AI and requires connected MCP tools. Check the tool result; the prompt being sent is not proof the memory was stored.
+7. Use **Pause**, **Resume** or **Stop** as needed. Do not leave it unattended.
 
 ## Control-line contract
 
