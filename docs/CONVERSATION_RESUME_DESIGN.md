@@ -18,7 +18,9 @@ The continuation userscript now supports an explicit, browser-local recovery che
 4. If the user returns to the provider home page or another chat, the panel offers **Reopen saved conversation**.
 5. Reopening does not start participation. The user still presses **Start**; MCP must already be configured in the original conversation.
 
-The stored link is not uploaded, sent to MCP, or posted in the group. Unchecking the option removes the local record. The recovery URL is restricted to the current provider origin and HTTPS. This deliberately gives an immediate recovery convenience without leaking a private conversation locator to the room.
+The local recovery link is not uploaded automatically. Unchecking the option removes the local record. The route is restricted to the current provider's HTTPS chat routes, with query strings and fragments removed.
+
+A separate **Save link privately in Rub Minds** button can send a one-time prompt to the current AI conversation asking it to call the existing `remember_memory` MCP tool with `visibility=private`. The tool stores a private memory associated with that participant, not a group message; the user must verify the actual tool result because sending a prompt is not proof that storage occurred. The userscript does not make the network request itself. This two-step consent flow keeps automatic local recovery separate from the deliberate server-side private-memory save.
 
 ## Why not put the raw URL in the group by default?
 
