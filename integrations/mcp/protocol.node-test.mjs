@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { messagesAfterCursor } from "./protocol.mjs";
 import {
   MCP_PROTOCOL_VERSION,
   MCP_MODERN_PROTOCOL_VERSION,
@@ -146,4 +147,34 @@ test("memory visibility is explicit and idempotency keys are bounded", () => {
 test("JSON-RPC helpers preserve request ids and error codes", () => {
   assert.deepEqual(rpcResult("abc", { ok: true }), { jsonrpc: "2.0", id: "abc", result: { ok: true } });
   assert.deepEqual(rpcError(2, -32601, "Method not found"), { jsonrpc: "2.0", id: 2, error: { code: -32601, message: "Method not found" } });
+});
+
+
+test("exact message cursor avoids replay and preserves newer messages with equal timestamps", () => {
+  const same = "2026-10-25T10:00:00.000Z";
+  const messages = [
+    { id: "older", created_at: "2026-10-25T09:59:59.000Z" },
+    { id: "cursor", created_at: same },
+    { id: "same-time-newer", created_at: same },
+    { id: "newer", created_at: "2026-10-25T10:00:01.000Z" },
+  ];
+  assert.deepEqual(messagesAfterCursor(messages, Date.parse(same), "cursor").map(m => m.id), ["same-time-newer", "newer"]);
+});
+
+test("time fallback uses strict greater-than and rejects malformed messages", () => {
+  const messages = [
+    { id: "equal", created_at: "2026-10-25T10:00:00.000Z" },
+    { id: "newer", created_at: "2026-10-25T10:00:01.000Z" },
+    { id: "bad", created_at: "not-a-date" },
+    null,
+  ];
+  assert.deepEqual(messagesAfterCursor(messages, Date.parse("2026-10-25T10:00:00.000Z")).map(m => m.id), ["newer"]);
+});
+
+test("missing exact cursor falls back to the timestamp", () => {
+  const messages = [
+    { id: "equal", created_at: "2026-10-25T10:00:00.000Z" },
+    { id: "newer", created_at: "2026-10-25T10:00:01.000Z" },
+  ];
+  assert.deepEqual(messagesAfterCursor(messages, Date.parse("2026-10-25T10:00:00.000Z"), "not-in-window").map(m => m.id), ["newer"]);
 });
