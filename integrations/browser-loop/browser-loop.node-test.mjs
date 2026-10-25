@@ -458,3 +458,26 @@ test('turning recovery off removes the local link without touching group state',
   assert.equal(h.context.localStorage.getItem('rubMindsConversationBindingV1'), null);
   assert.match(panel.querySelector('#rm-status').textContent, /group was not changed/);
 });
+
+
+test('recovery never stores a non-conversation provider route', () => {
+  const h = makeHarness({ scenario: 'done-first', pathname: '/settings' });
+  const panel = h.document.getElementById('rubminds-continuation-panel');
+  const remember = panel.querySelector('#rm-remember');
+  remember.checked = true;
+  remember.dispatchEvent({ type: 'change' });
+  assert.equal(h.context.localStorage.getItem('rubMindsConversationBindingV1'), null);
+  assert.equal(remember.checked, false);
+  assert.match(panel.querySelector('#rm-status').textContent, /Open a specific ChatGPT or Claude conversation/);
+});
+
+test('Claude conversation recovery accepts a same-origin chat route', () => {
+  const h = makeHarness({ scenario: 'done-first', site: 'claude', pathname: '/chat/claude-thread' });
+  const panel = h.document.getElementById('rubminds-continuation-panel');
+  const remember = panel.querySelector('#rm-remember');
+  remember.checked = true;
+  remember.dispatchEvent({ type: 'change' });
+  const saved = JSON.parse(h.context.localStorage.getItem('rubMindsConversationBindingV1'));
+  assert.equal(saved.url, 'https://claude.ai/chat/claude-thread');
+  assert.equal(saved.provider, 'Claude');
+});
