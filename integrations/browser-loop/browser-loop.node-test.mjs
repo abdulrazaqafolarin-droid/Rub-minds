@@ -240,6 +240,25 @@ function makeHarness({ scenario, site = 'chatgpt', initialDraft = '', pathname =
   });
   vm.runInContext(source, context, { filename: 'rub-minds-continuation.user.js' });
 
+  // Inject a new human message precisely when the next-cycle delay begins,
+  // after the prior assistant reply has returned CONTINUE.
+  if (scenario === 'human-between-cycles') {
+    const statusNode = activePanel.querySelector('#rm-status');
+    let statusText = statusNode.textContent;
+    let injected = false;
+    Object.defineProperty(statusNode, 'textContent', {
+      configurable: true,
+      get() { return statusText; },
+      set(value) {
+        statusText = String(value);
+        if (!injected && statusText.startsWith('Ready for cycle 2/')) {
+          injected = true;
+          addMessage('user', 'Human message arrived during the continuation delay.');
+        }
+      },
+    });
+  }
+
   return {
     context, sent, messages, document, composer,
     get sentBeforeInitialGenerationFinished() { return sentBeforeInitialGenerationFinished; },
@@ -300,6 +319,14 @@ test('new human activity interrupts automation', async () => {
   const result = await h.startAndWait();
   assert.equal(result.sent.length, 1);
   assert.match(result.status, /new user message was detected/);
+});
+
+test('human message arriving between CONTINUE and the next send prevents another prompt', async () => {
+  const h = makeHarness({ scenario: 'human-between-cycles' });
+  const result = await h.startAndWait();
+  assert.equal(result.sent.length, 1);
+  assert.match(result.sent[0], /RUBMINDS_LOOP: CONTINUE/);
+  assert.match(result.status, /human message arrived during the continuation delay/);
 });
 
 test('PAUSE stops rather than repeatedly asking for action', async () => {
