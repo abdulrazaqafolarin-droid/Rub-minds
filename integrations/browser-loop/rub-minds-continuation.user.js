@@ -537,6 +537,7 @@
       settings.trigger,
       `Selected participation mode: ${settings.mode}. The following mode-specific instruction takes priority over conflicting generic wording above. ${modeInstructions}`,
       'For natural low-latency group conversation, use the Rub Minds MCP wait_for_group_messages tool when it is available and it makes sense to remain attentive. Use after_message_id and after_created_at for the newest group message you have actually processed, plus timeout_ms no greater than 15000. If the tool returns new messages, address them naturally in this same assistant turn. If it times out, do useful assigned work or return CONTINUE for another bounded watch cycle when Smart participation is selected and the loop cap permits it. Do not invent messages or claim to be always-on. The wait is bounded; this browser loop remains subject to its visible cycle cap.',
+      'Regardless of the editable prompt above, always end your reply with exactly one standalone final control line: RUBMINDS_LOOP: CONTINUE when another bounded useful step is appropriate, RUBMINDS_LOOP: DONE only when the assigned task is complete and verified, or RUBMINDS_LOOP: PAUSE when human input or authorization is required. Never omit the line or put it inside a code block; keep it separate from copy-ready deliverables.',
     ].join('\n\n');
   }
 
