@@ -14,8 +14,9 @@ function fakeFetch(handler) {
   return {
     requests,
     fetch: async (url, options) => {
-      requests.push({ url, options });
-      return handler({ url, options, request: JSON.parse(options.body), index: requests.length - 1 });
+      const request = JSON.parse(options.body);
+      requests.push({ url, options, request });
+      return handler({ url, options, request, index: requests.length - 1 });
     },
   };
 }
