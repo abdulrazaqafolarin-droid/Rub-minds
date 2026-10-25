@@ -15,6 +15,15 @@ function isSafeToRetry(error) {
   ));
 }
 
+function errorOutcome(error, sent, processed) {
+  return {
+    status: "error",
+    sent,
+    processed,
+    message: error instanceof Error ? error.message : "Session bridge error",
+  };
+}
+
 export class PlaywrightSessionBridge {
   constructor({
     page,
@@ -89,7 +98,12 @@ export class PlaywrightSessionBridge {
     for (const [messageId, response] of this.pendingResponses) {
       if (signal?.aborted) return { status: "cancelled", sent, processed };
       if (this.replies >= effectiveLimit || sent >= remainingReplies) break;
-      await this.sendMessage(response, messageId, { signal });
+      try {
+        await this.sendMessage(response, messageId, { signal });
+      } catch (error) {
+        if (sent > 0) return errorOutcome(error, sent, processed);
+        throw error;
+      }
       this.pendingResponses.delete(messageId);
       this.replies++;
       sent++;
@@ -97,9 +111,17 @@ export class PlaywrightSessionBridge {
     if (this.replies >= effectiveLimit) return { status: "limit_reached", sent, processed };
     if (signal?.aborted) return { status: "cancelled", sent, processed };
 
-    const result = await this.readMessages({ signal });
+    let result;
+    try {
+      result = await this.readMessages({ signal });
+    } catch (error) {
+      if (sent > 0) return errorOutcome(error, sent, processed);
+      throw error;
+    }
     if (!result || !Array.isArray(result.messages)) {
-      throw new Error("Invalid group message response");
+      const error = new Error("Invalid group message response");
+      if (sent > 0) return errorOutcome(error, sent, processed);
+      throw error;
     }
 
     for (const message of result.messages) {
@@ -135,6 +157,7 @@ export class PlaywrightSessionBridge {
         if (isSafeToRetry(error)) {
           // Retry only when the adapter explicitly guarantees no prompt was sent.
           this.seen.delete(message.id);
+          if (sent > 0) return errorOutcome(error, sent, processed);
           throw error;
         }
         this.blockedMessage = { messageId: message.id, reason: "provider_outcome_unknown" };
@@ -163,7 +186,12 @@ export class PlaywrightSessionBridge {
       this.pendingResponses.set(message.id, response.trim());
       if (signal?.aborted) return { status: "cancelled", sent, processed, pendingDelivery: true };
 
-      await this.sendMessage(response.trim(), message.id, { signal });
+      try {
+        await this.sendMessage(response.trim(), message.id, { signal });
+      } catch (error) {
+        if (sent > 0) return errorOutcome(error, sent, processed);
+        throw error;
+      }
       this.pendingResponses.delete(message.id);
       this.replies++;
       sent++;
