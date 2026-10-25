@@ -95,7 +95,10 @@
       const parsed = new URL(value);
       if (parsed.protocol !== 'https:' || parsed.hostname !== location.hostname ||
           !Object.prototype.hasOwnProperty.call(SITES, parsed.hostname)) return null;
-      if (!parsed.pathname || parsed.pathname === '/' || parsed.pathname === '/new') return null;
+      const isConversationRoute = parsed.hostname === 'claude.ai'
+        ? /^\/(?:project\/[^/]+\/)?chat\/[^/]+(?:\/.*)?$/.test(parsed.pathname)
+        : /^\/(?:g\/[^/]+\/)?c\/[^/]+(?:\/.*)?$/.test(parsed.pathname);
+      if (!isConversationRoute) return null;
       // Strip query/hash so unrelated transient state or invite parameters are not retained.
       return `${parsed.origin}${parsed.pathname}`;
     } catch (_) { return null; }
