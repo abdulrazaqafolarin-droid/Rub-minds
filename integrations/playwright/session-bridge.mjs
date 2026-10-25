@@ -226,11 +226,12 @@ export class PlaywrightSessionBridge {
 
     // Deliver completed replies before prompting the provider again. If a send
     // failed ambiguously, resend the same body with the same idempotency key.
-    for (const [messageId, response] of this.pendingResponses) {
+    for (const [messageId, pending] of this.pendingResponses) {
       if (signal?.aborted) return { status: "cancelled", sent, processed };
       if (this.replies >= effectiveLimit || sent >= remainingReplies) break;
       try {
-        await this.sendMessage(response, messageId, { signal });
+        const acknowledgement = await this.sendMessage(pending.body, messageId, { signal });
+        assertDeliveryAccepted(acknowledgement);
       } catch (error) {
         if (sent > 0) return errorOutcome(error, sent, processed);
         throw error;
