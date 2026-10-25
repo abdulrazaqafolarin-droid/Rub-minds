@@ -34,6 +34,8 @@ export class PlaywrightSessionBridge {
     intervalMs = 5000,
     maxReplies = 20,
     maxMessagesPerStep = 1,
+    processExistingMessages = false,
+    maxSeenMessageIds = 2000,
   }) {
     if (!page || typeof page.isClosed !== "function" || !adapter || typeof adapter.ask !== "function") {
       throw new TypeError("Playwright page and AI adapter.ask are required");
@@ -53,12 +55,19 @@ export class PlaywrightSessionBridge {
     if (!Number.isInteger(maxMessagesPerStep) || maxMessagesPerStep < 1 || maxMessagesPerStep > 10) {
       throw new RangeError("maxMessagesPerStep must be between 1 and 10");
     }
+    if (typeof processExistingMessages !== "boolean") {
+      throw new TypeError("processExistingMessages must be a boolean");
+    }
+    if (!Number.isInteger(maxSeenMessageIds) || maxSeenMessageIds < 50 || maxSeenMessageIds > 100000) {
+      throw new RangeError("maxSeenMessageIds must be between 50 and 100000");
+    }
 
     Object.assign(this, {
       page, adapter, readMessages, sendMessage, participantId,
-      intervalMs, maxReplies, maxMessagesPerStep,
+      intervalMs, maxReplies, maxMessagesPerStep, processExistingMessages, maxSeenMessageIds,
     });
     this.running = false;
+    this.initialized = false;
     this.replies = 0;
     this.seen = new Set();
     // Keep completed provider replies pending until Rub Minds acknowledges them.
@@ -66,6 +75,50 @@ export class PlaywrightSessionBridge {
     this.pendingResponses = new Map();
     // Ambiguous provider outcomes must stop automation rather than risk duplicate prompts.
     this.blockedMessage = null;
+  }
+
+  markSeen(messageId) {
+    if (typeof messageId !== "string" || !messageId) return;
+    if (this.seen.has(messageId)) this.seen.delete(messageId);
+    this.seen.add(messageId);
+    while (this.seen.size > this.maxSeenMessageIds) {
+      const oldest = this.seen.values().next().value;
+      if (oldest === undefined) break;
+      this.seen.delete(oldest);
+    }
+  }
+
+  /**
+   * Establish a startup baseline before subscribing to wake notifications.
+   * Existing history is ignored by default. Enable processExistingMessages only
+   * when the owner explicitly wants a newly connected bridge to process backlog.
+   */
+  async initialize({ approved = false, signal } = {}) {
+    if (!approved) {
+      throw new Error("Explicit approval required before accessing an AI browser session");
+    }
+    if (this.initialized) return { status: "ready", baselineMessages: 0, alreadyInitialized: true };
+    if (signal?.aborted) return { status: "cancelled", baselineMessages: 0 };
+    if (this.page.isClosed()) return { status: "browser_closed", baselineMessages: 0 };
+
+    if (this.processExistingMessages) {
+      this.initialized = true;
+      return { status: "ready", baselineMessages: 0, processExistingMessages: true };
+    }
+
+    const result = await this.readMessages({ signal });
+    if (signal?.aborted) return { status: "cancelled", baselineMessages: 0 };
+    if (!result || !Array.isArray(result.messages)) {
+      throw new Error("Invalid group message response while establishing startup baseline");
+    }
+    let baselineMessages = 0;
+    for (const message of result.messages) {
+      if (!message || typeof message.id !== "string" || !message.id) continue;
+      this.markSeen(message.id);
+      baselineMessages++;
+    }
+    this.initialized = true;
+    return { status: "baseline", baselineMessages };
   }
 
   async step({ approved = false, remainingReplies = this.maxReplies - this.replies, signal } = {}) {
@@ -89,6 +142,19 @@ export class PlaywrightSessionBridge {
     const effectiveLimit = Math.min(this.maxReplies, this.replies + remainingReplies);
     if (this.replies >= effectiveLimit) return { status: "limit_reached", sent: 0, processed: 0 };
     if (this.page.isClosed()) return { status: "browser_closed", sent: 0, processed: 0 };
+
+    const initialization = await this.initialize({ approved, signal });
+    if (initialization.status === "cancelled" || initialization.status === "browser_closed") {
+      return { status: initialization.status, sent: 0, processed: 0 };
+    }
+    if (initialization.status === "baseline") {
+      return {
+        status: "baseline",
+        sent: 0,
+        processed: 0,
+        baselineMessages: initialization.baselineMessages,
+      };
+    }
 
     let sent = 0;
     let processed = 0;
@@ -132,7 +198,7 @@ export class PlaywrightSessionBridge {
 
       // Mark every observed ID once, including ignored messages, so polling does
       // not repeatedly reconsider the same event.
-      this.seen.add(message.id);
+      this.markSeen(message.id);
       if (this.participantId && message.sender_id === this.participantId) continue;
       if (message.sender_kind !== "human" && !AI_KINDS.has(message.sender_kind)) continue;
 
@@ -146,7 +212,7 @@ export class PlaywrightSessionBridge {
         response = await this.adapter.ask(this.page, message.body, {
           messageId: message.id,
           senderKind: message.sender_kind,
-          senderName: message.display_name ?? null,
+          senderName: message.display_name ?? message.sender_name ?? null,
           signal,
         });
       } catch (error) {
@@ -205,6 +271,10 @@ export class PlaywrightSessionBridge {
     if (this.running) throw new Error("Bridge already running");
     this.running = true;
     try {
+      const initialization = await this.initialize({ approved, signal });
+      if (initialization.status === "cancelled" || initialization.status === "browser_closed") {
+        return { status: initialization.status, replies: this.replies };
+      }
       while (this.running && !signal?.aborted && this.replies < this.maxReplies) {
         const outcome = await this.step({
           approved,

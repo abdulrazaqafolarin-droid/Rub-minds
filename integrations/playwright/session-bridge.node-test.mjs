@@ -2,7 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { PlaywrightSessionBridge } from "./session-bridge.mjs";
 
-function makeBridge({ messages = [], participantId = "self", maxReplies = 10, maxMessagesPerStep = 1 } = {}) {
+function makeBridge({
+  messages = [], participantId = "self", maxReplies = 10,
+  maxMessagesPerStep = 1, processExistingMessages = true, maxSeenMessageIds = 2000,
+} = {}) {
   const calls = [];
   const sent = [];
   const bridge = new PlaywrightSessionBridge({
@@ -10,12 +13,61 @@ function makeBridge({ messages = [], participantId = "self", maxReplies = 10, ma
     participantId,
     maxReplies,
     maxMessagesPerStep,
+    processExistingMessages,
+    maxSeenMessageIds,
     adapter: { ask: async (_page, body, meta) => { calls.push({ body, meta }); return "reply: " + body; } },
     readMessages: async () => ({ messages }),
     sendMessage: async (body, sourceMessageId) => { sent.push({ body, sourceMessageId }); return { ok: true }; },
   });
   return { bridge, calls, sent };
 }
+
+
+test("startup baseline ignores pre-existing messages while later messages remain eligible", async () => {
+  const history = [{ id: "old-1", body: "old question", sender_kind: "human" }];
+  let messages = [...history];
+  const calls = [];
+  const sent = [];
+  const bridge = new PlaywrightSessionBridge({
+    page: { isClosed: () => false },
+    adapter: { ask: async (_page, body, meta) => { calls.push({ body, meta }); return "reply: " + body; } },
+    readMessages: async () => ({ messages: [...messages] }),
+    sendMessage: async (body, sourceMessageId) => { sent.push({ body, sourceMessageId }); },
+  });
+
+  const baseline = await bridge.initialize({ approved: true });
+  assert.deepEqual(baseline, { status: "baseline", baselineMessages: 1 });
+  const oldOnly = await bridge.step({ approved: true });
+  assert.equal(oldOnly.sent, 0);
+  assert.equal(calls.length, 0);
+
+  messages = [...history, { id: "new-2", body: "new question", sender_kind: "human" }];
+  const fresh = await bridge.step({ approved: true });
+  assert.equal(fresh.sent, 1);
+  assert.deepEqual(calls.map(call => call.body), ["new question"]);
+  assert.deepEqual(sent.map(item => item.sourceMessageId), ["new-2"]);
+});
+
+test("processing startup history is an explicit option", async () => {
+  const { bridge, calls, sent } = makeBridge({
+    processExistingMessages: true,
+    messages: [{ id: "history-1", body: "process this backlog", sender_kind: "human" }],
+  });
+  const result = await bridge.step({ approved: true });
+  assert.equal(result.sent, 1);
+  assert.equal(calls[0].body, "process this backlog");
+  assert.equal(sent[0].sourceMessageId, "history-1");
+});
+
+test("seen-message memory stays bounded and evicts oldest IDs first", () => {
+  const { bridge } = makeBridge({ maxSeenMessageIds: 50, messages: [] });
+  for (let i = 0; i < 100; i++) bridge.markSeen("message-" + i);
+  assert.equal(bridge.seen.size, 50);
+  assert.equal(bridge.seen.has("message-0"), false);
+  assert.equal(bridge.seen.has("message-49"), false);
+  assert.equal(bridge.seen.has("message-50"), true);
+  assert.equal(bridge.seen.has("message-99"), true);
+});
 
 test("requires explicit approval before reading group messages", async () => {
   const { bridge, calls } = makeBridge({ messages: [{ id: "m1", body: "hello", sender_kind: "human" }] });
@@ -124,6 +176,7 @@ test("a failed group delivery retries the same saved provider response without a
     page: { isClosed: () => false },
     adapter: { ask: async () => { calls.ask++; return "answer"; } },
     readMessages: async () => ({ messages: [message] }),
+    processExistingMessages: true,
     sendMessage: async (body, sourceMessageId) => {
       calls.send++;
       calls.delivered.push({ body, sourceMessageId });

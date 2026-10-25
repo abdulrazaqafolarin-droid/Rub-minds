@@ -196,28 +196,44 @@ test("subscription startup failure reports error and still cleans up", async () 
 });
 
 
-test("wake runner composes with the real PlaywrightSessionBridge contract", async () => {
+test("wake runner establishes history baseline before subscribing and processes only new messages", async () => {
   const sent = [];
   const prompts = [];
+  const history = [{
+    id: "old-message", body: "old group history", sender_id: "human-1", sender_kind: "human",
+  }];
+  let messages = [...history];
   const sessionBridge = new PlaywrightSessionBridge({
     page: { isClosed: () => false },
     adapter: { ask: async (_page, body, metadata) => {
       prompts.push({ body, metadata });
       return "reply to: " + body;
     } },
-    readMessages: async () => ({
-      messages: [{ id: "message-42", body: "please collaborate", sender_id: "human-42", sender_kind: "human" }],
-    }),
+    readMessages: async () => ({ messages: [...messages] }),
     sendMessage: async (body, sourceMessageId) => { sent.push({ body, sourceMessageId }); },
     maxReplies: 5,
   });
+  let started = false;
   const runner = new OriginalSessionWakeRunner({
     bridge: sessionBridge,
-    wakeSource: { waitForWake: async () => ({ status: "wake" }), close: async () => {} },
+    wakeSource: {
+      start: async () => {
+        started = true;
+        // Simulate a group message arriving after the history baseline, during
+        // the hand-off to the Realtime subscription.
+        messages = [...history, {
+          id: "message-42", body: "please collaborate", sender_id: "human-42", sender_kind: "human",
+        }];
+      },
+      waitForWake: async () => ({ status: "wake" }),
+      close: async () => {},
+    },
     maxReplies: 1,
   });
   assert.deepEqual(await runner.run({ approved: true }), { status: "limit_reached", replies: 1 });
+  assert.equal(started, true);
   assert.equal(prompts.length, 1);
+  assert.equal(prompts[0].body, "please collaborate");
   assert.equal(prompts[0].metadata.messageId, "message-42");
   assert.deepEqual(sent, [{ body: "reply to: please collaborate", sourceMessageId: "message-42" }]);
 });

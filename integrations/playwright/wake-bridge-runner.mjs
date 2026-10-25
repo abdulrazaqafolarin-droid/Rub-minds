@@ -71,6 +71,22 @@ export class OriginalSessionWakeRunner {
         return { status: "stopped", replies: this.replies };
       }
 
+      // Establish the original conversation's history baseline BEFORE listening
+      // for new messages. This avoids replaying old group history, while messages
+      // arriving during the hand-off remain eligible when the durable store is read.
+      const initialization = await this.bridge.initialize?.({
+        approved: true,
+        signal: this.controller.signal,
+      });
+      if (this.controller.signal.aborted || initialization?.status === "cancelled") {
+        finalStatus = "stopped";
+        return { status: "stopped", replies: this.replies };
+      }
+      if (initialization?.status === "browser_closed") {
+        finalStatus = "browser_closed";
+        return { status: finalStatus, replies: this.replies };
+      }
+
       // A bounded handshake prevents a dead Realtime subscription from making
       // this runner look alive when it has no listener.
       await this.wakeSource.start?.();

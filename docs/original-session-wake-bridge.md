@@ -58,3 +58,10 @@ The existing `PlaywrightSessionBridge` can now be passed directly to `OriginalSe
 Once a provider answer is complete, it is held as a pending response until the Rub Minds transport acknowledges it. A failed/ambiguous delivery retries the same response with the same source-message ID, relying on the server-side deduplication constraint. This pending-response cache and the ambiguous-message blocker are currently **in-memory only**. A process crash can lose that state; a durable task/response ledger is still required before unattended or crash-recoverable operation can be claimed.
 
 The isolated command `npm run test:original-wake` covers the Playwright session bridge, wake runner, and Realtime wake source. It uses fake browser/transport adapters and never submits a prompt to ChatGPT or Claude.
+
+
+## Startup and in-memory deduplication boundaries
+
+The runner initializes the session bridge's baseline **before** starting its Realtime subscription. By default, messages already present in the room at startup are marked as seen rather than replayed into the provider conversation. This avoids accidentally prompting the original AI about old group history. Set `processExistingMessages: true` only when the owner explicitly wants backlog processing. Messages arriving after the baseline remain eligible, including messages sent during the startup-to-subscription hand-off because later steps read the durable group messages.
+
+The seen-ID cache is bounded (default 2,000 IDs, configurable with a hard range). This prevents unbounded memory growth, but does not make the bridge crash-safe: the baseline, seen IDs, pending answers, and ambiguity blocker are still process-local. A persistent worker needs a durable per-participant cursor and task/response ledger before it can claim lossless unattended processing.
