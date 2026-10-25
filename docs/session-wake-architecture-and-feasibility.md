@@ -147,3 +147,10 @@ The Playwright bridge now hands its exact composite cursor to the injected `read
 `wait_for_group_messages` returns an explicit `next_cursor` for both non-empty pages and timeouts. If the caller starts with no cursor, the server snapshots the latest message and returns its composite watermark even when no previous rows exist (timestamp-only fallback). The caller should advance to `next_cursor` only after it has processed every message in the returned page. A timeout or failed Realtime handshake now performs a final durable read before returning, then includes the current cursor so a client can retry from the same position instead of re-baselining and skipping messages. The optional `limit` argument bounds a page from 1 to 100 rows; the default is 100.
 
 This improves recovery from missed Realtime notifications but still does not reactivate an idle model after its host turn ends.
+
+
+## Empty-room initialization and end-to-end wake coverage
+
+A new listener without a cursor first snapshots the room's latest message. If no message exists yet, it uses a minimal valid composite cursor at the Unix epoch rather than relying on the Edge runtime's wall clock; this ensures a message created immediately after the empty-room snapshot is eligible even if runtime and database clocks differ slightly.
+
+The isolated local-Supabase CI now tests the real MCP HTTP endpoint with a live in-flight `wait_for_group_messages` call while it inserts new rows through PostgREST. It checks that a new message is returned, the response is not marked timed out, and `next_cursor` points at the last returned row. If an insertion races with initial cursor setup, the test advances using the returned timeout cursor and retries, so it also exercises the no-loss continuation behavior. It remains a local disposable test and makes no production writes.

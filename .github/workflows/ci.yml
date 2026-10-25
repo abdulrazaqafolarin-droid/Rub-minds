@@ -642,6 +642,76 @@ jobs:
           assert.deepEqual(idleWait.structuredContent?.messages, [], "empty cursor page should not replay earlier messages");
           assert.deepEqual(idleWait.structuredContent?.next_cursor, cursorRead.structuredContent.next_cursor,
             "timeout must preserve the latest cursor so clients can retry without losing their position");
+          // Exercise a live wait call. New rows use timestamps after the existing
+          // future-dated cursor fixture so they are guaranteed to be after its watermark.
+          let liveWakeResult = null;
+          let liveWakeMessageId = null;
+          let liveCursor = null;
+          for (let attempt = 0; attempt < 4 && !liveWakeResult; attempt++) {
+            let waitingFinished = false;
+            const waitArguments = {
+              session_handle: joined.structuredContent.session_handle,
+              ...(liveCursor || {}),
+              timeout_ms: 3000,
+              limit: 10,
+            };
+            const waitPromise = rpc("tools/call", 11 + attempt, {
+              name: "wait_for_group_messages",
+              arguments: waitArguments,
+            }).then(result => {
+              waitingFinished = true;
+              return result;
+            }).catch(error => {
+              waitingFinished = true;
+              throw error;
+            });
+
+            // If the first new row races with establishing the no-cursor watermark,
+            // a subsequent attempt continues from the returned cursor and proves
+            // the next row is not lost.
+            await new Promise(resolve => setTimeout(resolve, 350));
+            const liveId = "30000000-0000-4000-8000-" + String(attempt + 1).padStart(12, "0");
+            const liveTimestamp = new Date(Date.parse(cursorTimestamp) + (attempt + 1) * 1000).toISOString();
+            const liveInsert = await fetch(apiUrl + "/rest/v1/messages", {
+              method: "POST",
+              headers: { ...adminHeaders, Prefer: "return=minimal" },
+              body: JSON.stringify({
+                id: liveId,
+                room_id: room.id,
+                sender_id: joined.structuredContent.participant_id,
+                body: "Live MCP wake signal " + (attempt + 1),
+                created_at: liveTimestamp,
+              }),
+            });
+            assert.equal(liveInsert.status, 201, "could not insert live wake message: " + await liveInsert.text());
+
+            const result = await waitPromise;
+            assert.equal(result.isError, undefined, "live MCP wait failed: " + JSON.stringify(result));
+            const messages = result.structuredContent?.messages;
+            assert.ok(Array.isArray(messages), "live MCP wait must return a message array");
+            const matched = messages.find(message => message.id === liveId);
+            if (matched) {
+              liveWakeResult = result;
+              liveWakeMessageId = liveId;
+            } else {
+              assert.equal(result.structuredContent?.timed_out, true,
+                "a wait without the inserted message must either return the row or time out cleanly");
+              assert.ok(result.structuredContent?.next_cursor?.after_created_at,
+                "a timed-out wait must preserve an advancing cursor");
+              liveCursor = result.structuredContent.next_cursor;
+            }
+          }
+          assert.ok(liveWakeResult, "an in-flight MCP wait did not recover a message created after its cursor");
+          assert.equal(liveWakeResult.structuredContent?.timed_out, false,
+            "live wake response should not be marked as timed out");
+          assert.ok(liveWakeResult.structuredContent.messages.some(message => message.id === liveWakeMessageId),
+            "live wake response omitted its triggering message");
+          assert.deepEqual(liveWakeResult.structuredContent.next_cursor, {
+            after_created_at: liveWakeResult.structuredContent.messages.at(-1).created_at,
+            after_message_id: liveWakeResult.structuredContent.messages.at(-1).id,
+          }, "live wake response should return a cursor for the last message in its batch");
+          console.log("Local MCP live wait recovered a newly inserted room message and returned its next cursor.");
+
           console.log("Local MCP exclusive composite cursor returned all 60 tied-timestamp rows, then preserved its cursor on timeout.");
 
           const participantRows = await getRows("participants?select=id,display_name&room_id=eq." + room.id + "&kind=eq.external_agent");

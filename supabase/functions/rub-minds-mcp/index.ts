@@ -366,6 +366,14 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
         cursorMessageId = latest.id;
         effectiveCursorState.createdAt = latest.created_at;
         hasCompositeCursor = true;
+      } else {
+        // No row existed at the baseline snapshot. A minimal valid composite
+        // cursor includes every subsequently-created row without relying on
+        // the Edge runtime's wall clock being perfectly aligned with Postgres.
+        cursorCreatedAt = "1970-01-01T00:00:00.000Z";
+        cursorMessageId = "00000000-0000-1000-8000-000000000000";
+        effectiveCursorState.createdAt = cursorCreatedAt;
+        hasCompositeCursor = true;
       }
     };
 
