@@ -341,26 +341,37 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     const limit = typeof args.limit === "number" ? args.limit : 50;
     const hasCursor = typeof args.after_created_at === "string" &&
       typeof args.after_message_id === "string";
-    let rawData: unknown = authorized;
 
+    // Always use a bounded, deterministic database page after the credential
+    // and room binding are verified. The legacy agent_exchange RPC only returns
+    // the latest 50 rows, so using it for no-cursor reads silently ignored a
+    // caller's limit and made limits above 50 impossible. For an initial
+    // snapshot, fetch newest-first then reverse so the client still receives
+    // chronological order; cursor pages fetch oldest-first after the watermark.
+    let query = db.from("messages")
+      .select("id, sender_id, body, created_at")
+      .eq("room_id", roomId);
     if (hasCursor) {
-      // Composite pagination bypasses the legacy latest-50 RPC after first
-      // validating the credential and session/room binding above. Both fields
-      // have already been validated by validateToolArguments.
-      const { data, error } = await db.from("messages")
-        .select("id, sender_id, body, created_at")
-        .eq("room_id", roomId)
-        .or(`created_at.gt.${args.after_created_at},and(created_at.eq.${args.after_created_at},id.gt.${args.after_message_id})`)
-        .order("created_at", { ascending: true })
-        .order("id", { ascending: true })
-        .limit(limit);
-      if (error) throw new Error("Could not read messages after the supplied cursor.");
-      rawData = {
-        room_id: roomId,
-        participant_id: authorized.participant_id,
-        messages: data || [],
-      };
+      query = query.or(
+        `created_at.gt.${args.after_created_at},and(created_at.eq.${args.after_created_at},id.gt.${args.after_message_id})`,
+      ).order("created_at", { ascending: true })
+        .order("id", { ascending: true });
+    } else {
+      query = query.order("created_at", { ascending: false })
+        .order("id", { ascending: false });
     }
+    const { data, error } = await query.limit(limit);
+    if (error) {
+      throw new Error(hasCursor
+        ? "Could not read messages after the supplied cursor."
+        : "Could not read the latest group messages.");
+    }
+    const page = hasCursor ? (data || []) : (data || []).slice().reverse();
+    const rawData = {
+      room_id: roomId,
+      participant_id: authorized.participant_id,
+      messages: page,
+    };
 
     const enrichedResult = await enrichGroupMessages(rawData);
     const enriched = isRecord(enrichedResult) ? enrichedResult : { messages: [] };
