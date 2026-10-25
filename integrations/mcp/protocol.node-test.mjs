@@ -11,6 +11,7 @@ import {
   validateSessionMemoryDocument,
   validateToolArguments,
   filterMessagesAfterCursor,
+  compareMessageCursors,
   isAllowedMcpOrigin,
   validateProtocolVersionHeader,
   applyMcpCors,
@@ -147,6 +148,19 @@ test("composite message cursor excludes the last message and preserves timestamp
     "same timestamp, later id",
     "later timestamp, any id",
   ]);
+});
+
+test("message cursor comparator uses normalized microsecond timestamps then IDs", () => {
+  const cursor = { id: "message-40", created_at: "2026-10-24T17:00:00.123456+00:00" };
+  assert.equal(compareMessageCursors(
+    { id: "message-41", created_at: "2026-10-24T19:00:00.123456+02:00" }, cursor
+  ), 1);
+  assert.equal(compareMessageCursors(
+    { id: "message-39", created_at: "2026-10-24T19:00:00.123456+02:00" }, cursor
+  ), -1);
+  assert.equal(compareMessageCursors(
+    { id: "message-99", created_at: "2026-10-24T19:00:00.123455+02:00" }, cursor
+  ), -1);
 });
 
 test("composite cursor normalizes timezone offsets and compares sub-millisecond fractions exactly", () => {

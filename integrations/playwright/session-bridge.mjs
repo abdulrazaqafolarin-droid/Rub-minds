@@ -1,3 +1,5 @@
+import { compareMessageCursors } from "../mcp/protocol.mjs";
+
 /**
  * Playwright-backed Rub Minds session bridge foundation.
  *
@@ -105,6 +107,7 @@ export class PlaywrightSessionBridge {
     this.stepInProgress = false;
     this.initialized = false;
     this.replies = 0;
+    this.cursor = null;
     this.seen = new Set();
     // Keep completed provider replies pending until Rub Minds acknowledges them.
     // Retrying the same source_message_id is safe when the server enforces dedupe.
@@ -121,6 +124,15 @@ export class PlaywrightSessionBridge {
       const oldest = this.seen.values().next().value;
       if (oldest === undefined) break;
       this.seen.delete(oldest);
+    }
+  }
+
+  advanceCursor(message) {
+    if (!message || typeof message.id !== "string" || !message.id ||
+        typeof message.created_at !== "string") return;
+    const candidate = { id: message.id, created_at: message.created_at };
+    if (!this.cursor || compareMessageCursors(candidate, this.cursor) > 0) {
+      this.cursor = candidate;
     }
   }
 
@@ -142,7 +154,13 @@ export class PlaywrightSessionBridge {
       return { status: "ready", baselineMessages: 0, processExistingMessages: true };
     }
 
-    const result = await this.readMessages({ signal });
+    const result = await this.readMessages({
+      signal,
+      cursor: null,
+      after_created_at: null,
+      after_message_id: null,
+      limit: this.maxMessagesPerStep,
+    });
     if (signal?.aborted) return { status: "cancelled", baselineMessages: 0 };
     if (!result || !Array.isArray(result.messages)) {
       throw new Error("Invalid group message response while establishing startup baseline");
@@ -151,6 +169,7 @@ export class PlaywrightSessionBridge {
     for (const message of result.messages) {
       if (!message || typeof message.id !== "string" || !message.id) continue;
       this.markSeen(message.id);
+      this.advanceCursor(message);
       baselineMessages++;
     }
     this.initialized = true;
@@ -217,6 +236,7 @@ export class PlaywrightSessionBridge {
         throw error;
       }
       this.pendingResponses.delete(messageId);
+      this.advanceCursor(pending.message);
       this.replies++;
       sent++;
     }
@@ -225,7 +245,16 @@ export class PlaywrightSessionBridge {
 
     let result;
     try {
-      result = await this.readMessages({ signal });
+      const cursor = this.cursor
+        ? { after_created_at: this.cursor.created_at, after_message_id: this.cursor.id }
+        : null;
+      result = await this.readMessages({
+        signal,
+        cursor,
+        after_created_at: cursor?.after_created_at ?? null,
+        after_message_id: cursor?.after_message_id ?? null,
+        limit: this.maxMessagesPerStep,
+      });
     } catch (error) {
       if (sent > 0) return errorOutcome(error, sent, processed);
       throw error;
@@ -236,21 +265,39 @@ export class PlaywrightSessionBridge {
       throw error;
     }
 
-    for (const message of result.messages) {
+    const orderedMessages = [...result.messages].sort(compareMessageCursors);
+    for (const message of orderedMessages) {
       if (signal?.aborted) return { status: "cancelled", sent, processed };
       if (this.replies >= effectiveLimit || processed >= this.maxMessagesPerStep) break;
-      if (!message || typeof message.id !== "string" || typeof message.body !== "string") continue;
-      if (this.seen.has(message.id) || this.pendingResponses.has(message.id)) continue;
+      if (!message || typeof message.id !== "string" || !message.id) continue;
+      if (this.pendingResponses.has(message.id)) continue;
+      if (this.seen.has(message.id)) {
+        this.advanceCursor(message);
+        continue;
+      }
 
       // Mark every observed ID once, including ignored messages, so polling does
       // not repeatedly reconsider the same event.
       this.markSeen(message.id);
-      if (this.participantId && message.sender_id === this.participantId) continue;
-      if (message.sender_kind !== "human" && !AI_KINDS.has(message.sender_kind)) continue;
+      if (typeof message.body !== "string") {
+        this.advanceCursor(message);
+        continue;
+      }
+      if (this.participantId && message.sender_id === this.participantId) {
+        this.advanceCursor(message);
+        continue;
+      }
+      if (message.sender_kind !== "human" && !AI_KINDS.has(message.sender_kind)) {
+        this.advanceCursor(message);
+        continue;
+      }
 
       // Optional server-supplied depth is respected when available. The server
       // remains responsible for global turn limits across multiple AI bridges.
-      if (Number.isInteger(message.turn_depth) && message.turn_depth >= 8) continue;
+      if (Number.isInteger(message.turn_depth) && message.turn_depth >= 8) {
+        this.advanceCursor(message);
+        continue;
+      }
 
       processed++;
       let response;
@@ -295,7 +342,10 @@ export class PlaywrightSessionBridge {
 
       // Save before the send call so a transient/ambiguous transport failure
       // cannot force a second provider prompt on the next step.
-      this.pendingResponses.set(message.id, response.trim());
+      this.pendingResponses.set(message.id, {
+        body: response.trim(),
+        message: { id: message.id, created_at: message.created_at },
+      });
       if (signal?.aborted) return { status: "cancelled", sent, processed, pendingDelivery: true };
 
       try {
@@ -306,6 +356,7 @@ export class PlaywrightSessionBridge {
         throw error;
       }
       this.pendingResponses.delete(message.id);
+      this.advanceCursor(message);
       this.replies++;
       sent++;
     }

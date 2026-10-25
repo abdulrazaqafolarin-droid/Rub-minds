@@ -1,3 +1,4 @@
+import { compareMessageCursors } from "../mcp/protocol.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { PlaywrightSessionBridge } from "./session-bridge.mjs";
@@ -165,6 +166,107 @@ test("stop aborts a standalone bridge run and preserves its completed answer for
   assert.deepEqual(await running, { status: "stopped", replies: 0 });
   assert.equal(sent.length, 0);
   assert.equal(bridge.pendingResponses.has("stop-message"), true);
+});
+
+test("baseline stores a composite cursor and supplies it to the next durable message read", async () => {
+  const messages = [
+    { id: "message-01", body: "older", created_at: "2026-10-24T17:00:00.123455+00:00", sender_kind: "human" },
+    { id: "message-02", body: "latest existing", created_at: "2026-10-24T17:00:00.123456+00:00", sender_kind: "human" },
+  ];
+  const reads = [];
+  const sent = [];
+  const bridge = new PlaywrightSessionBridge({
+    page: { isClosed: () => false },
+    participantId: "self",
+    adapter: { ask: async (_page, body) => "reply: " + body },
+    readMessages: async options => {
+      reads.push(options);
+      if (!options.cursor) return { messages };
+      return { messages: [{ id: "message-03", body: "new after baseline", created_at: "2026-10-24T17:00:00.123457+00:00", sender_kind: "human" }] };
+    },
+    sendMessage: async (body, sourceMessageId) => { sent.push({ body, sourceMessageId }); },
+  });
+
+  assert.deepEqual(await bridge.initialize({ approved: true }), { status: "baseline", baselineMessages: 2 });
+  assert.deepEqual(bridge.cursor, {
+    id: "message-02",
+    created_at: "2026-10-24T17:00:00.123456+00:00",
+  });
+  const result = await bridge.step({ approved: true });
+  assert.equal(result.sent, 1);
+  assert.deepEqual(reads[1].cursor, {
+    after_created_at: "2026-10-24T17:00:00.123456+00:00",
+    after_message_id: "message-02",
+  });
+  assert.deepEqual(sent, [{ body: "reply: new after baseline", sourceMessageId: "message-03" }]);
+  assert.deepEqual(bridge.cursor, {
+    id: "message-03",
+    created_at: "2026-10-24T17:00:00.123457+00:00",
+  });
+});
+
+test("cursor paging resumes after the last successfully handled message", async () => {
+  const allMessages = [
+    { id: "page-02", body: "second", created_at: "2026-10-24T17:00:00.002000Z", sender_kind: "human" },
+    { id: "page-01", body: "first", created_at: "2026-10-24T17:00:00.001000Z", sender_kind: "human" },
+  ];
+  const reads = [];
+  const sent = [];
+  const bridge = new PlaywrightSessionBridge({
+    page: { isClosed: () => false },
+    participantId: "self",
+    processExistingMessages: true,
+    maxMessagesPerStep: 1,
+    adapter: { ask: async (_page, body) => "reply: " + body },
+    readMessages: async options => {
+      reads.push(options);
+      const cursor = options.cursor;
+      const remaining = cursor
+        ? allMessages.filter(message => compareMessageCursors(message, {
+            id: cursor.after_message_id,
+            created_at: cursor.after_created_at,
+          }) > 0)
+        : allMessages;
+      return { messages: remaining };
+    },
+    sendMessage: async (body, sourceMessageId) => { sent.push({ body, sourceMessageId }); },
+  });
+
+  assert.equal((await bridge.step({ approved: true })).sent, 1);
+  assert.equal(bridge.cursor.id, "page-01");
+  assert.equal((await bridge.step({ approved: true })).sent, 1);
+  assert.equal(bridge.cursor.id, "page-02");
+  assert.deepEqual(sent.map(item => item.sourceMessageId), ["page-01", "page-02"]);
+  assert.deepEqual(reads[1].cursor, {
+    after_created_at: "2026-10-24T17:00:00.001000Z",
+    after_message_id: "page-01",
+  });
+});
+
+test("partial provider failure does not advance the cursor past the failed message", async () => {
+  const messages = [
+    { id: "cursor-ok", body: "first", created_at: "2026-10-24T17:00:00.001000Z", sender_kind: "human" },
+    { id: "cursor-fail", body: "second", created_at: "2026-10-24T17:00:00.002000Z", sender_kind: "human" },
+  ];
+  const bridge = new PlaywrightSessionBridge({
+    page: { isClosed: () => false },
+    participantId: "self",
+    processExistingMessages: true,
+    maxMessagesPerStep: 2,
+    adapter: { ask: async (_page, body) => {
+      if (body === "second") {
+        const error = new Error("not submitted");
+        error.safeToRetry = true;
+        throw error;
+      }
+      return "first response";
+    } },
+    readMessages: async () => ({ messages }),
+    sendMessage: async () => ({ ok: true }),
+  });
+  const result = await bridge.step({ approved: true, remainingReplies: 2 });
+  assert.equal(result.status, "error");
+  assert.equal(bridge.cursor.id, "cursor-ok");
 });
 
 test("requires explicit approval before reading group messages", async () => {

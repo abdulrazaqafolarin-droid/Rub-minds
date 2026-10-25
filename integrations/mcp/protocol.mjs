@@ -164,27 +164,49 @@ function timestampMicros(value) {
  * @param {{afterCreatedAt?: string | null, afterMessageId?: string | null, now?: number}} options
  * @returns {Record<string, any>[]}
  */
+/**
+ * Compare two messages by the database's composite cursor ordering:
+ * timestamp first (exact UTC-normalized microseconds), then ID. Returns 0 if
+ * one side lacks a valid timestamp; callers should only advance on grounded rows.
+ */
+export function compareMessageCursors(left, right) {
+  if (!isRecord(left) || !isRecord(right)) return 0;
+  const leftMicros = timestampMicros(left.created_at);
+  const rightMicros = timestampMicros(right.created_at);
+  if (leftMicros === null || rightMicros === null) return 0;
+  if (leftMicros < rightMicros) return -1;
+  if (leftMicros > rightMicros) return 1;
+  if (typeof left.id !== "string" || typeof right.id !== "string") return 0;
+  if (left.id < right.id) return -1;
+  if (left.id > right.id) return 1;
+  return 0;
+}
+
+/**
+ * Filter a durable group-message read using an exclusive (created_at, id)
+ * cursor when both fields are supplied. ISO offsets are normalized before
+ * comparison, and timestamp precision remains exact to microseconds.
+ * Timestamp-only cursors retain their inclusive behavior for older clients.
+ *
+ * @param {unknown} data
+ * @param {{afterCreatedAt?: string | null, afterMessageId?: string | null, now?: number}} options
+ * @returns {Record<string, any>[]}
+ */
 export function filterMessagesAfterCursor(data, {
   afterCreatedAt = null,
   afterMessageId = null,
   now = Date.now(),
 } = {}) {
   const cursor = afterCreatedAt === null ? now : Date.parse(afterCreatedAt);
-  const cursorMicros = afterCreatedAt !== null && afterMessageId !== null
-    ? timestampMicros(afterCreatedAt)
+  const cursorMessage = afterCreatedAt !== null && afterMessageId !== null
+    ? { created_at: afterCreatedAt, id: afterMessageId }
     : null;
-  if (afterCreatedAt !== null && afterMessageId !== null && cursorMicros === null) return [];
+  if (cursorMessage && timestampMicros(afterCreatedAt) === null) return [];
   if (!isRecord(data) || !Array.isArray(data.messages)) return [];
   return data.messages.filter((message) => {
     if (!isRecord(message) || typeof message.created_at !== "string" ||
         !Number.isFinite(Date.parse(message.created_at))) return false;
-    if (afterCreatedAt !== null && afterMessageId !== null) {
-      if (typeof message.id !== "string") return false;
-      const messageMicros = timestampMicros(message.created_at);
-      if (messageMicros === null) return false;
-      return messageMicros > cursorMicros ||
-        (messageMicros === cursorMicros && message.id > afterMessageId);
-    }
+    if (cursorMessage) return compareMessageCursors(message, cursorMessage) > 0;
     return Date.parse(message.created_at) >= cursor;
   });
 }
