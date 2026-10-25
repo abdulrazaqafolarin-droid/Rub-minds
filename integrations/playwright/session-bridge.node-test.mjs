@@ -59,7 +59,7 @@ test("respects coordinator remaining-reply budget", async () => {
   const result = await bridge.step({ approved: true, remainingReplies: 1 });
   assert.equal(result.sent, 1);
   assert.equal(sent.length, 1);
-  assert.deepEqual(await bridge.step({ approved: true, remainingReplies: 0 }), { status: "limit_reached" });
+  assert.deepEqual(await bridge.step({ approved: true, remainingReplies: 0 }), { status: "limit_reached", sent: 0, processed: 0 });
 });
 
 test("does not reply to unknown sender kinds or excessive server-supplied turn depth", async () => {
@@ -79,12 +79,83 @@ test("retries a message after a transient provider failure", async () => {
   let attempts = 0;
   bridge.adapter.ask = async () => {
     attempts++;
-    if (attempts === 1) throw new Error("temporary provider failure");
+    if (attempts === 1) {
+      const error = new Error("temporary provider failure");
+      error.safeToRetry = true; // The adapter guarantees no prompt was submitted.
+      throw error;
+    }
     return "recovered reply";
   };
   await assert.rejects(() => bridge.step({ approved: true }), /temporary provider failure/);
   const result = await bridge.step({ approved: true });
   assert.equal(result.sent, 1);
   assert.equal(attempts, 2);
+  assert.equal(sent.length, 1);
+});
+
+
+test("returns typed terminal results with integer sent counts", async () => {
+  const { bridge } = makeBridge();
+  bridge.page.isClosed = () => true;
+  assert.deepEqual(await bridge.step({ approved: true }), {
+    status: "browser_closed", sent: 0, processed: 0,
+  });
+});
+
+test("an unclassified provider failure blocks instead of risking a duplicate prompt", async () => {
+  const { bridge, calls } = makeBridge({
+    messages: [{ id: "ambiguous", body: "send once", sender_kind: "human" }],
+  });
+  bridge.adapter.ask = async () => { throw new Error("connection dropped during submission"); };
+  const first = await bridge.step({ approved: true });
+  assert.equal(first.status, "blocked");
+  assert.equal(first.blockedMessageId, "ambiguous");
+  const second = await bridge.step({ approved: true });
+  assert.equal(second.status, "blocked");
+  assert.equal(calls.length, 0);
+});
+
+test("a failed group delivery retries the same saved provider response without asking twice", async () => {
+  const message = { id: "m-pending", body: "question", sender_kind: "human" };
+  const calls = { ask: 0, send: 0, delivered: [] };
+  const bridge = new PlaywrightSessionBridge({
+    page: { isClosed: () => false },
+    adapter: { ask: async () => { calls.ask++; return "answer"; } },
+    readMessages: async () => ({ messages: [message] }),
+    sendMessage: async (body, sourceMessageId) => {
+      calls.send++;
+      calls.delivered.push({ body, sourceMessageId });
+      if (calls.send === 1) throw new Error("transport timed out after send");
+      return { ok: true };
+    },
+  });
+  await assert.rejects(() => bridge.step({ approved: true }), /transport timed out/);
+  const result = await bridge.step({ approved: true });
+  assert.equal(result.sent, 1);
+  assert.equal(calls.ask, 1);
+  assert.equal(calls.send, 2);
+  assert.deepEqual(calls.delivered, [
+    { body: "answer", sourceMessageId: "m-pending" },
+    { body: "answer", sourceMessageId: "m-pending" },
+  ]);
+});
+
+test("passes cancellation to the provider adapter and preserves an already-completed answer", async () => {
+  let entered;
+  const enteredAsk = new Promise(resolve => { entered = resolve; });
+  const controller = new AbortController();
+  const { bridge, sent } = makeBridge({ messages: [{ id: "cancel-m", body: "question", sender_kind: "human" }] });
+  bridge.adapter.ask = async (_page, _body, meta) => {
+    assert.equal(meta.signal, controller.signal);
+    entered();
+    await new Promise(resolve => meta.signal.addEventListener("abort", resolve, { once: true }));
+    return "completed answer";
+  };
+  const pending = bridge.step({ approved: true, signal: controller.signal });
+  await enteredAsk;
+  controller.abort();
+  assert.deepEqual(await pending, { status: "cancelled", sent: 0, processed: 1, pendingDelivery: true });
+  const resent = await bridge.step({ approved: true });
+  assert.equal(resent.sent, 1);
   assert.equal(sent.length, 1);
 });
