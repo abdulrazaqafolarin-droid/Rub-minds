@@ -931,8 +931,8 @@ jobs:
           const emptyWake = await emptyWakePromise;
           assert.equal(emptyWake.isError, undefined, "empty-room live wait failed: " + JSON.stringify(emptyWake));
           assert.equal(emptyWake.structuredContent?.timed_out, false, "the first message should wake the empty-room listener");
-          assert.ok(["realtime", "realtime-recovery-read"].includes(emptyWake.structuredContent?.delivery),
-            "the empty-room listener must return the first message by Realtime or its durable recovery read");
+          assert.ok(["realtime", "realtime-recovery-read", "cursor-read"].includes(emptyWake.structuredContent?.delivery),
+            "the first empty-room message must be returned without loss, whether it arrives during the initial cursor read, Realtime wait, or recovery read");
           assert.ok(emptyWake.structuredContent?.messages?.some(message => message.id === emptyMessageId),
             "the first message after an empty-room baseline must be returned");
           assert.deepEqual(emptyWake.structuredContent?.next_cursor, {
