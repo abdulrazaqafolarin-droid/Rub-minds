@@ -5,10 +5,10 @@ A manually started userscript for an **already-open ChatGPT or Claude conversati
 ## What it does
 
 - Supports ChatGPT (\`chatgpt.com\` and \`chat.openai.com\`) and Claude (\`claude.ai\`) with best-effort UI selectors.
-- Shows **Start, Pause, Resume and Stop**, an editable prompt, delay, reply timeout and a hard 1–20 cycle cap (default: 5).
-- Prompts the conversation to check its already-connected Rub Minds MCP tools, consider new group messages, decide naturally whether to contribute, and continue its existing work.
+- Shows **Start, Pause, Resume and Stop**, three participation modes (**Smart**, **Mentions only**, **Task focus**), an editable prompt, delay, reply timeout and a hard 1–20 cycle cap (default: 5).
+- Prompts the conversation to check its already-connected Rub Minds MCP tools, decide naturally whether to contribute, and continue its existing work. It also tells the AI to use the existing bounded `wait_for_group_messages` MCP tool when available, allowing a response to incoming group activity during a running cycle instead of relying only on repeated reads.
 - Stops if a person types during the loop, the conversation changes, the composer has a draft, or the output cannot be verified.
-- Makes no network requests itself. It saves only numeric settings by default; custom prompt text is not persisted. Conversation recovery is a separate, explicit opt-in and stores only the current provider HTTPS origin/path locally, with query strings and fragments removed. It does not persist an invite token, MCP credential or conversation history.
+- Makes no network requests itself. It persists only cycle-limit settings and the selected participation mode by default; custom prompt text is not persisted. Conversation recovery is a separate, explicit opt-in and stores only the current provider HTTPS origin/path locally, with query strings and fragments removed. It does not persist an invite token, MCP credential or conversation history.
 
 ## What it does not do
 
@@ -53,6 +53,6 @@ node --check integrations/browser-loop/rub-minds-continuation.user.js
 node --test integrations/browser-loop/browser-loop.node-test.mjs
 \`\`\`
 
-The 26 regression tests execute the actual userscript source in a deterministic mocked DOM for ChatGPT-shaped and Claude-shaped pages. They cover DONE/CONTINUE/PAUSE, repeated cycles and the cap, missing control markers, manual stop/pause/resume, human interruption, navigation, draft protection, disabled send controls, and waiting for an in-progress response, manual opt-in, non-persistence of custom prompts, send-time race guards, opt-in local recovery, off-origin and non-chat URL rejection, Claude route handling, removal, reopening a saved conversation, and one-time private-memory request behavior. The tests make no external network requests and use no user account or credentials.
+The 27 regression tests execute the actual userscript source in a deterministic mocked DOM for ChatGPT-shaped and Claude-shaped pages. They cover DONE/CONTINUE/PAUSE, repeated cycles and the cap, missing control markers, manual stop/pause/resume, human interruption, navigation, draft protection, disabled send controls, and waiting for an in-progress response, manual opt-in, non-persistence of custom prompts, send-time race guards, opt-in local recovery, off-origin and non-chat URL rejection, Claude route handling, removal, reopening a saved conversation, and one-time private-memory request behavior, and all three participation modes. The tests make no external network requests and use no user account or credentials.
 
 **Evidence boundary:** these tests validate loop/recovery logic against mock DOM objects, not a live authenticated ChatGPT or Claude session. See [conversation recovery design](../../docs/CONVERSATION_RESUME_DESIGN.md) for why the saved URL stays local and what is required for event-driven reactivation. Live-provider acceptance testing remains required before relying on this for critical work.
