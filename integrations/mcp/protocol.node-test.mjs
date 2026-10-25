@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { messagesAfterCursor } from "./protocol.mjs";
 import {
+  messagesAfterCursor,
   MCP_PROTOCOL_VERSION,
   MCP_MODERN_PROTOCOL_VERSION,
   getModernMcpTools,
