@@ -1,0 +1,392 @@
+// ==UserScript==
+// @name         Rub Minds Conversation Continuation
+// @namespace    https://rub-minds.vercel.app/
+// @version      1.0.0
+// @description  Manually started, bounded continuation loop for an existing ChatGPT or Claude conversation.
+// @match        https://chatgpt.com/*
+// @match        https://chat.openai.com/*
+// @match        https://claude.ai/*
+// @run-at       document-idle
+// @noframes
+// @grant        none
+// ==/UserScript==
+
+(() => {
+  'use strict';
+
+  const SITES = {
+    'chatgpt.com': {
+      input: ['#prompt-textarea', 'textarea[placeholder]', '[contenteditable="true"]'],
+      send: ['button[data-testid="send-button"]', 'button[aria-label="Send prompt"]'],
+      stop: ['button[data-testid="stop-button"]', 'button[aria-label*="Stop generating"]'],
+      replies: ['[data-message-author-role="assistant"]'],
+      userMessages: ['[data-message-author-role="user"]'],
+    },
+    'chat.openai.com': {
+      input: ['#prompt-textarea', 'textarea[placeholder]', '[contenteditable="true"]'],
+      send: ['button[data-testid="send-button"]', 'button[aria-label="Send prompt"]'],
+      stop: ['button[data-testid="stop-button"]', 'button[aria-label*="Stop generating"]'],
+      replies: ['[data-message-author-role="assistant"]'],
+      userMessages: ['[data-message-author-role="user"]'],
+    },
+    'claude.ai': {
+      input: ['div[contenteditable="true"]', 'textarea'],
+      send: ['button[aria-label="Send message"]', 'button[aria-label="Send Message"]'],
+      stop: ['button[aria-label="Stop response"]', 'button[aria-label="Stop Response"]', 'button[aria-label*="Stop response"]'],
+      replies: ['.font-claude-response', '[data-testid="chat-message-content"]'],
+      userMessages: ['[data-testid*="user-message"]', '[data-testid*="human-message"]'],
+    },
+  };
+  const site = SITES[location.hostname];
+  if (!site) return;
+
+  // Re-running the userscript must stop the old instance before replacing its UI.
+  try { window.__RUBMINDS_CONTINUATION_LOOP__?.stop('Replaced by a new script instance.'); } catch (_) {}
+
+  const STORAGE_KEY = 'rubMindsContinuationSettingsV1';
+  const defaults = {
+    maxRounds: 5,
+    delaySec: 3,
+    timeoutMin: 5,
+    trigger: [
+      'Continue the work in this same conversation, preserving its existing context and working style.',
+      'Before acting, use the Rub Minds MCP tools connected to this conversation, if available, to check relevant new group messages and context since your last processed point.',
+      'Decide naturally whether a group reply is useful: answer direct questions and relevant requests, contribute meaningful progress, avoid filler, duplicates, or replying to every message, and stay quiet in the group when no response is warranted.',
+      'Advance the current assigned work by one concrete, useful step. Never claim you checked messages, sent something, or completed work unless the relevant tool/result verifies it.',
+      'If the Rub Minds tools are unavailable, the group state cannot be checked, a human decision is needed, or you are blocked, stop this loop and explain the blocker rather than pretending.',
+      'Keep control markers outside any deliverable, code block, or copy-ready artifact. At the very end of your response, write exactly one standalone control line: RUBMINDS_LOOP: CONTINUE if another bounded useful step is appropriate; RUBMINDS_LOOP: DONE only when the assigned work is complete and verified; or RUBMINDS_LOOP: PAUSE when human input or authorization is required. Do not use these control lines anywhere else.',
+    ].join('\n\n'),
+  };
+
+  const clampInteger = (value, min, max, fallback) => {
+    const number = Number.parseInt(value, 10);
+    return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
+  };
+  let settings = { ...defaults };
+  try {
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    settings = {
+      ...defaults,
+      maxRounds: clampInteger(stored.maxRounds, 1, 20, defaults.maxRounds),
+      delaySec: clampInteger(stored.delaySec, 1, 120, defaults.delaySec),
+      timeoutMin: clampInteger(stored.timeoutMin, 1, 20, defaults.timeoutMin),
+      // Free-form prompt text stays in memory only; do not persist possible private context.
+      trigger: defaults.trigger,
+    };
+  } catch (_) { /* keep defaults */ }
+  const persistSettings = () => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        maxRounds: settings.maxRounds,
+        delaySec: settings.delaySec,
+        timeoutMin: settings.timeoutMin,
+      }));
+    } catch (_) { /* storage may be disabled; loop still works for this page */ }
+  };
+
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+  const firstVisible = (selectors) => {
+    for (const selector of selectors) {
+      for (const node of document.querySelectorAll(selector)) {
+        if (node && !node.hidden && node.getAttribute('aria-hidden') !== 'true' && node.getClientRects().length > 0) return node;
+      }
+    }
+    return null;
+  };
+  const allMatching = (selectors) => {
+    const out = [];
+    const seen = new Set();
+    for (const selector of selectors) {
+      for (const node of document.querySelectorAll(selector)) {
+        if (!seen.has(node)) { seen.add(node); out.push(node); }
+      }
+    }
+    return out;
+  };
+  const inputNode = () => firstVisible(site.input);
+  const sendNode = () => firstVisible(site.send);
+  const isGenerating = () => Boolean(firstVisible(site.stop));
+  const readText = (node) => String(node?.innerText ?? node?.textContent ?? '').trim();
+  const replyNodes = () => allMatching(site.replies);
+  const userNodes = () => allMatching(site.userMessages);
+  const snapshot = () => {
+    const replies = replyNodes();
+    return {
+      assistantCount: replies.length,
+      lastAssistant: replies.length ? readText(replies[replies.length - 1]) : '',
+      userCount: userNodes().length,
+      path: location.pathname,
+    };
+  };
+  const composerText = (input) => String(input?.value ?? input?.innerText ?? input?.textContent ?? '').trim();
+
+  function setInput(text) {
+    const input = inputNode();
+    if (!input) throw new Error('Composer not found. The provider UI may have changed.');
+    if (composerText(input)) throw new Error('Composer contains a draft. Clear or send it manually before starting the loop.');
+    input.focus();
+
+    if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
+      const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+      if (!setter) throw new Error('Could not safely set composer value.');
+      setter.call(input, text);
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+    } else {
+      // Keep selection inside the provider's focused editable element.
+      input.focus();
+      if (!document.execCommand('selectAll', false, null) || !document.execCommand('insertText', false, text)) {
+        throw new Error('Could not insert text into the provider composer.');
+      }
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+    }
+    return input;
+  }
+
+  function clearInsertedText(input, expectedText) {
+    // Restore only the text this loop inserted; never erase a concurrent human edit.
+    if (!input || composerText(input) !== expectedText.trim()) return;
+    if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
+      const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+      if (setter) setter.call(input, '');
+    } else {
+      input.focus();
+      if (document.execCommand('selectAll', false, null)) document.execCommand('delete', false, null);
+    }
+    input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContent' }));
+  }
+
+  async function sendMessage(text) {
+    const input = setInput(text);
+    await sleep(350);
+    const button = sendNode();
+    if (!button || button.disabled || button.getAttribute('aria-disabled') === 'true') {
+      clearInsertedText(input, text);
+      throw new Error('Send button unavailable or disabled. Nothing was sent by the loop.');
+    }
+    button.click();
+  }
+
+  function readDirective(reply) {
+    const lines = String(reply || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    const last = lines.length ? lines[lines.length - 1] : '';
+    const match = /^RUBMINDS_LOOP:\s*(CONTINUE|DONE|PAUSE)$/.exec(last);
+    return match ? match[1] : null;
+  }
+
+  let running = false;
+  let paused = false;
+  let rounds = 0;
+  let stopReason = '';
+  let threadPath = null;
+  let pauseWaiters = [];
+
+  const panel = document.createElement('section');
+  panel.id = 'rubminds-continuation-panel';
+  panel.setAttribute('aria-label', 'Rub Minds conversation continuation controls');
+  panel.style.cssText = [
+    'position:fixed', 'right:10px', 'bottom:76px', 'z-index:2147483647',
+    'width:290px', 'max-width:calc(100vw - 24px)', 'max-height:70vh', 'overflow:auto',
+    'padding:10px', 'background:#171717', 'color:#f5f5f5', 'border:1px solid #555',
+    'border-radius:10px', 'box-shadow:0 4px 18px #0008', 'font:12px/1.4 system-ui,sans-serif',
+  ].join(';');
+  panel.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <strong>Rub Minds · Continuation</strong>
+      <button type="button" id="rm-collapse" aria-label="Collapse panel">−</button>
+    </div>
+    <div id="rm-controls" style="margin-top:8px">
+      <label style="display:block;margin:6px 0">Cycle prompt
+        <textarea id="rm-trigger" rows="5" style="display:block;width:100%;box-sizing:border-box;margin-top:3px"></textarea>
+      </label>
+      <div style="display:flex;gap:8px">
+        <label style="flex:1">Max cycles (1–20)
+          <input id="rm-max" type="number" min="1" max="20" style="display:block;width:100%;box-sizing:border-box">
+        </label>
+        <label style="flex:1">Delay seconds (1–120)
+          <input id="rm-delay" type="number" min="1" max="120" style="display:block;width:100%;box-sizing:border-box">
+        </label>
+      </div>
+      <label style="display:block;margin:6px 0">Reply timeout minutes (1–20)
+        <input id="rm-timeout" type="number" min="1" max="20" style="display:block;width:100%;box-sizing:border-box">
+      </label>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <button type="button" id="rm-start" style="flex:1;padding:7px;font-weight:700">Start</button>
+        <button type="button" id="rm-pause" style="flex:1;padding:7px" disabled>Pause</button>
+        <button type="button" id="rm-resume" style="flex:1;padding:7px" disabled>Resume</button>
+        <button type="button" id="rm-stop" style="flex:1;padding:7px" disabled>Stop</button>
+      </div>
+      <div id="rm-status" role="status" aria-live="polite" style="margin-top:8px;overflow-wrap:anywhere">Idle — review the prompt and start manually.</div>
+      <div style="margin-top:6px;color:#c9c9c9">Manual opt-in only. Pause waits for the current reply to finish. Stop prevents further automatic prompts. Never leave unattended.</div>
+    </div>`;
+  document.getElementById('rubminds-continuation-panel')?.remove();
+  document.body.appendChild(panel);
+
+  const el = (id) => panel.querySelector(`#${id}`);
+  el('rm-trigger').value = settings.trigger;
+  el('rm-max').value = String(settings.maxRounds);
+  el('rm-delay').value = String(settings.delaySec);
+  el('rm-timeout').value = String(settings.timeoutMin);
+  const status = (text) => { el('rm-status').textContent = text; };
+  const updateButtons = () => {
+    el('rm-start').disabled = running;
+    el('rm-pause').disabled = !running || paused;
+    el('rm-resume').disabled = !running || !paused;
+    el('rm-stop').disabled = !running;
+  };
+
+  const control = {
+    stop(reason = 'Stopped manually.') {
+      stopReason = reason;
+      running = false;
+      paused = false;
+      for (const resolve of pauseWaiters.splice(0)) resolve();
+      status(reason);
+      updateButtons();
+    },
+  };
+  window.__RUBMINDS_CONTINUATION_LOOP__ = control;
+
+  el('rm-collapse').addEventListener('click', () => {
+    const controls = el('rm-controls');
+    const hidden = controls.style.display === 'none';
+    controls.style.display = hidden ? 'block' : 'none';
+    el('rm-collapse').textContent = hidden ? '−' : '+';
+  });
+  el('rm-start').addEventListener('click', () => { if (!running) runLoop(); });
+  el('rm-pause').addEventListener('click', () => {
+    if (!running || paused) return;
+    paused = true;
+    status('Paused. The current provider reply, if any, will finish; no next prompt will be sent.');
+    updateButtons();
+  });
+  el('rm-resume').addEventListener('click', () => {
+    if (!running || !paused) return;
+    paused = false;
+    status('Resuming…');
+    for (const resolve of pauseWaiters.splice(0)) resolve();
+    updateButtons();
+  });
+  el('rm-stop').addEventListener('click', () => control.stop('Stopped manually. No further prompts will be sent.'));
+
+  async function waitWhilePaused() {
+    while (running && paused) {
+      status('Paused — waiting for you to Resume. The current reply is not cancelled.');
+      await new Promise(resolve => pauseWaiters.push(resolve));
+    }
+  }
+
+  async function waitForCurrentReply() {
+    if (!isGenerating()) return;
+    status('Waiting for the reply already in progress…');
+    const deadline = Date.now() + settings.timeoutMin * 60_000;
+    let stableChecks = 0;
+    let previous = snapshot().lastAssistant;
+    while (running && isGenerating()) {
+      if (Date.now() > deadline) throw new Error('Timed out waiting for the current reply; no continuation was sent.');
+      const current = snapshot().lastAssistant;
+      if (current === previous) stableChecks++;
+      else { previous = current; stableChecks = 0; }
+      await sleep(700);
+    }
+    if (running) await sleep(900);
+  }
+
+  async function waitForNewReply(previous) {
+    const deadline = Date.now() + settings.timeoutMin * 60_000;
+    let sawOutput = false;
+    let lastObserved = '';
+    let stableChecks = 0;
+    const expectedUserCount = Math.max(previous.userCount + 1, userNodes().length);
+
+    while (running) {
+      if (Date.now() > deadline) throw new Error('Timed out waiting for a completed new reply. Stopped to avoid sending blindly.');
+      if (threadPath && location.pathname !== threadPath) throw new Error('Conversation navigation detected. Loop stopped to avoid acting in another chat.');
+      const now = snapshot();
+      if (now.userCount > expectedUserCount) {
+        throw new Error('A new user message was detected during the loop. Stopped to avoid interrupting you.');
+      }
+      const changed = now.assistantCount > previous.assistantCount || now.lastAssistant !== previous.lastAssistant;
+      if (changed && now.lastAssistant) {
+        sawOutput = true;
+        if (now.lastAssistant === lastObserved) stableChecks++;
+        else { lastObserved = now.lastAssistant; stableChecks = 0; }
+      }
+      if (isGenerating()) sawOutput = sawOutput || changed;
+      if (sawOutput && !isGenerating() && stableChecks >= 2) {
+        await sleep(700);
+        const finalSnapshot = snapshot();
+        if (!isGenerating() && finalSnapshot.lastAssistant === lastObserved) return finalSnapshot.lastAssistant;
+        stableChecks = 0;
+      }
+      await sleep(800);
+    }
+    return null;
+  }
+
+  async function runLoop() {
+    settings = {
+      maxRounds: clampInteger(el('rm-max').value, 1, 20, defaults.maxRounds),
+      delaySec: clampInteger(el('rm-delay').value, 1, 120, defaults.delaySec),
+      timeoutMin: clampInteger(el('rm-timeout').value, 1, 20, defaults.timeoutMin),
+      trigger: el('rm-trigger').value.trim() || defaults.trigger,
+    };
+    if (!inputNode()) { status('Stopped: provider composer not found. Check that this is an open chat.'); return; }
+    if (composerText(inputNode())) { status('Stopped: the composer contains a draft. Send or clear it before starting.'); return; }
+    persistSettings();
+    running = true;
+    paused = false;
+    rounds = 0;
+    stopReason = '';
+    threadPath = (location.pathname === '/' || location.pathname === '/new') ? null : location.pathname;
+    updateButtons();
+
+    try {
+      await waitForCurrentReply();
+      // Establish the conversation identity after the first response, allowing a new chat URL to be assigned.
+      while (running && rounds < settings.maxRounds) {
+        await waitWhilePaused();
+        if (!running) break;
+        if (threadPath && location.pathname !== threadPath) throw new Error('Conversation changed. Loop stopped.');
+        if (composerText(inputNode())) throw new Error('A draft appeared in the composer. Loop stopped without overwriting it.');
+
+        for (let remaining = settings.delaySec; remaining > 0 && running && !paused; remaining--) {
+          status(`Ready for cycle ${rounds + 1}/${settings.maxRounds} in ${remaining}s…`);
+          await sleep(1000);
+        }
+        if (!running) break;
+        await waitWhilePaused();
+        if (!running) break;
+
+        const before = snapshot();
+        rounds++;
+        status(`Cycle ${rounds}/${settings.maxRounds}: sending continuation prompt…`);
+        await sendMessage(settings.trigger);
+        status(`Cycle ${rounds}/${settings.maxRounds}: waiting for the reply to finish…`);
+        const reply = await waitForNewReply(before);
+        if (!running) break;
+        if (!reply) throw new Error('No completed assistant reply was detected.');
+        if (!threadPath) threadPath = location.pathname;
+
+        const directive = readDirective(reply);
+        if (!directive) throw new Error('Reply ended without a valid RUBMINDS_LOOP control line. Stopped fail-closed; review the reply before restarting.');
+        if (directive === 'DONE') { stopReason = 'Assistant marked the assigned work DONE. Verify the result before relying on it.'; break; }
+        if (directive === 'PAUSE') { stopReason = 'Assistant requested PAUSE for a blocker or human decision.'; break; }
+        status(`Cycle ${rounds}/${settings.maxRounds} completed. Continuing only after the next delay…`);
+      }
+      if (!stopReason) stopReason = rounds >= settings.maxRounds
+        ? `Safety cap reached (${settings.maxRounds} cycles). Start again manually after reviewing progress.`
+        : 'Stopped manually.';
+      status(stopReason);
+    } catch (error) {
+      stopReason = `Stopped safely: ${error?.message || String(error)}`;
+      status(stopReason);
+    } finally {
+      running = false;
+      paused = false;
+      for (const resolve of pauseWaiters.splice(0)) resolve();
+      updateButtons();
+    }
+  }
+})();
