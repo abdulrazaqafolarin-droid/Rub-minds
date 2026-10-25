@@ -93,9 +93,19 @@ export class OriginalSessionWakeRunner {
 
       while (!this.controller.signal.aborted && this.replies < this.maxReplies) {
         try {
+          const bridgeCursor = this.bridge?.cursor;
+          const cursor = bridgeCursor &&
+            typeof bridgeCursor.created_at === "string" &&
+            typeof bridgeCursor.id === "string"
+            ? {
+                after_created_at: bridgeCursor.created_at,
+                after_message_id: bridgeCursor.id,
+              }
+            : null;
           const wake = await this.wakeSource.waitForWake({
             signal: this.controller.signal,
             timeoutMs: this.heartbeatMs,
+            cursor,
           });
           if (this.controller.signal.aborted) break;
           if (wake?.status === "closed") {
