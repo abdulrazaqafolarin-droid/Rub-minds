@@ -65,7 +65,7 @@ export class McpSessionMessageTransport {
     sessionHandle,
     fetchImpl = globalThis.fetch,
     protocolVersion = DEFAULT_PROTOCOL_VERSION,
-    waitTimeoutMs = 1000,
+    waitTimeoutMs = 10000,
     requestTimeoutMs = 20000,
   } = {}) {
     this.endpoint = validateEndpoint(endpoint);
@@ -261,6 +261,41 @@ export class McpSessionMessageTransport {
       throw new Error("Rub Minds bridge state save returned an invalid acknowledgement");
     }
     return result;
+  }
+
+  async waitForWake({ signal, timeoutMs = this.waitTimeoutMs, cursor = null } = {}) {
+    const requestedTimeout = Number.isInteger(timeoutMs) ? timeoutMs : this.waitTimeoutMs;
+    const boundedTimeout = Math.max(1000, Math.min(15000, this.waitTimeoutMs, requestedTimeout));
+    const afterCreatedAt = cursor?.after_created_at ?? cursor?.created_at ?? null;
+    const afterMessageId = cursor?.after_message_id ?? cursor?.id ?? null;
+    if ((afterCreatedAt === null) !== (afterMessageId === null)) {
+      throw new TypeError("wake cursor requires both timestamp and message ID");
+    }
+    const args = { timeout_ms: boundedTimeout, limit: 100 };
+    if (afterCreatedAt !== null) {
+      if (typeof afterCreatedAt !== "string" || typeof afterMessageId !== "string") {
+        throw new TypeError("wake cursor timestamp and message ID must be strings");
+      }
+      args.after_created_at = afterCreatedAt;
+      args.after_message_id = afterMessageId;
+    }
+    const result = await this.callTool("wait_for_group_messages", args, { signal });
+    if (!Array.isArray(result.messages)) {
+      throw new Error("Rub Minds MCP wake wait returned no message list");
+    }
+    const delivery = typeof result.delivery === "string" ? result.delivery : "unknown";
+    if (result.timed_out === true || result.messages.length === 0) {
+      return { status: "timeout", delivery, messageCount: 0 };
+    }
+    return { status: "wake", delivery, messageCount: result.messages.length };
+  }
+
+  createWakeSource() {
+    return {
+      start: async () => ({ status: "ready" }),
+      waitForWake: this.waitForWake.bind(this),
+      close: async () => {},
+    };
   }
 
   async sendMessage(body, sourceMessageId, { signal } = {}) {
