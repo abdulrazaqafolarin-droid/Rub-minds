@@ -8,12 +8,16 @@
  * must enforce room-level authorization through its existing RLS/session.
  */
 export class SupabaseRealtimeWakeSource {
-  constructor({ client, roomId, maxQueuedWakes = 1, channelName } = {}) {
+  constructor({ client, roomId, maxQueuedWakes = 1, channelName, subscriptionTimeoutMs = 10000 } = {}) {
     if (!client || typeof client.channel !== "function") throw new TypeError("Supabase client.channel is required");
     if (typeof roomId !== "string" || !roomId.trim()) throw new TypeError("roomId is required");
     if (!Number.isInteger(maxQueuedWakes) || maxQueuedWakes < 1 || maxQueuedWakes > 100) {
       throw new RangeError("maxQueuedWakes must be between 1 and 100");
     }
+    if (!Number.isInteger(subscriptionTimeoutMs) || subscriptionTimeoutMs < 100 || subscriptionTimeoutMs > 60000) {
+      throw new RangeError("subscriptionTimeoutMs must be between 100 and 60000");
+    }
+    this.subscriptionTimeoutMs = subscriptionTimeoutMs;
     this.client = client;
     this.roomId = roomId;
     this.maxQueuedWakes = maxQueuedWakes;
@@ -42,9 +46,13 @@ export class SupabaseRealtimeWakeSource {
     const channel = this.channel;
     await new Promise((resolve, reject) => {
       let settled = false;
+      const timer = setTimeout(() => {
+        finish(reject, new Error("Supabase Realtime subscription failed: local handshake timeout"));
+      }, this.subscriptionTimeoutMs);
       const finish = (fn, value) => {
         if (settled) return;
         settled = true;
+        clearTimeout(timer);
         fn(value);
       };
       channel.subscribe(status => {
