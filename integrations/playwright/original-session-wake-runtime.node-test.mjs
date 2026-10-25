@@ -153,10 +153,11 @@ test("factory wires the MCP transport and room Realtime wake into the original-s
     "save_original_session_bridge_state",
     "read_group_messages",
     "save_original_session_bridge_state",
+    "save_original_session_bridge_state",
     "send_group_message",
     "save_original_session_bridge_state",
   ]);
-  assert.equal(stateRevision, 3);
+  assert.equal(stateRevision, 4);
   assert.deepEqual(durableSnapshot, {
     cursor: { after_created_at: NEW_TIME, after_message_id: NEW_ID },
     pending_response: null,
