@@ -99,3 +99,79 @@ test("starts and closes the injected wake source as part of runner lifecycle", a
   await runner.run({ approved: true });
   assert.deepEqual(lifecycle, ["start", "close"]);
 });
+
+
+test("a signal aborted before run prevents source startup and browser work", async () => {
+  let started = 0;
+  let stepped = 0;
+  const runner = new OriginalSessionWakeRunner({
+    bridge: { step: async () => { stepped++; return { status: "ok", sent: 0 }; } },
+    wakeSource: {
+      start: async () => { started++; },
+      waitForWake: async () => ({ status: "closed" }),
+      close: async () => {},
+    },
+  });
+  const controller = new AbortController();
+  controller.abort();
+  assert.deepEqual(await runner.run({ approved: true, signal: controller.signal }), { status: "stopped", replies: 0 });
+  assert.equal(started, 0);
+  assert.equal(stepped, 0);
+});
+
+test("passes cancellation into an in-flight bridge step", async () => {
+  let entered;
+  const enteredStep = new Promise(resolve => { entered = resolve; });
+  const runner = new OriginalSessionWakeRunner({
+    bridge: { step: ({ signal }) => new Promise(resolve => {
+      assert.ok(signal instanceof AbortSignal);
+      entered();
+      signal.addEventListener("abort", () => resolve({ status: "cancelled", sent: 0 }), { once: true });
+    }) },
+    wakeSource: { waitForWake: async () => ({ status: "wake" }) },
+  });
+  const result = runner.run({ approved: true });
+  await enteredStep;
+  runner.stop();
+  assert.deepEqual(await result, { status: "stopped", replies: 0 });
+});
+
+test("rejects an adapter reply count that exceeds the remaining cap", async () => {
+  const runner = new OriginalSessionWakeRunner({
+    bridge: { step: async () => ({ status: "ok", sent: 2 }) },
+    wakeSource: { waitForWake: async () => ({ status: "wake" }) },
+    maxReplies: 1,
+    maxConsecutiveErrors: 1,
+  });
+  await assert.rejects(() => runner.run({ approved: true }), /invalid sent count/);
+});
+
+test("adapter error result counts toward the bounded failure threshold", async () => {
+  let calls = 0;
+  const runner = new OriginalSessionWakeRunner({
+    bridge: { step: async () => { calls++; return { status: "error", sent: 0, message: "provider adapter unavailable" }; } },
+    wakeSource: { waitForWake: async () => ({ status: "wake" }) },
+    maxConsecutiveErrors: 2,
+  });
+  await assert.rejects(() => runner.run({ approved: true }), /provider adapter unavailable/);
+  assert.equal(calls, 2);
+});
+
+test("fails closed on provider authorization or thread-state blockers", async () => {
+  let calls = 0;
+  const runner = new OriginalSessionWakeRunner({
+    bridge: { step: async () => { calls++; return { status: "auth_required", sent: 0 }; } },
+    wakeSource: { waitForWake: async () => ({ status: "wake" }) },
+  });
+  assert.deepEqual(await runner.run({ approved: true }), { status: "finished", replies: 0 });
+  assert.equal(calls, 1);
+});
+
+test("runner instance cannot be reused after its wake source has been closed", async () => {
+  const runner = new OriginalSessionWakeRunner({
+    bridge: { step: async () => ({ status: "ok", sent: 0 }) },
+    wakeSource: { waitForWake: async () => ({ status: "closed" }), close: async () => {} },
+  });
+  await runner.run({ approved: true });
+  await assert.rejects(() => runner.run({ approved: true }), /single-use/);
+});
