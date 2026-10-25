@@ -205,6 +205,14 @@ test("baseline stores a composite cursor and supplies it to the next durable mes
   });
 });
 
+test("invalid message timestamps do not poison the composite cursor", () => {
+  const { bridge } = makeBridge({ processExistingMessages: true, messages: [] });
+  bridge.advanceCursor({ id: "invalid", created_at: "not-a-date" });
+  assert.equal(bridge.cursor, null);
+  bridge.advanceCursor({ id: "valid", created_at: "2026-10-24T17:00:00.000Z" });
+  assert.deepEqual(bridge.cursor, { id: "valid", created_at: "2026-10-24T17:00:00.000Z" });
+});
+
 test("cursor paging resumes after the last successfully handled message", async () => {
   const allMessages = [
     { id: "page-02", body: "second", created_at: "2026-10-24T17:00:00.002000Z", sender_kind: "human" },

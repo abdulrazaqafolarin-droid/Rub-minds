@@ -1,4 +1,4 @@
-import { compareMessageCursors } from "../mcp/protocol.mjs";
+import { compareMessageCursors, isValidMessageCursor } from "../mcp/protocol.mjs";
 
 /**
  * Playwright-backed Rub Minds session bridge foundation.
@@ -128,8 +128,7 @@ export class PlaywrightSessionBridge {
   }
 
   advanceCursor(message) {
-    if (!message || typeof message.id !== "string" || !message.id ||
-        typeof message.created_at !== "string") return;
+    if (!isValidMessageCursor(message)) return;
     const candidate = { id: message.id, created_at: message.created_at };
     if (!this.cursor || compareMessageCursors(candidate, this.cursor) > 0) {
       this.cursor = candidate;

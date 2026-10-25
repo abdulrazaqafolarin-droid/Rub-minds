@@ -12,6 +12,7 @@ import {
   validateToolArguments,
   filterMessagesAfterCursor,
   compareMessageCursors,
+  isValidMessageCursor,
   isAllowedMcpOrigin,
   validateProtocolVersionHeader,
   applyMcpCors,
@@ -161,6 +162,9 @@ test("message cursor comparator uses normalized microsecond timestamps then IDs"
   assert.equal(compareMessageCursors(
     { id: "message-99", created_at: "2026-10-24T19:00:00.123455+02:00" }, cursor
   ), -1);
+  assert.equal(isValidMessageCursor(cursor), true);
+  assert.equal(isValidMessageCursor({ created_at: "2026-10-24T17:00:00.000Z" }), false);
+  assert.equal(isValidMessageCursor({ id: "bad", created_at: "invalid" }), false);
 });
 
 test("composite cursor normalizes timezone offsets and compares sub-millisecond fractions exactly", () => {

@@ -240,6 +240,24 @@ test("wake runner establishes history baseline before subscribing and processes 
 });
 
 
+test("wake runner treats a busy bridge step as non-fatal and keeps its bounded loop", async () => {
+  let stepCalls = 0;
+  let waitCalls = 0;
+  const statuses = [];
+  const runner = new OriginalSessionWakeRunner({
+    bridge: { step: async () => { stepCalls++; return { status: "busy", sent: 0, processed: 0 }; } },
+    wakeSource: {
+      waitForWake: async () => (++waitCalls === 1 ? { status: "wake" } : { status: "closed" }),
+      close: async () => {},
+    },
+    maxReplies: 1,
+    onStatus: event => statuses.push(event.status),
+  });
+  assert.deepEqual(await runner.run({ approved: true }), { status: "source_closed", replies: 0 });
+  assert.equal(stepCalls, 1);
+  assert.equal(statuses.includes("error"), false);
+});
+
 test("partial successful replies remain counted when a bridge step reports an error", async () => {
   let calls = 0;
   const runner = new OriginalSessionWakeRunner({

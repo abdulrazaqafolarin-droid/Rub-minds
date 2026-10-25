@@ -121,7 +121,7 @@ export class OriginalSessionWakeRunner {
           }
           const validStatuses = new Set([
             "ok", "idle", "browser_closed", "limit_reached", "blocked",
-            "auth_required", "thread_mismatch", "cancelled", "error",
+            "auth_required", "thread_mismatch", "cancelled", "error", "busy", "baseline",
           ]);
           if (!validStatuses.has(result.status)) {
             throw new Error("bridge.step returned an unknown status");

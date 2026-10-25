@@ -169,14 +169,21 @@ function timestampMicros(value) {
  * timestamp first (exact UTC-normalized microseconds), then ID. Returns 0 if
  * one side lacks a valid timestamp; callers should only advance on grounded rows.
  */
+export function isValidMessageCursor(value) {
+  return isRecord(value) &&
+    typeof value.id === "string" &&
+    value.id.length > 0 &&
+    timestampMicros(value.created_at) !== null;
+}
+
 export function compareMessageCursors(left, right) {
-  if (!isRecord(left) || !isRecord(right)) return 0;
+  // A row without a stable ID cannot participate in an exclusive composite
+  // cursor, even when its timestamp alone sorts later.
+  if (!isValidMessageCursor(left) || !isValidMessageCursor(right)) return 0;
   const leftMicros = timestampMicros(left.created_at);
   const rightMicros = timestampMicros(right.created_at);
-  if (leftMicros === null || rightMicros === null) return 0;
   if (leftMicros < rightMicros) return -1;
   if (leftMicros > rightMicros) return 1;
-  if (typeof left.id !== "string" || typeof right.id !== "string") return 0;
   if (left.id < right.id) return -1;
   if (left.id > right.id) return 1;
   return 0;
