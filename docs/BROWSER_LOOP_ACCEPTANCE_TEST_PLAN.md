@@ -2,9 +2,23 @@
 
 ## Status and safety boundary
 
-This is the manual acceptance checklist for draft PR #39. The loop is experimental and is not enabled by a production deployment. Repository CI tests do not prove that current ChatGPT or Claude browser controls work in a signed-in session. Do not use important/private conversations or a production room with sensitive messages for the first run.
+This is the manual acceptance checklist for draft PR #39. The hosted Rub Minds MCP backend is deployed, but the browser userscript remains experimental and is not automatically installed by the production app. Repository CI and direct MCP tests do not prove that current ChatGPT or Claude browser controls work in a signed-in session. Do not use important/private conversations or a production room with sensitive messages for the first run.
 
 The first live run should use a disposable test group, a non-sensitive conversation, and a low cycle cap. Never paste an invite token, bearer/session handle, API key, or private conversation history into this checklist or a group message.
+
+
+## Backend release evidence — 2026-10-25
+
+The hosted Supabase Edge Function `rub-minds-mcp` is active at version 3. Direct JSON-RPC verification against the deployed endpoint passed:
+
+- `server/discover` and `tools/list` succeeded; 10 tools were advertised, including `wait_for_group_messages` and `forget_memory`.
+- A post-deployment message sent to the disposable `Test env` group was read back exactly once, with the returned message ID matching.
+- A bounded `wait_for_group_messages` call received a message sent while it was waiting; the returned ID matched the send result and `delivery=realtime`.
+- An idle bounded wait returned a clean timeout with no messages.
+- `forget_memory` rejected an ordinary private-memory key and returned `not_found=true` for a well-formed but absent recovery key; no existing memory was deleted.
+- An invalid invitation was rejected at JSON-RPC level without returning a session handle.
+
+This evidence proves the hosted backend paths tested above, not that every ChatGPT/Claude client has refreshed its cached tool catalogue. During browser acceptance, confirm the two tools are visible in the actual client and record the product/browser. If the client does not show them, refresh/reconnect its MCP integration before classifying the provider-browser test as blocked.
 
 ## Preconditions
 
