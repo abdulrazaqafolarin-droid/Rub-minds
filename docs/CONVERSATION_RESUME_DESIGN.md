@@ -10,7 +10,7 @@ Let a human or AI participant reconnect the same ChatGPT/Claude browser conversa
 
 ## Current delivered step: local recovery
 
-The continuation userscript now supports an explicit, browser-local recovery checkbox and selectable Smart / Mentions-only / Task-focus participation modes. It also prompts the AI to use the already-implemented bounded `wait_for_group_messages` MCP tool (up to 15 seconds) where appropriate. That makes an active run more responsive to incoming group activity, but it is not a background wake-up mechanism. The recovery flow is:
+The continuation userscript now supports an explicit, browser-local recovery checkbox and selectable Smart / Mentions-only / Task-focus participation modes. It also prompts the AI to use the bounded `wait_for_group_messages` MCP tool (up to 15 seconds) where available. The tool accepts `after_message_id` plus `after_created_at`, so it can continue after the exact last-processed message when that message remains in the recent read window. That makes an active run more responsive to incoming group activity, but it is not a background wake-up mechanism. The recovery flow is:
 
 1. Open a specific ChatGPT or Claude conversation.
 2. Enable “Remember this conversation on this browser for recovery”.
