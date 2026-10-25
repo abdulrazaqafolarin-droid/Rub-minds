@@ -96,6 +96,71 @@ test("cursor reads use immediate composite paging with a bounded page limit", as
   assert.equal(sent.arguments.session_handle, SESSION);
 });
 
+test("uses the hosted MCP wait tool as a scoped wake source and forwards the bridge cursor", async () => {
+  const cursor = {
+    after_created_at: "2026-10-24T17:00:00.123456+00:00",
+    after_message_id: "00000000-0000-4000-8000-000000000042",
+  };
+  const fake = fakeFetch(({ request }) => fakeResponse({
+    jsonrpc: "2.0",
+    id: request.id,
+    result: { structuredContent: {
+      timed_out: false,
+      delivery: "realtime",
+      messages: [{ id: "00000000-0000-4000-8000-000000000043" }],
+      next_cursor: {
+        after_created_at: "2026-10-24T17:00:00.123457+00:00",
+        after_message_id: "00000000-0000-4000-8000-000000000043",
+      },
+    } },
+  }));
+  const transport = new McpSessionMessageTransport({
+    endpoint: ENDPOINT,
+    sessionHandle: SESSION,
+    fetchImpl: fake.fetch,
+    waitTimeoutMs: 5000,
+    requestTimeoutMs: 20000,
+  });
+  const source = transport.createWakeSource();
+  assert.deepEqual(await source.start(), { status: "ready" });
+  const result = await source.waitForWake({ timeoutMs: 4000, cursor });
+  assert.deepEqual(result, { status: "wake", delivery: "realtime", messageCount: 1 });
+  const request = fake.requests[0].request.params;
+  assert.equal(request.name, "wait_for_group_messages");
+  assert.equal(request.arguments.after_created_at, cursor.after_created_at);
+  assert.equal(request.arguments.after_message_id, cursor.after_message_id);
+  assert.equal(request.arguments.timeout_ms, 4000);
+  assert.equal(request.arguments.limit, 100);
+  assert.equal(request.arguments.session_handle, SESSION);
+  await source.close();
+});
+
+test("maps timeout and unavailable MCP wait results to a recoverable wake timeout", async () => {
+  const fake = fakeFetch(({ request }) => fakeResponse({
+    jsonrpc: "2.0",
+    id: request.id,
+    result: { structuredContent: { timed_out: true, delivery: "unavailable", messages: [], next_cursor: null } },
+  }));
+  const transport = new McpSessionMessageTransport({
+    endpoint: ENDPOINT,
+    sessionHandle: SESSION,
+    fetchImpl: fake.fetch,
+    waitTimeoutMs: 10000,
+    requestTimeoutMs: 20000,
+  });
+  const result = await transport.waitForWake({
+    timeoutMs: 15000,
+    cursor: {
+      after_created_at: "2026-10-24T17:00:00.000000Z",
+      after_message_id: "10000000-0000-4000-8000-000000000001",
+    },
+  });
+  assert.deepEqual(result, { status: "timeout", delivery: "unavailable", messageCount: 0 });
+  const args = fake.requests[0].request.params.arguments;
+  assert.equal(args.timeout_ms, 10000, "wake wait must respect the configured request timeout budget");
+  assert.equal(args.after_message_id, "10000000-0000-4000-8000-000000000001");
+});
+
 test("loads and revision-checks durable session bridge state", async () => {
   let revision = 4;
   const fake = fakeFetch(({ request }) => {
