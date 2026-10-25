@@ -180,6 +180,9 @@ function makeHarness({ scenario, site = 'chatgpt', initialDraft = '', pathname =
     addMessage('user', prompt);
     stopButton.hidden = false;
     const cycle = sent.length;
+    if (scenario === 'human-before-wait' && cycle === 1) {
+      addMessage('user', 'Another human message arrived immediately after the loop prompt.');
+    }
     if (scenario === 'pause-button' && cycle === 1) {
       vmSetTimeout(() => activePanel?.querySelector('#rm-pause').click(), 15);
     }
@@ -327,6 +330,13 @@ test('human message arriving between CONTINUE and the next send prevents another
   assert.equal(result.sent.length, 1);
   assert.match(result.sent[0], /RUBMINDS_LOOP: CONTINUE/);
   assert.match(result.status, /human message arrived during the continuation delay/);
+});
+
+test('human message visible before reply polling begins is detected immediately', async () => {
+  const h = makeHarness({ scenario: 'human-before-wait' });
+  const result = await h.startAndWait();
+  assert.equal(result.sent.length, 1);
+  assert.match(result.status, /new user message was detected/);
 });
 
 test('PAUSE stops rather than repeatedly asking for action', async () => {
