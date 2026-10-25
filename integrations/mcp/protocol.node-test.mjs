@@ -129,6 +129,7 @@ test("composite message cursor excludes the last message and preserves timestamp
     { id: "00000000-0000-0000-0000-000000000040", created_at: sameTime, body: "cursor" },
     { id: "00000000-0000-0000-0000-000000000041", created_at: sameTime, body: "same timestamp, later id" },
     { id: "00000000-0000-0000-0000-000000000001", created_at: afterTime, body: "later timestamp, any id" },
+    { created_at: afterTime, body: "later timestamp but missing ID" },
     { id: "bad", created_at: "not a timestamp", body: "invalid" },
     null,
   ] };
