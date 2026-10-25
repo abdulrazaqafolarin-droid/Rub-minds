@@ -9,6 +9,12 @@
  */
 const AI_KINDS = new Set(["original_session", "model", "external_agent"]);
 
+function isSafeToRetry(error) {
+  return Boolean(error && typeof error === "object" && (
+    error.safeToRetry === true || error.submissionState === "not_submitted"
+  ));
+}
+
 export class PlaywrightSessionBridge {
   constructor({
     page,
@@ -20,7 +26,7 @@ export class PlaywrightSessionBridge {
     maxReplies = 20,
     maxMessagesPerStep = 1,
   }) {
-    if (!page || !adapter || typeof adapter.ask !== "function") {
+    if (!page || typeof page.isClosed !== "function" || !adapter || typeof adapter.ask !== "function") {
       throw new TypeError("Playwright page and AI adapter.ask are required");
     }
     if (typeof readMessages !== "function" || typeof sendMessage !== "function") {
@@ -46,30 +52,61 @@ export class PlaywrightSessionBridge {
     this.running = false;
     this.replies = 0;
     this.seen = new Set();
+    // Keep completed provider replies pending until Rub Minds acknowledges them.
+    // Retrying the same source_message_id is safe when the server enforces dedupe.
+    this.pendingResponses = new Map();
+    // Ambiguous provider outcomes must stop automation rather than risk duplicate prompts.
+    this.blockedMessage = null;
   }
 
-  async step({ approved = false, remainingReplies = this.maxReplies - this.replies } = {}) {
+  async step({ approved = false, remainingReplies = this.maxReplies - this.replies, signal } = {}) {
     if (!approved) {
       throw new Error("Explicit approval required before accessing an AI browser session");
     }
     if (!Number.isInteger(remainingReplies) || remainingReplies < 0) {
       throw new RangeError("remainingReplies must be a non-negative integer");
     }
-    const effectiveLimit = Math.min(this.maxReplies, this.replies + remainingReplies);
-    if (this.replies >= effectiveLimit) return { status: "limit_reached" };
-    if (this.page.isClosed()) return { status: "browser_closed" };
+    if (signal?.aborted) return { status: "cancelled", sent: 0, processed: 0 };
+    if (this.blockedMessage) {
+      return {
+        status: "blocked",
+        sent: 0,
+        processed: 0,
+        blockedMessageId: this.blockedMessage.messageId,
+        reason: this.blockedMessage.reason,
+      };
+    }
 
-    const result = await this.readMessages();
+    const effectiveLimit = Math.min(this.maxReplies, this.replies + remainingReplies);
+    if (this.replies >= effectiveLimit) return { status: "limit_reached", sent: 0, processed: 0 };
+    if (this.page.isClosed()) return { status: "browser_closed", sent: 0, processed: 0 };
+
+    let sent = 0;
+    let processed = 0;
+
+    // Deliver completed replies before prompting the provider again. If a send
+    // failed ambiguously, resend the same body with the same idempotency key.
+    for (const [messageId, response] of this.pendingResponses) {
+      if (signal?.aborted) return { status: "cancelled", sent, processed };
+      if (this.replies >= effectiveLimit || sent >= remainingReplies) break;
+      await this.sendMessage(response, messageId, { signal });
+      this.pendingResponses.delete(messageId);
+      this.replies++;
+      sent++;
+    }
+    if (this.replies >= effectiveLimit) return { status: "limit_reached", sent, processed };
+    if (signal?.aborted) return { status: "cancelled", sent, processed };
+
+    const result = await this.readMessages({ signal });
     if (!result || !Array.isArray(result.messages)) {
       throw new Error("Invalid group message response");
     }
 
-    let sent = 0;
-    let processed = 0;
     for (const message of result.messages) {
+      if (signal?.aborted) return { status: "cancelled", sent, processed };
       if (this.replies >= effectiveLimit || processed >= this.maxMessagesPerStep) break;
       if (!message || typeof message.id !== "string" || typeof message.body !== "string") continue;
-      if (this.seen.has(message.id)) continue;
+      if (this.seen.has(message.id) || this.pendingResponses.has(message.id)) continue;
 
       // Mark every observed ID once, including ignored messages, so polling does
       // not repeatedly reconsider the same event.
@@ -82,26 +119,56 @@ export class PlaywrightSessionBridge {
       if (Number.isInteger(message.turn_depth) && message.turn_depth >= 8) continue;
 
       processed++;
+      let response;
       try {
-        const response = await this.adapter.ask(this.page, message.body, {
+        response = await this.adapter.ask(this.page, message.body, {
           messageId: message.id,
           senderKind: message.sender_kind,
           senderName: message.display_name ?? null,
+          signal,
         });
-        if (typeof response !== "string" || !response.trim()) continue;
-
-        // The transport should use source message IDs as idempotency keys. If
-        // the send result is ambiguous, a retry must not create a duplicate.
-        await this.sendMessage(response.trim(), message.id);
-        this.replies++;
-        sent++;
       } catch (error) {
-        // Provider failures are safe to retry. For ambiguous send failures the
-        // backend's source_message_id dedupe is the final protection.
-        this.seen.delete(message.id);
-        throw error;
+        if (signal?.aborted) {
+          this.blockedMessage = { messageId: message.id, reason: "provider_outcome_unknown_after_cancel" };
+          return { status: "cancelled", sent, processed, blockedMessageId: message.id };
+        }
+        if (isSafeToRetry(error)) {
+          // Retry only when the adapter explicitly guarantees no prompt was sent.
+          this.seen.delete(message.id);
+          throw error;
+        }
+        this.blockedMessage = { messageId: message.id, reason: "provider_outcome_unknown" };
+        return {
+          status: "blocked",
+          sent,
+          processed,
+          blockedMessageId: message.id,
+          reason: "provider_outcome_unknown",
+        };
       }
+
+      if (typeof response !== "string" || !response.trim()) {
+        this.blockedMessage = { messageId: message.id, reason: "provider_response_empty_or_incomplete" };
+        return {
+          status: "blocked",
+          sent,
+          processed,
+          blockedMessageId: message.id,
+          reason: "provider_response_empty_or_incomplete",
+        };
+      }
+
+      // Save before the send call so a transient/ambiguous transport failure
+      // cannot force a second provider prompt on the next step.
+      this.pendingResponses.set(message.id, response.trim());
+      if (signal?.aborted) return { status: "cancelled", sent, processed, pendingDelivery: true };
+
+      await this.sendMessage(response.trim(), message.id, { signal });
+      this.pendingResponses.delete(message.id);
+      this.replies++;
+      sent++;
     }
+
     return { status: "ok", sent, processed };
   }
 
@@ -111,8 +178,14 @@ export class PlaywrightSessionBridge {
     this.running = true;
     try {
       while (this.running && !signal?.aborted && this.replies < this.maxReplies) {
-        const outcome = await this.step({ approved, remainingReplies: this.maxReplies - this.replies });
-        if (outcome.status === "browser_closed" || outcome.status === "limit_reached") break;
+        const outcome = await this.step({
+          approved,
+          remainingReplies: this.maxReplies - this.replies,
+          signal,
+        });
+        if ([
+          "browser_closed", "limit_reached", "blocked", "cancelled",
+        ].includes(outcome.status)) break;
         await new Promise(resolve => setTimeout(resolve, this.intervalMs));
       }
     } finally {
