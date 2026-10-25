@@ -106,12 +106,14 @@ test("an unclassified provider failure blocks instead of risking a duplicate pro
   const { bridge, calls } = makeBridge({
     messages: [{ id: "ambiguous", body: "send once", sender_kind: "human" }],
   });
-  bridge.adapter.ask = async () => { throw new Error("connection dropped during submission"); };
+  let attempts = 0;
+  bridge.adapter.ask = async () => { attempts++; throw new Error("connection dropped during submission"); };
   const first = await bridge.step({ approved: true });
   assert.equal(first.status, "blocked");
   assert.equal(first.blockedMessageId, "ambiguous");
   const second = await bridge.step({ approved: true });
   assert.equal(second.status, "blocked");
+  assert.equal(attempts, 1);
   assert.equal(calls.length, 0);
 });
 
