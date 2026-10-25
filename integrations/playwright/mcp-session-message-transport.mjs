@@ -179,7 +179,7 @@ export class McpSessionMessageTransport {
 
     // The first read is a bounded current snapshot. Later reads use the same
     // read_group_messages tool with its composite cursor for immediate paging.
-    const result = await this.callTool("read_group_messages", {}, { signal });
+    const result = await this.callTool("read_group_messages", { limit }, { signal });
     if (!Array.isArray(result.messages)) throw new Error("Rub Minds MCP baseline read returned no message list");
     if (result.messages.length === 0 && !result.next_cursor) {
       return { ...result, next_cursor: { ...EMPTY_ROOM_CURSOR } };
