@@ -58,3 +58,20 @@ test("supports timeout, cancellation, and close without leaking waiters", async 
   assert.deepEqual(await pendingClose, { status: "closed" });
   assert.deepEqual(await source.waitForWake(), { status: "closed" });
 });
+
+
+test("removes the channel when subscription fails", async () => {
+  let removed = 0;
+  const channel = {
+    on: () => channel,
+    subscribe: handler => { queueMicrotask(() => handler("CHANNEL_ERROR")); return channel; },
+  };
+  const client = {
+    channel: () => channel,
+    removeChannel: async value => { assert.equal(value, channel); removed++; },
+  };
+  const source = new SupabaseRealtimeWakeSource({ client, roomId: "r" });
+  await assert.rejects(() => source.start(), /subscription failed: CHANNEL_ERROR/);
+  assert.equal(removed, 1);
+  assert.equal(source.channel, null);
+});
