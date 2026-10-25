@@ -354,7 +354,17 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
         };
         if (eventSeen) wakeWaiter();
       });
-      if (eventOrTimeout === "timeout") return { timed_out: true, delivery: "realtime", messages: [] };
+      if (eventOrTimeout === "timeout") {
+        // A Realtime event can race with the timeout callback. If we observed
+        // one, take a final authorized snapshot before reporting timeout.
+        if (eventSeen) {
+          const atDeadline = await invokeAgent(credential, "read");
+          if (hasNewMessages(atDeadline)) {
+            return { timed_out: false, delivery: "snapshot", ...(await onlyNewMessages(atDeadline) as Record<string, unknown>) };
+          }
+        }
+        return { timed_out: true, delivery: "realtime", messages: [] };
+      }
       const afterEvent = await invokeAgent(credential, "read");
       return { timed_out: !hasNewMessages(afterEvent), delivery: "realtime", ...(await onlyNewMessages(afterEvent) as Record<string, unknown>) };
     } finally {
