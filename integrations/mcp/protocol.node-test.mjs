@@ -140,6 +140,25 @@ test("memory visibility is explicit and idempotency keys are bounded", () => {
   assert.match(validateToolArguments("remember_memory", { ...args, visibility: "all" }), /visibility/);
   assert.match(validateToolArguments("remember_memory", { ...args, idempotency_key: "x" }), /idempotency_key/);
   assert.match(validateToolArguments("remember_memory", { ...args, idempotency_key: "        " }), /idempotency_key/);
+  const recoveryPrefix = "Original AI conversation recovery URL (private; do not post to group messages): ";
+  assert.equal(validateToolArguments("remember_memory", {
+    entry_type: "insight",
+    content: recoveryPrefix + "https://chatgpt.com/c/example",
+    visibility: "private",
+    idempotency_key: "browser-resume-12345678",
+  }), null);
+  assert.match(validateToolArguments("remember_memory", {
+    entry_type: "insight",
+    content: "An ordinary private note",
+    visibility: "private",
+    idempotency_key: "browser-resume-12345678",
+  }), /reserved for private browser-recovery locator/);
+  assert.match(validateToolArguments("remember_memory", {
+    entry_type: "insight",
+    content: recoveryPrefix + "https://chatgpt.com/c/example",
+    visibility: "group",
+    idempotency_key: "browser-resume-12345678",
+  }), /reserved for private browser-recovery locator/);
   const sourceId = "550e8400-e29b-41d4-a716-446655440000";
   assert.equal(validateToolArguments("remember_memory", { ...args, source_message_ids: [sourceId] }), null);
   assert.match(validateToolArguments("remember_memory", { ...args, source_message_ids: [sourceId, sourceId] }), /unique UUIDs/);

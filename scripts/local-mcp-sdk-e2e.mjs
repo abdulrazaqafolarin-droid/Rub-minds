@@ -297,10 +297,55 @@ try {
       entry_type: "insight",
       content: "PRIVATE ONLY: preserve the original user's unpublished research constraint.",
       visibility: "private",
-      idempotency_key: "browser-resume-sdk-private-memory-one",
+      idempotency_key: "sdk-private-memory-one",
     },
   });
   assert.notEqual(privateEntry.isError, true, "private memory write failed: " + JSON.stringify(privateEntry));
+
+  const recoveryPrefix = "Original AI conversation recovery URL (private; do not post to group messages): ";
+  const recoveryEntry = await first.callTool({
+    name: "remember_memory",
+    arguments: {
+      session_handle: one.session_handle,
+      entry_type: "insight",
+      content: recoveryPrefix + "https://chatgpt.com/c/ci-recovery-thread. This is only a locator, not an authentication credential.",
+      visibility: "private",
+      idempotency_key: "browser-resume-sdk-recovery-link-one",
+    },
+  });
+  assert.notEqual(recoveryEntry.isError, true, "private browser recovery locator write failed: " + JSON.stringify(recoveryEntry));
+
+  const reservedKeyMisuse = await first.callTool({
+    name: "remember_memory",
+    arguments: {
+      session_handle: one.session_handle,
+      entry_type: "insight",
+      content: "An ordinary private note must not be deletable through the recovery tool.",
+      visibility: "private",
+      idempotency_key: "browser-resume-sdk-bad-note",
+    },
+  });
+  assert.equal(reservedKeyMisuse.isError, true, "reserved recovery key must reject a non-locator note");
+
+  // Seed a legacy/private non-locator row with a browser-resume key directly
+  // into the disposable CI database to prove deletion has server-side defense
+  // in depth for rows created before the namespace validation existed.
+  const legacyRows = await request("/rest/v1/room_memory_entries", {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({
+      room_id: room.id,
+      created_by_participant_id: one.participant_id,
+      owner_id: owner.id,
+      entry_type: "insight",
+      visibility: "private",
+      content: "Legacy private note that is not a browser recovery locator.",
+      source_message_ids: [],
+      idempotency_key: "browser-resume-sdk-legacy-note",
+    }),
+  });
+  assert.equal(legacyRows.length, 1, "could not seed legacy private note for deletion regression test");
+
   const groupEntry = await first.callTool({
     name: "remember_memory",
     arguments: {
@@ -335,46 +380,74 @@ try {
   );
   assert.ok(
     memoryOne.structuredContent?.group_memory?.some(entry => entry.visibility === "private" && entry.content.includes("PRIVATE ONLY")),
-    "AI one must retain access to its own private memory",
+    "AI one must retain access to its own ordinary private memory",
   );
   assert.ok(
-    !memoryTwo.structuredContent?.group_memory?.some(entry => entry.content.includes("PRIVATE ONLY")),
-    "AI two must not see AI one's private memory",
+    memoryOne.structuredContent?.group_memory?.some(entry => entry.visibility === "private" && entry.content.startsWith(recoveryPrefix)),
+    "AI one must retain access to its own private recovery locator",
+  );
+  assert.ok(
+    memoryOne.structuredContent?.group_memory?.some(entry => entry.visibility === "private" && entry.content.includes("Legacy private note")),
+    "legacy private note should be present before deletion attempts",
+  );
+  assert.ok(
+    !memoryTwo.structuredContent?.group_memory?.some(entry => entry.content.includes("PRIVATE ONLY") || entry.content.startsWith(recoveryPrefix) || entry.content.includes("Legacy private note")),
+    "AI two must not see AI one's participant-private memory",
   );
   assert.ok(
     memoryTwo.structuredContent?.group_memory?.some(entry => entry.visibility === "group" && entry.content.includes("SHARED DECISION")),
     "AI two must see explicitly group-shared memory",
   );
-  // Deletion must be scoped to the requesting participant and to private
-  // visibility. AI two cannot erase AI one's private locator even with its key.
+
+  // Another participant cannot delete the private locator even with its key.
   const crossParticipantForget = await second.callTool({
     name: "forget_memory",
     arguments: {
       session_handle: two.session_handle,
-      idempotency_key: "browser-resume-sdk-private-memory-one",
+      idempotency_key: "browser-resume-sdk-recovery-link-one",
       confirm_forget: true,
     },
   });
   assert.notEqual(crossParticipantForget.isError, true, "private-memory scoped no-op should be a valid tool result");
   assert.equal(crossParticipantForget.structuredContent?.forgotten, false);
   assert.equal(crossParticipantForget.structuredContent?.not_found, true);
+
+  // Even the owner cannot delete an ordinary legacy private note just because
+  // its old idempotency key happens to use the browser-resume namespace.
+  const legacyForget = await first.callTool({
+    name: "forget_memory",
+    arguments: {
+      session_handle: one.session_handle,
+      idempotency_key: "browser-resume-sdk-legacy-note",
+      confirm_forget: true,
+    },
+  });
+  assert.notEqual(legacyForget.isError, true, "legacy private-note delete should be a safe no-op");
+  assert.equal(legacyForget.structuredContent?.forgotten, false);
+  assert.equal(legacyForget.structuredContent?.not_found, true);
   const stillPrivateForOwner = await first.callTool({
     name: "read_session_memory",
     arguments: { session_handle: one.session_handle },
   });
   assert.ok(stillPrivateForOwner.structuredContent?.group_memory?.some(entry =>
     entry.visibility === "private" && entry.content.includes("PRIVATE ONLY")),
-    "cross-participant deletion must not remove AI one's private entry");
+    "an attempted recovery delete must not remove an ordinary private memory");
+  assert.ok(stillPrivateForOwner.structuredContent?.group_memory?.some(entry =>
+    entry.visibility === "private" && entry.content.includes("Legacy private note")),
+    "recovery deletion must not remove legacy non-locator private rows");
+  assert.ok(stillPrivateForOwner.structuredContent?.group_memory?.some(entry =>
+    entry.visibility === "private" && entry.content.startsWith(recoveryPrefix)),
+    "cross-participant deletion must not remove AI one's private recovery locator");
 
   const ownerForget = await first.callTool({
     name: "forget_memory",
     arguments: {
       session_handle: one.session_handle,
-      idempotency_key: "browser-resume-sdk-private-memory-one",
+      idempotency_key: "browser-resume-sdk-recovery-link-one",
       confirm_forget: true,
     },
   });
-  assert.notEqual(ownerForget.isError, true, "owner could not delete own private memory");
+  assert.notEqual(ownerForget.isError, true, "owner could not delete own private recovery locator");
   assert.equal(ownerForget.structuredContent?.forgotten, true);
   assert.equal(ownerForget.structuredContent?.visibility, "private");
   const afterForgetOne = await first.callTool({
@@ -385,23 +458,29 @@ try {
     name: "read_session_memory",
     arguments: { session_handle: two.session_handle },
   });
-  assert.ok(!afterForgetOne.structuredContent?.group_memory?.some(entry => entry.content.includes("PRIVATE ONLY")),
-    "deleted private entry remains visible to its owner");
+  assert.ok(afterForgetOne.structuredContent?.group_memory?.some(entry => entry.content.includes("PRIVATE ONLY")),
+    "deleting the recovery locator must preserve ordinary private memory");
+  assert.ok(afterForgetOne.structuredContent?.group_memory?.some(entry => entry.content.includes("Legacy private note")),
+    "deleting the recovery locator must preserve legacy private notes");
+  assert.ok(!afterForgetOne.structuredContent?.group_memory?.some(entry => entry.content.startsWith(recoveryPrefix)),
+    "the deleted recovery locator remains visible to its owner");
+  assert.ok(!afterForgetTwo.structuredContent?.group_memory?.some(entry => entry.content.startsWith(recoveryPrefix)),
+    "the deleted recovery locator remains visible to another participant");
   assert.ok(afterForgetOne.structuredContent?.group_memory?.some(entry => entry.visibility === "group" && entry.content.includes("SHARED DECISION")),
-    "deleting private memory must preserve group memory for owner");
+    "deleting private recovery memory must preserve group memory for owner");
   assert.ok(afterForgetTwo.structuredContent?.group_memory?.some(entry => entry.visibility === "group" && entry.content.includes("SHARED DECISION")),
-    "deleting private memory must preserve group memory for other participants");
+    "deleting private recovery memory must preserve group memory for other participants");
   const repeatedForget = await first.callTool({
     name: "forget_memory",
     arguments: {
       session_handle: one.session_handle,
-      idempotency_key: "browser-resume-sdk-private-memory-one",
+      idempotency_key: "browser-resume-sdk-recovery-link-one",
       confirm_forget: true,
     },
   });
   assert.equal(repeatedForget.structuredContent?.forgotten, false, "repeated deletion must be a harmless idempotent no-op");
   assert.equal(repeatedForget.structuredContent?.not_found, true);
-  console.log("Official MCP SDK confirmed private-memory deletion is participant-scoped, preserves group memory, and is safe to retry.");
+  console.log("Official MCP SDK verified recovery-only deletion: participant-scoped, preserves ordinary private notes and group memory, and safe to retry.");
   console.log("Official MCP SDK private session-context and explicit group-memory isolation passed.");
 
   const sent = await first.callTool({

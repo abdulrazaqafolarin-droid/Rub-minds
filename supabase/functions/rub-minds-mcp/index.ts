@@ -484,6 +484,8 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       .eq("room_id", connection.room_id)
       .eq("created_by_participant_id", connection.participant_id)
       .eq("visibility", "private")
+      .eq("entry_type", "insight")
+      .like("content", "Original AI conversation recovery URL (private; do not post to group messages): %")
       .eq("idempotency_key", args.idempotency_key)
       .select("id");
     if (error) throw new Error("Could not delete this participant's private recovery entry.");

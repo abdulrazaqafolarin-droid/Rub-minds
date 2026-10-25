@@ -191,6 +191,14 @@ export function validateToolArguments(name, args) {
       if (typeof args.content !== "string" || !args.content.trim() || args.content.length > 12000) return "content must contain 1-12000 characters.";
       if (!["private", "group"].includes(args.visibility)) return "visibility must explicitly be private or group.";
       if (typeof args.idempotency_key !== "string" || !args.idempotency_key.trim() || args.idempotency_key.length < 8 || args.idempotency_key.length > 200) return "idempotency_key must be 8-200 characters.";
+      // Reserve this namespace for the exact kind of private browser locator
+      // that forget_memory is allowed to delete. Generic private notes must not
+      // become deletable just because they happen to use a matching key.
+      if (args.idempotency_key.startsWith("browser-resume-") &&
+          (args.entry_type !== "insight" || args.visibility !== "private" ||
+           !args.content.startsWith("Original AI conversation recovery URL (private; do not post to group messages): "))) {
+        return "browser-resume idempotency keys are reserved for private browser-recovery locator entries.";
+      }
       if (args.source_message_ids !== undefined && (
         !Array.isArray(args.source_message_ids) ||
         args.source_message_ids.length > 50 ||
