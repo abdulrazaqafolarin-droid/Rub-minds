@@ -532,6 +532,7 @@ test('participation modes shape prompts for smart chat, mentions-only, and task 
     assert.match(result.sent[0], new RegExp('Selected participation mode: ' + mode));
     assert.match(result.sent[0], expected);
     assert.match(result.sent[0], /wait_for_group_messages/);
+    assert.match(result.sent[0], /after_message_id and after_created_at/);
     assert.equal(JSON.parse(h.context.localStorage.getItem('rubMindsContinuationSettingsV1')).mode, mode);
   }
 });
