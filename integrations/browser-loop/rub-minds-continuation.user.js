@@ -354,7 +354,8 @@
         <button type="button" id="rm-forget-recovery" style="width:100%;margin-top:5px;padding:6px" disabled>Forget saved recovery link</button>
         <button type="button" id="rm-save-private" style="width:100%;margin-top:5px;padding:6px" disabled>Save link privately in Rub Minds</button>
         <button type="button" id="rm-forget-private" style="width:100%;margin-top:5px;padding:6px" disabled>Forget private link in Rub Minds</button>
-        <div style="margin-top:4px;color:#c9c9c9">Private save and deletion are separate, explicit MCP actions. Verify the actual tool result; local link removal alone does not delete server-side memory.</div>
+        <button type="button" id="rm-clear-private-reference" style="width:100%;margin-top:5px;padding:6px" disabled>Clear local reference after verifying delete result</button>
+        <div style="margin-top:4px;color:#c9c9c9">Only one private recovery-link reference is tracked per browser. Verify the actual forget_memory result before clearing its local deletion key; clearing this key does not delete server-side memory.</div>
       </div>
       <div style="display:flex;gap:6px;margin-top:8px">
         <button type="button" id="rm-start" style="flex:1;padding:7px;font-weight:700">Start</button>
@@ -380,7 +381,9 @@
     const message = el('rm-recovery');
     const reopen = el('rm-reopen');
     const forgetPrivate = el('rm-forget-private');
+    const clearPrivateReference = el('rm-clear-private-reference');
     forgetPrivate.disabled = !privateMemoryBinding || !inputNode() || running || paused || isGenerating() || Boolean(composerText(inputNode()));
+    clearPrivateReference.disabled = !privateMemoryBinding?.forgetRequestedAt || running || paused || isGenerating();
     forgetPrivate.textContent = privateMemoryBinding?.forgetRequestedAt
       ? 'Retry private-memory deletion'
       : 'Forget private link in Rub Minds';
@@ -390,7 +393,7 @@
       reopen.textContent = 'Reopen saved conversation';
       el('rm-forget-recovery').disabled = true;
       el('rm-save-private').disabled = true;
-      el('rm-save-private').textContent = 'Save link privately in Rub Minds';
+      el('rm-save-private').textContent = privateMemoryBinding ? 'Resolve the previous private link first' : 'Save link privately in Rub Minds';
       return;
     }
     const savedPath = new URL(savedConversation.url).pathname;
@@ -403,9 +406,10 @@
     reopen.disabled = isCurrent;
     reopen.textContent = isCurrent ? 'Saved conversation is already open' : 'Reopen saved conversation';
     el('rm-forget-recovery').disabled = false;
-    el('rm-save-private').disabled = !isCurrent || !inputNode() || !el('rm-remember').checked || running || paused || isGenerating() || privateRequestedForThisLink;
-    el('rm-save-private').textContent = privateRequestedForThisLink
-      ? 'Private-memory request submitted'
+    const hasTrackedPrivateReference = Boolean(privateMemoryBinding?.idempotencyKey);
+    el('rm-save-private').disabled = !isCurrent || !inputNode() || !el('rm-remember').checked || running || paused || isGenerating() || hasTrackedPrivateReference;
+    el('rm-save-private').textContent = hasTrackedPrivateReference
+      ? (privateRequestedForThisLink ? 'Private-memory request submitted' : 'Resolve previous private link first')
       : 'Save link privately in Rub Minds';
   }
   updateRecoveryUi();
@@ -470,7 +474,7 @@
         throw new Error('Open the saved conversation and enable local recovery before registering its link.');
       }
       if (running || paused || isGenerating()) throw new Error('Wait until the current assistant reply and continuation run have stopped.');
-      if (privateMemoryBinding?.idempotencyKey === `browser-resume-${savedConversation.resumeId}`) throw new Error('A private-memory request for this link was already submitted. Verify its tool result or use the Forget private link control before retrying.');
+      if (privateMemoryBinding?.idempotencyKey) throw new Error('A private-memory deletion reference is already tracked in this browser. Verify the actual forget_memory result, clear that local reference, and only then save another link. Do not clear it unless the result reports forgotten=true or not_found=true.');
       if (composerText(inputNode())) throw new Error('The composer contains a human draft. Send or clear it before requesting private link storage.');
       const before = snapshot();
       const idempotencyKey = `browser-resume-${savedConversation.resumeId}`;
@@ -524,6 +528,27 @@
     } catch (error) {
       updateRecoveryUi();
       status(`Private-memory deletion was not submitted: ${error?.message || String(error)}`);
+    }
+  });
+
+  el('rm-clear-private-reference').addEventListener('click', () => {
+    try {
+      if (!privateMemoryBinding?.idempotencyKey) throw new Error('No private-memory deletion reference is saved in this browser.');
+      if (!privateMemoryBinding.forgetRequestedAt) throw new Error('Submit the separate Forget private link action first.');
+      if (running || paused || isGenerating()) throw new Error('Wait until the current assistant reply has finished.');
+      const confirmed = window.confirm(
+        'Clear this browser\'s stored deletion key only? This does not delete server-side memory. Continue only after the actual forget_memory tool result reported forgotten=true or not_found=true.'
+      );
+      if (!confirmed) {
+        status('Local private-memory reference was kept. Verify the actual forget_memory result before clearing it.');
+        return;
+      }
+      localStorage.removeItem(PRIVATE_MEMORY_KEY);
+      privateMemoryBinding = null;
+      updateRecoveryUi();
+      status('Local private-memory deletion reference cleared. This did not change server-side memory; only clear it after verifying forgotten=true or not_found=true from the actual tool result.');
+    } catch (error) {
+      status(`Local private-memory reference was not cleared: ${error?.message || String(error)}`);
     }
   });
 

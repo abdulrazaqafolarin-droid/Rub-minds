@@ -56,7 +56,7 @@ class FakeElement {
     if (!this.elements.has(id)) {
       const tag = id === 'rm-trigger' ? 'textarea' :
         ['rm-max', 'rm-delay', 'rm-timeout', 'rm-remember'].includes(id) ? 'input' :
-        ['rm-start', 'rm-pause', 'rm-resume', 'rm-stop', 'rm-collapse', 'rm-reopen', 'rm-save-private', 'rm-forget-recovery', 'rm-forget-private'].includes(id) ? 'button' : 'div';
+        ['rm-start', 'rm-pause', 'rm-resume', 'rm-stop', 'rm-collapse', 'rm-reopen', 'rm-save-private', 'rm-forget-recovery', 'rm-forget-private', 'rm-clear-private-reference'].includes(id) ? 'button' : 'div';
       const node = tag === 'textarea' ? new FakeTextArea() : tag === 'input' ? new FakeInput() : new FakeElement(tag);
       node.id = id;
       node.ownerDocument = this.ownerDocument;
@@ -233,7 +233,7 @@ function makeHarness({ scenario, site = 'chatgpt', initialDraft = '', pathname =
     stopButton.hidden = false;
     vmSetTimeout(() => { addMessage('assistant', 'The already-running reply has now completed.'); stopButton.hidden = true; initialGenerationFinished = true; }, 80);
   }
-  const window = { __test: { sent, messages } };
+  const window = { __test: { sent, messages }, confirm: () => true };
   const context = vm.createContext({
     window, document, location,
     localStorage, HTMLTextAreaElement: FakeTextArea, HTMLInputElement: FakeInput,
@@ -663,4 +663,36 @@ test('private-memory deletion requires a separate explicit action and targets on
   assert.match(h.sent[0], /Do not delete any other memory/);
   assert.match(panel.querySelector('#rm-status').textContent, /Verify the actual forget_memory tool result/);
   assert.ok(h.context.localStorage.getItem('rubMindsPrivateRecoveryMemoryV1'), 'keep the key available until the result is verified');
+});
+
+
+test('a tracked private-memory deletion key cannot be overwritten by saving a second locator', () => {
+  const h = makeHarness({
+    scenario: 'done-first',
+    savedConversation: { url: 'https://chatgpt.com/c/new-thread', provider: 'ChatGPT', savedAt: '2026-10-25T00:00:00Z', resumeId: 'new-link-id-1234' },
+    savedPrivateMemory: { idempotencyKey: 'browser-resume-old-link-id-1234', requestedAt: '2026-10-25T00:00:00Z', forgetRequestedAt: '' },
+  });
+  const panel = h.document.getElementById('rubminds-continuation-panel');
+  const save = panel.querySelector('#rm-save-private');
+  assert.equal(save.disabled, true);
+  assert.match(save.textContent, /Resolve previous private link first/);
+  save.click();
+  assert.equal(h.sent.length, 0);
+  const tracked = JSON.parse(h.context.localStorage.getItem('rubMindsPrivateRecoveryMemoryV1'));
+  assert.equal(tracked.idempotencyKey, 'browser-resume-old-link-id-1234');
+});
+
+test('the local private-memory deletion key can be cleared only after a deletion request is tracked and remains local-only', () => {
+  const h = makeHarness({
+    scenario: 'done-first',
+    savedConversation: { url: 'https://chatgpt.com/c/new-thread', provider: 'ChatGPT', savedAt: '2026-10-25T00:00:00Z', resumeId: 'new-link-id-1234' },
+    savedPrivateMemory: { idempotencyKey: 'browser-resume-old-link-id-1234', requestedAt: '2026-10-25T00:00:00Z', forgetRequestedAt: '2026-10-25T00:01:00Z' },
+  });
+  const panel = h.document.getElementById('rubminds-continuation-panel');
+  const clear = panel.querySelector('#rm-clear-private-reference');
+  assert.equal(clear.disabled, false);
+  clear.click();
+  assert.equal(h.context.localStorage.getItem('rubMindsPrivateRecoveryMemoryV1'), null);
+  assert.match(panel.querySelector('#rm-status').textContent, /did not change server-side memory/);
+  assert.equal(panel.querySelector('#rm-save-private').disabled, false, 'a new private locator may be saved after the previous reference is explicitly resolved');
 });
