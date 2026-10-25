@@ -405,7 +405,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     await establishInitialCursor();
     const initial = await readCurrentGroup();
     if (hasNewMessages(initial)) {
-      return { timed_out: false, delivery: "realtime", ...(await onlyNewMessages(initial) as Record<string, unknown>) };
+      return { timed_out: false, delivery: "cursor-read", ...(await onlyNewMessages(initial) as Record<string, unknown>) };
     }
 
     db.realtime.setAuth(serviceKey);
@@ -452,7 +452,11 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       // payloads are wake signals only; message rows remain the source of truth.
       const afterSubscribe = await readCurrentGroup();
       if (hasNewMessages(afterSubscribe)) {
-        return { timed_out: false, delivery: "realtime", ...(await onlyNewMessages(afterSubscribe) as Record<string, unknown>) };
+        return {
+          timed_out: false,
+          delivery: eventSeen ? "realtime" : "realtime-recovery-read",
+          ...(await onlyNewMessages(afterSubscribe) as Record<string, unknown>),
+        };
       }
       if (eventSeen) {
         const afterEvent = await readCurrentGroup();
@@ -473,11 +477,15 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       // This recovers a message whose notification was dropped or delayed.
       const afterWait = await readCurrentGroup();
       if (hasNewMessages(afterWait)) {
-        return { timed_out: false, delivery: "realtime", ...(await onlyNewMessages(afterWait) as Record<string, unknown>) };
+        return {
+          timed_out: false,
+          delivery: eventOrTimeout === "message" ? "realtime" : "realtime-recovery-read",
+          ...(await onlyNewMessages(afterWait) as Record<string, unknown>),
+        };
       }
       return {
         timed_out: true,
-        delivery: eventOrTimeout === "timeout" ? "realtime" : "realtime-recovery-read",
+        delivery: eventOrTimeout === "timeout" ? "timeout" : "realtime-recovery-read",
         messages: [],
         next_cursor: currentCursor(),
       };

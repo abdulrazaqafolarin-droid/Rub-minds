@@ -162,3 +162,8 @@ The isolated CI also creates a genuinely empty room, verifies that a no-cursor w
 ## Concrete transport verification
 
 The local Supabase integration job now uses `McpSessionMessageTransport` against its running local `rub-minds-mcp` Edge Function to read a group snapshot, send a source-keyed message, and read the persisted message back. This proves the concrete bridge transport's JSON-RPC headers/body shape and session-handle placement against the real disposable server, while the provider/browser adapter remains simulated.
+
+
+## Distinguishing Realtime wake-ups from recovery reads
+
+The MCP wait response's `delivery` field now distinguishes an actual observed Realtime callback (`realtime`) from a durable fallback query (`realtime-recovery-read`), an initial cursor read (`cursor-read`), an unavailable subscription, and a normal timeout. This makes the status honest and allows local integration tests to prove that the subscriber actually received the first new-message event instead of merely recovering the row after a timeout.

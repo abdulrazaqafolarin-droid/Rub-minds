@@ -706,6 +706,8 @@ jobs:
           assert.ok(liveWakeResult, "an in-flight MCP wait did not recover a message created after its cursor");
           assert.equal(liveWakeResult.structuredContent?.timed_out, false,
             "live wake response should not be marked as timed out");
+          assert.equal(liveWakeResult.structuredContent?.delivery, "realtime",
+            "the live wait must be resumed by an observed Realtime event, not only a recovery read");
           assert.ok(liveWakeResult.structuredContent.messages.some(message => message.id === liveWakeMessageId),
             "live wake response omitted its triggering message");
           assert.deepEqual(liveWakeResult.structuredContent.next_cursor, {
@@ -802,6 +804,8 @@ jobs:
           const emptyWake = await emptyWakePromise;
           assert.equal(emptyWake.isError, undefined, "empty-room live wait failed: " + JSON.stringify(emptyWake));
           assert.equal(emptyWake.structuredContent?.timed_out, false, "the first message should wake the empty-room listener");
+          assert.equal(emptyWake.structuredContent?.delivery, "realtime",
+            "the empty-room listener must observe the first-message Realtime event");
           assert.ok(emptyWake.structuredContent?.messages?.some(message => message.id === emptyMessageId),
             "the first message after an empty-room baseline must be returned");
           assert.deepEqual(emptyWake.structuredContent?.next_cursor, {
