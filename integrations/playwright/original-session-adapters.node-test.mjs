@@ -55,7 +55,7 @@ function makeChatGPTPage(state) {
       return { count: async () => state.generating ? 1 : 0, isVisible: async () => state.generating };
     }
     if (selector.includes("prompt-textarea") || selector.includes("composer-input")) {
-      return { count: async () => 1, isVisible: async () => true, fill: async value => { state.submittedPrompt = value; state.onFill?.(); } };
+      return { count: async () => 1, isVisible: async () => true, inputValue: async () => state.composerText || "", fill: async value => { state.submittedPrompt = value; state.onFill?.(); } };
     }
     if (selector.includes("send-button") || selector.includes("Send prompt")) {
       return {
@@ -105,6 +105,52 @@ test("refuses to overlap an already-generating provider turn", async () => {
   );
   assert.equal(approvals, 1, "obtain explicit approval before inspecting the provider DOM");
   assert.equal(state.submittedPrompt, undefined, "do not alter the active conversation composer");
+});
+
+test("does not overwrite an existing owner-authored composer draft", async () => {
+  const state = {
+    assistantVisible: false,
+    text: "",
+    generating: false,
+    composerText: "Owner's unsent draft",
+  };
+  let clicked = false;
+  state.onSend = () => { clicked = true; };
+  const adapter = createOriginalSessionAdapter("chatgpt", { approval: async () => true, timeoutMs: 5000 });
+  await assert.rejects(
+    adapter.ask(makeChatGPTPage(state), "group message"),
+    error => error?.submissionState === "not_submitted" && /unsent draft/.test(error.message),
+  );
+  assert.equal(state.submittedPrompt, undefined, "existing owner draft must not be overwritten");
+  assert.equal(clicked, false, "no provider turn may be submitted over an existing draft");
+});
+
+test("fails closed if the composer text cannot be inspected safely", async () => {
+  const state = { assistantVisible: false, text: "", generating: false };
+  const basePage = makeChatGPTPage(state);
+  const page = {
+    url: basePage.url,
+    locator(selector) {
+      const item = basePage.locator(selector);
+      if (selector.includes("prompt-textarea") || selector.includes("composer-input")) {
+        return {
+          ...item,
+          last: () => ({
+            ...item.last(),
+            inputValue: undefined,
+            innerText: undefined,
+          }),
+        };
+      }
+      return item;
+    },
+  };
+  const adapter = createOriginalSessionAdapter("chatgpt", { approval: async () => true, timeoutMs: 5000 });
+  await assert.rejects(
+    adapter.ask(page, "group message"),
+    error => error?.submissionState === "not_submitted" && /Cannot safely inspect provider composer/.test(error.message),
+  );
+  assert.equal(state.submittedPrompt, undefined);
 });
 
 test("refuses to send when the owner switches threads during approval", async () => {
@@ -229,6 +275,7 @@ test("does not click send when provider disables it", async () => {
         last() { return this; },
         count: async () => 1,
         isVisible: async () => true,
+        inputValue: async () => "",
         fill: async () => {},
         isEnabled: async () => false,
         click: async () => { clicked = true; },
@@ -261,7 +308,7 @@ function makeClaudePage(state) {
       return { count: async () => state.generating ? 1 : 0, isVisible: async () => state.generating };
     }
     if (selector.includes("ProseMirror") || selector.includes("data-placeholder")) {
-      return { count: async () => 1, isVisible: async () => true, fill: async () => {} };
+      return { count: async () => 1, isVisible: async () => true, innerText: async () => state.composerText || "", fill: async value => { state.submittedPrompt = value; } };
     }
     if (selector.includes("Send message") || selector.includes("send-button")) {
       return {
