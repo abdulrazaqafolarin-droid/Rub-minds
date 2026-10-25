@@ -431,7 +431,7 @@
       settings.trigger,
       `Selected participation mode: ${settings.mode}. The following mode-specific instruction takes priority over conflicting generic wording above. ${modeInstructions}`,
       'For natural low-latency group conversation, use the Rub Minds MCP wait_for_group_messages tool when it is available and it makes sense to remain attentive. Use after_created_at with the newest group message timestamp you have actually processed and timeout_ms no greater than 15000. If the tool returns new messages, address them naturally in this same assistant turn. If it times out, do useful assigned work or return CONTINUE for another bounded watch cycle when Smart participation is selected and the loop cap permits it. Do not invent messages or claim to be always-on. The wait is bounded; this browser loop remains subject to its visible cycle cap.',
-    ].join('\\n\\n');
+    ].join('\n\n');
   }
 
   const updateButtons = () => {
