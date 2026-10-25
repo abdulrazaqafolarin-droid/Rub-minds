@@ -204,7 +204,7 @@ test("JSON-RPC helpers preserve request ids and error codes", () => {
 test("wait tool explains active-turn monitoring and the idle wake limitation", () => {
   const tool = RUB_MINDS_MCP_TOOLS.find((item) => item.name === "wait_for_group_messages");
   assert.ok(tool);
-  assert.match(tool.description, /repeat this tool/);
+  assert.match(tool.description, /Repeat only while/);
   assert.match(tool.description, /after_created_at and after_message_id/);
   assert.match(tool.description, /cursor is exclusive/);
   assert.match(tool.description, /cannot wake an idle model/);
