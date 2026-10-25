@@ -639,6 +639,13 @@
   }
 
   async function runLoop() {
+    // This helper continues the same existing provider conversation; it must not
+    // silently create a new chat when opened from a home/new-chat route.
+    const existingConversationUrl = currentConversationUrl();
+    if (!existingConversationUrl || userNodes().length === 0 || replyNodes().length === 0) {
+      status('Stopped: open an existing ChatGPT or Claude conversation with its messages visible before starting.');
+      return;
+    }
     settings = {
       maxRounds: clampInteger(el('rm-max').value, 1, 20, defaults.maxRounds),
       delaySec: clampInteger(el('rm-delay').value, 1, 120, defaults.delaySec),
