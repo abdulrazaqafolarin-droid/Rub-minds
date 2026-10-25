@@ -112,6 +112,27 @@ test("factory wires the MCP transport and room Realtime wake into the original-s
           next_cursor: { after_created_at: BASE_TIME, after_message_id: BASE_ID },
         };
       }
+    } else if (name === "wait_for_group_messages") {
+      assert.equal(args.after_created_at, BASE_TIME);
+      assert.equal(args.after_message_id, BASE_ID);
+      assert.equal(args.timeout_ms, 1000);
+      assert.equal(args.session_handle, SESSION);
+      structuredContent = {
+        room_id: ROOM,
+        participant_id: PARTICIPANT,
+        timed_out: false,
+        delivery: "realtime",
+        messages: [{
+          id: NEW_ID,
+          room_id: ROOM,
+          sender_id: OWNER_ID,
+          body: "please collaborate",
+          created_at: NEW_TIME,
+          sender_kind: "human",
+          sender_name: "Owner",
+        }],
+        next_cursor: { after_created_at: NEW_TIME, after_message_id: NEW_ID },
+      };
     } else if (name === "send_group_message") {
       assert.equal(args.body, "Reply: please collaborate");
       assert.equal(args.source_message_id, NEW_ID);
@@ -125,7 +146,7 @@ test("factory wires the MCP transport and room Realtime wake into the original-s
       result: { structuredContent },
     });
   };
-  const realtime = makeRealtimeClient(ROOM);
+  // The default runtime wake source uses wait_for_group_messages through MCP.
   const prompts = [];
   const runtime = createOriginalSessionWakeRuntime({
     endpoint: ENDPOINT,
@@ -137,7 +158,6 @@ test("factory wires the MCP transport and room Realtime wake into the original-s
       prompts.push({ body, meta });
       return "Reply: " + body;
     } },
-    supabaseClient: realtime.client,
     fetchImpl: fakeFetch,
     heartbeatMs: 1000,
     waitTimeoutMs: 1000,
@@ -151,6 +171,7 @@ test("factory wires the MCP transport and room Realtime wake into the original-s
     "load_original_session_bridge_state",
     "read_group_messages",
     "save_original_session_bridge_state",
+    "wait_for_group_messages",
     "read_group_messages",
     "save_original_session_bridge_state",
     "save_original_session_bridge_state",
@@ -165,11 +186,11 @@ test("factory wires the MCP transport and room Realtime wake into the original-s
   });
   assert.ok(requests.every(item => item.url === ENDPOINT && !item.url.includes(SESSION)));
   assert.ok(requests.every(item => item.request.params.arguments.session_handle === SESSION));
-  assert.deepEqual(realtime.getStats().configuration, {
-    event: "postgres_changes",
-    options: { event: "INSERT", schema: "public", table: "messages", filter: "room_id=eq." + ROOM },
-  });
-  assert.equal(realtime.getStats().removed, 1);
+  const waitRequest = requests.find(item => item.request.params.name === "wait_for_group_messages");
+  assert.ok(waitRequest, "default runtime should wait through the joined MCP session");
+  assert.equal(waitRequest.request.params.arguments.after_created_at, BASE_TIME);
+  assert.equal(waitRequest.request.params.arguments.after_message_id, BASE_ID);
+  assert.equal(waitRequest.request.params.arguments.timeout_ms, 1000);
 });
 
 test("factory refuses unapproved execution before touching the browser, network, or realtime source", async () => {
