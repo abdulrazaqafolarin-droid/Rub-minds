@@ -379,9 +379,9 @@
     const message = el('rm-recovery');
     const reopen = el('rm-reopen');
     const forgetPrivate = el('rm-forget-private');
-    forgetPrivate.disabled = !privateMemoryBinding || running || paused || isGenerating() || Boolean(composerText(inputNode()));
+    forgetPrivate.disabled = !privateMemoryBinding || !inputNode() || running || paused || isGenerating() || Boolean(composerText(inputNode()));
     forgetPrivate.textContent = privateMemoryBinding?.forgetRequestedAt
-      ? 'Forget request submitted — verify result'
+      ? 'Retry private-memory deletion'
       : 'Forget private link in Rub Minds';
     if (!savedConversation) {
       message.textContent = 'No recovery link saved. Opt in while viewing a specific conversation.';
@@ -402,7 +402,7 @@
     reopen.disabled = isCurrent;
     reopen.textContent = isCurrent ? 'Saved conversation is already open' : 'Reopen saved conversation';
     el('rm-forget-recovery').disabled = false;
-    el('rm-save-private').disabled = !isCurrent || !el('rm-remember').checked || running || paused || isGenerating() || privateRequestedForThisLink;
+    el('rm-save-private').disabled = !isCurrent || !inputNode() || !el('rm-remember').checked || running || paused || isGenerating() || privateRequestedForThisLink;
     el('rm-save-private').textContent = privateRequestedForThisLink
       ? 'Private-memory request submitted'
       : 'Save link privately in Rub Minds';
