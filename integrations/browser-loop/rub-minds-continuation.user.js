@@ -350,7 +350,9 @@
     }
     const savedPath = new URL(savedConversation.url).pathname;
     const isCurrent = location.pathname === savedPath;
-    message.textContent = `Saved locally in this browser only (${savedConversation.provider}). It is not shared with Rub Minds or the group.`;
+    message.textContent = privateMemoryRequested
+      ? 'Saved locally. A private-memory request was submitted; verify the assistant tool result. It was not posted as a group message.'
+      : `Saved locally in this browser only (${savedConversation.provider}). It is not shared with Rub Minds or the group.`;
     reopen.disabled = isCurrent;
     reopen.textContent = isCurrent ? 'Saved conversation is already open' : 'Reopen saved conversation';
     el('rm-save-private').disabled = !isCurrent || !el('rm-remember').checked || running || paused || isGenerating() || privateMemoryRequested;
@@ -371,6 +373,7 @@
     } else {
       try { localStorage.removeItem(RECOVERY_KEY); } catch (_) {}
       savedConversation = null;
+      privateMemoryRequested = false;
       updateRecoveryUi();
       status('Local recovery link removed. The Rub Minds group was not changed.');
     }
