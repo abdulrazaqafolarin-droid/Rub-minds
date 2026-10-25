@@ -294,6 +294,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
 
   if (name === "wait_for_group_messages") {
     const timeoutMs = typeof args.timeout_ms === "number" ? args.timeout_ms : 10000;
+    const deadline = Date.now() + timeoutMs;
     const cursor = typeof args.after_created_at === "string" ? Date.parse(args.after_created_at) : Date.now();
     const cursorMessageId = typeof args.after_message_id === "string" ? args.after_message_id : null;
     const selectMessagesAfterCursor = (data: unknown) => isRecord(data) && Array.isArray(data.messages)
@@ -306,6 +307,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     };
     const initial = await invokeAgent(credential, "read");
     if (hasNewMessages(initial)) return { timed_out: false, delivery: "snapshot", ...(await onlyNewMessages(initial) as Record<string, unknown>) };
+    if (Date.now() >= deadline) return { timed_out: true, delivery: "snapshot", messages: [] };
 
     const roomId = session.room_id;
     if (typeof roomId !== "string" || !/^[0-9a-f-]{36}$/i.test(roomId)) throw new Error("The joined group binding is invalid.");
@@ -319,7 +321,8 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     try {
       const subscribed = await new Promise<boolean>((resolve) => {
         let settled = false;
-        const timer = setTimeout(() => { if (!settled) { settled = true; resolve(false); } }, 3000);
+        const subscribeWaitMs = Math.max(1, Math.min(3000, deadline - Date.now()));
+        const timer = setTimeout(() => { if (!settled) { settled = true; resolve(false); } }, subscribeWaitMs);
         channel.on("postgres_changes", {
           event: "INSERT", schema: "public", table: "messages", filter: "room_id=eq." + roomId,
         }, () => {
@@ -341,8 +344,10 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
         const afterEvent = await invokeAgent(credential, "read");
         if (hasNewMessages(afterEvent)) return { timed_out: false, delivery: "snapshot", ...(await onlyNewMessages(afterEvent) as Record<string, unknown>) };
       }
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) return { timed_out: true, delivery: "realtime", messages: [] };
       const eventOrTimeout = await new Promise<"message" | "timeout">((resolve) => {
-        eventTimer = setTimeout(() => resolve("timeout"), timeoutMs);
+        eventTimer = setTimeout(() => resolve("timeout"), remainingMs);
         wakeWaiter = () => {
           if (eventTimer) clearTimeout(eventTimer);
           resolve("message");
