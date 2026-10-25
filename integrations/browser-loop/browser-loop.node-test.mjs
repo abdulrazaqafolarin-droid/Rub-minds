@@ -15,6 +15,7 @@ class FakeElement {
     this.tagName = tag.toUpperCase();
     this.hidden = false;
     this.disabled = false;
+    this.checked = false;
     this.attrs = {};
     this.listeners = new Map();
     this.style = { cssText: '', display: '' };
@@ -54,7 +55,7 @@ class FakeElement {
     if (!id) return null;
     if (!this.elements.has(id)) {
       const tag = id === 'rm-trigger' ? 'textarea' :
-        ['rm-max', 'rm-delay', 'rm-timeout'].includes(id) ? 'input' :
+        ['rm-max', 'rm-delay', 'rm-timeout', 'rm-remember'].includes(id) ? 'input' :
         ['rm-start', 'rm-pause', 'rm-resume', 'rm-stop', 'rm-collapse'].includes(id) ? 'button' : 'div';
       const node = tag === 'textarea' ? new FakeTextArea() : tag === 'input' ? new FakeInput() : new FakeElement(tag);
       node.id = id;
@@ -77,10 +78,11 @@ class FakeInput extends FakeElement {
   set value(v) { this._value = String(v ?? ''); }
 }
 
-function makeHarness({ scenario, site = 'chatgpt', initialDraft = '' }) {
+function makeHarness({ scenario, site = 'chatgpt', initialDraft = '', pathname = '/c/mock-thread', savedConversation = null }) {
   let activePanel = null;
   const messages = [];
-  const location = { hostname: site === 'claude' ? 'claude.ai' : 'chatgpt.com', pathname: '/c/mock-thread' };
+  const hostname = site === 'claude' ? 'claude.ai' : 'chatgpt.com';
+  const location = { hostname, origin: `https://${hostname}`, pathname, href: `https://${hostname}${pathname}` };
   const sent = [];
   let initialGenerationFinished = scenario !== 'initially-generating';
   let sentBeforeInitialGenerationFinished = false;
@@ -202,7 +204,12 @@ function makeHarness({ scenario, site = 'chatgpt', initialDraft = '' }) {
   });
 
   const store = new Map([['rubMindsContinuationSettingsV1', JSON.stringify({ maxRounds: 3, delaySec: 1, timeoutMin: 1 })]]);
-  const localStorage = { getItem: k => store.has(k) ? store.get(k) : null, setItem: (k, v) => store.set(k, String(v)) };
+  if (savedConversation) store.set('rubMindsConversationBindingV1', JSON.stringify(savedConversation));
+  const localStorage = {
+    getItem: k => store.has(k) ? store.get(k) : null,
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: k => store.delete(k),
+  };
   if (scenario === 'stop-before-send' || scenario === 'draft-changed-before-send') {
     let triggered = false;
     composer.addEventListener('input', () => {
@@ -224,6 +231,7 @@ function makeHarness({ scenario, site = 'chatgpt', initialDraft = '' }) {
     window, document, location,
     localStorage, HTMLTextAreaElement: FakeTextArea, HTMLInputElement: FakeInput,
     InputEvent: class InputEvent { constructor(type, init) { this.type = type; Object.assign(this, init); } },
+    URL,
     setTimeout: vmSetTimeout, clearTimeout, Date, Promise, JSON, Array, Object, String, Number, Boolean, RegExp, Error, Math,
   });
   vm.runInContext(source, context, { filename: 'rub-minds-continuation.user.js' });
@@ -385,4 +393,68 @@ test('A concurrent human draft before the click is preserved and not sent', asyn
   assert.equal(result.sent.length, 0);
   assert.equal(h.composer.value, 'Human is typing a new draft');
   assert.match(result.status, /changed before send/);
+});
+
+
+test('conversation recovery is saved only after explicit opt-in and only locally', () => {
+  const h = makeHarness({ scenario: 'done-first' });
+  const panel = h.document.getElementById('rubminds-continuation-panel');
+  const remember = panel.querySelector('#rm-remember');
+  remember.checked = true;
+  remember.dispatchEvent({ type: 'change' });
+  const saved = JSON.parse(h.context.localStorage.getItem('rubMindsConversationBindingV1'));
+  assert.equal(saved.url, 'https://chatgpt.com/c/mock-thread');
+  assert.equal(saved.provider, 'ChatGPT');
+  assert.match(panel.querySelector('#rm-status').textContent, /not been sent to the Rub Minds group/);
+  assert.match(panel.querySelector('#rm-recovery').textContent, /Saved locally in this browser only/);
+});
+
+test('saved conversation can be reopened from the provider home route', () => {
+  const h = makeHarness({
+    scenario: 'done-first',
+    pathname: '/',
+    savedConversation: { url: 'https://chatgpt.com/c/remembered-thread?temporary=1#frag', savedAt: '2026-10-25T00:00:00Z' },
+  });
+  const panel = h.document.getElementById('rubminds-continuation-panel');
+  const reopen = panel.querySelector('#rm-reopen');
+  assert.equal(reopen.disabled, false);
+  reopen.click();
+  assert.equal(h.document.getElementById('rubminds-continuation-panel').querySelector('#rm-status').textContent.includes('automatic participation remains off'), true);
+  assert.equal(h.context.location.href, 'https://chatgpt.com/c/remembered-thread');
+});
+
+test('conversation recovery rejects off-origin or insecure stored links', () => {
+  const h = makeHarness({
+    scenario: 'done-first',
+    pathname: '/',
+    savedConversation: { url: 'http://evil.example/steal', savedAt: '2026-10-25T00:00:00Z' },
+  });
+  const panel = h.document.getElementById('rubminds-continuation-panel');
+  assert.equal(panel.querySelector('#rm-reopen').disabled, true);
+  assert.match(panel.querySelector('#rm-recovery').textContent, /No recovery link saved/);
+});
+
+test('recovery links discard query strings and fragments when saved', () => {
+  const h = makeHarness({ scenario: 'done-first', pathname: '/c/private-thread?invite=secret#details' });
+  const panel = h.document.getElementById('rubminds-continuation-panel');
+  const remember = panel.querySelector('#rm-remember');
+  remember.checked = true;
+  remember.dispatchEvent({ type: 'change' });
+  const saved = JSON.parse(h.context.localStorage.getItem('rubMindsConversationBindingV1'));
+  assert.equal(saved.url, 'https://chatgpt.com/c/private-thread');
+  assert.equal(saved.url.includes('secret'), false);
+});
+
+test('turning recovery off removes the local link without touching group state', () => {
+  const h = makeHarness({
+    scenario: 'done-first',
+    savedConversation: { url: 'https://chatgpt.com/c/mock-thread', savedAt: '2026-10-25T00:00:00Z' },
+  });
+  const panel = h.document.getElementById('rubminds-continuation-panel');
+  const remember = panel.querySelector('#rm-remember');
+  assert.equal(remember.checked, true);
+  remember.checked = false;
+  remember.dispatchEvent({ type: 'change' });
+  assert.equal(h.context.localStorage.getItem('rubMindsConversationBindingV1'), null);
+  assert.match(panel.querySelector('#rm-status').textContent, /group was not changed/);
 });
