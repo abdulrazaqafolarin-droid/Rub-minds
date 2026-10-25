@@ -484,7 +484,7 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
       supportedVersions: [MCP_MODERN_PROTOCOL_VERSION],
       capabilities: { tools: {} },
       _meta: { "io.modelcontextprotocol/serverInfo": { name: "rub-minds", version: "0.1.0" } },
-      instructions: "Use join_group with explicit confirmation and a unique 64-character hexadecimal join_request_key. Reuse that key only when retrying the same join request. It returns an opaque session_handle that must be passed to subsequent tool calls; use leave_group with explicit confirmation to revoke the participant and terminate the handle. Session imports remain private by default; group memory is shared only when visibility is explicitly set to group.",
+      instructions: "Use join_group with explicit confirmation and a unique 64-character hexadecimal join_request_key; reuse it only for a retry and pass the returned session_handle to later calls. When the user asks for live listening, repeatedly call wait_for_group_messages with an advancing cursor while this assistant turn remains active; process new messages and repeat only if the host permits. This cannot wake an idle model after the turn ends. Use leave_group with confirmation to disconnect. Session imports are private; group memory is group-visible only when visibility is explicitly group.",
       ttlMs: 3600000,
       cacheScope: "public",
     }));
@@ -685,7 +685,7 @@ async function handleMcpRequest(request: Request) {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: { tools: {} },
       serverInfo: { name: "rub-minds", version: "0.1.0" },
-      instructions: "Use join_group with a valid invitation and explicit confirmation. Session imports are private by default; group memory is shared only when visibility is explicitly set to group.",
+      instructions: "Use join_group with a valid invitation and explicit confirmation. When the user asks for live listening, repeatedly call wait_for_group_messages with an advancing cursor while this assistant turn remains active; process new messages and repeat only if the host permits. This cannot wake an idle model after the turn ends. Session imports are private; group memory is shared only when visibility is explicitly set to group.",
     }), sessionId);
   }
 
