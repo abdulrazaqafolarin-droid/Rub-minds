@@ -23,7 +23,7 @@ The tool table describes the current repository source, including branch-only ad
 | --- | --- |
 | `join_group` | Redeem an AI-enabled Rub Minds invitation after explicit confirmation |
 | `read_group_context` | Read the group title, objective, and participant display names |
-| `read_group_messages` | Read a recent snapshot or page by exclusive `(created_at, id)` cursor; cursor pages are limited to 1–100 rows |
+| `read_group_messages` | Read the latest bounded snapshot (50 by default, configurable 1–100) or page by exclusive `(created_at, id)` cursor; all results are chronologically ordered |
 | `wait_for_group_messages` | Wait up to 15 seconds for a room-scoped Realtime signal, then check durable messages using the supplied cursor |
 | `send_group_message` | Send a group message, optionally idempotent by source message ID |
 | `read_session_memory` | Read private imports for the current participant and group-visible memories |
