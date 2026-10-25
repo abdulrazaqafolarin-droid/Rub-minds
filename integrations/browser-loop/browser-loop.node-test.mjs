@@ -56,7 +56,7 @@ class FakeElement {
     if (!this.elements.has(id)) {
       const tag = id === 'rm-trigger' ? 'textarea' :
         ['rm-max', 'rm-delay', 'rm-timeout', 'rm-remember'].includes(id) ? 'input' :
-        ['rm-start', 'rm-pause', 'rm-resume', 'rm-stop', 'rm-collapse', 'rm-reopen', 'rm-save-private'].includes(id) ? 'button' : 'div';
+        ['rm-start', 'rm-pause', 'rm-resume', 'rm-stop', 'rm-collapse', 'rm-reopen', 'rm-save-private', 'rm-forget-recovery', 'rm-forget-private'].includes(id) ? 'button' : 'div';
       const node = tag === 'textarea' ? new FakeTextArea() : tag === 'input' ? new FakeInput() : new FakeElement(tag);
       node.id = id;
       node.ownerDocument = this.ownerDocument;
@@ -78,7 +78,7 @@ class FakeInput extends FakeElement {
   set value(v) { this._value = String(v ?? ''); }
 }
 
-function makeHarness({ scenario, site = 'chatgpt', initialDraft = '', pathname = '/c/mock-thread', savedConversation = null }) {
+function makeHarness({ scenario, site = 'chatgpt', initialDraft = '', pathname = '/c/mock-thread', savedConversation = null, savedPrivateMemory = null }) {
   let activePanel = null;
   const messages = [];
   const hostname = site === 'claude' ? 'claude.ai' : 'chatgpt.com';
@@ -205,6 +205,7 @@ function makeHarness({ scenario, site = 'chatgpt', initialDraft = '', pathname =
 
   const store = new Map([['rubMindsContinuationSettingsV1', JSON.stringify({ maxRounds: 3, delaySec: 1, timeoutMin: 1 })]]);
   if (savedConversation) store.set('rubMindsConversationBindingV1', JSON.stringify(savedConversation));
+  if (savedPrivateMemory) store.set('rubMindsPrivateRecoveryMemoryV1', JSON.stringify(savedPrivateMemory));
   const localStorage = {
     getItem: k => store.has(k) ? store.get(k) : null,
     setItem: (k, v) => store.set(k, String(v)),
@@ -501,6 +502,7 @@ test('private resume-link registration is an explicit one-prompt action', async 
   assert.match(h.sent[0], /browser-resume-resume-test-id-1234/);
   assert.match(h.sent[0], /https:\/\/chatgpt\.com\/c\/mock-thread/);
   assert.match(h.sent[0], /Do not call send_group_message/);
+  assert.equal(JSON.parse(h.context.localStorage.getItem('rubMindsPrivateRecoveryMemoryV1')).idempotencyKey, 'browser-resume-resume-test-id-1234');
   assert.match(panel.querySelector('#rm-status').textContent, /actual MCP tool result/);
 });
 
@@ -543,12 +545,14 @@ test('saved recovery link can be explicitly forgotten from a different provider 
     scenario: 'done-first',
     pathname: '/',
     savedConversation: { url: 'https://chatgpt.com/c/mock-thread', provider: 'ChatGPT', savedAt: '2026-10-25T00:00:00Z', resumeId: 'resume-test-id-1234' },
+    savedPrivateMemory: { idempotencyKey: 'browser-resume-resume-test-id-1234', requestedAt: '2026-10-25T00:00:00Z', forgetRequestedAt: '' },
   });
   const panel = h.document.getElementById('rubminds-continuation-panel');
   const forget = panel.querySelector('#rm-forget-recovery');
   assert.equal(forget.disabled, false);
   forget.click();
   assert.equal(h.context.localStorage.getItem('rubMindsConversationBindingV1'), null);
+  assert.ok(h.context.localStorage.getItem('rubMindsPrivateRecoveryMemoryV1'), 'private-memory deletion reference must survive local URL removal');
   assert.match(panel.querySelector('#rm-recovery').textContent, /No recovery link saved/);
   assert.match(panel.querySelector('#rm-status').textContent, /removed from this browser/);
   assert.equal(h.sent.length, 0);
@@ -566,4 +570,28 @@ test('tampered off-origin recovery URL is cleared before it can be reopened', ()
   assert.equal(panel.querySelector('#rm-reopen').disabled, true);
   assert.match(panel.querySelector('#rm-recovery').textContent, /No recovery link saved/);
   assert.equal(h.sent.length, 0);
+});
+
+
+test('private-memory deletion requires a separate explicit action and targets only the saved key', async () => {
+  const h = makeHarness({
+    scenario: 'done-first',
+    pathname: '/',
+    savedPrivateMemory: { idempotencyKey: 'browser-resume-resume-test-id-1234', requestedAt: '2026-10-25T00:00:00Z', forgetRequestedAt: '' },
+  });
+  const panel = h.document.getElementById('rubminds-continuation-panel');
+  const forget = panel.querySelector('#rm-forget-private');
+  assert.equal(forget.disabled, false);
+  assert.equal(h.sent.length, 0);
+  forget.click();
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline && h.sent.length === 0) await new Promise(resolve => realSetTimeout(resolve, 10));
+  assert.equal(h.sent.length, 1);
+  assert.match(h.sent[0], /forget_memory/);
+  assert.match(h.sent[0], /browser-resume-resume-test-id-1234/);
+  assert.match(h.sent[0], /confirm_forget=true/);
+  assert.match(h.sent[0], /Do not call send_group_message/);
+  assert.match(h.sent[0], /Do not delete any other memory/);
+  assert.match(panel.querySelector('#rm-status').textContent, /Verify the actual forget_memory tool result/);
+  assert.ok(h.context.localStorage.getItem('rubMindsPrivateRecoveryMemoryV1'), 'keep the key available until the result is verified');
 });
