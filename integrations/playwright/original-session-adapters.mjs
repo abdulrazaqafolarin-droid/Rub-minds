@@ -220,6 +220,9 @@ export function createOriginalSessionAdapter(provider, {
       try {
         expectedConversationKey = assertPage(page, provider);
         throwIfAborted(signal, "not_submitted");
+        if (await isGenerating(page, config.generating)) {
+          throw new Error("Provider is already generating; no message sent");
+        }
         if (typeof prompt !== "string" || !prompt.trim() || prompt.length > 10000) {
           throw new TypeError("Prompt must be 1-10000 characters");
         }
@@ -244,6 +247,9 @@ export function createOriginalSessionAdapter(provider, {
         // Human approval can take time. Never send into a different thread if the
         // browser navigated while the owner was reviewing the pending group message.
         assertSameConversation(page, provider, expectedConversationKey);
+        if (await isGenerating(page, config.generating)) {
+          throw new Error("Provider started generating while waiting for approval; no message sent");
+        }
 
         // Resolve selectors BEFORE touching the composer; fail closed on UI changes.
         const composer = await findVisible(page, config.composer);
@@ -253,9 +259,12 @@ export function createOriginalSessionAdapter(provider, {
         await composer.fill(groupPrompt);
         throwIfAborted(signal, "not_submitted");
         if (!await send.isEnabled()) throw new Error("Provider send button unavailable");
-        // Re-check immediately before clicking: the same Page can be navigated
-        // after the composer was resolved or filled.
+        // Re-check both thread identity and generation state immediately before
+        // clicking. A manually started turn during approval must never overlap.
         assertSameConversation(page, provider, expectedConversationKey);
+        if (await isGenerating(page, config.generating)) {
+          throw new Error("Provider began generating before send; no message sent");
+        }
         throwIfAborted(signal, "not_submitted");
       } catch (error) {
         throw markNotSubmitted(error);
