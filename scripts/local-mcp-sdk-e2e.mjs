@@ -315,17 +315,26 @@ try {
   });
   assert.notEqual(recoveryEntry.isError, true, "private browser recovery locator write failed: " + JSON.stringify(recoveryEntry));
 
-  const reservedKeyMisuse = await first.callTool({
-    name: "remember_memory",
-    arguments: {
-      session_handle: one.session_handle,
-      entry_type: "insight",
-      content: "An ordinary private note must not be deletable through the recovery tool.",
-      visibility: "private",
-      idempotency_key: "browser-resume-sdk-bad-note",
-    },
-  });
-  assert.equal(reservedKeyMisuse.isError, true, "reserved recovery key must reject a non-locator note");
+  let reservedKeyMisuseRejected = false;
+  try {
+    await first.callTool({
+      name: "remember_memory",
+      arguments: {
+        session_handle: one.session_handle,
+        entry_type: "insight",
+        content: "An ordinary private note must not be deletable through the recovery tool.",
+        visibility: "private",
+        idempotency_key: "browser-resume-sdk-bad-note",
+      },
+    });
+  } catch (error) {
+    // The official MCP SDK surfaces JSON-RPC invalid-argument responses as
+    // ProtocolError exceptions rather than a ToolResult with isError=true.
+    reservedKeyMisuseRejected = String(error?.message || error).includes(
+      "browser-resume idempotency keys are reserved for private browser-recovery locator entries.",
+    );
+  }
+  assert.equal(reservedKeyMisuseRejected, true, "reserved recovery key must reject a non-locator note");
 
   // Seed a legacy/private non-locator row with a browser-resume key directly
   // into the disposable CI database to prove deletion has server-side defense
