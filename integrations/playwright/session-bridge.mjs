@@ -441,6 +441,12 @@ export class PlaywrightSessionBridge {
       }
 
       processed++;
+      if (signal?.aborted) return { status: "cancelled", sent, processed };
+      // Reserve this message using the durable revision counter before asking
+      // the provider. Another process with the same old cursor must lose the CAS
+      // and stop before invoking the provider a second time.
+      this.blockedMessage = { messageId: message.id, reason: "provider_prompt_in_progress" };
+      await this.persistDurableState({ signal });
       let response;
       try {
         response = await this.adapter.ask(this.page, message.body, {
@@ -456,7 +462,10 @@ export class PlaywrightSessionBridge {
           return { status: "cancelled", sent, processed, blockedMessageId: message.id };
         }
         if (isSafeToRetry(error)) {
-          // Retry only when the adapter explicitly guarantees no prompt was sent.
+          // The adapter guarantees that no prompt was submitted, so release the
+          // durable claim and keep the cursor before this message for retry.
+          this.blockedMessage = null;
+          await this.persistDurableState({ signal: signal?.aborted ? undefined : signal });
           this.seen.delete(message.id);
           if (sent > 0) return errorOutcome(error, sent, processed);
           throw error;
@@ -484,8 +493,9 @@ export class PlaywrightSessionBridge {
         };
       }
 
-      // Save before the send call so a transient/ambiguous transport failure
-      // cannot force a second provider prompt on the next step.
+      // Replace the in-progress claim with a durable completed answer before
+      // delivery, allowing restart recovery without re-prompting the provider.
+      this.blockedMessage = null;
       this.pendingResponses.set(message.id, {
         body: response.trim(),
         message: { id: message.id, created_at: message.created_at },
