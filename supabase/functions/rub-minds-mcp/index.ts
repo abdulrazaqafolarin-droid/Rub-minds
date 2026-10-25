@@ -296,21 +296,10 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     const timeoutMs = typeof args.timeout_ms === "number" ? args.timeout_ms : 10000;
     const cursor = typeof args.after_created_at === "string" ? Date.parse(args.after_created_at) : Date.now();
     const cursorMessageId = typeof args.after_message_id === "string" ? args.after_message_id : null;
-    const messagesAfterCursor = (data: unknown) => {
-      if (!isRecord(data) || !Array.isArray(data.messages)) return [];
-      const messages = data.messages.filter((message) => isRecord(message) &&
-        typeof message.created_at === "string" && Number.isFinite(Date.parse(message.created_at)));
-      // Prefer an exact message cursor when it is still in the bounded read window.
-      // This avoids replaying the last processed message and handles equal timestamps.
-      if (cursorMessageId) {
-        const index = messages.findIndex((message) => message.id === cursorMessageId);
-        if (index >= 0) return messages.slice(index + 1);
-      }
-      // If the exact cursor fell outside the read window, fall back to strict time
-      // ordering. Strict > avoids replaying a message whose timestamp equals cursor.
-      return messages.filter((message) => Date.parse(message.created_at as string) > cursor);
-    };
-    const hasNewMessages = (data: unknown) => messagesAfterCursor(data).length > 0;
+    const selectMessagesAfterCursor = (data: unknown) => isRecord(data) && Array.isArray(data.messages)
+      ? messagesAfterCursor(data.messages, cursor, cursorMessageId)
+      : [];
+    const hasNewMessages = (data: unknown) => selectMessagesAfterCursor(data).length > 0;
     const onlyNewMessages = async (data: unknown) => {
       if (!isRecord(data)) return { messages: [] };
       return await enrichGroupMessages({ ...data, messages: selectMessagesAfterCursor(data) });
