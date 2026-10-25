@@ -377,6 +377,9 @@ test('custom prompt is used for the current run but is not persisted', async () 
   const result = await h.startAndWait();
   assert.ok(result.sent[0].startsWith(privateMarker));
   assert.match(result.sent[0], /wait_for_group_messages/);
+  assert.match(result.sent[0], /RUBMINDS_LOOP: CONTINUE/);
+  assert.match(result.sent[0], /RUBMINDS_LOOP: DONE/);
+  assert.match(result.sent[0], /RUBMINDS_LOOP: PAUSE/);
   const stored = JSON.parse(h.context.localStorage.getItem('rubMindsContinuationSettingsV1'));
   assert.deepEqual(Object.keys(stored).sort(), ['delaySec', 'maxRounds', 'mode', 'timeoutMin']);
   assert.equal(JSON.stringify(stored).includes(privateMarker), false);
