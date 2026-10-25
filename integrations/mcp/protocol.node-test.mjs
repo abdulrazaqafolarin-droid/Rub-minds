@@ -51,6 +51,7 @@ test("advertises invitation, messaging, and memory tools", () => {
   assert.equal(MCP_PROTOCOL_VERSION, "2025-06-18");
   assert.deepEqual(RUB_MINDS_MCP_TOOLS.map((tool) => tool.name), [
     "join_group", "leave_group", "read_group_context", "read_group_messages", "wait_for_group_messages", "send_group_message",
+    "load_original_session_bridge_state", "save_original_session_bridge_state",
     "read_session_memory", "import_session_memory", "remember_memory",
   ]);
 });

@@ -4,6 +4,8 @@ import { McpSessionMessageTransport } from "./mcp-session-message-transport.mjs"
 
 const SESSION = "a".repeat(64);
 const ENDPOINT = "https://rub-minds.example/functions/v1/rub-minds-mcp";
+const BASE_TIME = "2026-10-24T17:00:00.000000+00:00";
+const NEW_TIME = "2026-10-24T17:00:00.000001+00:00";
 
 function fakeResponse(payload, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => payload };
