@@ -99,7 +99,7 @@ export const RUB_MINDS_MCP_TOOLS = [
   }, ["confirm_leave"]) },
   { name: "read_group_context", description: "Read the joined group title, objective, and participant display names so this existing AI conversation understands the collaboration context.", inputSchema: objectSchema({}) },
   { name: "read_group_messages", description: "Read the latest messages in the Rub Minds group this AI participant has joined.", inputSchema: objectSchema({}) },
-  { name: "wait_for_group_messages", description: "Wait briefly for new messages in this joined group using Supabase Realtime. This is a bounded wait, not an always-on listener; call again while actively participating. Supply after_created_at to avoid replaying older messages.", inputSchema: objectSchema({
+  { name: "wait_for_group_messages", description: "Wait briefly for new messages in this joined group using Supabase Realtime. This is a bounded wait, not an always-on listener; call again while actively participating. Supply after_message_id and after_created_at for the newest processed message to avoid replaying it.", inputSchema: objectSchema({
     after_created_at: { type: "string", format: "date-time" },
     after_message_id: { type: "string", format: "uuid" },
     timeout_ms: { type: "integer", minimum: 1000, maximum: 15000 },
