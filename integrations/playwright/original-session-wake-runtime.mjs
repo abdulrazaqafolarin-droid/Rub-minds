@@ -19,9 +19,10 @@ export function createOriginalSessionWakeRuntime({
   page,
   adapter,
   supabaseClient,
+  wakeSource: suppliedWakeSource,
   fetchImpl = globalThis.fetch,
   protocolVersion,
-  waitTimeoutMs = 1000,
+  waitTimeoutMs = 10000,
   requestTimeoutMs = 20000,
   intervalMs = 5000,
   maxReplies = 20,
@@ -58,13 +59,17 @@ export function createOriginalSessionWakeRuntime({
       save: (snapshot, options) => transport.saveBridgeState(snapshot, options),
     },
   });
-  const wakeSource = new SupabaseRealtimeWakeSource({
-    client: supabaseClient,
-    roomId,
-    maxQueuedWakes,
-    channelName,
-    subscriptionTimeoutMs,
-  });
+  const wakeSource = suppliedWakeSource ?? (
+    supabaseClient
+      ? new SupabaseRealtimeWakeSource({
+          client: supabaseClient,
+          roomId,
+          maxQueuedWakes,
+          channelName,
+          subscriptionTimeoutMs,
+        })
+      : transport.createWakeSource()
+  );
   const runner = new OriginalSessionWakeRunner({
     bridge,
     wakeSource,
