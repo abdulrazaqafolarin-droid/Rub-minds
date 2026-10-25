@@ -304,6 +304,7 @@
   let rounds = 0;
   let stopReason = '';
   let threadPath = null;
+  let expectedUserCount = 0;
   let pauseWaiters = [];
 
 
@@ -662,6 +663,7 @@
     rounds = 0;
     stopReason = '';
     threadPath = (location.pathname === '/' || location.pathname === '/new') ? null : location.pathname;
+    expectedUserCount = userNodes().length;
     updateButtons();
 
     try {
@@ -671,6 +673,7 @@
         await waitWhilePaused();
         if (!running) break;
         if (threadPath && location.pathname !== threadPath) throw new Error('Conversation changed. Loop stopped.');
+        if (userNodes().length !== expectedUserCount) throw new Error('A new human message was detected since the previous automated turn. Loop stopped to avoid interrupting you.');
         if (composerText(inputNode())) throw new Error('A draft appeared in the composer. Loop stopped without overwriting it.');
 
         for (let remaining = settings.delaySec; remaining > 0 && running && !paused; remaining--) {
@@ -683,11 +686,13 @@
 
         // Recheck after the countdown, because a human may have typed, navigated,
         // or paused during the delay. Guard again after inserting the prompt.
+        if (userNodes().length !== expectedUserCount) throw new Error('A new human message arrived during the continuation delay. Loop stopped to avoid interrupting you.');
         const before = snapshot();
-        ensureReadyToSend(threadPath, before.userCount);
+        ensureReadyToSend(threadPath, expectedUserCount);
         rounds++;
         status(`Cycle ${rounds}/${settings.maxRounds}: sending continuation prompt…`);
         await sendMessage(buildContinuationPrompt(), threadPath, before.userCount);
+        expectedUserCount = before.userCount + 1;
         if (!running) break;
         status(`Cycle ${rounds}/${settings.maxRounds}: waiting for the reply to finish…`);
         const reply = await waitForNewReply(before);
