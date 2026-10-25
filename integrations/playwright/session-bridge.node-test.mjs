@@ -168,6 +168,42 @@ test("stop aborts a standalone bridge run and preserves its completed answer for
   assert.equal(bridge.pendingResponses.has("stop-message"), true);
 });
 
+test("startup baseline uses a history limit independent of the per-step reply cap", async () => {
+  const history = Array.from({ length: 12 }, (_, i) => ({
+    id: "history-" + String(i + 1).padStart(2, "0"),
+    body: "old history " + (i + 1),
+    created_at: new Date(Date.UTC(2026, 9, 24, 17, 0, i + 1)).toISOString(),
+    sender_kind: "human",
+  }));
+  const readOptions = [];
+  const prompts = [];
+  const bridge = new PlaywrightSessionBridge({
+    page: { isClosed: () => false },
+    participantId: "self",
+    maxMessagesPerStep: 1,
+    adapter: { ask: async (_page, body) => { prompts.push(body); return "answer"; } },
+    readMessages: async options => {
+      readOptions.push(options);
+      if (options.baseline) return { messages: history.slice(-5) }; // mimic latest-page history API
+      const cursor = options.cursor
+        ? { id: options.cursor.after_message_id, created_at: options.cursor.after_created_at }
+        : null;
+      return { messages: cursor ? history.filter(message => compareMessageCursors(message, cursor) > 0) : history };
+    },
+    sendMessage: async () => ({ ok: true }),
+  });
+
+  const result = await bridge.initialize({ approved: true });
+  assert.equal(result.status, "baseline");
+  assert.equal(readOptions[0].baseline, true);
+  assert.equal(readOptions[0].limit, 100);
+  assert.equal(bridge.cursor.id, "history-12");
+  assert.equal(bridge.seen.size, 5);
+  const step = await bridge.step({ approved: true });
+  assert.equal(step.sent, 0);
+  assert.deepEqual(prompts, []);
+});
+
 test("baseline stores a composite cursor and supplies it to the next durable message read", async () => {
   const messages = [
     { id: "message-01", body: "older", created_at: "2026-10-24T17:00:00.123455+00:00", sender_kind: "human" },

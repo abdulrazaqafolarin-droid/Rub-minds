@@ -153,12 +153,16 @@ export class PlaywrightSessionBridge {
       return { status: "ready", baselineMessages: 0, processExistingMessages: true };
     }
 
+    // Baseline reads are separate from the per-step reply budget. Ask the
+    // adapter for a sufficiently broad current snapshot so cursor advances to
+    // the newest existing row even when maxMessagesPerStep is configured to 1.
     const result = await this.readMessages({
       signal,
+      baseline: true,
       cursor: null,
       after_created_at: null,
       after_message_id: null,
-      limit: this.maxMessagesPerStep,
+      limit: 100,
     });
     if (signal?.aborted) return { status: "cancelled", baselineMessages: 0 };
     if (!result || !Array.isArray(result.messages)) {

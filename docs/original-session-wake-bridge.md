@@ -92,3 +92,6 @@ Cursor validation now requires both a parseable timestamp (with timezone and mic
 
 
 The MCP wait tool returns an explicit `next_cursor` on successful message pages and empty timeout/unavailable responses. A timeout or Realtime subscription failure triggers one final authorized durable read, so messages whose notifications were missed are still returned when present. The caller should keep the returned cursor unchanged on an empty timeout and advance to the cursor from a non-empty page only after processing every returned row. Page size is configurable from 1 to 100 (default 100).
+
+
+The startup baseline read is deliberately independent of `maxMessagesPerStep`. That setting caps provider replies per poll, not history inspection; a baseline request asks for a bounded 100-row snapshot, so a bridge configured to answer one message per step doesn't accidentally start its cursor at the oldest row in a one-message page. The injected reader should return a current snapshot (e.g. the latest messages from the authorized group read), not use a long-poll that might yield live arrivals during initialization.
