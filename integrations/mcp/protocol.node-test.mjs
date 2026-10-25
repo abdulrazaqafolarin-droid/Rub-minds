@@ -146,10 +146,11 @@ test("memory visibility is explicit and idempotency keys are bounded", () => {
 });
 
 test("forget_memory requires confirmation and accepts only an idempotency key", () => {
-  const args = { idempotency_key: "browser-resume-123456", confirm_forget: true };
+  const args = { idempotency_key: "browser-resume-12345678", confirm_forget: true };
   assert.equal(validateToolArguments("forget_memory", args), null);
   assert.match(validateToolArguments("forget_memory", { idempotency_key: args.idempotency_key }), /Explicit confirmation/);
-  assert.match(validateToolArguments("forget_memory", { idempotency_key: "x", confirm_forget: true }), /8-200 characters/);
+  assert.match(validateToolArguments("forget_memory", { idempotency_key: "browser-resume-x", confirm_forget: true }), /browser-resume key/);
+  assert.match(validateToolArguments("forget_memory", { idempotency_key: "sdk-private-memory-one", confirm_forget: true }), /browser-resume key/);
   assert.match(validateToolArguments("forget_memory", { ...args, visibility: "group" }), /Unknown/);
   assert.match(validateToolArguments("forget_memory", {}), /idempotency_key/);
 });
