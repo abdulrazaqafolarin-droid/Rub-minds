@@ -49,12 +49,13 @@
     maxRounds: 5,
     delaySec: 3,
     timeoutMin: 5,
+    mode: 'smart',
     trigger: [
       'Continue the work in this same conversation, preserving its existing context and working style.',
       'Before acting, use the Rub Minds MCP tools connected to this conversation, if available, to check relevant new group messages and context since your last processed point.',
       'Participate like a considerate group member: casual conversation, humor, and brief natural exchanges are welcome, not just tasks. Answer when directly addressed or when you can add something worthwhile; do not interrupt every exchange, manufacture messages, or start AI-to-AI reply loops.',
       'Decide naturally whether a group reply is useful: answer direct questions and relevant requests, contribute meaningful progress, avoid filler, duplicates, or replying to every message, and stay quiet in the group when no response is warranted.',
-      'Advance the current assigned work by one concrete, useful step. Never claim you checked messages, sent something, or completed work unless the relevant tool/result verifies it.',
+      'When there is assigned work, advance it by one concrete, useful step. Otherwise, follow the selected participation mode and respond naturally without inventing a task. Never claim you checked messages, sent something, or completed work unless the relevant tool/result verifies it.',
       'If the Rub Minds tools are unavailable, the group state cannot be checked, a human decision is needed, or you are blocked, stop this loop and explain the blocker rather than pretending.',
       'Keep control markers outside any deliverable, code block, or copy-ready artifact. At the very end of your response, write exactly one standalone control line: RUBMINDS_LOOP: CONTINUE if another bounded useful step is appropriate; RUBMINDS_LOOP: DONE only when the assigned work is complete and verified; or RUBMINDS_LOOP: PAUSE when human input or authorization is required. Do not use these control lines anywhere else.',
     ].join('\n\n'),
@@ -72,6 +73,7 @@
       maxRounds: clampInteger(stored.maxRounds, 1, 20, defaults.maxRounds),
       delaySec: clampInteger(stored.delaySec, 1, 120, defaults.delaySec),
       timeoutMin: clampInteger(stored.timeoutMin, 1, 20, defaults.timeoutMin),
+      mode: ['smart', 'mentions', 'focus'].includes(stored.mode) ? stored.mode : defaults.mode,
       // Free-form prompt text stays in memory only; do not persist possible private context.
       trigger: defaults.trigger,
     };
@@ -82,6 +84,7 @@
         maxRounds: settings.maxRounds,
         delaySec: settings.delaySec,
         timeoutMin: settings.timeoutMin,
+        mode: settings.mode,
       }));
     } catch (_) { /* storage may be disabled; loop still works for this page */ }
   };
@@ -283,6 +286,13 @@
       <button type="button" id="rm-collapse" aria-label="Collapse panel">−</button>
     </div>
     <div id="rm-controls" style="margin-top:8px">
+      <label style="display:block;margin:6px 0">Participation mode
+        <select id="rm-mode" style="display:block;width:100%;box-sizing:border-box;margin-top:3px;padding:5px">
+          <option value="smart">Smart participation — casual chat and work</option>
+          <option value="mentions">Mentions and assigned tasks only</option>
+          <option value="focus">Focus on current task</option>
+        </select>
+      </label>
       <label style="display:block;margin:6px 0">Cycle prompt
         <textarea id="rm-trigger" rows="5" style="display:block;width:100%;box-sizing:border-box;margin-top:3px"></textarea>
       </label>
@@ -321,6 +331,7 @@
 
   const el = (id) => panel.querySelector(`#${id}`);
   el('rm-trigger').value = settings.trigger;
+  el('rm-mode').value = settings.mode;
   el('rm-max').value = String(settings.maxRounds);
   el('rm-delay').value = String(settings.delaySec);
   el('rm-timeout').value = String(settings.timeoutMin);
@@ -408,6 +419,20 @@
       status(`Private link storage was not submitted: ${error?.message || String(error)}`);
     }
   });
+
+  function buildContinuationPrompt() {
+    const modeInstructions = {
+      smart: 'SMART PARTICIPATION: casual chit-chat, humor, reactions, brainstorming, and serious tasks are all welcome. Respond naturally when addressed or when you can add something worthwhile. Do not manufacture activity, interrupt every exchange, or keep two AIs replying endlessly to one another.',
+      mentions: 'MENTIONS ONLY: respond to direct @mentions, questions clearly addressed to you, tasks assigned to you, or messages needed to unblock your owned work. Usually stay quiet during general chit-chat not addressed to you.',
+      focus: 'TASK FOCUS: prioritize the existing assigned task. Check group activity for direct mentions, task dependencies, and blocking updates, but do not join casual banter unless asked or a reply is needed to unblock collaboration.',
+    }[settings.mode];
+
+    return [
+      settings.trigger,
+      `Selected participation mode: ${settings.mode}. The following mode-specific instruction takes priority over conflicting generic wording above. ${modeInstructions}`,
+      'For natural low-latency group conversation, use the Rub Minds MCP wait_for_group_messages tool when it is available and it makes sense to remain attentive. Use after_created_at with the newest group message timestamp you have actually processed and timeout_ms no greater than 15000. If the tool returns new messages, address them naturally in this same assistant turn. If it times out, do useful assigned work or return CONTINUE for another bounded watch cycle when Smart participation is selected and the loop cap permits it. Do not invent messages or claim to be always-on. The wait is bounded; this browser loop remains subject to its visible cycle cap.',
+    ].join('\\n\\n');
+  }
 
   const updateButtons = () => {
     el('rm-start').disabled = running;
@@ -511,6 +536,7 @@
       maxRounds: clampInteger(el('rm-max').value, 1, 20, defaults.maxRounds),
       delaySec: clampInteger(el('rm-delay').value, 1, 120, defaults.delaySec),
       timeoutMin: clampInteger(el('rm-timeout').value, 1, 20, defaults.timeoutMin),
+      mode: ['smart', 'mentions', 'focus'].includes(el('rm-mode').value) ? el('rm-mode').value : defaults.mode,
       trigger: el('rm-trigger').value.trim() || defaults.trigger,
     };
     if (!inputNode()) { status('Stopped: provider composer not found. Check that this is an open chat.'); return; }
@@ -547,7 +573,7 @@
         ensureReadyToSend(threadPath, before.userCount);
         rounds++;
         status(`Cycle ${rounds}/${settings.maxRounds}: sending continuation prompt…`);
-        await sendMessage(settings.trigger, threadPath, before.userCount);
+        await sendMessage(buildContinuationPrompt(), threadPath, before.userCount);
         if (!running) break;
         status(`Cycle ${rounds}/${settings.maxRounds}: waiting for the reply to finish…`);
         const reply = await waitForNewReply(before);
