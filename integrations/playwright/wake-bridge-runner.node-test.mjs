@@ -175,3 +175,21 @@ test("runner instance cannot be reused after its wake source has been closed", a
   await runner.run({ approved: true });
   await assert.rejects(() => runner.run({ approved: true }), /single-use/);
 });
+
+
+test("subscription startup failure reports error and still cleans up", async () => {
+  const statuses = [];
+  let closed = 0;
+  const runner = new OriginalSessionWakeRunner({
+    bridge: { step: async () => ({ status: "ok", sent: 0 }) },
+    wakeSource: {
+      start: async () => { throw new Error("subscription handshake timeout"); },
+      waitForWake: async () => ({ status: "closed" }),
+      close: async () => { closed++; },
+    },
+    onStatus: event => statuses.push(event.status),
+  });
+  await assert.rejects(() => runner.run({ approved: true }), /subscription handshake timeout/);
+  assert.equal(closed, 1);
+  assert.equal(statuses.at(-1), "error");
+});
