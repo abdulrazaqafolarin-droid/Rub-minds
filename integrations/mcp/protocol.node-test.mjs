@@ -145,3 +145,12 @@ test("JSON-RPC helpers preserve request ids and error codes", () => {
   assert.deepEqual(rpcResult("abc", { ok: true }), { jsonrpc: "2.0", id: "abc", result: { ok: true } });
   assert.deepEqual(rpcError(2, -32601, "Method not found"), { jsonrpc: "2.0", id: 2, error: { code: -32601, message: "Method not found" } });
 });
+
+
+test("wait tool explains active-turn monitoring and the idle wake limitation", () => {
+  const tool = RUB_MINDS_MCP_TOOLS.find((item) => item.name === "wait_for_group_messages");
+  assert.ok(tool);
+  assert.match(tool.description, /repeat this tool/);
+  assert.match(tool.description, /cannot wake an idle model/);
+  assert.match(tool.description, /host keeps the turn active/);
+});
