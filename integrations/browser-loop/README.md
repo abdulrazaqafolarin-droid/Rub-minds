@@ -23,7 +23,8 @@ A manually started userscript for an **already-open ChatGPT or Claude conversati
 2. Create a new script in the manager and replace its contents with \`rub-minds-continuation.user.js\`. Save it and reload the AI conversation.
 3. Confirm the **Rub Minds · Continuation** panel appears. Review the prompt and confirm Rub Minds MCP tools are available to the conversation.
 4. Start manually with a low cycle cap. Keep the tab open and monitor it.
-5. Optionally enable **Remember this conversation on this browser for recovery** while viewing a specific chat. If you later open the provider home page or another thread, use **Reopen saved conversation** to return to it. This URL stays on the same provider origin in local browser storage; it is not sent to Rub Minds or the group. Uncheck the option to delete it.\n6. Use **Pause**, **Resume** or **Stop** as needed. Do not leave it unattended.
+5. Optionally enable **Remember this conversation on this browser for recovery** while viewing a specific chat. If you later open the provider home page or another thread, use **Reopen saved conversation** to return to it. This URL stays on the same provider origin in local browser storage; it is not sent to Rub Minds or the group. Uncheck the option to delete it.
+6. Use **Pause**, **Resume** or **Stop** as needed. Do not leave it unattended.
 
 ## Control-line contract
 
