@@ -296,6 +296,10 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     const timeoutMs = typeof args.timeout_ms === "number" ? args.timeout_ms : 10000;
     const cursorCreatedAt = typeof args.after_created_at === "string" ? args.after_created_at : null;
     const cursorMessageId = typeof args.after_message_id === "string" ? args.after_message_id : null;
+    // Freeze a timestamp-only default watermark once at the start of this wait.
+    // Recomputing Date.now() on every filter pass can discard a message that
+    // arrived after subscription but milliseconds before a later read/filter.
+    const effectiveCursorCreatedAt = cursorCreatedAt ?? new Date().toISOString();
     const hasCompositeCursor = cursorCreatedAt !== null && cursorMessageId !== null;
 
     const roomId = session.room_id;
@@ -314,7 +318,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
           typeof message.body === "string");
       }
       return filterMessagesAfterCursor(data, {
-        afterCreatedAt: cursorCreatedAt,
+        afterCreatedAt: effectiveCursorCreatedAt,
         afterMessageId: cursorMessageId,
       });
     };
