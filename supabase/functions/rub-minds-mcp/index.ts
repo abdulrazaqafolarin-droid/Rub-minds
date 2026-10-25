@@ -477,21 +477,40 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
 
     const readCurrentGroup = async () => {
       // Validate the credential through the existing agent RPC before returning
-      // rows. The cursor query is restricted to the session-bound room.
+      // rows. All message reads are then bounded by this session's room binding.
       const authorized = await invokeAgent(credential, "read");
-      if (!hasCompositeCursor) return authorized;
       if (!isRecord(authorized) || authorized.room_id !== roomId) {
         throw new Error("The joined group binding no longer matches the AI credential.");
       }
-      // The legacy RPC returns at most 50 messages. Composite cursors use direct
-      // bounded pages, oldest-first, so backlogs aren't silently truncated to 50.
-      const { data, error } = await db.from("messages")
-        .select("id, sender_id, body, created_at")
-        .eq("room_id", roomId)
-        .or(`created_at.gt.${cursorCreatedAt},and(created_at.eq.${cursorCreatedAt},id.gt.${cursorMessageId})`)
-        .order("created_at", { ascending: true })
-        .order("id", { ascending: true })
-        .limit(limit);
+
+      // Composite cursors use exclusive (created_at,id) ordering. Preserve the
+      // older timestamp-only cursor as inclusive, but query it directly rather
+      // than filtering the legacy latest-50 snapshot, which could silently drop
+      // older unread rows in a backlog. A no-cursor wait has already established
+      // a composite watermark in establishInitialCursor().
+      let data;
+      let error;
+      if (hasCompositeCursor) {
+        const result = await db.from("messages")
+          .select("id, sender_id, body, created_at")
+          .eq("room_id", roomId)
+          .or(`created_at.gt.${cursorCreatedAt},and(created_at.eq.${cursorCreatedAt},id.gt.${cursorMessageId})`)
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
+          .limit(limit);
+        data = result.data;
+        error = result.error;
+      } else {
+        const result = await db.from("messages")
+          .select("id, sender_id, body, created_at")
+          .eq("room_id", roomId)
+          .gte("created_at", effectiveCursorState.createdAt)
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
+          .limit(limit);
+        data = result.data;
+        error = result.error;
+      }
       if (error) throw new Error("Could not read messages after the supplied cursor.");
       return {
         room_id: roomId,
