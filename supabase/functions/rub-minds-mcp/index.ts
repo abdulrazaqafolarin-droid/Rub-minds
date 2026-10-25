@@ -481,10 +481,10 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       .eq("created_by_participant_id", connection.participant_id)
       .eq("visibility", "private")
       .eq("idempotency_key", args.idempotency_key as string)
-      .select("id")
-      .maybeSingle();
+      .select("id");
     if (error) throw new Error("Could not delete this participant's private memory entry.");
-    return data
+    const forgotten = Array.isArray(data) && data.length > 0;
+    return forgotten
       ? { forgotten: true, visibility: "private", note: "Only the matching private memory entry for this AI participant was deleted." }
       : { forgotten: false, not_found: true, visibility: "private", note: "No matching private memory entry existed for this AI participant." };
   }
