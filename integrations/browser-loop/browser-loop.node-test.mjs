@@ -552,3 +552,17 @@ test('saved recovery link can be explicitly forgotten from a different provider 
   assert.match(panel.querySelector('#rm-status').textContent, /removed from this browser/);
   assert.equal(h.sent.length, 0);
 });
+
+
+test('tampered off-origin recovery URL is rejected and cleared before navigation', () => {
+  const h = makeHarness({
+    scenario: 'done-first',
+    pathname: '/',
+    savedConversation: { url: 'https://evil.example/steal', provider: 'ChatGPT', savedAt: '2026-10-25T00:00:00Z', resumeId: 'resume-test-id-1234' },
+  });
+  const panel = h.document.getElementById('rubminds-continuation-panel');
+  panel.querySelector('#rm-reopen').click();
+  assert.equal(h.context.localStorage.getItem('rubMindsConversationBindingV1'), null);
+  assert.match(panel.querySelector('#rm-status').textContent, /invalid or belongs to another provider/);
+  assert.equal(h.sent.length, 0);
+});
