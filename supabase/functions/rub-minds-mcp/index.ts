@@ -296,22 +296,65 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     const timeoutMs = typeof args.timeout_ms === "number" ? args.timeout_ms : 10000;
     const cursorCreatedAt = typeof args.after_created_at === "string" ? args.after_created_at : null;
     const cursorMessageId = typeof args.after_message_id === "string" ? args.after_message_id : null;
-    const messagesAfterCursor = (data: unknown) => filterMessagesAfterCursor(data, {
-      afterCreatedAt: cursorCreatedAt,
-      afterMessageId: cursorMessageId,
-    });
+    const hasCompositeCursor = cursorCreatedAt !== null && cursorMessageId !== null;
+
+    const roomId = session.room_id;
+    if (typeof roomId !== "string" || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(roomId)) {
+      throw new Error("The joined group binding is invalid.");
+    }
+
+    const messagesAfterCursor = (data: unknown) => {
+      if (hasCompositeCursor && isRecord(data) && Array.isArray(data.messages)) {
+        // The composite path is already ordered and filtered by PostgreSQL.
+        // Do not re-compare timestamp strings in JS: PostgreSQL preserves
+        // microseconds, whereas JS Date parsing truncates them to milliseconds.
+        return data.messages.filter((message) => isRecord(message) &&
+          typeof message.id === "string" &&
+          typeof message.created_at === "string" &&
+          typeof message.body === "string");
+      }
+      return filterMessagesAfterCursor(data, {
+        afterCreatedAt: cursorCreatedAt,
+        afterMessageId: cursorMessageId,
+      });
+    };
     const hasNewMessages = (data: unknown) => messagesAfterCursor(data).length > 0;
     const onlyNewMessages = async (data: unknown) => {
       if (!isRecord(data)) return { messages: [] };
       return await enrichGroupMessages({ ...data, messages: messagesAfterCursor(data) });
     };
-    const initial = await invokeAgent(credential, "read");
+
+    const readCurrentGroup = async () => {
+      // First validate credential expiry/revocation through the existing
+      // credential-checked RPC. The direct table query below is always scoped
+      // to the room bound to this MCP session and only used for cursor reads.
+      const authorized = await invokeAgent(credential, "read");
+      if (!hasCompositeCursor) return authorized;
+      if (!isRecord(authorized) || authorized.room_id !== roomId) {
+        throw new Error("The joined group binding no longer matches the AI credential.");
+      }
+      // The legacy RPC intentionally returns only the latest 50 messages.
+      // For composite cursors query all rows strictly after (created_at, id),
+      // ordered oldest-first. The 100-row cap permits clients to advance the
+      // cursor in batches without losing older unseen messages in a busy room.
+      const { data, error } = await db.from("messages")
+        .select("id, sender_id, body, created_at")
+        .eq("room_id", roomId)
+        .or(`created_at.gt.${cursorCreatedAt},and(created_at.eq.${cursorCreatedAt},id.gt.${cursorMessageId})`)
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .limit(100);
+      if (error) throw new Error("Could not read messages after the supplied cursor.");
+      return {
+        room_id: roomId,
+        participant_id: authorized.participant_id,
+        messages: data || [],
+      };
+    };
+
+    const initial = await readCurrentGroup();
     if (hasNewMessages(initial)) return { timed_out: false, delivery: "realtime", ...(await onlyNewMessages(initial) as Record<string, unknown>) };
 
-    const roomId = session.room_id;
-    if (typeof roomId !== "string" || !/^[0-9a-f-]{36}$/i.test(roomId)) throw new Error("The joined group binding is invalid.");
-    // The service credential is server-only. The channel is filtered to the
-    // authenticated session's room and payloads are never returned to the model.
     db.realtime.setAuth(serviceKey);
     const channel = db.channel("mcp-room-wait-" + roomId + "-" + crypto.randomUUID());
     let eventSeen = false;
@@ -334,12 +377,12 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       });
       if (!subscribed) return { timed_out: true, delivery: "unavailable", messages: [], note: "Supabase Realtime subscription could not be established. Retry read_group_messages or wait_for_group_messages." };
 
-      // Read after subscribing to close the read/subscribe race. Realtime payloads
-      // are only wake-up signals; the authorized group read remains the source of truth.
-      const afterSubscribe = await invokeAgent(credential, "read");
+      // Re-read after subscribing to close the read/subscribe race. For the
+      // composite cursor this is a bounded DB query, not a latest-50 history scan.
+      const afterSubscribe = await readCurrentGroup();
       if (hasNewMessages(afterSubscribe)) return { timed_out: false, delivery: "realtime", ...(await onlyNewMessages(afterSubscribe) as Record<string, unknown>) };
       if (eventSeen) {
-        const afterEvent = await invokeAgent(credential, "read");
+        const afterEvent = await readCurrentGroup();
         if (hasNewMessages(afterEvent)) return { timed_out: false, delivery: "realtime", ...(await onlyNewMessages(afterEvent) as Record<string, unknown>) };
       }
       const eventOrTimeout = await new Promise<"message" | "timeout">((resolve) => {
@@ -351,7 +394,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
         if (eventSeen) wakeWaiter();
       });
       if (eventOrTimeout === "timeout") return { timed_out: true, delivery: "realtime", messages: [] };
-      const afterEvent = await invokeAgent(credential, "read");
+      const afterEvent = await readCurrentGroup();
       return { timed_out: !hasNewMessages(afterEvent), delivery: "realtime", ...(await onlyNewMessages(afterEvent) as Record<string, unknown>) };
     } finally {
       if (eventTimer) clearTimeout(eventTimer);
