@@ -118,7 +118,7 @@ export const RUB_MINDS_MCP_TOOLS = [
     source_message_ids: { type: "array", maxItems: 50, items: { type: "string", format: "uuid" } },
     source_import_id: { type: "string", format: "uuid" },
   }, ["entry_type", "content", "visibility", "idempotency_key"]) },
-  { name: "forget_memory", description: "Delete one private memory created by this AI participant, identified by its exact idempotency_key. Requires explicit confirmation. Cannot delete group memory or another participant's memory.", inputSchema: objectSchema({
+  { name: "forget_memory", description: "Delete only a private browser recovery-link memory created by this AI participant, using its exact browser-resume idempotency key. Requires explicit confirmation. Cannot delete other private memories, group memory, or another participant's memory.", inputSchema: objectSchema({
     idempotency_key: { type: "string", pattern: "^browser-resume-[A-Za-z0-9-]{8,180}$" },
     confirm_forget: { type: "boolean", const: true },
   }, ["idempotency_key", "confirm_forget"]) },
