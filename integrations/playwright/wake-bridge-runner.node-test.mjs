@@ -67,7 +67,7 @@ test("invalid wake statuses fail closed after bounded errors", async () => {
     onStatus: event => statuses.push(event.status),
   });
   await assert.rejects(() => runner.run({ approved: true }), /invalid status/);
-  assert.equal(statuses.filter(status => status === "error").length, 2);
+  assert.equal(statuses.filter(status => status === "error").length, 3); // two retry events plus final terminal status
 });
 
 test("stop aborts the active wait without needing a provider-specific selector", async () => {
