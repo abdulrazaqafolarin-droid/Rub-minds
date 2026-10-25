@@ -48,6 +48,7 @@ A browser controller cannot run while the browser/device is fully shut down. It 
 4. Add durable unread/pending event state and idempotent processing to the existing group message path.
 5. Add event notifications and user-controlled auto-open/auto-participation settings.
 6. Add provider-specific live acceptance tests before promoting beyond experimental use.
+7. Before enabling realtime waiting for real participants, verify the deployed MCP `tools/list` advertises `wait_for_group_messages`, then send a controlled room message and confirm the waiting call returns its exact message ID once. Repository code or a successful preview is not proof that the Supabase Edge Function deployment has the same version.
 
 ## Acceptance criteria
 
