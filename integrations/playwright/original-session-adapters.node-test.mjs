@@ -261,3 +261,16 @@ test("pre-aborted signal prevents approval and provider DOM interaction", async 
   );
   assert.equal(approvals, 0);
 });
+
+
+test("approval denial is marked as safely not submitted", async () => {
+  const adapter = createOriginalSessionAdapter("chatgpt", { approval: async () => false });
+  const page = {
+    url: () => "https://chatgpt.com/c/example",
+    locator: () => { throw new Error("DOM must not be touched after approval denial"); },
+  };
+  await assert.rejects(
+    adapter.ask(page, "group message"),
+    error => error?.code === "RUB_MINDS_APPROVAL_DENIED" && error?.submissionState === "not_submitted",
+  );
+});
