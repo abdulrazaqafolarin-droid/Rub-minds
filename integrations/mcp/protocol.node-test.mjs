@@ -208,5 +208,5 @@ test("wait tool explains active-turn monitoring and the idle wake limitation", (
   assert.match(tool.description, /after_created_at and after_message_id/);
   assert.match(tool.description, /cursor is exclusive/);
   assert.match(tool.description, /cannot wake an idle model/);
-  assert.match(tool.description, /host keeps the turn active/);
+  assert.match(tool.description, /this assistant turn remains active/);
 });
