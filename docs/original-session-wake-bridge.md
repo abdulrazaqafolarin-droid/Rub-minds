@@ -112,3 +112,10 @@ The factory has a dedicated fake-adapter integration test for this complete comp
 Composite pagination is now part of the `read_group_messages` tool itself, rather than being available only through the active-turn wait tool. Calling it with no arguments returns the legacy latest-message snapshot plus `next_cursor`; calling it with both `after_created_at` and `after_message_id` reads an immediate, bounded page strictly after that cursor, ordered by timestamp then ID. Empty results preserve the supplied cursor, and an empty initial room returns the epoch sentinel cursor. `limit` is optional and bounded to 1–100 (default 50).
 
 `wait_for_group_messages` remains the separate long-poll/Realtime notification tool. The session bridge's `readMessages` adapter now uses `read_group_messages` for immediate snapshots/pages, keeping notification waiting separate from message retrieval.
+
+
+## Durable state is now wired through the runtime
+
+The runtime now loads the room-bound state snapshot before its first baseline/read and saves cursor, pending response and blocked-message status with optimistic revision checks. On restart, a stored cursor prevents a fresh baseline from jumping past unseen messages; a saved pending answer is retried under its source message ID without re-running the provider; an ambiguous provider result stays blocked across restarts. A revision conflict stops the runner rather than overwriting another process's state.
+
+The persistence layer is backed by `rub_minds_mcp_bridge_state` through the authenticated MCP `load_original_session_bridge_state` and `save_original_session_bridge_state` tools. It is now part of the local runtime composition, but still requires the migration and updated hosted MCP Edge Function to be deployed before a production connection can use it. The browser/provider adapter remains injected and unverified for ChatGPT or Claude.

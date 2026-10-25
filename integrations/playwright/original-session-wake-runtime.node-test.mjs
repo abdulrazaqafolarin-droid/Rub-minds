@@ -47,45 +47,71 @@ function makeRealtimeClient(roomId, { emitWake = true } = {}) {
 
 test("factory wires the MCP transport and room Realtime wake into the original-session bridge", async () => {
   const requests = [];
+  let stateRevision = 0;
+  let durableSnapshot = { cursor: null, pending_response: null, blocked_message: null };
   const fakeFetch = async (url, options) => {
     const request = JSON.parse(options.body);
     requests.push({ url, options, request });
     const name = request.params.name;
     const args = request.params.arguments;
     let structuredContent;
-    if (name === "read_group_messages") {
+    if (name === "load_original_session_bridge_state") {
       structuredContent = {
-        room_id: ROOM,
-        participant_id: PARTICIPANT,
-        messages: [{
-          id: BASE_ID,
-          room_id: ROOM,
-          sender_id: OWNER_ID,
-          body: "history before runner start",
-          created_at: BASE_TIME,
-          sender_kind: "human",
-        }],
+        revision: 0,
+        cursor: null,
+        pending_response: null,
+        blocked_message: null,
+        updated_at: "2026-10-24T17:00:00.000Z",
       };
-    } else if (name === "wait_for_group_messages") {
-      assert.equal(args.after_created_at, BASE_TIME);
-      assert.equal(args.after_message_id, BASE_ID);
-      assert.equal(args.limit, 1);
-      structuredContent = {
-        room_id: ROOM,
-        participant_id: PARTICIPANT,
-        timed_out: false,
-        delivery: "realtime",
-        messages: [{
-          id: NEW_ID,
-          room_id: ROOM,
-          sender_id: OWNER_ID,
-          body: "please collaborate",
-          created_at: NEW_TIME,
-          sender_kind: "human",
-          sender_name: "Owner",
-        }],
-        next_cursor: { after_created_at: NEW_TIME, after_message_id: NEW_ID },
+    } else if (name === "save_original_session_bridge_state") {
+      assert.equal(args.expected_revision, stateRevision);
+      stateRevision++;
+      durableSnapshot = {
+        cursor: args.cursor_created_at && args.cursor_message_id
+          ? { after_created_at: args.cursor_created_at, after_message_id: args.cursor_message_id }
+          : null,
+        pending_response: args.pending_message_id && args.pending_message_created_at && args.pending_response
+          ? { source_message_id: args.pending_message_id, message_created_at: args.pending_message_created_at, body: args.pending_response }
+          : null,
+        blocked_message: args.blocked_message_id && args.blocked_reason
+          ? { message_id: args.blocked_message_id, reason: args.blocked_reason }
+          : null,
       };
+      structuredContent = { saved: true, conflict: false, revision: stateRevision };
+    } else if (name === "read_group_messages") {
+      if (args.after_created_at !== undefined) {
+        assert.equal(args.after_created_at, BASE_TIME);
+        assert.equal(args.after_message_id, BASE_ID);
+        assert.equal(args.limit, 1);
+        structuredContent = {
+          room_id: ROOM,
+          participant_id: PARTICIPANT,
+          messages: [{
+            id: NEW_ID,
+            room_id: ROOM,
+            sender_id: OWNER_ID,
+            body: "please collaborate",
+            created_at: NEW_TIME,
+            sender_kind: "human",
+            sender_name: "Owner",
+          }],
+          next_cursor: { after_created_at: NEW_TIME, after_message_id: NEW_ID },
+        };
+      } else {
+        structuredContent = {
+          room_id: ROOM,
+          participant_id: PARTICIPANT,
+          messages: [{
+            id: BASE_ID,
+            room_id: ROOM,
+            sender_id: OWNER_ID,
+            body: "history before runner start",
+            created_at: BASE_TIME,
+            sender_kind: "human",
+          }],
+          next_cursor: { after_created_at: BASE_TIME, after_message_id: BASE_ID },
+        };
+      }
     } else if (name === "send_group_message") {
       assert.equal(args.body, "Reply: please collaborate");
       assert.equal(args.source_message_id, NEW_ID);
@@ -122,10 +148,20 @@ test("factory wires the MCP transport and room Realtime wake into the original-s
   assert.deepEqual(result, { status: "limit_reached", replies: 1 });
   assert.deepEqual(prompts.map(prompt => prompt.body), ["please collaborate"]);
   assert.deepEqual(requests.map(item => item.request.params.name), [
+    "load_original_session_bridge_state",
     "read_group_messages",
-    "wait_for_group_messages",
+    "save_original_session_bridge_state",
+    "read_group_messages",
+    "save_original_session_bridge_state",
     "send_group_message",
+    "save_original_session_bridge_state",
   ]);
+  assert.equal(stateRevision, 3);
+  assert.deepEqual(durableSnapshot, {
+    cursor: { after_created_at: NEW_TIME, after_message_id: NEW_ID },
+    pending_response: null,
+    blocked_message: null,
+  });
   assert.ok(requests.every(item => item.url === ENDPOINT && !item.url.includes(SESSION)));
   assert.ok(requests.every(item => item.request.params.arguments.session_handle === SESSION));
   assert.deepEqual(realtime.getStats().configuration, {

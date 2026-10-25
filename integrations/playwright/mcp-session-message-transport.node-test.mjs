@@ -69,7 +69,7 @@ test("empty startup snapshots return a valid epoch cursor and only permit messag
   await assert.rejects(() => transport.callTool("read_session_memory", {}), /only supports/);
 });
 
-test("cursor reads forward the exact composite cursor, bounded limit, and read wait", async () => {
+test("cursor reads use immediate composite paging with a bounded page limit", async () => {
   const cursor = {
     after_created_at: "2026-10-24T17:00:00.123456+00:00",
     after_message_id: "00000000-0000-4000-8000-000000000042",
@@ -92,6 +92,61 @@ test("cursor reads forward the exact composite cursor, bounded limit, and read w
   assert.equal(sent.arguments.timeout_ms, undefined);
   assert.equal(sent.arguments.limit, 9);
   assert.equal(sent.arguments.session_handle, SESSION);
+});
+
+test("loads and revision-checks durable session bridge state", async () => {
+  let revision = 4;
+  const fake = fakeFetch(({ request }) => {
+    const name = request.params.name;
+    const args = request.params.arguments;
+    let structuredContent;
+    if (name === "load_original_session_bridge_state") {
+      structuredContent = {
+        revision,
+        cursor: { after_created_at: BASE_TIME, after_message_id: "10000000-0000-4000-8000-000000000001" },
+        pending_response: null,
+        blocked_message: null,
+      };
+    } else if (name === "save_original_session_bridge_state") {
+      assert.equal(args.expected_revision, revision);
+      revision++;
+      structuredContent = { saved: true, conflict: false, revision };
+    } else {
+      throw new Error("Unexpected state tool " + name);
+    }
+    return fakeResponse({ jsonrpc: "2.0", id: request.id, result: { structuredContent } });
+  });
+  const transport = new McpSessionMessageTransport({ endpoint: ENDPOINT, sessionHandle: SESSION, fetchImpl: fake.fetch });
+  const loaded = await transport.loadBridgeState();
+  assert.equal(loaded.revision, 4);
+  assert.equal(loaded.cursor.after_message_id, "10000000-0000-4000-8000-000000000001");
+  const saved = await transport.saveBridgeState({
+    expected_revision: loaded.revision,
+    cursor: loaded.cursor,
+    pending_response: {
+      source_message_id: "20000000-0000-4000-8000-000000000002",
+      message_created_at: NEW_TIME,
+      body: "pending answer",
+    },
+    blocked_message: null,
+  });
+  assert.deepEqual(saved, { saved: true, conflict: false, revision: 5 });
+  const args = fake.requests[1].request.params.arguments;
+  assert.equal(args.session_handle, SESSION);
+  assert.equal(args.cursor_message_id, loaded.cursor.after_message_id);
+  assert.equal(args.pending_message_id, "20000000-0000-4000-8000-000000000002");
+  assert.equal(args.pending_response, "pending answer");
+});
+
+test("surfaces a durable bridge-state revision conflict without overwriting it", async () => {
+  const fake = fakeFetch(({ request }) => fakeResponse({
+    jsonrpc: "2.0", id: request.id,
+    result: { structuredContent: { saved: false, conflict: true, revision: 9 } },
+  }));
+  const transport = new McpSessionMessageTransport({ endpoint: ENDPOINT, sessionHandle: SESSION, fetchImpl: fake.fetch });
+  assert.deepEqual(await transport.saveBridgeState({
+    expected_revision: 7, cursor: null, pending_response: null, blocked_message: null,
+  }), { saved: false, conflict: true, revision: 9 });
 });
 
 test("message sends include a stable source_message_id for server-side deduplication", async () => {

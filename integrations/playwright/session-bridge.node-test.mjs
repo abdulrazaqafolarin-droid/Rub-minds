@@ -280,6 +280,43 @@ test("baseline stores a composite cursor and supplies it to the next durable mes
   });
 });
 
+test("restores durable cursor state and avoids a fresh baseline that could skip messages", async () => {
+  const stored = {
+    revision: 7,
+    cursor: { after_created_at: "2026-10-24T17:00:00.000000Z", after_message_id: "10000000-0000-4000-8000-000000000001" },
+    pending_response: null,
+    blocked_message: null,
+  };
+  let reads = 0;
+  const saves = [];
+  const stateStore = {
+    load: async () => structuredClone(stored),
+    save: async snapshot => {
+      assert.equal(snapshot.expected_revision, stored.revision);
+      stored.revision++;
+      saves.push(snapshot);
+      return { saved: true, conflict: false, revision: stored.revision };
+    },
+  };
+  const bridge = new PlaywrightSessionBridge({
+    page: { isClosed: () => false },
+    participantId: "self",
+    adapter: { ask: async () => "not needed" },
+    readMessages: async () => { reads++; return { messages: [] }; },
+    sendMessage: async () => ({ ok: true }),
+    stateStore,
+  });
+  assert.deepEqual(await bridge.initialize({ approved: true }), {
+    status: "ready", baselineMessages: 0, restored: true,
+  });
+  assert.equal(reads, 0);
+  assert.deepEqual(bridge.cursor, {
+    id: "10000000-0000-4000-8000-000000000001",
+    created_at: "2026-10-24T17:00:00.000000Z",
+  });
+  assert.equal(saves.length, 0);
+});
+
 test("invalid message timestamps do not poison the composite cursor", () => {
   const { bridge } = makeBridge({ processExistingMessages: true, messages: [] });
   bridge.advanceCursor({ id: "invalid", created_at: "not-a-date" });

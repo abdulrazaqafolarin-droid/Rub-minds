@@ -71,7 +71,8 @@ export class PlaywrightSessionBridge {
     maxMessagesPerStep = 1,
     processExistingMessages = false,
     maxSeenMessageIds = 2000,
-  }) {
+    stateStore = null,
+  } = {}) {
     if (!page || typeof page.isClosed !== "function" || !adapter || typeof adapter.ask !== "function") {
       throw new TypeError("Playwright page and AI adapter.ask are required");
     }
@@ -97,15 +98,23 @@ export class PlaywrightSessionBridge {
     if (!Number.isInteger(maxSeenMessageIds) || maxSeenMessageIds < 50 || maxSeenMessageIds > 100000) {
       throw new RangeError("maxSeenMessageIds must be between 50 and 100000");
     }
+    if (stateStore !== null && (
+      !stateStore || typeof stateStore.load !== "function" || typeof stateStore.save !== "function"
+    )) {
+      throw new TypeError("stateStore must provide load() and save() methods");
+    }
 
     Object.assign(this, {
       page, adapter, readMessages, sendMessage, participantId,
-      intervalMs, maxReplies, maxMessagesPerStep, processExistingMessages, maxSeenMessageIds,
+      intervalMs, maxReplies, maxMessagesPerStep, processExistingMessages, maxSeenMessageIds, stateStore,
     });
     this.running = false;
     this.runController = null;
     this.stepInProgress = false;
     this.initialized = false;
+    this.durableStateLoaded = false;
+    this.stateRevision = null;
+    this.statePersistenceFailed = false;
     this.replies = 0;
     this.cursor = null;
     this.seen = new Set();
@@ -128,11 +137,107 @@ export class PlaywrightSessionBridge {
   }
 
   advanceCursor(message) {
-    if (!isValidMessageCursor(message)) return;
+    if (!isValidMessageCursor(message)) return false;
     const candidate = { id: message.id, created_at: message.created_at };
     if (!this.cursor || compareMessageCursors(candidate, this.cursor) > 0) {
       this.cursor = candidate;
+      return true;
     }
+    return false;
+  }
+
+  async restoreDurableState({ signal } = {}) {
+    if (this.durableStateLoaded) {
+      return {
+        status: "loaded",
+        hasResumeState: Boolean(this.cursor || this.pendingResponses.size || this.blockedMessage),
+      };
+    }
+    if (!this.stateStore) {
+      this.durableStateLoaded = true;
+      return { status: "unconfigured", hasResumeState: false };
+    }
+    const state = await this.stateStore.load({ signal });
+    if (!state || !Number.isSafeInteger(state.revision) || state.revision < 0) {
+      throw new Error("Could not restore a valid durable bridge-state revision");
+    }
+    if (state.cursor !== null) {
+      const cursor = state.cursor;
+      if (!cursor || typeof cursor !== "object" ||
+          !isValidMessageCursor({ id: cursor.after_message_id, created_at: cursor.after_created_at })) {
+        throw new Error("Could not restore the durable composite message cursor");
+      }
+      this.cursor = { id: cursor.after_message_id, created_at: cursor.after_created_at };
+    }
+    if (state.pending_response !== null) {
+      const pending = state.pending_response;
+      if (!pending || typeof pending.source_message_id !== "string" ||
+          typeof pending.message_created_at !== "string" || typeof pending.body !== "string") {
+        throw new Error("Could not restore the durable pending response");
+      }
+      this.pendingResponses.set(pending.source_message_id, {
+        body: pending.body,
+        message: { id: pending.source_message_id, created_at: pending.message_created_at },
+      });
+    }
+    if (state.blocked_message !== null) {
+      const blocked = state.blocked_message;
+      if (!blocked || typeof blocked.message_id !== "string" || typeof blocked.reason !== "string") {
+        throw new Error("Could not restore the durable blocked-message marker");
+      }
+      this.blockedMessage = { messageId: blocked.message_id, reason: blocked.reason };
+    }
+    this.stateRevision = state.revision;
+    this.durableStateLoaded = true;
+    return {
+      status: "loaded",
+      hasResumeState: Boolean(this.cursor || this.pendingResponses.size || this.blockedMessage),
+    };
+  }
+
+  async persistDurableState({ signal } = {}) {
+    if (!this.stateStore) return { saved: true, revision: null };
+    if (this.statePersistenceFailed) throw new Error("Durable bridge-state persistence previously failed; stopping safely");
+    if (!this.durableStateLoaded || !Number.isSafeInteger(this.stateRevision) || this.stateRevision < 0) {
+      throw new Error("Durable bridge state must be loaded before saving");
+    }
+    const pending = [...this.pendingResponses.entries()];
+    if (pending.length > 1) throw new Error("Durable bridge state supports one pending response at a time");
+    const [messageId, pendingRecord] = pending[0] || [];
+    const snapshot = {
+      expected_revision: this.stateRevision,
+      cursor: this.cursor
+        ? { after_created_at: this.cursor.created_at, after_message_id: this.cursor.id }
+        : null,
+      pending_response: pendingRecord
+        ? {
+            source_message_id: messageId,
+            message_created_at: pendingRecord.message.created_at,
+            body: pendingRecord.body,
+          }
+        : null,
+      blocked_message: this.blockedMessage
+        ? { message_id: this.blockedMessage.messageId, reason: this.blockedMessage.reason }
+        : null,
+    };
+    try {
+      const result = await this.stateStore.save(snapshot, { signal });
+      if (!result || result.saved !== true || result.conflict !== false ||
+          !Number.isSafeInteger(result.revision) || result.revision < 0) {
+        throw new Error("Durable bridge-state revision conflict or invalid save acknowledgement");
+      }
+      this.stateRevision = result.revision;
+      return result;
+    } catch (error) {
+      this.statePersistenceFailed = true;
+      throw error;
+    }
+  }
+
+  async advanceAndPersist(message, { signal } = {}) {
+    const advanced = this.advanceCursor(message);
+    if (advanced) await this.persistDurableState({ signal: signal?.aborted ? undefined : signal });
+    return advanced;
   }
 
   /**
@@ -147,6 +252,14 @@ export class PlaywrightSessionBridge {
     if (this.initialized) return { status: "ready", baselineMessages: 0, alreadyInitialized: true };
     if (signal?.aborted) return { status: "cancelled", baselineMessages: 0 };
     if (this.page.isClosed()) return { status: "browser_closed", baselineMessages: 0 };
+    if (this.statePersistenceFailed) throw new Error("Durable bridge-state persistence previously failed; stopping safely");
+
+    const restored = await this.restoreDurableState({ signal });
+    if (signal?.aborted) return { status: "cancelled", baselineMessages: 0 };
+    if (restored.hasResumeState) {
+      this.initialized = true;
+      return { status: "ready", baselineMessages: 0, restored: true };
+    }
 
     if (this.processExistingMessages) {
       this.initialized = true;
@@ -186,6 +299,7 @@ export class PlaywrightSessionBridge {
         id: nextCursor.after_message_id,
       });
     }
+    await this.persistDurableState({ signal: signal?.aborted ? undefined : signal });
     this.initialized = true;
     return { status: "baseline", baselineMessages };
   }
@@ -254,6 +368,7 @@ export class PlaywrightSessionBridge {
       this.advanceCursor(pending.message);
       this.replies++;
       sent++;
+      await this.persistDurableState({ signal: signal?.aborted ? undefined : signal });
     }
     if (this.replies >= effectiveLimit) return { status: "limit_reached", sent, processed };
     if (signal?.aborted) return { status: "cancelled", sent, processed };
@@ -287,7 +402,7 @@ export class PlaywrightSessionBridge {
       if (!message || typeof message.id !== "string" || !message.id) continue;
       if (this.pendingResponses.has(message.id)) continue;
       if (this.seen.has(message.id)) {
-        this.advanceCursor(message);
+        await this.advanceAndPersist(message, { signal });
         continue;
       }
 
@@ -295,22 +410,22 @@ export class PlaywrightSessionBridge {
       // not repeatedly reconsider the same event.
       this.markSeen(message.id);
       if (typeof message.body !== "string") {
-        this.advanceCursor(message);
+        await this.advanceAndPersist(message, { signal });
         continue;
       }
       if (this.participantId && message.sender_id === this.participantId) {
-        this.advanceCursor(message);
+        await this.advanceAndPersist(message, { signal });
         continue;
       }
       if (message.sender_kind !== "human" && !AI_KINDS.has(message.sender_kind)) {
-        this.advanceCursor(message);
+        await this.advanceAndPersist(message, { signal });
         continue;
       }
 
       // Optional server-supplied depth is respected when available. The server
       // remains responsible for global turn limits across multiple AI bridges.
       if (Number.isInteger(message.turn_depth) && message.turn_depth >= 8) {
-        this.advanceCursor(message);
+        await this.advanceAndPersist(message, { signal });
         continue;
       }
 
@@ -326,6 +441,7 @@ export class PlaywrightSessionBridge {
       } catch (error) {
         if (signal?.aborted) {
           this.blockedMessage = { messageId: message.id, reason: "provider_outcome_unknown_after_cancel" };
+          await this.persistDurableState();
           return { status: "cancelled", sent, processed, blockedMessageId: message.id };
         }
         if (isSafeToRetry(error)) {
@@ -335,6 +451,7 @@ export class PlaywrightSessionBridge {
           throw error;
         }
         this.blockedMessage = { messageId: message.id, reason: "provider_outcome_unknown" };
+        await this.persistDurableState({ signal });
         return {
           status: "blocked",
           sent,
@@ -346,6 +463,7 @@ export class PlaywrightSessionBridge {
 
       if (typeof response !== "string" || !response.trim()) {
         this.blockedMessage = { messageId: message.id, reason: "provider_response_empty_or_incomplete" };
+        await this.persistDurableState({ signal });
         return {
           status: "blocked",
           sent,
@@ -361,6 +479,10 @@ export class PlaywrightSessionBridge {
         body: response.trim(),
         message: { id: message.id, created_at: message.created_at },
       });
+      // Commit the completed answer before attempting network delivery. If the
+      // process exits after this save, another instance can retry the same
+      // source_message_id without invoking the provider a second time.
+      await this.persistDurableState({ signal: signal?.aborted ? undefined : signal });
       if (signal?.aborted) return { status: "cancelled", sent, processed, pendingDelivery: true };
 
       try {

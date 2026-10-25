@@ -53,6 +53,10 @@ export function createOriginalSessionWakeRuntime({
     maxMessagesPerStep,
     processExistingMessages,
     maxSeenMessageIds,
+    stateStore: {
+      load: options => transport.loadBridgeState(options),
+      save: (snapshot, options) => transport.saveBridgeState(snapshot, options),
+    },
   });
   const wakeSource = new SupabaseRealtimeWakeSource({
     client: supabaseClient,

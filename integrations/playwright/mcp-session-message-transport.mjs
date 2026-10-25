@@ -15,7 +15,11 @@ const MESSAGE_TOOL_NAMES = new Set([
   "read_group_messages",
   "wait_for_group_messages",
   "send_group_message",
+  "load_original_session_bridge_state",
+  "save_original_session_bridge_state",
 ]);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const TIMESTAMP_RE = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$/;
 
 function validateEndpoint(value) {
   if (typeof value !== "string" || value.length > 2048) {
@@ -179,6 +183,82 @@ export class McpSessionMessageTransport {
     if (!Array.isArray(result.messages)) throw new Error("Rub Minds MCP baseline read returned no message list");
     if (result.messages.length === 0 && !result.next_cursor) {
       return { ...result, next_cursor: { ...EMPTY_ROOM_CURSOR } };
+    }
+    return result;
+  }
+
+  async loadBridgeState({ signal } = {}) {
+    const state = await this.callTool("load_original_session_bridge_state", {}, { signal });
+    if (!Number.isSafeInteger(state.revision) || state.revision < 0) {
+      throw new Error("Rub Minds bridge state has an invalid revision");
+    }
+    if (state.cursor !== null) {
+      if (!state.cursor || !UUID_RE.test(state.cursor.after_message_id || "") ||
+          typeof state.cursor.after_created_at !== "string" ||
+          !TIMESTAMP_RE.test(state.cursor.after_created_at) ||
+          !Number.isFinite(Date.parse(state.cursor.after_created_at))) {
+        throw new Error("Rub Minds bridge state has an invalid composite cursor");
+      }
+    }
+    if (state.pending_response !== null) {
+      const pending = state.pending_response;
+      if (!pending || !UUID_RE.test(pending.source_message_id || "") ||
+          typeof pending.message_created_at !== "string" ||
+          !TIMESTAMP_RE.test(pending.message_created_at) ||
+          !Number.isFinite(Date.parse(pending.message_created_at)) ||
+          typeof pending.body !== "string" || !pending.body.trim() || pending.body.length > 10000) {
+        throw new Error("Rub Minds bridge state has an invalid pending response");
+      }
+    }
+    if (state.blocked_message !== null) {
+      const blocked = state.blocked_message;
+      if (!blocked || !UUID_RE.test(blocked.message_id || "") ||
+          typeof blocked.reason !== "string" || !blocked.reason.trim() || blocked.reason.length > 200) {
+        throw new Error("Rub Minds bridge state has an invalid blocked-message marker");
+      }
+    }
+    return state;
+  }
+
+  async saveBridgeState(snapshot, { signal } = {}) {
+    if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot) ||
+        !Number.isSafeInteger(snapshot.expected_revision) || snapshot.expected_revision < 0) {
+      throw new TypeError("bridge state snapshot and expected revision are required");
+    }
+    const cursor = snapshot.cursor ?? null;
+    const pending = snapshot.pending_response ?? null;
+    const blocked = snapshot.blocked_message ?? null;
+    if (cursor !== null && (!UUID_RE.test(cursor.after_message_id || "") ||
+        typeof cursor.after_created_at !== "string" ||
+        !TIMESTAMP_RE.test(cursor.after_created_at) ||
+        !Number.isFinite(Date.parse(cursor.after_created_at)))) {
+      throw new TypeError("bridge state cursor is invalid");
+    }
+    if (pending !== null && (!UUID_RE.test(pending.source_message_id || "") ||
+        typeof pending.message_created_at !== "string" ||
+        !TIMESTAMP_RE.test(pending.message_created_at) ||
+        !Number.isFinite(Date.parse(pending.message_created_at)) ||
+        typeof pending.body !== "string" || !pending.body.trim() || pending.body.length > 10000)) {
+      throw new TypeError("bridge state pending response is invalid");
+    }
+    if (blocked !== null && (!UUID_RE.test(blocked.message_id || "") ||
+        typeof blocked.reason !== "string" || !blocked.reason.trim() || blocked.reason.length > 200)) {
+      throw new TypeError("bridge state blocked marker is invalid");
+    }
+    const result = await this.callTool("save_original_session_bridge_state", {
+      expected_revision: snapshot.expected_revision,
+      cursor_created_at: cursor?.after_created_at ?? null,
+      cursor_message_id: cursor?.after_message_id ?? null,
+      pending_message_id: pending?.source_message_id ?? null,
+      pending_message_created_at: pending?.message_created_at ?? null,
+      pending_response: pending?.body ?? null,
+      blocked_message_id: blocked?.message_id ?? null,
+      blocked_reason: blocked?.reason ?? null,
+    }, { signal });
+    if (result.saved === false && result.conflict === true) return result;
+    if (result.saved !== true || result.conflict !== false ||
+        !Number.isSafeInteger(result.revision) || result.revision < 0) {
+      throw new Error("Rub Minds bridge state save returned an invalid acknowledgement");
     }
     return result;
   }
