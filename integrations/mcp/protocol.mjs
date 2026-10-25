@@ -120,6 +120,23 @@ export const RUB_MINDS_MCP_TOOLS = [
   }, ["entry_type", "content", "visibility", "idempotency_key"]) },
 ];
 
+/** Select messages after the last processed cursor from a newest-50, ascending read window. */
+export function messagesAfterCursor(messages, cursorTimestamp, cursorMessageId = null) {
+  if (!Array.isArray(messages)) return [];
+  const valid = messages.filter((message) =>
+    message !== null && typeof message === "object" && !Array.isArray(message) &&
+    typeof message.created_at === "string" && Number.isFinite(Date.parse(message.created_at))
+  );
+  if (typeof cursorMessageId === "string") {
+    const index = valid.findIndex((message) => message.id === cursorMessageId);
+    // An exact ID cursor handles messages sharing the same timestamp.
+    if (index >= 0) return valid.slice(index + 1);
+  }
+  const cursor = Number.isFinite(cursorTimestamp) ? cursorTimestamp : Date.now();
+  // Strict greater-than avoids replaying the already processed cursor message.
+  return valid.filter((message) => Date.parse(message.created_at) > cursor);
+}
+
 /** @param {unknown} value @returns {value is Record<string, any>} */
 export function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
