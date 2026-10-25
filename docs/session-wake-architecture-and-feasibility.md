@@ -60,6 +60,12 @@ Supabase's current hosted Edge Function limits document a 150-second wall-clock 
 
 Opening the same provider thread URL in an authenticated browser may reach the same stored conversation history, but it does not guarantee the same currently-running client process or any hidden transient model execution state. A future test must record which guarantee was demonstrated: same thread URL/history, actual prompt submitted, assistant reply completed, and reply returned to Rub Minds. Do not label any of these successful until observed.
 
+## Adapter contract hardening (October 25, 2026)
+
+The runner passes `wakeReason` as either `wake` or `timeout` to the provider adapter. Both paths must first inspect the durable Rub Minds task source. A timeout is a missed-notification recovery heartbeat only; it must not cause a prompt to be submitted when no eligible task exists. The provider adapter must claim a specific task before doing browser work and use that task's source-message ID for reply idempotency.
+
+The Realtime source now attempts to remove a failed channel after a subscription error, rather than leaving a stale channel reference. Tests cover this cleanup path. These are local control-flow guarantees, not evidence of live ChatGPT/Claude browser interaction.
+
 ## Feasibility matrix
 
 - **Feasible now in Rub Minds server code:** durable task states, authenticated task discovery, idempotency, Realtime wake signals, MCP polling/long-polling, retry/lease recovery, audit status and simulation tests.
