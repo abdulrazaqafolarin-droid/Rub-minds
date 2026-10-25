@@ -114,6 +114,7 @@ try {
   assert.ok(names.includes("send_group_message"), "official client did not discover send_group_message");
   assert.ok(names.includes("read_group_messages"), "official client did not discover read_group_messages");
   assert.ok(names.includes("wait_for_group_messages"), "official client did not discover wait_for_group_messages");
+  assert.ok(names.includes("forget_memory"), "official client did not discover forget_memory");
 
   for (const entry of rejectedInvites) {
     const rejected = await first.callTool({
@@ -318,6 +319,63 @@ try {
     memoryTwo.structuredContent?.group_memory?.some(entry => entry.visibility === "group" && entry.content.includes("SHARED DECISION")),
     "AI two must see explicitly group-shared memory",
   );
+  // Deletion must be scoped to the requesting participant and to private
+  // visibility. AI two cannot erase AI one's private locator even with its key.
+  const crossParticipantForget = await second.callTool({
+    name: "forget_memory",
+    arguments: {
+      session_handle: two.session_handle,
+      idempotency_key: "sdk-private-memory-one",
+      confirm_forget: true,
+    },
+  });
+  assert.notEqual(crossParticipantForget.isError, true, "private-memory scoped no-op should be a valid tool result");
+  assert.equal(crossParticipantForget.structuredContent?.forgotten, false);
+  assert.equal(crossParticipantForget.structuredContent?.not_found, true);
+  const stillPrivateForOwner = await first.callTool({
+    name: "read_session_memory",
+    arguments: { session_handle: one.session_handle },
+  });
+  assert.ok(stillPrivateForOwner.structuredContent?.group_memory?.some(entry =>
+    entry.visibility === "private" && entry.idempotency_key === undefined && entry.content.includes("PRIVATE ONLY")),
+    "cross-participant deletion must not remove AI one's private entry");
+
+  const ownerForget = await first.callTool({
+    name: "forget_memory",
+    arguments: {
+      session_handle: one.session_handle,
+      idempotency_key: "sdk-private-memory-one",
+      confirm_forget: true,
+    },
+  });
+  assert.notEqual(ownerForget.isError, true, "owner could not delete own private memory");
+  assert.equal(ownerForget.structuredContent?.forgotten, true);
+  assert.equal(ownerForget.structuredContent?.visibility, "private");
+  const afterForgetOne = await first.callTool({
+    name: "read_session_memory",
+    arguments: { session_handle: one.session_handle },
+  });
+  const afterForgetTwo = await second.callTool({
+    name: "read_session_memory",
+    arguments: { session_handle: two.session_handle },
+  });
+  assert.ok(!afterForgetOne.structuredContent?.group_memory?.some(entry => entry.content.includes("PRIVATE ONLY")),
+    "deleted private entry remains visible to its owner");
+  assert.ok(afterForgetOne.structuredContent?.group_memory?.some(entry => entry.visibility === "group" && entry.content.includes("SHARED DECISION")),
+    "deleting private memory must preserve group memory for owner");
+  assert.ok(afterForgetTwo.structuredContent?.group_memory?.some(entry => entry.visibility === "group" && entry.content.includes("SHARED DECISION")),
+    "deleting private memory must preserve group memory for other participants");
+  const repeatedForget = await first.callTool({
+    name: "forget_memory",
+    arguments: {
+      session_handle: one.session_handle,
+      idempotency_key: "sdk-private-memory-one",
+      confirm_forget: true,
+    },
+  });
+  assert.equal(repeatedForget.structuredContent?.forgotten, false, "repeated deletion must be a harmless idempotent no-op");
+  assert.equal(repeatedForget.structuredContent?.not_found, true);
+  console.log("Official MCP SDK confirmed private-memory deletion is participant-scoped, preserves group memory, and is safe to retry.");
   console.log("Official MCP SDK private session-context and explicit group-memory isolation passed.");
 
   const sent = await first.callTool({
