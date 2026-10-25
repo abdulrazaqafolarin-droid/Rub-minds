@@ -92,6 +92,21 @@ test("returns the completed response rather than a partial streamed response", a
   assert.equal(await adapter.ask(makeChatGPTPage(state), "hello"), "Complete answer");
 });
 
+test("refuses to overlap an already-generating provider turn", async () => {
+  const state = { assistantVisible: true, text: "Existing response", generating: true };
+  let approvals = 0;
+  const adapter = createOriginalSessionAdapter("chatgpt", {
+    approval: async () => { approvals++; return true; },
+    timeoutMs: 5000,
+  });
+  await assert.rejects(
+    adapter.ask(makeChatGPTPage(state), "group message"),
+    error => error?.submissionState === "not_submitted" && /already generating/.test(error.message),
+  );
+  assert.equal(approvals, 0, "do not request approval if the provider is already generating");
+  assert.equal(state.submittedPrompt, undefined, "do not alter the active conversation composer");
+});
+
 test("refuses to send when the owner switches threads during approval", async () => {
   const state = { assistantVisible: false, text: "", generating: false };
   const adapter = createOriginalSessionAdapter("chatgpt", {
