@@ -943,7 +943,7 @@ jobs:
           // uses compare-and-swap revisions, and can be explicitly cleared.
           const loadedBridgeState = await rpc("tools/call", 40, {
             name: "load_original_session_bridge_state",
-            arguments: { session_handle: joined.structuredContent.session_handle },
+            arguments: { session_handle: secondJoin.structuredContent.session_handle },
           });
           assert.equal(loadedBridgeState.isError, undefined,
             "bridge-state load failed: " + JSON.stringify(loadedBridgeState));
@@ -975,7 +975,7 @@ jobs:
           assert.equal(savedBridgeState.structuredContent.revision, 1);
           const reloadedBridgeState = await rpc("tools/call", 42, {
             name: "load_original_session_bridge_state",
-            arguments: { session_handle: joined.structuredContent.session_handle },
+            arguments: { session_handle: secondJoin.structuredContent.session_handle },
           });
           assert.deepEqual(reloadedBridgeState.structuredContent.cursor, {
             after_created_at: stateAnchorMessage.created_at,
