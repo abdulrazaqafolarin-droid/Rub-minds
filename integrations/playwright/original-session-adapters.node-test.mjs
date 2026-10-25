@@ -222,6 +222,9 @@ test("does not click send when provider disables it", async () => {
   const page = {
     url: () => "https://chatgpt.com/c/example",
     locator(selector) {
+      if (selector.includes("stop-button") || selector.includes("Stop generating") || selector.includes("Stop response")) {
+        return { last() { return this; }, count: async () => 0, isVisible: async () => false };
+      }
       const item = {
         last() { return this; },
         count: async () => 1,
