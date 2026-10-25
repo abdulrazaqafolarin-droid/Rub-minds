@@ -55,7 +55,7 @@ function makeChatGPTPage(state) {
       return { count: async () => state.generating ? 1 : 0, isVisible: async () => state.generating };
     }
     if (selector.includes("prompt-textarea") || selector.includes("composer-input")) {
-      return { count: async () => 1, isVisible: async () => true, fill: async () => {} };
+      return { count: async () => 1, isVisible: async () => true, fill: async value => { state.submittedPrompt = value; } };
     }
     if (selector.includes("send-button") || selector.includes("Send prompt")) {
       return {
