@@ -1,13 +1,13 @@
 /**
  * Original-session wake runner.
  *
- * This runs beside an explicitly authenticated, user-authorized Playwright
- * browser. HTTP/pg_cron can signal the wake source, but cannot itself execute
- * a browser or create a new turn in ChatGPT/Claude. A live runner is required.
+ * Runs beside an explicitly authenticated, user-authorized browser. A server
+ * signal cannot itself execute a browser or create a turn in an idle provider
+ * conversation. A live runner and a provider-specific bridge are required.
  *
- * The wake source is transport-injected (e.g. authenticated Supabase Realtime
- * plus a bounded heartbeat). Provider page interaction remains the responsibility
- * of the existing Playwright adapter. No provider cookies are exported.
+ * The bridge must claim/check durable Rub Minds work before taking browser
+ * action, honor the supplied AbortSignal, and use source-message IDs as
+ * idempotency keys. This runner never exports provider cookies or credentials.
  */
 export class OriginalSessionWakeRunner {
   constructor({
@@ -33,57 +33,99 @@ export class OriginalSessionWakeRunner {
     if (!Number.isInteger(maxConsecutiveErrors) || maxConsecutiveErrors < 1) {
       throw new RangeError("maxConsecutiveErrors must be a positive integer");
     }
+    if (typeof onStatus !== "function") throw new TypeError("onStatus must be a function");
+
     Object.assign(this, { bridge, wakeSource, heartbeatMs, maxReplies, maxConsecutiveErrors, onStatus });
     this.running = false;
+    this.hasRun = false;
     this.replies = 0;
     this.controller = null;
+  }
+
+  emit(event) {
+    // Diagnostics must never prevent cancellation or cleanup.
+    try {
+      this.onStatus(event);
+    } catch {
+      // Status listeners are best-effort and intentionally cannot control the runner.
+    }
   }
 
   async run({ approved = false, signal } = {}) {
     if (!approved) throw new Error("Explicit approval required before waking an original AI session");
     if (this.running) throw new Error("Wake runner is already running");
+    if (this.hasRun) throw new Error("Wake runner instances are single-use; construct a fresh runner to restart");
+
+    this.hasRun = true;
     this.running = true;
     this.controller = new AbortController();
     const abort = () => this.controller?.abort();
-    signal?.addEventListener("abort", abort, { once: true });
-    let consecutiveErrors = 0;
-    this.onStatus({ status: "running", replies: this.replies });
+    if (signal?.aborted) abort();
+    else signal?.addEventListener("abort", abort, { once: true });
 
+    let consecutiveErrors = 0;
     try {
-      // Concrete wake sources may need an explicit subscription handshake.
-      // Starting the source here avoids a silent "running" loop with no listener.
+      this.emit({ status: "running", replies: this.replies });
+      if (this.controller.signal.aborted) {
+        return { status: "stopped", replies: this.replies };
+      }
+
+      // A bounded handshake prevents a dead Realtime subscription from making
+      // this runner look alive when it has no listener.
       await this.wakeSource.start?.();
-      while (this.running && !this.controller.signal.aborted && this.replies < this.maxReplies) {
+
+      while (!this.controller.signal.aborted && this.replies < this.maxReplies) {
         try {
-          // A timeout is a heartbeat, not a wake event. It lets the bridge recover
-          // from dropped realtime notifications by checking the durable message store.
           const wake = await this.wakeSource.waitForWake({
             signal: this.controller.signal,
             timeoutMs: this.heartbeatMs,
           });
-          if (this.controller.signal.aborted) break;
-          if (wake?.status === "closed") break;
+          if (this.controller.signal.aborted || wake?.status === "closed") break;
           if (wake?.status !== "timeout" && wake?.status !== "wake") {
             throw new Error("Wake source returned an invalid status");
           }
 
-          // The provider adapter must always check the durable Rub Minds task
-          // queue first. A timeout is only a recovery heartbeat; it is not
-          // permission to submit an empty or duplicate prompt.
+          // A timeout is a recovery heartbeat, never permission to send an
+          // empty prompt. The adapter must check and claim a durable eligible task.
+          const remainingReplies = this.maxReplies - this.replies;
           const result = await this.bridge.step({
             approved: true,
+            signal: this.controller.signal,
             wakeReason: wake.status,
-            remainingReplies: this.maxReplies - this.replies,
+            remainingReplies,
           });
-          const sent = Number.isInteger(result?.sent) && result.sent > 0 ? result.sent : 0;
-          this.replies += sent;
+
+          if (!result || typeof result !== "object" || typeof result.status !== "string") {
+            throw new Error("bridge.step returned an invalid result");
+          }
+          if (result.status === "error") {
+            throw new Error(typeof result.message === "string" ? result.message : "Wake bridge reported an error");
+          }
+          const validStatuses = new Set([
+            "ok", "idle", "browser_closed", "limit_reached",
+            "blocked", "auth_required", "thread_mismatch", "cancelled",
+          ]);
+          if (!validStatuses.has(result.status)) {
+            throw new Error("bridge.step returned an unknown status");
+          }
+          if (!Number.isInteger(result.sent) || result.sent < 0 || result.sent > remainingReplies) {
+            throw new Error("bridge.step returned an invalid sent count");
+          }
+
+          this.replies += result.sent;
           consecutiveErrors = 0;
-          this.onStatus({ status: "running", replies: this.replies, lastResult: result });
-          if (result?.status === "browser_closed" || result?.status === "limit_reached") break;
+          this.emit({ status: "running", replies: this.replies, lastResult: result });
+
+          // These states require operator intervention or signify a hard stop;
+          // never keep poking a login challenge or an ambiguous conversation.
+          if ([
+            "browser_closed", "limit_reached", "blocked",
+            "auth_required", "thread_mismatch", "cancelled",
+          ].includes(result.status)) break;
         } catch (error) {
           if (this.controller.signal.aborted) break;
           consecutiveErrors += 1;
-          this.onStatus({
+          this.emit({
             status: "error",
             consecutiveErrors,
             message: error instanceof Error ? error.message : "Wake bridge error",
@@ -91,6 +133,7 @@ export class OriginalSessionWakeRunner {
           if (consecutiveErrors >= this.maxConsecutiveErrors) throw error;
         }
       }
+
       return {
         status: this.controller.signal.aborted ? "stopped" : "finished",
         replies: this.replies,
@@ -98,16 +141,20 @@ export class OriginalSessionWakeRunner {
     } finally {
       signal?.removeEventListener("abort", abort);
       this.running = false;
+      const controller = this.controller;
       this.controller = null;
       try {
         await this.wakeSource.close?.();
       } catch (error) {
-        this.onStatus({
+        this.emit({
           status: "cleanup_error",
           message: error instanceof Error ? error.message : "Wake source cleanup failed",
         });
       }
-      this.onStatus({ status: "stopped", replies: this.replies });
+      this.emit({
+        status: controller?.signal.aborted ? "stopped" : "finished",
+        replies: this.replies,
+      });
     }
   }
 
