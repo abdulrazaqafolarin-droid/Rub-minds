@@ -280,6 +280,109 @@ test("baseline stores a composite cursor and supplies it to the next durable mes
   });
 });
 
+test("durable pre-prompt claims prevent concurrent bridge instances asking the provider twice", async () => {
+  const initial = {
+    revision: 0,
+    cursor: {
+      after_created_at: "2026-10-24T17:00:00.000000Z",
+      after_message_id: "10000000-0000-4000-8000-000000000001",
+    },
+    pending_response: null,
+    blocked_message: null,
+  };
+  let loads = 0;
+  let releaseLoads;
+  const bothLoaded = new Promise(resolve => { releaseLoads = resolve; });
+  let current = structuredClone(initial);
+  const stateStore = {
+    load: async () => {
+      loads++;
+      const snapshot = structuredClone(initial);
+      if (loads === 2) releaseLoads();
+      await bothLoaded;
+      return snapshot;
+    },
+    save: async snapshot => {
+      if (snapshot.expected_revision !== current.revision) {
+        return { saved: false, conflict: true, revision: current.revision };
+      }
+      current = {
+        revision: current.revision + 1,
+        cursor: snapshot.cursor,
+        pending_response: snapshot.pending_response,
+        blocked_message: snapshot.blocked_message,
+      };
+      return { saved: true, conflict: false, revision: current.revision };
+    },
+  };
+  let askCalls = 0;
+  const sent = [];
+  const makeBridge = () => new PlaywrightSessionBridge({
+    page: { isClosed: () => false },
+    participantId: "self",
+    adapter: { ask: async () => { askCalls++; return "single answer"; } },
+    readMessages: async () => ({
+      messages: [{
+        id: "20000000-0000-4000-8000-000000000002",
+        body: "shared question",
+        sender_id: "human",
+        sender_kind: "human",
+        created_at: "2026-10-24T17:00:00.000001Z",
+      }],
+    }),
+    sendMessage: async (body, sourceMessageId) => {
+      sent.push({ body, sourceMessageId });
+      return { ok: true };
+    },
+    stateStore,
+  });
+  const first = makeBridge();
+  const second = makeBridge();
+  const outcomes = await Promise.allSettled([
+    first.step({ approved: true }),
+    second.step({ approved: true }),
+  ]);
+  assert.equal(askCalls, 1, "only the bridge that wins the durable claim may ask the provider");
+  assert.equal(sent.length, 1, "only one bridge may send the completed response");
+  assert.equal(outcomes.filter(outcome => outcome.status === "fulfilled").length, 1);
+  assert.equal(outcomes.filter(outcome => outcome.status === "rejected").length, 1);
+  assert.equal(current.cursor.after_message_id, "20000000-0000-4000-8000-000000000002");
+  assert.equal(current.pending_response, null);
+  assert.equal(current.blocked_message, null);
+});
+
+test("direct step honours a durable provider-prompt block restored during initialization", async () => {
+  let reads = 0;
+  let asks = 0;
+  const bridge = new PlaywrightSessionBridge({
+    page: { isClosed: () => false },
+    participantId: "self",
+    adapter: { ask: async () => { asks++; return "must not run"; } },
+    readMessages: async () => { reads++; return { messages: [] }; },
+    sendMessage: async () => ({ ok: true }),
+    stateStore: {
+      load: async () => ({
+        revision: 3,
+        cursor: {
+          after_created_at: "2026-10-24T17:00:00.000000Z",
+          after_message_id: "10000000-0000-4000-8000-000000000001",
+        },
+        pending_response: null,
+        blocked_message: {
+          message_id: "20000000-0000-4000-8000-000000000002",
+          reason: "provider_prompt_in_progress",
+        },
+      }),
+      save: async () => { throw new Error("blocked state must stop before another save"); },
+    },
+  });
+  const result = await bridge.step({ approved: true });
+  assert.equal(result.status, "blocked");
+  assert.equal(result.reason, "provider_prompt_in_progress");
+  assert.equal(reads, 0);
+  assert.equal(asks, 0);
+});
+
 test("restores durable cursor state and avoids a fresh baseline that could skip messages", async () => {
   const stored = {
     revision: 7,
