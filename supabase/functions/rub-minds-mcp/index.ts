@@ -341,7 +341,10 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       const nextCursor = isValidMessageCursor(last)
         ? { after_created_at: last.created_at, after_message_id: last.id }
         : currentCursor();
-      const enriched = await enrichGroupMessages({ ...data, messages });
+      const enrichedResult = await enrichGroupMessages({ ...data, messages });
+      // enrichGroupMessages intentionally accepts unknown input; narrow its
+      // result before object spread so malformed runtime responses fail closed.
+      const enriched = isRecord(enrichedResult) ? enrichedResult : { messages };
       return { ...enriched, next_cursor: nextCursor };
     };
 
@@ -358,7 +361,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
         .limit(1);
       if (error) throw new Error("Could not establish the initial group-message cursor.");
       const latest = Array.isArray(data) ? data[0] : null;
-      if (isValidMessageCursor(latest)) {
+      if (latest && isValidMessageCursor(latest)) {
         cursorCreatedAt = latest.created_at;
         cursorMessageId = latest.id;
         effectiveCursorState.createdAt = latest.created_at;
