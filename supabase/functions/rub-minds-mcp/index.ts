@@ -14,6 +14,7 @@ import {
   rpcResult,
   validateSessionMemoryDocument,
   validateToolArguments,
+  messagesAfterCursor,
   isAllowedMcpOrigin,
   validateProtocolVersionHeader,
   applyMcpCors,
@@ -312,7 +313,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     const hasNewMessages = (data: unknown) => messagesAfterCursor(data).length > 0;
     const onlyNewMessages = async (data: unknown) => {
       if (!isRecord(data)) return { messages: [] };
-      return await enrichGroupMessages({ ...data, messages: messagesAfterCursor(data) });
+      return await enrichGroupMessages({ ...data, messages: selectMessagesAfterCursor(data) });
     };
     const initial = await invokeAgent(credential, "read");
     if (hasNewMessages(initial)) return { timed_out: false, delivery: "snapshot", ...(await onlyNewMessages(initial) as Record<string, unknown>) };
