@@ -521,6 +521,21 @@ try {
   assert.deepEqual(forbiddenRows, [], "rejected sender impersonation must not persist");
   console.log("Authenticated human and MCP AI exchanged messages in both directions; outsider RLS denied room access.");
 
+  // Seed durable bridge state for the first session so leaving proves that
+  // potentially private pending-response/cursor data is removed with revocation.
+  const seededBridgeState = await first.callTool({
+    name: "load_original_session_bridge_state",
+    arguments: { session_handle: one.session_handle },
+  });
+  assert.notEqual(seededBridgeState.isError, true,
+    "could not seed bridge state before leave: " + JSON.stringify(seededBridgeState));
+  const firstSessionDigestBeforeLeave = createHash("sha256").update(one.session_handle, "utf8").digest("hex");
+  const bridgeStateBeforeLeave = await request(
+    "/rest/v1/rub_minds_mcp_bridge_state?select=session_digest&session_digest=eq." + firstSessionDigestBeforeLeave,
+  );
+  assert.equal(bridgeStateBeforeLeave.length, 1,
+    "bridge state should exist before revocation so cleanup is exercised");
+
   // Race leave against an idempotent retry of the same join. Either the retry
   // observes the active join before leave wins, or it is rejected as revoked;
   // the invariant is that the old handle must be unusable after both finish.
@@ -557,6 +572,11 @@ try {
   assert.equal(terminatedSessions.length, 1, "leaving must retain the session tombstone by its digest");
   assert.ok(terminatedSessions[0].terminated_at, "leaving must mark the session as terminated");
   assert.equal(terminatedSessions[0].participant_id, null, "a tombstoned session must no longer be bound to a participant");
+  const residualBridgeState = await request(
+    "/rest/v1/rub_minds_mcp_bridge_state?select=session_digest&session_digest=eq." + firstSessionDigest,
+  );
+  assert.deepEqual(residualBridgeState, [],
+    "leaving must delete durable cursor/pending-response state for the revoked session");
   const participants = await request(
     "/rest/v1/participants?select=id,kind&room_id=eq." + room.id + "&kind=eq.external_agent",
   );
