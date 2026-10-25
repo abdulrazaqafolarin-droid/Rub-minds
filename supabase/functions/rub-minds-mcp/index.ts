@@ -294,13 +294,15 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
 
   if (name === "wait_for_group_messages") {
     const timeoutMs = typeof args.timeout_ms === "number" ? args.timeout_ms : 10000;
-    const cursorCreatedAt = typeof args.after_created_at === "string" ? args.after_created_at : null;
-    const cursorMessageId = typeof args.after_message_id === "string" ? args.after_message_id : null;
-    // Freeze a timestamp-only default watermark once at the start of this wait.
-    // Recomputing Date.now() on every filter pass can discard a message that
-    // arrived after subscription but milliseconds before a later read/filter.
-    const effectiveCursorCreatedAt = cursorCreatedAt ?? new Date().toISOString();
-    const hasCompositeCursor = cursorCreatedAt !== null && cursorMessageId !== null;
+    let cursorCreatedAt = typeof args.after_created_at === "string" ? args.after_created_at : null;
+    let cursorMessageId = typeof args.after_message_id === "string" ? args.after_message_id : null;
+    const callerSuppliedCursor = cursorCreatedAt !== null;
+    // Freeze the timestamp fallback once. For a new listener with no cursor,
+    // the exact latest (created_at,id) row below replaces this fallback.
+    const effectiveCursorState: { createdAt: string } = {
+      createdAt: cursorCreatedAt ?? new Date().toISOString(),
+    };
+    let hasCompositeCursor = cursorCreatedAt !== null && cursorMessageId !== null;
 
     const roomId = session.room_id;
     if (typeof roomId !== "string" || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(roomId)) {
@@ -318,7 +320,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
           typeof message.body === "string");
       }
       return filterMessagesAfterCursor(data, {
-        afterCreatedAt: effectiveCursorCreatedAt,
+        afterCreatedAt: effectiveCursorState.createdAt,
         afterMessageId: cursorMessageId,
       });
     };
@@ -326,6 +328,27 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     const onlyNewMessages = async (data: unknown) => {
       if (!isRecord(data)) return { messages: [] };
       return await enrichGroupMessages({ ...data, messages: messagesAfterCursor(data) });
+    };
+
+    const establishInitialCursor = async () => {
+      if (callerSuppliedCursor) return;
+      // "Wait from now" means do not replay the group's previous history. Use
+      // the real latest row as an exact composite watermark, not a Date.now()
+      // timestamp, so messages that arrive after this snapshot remain visible.
+      const { data, error } = await db.from("messages")
+        .select("id, created_at")
+        .eq("room_id", roomId)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(1);
+      if (error) throw new Error("Could not establish the initial group-message cursor.");
+      const latest = Array.isArray(data) ? data[0] : null;
+      if (latest && typeof latest.id === "string" && typeof latest.created_at === "string") {
+        cursorCreatedAt = latest.created_at;
+        cursorMessageId = latest.id;
+        effectiveCursorState.createdAt = latest.created_at;
+        hasCompositeCursor = true;
+      }
     };
 
     const readCurrentGroup = async () => {
@@ -356,6 +379,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       };
     };
 
+    await establishInitialCursor();
     const initial = await readCurrentGroup();
     if (hasNewMessages(initial)) return { timed_out: false, delivery: "realtime", ...(await onlyNewMessages(initial) as Record<string, unknown>) };
 
