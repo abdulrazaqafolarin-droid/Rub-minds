@@ -55,6 +55,24 @@ function assertPage(page, provider) {
   if (!url.pathname.includes("/chat/") && provider === "claude") {
     throw new Error("Open the existing Claude conversation first");
   }
+  // Query/hash changes do not switch the provider thread; origin + pathname do.
+  return url.origin + url.pathname;
+}
+
+function assertSameConversation(page, provider, expectedConversationKey) {
+  const actualConversationKey = assertPage(page, provider);
+  if (actualConversationKey !== expectedConversationKey) {
+    throw new Error("The original provider conversation changed; no message sent");
+  }
+}
+
+function markAmbiguous(error) {
+  const ambiguousError = new Error(
+    error instanceof Error ? error.message : "Provider send action outcome is unknown",
+    { cause: error },
+  );
+  ambiguousError.submissionState = "unknown";
+  return ambiguousError;
 }
 
 async function findVisible(page, selectors) {
@@ -194,12 +212,13 @@ export function createOriginalSessionAdapter(provider, {
       let send;
       let before;
       let groupPrompt;
+      let expectedConversationKey;
 
       // Everything through composer fill is known not to have submitted a
       // provider turn. Tag failures so the bridge can safely retry or stop on
       // approval denial instead of misclassifying them as ambiguous sends.
       try {
-        assertPage(page, provider);
+        expectedConversationKey = assertPage(page, provider);
         throwIfAborted(signal, "not_submitted");
         if (typeof prompt !== "string" || !prompt.trim() || prompt.length > 10000) {
           throw new TypeError("Prompt must be 1-10000 characters");
@@ -222,6 +241,9 @@ export function createOriginalSessionAdapter(provider, {
         }
         throwIfAborted(signal, "not_submitted");
         if (allowed !== true) throw approvalDeniedError();
+        // Human approval can take time. Never send into a different thread if the
+        // browser navigated while the owner was reviewing the pending group message.
+        assertSameConversation(page, provider, expectedConversationKey);
 
         // Resolve selectors BEFORE touching the composer; fail closed on UI changes.
         const composer = await findVisible(page, config.composer);
@@ -231,6 +253,9 @@ export function createOriginalSessionAdapter(provider, {
         await composer.fill(groupPrompt);
         throwIfAborted(signal, "not_submitted");
         if (!await send.isEnabled()) throw new Error("Provider send button unavailable");
+        // Re-check immediately before clicking: the same Page can be navigated
+        // after the composer was resolved or filled.
+        assertSameConversation(page, provider, expectedConversationKey);
         throwIfAborted(signal, "not_submitted");
       } catch (error) {
         throw markNotSubmitted(error);
@@ -245,14 +270,17 @@ export function createOriginalSessionAdapter(provider, {
       try {
         await send.click();
       } catch (error) {
-        const ambiguousError = new Error(
-          error instanceof Error ? error.message : "Provider send action outcome is unknown",
-          { cause: error },
-        );
-        ambiguousError.submissionState = "unknown";
-        throw ambiguousError;
+        throw markAmbiguous(error);
       }
       throwIfAborted(signal, "unknown");
+      // Do not accept a response if navigation changed the thread during send.
+      // At this point the provider may already have received the prompt, so this
+      // is an ambiguous outcome and must not be retried automatically.
+      try {
+        assertSameConversation(page, provider, expectedConversationKey);
+      } catch (error) {
+        throw markAmbiguous(error);
+      }
       const assistant = page.locator(config.assistant.join(", "));
       const response = assistant.nth(before);
       await awaitWithSignal(response.waitFor({ state: "visible", timeout: timeoutMs }), signal, "unknown");
