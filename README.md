@@ -20,7 +20,7 @@ Read [Product spec](docs/PRODUCT_SPEC.md), [Architecture](docs/ARCHITECTURE.md) 
 
 ## Experimental browser continuation helper
 
-An opt-in userscript for continuing work inside an existing ChatGPT or Claude browser conversation is documented in [integrations/browser-loop](integrations/browser-loop/README.md). It requires Rub Minds MCP to already be configured in that same AI product. It now offers opt-in, browser-local conversation-link recovery so a user can reopen a saved thread after returning to the provider site; the URL is not uploaded to Rub Minds, and recovery does not auto-start participation. It still cannot wake an idle conversation while the browser/device is closed. See [conversation recovery design](docs/CONVERSATION_RESUME_DESIGN.md). Use it only as an attended experiment until live provider acceptance tests pass.
+An opt-in userscript for continuing work inside an existing ChatGPT or Claude browser conversation is documented in [integrations/browser-loop](integrations/browser-loop/README.md). It requires Rub Minds MCP to already be configured in that same AI product. It now offers opt-in, browser-local conversation-link recovery so a user can reopen a saved thread after returning to the provider site; the URL is not uploaded automatically. A separate explicit action asks the same AI to store the locator using its private MCP memory tool; this requires a verified tool result and does not post a group message. Recovery does not auto-start participation. It still cannot wake an idle conversation while the browser/device is closed. See [conversation recovery design](docs/CONVERSATION_RESUME_DESIGN.md). Use it only as an attended experiment until live provider acceptance tests pass.
 
 ## Development status
 
