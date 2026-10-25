@@ -119,3 +119,10 @@ Composite pagination is now part of the `read_group_messages` tool itself, rathe
 The runtime now loads the room-bound state snapshot before its first baseline/read and saves cursor, pending response and blocked-message status with optimistic revision checks. On restart, a stored cursor prevents a fresh baseline from jumping past unseen messages; a saved pending answer is retried under its source message ID without re-running the provider; an ambiguous provider result stays blocked across restarts. A revision conflict stops the runner rather than overwriting another process's state.
 
 The persistence layer is backed by `rub_minds_mcp_bridge_state` through the authenticated MCP `load_original_session_bridge_state` and `save_original_session_bridge_state` tools. It is now part of the local runtime composition, but still requires the migration and updated hosted MCP Edge Function to be deployed before a production connection can use it. The browser/provider adapter remains injected and unverified for ChatGPT or Claude.
+
+
+## Pre-prompt claim prevents concurrent duplicate provider turns
+
+Before asking the original AI session to answer a new group message, the bridge now records a revision-checked `provider_prompt_in_progress` marker. Only the process that wins the durable compare-and-swap save may invoke the provider; another process using the same stale cursor gets a revision conflict before prompting. Once an answer is complete, the in-progress marker is replaced by a pending answer before group delivery. An explicitly safe-to-retry provider error clears the marker; an ambiguous provider outcome stays blocked.
+
+A crash while a provider operation is in flight leaves a fail-closed marker requiring deliberate recovery. This intentionally prefers a visible blocked message over silently issuing the same prompt twice when the provider's outcome is unknown. Automated lease recovery is not claimed yet and remains a precondition for unattended always-on use.
