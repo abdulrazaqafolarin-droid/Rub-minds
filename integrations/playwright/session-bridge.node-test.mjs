@@ -204,6 +204,45 @@ test("startup baseline uses a history limit independent of the per-step reply ca
   assert.deepEqual(prompts, []);
 });
 
+test("an empty startup snapshot preserves its sentinel cursor for the first message", async () => {
+  const sentinel = {
+    after_created_at: "1970-01-01T00:00:00.000Z",
+    after_message_id: "00000000-0000-1000-8000-000000000000",
+  };
+  const reads = [];
+  const sent = [];
+  const bridge = new PlaywrightSessionBridge({
+    page: { isClosed: () => false },
+    participantId: "self",
+    adapter: { ask: async (_page, body) => "reply: " + body },
+    readMessages: async options => {
+      reads.push(options);
+      if (options.baseline) return { messages: [], next_cursor: sentinel };
+      return { messages: [{
+        id: "20000000-0000-4000-8000-000000000002",
+        body: "first message in room",
+        sender_id: "human",
+        sender_kind: "human",
+        created_at: "2026-10-24T17:00:00.000001Z",
+      }] };
+    },
+    sendMessage: async (body, sourceMessageId) => { sent.push({ body, sourceMessageId }); },
+  });
+  const initialized = await bridge.initialize({ approved: true });
+  assert.deepEqual(initialized, { status: "baseline", baselineMessages: 0 });
+  assert.deepEqual(bridge.cursor, {
+    id: sentinel.after_message_id,
+    created_at: sentinel.after_created_at,
+  });
+  const result = await bridge.step({ approved: true });
+  assert.equal(result.sent, 1);
+  assert.deepEqual(reads[1].cursor, sentinel);
+  assert.deepEqual(sent, [{
+    body: "reply: first message in room",
+    sourceMessageId: "20000000-0000-4000-8000-000000000002",
+  }]);
+});
+
 test("baseline stores a composite cursor and supplies it to the next durable message read", async () => {
   const messages = [
     { id: "message-01", body: "older", created_at: "2026-10-24T17:00:00.123455+00:00", sender_kind: "human" },

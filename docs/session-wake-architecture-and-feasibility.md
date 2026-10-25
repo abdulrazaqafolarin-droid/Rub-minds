@@ -157,3 +157,8 @@ The isolated local-Supabase CI now tests the real MCP HTTP endpoint with a live 
 
 
 The isolated CI also creates a genuinely empty room, verifies that a no-cursor wait returns a valid epoch-based composite cursor (rather than relying on Edge-runtime clock alignment), then starts a second wait from that cursor and inserts the room's first message through the local Data API. The test asserts that the first inserted message wakes the wait and advances the cursor. This closes the empty-room initialization case independently of the existing-room backlog test.
+
+
+## Concrete transport verification
+
+The local Supabase integration job now uses `McpSessionMessageTransport` against its running local `rub-minds-mcp` Edge Function to read a group snapshot, send a source-keyed message, and read the persisted message back. This proves the concrete bridge transport's JSON-RPC headers/body shape and session-handle placement against the real disposable server, while the provider/browser adapter remains simulated.

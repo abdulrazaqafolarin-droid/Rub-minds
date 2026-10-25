@@ -572,6 +572,28 @@ jobs:
           assert.ok(read.structuredContent.messages.some(message => message.body === "Message from CI AI one to the shared group"),
             "AI #2 did not receive AI #1's group message");
 
+          // Exercise the concrete bridge transport against the actual disposable
+          // hosted-MCP endpoint, rather than only testing it with fake fetch responses.
+          const { McpSessionMessageTransport } = await import("./integrations/playwright/mcp-session-message-transport.mjs");
+          const transport = new McpSessionMessageTransport({
+            endpoint,
+            sessionHandle: joined.structuredContent.session_handle,
+            fetchImpl: fetch,
+          });
+          const transportBaseline = await transport.readMessages({ baseline: true });
+          assert.ok(Array.isArray(transportBaseline.messages), "transport could not read the group snapshot");
+          const transportSent = await transport.sendMessage(
+            "Concrete MCP transport end-to-end roundtrip",
+            "mcp-transport-ci-source-001",
+          );
+          assert.ok(transportSent.message_id, "transport did not send a source-keyed group message");
+          const transportSnapshot = await transport.readMessages({ baseline: true });
+          assert.ok(transportSnapshot.messages.some(message =>
+            message.id === transportSent.message_id &&
+            message.body === "Concrete MCP transport end-to-end roundtrip"),
+            "transport could not read back its own sent message");
+          console.log("Concrete MCP message transport passed local read/send/read roundtrip.");
+
           // Prove composite cursor reads are not truncated by the legacy latest-50 RPC.
           // All 60 messages share an exact timestamp and sort after a known cursor ID,
           // exercising the (created_at, id) tie-breaker against the real local PostgREST API.
@@ -624,8 +646,8 @@ jobs:
           assert.ok(cursorMessages.every(message => message.body !== "Cursor anchor"),
             "cursor result must exclude the anchor message itself");
           assert.deepEqual(cursorRead.structuredContent?.next_cursor, {
-            after_created_at: cursorTimestamp,
-            after_message_id: cursorBacklog.at(-1).id,
+            after_created_at: cursorMessages.at(-1).created_at,
+            after_message_id: cursorMessages.at(-1).id,
           }, "next_cursor must point to the last row returned in the page");
 
           const idleWait = await rpc("tools/call", 10, {
