@@ -35,7 +35,10 @@ class FakeElement {
   getAttribute(k) { return this.attrs[k] ?? null; }
   getClientRects() { return this.hidden || this.style.display === 'none' ? [] : [{}]; }
   focus() { this.ownerDocument.activeElement = this; }
-  dispatchEvent() { return true; }
+  dispatchEvent(event) {
+    for (const cb of this.listeners.get(event.type) || []) cb(event);
+    return true;
+  }
   addEventListener(type, cb) {
     if (!this.listeners.has(type)) this.listeners.set(type, []);
     this.listeners.get(type).push(cb);
@@ -200,6 +203,17 @@ function makeHarness({ scenario, site = 'chatgpt', initialDraft = '' }) {
 
   const store = new Map([['rubMindsContinuationSettingsV1', JSON.stringify({ maxRounds: 3, delaySec: 1, timeoutMin: 1 })]]);
   const localStorage = { getItem: k => store.has(k) ? store.get(k) : null, setItem: (k, v) => store.set(k, String(v)) };
+  if (scenario === 'stop-before-send' || scenario === 'draft-changed-before-send') {
+    let triggered = false;
+    composer.addEventListener('input', () => {
+      if (triggered) return;
+      triggered = true;
+      vmSetTimeout(() => {
+        if (scenario === 'stop-before-send') activePanel.querySelector('#rm-stop').click();
+        else composer.value = 'Human is typing a new draft';
+      }, 20);
+    });
+  }
   let vmSetTimeout = (fn, ms) => realSetTimeout(fn, Math.max(0, ms * SCALE));
   if (scenario === 'initially-generating') {
     stopButton.hidden = false;
@@ -356,4 +370,19 @@ test('custom prompt is used for the current run but is not persisted', async () 
   const stored = JSON.parse(h.context.localStorage.getItem('rubMindsContinuationSettingsV1'));
   assert.deepEqual(Object.keys(stored).sort(), ['delaySec', 'maxRounds', 'timeoutMin']);
   assert.equal(JSON.stringify(stored).includes(privateMarker), false);
+});
+
+test('Stop during composer insertion prevents a pending click', async () => {
+  const h = makeHarness({ scenario: 'stop-before-send' });
+  const result = await h.startAndWait();
+  assert.equal(result.sent.length, 0);
+  assert.match(result.status, /Stopped manually|Stopped safely/);
+});
+
+test('A concurrent human draft before the click is preserved and not sent', async () => {
+  const h = makeHarness({ scenario: 'draft-changed-before-send' });
+  const result = await h.startAndWait();
+  assert.equal(result.sent.length, 0);
+  assert.equal(h.composer.value, 'Human is typing a new draft');
+  assert.match(result.status, /changed before send/);
 });
