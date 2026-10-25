@@ -495,7 +495,7 @@
         'The user explicitly clicked Forget private link in Rub Minds. Call forget_memory with idempotency_key=' + JSON.stringify(idempotencyKey) + ' and confirm_forget=true. The tool is designed to delete only the matching private memory for this participant; it cannot delete group memory.',
         'Do not call send_group_message. Do not delete any other memory. Do not claim success unless the tool result says forgotten=true. If the result says not_found=true, report that no matching private entry existed.',
         'At the end, report the exact relevant fields from the actual tool result (forgotten and/or not_found) and explain that the local browser link is separate.',
-      ].join('\\n\\n');
+      ].join('\n\n');
       el('rm-forget-private').disabled = true;
       await sendMessage(prompt, location.pathname, before.userCount, true);
       privateMemoryBinding = {
