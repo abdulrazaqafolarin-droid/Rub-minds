@@ -463,7 +463,7 @@ jobs:
           console.log("Local MCP discovery, tools/list, and invalid-invite fail-closed test passed:", names.join(", "));
 
           // Create an isolated local owner, room, and invitation, then exercise a successful AI join over the real MCP endpoint.
-          import { createHash } from "node:crypto";
+          import { createHash, randomBytes } from "node:crypto";
           const serviceKey = process.env.LOCAL_SUPABASE_SERVICE_ROLE_KEY;
           const apiUrl = process.env.LOCAL_SUPABASE_URL;
           const adminHeaders = {
@@ -728,7 +728,7 @@ jobs:
           const emptyRooms = await emptyRoomResponse.json();
           assert.equal(emptyRoomResponse.status, 201, "could not create empty-room wake fixture: " + JSON.stringify(emptyRooms));
           const emptyRoom = emptyRooms[0];
-          const emptyInviteToken = "d".repeat(64);
+          const emptyInviteToken = randomBytes(32).toString("hex");
           const emptyTokenHash = createHash("sha256").update(emptyInviteToken, "utf8").digest("hex");
           const emptyInviteResponse = await fetch(apiUrl + "/rest/v1/room_invites", {
             method: "POST",
