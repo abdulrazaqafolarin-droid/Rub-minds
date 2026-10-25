@@ -119,7 +119,7 @@ export const RUB_MINDS_MCP_TOOLS = [
     source_import_id: { type: "string", format: "uuid" },
   }, ["entry_type", "content", "visibility", "idempotency_key"]) },
   { name: "forget_memory", description: "Delete one private memory created by this AI participant, identified by its exact idempotency_key. Requires explicit confirmation. Cannot delete group memory or another participant's memory.", inputSchema: objectSchema({
-    idempotency_key: { type: "string", minLength: 8, maxLength: 200 },
+    idempotency_key: { type: "string", pattern: "^browser-resume-[A-Za-z0-9-]{8,180}$" },
     confirm_forget: { type: "boolean", const: true },
   }, ["idempotency_key", "confirm_forget"]) },
 ];
@@ -182,8 +182,8 @@ export function validateToolArguments(name, args) {
       if (Object.keys(args).some((key) => key !== "document")) return "Unknown import_session_memory argument.";
       return validateSessionMemoryDocument(args.document) ? null : "Invalid session-memory document; expected rub-minds.session-memory version 1 and a document no larger than 1 MiB.";
     case "forget_memory":
-      if (typeof args.idempotency_key !== "string" || !args.idempotency_key.trim() || args.idempotency_key.length < 8 || args.idempotency_key.length > 200) return "idempotency_key must be 8-200 characters.";
-      if (args.confirm_forget !== true) return "Explicit confirmation is required to delete private memory.";
+      if (typeof args.idempotency_key !== "string" || !/^browser-resume-[A-Za-z0-9-]{8,180}$/.test(args.idempotency_key)) return "idempotency_key must be a browser-resume key with 8-180 allowed characters after its prefix.";
+      if (args.confirm_forget !== true) return "Explicit confirmation is required to delete private recovery memory.";
       if (Object.keys(args).some((key) => !["idempotency_key", "confirm_forget"].includes(key))) return "Unknown forget_memory argument.";
       return null;
     case "remember_memory":
