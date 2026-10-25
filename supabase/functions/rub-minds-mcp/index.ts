@@ -81,8 +81,41 @@ function validRpcEnvelope(input: unknown) {
   return isRecord(input) && input.jsonrpc === "2.0" && typeof input.method === "string" &&
     (input.id === undefined || typeof input.id === "string" || typeof input.id === "number");
 }
+// Expired sessions can own durable bridge state that may contain an unsubmitted
+// private provider response. Opportunistically purge expired bindings on valid
+// MCP-session traffic, not only when a new invite is successfully redeemed.
+// The per-isolate cooldown bounds database writes; deletion remains idempotent
+// across Edge Function instances. Session expiry checks remain authoritative.
+const SESSION_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+let lastSessionCleanupAt = 0;
+
+async function cleanupExpiredMcpSessions() {
+  const now = Date.now();
+  if (now - lastSessionCleanupAt < SESSION_CLEANUP_INTERVAL_MS) return;
+  // Set a provisional timestamp to avoid overlapping cleanup attempts in this
+  // isolate. On any failure, permit the next valid request to retry immediately.
+  lastSessionCleanupAt = now;
+  try {
+    const nowIso = new Date(now).toISOString();
+    const { error: expiredError } = await db.from("rub_minds_mcp_sessions")
+      .delete().lt("expires_at", nowIso).is("terminated_at", null);
+    if (expiredError) throw expiredError;
+
+    const tombstoneCutoff = new Date(now - TERMINATED_TOMBSTONE_HOURS * 60 * 60 * 1000).toISOString();
+    const { error: tombstoneError } = await db.from("rub_minds_mcp_sessions")
+      .delete().lt("terminated_at", tombstoneCutoff);
+    if (tombstoneError) throw tombstoneError;
+  } catch {
+    lastSessionCleanupAt = 0;
+    // The request can continue safely: expired handles are still rejected by
+    // findSession(), and the next eligible request retries this retention sweep.
+    console.warn("MCP expired-session cleanup failed; it will be retried.");
+  }
+}
+
 async function findSession(sessionId: string) {
   if (!/^[a-f0-9]{64}$/.test(sessionId)) return null;
+  await cleanupExpiredMcpSessions();
   const digest = await sha256(sessionId);
   const { data, error } = await db.from("rub_minds_mcp_sessions")
     .select("session_digest, agent_credential_ciphertext, room_id, participant_id, expires_at, terminated_at")
