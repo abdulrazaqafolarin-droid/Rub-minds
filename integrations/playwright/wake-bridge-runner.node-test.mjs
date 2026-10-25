@@ -25,7 +25,7 @@ test("wake events invoke the existing-session bridge and respect reply limits", 
     wakeSource: { waitForWake: async () => ({ status: ++waits <= 2 ? "wake" : "closed" }) },
     maxReplies: 2,
   });
-  assert.deepEqual(await runner.run({ approved: true }), { status: "finished", replies: 2 });
+  assert.deepEqual(await runner.run({ approved: true }), { status: "limit_reached", replies: 2 });
   assert.equal(steps, 2);
 });
 
@@ -37,7 +37,7 @@ test("heartbeat timeout still checks durable messages to recover missed notifica
     wakeSource: { waitForWake: async () => ({ status: ++wakeCount === 1 ? "timeout" : "closed" }) },
     heartbeatMs: 1000,
   });
-  assert.deepEqual(await runner.run({ approved: true }), { status: "finished", replies: 0 });
+  assert.deepEqual(await runner.run({ approved: true }), { status: "source_closed", replies: 0 });
   assert.equal(stepCount, 1);
 });
 
@@ -163,7 +163,7 @@ test("fails closed on provider authorization or thread-state blockers", async ()
     bridge: { step: async () => { calls++; return { status: "auth_required", sent: 0 }; } },
     wakeSource: { waitForWake: async () => ({ status: "wake" }) },
   });
-  assert.deepEqual(await runner.run({ approved: true }), { status: "finished", replies: 0 });
+  assert.deepEqual(await runner.run({ approved: true }), { status: "auth_required", replies: 0 });
   assert.equal(calls, 1);
 });
 
