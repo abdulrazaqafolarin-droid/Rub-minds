@@ -44,6 +44,7 @@
   try { window.__RUBMINDS_CONTINUATION_LOOP__?.stop('Replaced by a new script instance.'); } catch (_) {}
 
   const STORAGE_KEY = 'rubMindsContinuationSettingsV1';
+  const RECOVERY_KEY = 'rubMindsConversationBindingV1';
   const defaults = {
     maxRounds: 5,
     delaySec: 3,
@@ -83,6 +84,50 @@
         timeoutMin: settings.timeoutMin,
       }));
     } catch (_) { /* storage may be disabled; loop still works for this page */ }
+  };
+
+  // Recovery URLs stay in this provider origin's localStorage. They are never
+  // sent to Rub Minds, MCP, or other group members by this userscript.
+  const providerLabel = location.hostname === 'claude.ai' ? 'Claude' : 'ChatGPT';
+  const safeConversationUrl = (value) => {
+    try {
+      if (typeof value !== 'string' || !value) return null;
+      const parsed = new URL(value);
+      if (parsed.protocol !== 'https:' || parsed.hostname !== location.hostname ||
+          !Object.prototype.hasOwnProperty.call(SITES, parsed.hostname)) return null;
+      if (!parsed.pathname || parsed.pathname === '/' || parsed.pathname === '/new') return null;
+      // Strip query/hash so unrelated transient state or invite parameters are not retained.
+      return `${parsed.origin}${parsed.pathname}`;
+    } catch (_) { return null; }
+  };
+  const currentConversationUrl = () => {
+    const origin = location.origin || `https://${location.hostname}`;
+    return safeConversationUrl(`${origin}${location.pathname}`);
+  };
+  const getSavedConversation = () => {
+    try {
+      const record = JSON.parse(localStorage.getItem(RECOVERY_KEY) || 'null');
+      const url = safeConversationUrl(record?.url);
+      if (!url) return null;
+      return { url, provider: providerLabel, savedAt: typeof record.savedAt === 'string' ? record.savedAt : '' };
+    } catch (_) { return null; }
+  };
+  let savedConversation = getSavedConversation();
+
+  const rememberCurrentConversation = () => {
+    const url = currentConversationUrl();
+    if (!url) return false;
+    const record = { url, provider: providerLabel, savedAt: new Date().toISOString() };
+    try {
+      localStorage.setItem(RECOVERY_KEY, JSON.stringify(record));
+      savedConversation = record;
+      updateRecoveryUi();
+      return true;
+    } catch (_) {
+      savedConversation = null;
+      updateRecoveryUi();
+      return false;
+    }
   };
 
   const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -232,6 +277,14 @@
       <label style="display:block;margin:6px 0">Reply timeout minutes (1–20)
         <input id="rm-timeout" type="number" min="1" max="20" style="display:block;width:100%;box-sizing:border-box">
       </label>
+      <div style="margin-top:8px;padding:7px;border:1px solid #555;border-radius:6px">
+        <label style="display:flex;align-items:flex-start;gap:6px">
+          <input id="rm-remember" type="checkbox">
+          <span>Remember this conversation on this browser for recovery</span>
+        </label>
+        <div id="rm-recovery" role="status" style="margin-top:5px;color:#c9c9c9">No saved conversation.</div>
+        <button type="button" id="rm-reopen" style="width:100%;margin-top:5px;padding:6px" disabled>Reopen saved conversation</button>
+      </div>
       <div style="display:flex;gap:6px;margin-top:8px">
         <button type="button" id="rm-start" style="flex:1;padding:7px;font-weight:700">Start</button>
         <button type="button" id="rm-pause" style="flex:1;padding:7px" disabled>Pause</button>
@@ -249,7 +302,56 @@
   el('rm-max').value = String(settings.maxRounds);
   el('rm-delay').value = String(settings.delaySec);
   el('rm-timeout').value = String(settings.timeoutMin);
+  el('rm-remember').checked = Boolean(savedConversation);
   const status = (text) => { el('rm-status').textContent = text; };
+  function updateRecoveryUi() {
+    const message = el('rm-recovery');
+    const reopen = el('rm-reopen');
+    if (!savedConversation) {
+      message.textContent = 'No recovery link saved. Opt in while viewing a specific conversation.';
+      reopen.disabled = true;
+      reopen.textContent = 'Reopen saved conversation';
+      return;
+    }
+    const savedPath = new URL(savedConversation.url).pathname;
+    const isCurrent = location.pathname === savedPath;
+    message.textContent = `Saved locally in this browser only (${savedConversation.provider}). It is not shared with Rub Minds or the group.`;
+    reopen.disabled = isCurrent;
+    reopen.textContent = isCurrent ? 'Saved conversation is already open' : 'Reopen saved conversation';
+  }
+  updateRecoveryUi();
+
+  el('rm-remember').addEventListener('change', () => {
+    if (el('rm-remember').checked) {
+      if (!rememberCurrentConversation()) {
+        el('rm-remember').checked = false;
+        status('Open a specific ChatGPT or Claude conversation before saving a recovery link.');
+        return;
+      }
+      status('Conversation link saved locally on this browser. It has not been sent to the Rub Minds group.');
+    } else {
+      try { localStorage.removeItem(RECOVERY_KEY); } catch (_) {}
+      savedConversation = null;
+      updateRecoveryUi();
+      status('Local recovery link removed. The Rub Minds group was not changed.');
+    }
+  });
+  el('rm-reopen').addEventListener('click', () => {
+    const url = safeConversationUrl(savedConversation?.url);
+    if (!url) {
+      savedConversation = null;
+      updateRecoveryUi();
+      status('Saved recovery link is invalid or belongs to another provider. Save it again from the original conversation.');
+      return;
+    }
+    if (location.pathname === new URL(url).pathname) {
+      status('The saved conversation is already open.');
+      return;
+    }
+    status('Opening the saved conversation. You may need to sign in; automatic participation remains off until you press Start.');
+    location.href = url;
+  });
+
   const updateButtons = () => {
     el('rm-start').disabled = running;
     el('rm-pause').disabled = !running || paused;
@@ -356,6 +458,7 @@
     if (!inputNode()) { status('Stopped: provider composer not found. Check that this is an open chat.'); return; }
     if (composerText(inputNode())) { status('Stopped: the composer contains a draft. Send or clear it before starting.'); return; }
     persistSettings();
+    if (el('rm-remember').checked) rememberCurrentConversation();
     running = true;
     paused = false;
     rounds = 0;
@@ -392,7 +495,10 @@
         const reply = await waitForNewReply(before);
         if (!running) break;
         if (!reply) throw new Error('No completed assistant reply was detected.');
-        if (!threadPath) threadPath = location.pathname;
+        if (!threadPath) {
+          threadPath = location.pathname;
+          if (el('rm-remember').checked) rememberCurrentConversation();
+        }
 
         const directive = readDirective(reply);
         if (!directive) throw new Error('Reply ended without a valid RUBMINDS_LOOP control line. Stopped fail-closed; review the reply before restarting.');
