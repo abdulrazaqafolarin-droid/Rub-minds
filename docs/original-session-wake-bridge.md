@@ -49,3 +49,12 @@ The runner is deliberately single-use: it closes its wake source during cleanup,
 Recognized non-retry terminal states are `browser_closed`, `limit_reached`, `blocked`, `auth_required`, `thread_mismatch`, and `cancelled`. An `error` result or thrown exception uses the bounded retry/error threshold; unknown statuses or invalid reply counts fail closed. Timeout heartbeats only trigger a queue check, not prompt submission. The returned status preserves terminal blockers so an operator can distinguish an authentication challenge from a normal stop.
 
 The unit tests now cover an already-aborted signal, cancellation during the provider adapter call, single-use lifecycle, malformed reply counts, adapter error results, terminal provider blockers, and cleanup after startup failure. These remain simulated adapter tests; they do not prove that a real ChatGPT or Claude page can be woken.
+
+
+## Provider submission and delivery recovery
+
+The existing `PlaywrightSessionBridge` can now be passed directly to `OriginalSessionWakeRunner`; it receives the runner's cancellation signal and reply budget. Provider errors are **not** automatically retried unless the adapter explicitly marks them `safeToRetry: true` or `submissionState: "not_submitted"`. An ambiguous provider outcome blocks that message rather than risking a duplicate prompt. Terminal bridge results always include an integer `sent` count, including zero for a closed browser or exhausted limit.
+
+Once a provider answer is complete, it is held as a pending response until the Rub Minds transport acknowledges it. A failed/ambiguous delivery retries the same response with the same source-message ID, relying on the server-side deduplication constraint. This pending-response cache and the ambiguous-message blocker are currently **in-memory only**. A process crash can lose that state; a durable task/response ledger is still required before unattended or crash-recoverable operation can be claimed.
+
+The isolated command `npm run test:original-wake` covers the Playwright session bridge, wake runner, and Realtime wake source. It uses fake browser/transport adapters and never submits a prompt to ChatGPT or Claude.
