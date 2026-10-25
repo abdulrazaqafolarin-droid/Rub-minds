@@ -103,8 +103,9 @@ test("leave_group requires explicit confirmation and rejects unknown arguments",
 test("Realtime wait tool validates cursor and bounds its wait", () => {
   assert.equal(validateToolArguments("wait_for_group_messages", {}), null);
   assert.equal(validateToolArguments("wait_for_group_messages", { after_created_at: "2026-10-24T17:00:00.000Z", timeout_ms: 5000 }), null);
-  assert.equal(validateToolArguments("wait_for_group_messages", { after_message_id: "123e4567-e89b-12d3-a456-426614174000", timeout_ms: 5000 }), null);
-  assert.match(validateToolArguments("wait_for_group_messages", { after_message_id: "not-a-uuid" }), /UUID/);
+  assert.equal(validateToolArguments("wait_for_group_messages", { after_message_id: "123e4567-e89b-12d3-a456-426614174000", after_created_at: "2026-10-24T17:00:00.000Z", timeout_ms: 5000 }), null);
+  assert.match(validateToolArguments("wait_for_group_messages", { after_message_id: "123e4567-e89b-12d3-a456-426614174000", timeout_ms: 5000 }), /after_created_at is required/);
+  assert.match(validateToolArguments("wait_for_group_messages", { after_message_id: "not-a-uuid", after_created_at: "2026-10-24T17:00:00.000Z" }), /UUID/);
   assert.match(validateToolArguments("wait_for_group_messages", { after_created_at: "not-a-date" }), /date-time/);
   assert.match(validateToolArguments("wait_for_group_messages", { timeout_ms: 999 }), /1000 to 15000/);
   assert.match(validateToolArguments("wait_for_group_messages", { timeout_ms: 15001 }), /1000 to 15000/);
