@@ -324,7 +324,7 @@ try {
         entry_type: "insight",
         content: "An ordinary private note must not be deletable through the recovery tool.",
         visibility: "private",
-        idempotency_key: "sdk-private-memory-bad-note",
+        idempotency_key: "browser-resume-sdk-private-memory-bad-note",
       },
     });
   } catch (error) {
