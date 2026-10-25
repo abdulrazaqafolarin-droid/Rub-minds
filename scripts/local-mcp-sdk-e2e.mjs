@@ -188,15 +188,37 @@ try {
   assert.notEqual(one.participant_id, two.participant_id, "independent clients must have distinct participants");
   assert.notEqual(one.session_handle, two.session_handle, "independent clients must have distinct session handles");
 
+  // Create a real baseline message and use its exact ID + timestamp as the
+  // cursor. This proves the wait returns subsequent activity without replaying
+  // the cursor message; a timestamp-only test would not cover the new ID path.
+  const cursorBody = "Realtime cursor baseline from official SDK AI two";
+  const cursorSend = await second.callTool({
+    name: "send_group_message",
+    arguments: {
+      session_handle: two.session_handle,
+      body: cursorBody,
+      source_message_id: "official-sdk-realtime-cursor-baseline",
+    },
+  });
+  assert.notEqual(cursorSend.isError, true, "second AI could not send the cursor baseline message");
+  const baselineRead = await first.callTool({
+    name: "read_group_messages",
+    arguments: { session_handle: one.session_handle },
+  });
+  assert.notEqual(baselineRead.isError, true, "first AI could not read the cursor baseline message");
+  const cursorMessage = baselineRead.structuredContent?.messages?.find(message => message.body === cursorBody);
+  assert.ok(cursorMessage?.id, "baseline message did not expose its persisted message ID");
+  assert.ok(cursorMessage?.created_at, "baseline message did not expose its creation timestamp");
+
   // Prove the MCP tool can wait on a real Supabase Realtime Postgres Changes
   // subscription. Delay the second client's send so the first subscription is
   // established; a timeout or unavailable subscription must fail this test.
-  const realtimeCursor = new Date().toISOString();
   const waitingForRealtime = first.callTool({
     name: "wait_for_group_messages",
     arguments: {
       session_handle: one.session_handle,
-      after_created_at: realtimeCursor,
+      after_message_id: cursorMessage.id,
+      after_created_at: cursorMessage.created_at,
       timeout_ms: 8000,
     },
   });
@@ -219,7 +241,11 @@ try {
     realtimeRead.structuredContent?.messages?.some(message => message.body === realtimeBody),
     "waiting AI did not retrieve the message that woke its Realtime subscription",
   );
-  console.log("Official MCP SDK received a new group message through the bounded Supabase Realtime wait.");
+  assert.ok(
+    !realtimeRead.structuredContent?.messages?.some(message => message.id === cursorMessage.id || message.body === cursorBody),
+    "Realtime wait replayed the exact cursor message",
+  );
+  console.log("Official MCP SDK received a new group message through the bounded Supabase Realtime wait without replaying its exact cursor.");
 
   // Two successful AI joins exhaust this invitation's AI quota. A third
   // independent request must not create a participant or a scoped credential.
