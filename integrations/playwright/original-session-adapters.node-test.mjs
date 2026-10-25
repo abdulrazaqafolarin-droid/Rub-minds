@@ -199,3 +199,36 @@ test("Claude adapter waits for a completed streamed answer", async () => {
   const adapter = createOriginalSessionAdapter("claude", { approval: async () => true, timeoutMs: 5000 });
   assert.equal(await adapter.ask(makeClaudePage(state), "hello"), "Claude complete answer");
 });
+
+
+test("honors cancellation while waiting for a streamed response", async () => {
+  const state = { assistantVisible: false, text: "", generating: false };
+  const controller = new AbortController();
+  state.onSend = () => setTimeout(() => controller.abort(), 100);
+  const adapter = createOriginalSessionAdapter("chatgpt", {
+    approval: async ({ signal }) => signal === controller.signal,
+    timeoutMs: 5000,
+  });
+  await assert.rejects(
+    adapter.ask(makeChatGPTPage(state), "hello", { signal: controller.signal }),
+    error => error?.name === "AbortError" && error?.submissionState === "unknown",
+  );
+});
+
+test("pre-aborted signal prevents approval and provider DOM interaction", async () => {
+  let approvals = 0;
+  const controller = new AbortController();
+  controller.abort();
+  const adapter = createOriginalSessionAdapter("chatgpt", {
+    approval: () => { approvals++; return true; },
+  });
+  const page = {
+    url: () => "https://chatgpt.com/c/example",
+    locator: () => { throw new Error("DOM must not be touched after cancellation"); },
+  };
+  await assert.rejects(
+    adapter.ask(page, "hello", { signal: controller.signal }),
+    error => error?.name === "AbortError" && error?.submissionState === "not_submitted",
+  );
+  assert.equal(approvals, 0);
+});
