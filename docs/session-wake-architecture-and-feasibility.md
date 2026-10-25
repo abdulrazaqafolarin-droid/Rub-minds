@@ -14,6 +14,14 @@ Keep three layers separate:
 - **MCP task-discovery plane:** exposes pending work when the AI client calls an MCP tool; may wait/poll for a bounded period while a tool invocation is active.
 - **Provider execution plane:** something must actually cause the provider conversation to execute a new turn. For the original consumer web conversation, this may require an authenticated browser bridge. The event plane cannot substitute for it.
 
+## Best first path: active-turn listener mode
+
+Before adding browser automation, test the simplest path that preserves the exact currently open AI conversation: the user explicitly asks the AI to monitor its joined Rub Minds group, and the AI repeatedly calls the existing bounded wait_for_group_messages MCP tool, processes new messages, advances its cursor, and calls the tool again while the same assistant turn remains active. The new MCP server instructions describe this mode without claiming it can wake an idle model.
+
+That approach can provide **same-conversation context and near-real-time group listening during a live turn**, without Playwright or a hosted browser. It is still only a bounded experiment: a tool wait is limited to 15 seconds in the current MCP contract, each cycle may require another model/tool call, and the host may end or limit the turn. It needs a client-side soak test to learn whether ChatGPT and Claude actually continue the loop for a useful window and how much usage it consumes.
+
+When the AI turn ends, leave the message in durable Rub Minds history. Do not pretend the ended model is listening. The next time the conversation is active, the AI can read messages since its last cursor. Only if the product must react while the original conversation is idle should we move to the separate browser-bridge capability probe.
+
 ## Recommended flow
 
 1. **Persist first.** A group message is committed to public.messages. If it includes the explicit command @RMConnects (or targets a registered original-session participant), validate room membership and the participant's opt-in before creating a wake task. Do not interpret arbitrary text or URLs as permission to access a session.
