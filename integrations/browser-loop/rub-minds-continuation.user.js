@@ -115,10 +115,18 @@
     return safeConversationUrl(`${origin}${location.pathname}`);
   };
   const getSavedConversation = () => {
+    let stored = null;
     try {
-      const record = JSON.parse(localStorage.getItem(RECOVERY_KEY) || 'null');
+      stored = localStorage.getItem(RECOVERY_KEY);
+      if (!stored) return null;
+      const record = JSON.parse(stored);
       const url = safeConversationUrl(record?.url);
-      if (!url) return null;
+      if (!url) {
+        // Clear malformed, off-origin, insecure, or non-chat paths instead of
+        // leaving a poisoned recovery record for future navigation attempts.
+        try { localStorage.removeItem(RECOVERY_KEY); } catch (_) {}
+        return null;
+      }
       const resumeId = typeof record.resumeId === 'string' && record.resumeId.length >= 8 && record.resumeId.length <= 100
         ? record.resumeId : makeResumeId();
       const normalized = { url, provider: providerLabel, savedAt: typeof record.savedAt === 'string' ? record.savedAt : '', resumeId };
@@ -126,7 +134,11 @@
         try { localStorage.setItem(RECOVERY_KEY, JSON.stringify(normalized)); } catch (_) {}
       }
       return normalized;
-    } catch (_) { return null; }
+    } catch (_) {
+      // Corrupt local data should be removed, not repeatedly retried.
+      try { localStorage.removeItem(RECOVERY_KEY); } catch (_) {}
+      return null;
+    }
   };
   let savedConversation = getSavedConversation();
 
