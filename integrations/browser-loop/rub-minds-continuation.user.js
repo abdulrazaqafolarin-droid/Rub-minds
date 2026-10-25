@@ -89,6 +89,10 @@
   // Recovery URLs stay in this provider origin's localStorage. They are never
   // sent to Rub Minds, MCP, or other group members by this userscript.
   const providerLabel = location.hostname === 'claude.ai' ? 'Claude' : 'ChatGPT';
+  const makeResumeId = () => {
+    try { return crypto.randomUUID(); }
+    catch (_) { return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`; }
+  };
   const safeConversationUrl = (value) => {
     try {
       if (typeof value !== 'string' || !value) return null;
@@ -112,7 +116,13 @@
       const record = JSON.parse(localStorage.getItem(RECOVERY_KEY) || 'null');
       const url = safeConversationUrl(record?.url);
       if (!url) return null;
-      return { url, provider: providerLabel, savedAt: typeof record.savedAt === 'string' ? record.savedAt : '' };
+      const resumeId = typeof record.resumeId === 'string' && record.resumeId.length >= 8 && record.resumeId.length <= 100
+        ? record.resumeId : makeResumeId();
+      const normalized = { url, provider: providerLabel, savedAt: typeof record.savedAt === 'string' ? record.savedAt : '', resumeId };
+      if (record.url !== url || record.provider !== providerLabel || record.resumeId !== resumeId) {
+        try { localStorage.setItem(RECOVERY_KEY, JSON.stringify(normalized)); } catch (_) {}
+      }
+      return normalized;
     } catch (_) { return null; }
   };
   let savedConversation = getSavedConversation();
@@ -120,7 +130,9 @@
   const rememberCurrentConversation = () => {
     const url = currentConversationUrl();
     if (!url) return false;
-    const record = { url, provider: providerLabel, savedAt: new Date().toISOString() };
+    const resumeId = savedConversation?.url === url && savedConversation.resumeId
+      ? savedConversation.resumeId : makeResumeId();
+    const record = { url, provider: providerLabel, savedAt: new Date().toISOString(), resumeId };
     try {
       localStorage.setItem(RECOVERY_KEY, JSON.stringify(record));
       savedConversation = record;
@@ -206,8 +218,12 @@
     input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContent' }));
   }
 
-  function ensureReadyToSend(expectedPath, expectedUserCount) {
-    if (!running || paused) throw new Error('Loop stopped or paused before sending; no message was sent.');
+  function ensureReadyToSend(expectedPath, expectedUserCount, manualAction = false) {
+    if (manualAction ? (running || paused) : (!running || paused)) {
+      throw new Error(manualAction
+        ? 'A continuation run is active; stop it before submitting the private-memory request.'
+        : 'Loop stopped or paused before sending; no message was sent.');
+    }
     if (expectedPath && location.pathname !== expectedPath) throw new Error('Conversation changed before sending; no message was sent.');
     if (userNodes().length !== expectedUserCount) throw new Error('Human conversation activity detected before sending; no message was sent.');
     if (isGenerating()) throw new Error('Provider is generating a reply; no continuation was sent.');
@@ -215,12 +231,12 @@
     if (!input || composerText(input)) throw new Error('Composer draft or unavailable input detected before sending.');
   }
 
-  async function sendMessage(text, expectedPath, expectedUserCount) {
-    ensureReadyToSend(expectedPath, expectedUserCount);
+  async function sendMessage(text, expectedPath, expectedUserCount, manualAction = false) {
+    ensureReadyToSend(expectedPath, expectedUserCount, manualAction);
     const input = setInput(text);
     await sleep(350);
     try {
-      if (!running || paused || (expectedPath && location.pathname !== expectedPath) ||
+      if ((manualAction ? (running || paused) : (!running || paused)) || (expectedPath && location.pathname !== expectedPath) ||
           userNodes().length !== expectedUserCount || isGenerating() || inputNode() !== input ||
           composerText(input) !== text.trim()) {
         throw new Error('Page, conversation, draft, or loop state changed before send. Nothing was sent.');
@@ -250,6 +266,7 @@
   let stopReason = '';
   let threadPath = null;
   let pauseWaiters = [];
+  let privateMemoryRequested = false;
 
   const panel = document.createElement('section');
   panel.id = 'rubminds-continuation-panel';
@@ -287,6 +304,8 @@
         </label>
         <div id="rm-recovery" role="status" style="margin-top:5px;color:#c9c9c9">No saved conversation.</div>
         <button type="button" id="rm-reopen" style="width:100%;margin-top:5px;padding:6px" disabled>Reopen saved conversation</button>
+        <button type="button" id="rm-save-private" style="width:100%;margin-top:5px;padding:6px" disabled>Save link privately in Rub Minds</button>
+        <div style="margin-top:4px;color:#c9c9c9">Optional: sends one prompt asking the connected MCP session to save only this link as private participant memory. Verify the actual tool result.</div>
       </div>
       <div style="display:flex;gap:6px;margin-top:8px">
         <button type="button" id="rm-start" style="flex:1;padding:7px;font-weight:700">Start</button>
@@ -314,6 +333,8 @@
       message.textContent = 'No recovery link saved. Opt in while viewing a specific conversation.';
       reopen.disabled = true;
       reopen.textContent = 'Reopen saved conversation';
+      el('rm-save-private').disabled = true;
+      el('rm-save-private').textContent = 'Save link privately in Rub Minds';
       return;
     }
     const savedPath = new URL(savedConversation.url).pathname;
@@ -321,6 +342,10 @@
     message.textContent = `Saved locally in this browser only (${savedConversation.provider}). It is not shared with Rub Minds or the group.`;
     reopen.disabled = isCurrent;
     reopen.textContent = isCurrent ? 'Saved conversation is already open' : 'Reopen saved conversation';
+    el('rm-save-private').disabled = !isCurrent || !el('rm-remember').checked || running || paused || isGenerating() || privateMemoryRequested;
+    el('rm-save-private').textContent = privateMemoryRequested
+      ? 'Private-memory request submitted'
+      : 'Save link privately in Rub Minds';
   }
   updateRecoveryUi();
 
@@ -355,11 +380,41 @@
     location.href = url;
   });
 
+  el('rm-save-private').addEventListener('click', async () => {
+    try {
+      const url = safeConversationUrl(savedConversation?.url);
+      if (!url || location.pathname !== new URL(url).pathname || !el('rm-remember').checked) {
+        throw new Error('Open the saved conversation and enable local recovery before registering its link.');
+      }
+      if (running || paused || isGenerating()) throw new Error('Wait until the current assistant reply and continuation run have stopped.');
+      if (privateMemoryRequested) throw new Error('A private-memory request was already submitted in this page. Verify its tool result before retrying.');
+      if (composerText(inputNode())) throw new Error('The composer contains a human draft. Send or clear it before requesting private link storage.');
+      const before = snapshot();
+      const idempotencyKey = `browser-resume-${savedConversation.resumeId}`;
+      const content = `Original AI conversation recovery URL (private; do not post to group messages): ${url}. This is only a locator, not an authentication credential.`;
+      const prompt = [
+        'Use the Rub Minds MCP tools already connected to this existing conversation.',
+        'The user explicitly asked to save this conversation recovery locator privately. Call remember_memory with entry_type="insight", visibility="private", idempotency_key=' + JSON.stringify(idempotencyKey) + ', and content=' + JSON.stringify(content) + '.',
+        'Do not call send_group_message. Do not save this as group-visible memory. Do not read, import, or share unrelated conversation history.',
+        'If remember_memory is unavailable or the private visibility cannot be confirmed, do not claim the link was saved. Report the actual tool result only.',
+      ].join('\n\n');
+      el('rm-save-private').disabled = true;
+      await sendMessage(prompt, location.pathname, before.userCount, true);
+      privateMemoryRequested = true;
+      updateRecoveryUi();
+      status('Private-memory request submitted. Check the assistant reply for the actual MCP tool result; the prompt itself is not proof of storage.');
+    } catch (error) {
+      updateRecoveryUi();
+      status(`Private link storage was not submitted: ${error?.message || String(error)}`);
+    }
+  });
+
   const updateButtons = () => {
     el('rm-start').disabled = running;
     el('rm-pause').disabled = !running || paused;
     el('rm-resume').disabled = !running || !paused;
     el('rm-stop').disabled = !running;
+    updateRecoveryUi();
   };
 
   const control = {
