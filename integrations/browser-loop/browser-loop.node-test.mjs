@@ -339,3 +339,21 @@ test('active provider generation finishes before the loop sends a continuation',
   assert.equal(h.sentBeforeInitialGenerationFinished, false);
   assert.match(result.status, /DONE/);
 });
+
+
+test('page load does not start a loop without a human click', () => {
+  const h = makeHarness({ scenario: 'done-first' });
+  assert.equal(h.sent.length, 0);
+  assert.match(h.document.getElementById('rubminds-continuation-panel').querySelector('#rm-status').textContent, /Idle/);
+});
+
+test('custom prompt is used for the current run but is not persisted', async () => {
+  const h = makeHarness({ scenario: 'done-first' });
+  const privateMarker = 'PRIVATE_CUSTOM_PROMPT_DO_NOT_PERSIST';
+  h.document.getElementById('rubminds-continuation-panel').querySelector('#rm-trigger').value = privateMarker;
+  const result = await h.startAndWait();
+  assert.equal(result.sent[0], privateMarker);
+  const stored = JSON.parse(h.context.localStorage.getItem('rubMindsContinuationSettingsV1'));
+  assert.deepEqual(Object.keys(stored).sort(), ['delaySec', 'maxRounds', 'timeoutMin']);
+  assert.equal(JSON.stringify(stored).includes(privateMarker), false);
+});
