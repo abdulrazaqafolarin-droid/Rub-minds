@@ -767,6 +767,31 @@ jobs:
             "read_group_messages paging must return all rows exactly once in composite order");
           console.log("Local MCP read_group_messages returned all 60 rows in three cursor pages.");
 
+          // Legacy timestamp-only waits remain inclusive for compatibility,
+          // but must use a bounded database query rather than the latest-50 RPC.
+          const timestampOnlyWait = await rpc("tools/call", 23, {
+            name: "wait_for_group_messages",
+            arguments: {
+              session_handle: joined.structuredContent.session_handle,
+              after_created_at: cursorTimestamp,
+              timeout_ms: 1000,
+              limit: 20,
+            },
+          });
+          assert.equal(timestampOnlyWait.isError, undefined,
+            "legacy timestamp-only wait failed: " + JSON.stringify(timestampOnlyWait));
+          assert.equal(timestampOnlyWait.structuredContent?.messages?.length, 20,
+            "timestamp-only wait must honor its limit against the full backlog");
+          assert.equal(timestampOnlyWait.structuredContent.messages[0]?.id, cursorAnchorId,
+            "timestamp-only cursor remains inclusive at the supplied timestamp");
+          assert.equal(timestampOnlyWait.structuredContent.messages.at(-1)?.id, cursorBacklog[18].id,
+            "timestamp-only wait must return the first bounded chronological page");
+          assert.deepEqual(timestampOnlyWait.structuredContent.next_cursor, {
+            after_created_at: timestampOnlyWait.structuredContent.messages.at(-1).created_at,
+            after_message_id: timestampOnlyWait.structuredContent.messages.at(-1).id,
+          });
+          console.log("Local MCP timestamp-only wait remains inclusive and bounded over a backlog.");
+
           const cursorRead = await rpc("tools/call", 9, {
             name: "wait_for_group_messages",
             arguments: {
