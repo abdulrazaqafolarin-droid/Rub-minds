@@ -67,8 +67,12 @@ export class OriginalSessionWakeRunner {
             throw new Error("Wake source returned an invalid status");
           }
 
+          // The provider adapter must always check the durable Rub Minds task
+          // queue first. A timeout is only a recovery heartbeat; it is not
+          // permission to submit an empty or duplicate prompt.
           const result = await this.bridge.step({
             approved: true,
+            wakeReason: wake.status,
             remainingReplies: this.maxReplies - this.replies,
           });
           const sent = Number.isInteger(result?.sent) && result.sent > 0 ? result.sent : 0;
