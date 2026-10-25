@@ -89,3 +89,34 @@ test("bounds a subscription handshake that never reports a status", async () => 
   assert.equal(source.channel, null);
 });
 
+
+
+test("a fresh start can recover after an earlier handshake timeout", async () => {
+  let removed = 0;
+  const channels = [];
+  function makeChannel(subscribeImpl) {
+    const channel = {
+      on: () => channel,
+      subscribe: subscribeImpl,
+    };
+    channels.push(channel);
+    return channel;
+  }
+  const first = makeChannel(() => first);
+  const second = makeChannel(handler => {
+    queueMicrotask(() => handler("SUBSCRIBED"));
+    return second;
+  });
+  let next = 0;
+  const client = {
+    channel: () => [first, second][next++],
+    removeChannel: async channel => { assert.ok(channels.includes(channel)); removed++; },
+  };
+  const source = new SupabaseRealtimeWakeSource({ client, roomId: "r", subscriptionTimeoutMs: 100 });
+  await assert.rejects(() => source.start(), /local handshake timeout/);
+  await source.start();
+  assert.equal(source.channel, second);
+  assert.equal(removed, 1);
+  await source.close();
+  assert.equal(removed, 2);
+});
