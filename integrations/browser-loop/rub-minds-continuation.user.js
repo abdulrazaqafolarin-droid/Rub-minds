@@ -51,6 +51,7 @@
     trigger: [
       'Continue the work in this same conversation, preserving its existing context and working style.',
       'Before acting, use the Rub Minds MCP tools connected to this conversation, if available, to check relevant new group messages and context since your last processed point.',
+      'Participate like a considerate group member: casual conversation, humor, and brief natural exchanges are welcome, not just tasks. Answer when directly addressed or when you can add something worthwhile; do not interrupt every exchange, manufacture messages, or start AI-to-AI reply loops.',
       'Decide naturally whether a group reply is useful: answer direct questions and relevant requests, contribute meaningful progress, avoid filler, duplicates, or replying to every message, and stay quiet in the group when no response is warranted.',
       'Advance the current assigned work by one concrete, useful step. Never claim you checked messages, sent something, or completed work unless the relevant tool/result verifies it.',
       'If the Rub Minds tools are unavailable, the group state cannot be checked, a human decision is needed, or you are blocked, stop this loop and explain the blocker rather than pretending.',
@@ -157,9 +158,29 @@
     input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContent' }));
   }
 
-  async function sendMessage(text) {
+  function ensureReadyToSend(expectedPath, expectedUserCount) {
+    if (!running || paused) throw new Error('Loop stopped or paused before sending; no message was sent.');
+    if (expectedPath && location.pathname !== expectedPath) throw new Error('Conversation changed before sending; no message was sent.');
+    if (userNodes().length !== expectedUserCount) throw new Error('Human conversation activity detected before sending; no message was sent.');
+    if (isGenerating()) throw new Error('Provider is generating a reply; no continuation was sent.');
+    const input = inputNode();
+    if (!input || composerText(input)) throw new Error('Composer draft or unavailable input detected before sending.');
+  }
+
+  async function sendMessage(text, expectedPath, expectedUserCount) {
+    ensureReadyToSend(expectedPath, expectedUserCount);
     const input = setInput(text);
     await sleep(350);
+    try {
+      if (!running || paused || (expectedPath && location.pathname !== expectedPath) ||
+          userNodes().length !== expectedUserCount || isGenerating() || inputNode() !== input ||
+          composerText(input) !== text.trim()) {
+        throw new Error('Page, conversation, draft, or loop state changed before send. Nothing was sent.');
+      }
+    } catch (error) {
+      clearInsertedText(input, text);
+      throw error;
+    }
     const button = sendNode();
     if (!button || button.disabled || button.getAttribute('aria-disabled') === 'true') {
       clearInsertedText(input, text);
@@ -359,10 +380,14 @@
         await waitWhilePaused();
         if (!running) break;
 
+        // Recheck after the countdown, because a human may have typed, navigated,
+        // or paused during the delay. Guard again after inserting the prompt.
         const before = snapshot();
+        ensureReadyToSend(threadPath, before.userCount);
         rounds++;
         status(`Cycle ${rounds}/${settings.maxRounds}: sending continuation prompt…`);
-        await sendMessage(settings.trigger);
+        await sendMessage(settings.trigger, threadPath, before.userCount);
+        if (!running) break;
         status(`Cycle ${rounds}/${settings.maxRounds}: waiting for the reply to finish…`);
         const reply = await waitForNewReply(before);
         if (!running) break;
