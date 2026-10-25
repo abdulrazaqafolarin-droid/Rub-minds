@@ -184,7 +184,7 @@ export function createOriginalSessionAdapter(provider, {
         throw new TypeError("Prompt must be 1-10000 characters");
       }
       const safeLabel = value => typeof value === "string"
-        ? value.replace(/[\\r\\n\\t]/g, " ").slice(0, 80)
+        ? value.replace(/[\r\n\t]/g, " ").slice(0, 80)
         : null;
       const allowed = await approval({
         provider,
