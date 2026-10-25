@@ -474,19 +474,36 @@ export class PlaywrightSessionBridge {
           signal,
         });
       } catch (error) {
+        if (error && typeof error === "object" && error.code === "RUB_MINDS_APPROVAL_DENIED") {
+          // An explicit refusal is not an ambiguous provider call. Stop this
+          // run without persisting a crash-recovery blocker; a later authorized
+          // run may ask the owner again for the same unprocessed group message.
+          this.blockedMessage = null;
+          await this.persistDurableState({ signal: signal?.aborted ? undefined : signal });
+          this.seen.delete(message.id);
+          return {
+            status: "blocked",
+            sent,
+            processed,
+            blockedMessageId: message.id,
+            reason: "approval_denied",
+          };
+        }
+        if (isSafeToRetry(error)) {
+          // The adapter guarantees that no prompt was submitted. Release the
+          // durable claim even when cancellation occurred before the submit
+          // action; only ambiguous post-submit cancellation must remain blocked.
+          this.blockedMessage = null;
+          await this.persistDurableState({ signal: signal?.aborted ? undefined : signal });
+          this.seen.delete(message.id);
+          if (signal?.aborted) return { status: "cancelled", sent, processed };
+          if (sent > 0) return errorOutcome(error, sent, processed);
+          throw error;
+        }
         if (signal?.aborted) {
           this.blockedMessage = { messageId: message.id, reason: "provider_outcome_unknown_after_cancel" };
           await this.persistDurableState();
           return { status: "cancelled", sent, processed, blockedMessageId: message.id };
-        }
-        if (isSafeToRetry(error)) {
-          // The adapter guarantees that no prompt was submitted, so release the
-          // durable claim and keep the cursor before this message for retry.
-          this.blockedMessage = null;
-          await this.persistDurableState({ signal: signal?.aborted ? undefined : signal });
-          this.seen.delete(message.id);
-          if (sent > 0) return errorOutcome(error, sent, processed);
-          throw error;
         }
         this.blockedMessage = { messageId: message.id, reason: "provider_outcome_unknown" };
         await this.persistDurableState({ signal });
