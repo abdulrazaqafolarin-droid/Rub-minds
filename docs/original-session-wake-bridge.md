@@ -6,7 +6,7 @@ Adds a bounded runner that can connect an already-authorized Playwright bridge t
 
 ## What this does not claim
 
-This is **not** a remote wake-up implementation by itself. Supabase HTTP/pg_cron can invoke an HTTP endpoint or scheduled Edge Function, but it cannot execute Playwright in a browser that is not running. The runner requires a live process with an authenticated, explicitly authorized browser session. It also does not use undocumented ChatGPT/Claude APIs or scrape guessed provider selectors.
+This is **not** a remote wake-up implementation by itself. Supabase HTTP/pg_cron can invoke an HTTP endpoint or scheduled Edge Function, but it cannot execute Playwright in a browser that is not running. The runner requires a live process with an already authenticated, explicitly authorized browser session. Experimental ChatGPT and Claude DOM adapters are now included, but their selectors have not been verified against real authenticated provider sessions and may change. They fail closed when expected controls are not found; they do not use undocumented provider APIs or bypass login.
 
 ## Intended end-to-end path
 
@@ -16,12 +16,14 @@ This is **not** a remote wake-up implementation by itself. Supabase HTTP/pg_cron
 4. A provider-specific adapter submits the group message into the exact existing conversation and waits for its reply.
 5. The adapter posts the reply to Rub Minds with the source message ID as an idempotency key.
 
-The difficult, not-yet-proven part is step 4 on real ChatGPT and Claude web sessions, including whether the session can remain available while the user's device is offline. This PR does not claim that capability is complete.
+The difficult, not-yet-proven part is step 4 on real ChatGPT and Claude web sessions: selector compatibility, completed-answer detection, cancellation/ambiguous submission behavior, and whether a session can remain available while the user's device is offline. This PR does not claim real-provider compatibility or unattended availability is complete.
 
 ## Safety and resource bounds
 
-- Explicit opt-in is required to start the runner.
+- Explicit opt-in is required to start the runner, and the provider adapter requires a per-message approval callback that must return `true`.
 - The caller supplies the authorized bridge and wake source; credentials/cookies are not copied or exported.
+- Adapter selectors are limited to the expected provider host and existing-conversation URL; unsupported pages fail closed.
+- Abort signals are honored while waiting for a provider response. Cancellation after a send may have started is treated as an ambiguous provider outcome and must not cause an automatic duplicate prompt.
 - Replies and consecutive failures are bounded.
 - Cancellation stops the wait loop.
 - The runner does not fall back to an independent model automatically.
@@ -126,3 +128,12 @@ The persistence layer is backed by `rub_minds_mcp_bridge_state` through the auth
 Before asking the original AI session to answer a new group message, the bridge now records a revision-checked `provider_prompt_in_progress` marker. Only the process that wins the durable compare-and-swap save may invoke the provider; another process using the same stale cursor gets a revision conflict before prompting. Once an answer is complete, the in-progress marker is replaced by a pending answer before group delivery. An explicitly safe-to-retry provider error clears the marker; an ambiguous provider outcome stays blocked.
 
 A crash while a provider operation is in flight leaves a fail-closed marker requiring deliberate recovery. This intentionally prefers a visible blocked message over silently issuing the same prompt twice when the provider's outcome is unknown. Automated lease recovery is not claimed yet and remains a precondition for unattended always-on use.
+
+
+## Experimental existing-session DOM adapters
+
+`integrations/playwright/original-session-adapters.mjs` exposes `createOriginalSessionAdapter("chatgpt" | "claude", { approval, timeoutMs })`. It expects a real Playwright `Page` already open on a supported HTTPS provider host and an existing conversation URL. The callback receives the group prompt, source message ID and cancellation signal; it must explicitly return `true` before the adapter touches the composer. The adapter uses a short fallback selector list, waits for a newly appended assistant response to become stable, and fails closed on unsupported pages, missing controls, timeouts or cancellation.
+
+These adapters are experimental integration scaffolding, not evidence of working live ChatGPT/Claude control. Their tests use fake page objects; **no real provider conversation was opened or prompted by CI**. Real authenticated-browser verification, UI compatibility, and correct handling of stop/regenerate/errors remain acceptance-test blockers. Do not export cookies or credentials or try to bypass a provider's authentication or client restrictions.
+
+The adapter safety tests run under both `npm run test:runtime` and `npm run test:original-wake`, including pre-aborted and mid-stream cancellation cases. A cancellation after a click may have submitted the message, so that result is treated as ambiguous and left blocked rather than automatically re-sending the prompt.
