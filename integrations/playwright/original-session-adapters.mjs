@@ -83,6 +83,19 @@ async function findVisible(page, selectors) {
   throw new Error("Provider UI changed or conversation is not ready; no message sent");
 }
 
+async function getComposerText(composer) {
+  // ChatGPT currently uses a textarea; Claude commonly uses contenteditable.
+  // Read the current draft before fill(), and fail closed if neither interface
+  // can be inspected so the bridge never blindly overwrites owner-authored text.
+  if (typeof composer.inputValue === "function") {
+    try { return await composer.inputValue(); } catch { /* try contenteditable below */ }
+  }
+  if (typeof composer.innerText === "function") {
+    try { return await composer.innerText(); } catch { /* fail closed below */ }
+  }
+  throw new Error("Cannot safely inspect provider composer; no message sent");
+}
+
 async function isGenerating(page, selectors) {
   for (const selector of selectors) {
     const item = page.locator(selector).last();
@@ -251,6 +264,13 @@ export function createOriginalSessionAdapter(provider, {
         // Resolve selectors BEFORE touching the composer; fail closed on UI changes.
         const composer = await findVisible(page, config.composer);
         send = await findVisible(page, config.send);
+        const existingDraft = await getComposerText(composer);
+        if (typeof existingDraft !== "string") {
+          throw new Error("Cannot safely inspect provider composer; no message sent");
+        }
+        if (existingDraft.trim()) {
+          throw new Error("Provider composer contains an unsent draft; refusing to overwrite it");
+        }
         before = await page.locator(config.assistant.join(", ")).count();
         groupPrompt = buildGroupMessagePrompt(prompt, metadata);
         await composer.fill(groupPrompt);
