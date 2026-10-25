@@ -51,6 +51,24 @@ test("uses session-scoped JSON-RPC headers and keeps the session handle out of t
   assert.equal(request.request.params.name, "read_group_messages");
 });
 
+test("empty startup snapshots return a valid epoch cursor and only permit message tools", async () => {
+  const fake = fakeFetch(({ request }) => fakeResponse({
+    jsonrpc: "2.0",
+    id: request.id,
+    result: { structuredContent: { messages: [] } },
+  }));
+  const transport = new McpSessionMessageTransport({
+    endpoint: ENDPOINT, sessionHandle: SESSION, fetchImpl: fake.fetch,
+  });
+  const snapshot = await transport.readMessages({ baseline: true });
+  assert.deepEqual(snapshot.next_cursor, {
+    after_created_at: "1970-01-01T00:00:00.000Z",
+    after_message_id: "00000000-0000-1000-8000-000000000000",
+  });
+  await assert.rejects(() => transport.callTool("join_group", { invite_token: "x" }), /only supports/);
+  await assert.rejects(() => transport.callTool("read_session_memory", {}), /only supports/);
+});
+
 test("cursor reads forward the exact composite cursor, bounded limit, and read wait", async () => {
   const cursor = {
     after_created_at: "2026-10-24T17:00:00.123456+00:00",
@@ -107,6 +125,18 @@ test("fails closed on HTTP, JSON-RPC, and tool errors without echoing session ca
   fake = fakeFetch(({ request }) => fakeResponse({ jsonrpc: "2.0", id: request.id, result: { isError: true, structuredContent: { error: SESSION } } }));
   transport = new McpSessionMessageTransport({ endpoint: ENDPOINT, sessionHandle: SESSION, fetchImpl: fake.fetch });
   await assert.rejects(() => transport.sendMessage("reply", "source-123"), /tool returned an error/);
+});
+
+test("requires a JSON-RPC 2.0 response envelope", async () => {
+  const fake = fakeFetch(({ request }) => fakeResponse({
+    jsonrpc: "1.0",
+    id: request.id,
+    result: { structuredContent: { messages: [] } },
+  }));
+  const transport = new McpSessionMessageTransport({
+    endpoint: ENDPOINT, sessionHandle: SESSION, fetchImpl: fake.fetch,
+  });
+  await assert.rejects(() => transport.readMessages(), /invalid JSON-RPC response/);
 });
 
 test("rejects mismatched RPC ids and invalid structured message responses", async () => {

@@ -175,6 +175,17 @@ export class PlaywrightSessionBridge {
       this.advanceCursor(message);
       baselineMessages++;
     }
+    // Preserve a high-water cursor when a reader's startup snapshot is empty.
+    // Otherwise the first new message would fall back to the legacy latest-50 read.
+    const nextCursor = result.next_cursor;
+    if (nextCursor && typeof nextCursor === "object" &&
+        typeof nextCursor.after_created_at === "string" &&
+        typeof nextCursor.after_message_id === "string") {
+      this.advanceCursor({
+        created_at: nextCursor.after_created_at,
+        id: nextCursor.after_message_id,
+      });
+    }
     this.initialized = true;
     return { status: "baseline", baselineMessages };
   }

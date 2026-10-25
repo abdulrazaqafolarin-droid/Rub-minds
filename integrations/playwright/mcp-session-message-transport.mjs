@@ -7,6 +7,15 @@
  */
 const SESSION_HANDLE_RE = /^[0-9a-f]{64}$/i;
 const DEFAULT_PROTOCOL_VERSION = "2026-07-28";
+const EMPTY_ROOM_CURSOR = Object.freeze({
+  after_created_at: "1970-01-01T00:00:00.000Z",
+  after_message_id: "00000000-0000-1000-8000-000000000000",
+});
+const MESSAGE_TOOL_NAMES = new Set([
+  "read_group_messages",
+  "wait_for_group_messages",
+  "send_group_message",
+]);
 
 function validateEndpoint(value) {
   if (typeof value !== "string" || value.length > 2048) {
@@ -29,7 +38,8 @@ function validateEndpoint(value) {
 }
 
 function extractStructuredContent(payload, requestId, toolName) {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload) || payload.id !== requestId) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload) ||
+      payload.jsonrpc !== "2.0" || payload.id !== requestId) {
     throw new Error("Rub Minds MCP returned an invalid JSON-RPC response");
   }
   if (payload.error || !payload.result || typeof payload.result !== "object" || Array.isArray(payload.result)) {
@@ -77,7 +87,9 @@ export class McpSessionMessageTransport {
   }
 
   async callTool(name, args = {}, { signal } = {}) {
-    if (typeof name !== "string" || !name.trim()) throw new TypeError("tool name is required");
+    if (typeof name !== "string" || !MESSAGE_TOOL_NAMES.has(name)) {
+      throw new TypeError("this transport only supports the Rub Minds group-message tools");
+    }
     if (!args || typeof args !== "object" || Array.isArray(args)) throw new TypeError("tool arguments must be an object");
     if (signal?.aborted) throw new Error("Rub Minds MCP call aborted");
 
@@ -166,6 +178,9 @@ export class McpSessionMessageTransport {
     // this once for startup baselining and then advances with the cursor tool.
     const result = await this.callTool("read_group_messages", {}, { signal });
     if (!Array.isArray(result.messages)) throw new Error("Rub Minds MCP baseline read returned no message list");
+    if (result.messages.length === 0 && !result.next_cursor) {
+      return { ...result, next_cursor: { ...EMPTY_ROOM_CURSOR } };
+    }
     return result;
   }
 
