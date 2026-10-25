@@ -86,6 +86,19 @@ function abortError(submissionState = "unknown") {
   return error;
 }
 
+function markNotSubmitted(error) {
+  const result = error instanceof Error ? error : new Error("Provider interaction did not submit a prompt");
+  result.submissionState = "not_submitted";
+  return result;
+}
+
+function approvalDeniedError() {
+  const error = new Error("Original-session message not approved");
+  error.code = "RUB_MINDS_APPROVAL_DENIED";
+  error.submissionState = "not_submitted";
+  return error;
+}
+
 function throwIfAborted(signal, submissionState = "unknown") {
   if (signal?.aborted) throw abortError(submissionState);
 }
@@ -178,38 +191,56 @@ export function createOriginalSessionAdapter(provider, {
     provider,
     async ask(page, prompt, metadata = {}) {
       const signal = metadata.signal;
-      assertPage(page, provider);
-      throwIfAborted(signal, "not_submitted");
-      if (typeof prompt !== "string" || !prompt.trim() || prompt.length > 10000) {
-        throw new TypeError("Prompt must be 1-10000 characters");
+      let send;
+      let before;
+      let groupPrompt;
+
+      // Everything through composer fill is known not to have submitted a
+      // provider turn. Tag failures so the bridge can safely retry or stop on
+      // approval denial instead of misclassifying them as ambiguous sends.
+      try {
+        assertPage(page, provider);
+        throwIfAborted(signal, "not_submitted");
+        if (typeof prompt !== "string" || !prompt.trim() || prompt.length > 10000) {
+          throw new TypeError("Prompt must be 1-10000 characters");
+        }
+        const safeLabel = value => typeof value === "string"
+          ? value.replace(/[\\r\\n\\t]/g, " ").slice(0, 80)
+          : null;
+        let allowed;
+        try {
+          allowed = await approval({
+            provider,
+            messageId: metadata.messageId ?? null,
+            senderName: safeLabel(metadata.senderName),
+            senderKind: safeLabel(metadata.senderKind),
+            prompt,
+            signal,
+          });
+        } catch (error) {
+          throw markNotSubmitted(error);
+        }
+        throwIfAborted(signal, "not_submitted");
+        if (allowed !== true) throw approvalDeniedError();
+
+        // Resolve selectors BEFORE touching the composer; fail closed on UI changes.
+        const composer = await findVisible(page, config.composer);
+        send = await findVisible(page, config.send);
+        before = await page.locator(config.assistant.join(", ")).count();
+        groupPrompt = buildGroupMessagePrompt(prompt, metadata);
+        await composer.fill(groupPrompt);
+        throwIfAborted(signal, "not_submitted");
+        if (!await send.isEnabled()) throw new Error("Provider send button unavailable");
+        throwIfAborted(signal, "not_submitted");
+      } catch (error) {
+        throw markNotSubmitted(error);
       }
-      const safeLabel = value => typeof value === "string"
-        ? value.replace(/[\r\n\t]/g, " ").slice(0, 80)
-        : null;
-      const allowed = await approval({
-        provider,
-        messageId: metadata.messageId ?? null,
-        senderName: safeLabel(metadata.senderName),
-        senderKind: safeLabel(metadata.senderKind),
-        prompt,
-        signal,
-      });
-      throwIfAborted(signal, "not_submitted");
-      if (allowed !== true) throw new Error("Original-session message not approved");
-      // Resolve selectors BEFORE touching the composer; fail closed on UI changes.
-      const composer = await findVisible(page, config.composer);
-      const send = await findVisible(page, config.send);
-      const before = await page.locator(config.assistant.join(", ")).count();
-      const groupPrompt = buildGroupMessagePrompt(prompt, metadata);
-      await composer.fill(groupPrompt);
-      throwIfAborted(signal, "not_submitted");
-      if (!await send.isEnabled()) throw new Error("Provider send button unavailable");
-      throwIfAborted(signal, "not_submitted");
-      // After this click begins, cancellation is conservatively treated as
-      // ambiguous: the UI may have submitted even if Playwright is interrupted.
+
+      // Once click begins, the provider may have accepted the prompt even if
+      // Playwright reports a timeout or the user cancels. Do not mark it safe
+      // to retry: the bridge will persist an ambiguity blocker instead.
       await send.click();
       throwIfAborted(signal, "unknown");
-      // Require a NEW assistant message and wait for streaming to settle.
       const assistant = page.locator(config.assistant.join(", "));
       const response = assistant.nth(before);
       await awaitWithSignal(response.waitFor({ state: "visible", timeout: timeoutMs }), signal, "unknown");
