@@ -315,7 +315,9 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     // authenticated session's room and payloads are never returned to the model.
     db.realtime.setAuth(serviceKey);
     const channel = db.channel("mcp-room-wait-" + roomId + "-" + crypto.randomUUID());
-    let eventSeen = false;
+    let eventVersion = 0;
+    let observedEventVersion = 0;
+    let realtimeWakeObserved = false;
     let wakeWaiter: (() => void) | null = null;
     let eventTimer: ReturnType<typeof setTimeout> | null = null;
     try {
@@ -326,7 +328,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
         channel.on("postgres_changes", {
           event: "INSERT", schema: "public", table: "messages", filter: "room_id=eq." + roomId,
         }, () => {
-          eventSeen = true;
+          eventVersion += 1;
           wakeWaiter?.();
         }).subscribe((status: string) => {
           if (settled) return;
@@ -336,39 +338,75 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       });
       if (!subscribed) return { timed_out: true, delivery: "unavailable", messages: [], note: "Supabase Realtime subscription could not be established. Retry read_group_messages or wait_for_group_messages." };
 
-      // Read after subscribing to close the read/subscribe race. Realtime payloads
-      // are only wake-up signals; the authorized group read remains the source of truth.
-      const afterSubscribe = await invokeAgent(credential, "read");
-      if (hasNewMessages(afterSubscribe)) return { timed_out: false, delivery: "snapshot", ...(await onlyNewMessages(afterSubscribe) as Record<string, unknown>) };
-      if (eventSeen) {
-        const afterEvent = await invokeAgent(credential, "read");
-        if (hasNewMessages(afterEvent)) return { timed_out: false, delivery: "snapshot", ...(await onlyNewMessages(afterEvent) as Record<string, unknown>) };
-      }
-      const remainingMs = deadline - Date.now();
-      if (remainingMs <= 0) return { timed_out: true, delivery: "realtime", messages: [] };
-      const eventOrTimeout = await new Promise<"message" | "timeout">((resolve) => {
-        eventTimer = setTimeout(() => resolve("timeout"), remainingMs);
-        wakeWaiter = () => {
-          if (eventTimer) clearTimeout(eventTimer);
-          resolve("message");
-        };
-        if (eventSeen) wakeWaiter();
-      });
-      if (eventOrTimeout === "timeout") {
-        // A Realtime event can race with the timeout callback. If we observed
-        // one, take a final authorized snapshot before reporting timeout.
-        if (eventSeen) {
-          const atDeadline = await invokeAgent(credential, "read");
-          if (hasNewMessages(atDeadline)) {
-            return { timed_out: false, delivery: "snapshot", ...(await onlyNewMessages(atDeadline) as Record<string, unknown>) };
-          }
+      // Realtime messages can arrive late, including the INSERT used to establish
+      // the cursor. Treat events only as wake-ups: snapshot the authorized group
+      // and ignore stale notifications that do not contain a message after cursor.
+      while (Date.now() < deadline) {
+        const eventVersionBeforeRead = eventVersion;
+        const snapshot = await invokeAgent(credential, "read");
+        if (hasNewMessages(snapshot)) {
+          return {
+            timed_out: false,
+            delivery: realtimeWakeObserved ? "realtime" : "snapshot",
+            ...(await onlyNewMessages(snapshot) as Record<string, unknown>),
+          };
         }
-        return { timed_out: true, delivery: "realtime", messages: [] };
+        const eventVersionAfterRead = eventVersion;
+        if (eventVersionAfterRead !== eventVersionBeforeRead) {
+          // An event raced the snapshot. Read again before advancing the cursor
+          // for notifications, or a newly committed message could be overlooked.
+          observedEventVersion = eventVersionAfterRead;
+          continue;
+        }
+        observedEventVersion = eventVersionAfterRead;
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) break;
+        const eventOrTimeout = await new Promise<"message" | "timeout">((resolve) => {
+          let settled = false;
+          eventTimer = setTimeout(() => {
+            if (!settled) {
+              settled = true;
+              wakeWaiter = null;
+              resolve("timeout");
+            }
+          }, remainingMs);
+          wakeWaiter = () => {
+            if (settled || eventVersion <= observedEventVersion) return;
+            settled = true;
+            if (eventTimer) clearTimeout(eventTimer);
+            eventTimer = null;
+            wakeWaiter = null;
+            resolve("message");
+          };
+          // Handle an event that arrived after the snapshot but before the wait
+          // callback was installed.
+          if (eventVersion > observedEventVersion) wakeWaiter();
+        });
+        wakeWaiter = null;
+        if (eventOrTimeout === "timeout") break;
+        // A signal does not prove there is a new authorized message. The next
+        // loop iteration verifies it; stale events simply continue waiting.
+        realtimeWakeObserved = true;
       }
-      const afterEvent = await invokeAgent(credential, "read");
-      return { timed_out: !hasNewMessages(afterEvent), delivery: "realtime", ...(await onlyNewMessages(afterEvent) as Record<string, unknown>) };
+
+      // Always take a final authorized read at the deadline. Retry if a
+      // notification races this read, then report timeout only on a stable empty snapshot.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const eventVersionBeforeRead = eventVersion;
+        const finalSnapshot = await invokeAgent(credential, "read");
+        if (hasNewMessages(finalSnapshot)) {
+          return {
+            timed_out: false,
+            delivery: realtimeWakeObserved ? "realtime" : "snapshot",
+            ...(await onlyNewMessages(finalSnapshot) as Record<string, unknown>),
+          };
+        }
+        if (eventVersion === eventVersionBeforeRead) break;
+      }
+      return { timed_out: true, delivery: "realtime", messages: [] };
     } finally {
       if (eventTimer) clearTimeout(eventTimer);
+      wakeWaiter = null;
       try { await db.removeChannel(channel); } catch { /* best-effort cleanup for this bounded subscription */ }
     }
   }

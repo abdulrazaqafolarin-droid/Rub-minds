@@ -235,7 +235,7 @@ try {
   assert.notEqual(realtimeSend.isError, true, "second AI could not send the Realtime wake-up message");
   const realtimeRead = await waitingForRealtime;
   assert.notEqual(realtimeRead.isError, true, "Realtime wait tool failed: " + JSON.stringify(realtimeRead));
-  assert.equal(realtimeRead.structuredContent?.timed_out, false, "Realtime wait timed out instead of waking on a new message");
+  assert.equal(realtimeRead.structuredContent?.timed_out, false, "Realtime wait timed out instead of waking on a new message: " + JSON.stringify(realtimeRead.structuredContent));
   assert.equal(realtimeRead.structuredContent?.delivery, "realtime", "message was not delivered through the Realtime subscription");
   assert.ok(
     realtimeRead.structuredContent?.messages?.some(message => message.body === realtimeBody),
