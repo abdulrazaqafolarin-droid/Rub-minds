@@ -239,7 +239,19 @@ export function createOriginalSessionAdapter(provider, {
       // Once click begins, the provider may have accepted the prompt even if
       // Playwright reports a timeout or the user cancels. Do not mark it safe
       // to retry: the bridge will persist an ambiguity blocker instead.
-      await send.click();
+      // A rejected Playwright click can still have reached the provider. Treat
+      // every failure after the send action begins as ambiguous; never let a
+      // later retry classification mistake this for a definitely-unsent prompt.
+      try {
+        await send.click();
+      } catch (error) {
+        const ambiguousError = new Error(
+          error instanceof Error ? error.message : "Provider send action outcome is unknown",
+          { cause: error },
+        );
+        ambiguousError.submissionState = "unknown";
+        throw ambiguousError;
+      }
       throwIfAborted(signal, "unknown");
       const assistant = page.locator(config.assistant.join(", "));
       const response = assistant.nth(before);
