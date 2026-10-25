@@ -10,6 +10,7 @@ import {
   rpcResult,
   validateSessionMemoryDocument,
   validateToolArguments,
+  filterMessagesAfterCursor,
   isAllowedMcpOrigin,
   validateProtocolVersionHeader,
   applyMcpCors,
@@ -118,6 +119,46 @@ test("Realtime wait tool validates an exclusive composite cursor and bounds its 
   assert.match(validateToolArguments("wait_for_group_messages", { timeout_ms: 999 }), /1000 to 15000/);
   assert.match(validateToolArguments("wait_for_group_messages", { timeout_ms: 15001 }), /1000 to 15000/);
   assert.match(validateToolArguments("wait_for_group_messages", { extra: true }), /Unknown/);
+});
+
+test("composite message cursor excludes the last message and preserves timestamp ties", () => {
+  const sameTime = "2026-10-24T17:00:00.123456+00:00";
+  const afterTime = "2026-10-24T17:00:00.123457+00:00";
+  const data = { messages: [
+    { id: "00000000-0000-0000-0000-000000000001", created_at: "2026-10-24T17:00:00.123455+00:00", body: "older" },
+    { id: "00000000-0000-0000-0000-000000000040", created_at: sameTime, body: "cursor" },
+    { id: "00000000-0000-0000-0000-000000000041", created_at: sameTime, body: "same timestamp, later id" },
+    { id: "00000000-0000-0000-0000-000000000001", created_at: afterTime, body: "later timestamp, any id" },
+    { id: "bad", created_at: "not a timestamp", body: "invalid" },
+    null,
+  ] };
+  const result = filterMessagesAfterCursor(data, {
+    afterCreatedAt: sameTime,
+    afterMessageId: "00000000-0000-0000-0000-000000000040",
+  });
+  assert.deepEqual(result.map(message => message.body), [
+    "same timestamp, later id",
+    "later timestamp, any id",
+  ]);
+});
+
+test("timestamp-only cursors remain inclusive for older MCP clients", () => {
+  const stamp = "2026-10-24T17:00:00.000Z";
+  const result = filterMessagesAfterCursor({ messages: [
+    { id: "before", created_at: "2026-10-24T16:59:59.999Z" },
+    { id: "at", created_at: stamp },
+    { id: "after", created_at: "2026-10-24T17:00:00.001Z" },
+  ] }, { afterCreatedAt: stamp });
+  assert.deepEqual(result.map(message => message.id), ["at", "after"]);
+});
+
+test("message cursor filtering handles malformed input and missing cursor", () => {
+  assert.deepEqual(filterMessagesAfterCursor(null, { afterCreatedAt: null, now: 0 }), []);
+  assert.deepEqual(filterMessagesAfterCursor({ messages: "not an array" }, { afterCreatedAt: null, now: 0 }), []);
+  assert.deepEqual(filterMessagesAfterCursor({ messages: [
+    { id: "future", created_at: "1970-01-01T00:00:00.001Z" },
+    { id: "past", created_at: "1969-12-31T23:59:59.999Z" },
+  ] }, { afterCreatedAt: null, now: 0 }).map(message => message.id), ["future"]);
 });
 
 test("message tool rejects empty, oversized, and unknown arguments", () => {
