@@ -52,6 +52,6 @@ node --check integrations/browser-loop/rub-minds-continuation.user.js
 node --test integrations/browser-loop/browser-loop.node-test.mjs
 \`\`\`
 
-The 13 regression tests execute the actual userscript source in a deterministic mocked DOM for ChatGPT-shaped and Claude-shaped pages. They cover DONE/CONTINUE/PAUSE, repeated cycles and the cap, missing control markers, manual stop/pause/resume, human interruption, navigation, draft protection, disabled send controls, and waiting for an in-progress response. The tests make no external network requests and use no user account or credentials.
+The 15 regression tests execute the actual userscript source in a deterministic mocked DOM for ChatGPT-shaped and Claude-shaped pages. They cover DONE/CONTINUE/PAUSE, repeated cycles and the cap, missing control markers, manual stop/pause/resume, human interruption, navigation, draft protection, disabled send controls, and waiting for an in-progress response, manual opt-in, and non-persistence of custom prompts. The tests make no external network requests and use no user account or credentials.
 
 **Evidence boundary:** these tests validate loop logic against mock DOM objects, not a live authenticated ChatGPT or Claude session. Live-provider acceptance testing remains required before relying on this for critical work.
