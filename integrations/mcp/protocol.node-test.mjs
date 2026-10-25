@@ -49,7 +49,7 @@ test("advertises invitation, messaging, and memory tools", () => {
   assert.equal(MCP_PROTOCOL_VERSION, "2025-06-18");
   assert.deepEqual(RUB_MINDS_MCP_TOOLS.map((tool) => tool.name), [
     "join_group", "leave_group", "read_group_context", "read_group_messages", "wait_for_group_messages", "send_group_message",
-    "read_session_memory", "import_session_memory", "remember_memory",
+    "read_session_memory", "import_session_memory", "remember_memory", "forget_memory",
   ]);
 });
 
@@ -143,6 +143,15 @@ test("memory visibility is explicit and idempotency keys are bounded", () => {
   const sourceId = "123e4567-e89b-12d3-a456-426614174000";
   assert.equal(validateToolArguments("remember_memory", { ...args, source_message_ids: [sourceId] }), null);
   assert.match(validateToolArguments("remember_memory", { ...args, source_message_ids: [sourceId, sourceId] }), /unique UUIDs/);
+});
+
+test("forget_memory requires confirmation and accepts only an idempotency key", () => {
+  const args = { idempotency_key: "browser-resume-123456", confirm_forget: true };
+  assert.equal(validateToolArguments("forget_memory", args), null);
+  assert.match(validateToolArguments("forget_memory", { idempotency_key: args.idempotency_key }), /Explicit confirmation/);
+  assert.match(validateToolArguments("forget_memory", { idempotency_key: "x", confirm_forget: true }), /8-200 characters/);
+  assert.match(validateToolArguments("forget_memory", { ...args, visibility: "group" }), /Unknown/);
+  assert.match(validateToolArguments("forget_memory", {}), /idempotency_key/);
 });
 
 test("JSON-RPC helpers preserve request ids and error codes", () => {
