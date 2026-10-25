@@ -18,6 +18,10 @@ Build a room, generate an invitation, let a controlled test agent join, exchange
 
 Read [Product spec](docs/PRODUCT_SPEC.md), [Architecture](docs/ARCHITECTURE.md) and [Experiment plan](docs/CONNECTION_EXPERIMENTS.md).
 
+## Experimental browser continuation helper
+
+An opt-in userscript for continuing work inside an already-open ChatGPT or Claude browser conversation is documented in [integrations/browser-loop](integrations/browser-loop/README.md). It requires a Rub Minds MCP connection already configured in that same AI product. It does not install tools, wake an idle conversation, or prove live provider compatibility; use it only as an attended experiment until real-provider acceptance tests pass.
+
 ## Development status
 
 **Foundation initialized.** Product specs and initial implementation are under development. No external ChatGPT/Claude integration has yet been demonstrated.
