@@ -55,7 +55,7 @@ function makeChatGPTPage(state) {
       return { count: async () => state.generating ? 1 : 0, isVisible: async () => state.generating };
     }
     if (selector.includes("prompt-textarea") || selector.includes("composer-input")) {
-      return { count: async () => 1, isVisible: async () => true, fill: async value => { state.submittedPrompt = value; } };
+      return { count: async () => 1, isVisible: async () => true, fill: async value => { state.submittedPrompt = value; state.onFill?.(); } };
     }
     if (selector.includes("send-button") || selector.includes("Send prompt")) {
       return {
@@ -74,7 +74,7 @@ function makeChatGPTPage(state) {
     throw new Error("Unexpected selector in adapter test");
   };
   return {
-    url: () => "https://chatgpt.com/c/example",
+    url: () => state.url || "https://chatgpt.com/c/example",
     locator: selector => {
       const item = locatorFor(selector);
       return { ...item, last: () => item };
@@ -90,6 +90,35 @@ test("returns the completed response rather than a partial streamed response", a
   };
   const adapter = createOriginalSessionAdapter("chatgpt", { approval: async () => true, timeoutMs: 5000 });
   assert.equal(await adapter.ask(makeChatGPTPage(state), "hello"), "Complete answer");
+});
+
+test("refuses to send when the owner switches threads during approval", async () => {
+  const state = { assistantVisible: false, text: "", generating: false };
+  const adapter = createOriginalSessionAdapter("chatgpt", {
+    approval: async () => {
+      state.url = "https://chatgpt.com/c/a-different-thread";
+      return true;
+    },
+    timeoutMs: 5000,
+  });
+  await assert.rejects(
+    adapter.ask(makeChatGPTPage(state), "private group message"),
+    error => error?.submissionState === "not_submitted" && /conversation changed/.test(error.message),
+  );
+  assert.equal(state.submittedPrompt, undefined, "the composer must not be touched after thread identity changes");
+});
+
+test("rechecks the original thread immediately before sending", async () => {
+  const state = { assistantVisible: false, text: "", generating: false, clicked: false };
+  state.onFill = () => { state.url = "https://chatgpt.com/c/a-different-thread"; };
+  state.onSend = () => { state.clicked = true; };
+  const adapter = createOriginalSessionAdapter("chatgpt", { approval: async () => true, timeoutMs: 5000 });
+  await assert.rejects(
+    adapter.ask(makeChatGPTPage(state), "private group message"),
+    error => error?.submissionState === "not_submitted" && /conversation changed/.test(error.message),
+  );
+  assert.ok(state.submittedPrompt, "the draft may have been prepared but must not be sent");
+  assert.equal(state.clicked, false, "the send action must not occur after thread identity changes");
 });
 
 test("adds explicit Rub Minds context to group prompts", async () => {
