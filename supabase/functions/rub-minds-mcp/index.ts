@@ -14,6 +14,9 @@ import {
   rpcResult,
   validateSessionMemoryDocument,
   validateToolArguments,
+  filterMessagesAfterCursor,
+  compareMessageCursors,
+  isValidMessageCursor,
   isAllowedMcpOrigin,
   validateProtocolVersionHeader,
   applyMcpCors,
@@ -78,6 +81,38 @@ function validRpcEnvelope(input: unknown) {
   return isRecord(input) && input.jsonrpc === "2.0" && typeof input.method === "string" &&
     (input.id === undefined || typeof input.id === "string" || typeof input.id === "number");
 }
+// Expired sessions can own durable bridge state that may contain an unsubmitted
+// private provider response. Opportunistically purge expired bindings on valid
+// MCP-session traffic, not only when a new invite is successfully redeemed.
+// The per-isolate cooldown bounds database writes; deletion remains idempotent
+// across Edge Function instances. Session expiry checks remain authoritative.
+const SESSION_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+let lastSessionCleanupAt = 0;
+
+async function cleanupExpiredMcpSessions() {
+  const now = Date.now();
+  if (now - lastSessionCleanupAt < SESSION_CLEANUP_INTERVAL_MS) return;
+  // Set a provisional timestamp to avoid overlapping cleanup attempts in this
+  // isolate. On any failure, permit the next valid request to retry immediately.
+  lastSessionCleanupAt = now;
+  try {
+    const nowIso = new Date(now).toISOString();
+    const { error: expiredError } = await db.from("rub_minds_mcp_sessions")
+      .delete().lt("expires_at", nowIso).is("terminated_at", null);
+    if (expiredError) throw expiredError;
+
+    const tombstoneCutoff = new Date(now - TERMINATED_TOMBSTONE_HOURS * 60 * 60 * 1000).toISOString();
+    const { error: tombstoneError } = await db.from("rub_minds_mcp_sessions")
+      .delete().lt("terminated_at", tombstoneCutoff);
+    if (tombstoneError) throw tombstoneError;
+  } catch {
+    lastSessionCleanupAt = 0;
+    // The request can continue safely: expired handles are still rejected by
+    // findSession(), and the next eligible request retries this retention sweep.
+    console.warn("MCP expired-session cleanup failed; it will be retried.");
+  }
+}
+
 async function findSession(sessionId: string) {
   if (!/^[a-f0-9]{64}$/.test(sessionId)) return null;
   const digest = await sha256(sessionId);
@@ -112,6 +147,9 @@ async function terminateMcpSession(sessionDigest: string) {
       .is("revoked_at", null);
     if (revokeError) throw new Error("Could not revoke the AI participant session. Retry or wait for expiry.");
   }
+  const { error: stateDeleteError } = await db.from("rub_minds_mcp_bridge_state")
+    .delete().eq("session_digest", sessionDigest);
+  if (stateDeleteError) throw new Error("Could not clear original-session bridge state while terminating the MCP session.");
   const terminatedAt = new Date().toISOString();
   const tombstoneExpiry = new Date(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000).toISOString();
   const { error: terminateError } = await db.from("rub_minds_mcp_sessions").update({
@@ -158,6 +196,9 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
         .is("revoked_at", null).gt("expires_at", new Date().toISOString()).maybeSingle();
       if (activeConnectionError) throw new Error("Could not verify the existing AI participant session.");
       if (activeConnection) return { joined: true, room_id: session.room_id, participant_id: session.participant_id, note: "This MCP session is already joined to an active group." };
+      const { error: stateDeleteError } = await db.from("rub_minds_mcp_bridge_state")
+        .delete().eq("session_digest", session.session_digest as string);
+      if (stateDeleteError) throw new Error("Could not clear state for the expired AI participant session.");
       const { error: clearError } = await db.from("rub_minds_mcp_sessions").update({
         agent_credential_ciphertext: null, room_id: null, participant_id: null,
       }).eq("session_digest", session.session_digest as string)
@@ -288,28 +329,202 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
   }
 
   if (name === "read_group_messages") {
-    return await enrichGroupMessages(await invokeAgent(credential, "read"));
+    const authorized = await invokeAgent(credential, "read");
+    const roomId = session.room_id;
+    if (typeof roomId !== "string" || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(roomId)) {
+      throw new Error("The joined group binding is invalid.");
+    }
+    if (!isRecord(authorized) || authorized.room_id !== roomId) {
+      throw new Error("The joined group binding no longer matches the AI credential.");
+    }
+
+    const limit = typeof args.limit === "number" ? args.limit : 50;
+    const hasCursor = typeof args.after_created_at === "string" &&
+      typeof args.after_message_id === "string";
+
+    // Always use a bounded, deterministic database page after the credential
+    // and room binding are verified. The legacy agent_exchange RPC only returns
+    // the latest 50 rows, so using it for no-cursor reads silently ignored a
+    // caller's limit and made limits above 50 impossible. For an initial
+    // snapshot, fetch newest-first then reverse so the client still receives
+    // chronological order; cursor pages fetch oldest-first after the watermark.
+    let query = db.from("messages")
+      .select("id, sender_id, body, created_at")
+      .eq("room_id", roomId);
+    if (hasCursor) {
+      query = query.or(
+        `created_at.gt.${args.after_created_at},and(created_at.eq.${args.after_created_at},id.gt.${args.after_message_id})`,
+      ).order("created_at", { ascending: true })
+        .order("id", { ascending: true });
+    } else {
+      query = query.order("created_at", { ascending: false })
+        .order("id", { ascending: false });
+    }
+    const { data, error } = await query.limit(limit);
+    if (error) {
+      throw new Error(hasCursor
+        ? "Could not read messages after the supplied cursor."
+        : "Could not read the latest group messages.");
+    }
+    const page = hasCursor ? (data || []) : (data || []).slice().reverse();
+    const rawData = {
+      room_id: roomId,
+      participant_id: authorized.participant_id,
+      messages: page,
+    };
+
+    const enrichedResult = await enrichGroupMessages(rawData);
+    const enriched = isRecord(enrichedResult) ? enrichedResult : { messages: [] };
+    const messages = Array.isArray(enriched.messages) ? enriched.messages : [];
+    const latest = messages
+      .filter((message) => isValidMessageCursor(message))
+      .sort(compareMessageCursors)
+      .at(-1);
+    const suppliedCursor = hasCursor
+      ? { after_created_at: args.after_created_at, after_message_id: args.after_message_id }
+      : null;
+    const nextCursor = isValidMessageCursor(latest)
+      ? { after_created_at: latest.created_at, after_message_id: latest.id }
+      : suppliedCursor ?? {
+          after_created_at: "1970-01-01T00:00:00.000Z",
+          after_message_id: "00000000-0000-1000-8000-000000000000",
+        };
+    return { ...enriched, next_cursor: nextCursor };
   }
 
   if (name === "wait_for_group_messages") {
     const timeoutMs = typeof args.timeout_ms === "number" ? args.timeout_ms : 10000;
-    const cursor = typeof args.after_created_at === "string" ? Date.parse(args.after_created_at) : Date.now();
-    const messagesAfterCursor = (data: unknown) => isRecord(data) && Array.isArray(data.messages)
-      ? data.messages.filter((message) => isRecord(message) && typeof message.created_at === "string" &&
-          Number.isFinite(Date.parse(message.created_at)) && Date.parse(message.created_at) >= cursor)
-      : [];
-    const hasNewMessages = (data: unknown) => messagesAfterCursor(data).length > 0;
-    const onlyNewMessages = async (data: unknown) => {
-      if (!isRecord(data)) return { messages: [] };
-      return await enrichGroupMessages({ ...data, messages: messagesAfterCursor(data) });
+    const limit = typeof args.limit === "number" ? args.limit : 100;
+    let cursorCreatedAt = typeof args.after_created_at === "string" ? args.after_created_at : null;
+    let cursorMessageId = typeof args.after_message_id === "string" ? args.after_message_id : null;
+    const callerSuppliedCursor = cursorCreatedAt !== null;
+    // Freeze the timestamp fallback once. For a new listener without a cursor,
+    // the latest-row snapshot below becomes an exact composite watermark.
+    const effectiveCursorState: { createdAt: string } = {
+      createdAt: cursorCreatedAt ?? new Date().toISOString(),
     };
-    const initial = await invokeAgent(credential, "read");
-    if (hasNewMessages(initial)) return { timed_out: false, delivery: "realtime", ...(await onlyNewMessages(initial) as Record<string, unknown>) };
+    let hasCompositeCursor = cursorCreatedAt !== null && cursorMessageId !== null;
 
     const roomId = session.room_id;
-    if (typeof roomId !== "string" || !/^[0-9a-f-]{36}$/i.test(roomId)) throw new Error("The joined group binding is invalid.");
-    // The service credential is server-only. The channel is filtered to the
-    // authenticated session's room and payloads are never returned to the model.
+    if (typeof roomId !== "string" || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(roomId)) {
+      throw new Error("The joined group binding is invalid.");
+    }
+
+    const currentCursor = () => hasCompositeCursor && cursorCreatedAt !== null && cursorMessageId !== null
+      ? { after_created_at: cursorCreatedAt, after_message_id: cursorMessageId }
+      : { after_created_at: effectiveCursorState.createdAt };
+
+    const messagesAfterCursor = (data: unknown) => {
+      if (!isRecord(data) || !Array.isArray(data.messages)) return [];
+      if (hasCompositeCursor) {
+        // The composite path is already filtered and ordered by PostgreSQL.
+        // Do not re-compare timestamp strings in JS: Date.parse loses microseconds.
+        return data.messages
+          .filter((message) => isValidMessageCursor(message) && typeof message.body === "string")
+          .sort(compareMessageCursors)
+          .slice(0, limit);
+      }
+      return filterMessagesAfterCursor(data, {
+        afterCreatedAt: effectiveCursorState.createdAt,
+      })
+        .filter((message) => isValidMessageCursor(message) && typeof message.body === "string")
+        .sort(compareMessageCursors)
+        .slice(0, limit);
+    };
+    const hasNewMessages = (data: unknown) => messagesAfterCursor(data).length > 0;
+    const onlyNewMessages = async (data: unknown) => {
+      if (!isRecord(data)) return { messages: [], next_cursor: currentCursor() };
+      const messages = messagesAfterCursor(data);
+      const last = messages.at(-1);
+      const nextCursor = isValidMessageCursor(last)
+        ? { after_created_at: last.created_at, after_message_id: last.id }
+        : currentCursor();
+      const enrichedResult = await enrichGroupMessages({ ...data, messages });
+      // enrichGroupMessages intentionally accepts unknown input; narrow its
+      // result before object spread so malformed runtime responses fail closed.
+      const enriched = isRecord(enrichedResult) ? enrichedResult : { messages };
+      return { ...enriched, next_cursor: nextCursor };
+    };
+
+    const establishInitialCursor = async () => {
+      if (callerSuppliedCursor) return;
+      // "Wait from now" means do not replay group history. Use the exact latest
+      // (created_at,id) row as a watermark so later messages stay visible through
+      // subscription setup and the final timeout check.
+      const { data, error } = await db.from("messages")
+        .select("id, created_at")
+        .eq("room_id", roomId)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(1);
+      if (error) throw new Error("Could not establish the initial group-message cursor.");
+      const latest = Array.isArray(data) ? data[0] : null;
+      if (latest && isValidMessageCursor(latest)) {
+        cursorCreatedAt = latest.created_at;
+        cursorMessageId = latest.id;
+        effectiveCursorState.createdAt = latest.created_at;
+        hasCompositeCursor = true;
+      } else {
+        // No row existed at the baseline snapshot. A minimal valid composite
+        // cursor includes every subsequently-created row without relying on
+        // the Edge runtime's wall clock being perfectly aligned with Postgres.
+        cursorCreatedAt = "1970-01-01T00:00:00.000Z";
+        cursorMessageId = "00000000-0000-1000-8000-000000000000";
+        effectiveCursorState.createdAt = cursorCreatedAt;
+        hasCompositeCursor = true;
+      }
+    };
+
+    const readCurrentGroup = async () => {
+      // Validate the credential through the existing agent RPC before returning
+      // rows. All message reads are then bounded by this session's room binding.
+      const authorized = await invokeAgent(credential, "read");
+      if (!isRecord(authorized) || authorized.room_id !== roomId) {
+        throw new Error("The joined group binding no longer matches the AI credential.");
+      }
+
+      // Composite cursors use exclusive (created_at,id) ordering. Preserve the
+      // older timestamp-only cursor as inclusive, but query it directly rather
+      // than filtering the legacy latest-50 snapshot, which could silently drop
+      // older unread rows in a backlog. A no-cursor wait has already established
+      // a composite watermark in establishInitialCursor().
+      let data;
+      let error;
+      if (hasCompositeCursor) {
+        const result = await db.from("messages")
+          .select("id, sender_id, body, created_at")
+          .eq("room_id", roomId)
+          .or(`created_at.gt.${cursorCreatedAt},and(created_at.eq.${cursorCreatedAt},id.gt.${cursorMessageId})`)
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
+          .limit(limit);
+        data = result.data;
+        error = result.error;
+      } else {
+        const result = await db.from("messages")
+          .select("id, sender_id, body, created_at")
+          .eq("room_id", roomId)
+          .gte("created_at", effectiveCursorState.createdAt)
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
+          .limit(limit);
+        data = result.data;
+        error = result.error;
+      }
+      if (error) throw new Error("Could not read messages after the supplied cursor.");
+      return {
+        room_id: roomId,
+        participant_id: authorized.participant_id,
+        messages: data || [],
+      };
+    };
+
+    await establishInitialCursor();
+    const initial = await readCurrentGroup();
+    if (hasNewMessages(initial)) {
+      return { timed_out: false, delivery: "cursor-read", ...(await onlyNewMessages(initial) as Record<string, unknown>) };
+    }
+
     db.realtime.setAuth(serviceKey);
     const channel = db.channel("mcp-room-wait-" + roomId + "-" + crypto.randomUUID());
     let eventSeen = false;
@@ -327,19 +542,46 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
         }).subscribe((status: string) => {
           if (settled) return;
           if (status === "SUBSCRIBED") { settled = true; clearTimeout(timer); resolve(true); }
-          else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") { settled = true; clearTimeout(timer); resolve(false); }
+          else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+            settled = true;
+            clearTimeout(timer);
+            resolve(false);
+          }
         });
       });
-      if (!subscribed) return { timed_out: true, delivery: "unavailable", messages: [], note: "Supabase Realtime subscription could not be established. Retry read_group_messages or wait_for_group_messages." };
-
-      // Read after subscribing to close the read/subscribe race. Realtime payloads
-      // are only wake-up signals; the authorized group read remains the source of truth.
-      const afterSubscribe = await invokeAgent(credential, "read");
-      if (hasNewMessages(afterSubscribe)) return { timed_out: false, delivery: "realtime", ...(await onlyNewMessages(afterSubscribe) as Record<string, unknown>) };
-      if (eventSeen) {
-        const afterEvent = await invokeAgent(credential, "read");
-        if (hasNewMessages(afterEvent)) return { timed_out: false, delivery: "realtime", ...(await onlyNewMessages(afterEvent) as Record<string, unknown>) };
+      if (!subscribed) {
+        // A message may have arrived during the failed handshake; inspect the
+        // durable source before reporting an unavailable notification channel.
+        const afterUnavailable = await readCurrentGroup();
+        if (hasNewMessages(afterUnavailable)) {
+          return { timed_out: false, delivery: "realtime-recovery-read", ...(await onlyNewMessages(afterUnavailable) as Record<string, unknown>) };
+        }
+        return {
+          timed_out: true,
+          delivery: "unavailable",
+          messages: [],
+          next_cursor: currentCursor(),
+          note: "Supabase Realtime subscription could not be established. Retry read_group_messages or wait_for_group_messages.",
+        };
       }
+
+      // Re-read after subscribing to close the read/subscribe race. Realtime
+      // payloads are wake signals only; message rows remain the source of truth.
+      const afterSubscribe = await readCurrentGroup();
+      if (hasNewMessages(afterSubscribe)) {
+        return {
+          timed_out: false,
+          delivery: eventSeen ? "realtime" : "realtime-recovery-read",
+          ...(await onlyNewMessages(afterSubscribe) as Record<string, unknown>),
+        };
+      }
+      if (eventSeen) {
+        const afterEvent = await readCurrentGroup();
+        if (hasNewMessages(afterEvent)) {
+          return { timed_out: false, delivery: "realtime", ...(await onlyNewMessages(afterEvent) as Record<string, unknown>) };
+        }
+      }
+
       const eventOrTimeout = await new Promise<"message" | "timeout">((resolve) => {
         eventTimer = setTimeout(() => resolve("timeout"), timeoutMs);
         wakeWaiter = () => {
@@ -348,9 +590,22 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
         };
         if (eventSeen) wakeWaiter();
       });
-      if (eventOrTimeout === "timeout") return { timed_out: true, delivery: "realtime", messages: [] };
-      const afterEvent = await invokeAgent(credential, "read");
-      return { timed_out: !hasNewMessages(afterEvent), delivery: "realtime", ...(await onlyNewMessages(afterEvent) as Record<string, unknown>) };
+      // Always perform a final durable read, even if Realtime didn't wake us.
+      // This recovers a message whose notification was dropped or delayed.
+      const afterWait = await readCurrentGroup();
+      if (hasNewMessages(afterWait)) {
+        return {
+          timed_out: false,
+          delivery: eventOrTimeout === "message" ? "realtime" : "realtime-recovery-read",
+          ...(await onlyNewMessages(afterWait) as Record<string, unknown>),
+        };
+      }
+      return {
+        timed_out: true,
+        delivery: eventOrTimeout === "timeout" ? "timeout" : "realtime-recovery-read",
+        messages: [],
+        next_cursor: currentCursor(),
+      };
     } finally {
       if (eventTimer) clearTimeout(eventTimer);
       try { await db.removeChannel(channel); } catch { /* best-effort cleanup for this bounded subscription */ }
@@ -367,6 +622,67 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     .eq("credential_digest", credentialDigest).is("revoked_at", null)
     .gt("expires_at", new Date().toISOString()).maybeSingle();
   if (connectionError || !connection) throw new Error("AI participant credential is invalid, expired, or revoked.");
+  const sessionDigest = typeof session.session_digest === "string" ? session.session_digest : "";
+  if (name === "load_original_session_bridge_state" || name === "save_original_session_bridge_state") {
+    if (!/^[a-f0-9]{64}$/.test(sessionDigest) ||
+        session.room_id !== connection.room_id || session.participant_id !== connection.participant_id) {
+      throw new Error("Original-session bridge state requires this session's current joined group binding.");
+    }
+
+    if (name === "load_original_session_bridge_state") {
+      const { error: seedError } = await db.from("rub_minds_mcp_bridge_state").upsert({
+        session_digest: sessionDigest,
+        room_id: connection.room_id,
+        participant_id: connection.participant_id,
+      }, { onConflict: "session_digest", ignoreDuplicates: true });
+      if (seedError) throw new Error("Could not initialize original-session bridge state.");
+      const { data: state, error } = await db.from("rub_minds_mcp_bridge_state")
+        .select("room_id, participant_id, cursor_created_at, cursor_message_id, pending_message_id, pending_message_created_at, pending_response, blocked_message_id, blocked_reason, revision, updated_at")
+        .eq("session_digest", sessionDigest).maybeSingle();
+      if (error || !state) throw new Error("Could not load original-session bridge state.");
+      if (state.room_id !== connection.room_id || state.participant_id !== connection.participant_id) {
+        throw new Error("Stored original-session bridge state does not match this joined group.");
+      }
+      return {
+        revision: Number(state.revision),
+        cursor: state.cursor_created_at && state.cursor_message_id
+          ? { after_created_at: state.cursor_created_at, after_message_id: state.cursor_message_id }
+          : null,
+        pending_response: state.pending_message_id && state.pending_message_created_at && state.pending_response
+          ? { source_message_id: state.pending_message_id, message_created_at: state.pending_message_created_at, body: state.pending_response }
+          : null,
+        blocked_message: state.blocked_message_id && state.blocked_reason
+          ? { message_id: state.blocked_message_id, reason: state.blocked_reason }
+          : null,
+        updated_at: state.updated_at,
+      };
+    }
+
+    const expectedRevision = args.expected_revision as number;
+    const { data: saved, error: saveError } = await db.from("rub_minds_mcp_bridge_state").update({
+      cursor_created_at: args.cursor_created_at,
+      cursor_message_id: args.cursor_message_id,
+      pending_message_id: args.pending_message_id,
+      pending_message_created_at: args.pending_message_created_at,
+      pending_response: args.pending_response,
+      blocked_message_id: args.blocked_message_id,
+      blocked_reason: args.blocked_reason,
+      revision: expectedRevision + 1,
+      updated_at: new Date().toISOString(),
+    }).eq("session_digest", sessionDigest)
+      .eq("room_id", connection.room_id)
+      .eq("participant_id", connection.participant_id)
+      .eq("revision", expectedRevision)
+      .select("revision").maybeSingle();
+    if (saveError) throw new Error("Could not save original-session bridge state.");
+    if (!saved) {
+      const { data: current } = await db.from("rub_minds_mcp_bridge_state")
+        .select("revision").eq("session_digest", sessionDigest).maybeSingle();
+      return { saved: false, conflict: true, revision: current ? Number(current.revision) : null };
+    }
+    return { saved: true, conflict: false, revision: Number(saved.revision) };
+  }
+
   await invokeAgent(credential, "read");
 
   if (name === "read_session_memory") {
@@ -484,7 +800,7 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
       supportedVersions: [MCP_MODERN_PROTOCOL_VERSION],
       capabilities: { tools: {} },
       _meta: { "io.modelcontextprotocol/serverInfo": { name: "rub-minds", version: "0.1.0" } },
-      instructions: "Use join_group with explicit confirmation and a unique 64-character hexadecimal join_request_key. Reuse that key only when retrying the same join request. It returns an opaque session_handle that must be passed to subsequent tool calls; use leave_group with explicit confirmation to revoke the participant and terminate the handle. Session imports remain private by default; group memory is shared only when visibility is explicitly set to group.",
+      instructions: "Use join_group with explicit confirmation and a unique 64-character hexadecimal join_request_key; reuse it only for a retry and pass the returned session_handle to later calls. When the user asks for live listening, repeatedly call wait_for_group_messages with an advancing cursor while this assistant turn remains active; process new messages and repeat only if the host permits. This cannot wake an idle model after the turn ends. Use leave_group with confirmation to disconnect. Session imports are private; group memory is group-visible only when visibility is explicitly group.",
       ttlMs: 3600000,
       cacheScope: "public",
     }));
@@ -499,6 +815,9 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
   const toolName = params.name;
   if (typeof toolName !== "string") return modernRpcError(200, id, -32602, "Tool name is required.");
   if (params.arguments !== undefined && !isRecord(params.arguments)) return modernRpcError(200, id, -32602, "Tool arguments must be a JSON object.");
+  // Do not purge an expired row before a join retry checks for its tombstone:
+  // join_group must be able to distinguish an old handle from a fresh session.
+  if (toolName !== "join_group") await cleanupExpiredMcpSessions();
   const rawArgs: Record<string, unknown> = { ...(isRecord(params.arguments) ? params.arguments : {}) };
   let sessionHandle: string;
   let session: Record<string, unknown> | null;
@@ -685,7 +1004,7 @@ async function handleMcpRequest(request: Request) {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: { tools: {} },
       serverInfo: { name: "rub-minds", version: "0.1.0" },
-      instructions: "Use join_group with a valid invitation and explicit confirmation. Session imports are private by default; group memory is shared only when visibility is explicitly set to group.",
+      instructions: "Use join_group with a valid invitation and explicit confirmation. When the user asks for live listening, repeatedly call wait_for_group_messages with an advancing cursor while this assistant turn remains active; process new messages and repeat only if the host permits. This cannot wake an idle model after the turn ends. Session imports are private; group memory is shared only when visibility is explicitly set to group.",
     }), sessionId);
   }
 
@@ -704,6 +1023,8 @@ async function handleMcpRequest(request: Request) {
   const toolName = params.name;
   const args = params.arguments === undefined ? {} : params.arguments;
   if (typeof toolName !== "string") return reply(200, rpcError(id, -32602, "Tool name is required."), sessionId);
+  // Preserve join tombstones until the join/retry path has checked them.
+  if (toolName !== "join_group") await cleanupExpiredMcpSessions();
   let session: Record<string, unknown> | null = await findSession(sessionId);
   if (!session) {
     if (toolName !== "join_group") return httpError(404, "MCP session missing, expired, or invalid. Reconnect and join with a valid invitation.");

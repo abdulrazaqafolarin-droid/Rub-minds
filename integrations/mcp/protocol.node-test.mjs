@@ -10,6 +10,9 @@ import {
   rpcResult,
   validateSessionMemoryDocument,
   validateToolArguments,
+  filterMessagesAfterCursor,
+  compareMessageCursors,
+  isValidMessageCursor,
   isAllowedMcpOrigin,
   validateProtocolVersionHeader,
   applyMcpCors,
@@ -48,6 +51,7 @@ test("advertises invitation, messaging, and memory tools", () => {
   assert.equal(MCP_PROTOCOL_VERSION, "2025-06-18");
   assert.deepEqual(RUB_MINDS_MCP_TOOLS.map((tool) => tool.name), [
     "join_group", "leave_group", "read_group_context", "read_group_messages", "wait_for_group_messages", "send_group_message",
+    "load_original_session_bridge_state", "save_original_session_bridge_state",
     "read_session_memory", "import_session_memory", "remember_memory",
   ]);
 });
@@ -99,13 +103,178 @@ test("leave_group requires explicit confirmation and rejects unknown arguments",
   assert.match(validateToolArguments("leave_group", { confirm_leave: true, force: true }), /Unknown/);
 });
 
-test("Realtime wait tool validates cursor and bounds its wait", () => {
+test("read_group_messages accepts a paired composite cursor and bounded page limit", () => {
+  assert.equal(validateToolArguments("read_group_messages", {}), null);
+  assert.equal(validateToolArguments("read_group_messages", {
+    after_created_at: "2026-10-24T17:00:00.123456Z",
+    after_message_id: "00000000-0000-4000-8000-000000000042",
+    limit: 20,
+  }), null);
+  assert.match(validateToolArguments("read_group_messages", { after_created_at: "2026-10-24T17:00:00Z" }), /both be supplied/);
+  assert.match(validateToolArguments("read_group_messages", { after_message_id: "00000000-0000-4000-8000-000000000042" }), /both be supplied/);
+  assert.match(validateToolArguments("read_group_messages", { limit: 0 }), /1 to 100/);
+  assert.match(validateToolArguments("read_group_messages", { limit: 101 }), /1 to 100/);
+  assert.match(validateToolArguments("read_group_messages", { surprise: true }), /Unknown/);
+  const tool = getModernMcpTools().find(item => item.name === "read_group_messages");
+  assert.ok(tool);
+  assert.match(tool.description, /next_cursor/);
+  assert.ok(tool.inputSchema.properties.after_created_at);
+  assert.ok(tool.inputSchema.properties.after_message_id);
+  assert.ok(tool.inputSchema.properties.limit);
+});
+
+test("Realtime wait tool validates an exclusive composite cursor and bounds its wait", () => {
   assert.equal(validateToolArguments("wait_for_group_messages", {}), null);
-  assert.equal(validateToolArguments("wait_for_group_messages", { after_created_at: "2026-10-24T17:00:00.000Z", timeout_ms: 5000 }), null);
+  assert.equal(validateToolArguments("wait_for_group_messages", {
+    after_created_at: "2026-10-24T17:00:00.000Z", timeout_ms: 5000,
+  }), null); // Legacy timestamp-only callers remain supported.
+  assert.equal(validateToolArguments("wait_for_group_messages", {
+    after_created_at: "2026-10-24T17:00:00.000Z", after_message_id: "00000000-0000-4000-8000-000000000042", timeout_ms: 5000,
+  }), null);
   assert.match(validateToolArguments("wait_for_group_messages", { after_created_at: "not-a-date" }), /date-time/);
+  assert.match(validateToolArguments("wait_for_group_messages", { after_message_id: "00000000-0000-4000-8000-000000000042" }), /requires after_created_at/);
+  assert.match(validateToolArguments("wait_for_group_messages", {
+    after_created_at: "2026-10-24T17:00:00.000Z", after_message_id: "not-a-uuid",
+  }), /UUID/);
+  assert.match(validateToolArguments("wait_for_group_messages", {
+    after_created_at: "October 24, 2026", after_message_id: "00000000-0000-4000-8000-000000000042",
+  }), /ISO date-time/);
+  assert.match(validateToolArguments("wait_for_group_messages", {
+    after_created_at: "2026-10-24T17:00:00.000Z", after_message_id: "   ",
+  }), /UUID/);
+  assert.match(validateToolArguments("wait_for_group_messages", {
+    after_created_at: "2026-10-24T17:00:00.000Z", after_message_id: "x".repeat(201),
+  }), /UUID/);
   assert.match(validateToolArguments("wait_for_group_messages", { timeout_ms: 999 }), /1000 to 15000/);
   assert.match(validateToolArguments("wait_for_group_messages", { timeout_ms: 15001 }), /1000 to 15000/);
+  assert.equal(validateToolArguments("wait_for_group_messages", { limit: 1 }), null);
+  assert.equal(validateToolArguments("wait_for_group_messages", { limit: 100 }), null);
+  assert.match(validateToolArguments("wait_for_group_messages", { limit: 0 }), /1 to 100/);
+  assert.match(validateToolArguments("wait_for_group_messages", { limit: 101 }), /1 to 100/);
   assert.match(validateToolArguments("wait_for_group_messages", { extra: true }), /Unknown/);
+});
+
+test("composite message cursor excludes the last message and preserves timestamp ties", () => {
+  const sameTime = "2026-10-24T17:00:00.123456+00:00";
+  const afterTime = "2026-10-24T17:00:00.123457+00:00";
+  const data = { messages: [
+    { id: "00000000-0000-0000-0000-000000000001", created_at: "2026-10-24T17:00:00.123455+00:00", body: "older" },
+    { id: "00000000-0000-0000-0000-000000000040", created_at: sameTime, body: "cursor" },
+    { id: "00000000-0000-0000-0000-000000000041", created_at: sameTime, body: "same timestamp, later id" },
+    { id: "00000000-0000-0000-0000-000000000001", created_at: afterTime, body: "later timestamp, any id" },
+    { created_at: afterTime, body: "later timestamp but missing ID" },
+    { id: "bad", created_at: "not a timestamp", body: "invalid" },
+    null,
+  ] };
+  const result = filterMessagesAfterCursor(data, {
+    afterCreatedAt: sameTime,
+    afterMessageId: "00000000-0000-0000-0000-000000000040",
+  });
+  assert.deepEqual(result.map(message => message.body), [
+    "same timestamp, later id",
+    "later timestamp, any id",
+  ]);
+});
+
+test("message cursor comparator uses normalized microsecond timestamps then IDs", () => {
+  const cursor = { id: "message-40", created_at: "2026-10-24T17:00:00.123456+00:00" };
+  assert.equal(compareMessageCursors(
+    { id: "message-41", created_at: "2026-10-24T19:00:00.123456+02:00" }, cursor
+  ), 1);
+  assert.equal(compareMessageCursors(
+    { id: "message-39", created_at: "2026-10-24T19:00:00.123456+02:00" }, cursor
+  ), -1);
+  assert.equal(compareMessageCursors(
+    { id: "message-99", created_at: "2026-10-24T19:00:00.123455+02:00" }, cursor
+  ), -1);
+  assert.equal(isValidMessageCursor(cursor), true);
+  assert.equal(isValidMessageCursor({ created_at: "2026-10-24T17:00:00.000Z" }), false);
+  assert.equal(isValidMessageCursor({ id: "bad", created_at: "invalid" }), false);
+});
+
+test("composite cursor normalizes timezone offsets and compares sub-millisecond fractions exactly", () => {
+  const cursor = "2026-10-24T17:00:00.123456+00:00";
+  const result = filterMessagesAfterCursor({ messages: [
+    { id: "00000000-0000-0000-0000-000000000099", created_at: "2026-10-24T19:00:00.123455+02:00", body: "one microsecond before" },
+    { id: "00000000-0000-0000-0000-000000000041", created_at: "2026-10-24T19:00:00.123456+02:00", body: "same instant, later id" },
+    { id: "00000000-0000-0000-0000-000000000001", created_at: "2026-10-24T19:00:00.123457+02:00", body: "one microsecond after" },
+  ] }, {
+    afterCreatedAt: cursor,
+    afterMessageId: "00000000-0000-0000-0000-000000000040",
+  });
+  assert.deepEqual(result.map(message => message.body), [
+    "same instant, later id",
+    "one microsecond after",
+  ]);
+});
+
+test("composite cursor rejects unparseable timestamps instead of guessing their order", () => {
+  const result = filterMessagesAfterCursor({ messages: [
+    { id: "00000000-0000-0000-0000-000000000099", created_at: "2026-10-24 17:00:00+00", body: "non-ISO" },
+  ] }, {
+    afterCreatedAt: "2026-10-24T17:00:00.000000Z",
+    afterMessageId: "00000000-0000-0000-0000-000000000040",
+  });
+  assert.deepEqual(result, []);
+});
+
+test("timestamp-only cursors remain inclusive for older MCP clients", () => {
+  const stamp = "2026-10-24T17:00:00.000Z";
+  const result = filterMessagesAfterCursor({ messages: [
+    { id: "before", created_at: "2026-10-24T16:59:59.999Z" },
+    { id: "at", created_at: stamp },
+    { id: "after", created_at: "2026-10-24T17:00:00.001Z" },
+  ] }, { afterCreatedAt: stamp });
+  assert.deepEqual(result.map(message => message.id), ["at", "after"]);
+});
+
+test("message cursor filtering handles malformed input and missing cursor", () => {
+  assert.deepEqual(filterMessagesAfterCursor(null, { afterCreatedAt: null, now: 0 }), []);
+  assert.deepEqual(filterMessagesAfterCursor({ messages: "not an array" }, { afterCreatedAt: null, now: 0 }), []);
+  assert.deepEqual(filterMessagesAfterCursor({ messages: [
+    { id: "future", created_at: "1970-01-01T00:00:00.001Z" },
+    { id: "past", created_at: "1969-12-31T23:59:59.999Z" },
+  ] }, { afterCreatedAt: null, now: 0 }).map(message => message.id), ["future"]);
+});
+
+test("bridge-state tools are discoverable and load requires no caller-controlled state", () => {
+  const tools = getModernMcpTools();
+  assert.ok(tools.some(tool => tool.name === "load_original_session_bridge_state"));
+  assert.ok(tools.some(tool => tool.name === "save_original_session_bridge_state"));
+  assert.equal(validateToolArguments("load_original_session_bridge_state", {}), null);
+  assert.match(validateToolArguments("load_original_session_bridge_state", { cursor: "caller-controlled" }), /no arguments/);
+});
+
+test("bridge-state saves require a full valid snapshot and expected revision", () => {
+  const valid = {
+    expected_revision: 0,
+    cursor_created_at: null,
+    cursor_message_id: null,
+    pending_message_id: null,
+    pending_message_created_at: null,
+    pending_response: null,
+    blocked_message_id: null,
+    blocked_reason: null,
+  };
+  assert.equal(validateToolArguments("save_original_session_bridge_state", valid), null);
+  assert.match(validateToolArguments("save_original_session_bridge_state", {
+    ...valid, expected_revision: -1,
+  }), /non-negative safe integer/);
+  assert.match(validateToolArguments("save_original_session_bridge_state", {
+    ...valid, cursor_created_at: "2026-10-24T17:00:00.000Z",
+  }), /both be null or both be set/);
+  assert.match(validateToolArguments("save_original_session_bridge_state", {
+    ...valid, pending_message_id: "11111111-1111-4111-8111-111111111111",
+  }), /all be null/);
+  assert.match(validateToolArguments("save_original_session_bridge_state", {
+    ...valid, pending_response: "   ",
+  }), /all be null or include/);
+  assert.match(validateToolArguments("save_original_session_bridge_state", {
+    ...valid, blocked_message_id: "11111111-1111-4111-8111-111111111111",
+  }), /both be null or a bounded/);
+  assert.match(validateToolArguments("save_original_session_bridge_state", {
+    ...valid, unexpected: true,
+  }), /exactly the documented/);
 });
 
 test("message tool rejects empty, oversized, and unknown arguments", () => {
@@ -144,4 +313,17 @@ test("memory visibility is explicit and idempotency keys are bounded", () => {
 test("JSON-RPC helpers preserve request ids and error codes", () => {
   assert.deepEqual(rpcResult("abc", { ok: true }), { jsonrpc: "2.0", id: "abc", result: { ok: true } });
   assert.deepEqual(rpcError(2, -32601, "Method not found"), { jsonrpc: "2.0", id: 2, error: { code: -32601, message: "Method not found" } });
+});
+
+
+test("wait tool explains active-turn monitoring and the idle wake limitation", () => {
+  const tool = RUB_MINDS_MCP_TOOLS.find((item) => item.name === "wait_for_group_messages");
+  assert.ok(tool);
+  assert.match(tool.description, /Repeat only while/);
+  assert.match(tool.description, /after_created_at and after_message_id/);
+  assert.match(tool.description, /cursor is exclusive/);
+  assert.match(tool.description, /next_cursor/);
+  assert.match(tool.description, /Optional limit bounds the page/);
+  assert.match(tool.description, /cannot wake an idle model/);
+  assert.match(tool.description, /this assistant turn remains active/);
 });
