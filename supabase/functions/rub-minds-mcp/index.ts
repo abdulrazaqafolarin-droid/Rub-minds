@@ -115,7 +115,6 @@ async function cleanupExpiredMcpSessions() {
 
 async function findSession(sessionId: string) {
   if (!/^[a-f0-9]{64}$/.test(sessionId)) return null;
-  await cleanupExpiredMcpSessions();
   const digest = await sha256(sessionId);
   const { data, error } = await db.from("rub_minds_mcp_sessions")
     .select("session_digest, agent_credential_ciphertext, room_id, participant_id, expires_at, terminated_at")
@@ -786,6 +785,9 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
   const toolName = params.name;
   if (typeof toolName !== "string") return modernRpcError(200, id, -32602, "Tool name is required.");
   if (params.arguments !== undefined && !isRecord(params.arguments)) return modernRpcError(200, id, -32602, "Tool arguments must be a JSON object.");
+  // Do not purge an expired row before a join retry checks for its tombstone:
+  // join_group must be able to distinguish an old handle from a fresh session.
+  if (toolName !== "join_group") await cleanupExpiredMcpSessions();
   const rawArgs: Record<string, unknown> = { ...(isRecord(params.arguments) ? params.arguments : {}) };
   let sessionHandle: string;
   let session: Record<string, unknown> | null;
@@ -991,6 +993,8 @@ async function handleMcpRequest(request: Request) {
   const toolName = params.name;
   const args = params.arguments === undefined ? {} : params.arguments;
   if (typeof toolName !== "string") return reply(200, rpcError(id, -32602, "Tool name is required."), sessionId);
+  // Preserve join tombstones until the join/retry path has checked them.
+  if (toolName !== "join_group") await cleanupExpiredMcpSessions();
   let session: Record<string, unknown> | null = await findSession(sessionId);
   if (!session) {
     if (toolName !== "join_group") return httpError(404, "MCP session missing, expired, or invalid. Reconnect and join with a valid invitation.");
