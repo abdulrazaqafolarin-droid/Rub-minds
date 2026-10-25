@@ -139,25 +139,55 @@ export function isRecord(value) {
  * @param {{afterCreatedAt?: string | null, afterMessageId?: string | null, now?: number}} options
  * @returns {Record<string, any>[]}
  */
+/**
+ * Parse an ISO timestamp with timezone into exact epoch microseconds.
+ * Date.parse provides a timezone-normalized millisecond value; add the last
+ * three fractional digits separately so PostgreSQL microsecond ties survive.
+ */
+function timestampMicros(value) {
+  if (typeof value !== "string") return null;
+  const match = value.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}:\d{2})$/);
+  if (!match) return null;
+  const milliseconds = Date.parse(value);
+  if (!Number.isFinite(milliseconds)) return null;
+  const fractionalMicros = Number((match[2] || "").padEnd(6, "0"));
+  return BigInt(milliseconds) * 1000n + BigInt(fractionalMicros % 1000);
+}
+
+/**
+ * Filter a durable group-message read using an exclusive (created_at, id)
+ * cursor when both fields are supplied. ISO offsets are normalized before
+ * comparison, and timestamp precision remains exact to microseconds.
+ * Timestamp-only cursors retain their inclusive behavior for older clients.
+ *
+ * @param {unknown} data
+ * @param {{afterCreatedAt?: string | null, afterMessageId?: string | null, now?: number}} options
+ * @returns {Record<string, any>[]}
+ */
 export function filterMessagesAfterCursor(data, {
   afterCreatedAt = null,
   afterMessageId = null,
   now = Date.now(),
 } = {}) {
   const cursor = afterCreatedAt === null ? now : Date.parse(afterCreatedAt);
+  const cursorMicros = afterCreatedAt !== null && afterMessageId !== null
+    ? timestampMicros(afterCreatedAt)
+    : null;
+  if (afterCreatedAt !== null && afterMessageId !== null && cursorMicros === null) return [];
   if (!isRecord(data) || !Array.isArray(data.messages)) return [];
   return data.messages.filter((message) => {
     if (!isRecord(message) || typeof message.created_at !== "string" ||
         !Number.isFinite(Date.parse(message.created_at))) return false;
     if (afterCreatedAt !== null && afterMessageId !== null) {
       if (typeof message.id !== "string") return false;
-      return message.created_at > afterCreatedAt ||
-        (message.created_at === afterCreatedAt && message.id > afterMessageId);
+      const messageMicros = timestampMicros(message.created_at);
+      if (messageMicros === null) return false;
+      return messageMicros > cursorMicros ||
+        (messageMicros === cursorMicros && message.id > afterMessageId);
     }
     return Date.parse(message.created_at) >= cursor;
   });
 }
-
 /** @param {string} name @param {unknown} args @returns {string | null} */
 export function validateToolArguments(name, args) {
   if (!isRecord(args)) return "Tool arguments must be a JSON object.";
