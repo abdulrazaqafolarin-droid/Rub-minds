@@ -710,7 +710,105 @@ jobs:
             after_created_at: liveWakeResult.structuredContent.messages.at(-1).created_at,
             after_message_id: liveWakeResult.structuredContent.messages.at(-1).id,
           }, "live wake response should return a cursor for the last message in its batch");
-          console.log("Local MCP live wait recovered a newly inserted room message and returned its next cursor.");
+          
+          // Verify that a truly empty room gets a valid initial cursor, then wakes
+          // on its first message. The second call uses the returned sentinel cursor
+          // so the test is deterministic even if the first request is slow to start.
+          const emptyRoomResponse = await fetch(apiUrl + "/rest/v1/rooms", {
+            method: "POST",
+            headers: { ...adminHeaders, Prefer: "return=representation" },
+            body: JSON.stringify({
+              owner_id: ownerPayload.id,
+              title: "Local empty-room wake test",
+              objective: "Verify the empty-room cursor sentinel",
+            }),
+          });
+          const emptyRooms = await emptyRoomResponse.json();
+          assert.equal(emptyRoomResponse.status, 201, "could not create empty-room wake fixture: " + JSON.stringify(emptyRooms));
+          const emptyRoom = emptyRooms[0];
+          const emptyInviteToken = "d".repeat(64);
+          const emptyTokenHash = createHash("sha256").update(emptyInviteToken, "utf8").digest("hex");
+          const emptyInviteResponse = await fetch(apiUrl + "/rest/v1/room_invites", {
+            method: "POST",
+            headers: { ...adminHeaders, Prefer: "return=representation" },
+            body: JSON.stringify({
+              room_id: emptyRoom.id,
+              created_by: ownerPayload.id,
+              token_hash: emptyTokenHash,
+              expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+              max_uses: 1,
+              uses: 0,
+              allow_ai: true,
+              max_ai_uses: 1,
+              ai_uses: 0,
+            }),
+          });
+          const emptyInvites = await emptyInviteResponse.json();
+          assert.equal(emptyInviteResponse.status, 201, "could not create empty-room invite: " + JSON.stringify(emptyInvites));
+          const emptyJoin = await rpc("tools/call", 30, {
+            name: "join_group",
+            arguments: {
+              invite_token: emptyInviteToken,
+              agent_label: "CI empty-room AI",
+              confirm_join: true,
+              join_request_key: "4".repeat(64),
+            },
+          });
+          assert.equal(emptyJoin.isError, undefined, "AI could not join the empty-room fixture: " + JSON.stringify(emptyJoin));
+          assert.equal(emptyJoin.structuredContent?.room_id, emptyRoom.id);
+
+          const emptyBaseline = await rpc("tools/call", 31, {
+            name: "wait_for_group_messages",
+            arguments: {
+              session_handle: emptyJoin.structuredContent.session_handle,
+              timeout_ms: 1000,
+              limit: 10,
+            },
+          });
+          assert.equal(emptyBaseline.isError, undefined, "empty-room baseline read failed: " + JSON.stringify(emptyBaseline));
+          assert.equal(emptyBaseline.structuredContent?.timed_out, true,
+            "an empty room should finish its baseline with a bounded timeout");
+          assert.deepEqual(emptyBaseline.structuredContent?.messages, [],
+            "the empty-room baseline must not invent or replay messages");
+          assert.deepEqual(emptyBaseline.structuredContent?.next_cursor, {
+            after_created_at: "1970-01-01T00:00:00.000Z",
+            after_message_id: "00000000-0000-1000-8000-000000000000",
+          }, "an empty room should return the valid epoch composite cursor");
+
+          const emptyWakePromise = rpc("tools/call", 32, {
+            name: "wait_for_group_messages",
+            arguments: {
+              session_handle: emptyJoin.structuredContent.session_handle,
+              ...emptyBaseline.structuredContent.next_cursor,
+              timeout_ms: 5000,
+              limit: 10,
+            },
+          });
+          await new Promise(resolve => setTimeout(resolve, 250));
+          const emptyMessageId = "50000000-0000-4000-8000-000000000001";
+          const emptyMessageInsert = await fetch(apiUrl + "/rest/v1/messages", {
+            method: "POST",
+            headers: { ...adminHeaders, Prefer: "return=minimal" },
+            body: JSON.stringify({
+              id: emptyMessageId,
+              room_id: emptyRoom.id,
+              sender_id: emptyJoin.structuredContent.participant_id,
+              body: "First message in the empty room",
+            }),
+          });
+          assert.equal(emptyMessageInsert.status, 201, "could not send first empty-room message: " + await emptyMessageInsert.text());
+          const emptyWake = await emptyWakePromise;
+          assert.equal(emptyWake.isError, undefined, "empty-room live wait failed: " + JSON.stringify(emptyWake));
+          assert.equal(emptyWake.structuredContent?.timed_out, false, "the first message should wake the empty-room listener");
+          assert.ok(emptyWake.structuredContent?.messages?.some(message => message.id === emptyMessageId),
+            "the first message after an empty-room baseline must be returned");
+          assert.deepEqual(emptyWake.structuredContent?.next_cursor, {
+            after_created_at: emptyWake.structuredContent.messages.at(-1).created_at,
+            after_message_id: emptyWake.structuredContent.messages.at(-1).id,
+          });
+          console.log("Local MCP empty-room baseline used the valid epoch cursor and woke on the first inserted message.");
+
+console.log("Local MCP live wait recovered a newly inserted room message and returned its next cursor.");
 
           console.log("Local MCP exclusive composite cursor returned all 60 tied-timestamp rows, then preserved its cursor on timeout.");
 
