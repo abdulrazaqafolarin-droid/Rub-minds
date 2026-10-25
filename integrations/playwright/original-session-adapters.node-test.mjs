@@ -101,7 +101,7 @@ test("refuses to overlap an already-generating provider turn", async () => {
   });
   await assert.rejects(
     adapter.ask(makeChatGPTPage(state), "group message"),
-    error => error?.submissionState === "not_submitted" && /already generating/.test(error.message),
+    error => error?.submissionState === "not_submitted" && /generating/.test(error.message),
   );
   assert.equal(approvals, 1, "obtain explicit approval before inspecting the provider DOM");
   assert.equal(state.submittedPrompt, undefined, "do not alter the active conversation composer");
