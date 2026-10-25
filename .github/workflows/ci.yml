@@ -52,6 +52,7 @@ jobs:
             max_ai_uses integer not null default 5,
             ai_uses integer not null default 0
           );
+          create table public.rooms(id uuid primary key);
           create table public.participants(
             id uuid primary key default gen_random_uuid(),
             room_id uuid not null,
@@ -72,6 +73,7 @@ jobs:
           psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261019120000_hosted_mcp_sessions.sql
           psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261021150000_atomic_mcp_join_idempotency.sql
           psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261022100000_public_invite_rate_limits.sql
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261025020000_mcp_bridge_state.sql
           psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
           insert into public.room_invites(token_hash, room_id, created_by, expires_at, allow_ai, max_ai_uses, ai_uses)
             values (encode(sha256(convert_to(repeat('e',64), 'UTF8')), 'hex'),
@@ -281,6 +283,88 @@ jobs:
             end;
           end;
           $test$;
+          SQL
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          DO $bridge$
+          DECLARE
+            rejected boolean := false;
+          BEGIN
+            IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.rub_minds_mcp_bridge_state'::regclass) THEN
+              RAISE EXCEPTION 'RLS must be enabled on original-session bridge state';
+            END IF;
+            IF has_table_privilege('anon', 'public.rub_minds_mcp_bridge_state', 'SELECT')
+              OR has_table_privilege('authenticated', 'public.rub_minds_mcp_bridge_state', 'SELECT')
+              OR has_table_privilege('anon', 'public.rub_minds_mcp_bridge_state', 'INSERT')
+              OR has_table_privilege('authenticated', 'public.rub_minds_mcp_bridge_state', 'INSERT')
+              OR has_table_privilege('anon', 'public.rub_minds_mcp_bridge_state', 'UPDATE')
+              OR has_table_privilege('authenticated', 'public.rub_minds_mcp_bridge_state', 'UPDATE') THEN
+              RAISE EXCEPTION 'Client roles must not access original-session bridge state';
+            END IF;
+            IF NOT has_table_privilege('service_role', 'public.rub_minds_mcp_bridge_state', 'SELECT')
+              OR NOT has_table_privilege('service_role', 'public.rub_minds_mcp_bridge_state', 'INSERT')
+              OR NOT has_table_privilege('service_role', 'public.rub_minds_mcp_bridge_state', 'UPDATE') THEN
+              RAISE EXCEPTION 'Service-role bridge-state grants are incomplete';
+            END IF;
+
+            INSERT INTO public.rooms(id)
+              VALUES ('10000000-0000-0000-0000-000000000020');
+            INSERT INTO public.participants(id, room_id, display_name, kind, status)
+              VALUES ('20000000-0000-0000-0000-000000000020',
+                      '10000000-0000-0000-0000-000000000020',
+                      'CI bridge-state fixture', 'external_agent', 'active');
+            INSERT INTO public.rub_minds_mcp_sessions(
+              session_digest, agent_credential_ciphertext, room_id, participant_id, expires_at
+            ) VALUES (
+              repeat('7',64), 'ci-only-fixture-ciphertext',
+              '10000000-0000-0000-0000-000000000020',
+              '20000000-0000-0000-0000-000000000020',
+              now() + interval '1 hour'
+            );
+            INSERT INTO public.rub_minds_mcp_bridge_state(session_digest, room_id, participant_id)
+              VALUES (repeat('7',64),
+                      '10000000-0000-0000-0000-000000000020',
+                      '20000000-0000-0000-0000-000000000020');
+            IF (SELECT revision FROM public.rub_minds_mcp_bridge_state WHERE session_digest = repeat('7',64)) <> 0 THEN
+              RAISE EXCEPTION 'New bridge-state rows must start at revision zero';
+            END IF;
+
+            rejected := false;
+            BEGIN
+              UPDATE public.rub_minds_mcp_bridge_state
+                SET cursor_created_at = now()
+                WHERE session_digest = repeat('7',64);
+            EXCEPTION WHEN check_violation THEN
+              rejected := true;
+            END;
+            IF NOT rejected THEN
+              RAISE EXCEPTION 'Partial composite cursor state must be rejected';
+            END IF;
+
+            rejected := false;
+            BEGIN
+              UPDATE public.rub_minds_mcp_bridge_state
+                SET pending_message_id = '30000000-0000-0000-0000-000000000020'
+                WHERE session_digest = repeat('7',64);
+            EXCEPTION WHEN check_violation THEN
+              rejected := true;
+            END;
+            IF NOT rejected THEN
+              RAISE EXCEPTION 'Partial pending-response state must be rejected';
+            END IF;
+
+            rejected := false;
+            BEGIN
+              UPDATE public.rub_minds_mcp_bridge_state
+                SET blocked_message_id = '40000000-0000-0000-0000-000000000020'
+                WHERE session_digest = repeat('7',64);
+            EXCEPTION WHEN check_violation THEN
+              rejected := true;
+            END;
+            IF NOT rejected THEN
+              RAISE EXCEPTION 'Partial blocked-state record must be rejected';
+            END IF;
+          END;
+          $bridge$;
           SQL
   build:
     runs-on: ubuntu-latest
