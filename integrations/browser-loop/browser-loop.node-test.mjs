@@ -374,9 +374,10 @@ test('custom prompt is used for the current run but is not persisted', async () 
   const privateMarker = 'PRIVATE_CUSTOM_PROMPT_DO_NOT_PERSIST';
   h.document.getElementById('rubminds-continuation-panel').querySelector('#rm-trigger').value = privateMarker;
   const result = await h.startAndWait();
-  assert.equal(result.sent[0], privateMarker);
+  assert.ok(result.sent[0].startsWith(privateMarker));
+  assert.match(result.sent[0], /wait_for_group_messages/);
   const stored = JSON.parse(h.context.localStorage.getItem('rubMindsContinuationSettingsV1'));
-  assert.deepEqual(Object.keys(stored).sort(), ['delaySec', 'maxRounds', 'timeoutMin']);
+  assert.deepEqual(Object.keys(stored).sort(), ['delaySec', 'maxRounds', 'mode', 'timeoutMin']);
   assert.equal(JSON.stringify(stored).includes(privateMarker), false);
 });
 
@@ -513,4 +514,24 @@ test('private resume-link registration is unavailable unless the saved chat is o
   assert.equal(button.disabled, true);
   button.click();
   assert.equal(h.sent.length, 0);
+});
+
+
+test('participation modes shape prompts for smart chat, mentions-only, and task focus', async () => {
+  const cases = [
+    ['smart', /SMART PARTICIPATION: casual chit-chat, humor, reactions, brainstorming/],
+    ['mentions', /MENTIONS ONLY: respond to direct @mentions/],
+    ['focus', /TASK FOCUS: prioritize the existing assigned task/],
+  ];
+  for (const [mode, expected] of cases) {
+    const h = makeHarness({ scenario: 'done-first' });
+    const panel = h.document.getElementById('rubminds-continuation-panel');
+    panel.querySelector('#rm-mode').value = mode;
+    const result = await h.startAndWait();
+    assert.equal(result.sent.length, 1);
+    assert.match(result.sent[0], new RegExp('Selected participation mode: ' + mode));
+    assert.match(result.sent[0], expected);
+    assert.match(result.sent[0], /wait_for_group_messages/);
+    assert.equal(JSON.parse(h.context.localStorage.getItem('rubMindsContinuationSettingsV1')).mode, mode);
+  }
 });
