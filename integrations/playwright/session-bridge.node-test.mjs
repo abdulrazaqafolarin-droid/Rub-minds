@@ -383,6 +383,62 @@ test("direct step honours a durable provider-prompt block restored during initia
   assert.equal(asks, 0);
 });
 
+test("restarts from a durable pending answer without prompting the provider again", async () => {
+  let state = {
+    revision: 5,
+    cursor: {
+      after_created_at: "2026-10-24T17:00:00.000000Z",
+      after_message_id: "10000000-0000-4000-8000-000000000001",
+    },
+    pending_response: {
+      source_message_id: "20000000-0000-4000-8000-000000000002",
+      message_created_at: "2026-10-24T17:00:00.000001Z",
+      body: "answer saved before crash",
+    },
+    blocked_message: null,
+  };
+  const saves = [];
+  const stateStore = {
+    load: async () => structuredClone(state),
+    save: async snapshot => {
+      assert.equal(snapshot.expected_revision, state.revision);
+      state = {
+        revision: state.revision + 1,
+        cursor: snapshot.cursor,
+        pending_response: snapshot.pending_response,
+        blocked_message: snapshot.blocked_message,
+      };
+      saves.push(snapshot);
+      return { saved: true, conflict: false, revision: state.revision };
+    },
+  };
+  let askCalls = 0;
+  const sent = [];
+  const bridge = new PlaywrightSessionBridge({
+    page: { isClosed: () => false },
+    participantId: "self",
+    adapter: { ask: async () => { askCalls++; return "must not ask again"; } },
+    readMessages: async () => ({ messages: [] }),
+    sendMessage: async (body, sourceMessageId) => {
+      sent.push({ body, sourceMessageId });
+      return { ok: true };
+    },
+    stateStore,
+  });
+  const result = await bridge.step({ approved: true });
+  assert.deepEqual(result, { status: "ok", sent: 1, processed: 0 });
+  assert.equal(askCalls, 0);
+  assert.deepEqual(sent, [{
+    body: "answer saved before crash",
+    sourceMessageId: "20000000-0000-4000-8000-000000000002",
+  }]);
+  assert.equal(state.cursor.after_message_id, "20000000-0000-4000-8000-000000000002");
+  assert.equal(state.pending_response, null);
+  assert.equal(state.blocked_message, null);
+  assert.equal(state.revision, 6);
+  assert.equal(saves.length, 1);
+});
+
 test("restores durable cursor state and avoids a fresh baseline that could skip messages", async () => {
   const stored = {
     revision: 7,
