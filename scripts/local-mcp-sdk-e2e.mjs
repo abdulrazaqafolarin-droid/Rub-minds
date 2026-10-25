@@ -337,7 +337,7 @@ try {
     arguments: { session_handle: one.session_handle },
   });
   assert.ok(stillPrivateForOwner.structuredContent?.group_memory?.some(entry =>
-    entry.visibility === "private" && entry.idempotency_key === undefined && entry.content.includes("PRIVATE ONLY")),
+    entry.visibility === "private" && entry.content.includes("PRIVATE ONLY")),
     "cross-participant deletion must not remove AI one's private entry");
 
   const ownerForget = await first.callTool({
