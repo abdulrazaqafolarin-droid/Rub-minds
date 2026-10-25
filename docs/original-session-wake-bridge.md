@@ -105,3 +105,10 @@ The transport requires HTTPS except for explicit loopback development, rejects e
 
 
 The factory has a dedicated fake-adapter integration test for this complete composition. Local disposable CI also exercises the concrete HTTP transport against the actual hosted-MCP Edge Function endpoint, verifying a read/send/read roundtrip with a stable `source_message_id`. This verifies the Rub Minds transport wiring, not ChatGPT/Claude page selectors or idle-thread activation.
+
+
+## Cursor paging on `read_group_messages`
+
+Composite pagination is now part of the `read_group_messages` tool itself, rather than being available only through the active-turn wait tool. Calling it with no arguments returns the legacy latest-message snapshot plus `next_cursor`; calling it with both `after_created_at` and `after_message_id` reads an immediate, bounded page strictly after that cursor, ordered by timestamp then ID. Empty results preserve the supplied cursor, and an empty initial room returns the epoch sentinel cursor. `limit` is optional and bounded to 1–100 (default 50).
+
+`wait_for_group_messages` remains the separate long-poll/Realtime notification tool. The session bridge's `readMessages` adapter now uses `read_group_messages` for immediate snapshots/pages, keeping notification waiting separate from message retrieval.

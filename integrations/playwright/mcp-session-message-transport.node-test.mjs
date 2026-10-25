@@ -77,19 +77,19 @@ test("cursor reads forward the exact composite cursor, bounded limit, and read w
   const fake = fakeFetch(({ request }) => fakeResponse({
     jsonrpc: "2.0",
     id: request.id,
-    result: { structuredContent: { messages: [], timed_out: true, next_cursor: cursor } },
+    result: { structuredContent: { messages: [], next_cursor: cursor } },
   }));
   const transport = new McpSessionMessageTransport({
     endpoint: ENDPOINT, sessionHandle: SESSION, fetchImpl: fake.fetch, waitTimeoutMs: 2000,
   });
   const adapters = transport.createBridgeAdapters();
   const result = await adapters.readMessages({ cursor, limit: 9 });
-  assert.equal(result.timed_out, true);
+  assert.deepEqual(result.next_cursor, cursor);
   const sent = fake.requests[0].request.params;
-  assert.equal(sent.name, "wait_for_group_messages");
+  assert.equal(sent.name, "read_group_messages");
   assert.equal(sent.arguments.after_created_at, cursor.after_created_at);
   assert.equal(sent.arguments.after_message_id, cursor.after_message_id);
-  assert.equal(sent.arguments.timeout_ms, 2000);
+  assert.equal(sent.arguments.timeout_ms, undefined);
   assert.equal(sent.arguments.limit, 9);
   assert.equal(sent.arguments.session_handle, SESSION);
 });

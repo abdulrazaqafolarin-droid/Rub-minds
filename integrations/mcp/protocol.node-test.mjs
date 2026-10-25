@@ -102,6 +102,26 @@ test("leave_group requires explicit confirmation and rejects unknown arguments",
   assert.match(validateToolArguments("leave_group", { confirm_leave: true, force: true }), /Unknown/);
 });
 
+test("read_group_messages accepts a paired composite cursor and bounded page limit", () => {
+  assert.equal(validateToolArguments("read_group_messages", {}), null);
+  assert.equal(validateToolArguments("read_group_messages", {
+    after_created_at: "2026-10-24T17:00:00.123456Z",
+    after_message_id: "00000000-0000-4000-8000-000000000042",
+    limit: 20,
+  }), null);
+  assert.match(validateToolArguments("read_group_messages", { after_created_at: "2026-10-24T17:00:00Z" }), /both be supplied/);
+  assert.match(validateToolArguments("read_group_messages", { after_message_id: "00000000-0000-4000-8000-000000000042" }), /both be supplied/);
+  assert.match(validateToolArguments("read_group_messages", { limit: 0 }), /1 to 100/);
+  assert.match(validateToolArguments("read_group_messages", { limit: 101 }), /1 to 100/);
+  assert.match(validateToolArguments("read_group_messages", { surprise: true }), /Unknown/);
+  const tool = getModernMcpTools().find(item => item.name === "read_group_messages");
+  assert.ok(tool);
+  assert.match(tool.description, /next_cursor/);
+  assert.ok(tool.inputSchema.properties.after_created_at);
+  assert.ok(tool.inputSchema.properties.after_message_id);
+  assert.ok(tool.inputSchema.properties.limit);
+});
+
 test("Realtime wait tool validates an exclusive composite cursor and bounds its wait", () => {
   assert.equal(validateToolArguments("wait_for_group_messages", {}), null);
   assert.equal(validateToolArguments("wait_for_group_messages", {

@@ -98,7 +98,11 @@ export const RUB_MINDS_MCP_TOOLS = [
     confirm_leave: { type: "boolean", const: true },
   }, ["confirm_leave"]) },
   { name: "read_group_context", description: "Read the joined group title, objective, and participant display names so this existing AI conversation understands the collaboration context.", inputSchema: objectSchema({}) },
-  { name: "read_group_messages", description: "Read the latest messages in the Rub Minds group this AI participant has joined.", inputSchema: objectSchema({}) },
+  { name: "read_group_messages", description: "Read messages in the Rub Minds group this AI participant has joined. With no arguments, returns the latest bounded snapshot. For pagination, pass both after_created_at and after_message_id from the previous next_cursor; the cursor is exclusive and ordered by created_at then id. Optional limit bounds the page to 1-100 messages. Every response includes next_cursor.", inputSchema: objectSchema({
+    after_created_at: { type: "string", format: "date-time" },
+    after_message_id: { type: "string", format: "uuid" },
+    limit: { type: "integer", minimum: 1, maximum: 100 },
+  }) },
   { name: "wait_for_group_messages", description: "Wait up to 15 seconds for new messages in this joined group using Supabase Realtime. Returns a next_cursor on both message and timeout responses. The cursor fields are after_created_at and after_message_id. After processing every returned message, pass both next_cursor fields into the next call; the cursor is exclusive and ordered by created_at then id. Optional limit bounds the page to 1-100 messages. Repeat only while the user asked for listening and this assistant turn remains active. This cannot wake an idle model or start a new turn after the host ends the turn.", inputSchema: objectSchema({
     after_created_at: { type: "string", format: "date-time" },
     after_message_id: { type: "string", format: "uuid" },
@@ -244,10 +248,19 @@ export function validateToolArguments(name, args) {
       if (Object.keys(args).some((key) => key !== "confirm_leave")) return "Unknown leave_group argument.";
       return null;
     case "read_group_context":
-    case "read_group_messages":
     case "read_session_memory":
     case "load_original_session_bridge_state":
       return Object.keys(args).length ? "This tool takes no arguments." : null;
+    case "read_group_messages":
+      if (args.after_created_at !== undefined && (typeof args.after_created_at !== "string" ||
+          !/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$/.test(args.after_created_at) ||
+          !Number.isFinite(Date.parse(args.after_created_at)))) return "after_created_at must be an ISO date-time with timezone and at most microsecond precision.";
+      if (args.after_message_id !== undefined && (typeof args.after_message_id !== "string" ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(args.after_message_id))) return "after_message_id must be a UUID.";
+      if ((args.after_created_at === undefined) !== (args.after_message_id === undefined)) return "Cursor timestamp and message ID must both be supplied for composite pagination.";
+      if (args.limit !== undefined && (!Number.isInteger(args.limit) || args.limit < 1 || args.limit > 100)) return "limit must be an integer from 1 to 100.";
+      if (Object.keys(args).some((key) => !["after_created_at", "after_message_id", "limit"].includes(key))) return "Unknown read_group_messages argument.";
+      return null;
     case "save_original_session_bridge_state": {
       const allowed = [
         "expected_revision", "cursor_created_at", "cursor_message_id",
@@ -257,7 +270,7 @@ export function validateToolArguments(name, args) {
       if (Object.keys(args).some((key) => !allowed.includes(key)) || allowed.some((key) => !(key in args))) {
         return "save_original_session_bridge_state requires exactly the documented state fields.";
       }
-      if (!Number.isSafeInteger(args.expected_revision) || (args.expected_revision as number) < 0) {
+      if (!Number.isSafeInteger(args.expected_revision) || args.expected_revision < 0) {
         return "expected_revision must be a non-negative safe integer.";
       }
       const validUuidOrNull = (value) => value === null || (

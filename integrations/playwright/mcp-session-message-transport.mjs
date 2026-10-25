@@ -164,18 +164,17 @@ export class McpSessionMessageTransport {
       if (typeof cursorCreatedAt !== "string" || typeof cursorMessageId !== "string") {
         throw new TypeError("both composite cursor fields are required");
       }
-      const result = await this.callTool("wait_for_group_messages", {
+      const result = await this.callTool("read_group_messages", {
         after_created_at: cursorCreatedAt,
         after_message_id: cursorMessageId,
-        timeout_ms: this.waitTimeoutMs,
         limit,
       }, { signal });
       if (!Array.isArray(result.messages)) throw new Error("Rub Minds MCP cursor read returned no message list");
       return result;
     }
 
-    // The legacy read tool returns a bounded current snapshot. The bridge uses
-    // this once for startup baselining and then advances with the cursor tool.
+    // The first read is a bounded current snapshot. Later reads use the same
+    // read_group_messages tool with its composite cursor for immediate paging.
     const result = await this.callTool("read_group_messages", {}, { signal });
     if (!Array.isArray(result.messages)) throw new Error("Rub Minds MCP baseline read returned no message list");
     if (result.messages.length === 0 && !result.next_cursor) {

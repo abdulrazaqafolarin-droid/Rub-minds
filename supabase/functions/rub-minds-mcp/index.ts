@@ -297,7 +297,56 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
   }
 
   if (name === "read_group_messages") {
-    return await enrichGroupMessages(await invokeAgent(credential, "read"));
+    const authorized = await invokeAgent(credential, "read");
+    const roomId = session.room_id;
+    if (typeof roomId !== "string" || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(roomId)) {
+      throw new Error("The joined group binding is invalid.");
+    }
+    if (!isRecord(authorized) || authorized.room_id !== roomId) {
+      throw new Error("The joined group binding no longer matches the AI credential.");
+    }
+
+    const limit = typeof args.limit === "number" ? args.limit : 50;
+    const hasCursor = typeof args.after_created_at === "string" &&
+      typeof args.after_message_id === "string";
+    let rawData: unknown = authorized;
+
+    if (hasCursor) {
+      // Composite pagination bypasses the legacy latest-50 RPC after first
+      // validating the credential and session/room binding above. Both fields
+      // have already been validated by validateToolArguments.
+      const { data, error } = await db.from("messages")
+        .select("id, sender_id, body, created_at")
+        .eq("room_id", roomId)
+        .or(`created_at.gt.${args.after_created_at},and(created_at.eq.${args.after_created_at},id.gt.${args.after_message_id})`)
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .limit(limit);
+      if (error) throw new Error("Could not read messages after the supplied cursor.");
+      rawData = {
+        room_id: roomId,
+        participant_id: authorized.participant_id,
+        messages: data || [],
+      };
+    }
+
+    const enrichedResult = await enrichGroupMessages(rawData);
+    const enriched = isRecord(enrichedResult) ? enrichedResult : { messages: [] };
+    const messages = Array.isArray(enriched.messages) ? enriched.messages : [];
+    const latest = messages
+      .filter((message) => isValidMessageCursor(message))
+      .sort(compareMessageCursors)
+      .at(-1);
+    const suppliedCursor = hasCursor
+      ? { after_created_at: args.after_created_at, after_message_id: args.after_message_id }
+      : null;
+    const nextCursor = isValidMessageCursor(latest)
+      ? { after_created_at: latest.created_at, after_message_id: latest.id }
+      : suppliedCursor ?? {
+          after_created_at: "1970-01-01T00:00:00.000Z",
+          after_message_id: "00000000-0000-1000-8000-000000000000",
+        };
+    return { ...enriched, next_cursor: nextCursor };
   }
 
   if (name === "wait_for_group_messages") {
