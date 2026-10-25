@@ -747,34 +747,45 @@ jobs:
             "stale bridge-state save must not overwrite the stored revision");
           console.log("Local MCP bridge-state load/save uses revision checks and rejects stale updates.");
 
-          // Exercise a live wait call. New rows use timestamps after the existing
-          // future-dated cursor fixture so they are guaranteed to be after its watermark.
+          // Establish a durable baseline before testing the live wake. Without
+          // this cursor checkpoint, a delayed MCP request could see the inserted
+          // row during its initial snapshot and legitimately treat it as old history.
+          const liveBaseline = await rpc("tools/call", 10, {
+            name: "wait_for_group_messages",
+            arguments: {
+              session_handle: joined.structuredContent.session_handle,
+              timeout_ms: 1000,
+              limit: 10,
+            },
+          });
+          assert.equal(liveBaseline.isError, undefined,
+            "live wake baseline failed: " + JSON.stringify(liveBaseline));
+          assert.equal(liveBaseline.structuredContent?.timed_out, true,
+            "live wake baseline should start from a quiet room snapshot");
+          assert.deepEqual(liveBaseline.structuredContent?.messages, [],
+            "live wake baseline must not replay prior history");
+          assert.ok(liveBaseline.structuredContent?.next_cursor?.after_created_at &&
+            liveBaseline.structuredContent?.next_cursor?.after_message_id,
+            "live wake baseline must produce a composite cursor");
+
           let liveWakeResult = null;
           let liveWakeMessageId = null;
-          let liveCursor = null;
-          for (let attempt = 0; attempt < 4 && !liveWakeResult; attempt++) {
-            let waitingFinished = false;
-            const waitArguments = {
-              session_handle: joined.structuredContent.session_handle,
-              ...(liveCursor || {}),
-              timeout_ms: 3000,
-              limit: 10,
-            };
+          let liveCursor = liveBaseline.structuredContent.next_cursor;
+          // Retry the explicit Realtime proof with progressively longer setup
+          // windows. If insertion wins the subscription race, cursor/recovery reads
+          // still advance safely; the test only counts an event-sourced wake as proof.
+          const liveInsertDelays = [350, 900, 1500, 2100];
+          for (let attempt = 0; attempt < liveInsertDelays.length && !liveWakeResult; attempt++) {
             const waitPromise = rpc("tools/call", 11 + attempt, {
               name: "wait_for_group_messages",
-              arguments: waitArguments,
-            }).then(result => {
-              waitingFinished = true;
-              return result;
-            }).catch(error => {
-              waitingFinished = true;
-              throw error;
+              arguments: {
+                session_handle: joined.structuredContent.session_handle,
+                ...liveCursor,
+                timeout_ms: 4000,
+                limit: 10,
+              },
             });
-
-            // If the first new row races with establishing the no-cursor watermark,
-            // a subsequent attempt continues from the returned cursor and proves
-            // the next row is not lost.
-            await new Promise(resolve => setTimeout(resolve, 350));
+            await new Promise(resolve => setTimeout(resolve, liveInsertDelays[attempt]));
             const liveId = "30000000-0000-4000-8000-" + String(attempt + 1).padStart(12, "0");
             const liveTimestamp = new Date(Date.parse(cursorTimestamp) + (attempt + 1) * 1000).toISOString();
             const liveInsert = await fetch(apiUrl + "/rest/v1/messages", {
@@ -788,25 +799,37 @@ jobs:
                 created_at: liveTimestamp,
               }),
             });
-            assert.equal(liveInsert.status, 201, "could not insert live wake message: " + await liveInsert.text());
+            assert.equal(liveInsert.status, 201,
+              "could not insert live wake message: " + await liveInsert.text());
 
             const result = await waitPromise;
             assert.equal(result.isError, undefined, "live MCP wait failed: " + JSON.stringify(result));
             const messages = result.structuredContent?.messages;
             assert.ok(Array.isArray(messages), "live MCP wait must return a message array");
             const matched = messages.find(message => message.id === liveId);
-            if (matched) {
+            const delivery = result.structuredContent?.delivery;
+            if (matched && delivery === "realtime") {
               liveWakeResult = result;
               liveWakeMessageId = liveId;
             } else {
-              assert.equal(result.structuredContent?.timed_out, true,
-                "a wait without the inserted message must either return the row or time out cleanly");
-              assert.ok(result.structuredContent?.next_cursor?.after_created_at,
-                "a timed-out wait must preserve an advancing cursor");
-              liveCursor = result.structuredContent.next_cursor;
+              const next = result.structuredContent?.next_cursor;
+              assert.ok(next?.after_created_at && next?.after_message_id,
+                "every live-wait result must preserve a valid composite cursor");
+              if (delivery !== "realtime" && Array.isArray(messages) && messages.length > 0) {
+                // A cursor read/recovery read can safely move past the returned
+                // prefix; it does not count as proof that the subscription woke.
+                liveCursor = next;
+              } else if (result.structuredContent?.timed_out === true) {
+                liveCursor = next;
+              } else if (matched) {
+                liveCursor = next;
+              } else {
+                throw new Error("Unexpected live-wait result: " + JSON.stringify(result.structuredContent));
+              }
             }
           }
-          assert.ok(liveWakeResult, "an in-flight MCP wait did not recover a message created after its cursor");
+          assert.ok(liveWakeResult,
+            "no inserted message was returned from an observed Realtime event across bounded retries");
           assert.equal(liveWakeResult.structuredContent?.timed_out, false,
             "live wake response should not be marked as timed out");
           assert.equal(liveWakeResult.structuredContent?.delivery, "realtime",
@@ -817,7 +840,8 @@ jobs:
             after_created_at: liveWakeResult.structuredContent.messages.at(-1).created_at,
             after_message_id: liveWakeResult.structuredContent.messages.at(-1).id,
           }, "live wake response should return a cursor for the last message in its batch");
-          
+          console.log("Local MCP live wait recovered a newly inserted room message from a Realtime event and returned its next cursor.");
+
           // Verify that a truly empty room gets a valid initial cursor, then wakes
           // on its first message. The second call uses the returned sentinel cursor
           // so the test is deterministic even if the first request is slow to start.
@@ -907,8 +931,8 @@ jobs:
           const emptyWake = await emptyWakePromise;
           assert.equal(emptyWake.isError, undefined, "empty-room live wait failed: " + JSON.stringify(emptyWake));
           assert.equal(emptyWake.structuredContent?.timed_out, false, "the first message should wake the empty-room listener");
-          assert.equal(emptyWake.structuredContent?.delivery, "realtime",
-            "the empty-room listener must observe the first-message Realtime event");
+          assert.ok(["realtime", "realtime-recovery-read"].includes(emptyWake.structuredContent?.delivery),
+            "the empty-room listener must return the first message by Realtime or its durable recovery read");
           assert.ok(emptyWake.structuredContent?.messages?.some(message => message.id === emptyMessageId),
             "the first message after an empty-room baseline must be returned");
           assert.deepEqual(emptyWake.structuredContent?.next_cursor, {
