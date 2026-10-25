@@ -56,7 +56,7 @@ class FakeElement {
     if (!this.elements.has(id)) {
       const tag = id === 'rm-trigger' ? 'textarea' :
         ['rm-max', 'rm-delay', 'rm-timeout', 'rm-remember'].includes(id) ? 'input' :
-        ['rm-start', 'rm-pause', 'rm-resume', 'rm-stop', 'rm-collapse'].includes(id) ? 'button' : 'div';
+        ['rm-start', 'rm-pause', 'rm-resume', 'rm-stop', 'rm-collapse', 'rm-reopen', 'rm-save-private'].includes(id) ? 'button' : 'div';
       const node = tag === 'textarea' ? new FakeTextArea() : tag === 'input' ? new FakeInput() : new FakeElement(tag);
       node.id = id;
       node.ownerDocument = this.ownerDocument;
@@ -480,4 +480,37 @@ test('Claude conversation recovery accepts a same-origin chat route', () => {
   const saved = JSON.parse(h.context.localStorage.getItem('rubMindsConversationBindingV1'));
   assert.equal(saved.url, 'https://claude.ai/chat/claude-thread');
   assert.equal(saved.provider, 'Claude');
+});
+
+
+test('private resume-link registration is an explicit one-prompt action', async () => {
+  const h = makeHarness({
+    scenario: 'done-first',
+    savedConversation: { url: 'https://chatgpt.com/c/mock-thread', provider: 'ChatGPT', savedAt: '2026-10-25T00:00:00Z', resumeId: 'resume-test-id-1234' },
+  });
+  const panel = h.document.getElementById('rubminds-continuation-panel');
+  const button = panel.querySelector('#rm-save-private');
+  assert.equal(button.disabled, false);
+  assert.equal(h.sent.length, 0);
+  button.click();
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline && h.sent.length === 0) await new Promise(resolve => realSetTimeout(resolve, 10));
+  assert.equal(h.sent.length, 1);
+  assert.match(h.sent[0], /visibility="private"/);
+  assert.match(h.sent[0], /browser-resume-resume-test-id-1234/);
+  assert.match(h.sent[0], /https:\/\/chatgpt\.com\/c\/mock-thread/);
+  assert.match(h.sent[0], /Do not call send_group_message/);
+  assert.match(panel.querySelector('#rm-status').textContent, /actual MCP tool result/);
+});
+
+test('private resume-link registration is unavailable unless the saved chat is open', () => {
+  const h = makeHarness({
+    scenario: 'done-first',
+    pathname: '/',
+    savedConversation: { url: 'https://chatgpt.com/c/mock-thread', provider: 'ChatGPT', savedAt: '2026-10-25T00:00:00Z', resumeId: 'resume-test-id-1234' },
+  });
+  const button = h.document.getElementById('rubminds-continuation-panel').querySelector('#rm-save-private');
+  assert.equal(button.disabled, true);
+  button.click();
+  assert.equal(h.sent.length, 0);
 });
