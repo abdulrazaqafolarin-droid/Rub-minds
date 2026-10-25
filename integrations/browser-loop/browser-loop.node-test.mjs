@@ -78,7 +78,7 @@ class FakeInput extends FakeElement {
   set value(v) { this._value = String(v ?? ''); }
 }
 
-function makeHarness({ scenario, site = 'chatgpt', initialDraft = '', pathname = null, savedConversation = null, savedPrivateMemory = null, emptyConversation = false }) {
+function makeHarness({ scenario, site = 'chatgpt', initialDraft = '', pathname = null, savedConversation = null, savedPrivateMemory = null, emptyConversation = false, confirmResult = true }) {
   let activePanel = null;
   const messages = [];
   const hostname = site === 'claude' ? 'claude.ai' : 'chatgpt.com';
@@ -233,7 +233,7 @@ function makeHarness({ scenario, site = 'chatgpt', initialDraft = '', pathname =
     stopButton.hidden = false;
     vmSetTimeout(() => { addMessage('assistant', 'The already-running reply has now completed.'); stopButton.hidden = true; initialGenerationFinished = true; }, 80);
   }
-  const window = { __test: { sent, messages }, confirm: () => true };
+  const window = { __test: { sent, messages }, confirm: () => confirmResult };
   const context = vm.createContext({
     window, document, location,
     localStorage, HTMLTextAreaElement: FakeTextArea, HTMLInputElement: FakeInput,
@@ -685,6 +685,7 @@ test('a tracked private-memory deletion key cannot be overwritten by saving a se
 test('the local private-memory deletion key can be cleared only after a deletion request is tracked and remains local-only', () => {
   const h = makeHarness({
     scenario: 'done-first',
+    pathname: '/c/new-thread',
     savedConversation: { url: 'https://chatgpt.com/c/new-thread', provider: 'ChatGPT', savedAt: '2026-10-25T00:00:00Z', resumeId: 'new-link-id-1234' },
     savedPrivateMemory: { idempotencyKey: 'browser-resume-old-link-id-1234', requestedAt: '2026-10-25T00:00:00Z', forgetRequestedAt: '2026-10-25T00:01:00Z' },
   });
@@ -695,4 +696,21 @@ test('the local private-memory deletion key can be cleared only after a deletion
   assert.equal(h.context.localStorage.getItem('rubMindsPrivateRecoveryMemoryV1'), null);
   assert.match(panel.querySelector('#rm-status').textContent, /did not change server-side memory/);
   assert.equal(panel.querySelector('#rm-save-private').disabled, false, 'a new private locator may be saved after the previous reference is explicitly resolved');
+});
+
+
+test('declining to clear a private-memory deletion key preserves it and makes no server claim', () => {
+  const h = makeHarness({
+    scenario: 'done-first',
+    pathname: '/c/new-thread',
+    confirmResult: false,
+    savedConversation: { url: 'https://chatgpt.com/c/new-thread', provider: 'ChatGPT', savedAt: '2026-10-25T00:00:00Z', resumeId: 'new-link-id-1234' },
+    savedPrivateMemory: { idempotencyKey: 'browser-resume-old-link-id-1234', requestedAt: '2026-10-25T00:00:00Z', forgetRequestedAt: '2026-10-25T00:01:00Z' },
+  });
+  const panel = h.document.getElementById('rubminds-continuation-panel');
+  panel.querySelector('#rm-clear-private-reference').click();
+  const retained = JSON.parse(h.context.localStorage.getItem('rubMindsPrivateRecoveryMemoryV1'));
+  assert.equal(retained.idempotencyKey, 'browser-resume-old-link-id-1234');
+  assert.match(panel.querySelector('#rm-status').textContent, /reference was kept/);
+  assert.equal(h.sent.length, 0);
 });
