@@ -314,6 +314,7 @@
         </label>
         <div id="rm-recovery" role="status" style="margin-top:5px;color:#c9c9c9">No saved conversation.</div>
         <button type="button" id="rm-reopen" style="width:100%;margin-top:5px;padding:6px" disabled>Reopen saved conversation</button>
+        <button type="button" id="rm-forget-recovery" style="width:100%;margin-top:5px;padding:6px" disabled>Forget saved recovery link</button>
         <button type="button" id="rm-save-private" style="width:100%;margin-top:5px;padding:6px" disabled>Save link privately in Rub Minds</button>
         <div style="margin-top:4px;color:#c9c9c9">Optional: sends one prompt asking the connected MCP session to save only this link as private participant memory. Verify the actual tool result.</div>
       </div>
@@ -344,6 +345,7 @@
       message.textContent = 'No recovery link saved. Opt in while viewing a specific conversation.';
       reopen.disabled = true;
       reopen.textContent = 'Reopen saved conversation';
+      el('rm-forget-recovery').disabled = true;
       el('rm-save-private').disabled = true;
       el('rm-save-private').textContent = 'Save link privately in Rub Minds';
       return;
@@ -355,6 +357,7 @@
       : `Saved locally in this browser only (${savedConversation.provider}). It is not shared with Rub Minds or the group.`;
     reopen.disabled = isCurrent;
     reopen.textContent = isCurrent ? 'Saved conversation is already open' : 'Reopen saved conversation';
+    el('rm-forget-recovery').disabled = false;
     el('rm-save-private').disabled = !isCurrent || !el('rm-remember').checked || running || paused || isGenerating() || privateMemoryRequested;
     el('rm-save-private').textContent = privateMemoryRequested
       ? 'Private-memory request submitted'
@@ -378,6 +381,15 @@
       status('Local recovery link removed. The Rub Minds group was not changed.');
     }
   });
+  el('rm-forget-recovery').addEventListener('click', () => {
+    try { localStorage.removeItem(RECOVERY_KEY); } catch (_) {}
+    savedConversation = null;
+    privateMemoryRequested = false;
+    el('rm-remember').checked = false;
+    updateRecoveryUi();
+    status('Saved recovery link removed from this browser. Any private Rub Minds memory must be managed separately; the group was not changed.');
+  });
+
   el('rm-reopen').addEventListener('click', () => {
     const url = safeConversationUrl(savedConversation?.url);
     if (!url) {
