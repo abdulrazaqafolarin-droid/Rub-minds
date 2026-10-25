@@ -69,6 +69,37 @@ test("seen-message memory stays bounded and evicts oldest IDs first", () => {
   assert.equal(bridge.seen.has("message-99"), true);
 });
 
+
+test("concurrent bridge steps fail fast instead of prompting the same message twice", async () => {
+  let enteredRead;
+  let releaseRead;
+  const readEntered = new Promise(resolve => { enteredRead = resolve; });
+  const readGate = new Promise(resolve => { releaseRead = resolve; });
+  const calls = [];
+  const sent = [];
+  const bridge = new PlaywrightSessionBridge({
+    page: { isClosed: () => false },
+    processExistingMessages: true,
+    adapter: { ask: async (_page, body) => { calls.push(body); return "reply: " + body; } },
+    readMessages: async () => {
+      enteredRead();
+      await readGate;
+      return { messages: [{ id: "only-once", body: "message", sender_kind: "human" }] };
+    },
+    sendMessage: async (body, sourceMessageId) => { sent.push({ body, sourceMessageId }); },
+  });
+
+  const first = bridge.step({ approved: true });
+  await readEntered;
+  const second = await bridge.step({ approved: true });
+  assert.deepEqual(second, { status: "busy", sent: 0, processed: 0 });
+  releaseRead();
+  const firstResult = await first;
+  assert.equal(firstResult.sent, 1);
+  assert.deepEqual(calls, ["message"]);
+  assert.deepEqual(sent, [{ body: "reply: message", sourceMessageId: "only-once" }]);
+});
+
 test("requires explicit approval before reading group messages", async () => {
   const { bridge, calls } = makeBridge({ messages: [{ id: "m1", body: "hello", sender_kind: "human" }] });
   await assert.rejects(() => bridge.step(), /Explicit approval/);
@@ -236,6 +267,7 @@ test("reports partial sends when a later message has a classified transient fail
       return "answer one";
     } },
     readMessages: async () => ({ messages }),
+    processExistingMessages: true,
     sendMessage: async (body, sourceMessageId) => { sent.push({ body, sourceMessageId }); },
   });
   const result = await bridge.step({ approved: true, remainingReplies: 2 });

@@ -67,6 +67,7 @@ export class PlaywrightSessionBridge {
       intervalMs, maxReplies, maxMessagesPerStep, processExistingMessages, maxSeenMessageIds,
     });
     this.running = false;
+    this.stepInProgress = false;
     this.initialized = false;
     this.replies = 0;
     this.seen = new Set();
@@ -121,7 +122,17 @@ export class PlaywrightSessionBridge {
     return { status: "baseline", baselineMessages };
   }
 
-  async step({ approved = false, remainingReplies = this.maxReplies - this.replies, signal } = {}) {
+  async step(options = {}) {
+    if (this.stepInProgress) return { status: "busy", sent: 0, processed: 0 };
+    this.stepInProgress = true;
+    try {
+      return await this.#step(options);
+    } finally {
+      this.stepInProgress = false;
+    }
+  }
+
+  async #step({ approved = false, remainingReplies = this.maxReplies - this.replies, signal } = {}) {
     if (!approved) {
       throw new Error("Explicit approval required before accessing an AI browser session");
     }

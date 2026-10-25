@@ -65,3 +65,8 @@ The isolated command `npm run test:original-wake` covers the Playwright session 
 The runner initializes the session bridge's baseline **before** starting its Realtime subscription. By default, messages already present in the room at startup are marked as seen rather than replayed into the provider conversation. This avoids accidentally prompting the original AI about old group history. Set `processExistingMessages: true` only when the owner explicitly wants backlog processing. Messages arriving after the baseline remain eligible, including messages sent during the startup-to-subscription hand-off because later steps read the durable group messages.
 
 The seen-ID cache is bounded (default 2,000 IDs, configurable with a hard range). This prevents unbounded memory growth, but does not make the bridge crash-safe: the baseline, seen IDs, pending answers, and ambiguity blocker are still process-local. A persistent worker needs a durable per-participant cursor and task/response ledger before it can claim lossless unattended processing.
+
+
+## Concurrent-step guard
+
+A session bridge now allows only one `step()` operation at a time. A second concurrent call returns `busy` without reading messages or submitting a second provider prompt. This prevents two overlapping wake notifications from racing the in-memory deduplication set. The guard is process-local; a distributed or crash-recoverable deployment still needs durable task claims and idempotent reply receipts.
