@@ -64,7 +64,7 @@ export class OriginalSessionWakeRunner {
     else signal?.addEventListener("abort", abort, { once: true });
 
     let consecutiveErrors = 0;
-    let finalStatus = "finished";
+    let finalStatus = "error";
     try {
       this.emit({ status: "running", replies: this.replies });
       if (this.controller.signal.aborted) {
