@@ -40,7 +40,7 @@ test("uses session-scoped JSON-RPC headers and keeps the session handle out of t
     result: { structuredContent: { messages: [] } },
   }));
   const transport = new McpSessionMessageTransport({ endpoint: ENDPOINT, sessionHandle: SESSION, fetchImpl: fake.fetch });
-  const result = await transport.readMessages({ baseline: true });
+  const result = await transport.readMessages({ baseline: true, limit: 77 });
   assert.deepEqual(result.messages, []);
   assert.equal(fake.requests.length, 1);
   const request = fake.requests[0];
@@ -50,6 +50,7 @@ test("uses session-scoped JSON-RPC headers and keeps the session handle out of t
   assert.equal(request.options.headers["Mcp-Name"], "read_group_messages");
   assert.ok(!request.url.includes(SESSION));
   assert.equal(request.request.params.arguments.session_handle, SESSION);
+  assert.equal(request.request.params.arguments.limit, 77, "no-cursor snapshots must forward the requested page limit");
   assert.equal(request.request.params.name, "read_group_messages");
 });
 
@@ -63,6 +64,7 @@ test("empty startup snapshots return a valid epoch cursor and only permit messag
     endpoint: ENDPOINT, sessionHandle: SESSION, fetchImpl: fake.fetch,
   });
   const snapshot = await transport.readMessages({ baseline: true });
+  assert.equal(fake.requests[0].request.params.arguments.limit, 100, "the default startup snapshot limit must be forwarded");
   assert.deepEqual(snapshot.next_cursor, {
     after_created_at: "1970-01-01T00:00:00.000Z",
     after_message_id: "00000000-0000-1000-8000-000000000000",
