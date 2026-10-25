@@ -220,9 +220,6 @@ export function createOriginalSessionAdapter(provider, {
       try {
         expectedConversationKey = assertPage(page, provider);
         throwIfAborted(signal, "not_submitted");
-        if (await isGenerating(page, config.generating)) {
-          throw new Error("Provider is already generating; no message sent");
-        }
         if (typeof prompt !== "string" || !prompt.trim() || prompt.length > 10000) {
           throw new TypeError("Prompt must be 1-10000 characters");
         }
