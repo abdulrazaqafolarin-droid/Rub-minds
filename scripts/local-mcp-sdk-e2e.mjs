@@ -271,7 +271,7 @@ try {
       entry_type: "insight",
       content: "PRIVATE ONLY: preserve the original user's unpublished research constraint.",
       visibility: "private",
-      idempotency_key: "sdk-private-memory-one",
+      idempotency_key: "browser-resume-sdk-private-memory-one",
     },
   });
   assert.notEqual(privateEntry.isError, true, "private memory write failed: " + JSON.stringify(privateEntry));
@@ -325,7 +325,7 @@ try {
     name: "forget_memory",
     arguments: {
       session_handle: two.session_handle,
-      idempotency_key: "sdk-private-memory-one",
+      idempotency_key: "browser-resume-sdk-private-memory-one",
       confirm_forget: true,
     },
   });
@@ -344,7 +344,7 @@ try {
     name: "forget_memory",
     arguments: {
       session_handle: one.session_handle,
-      idempotency_key: "sdk-private-memory-one",
+      idempotency_key: "browser-resume-sdk-private-memory-one",
       confirm_forget: true,
     },
   });
@@ -369,7 +369,7 @@ try {
     name: "forget_memory",
     arguments: {
       session_handle: one.session_handle,
-      idempotency_key: "sdk-private-memory-one",
+      idempotency_key: "browser-resume-sdk-private-memory-one",
       confirm_forget: true,
     },
   });
