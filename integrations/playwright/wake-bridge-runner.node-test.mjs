@@ -15,8 +15,9 @@ test("wake events invoke the existing-session bridge and respect reply limits", 
   let waits = 0;
   let steps = 0;
   const runner = new OriginalSessionWakeRunner({
-    bridge: { step: async ({ approved, remainingReplies }) => {
+    bridge: { step: async ({ approved, wakeReason, remainingReplies }) => {
       assert.equal(approved, true);
+      assert.equal(wakeReason, "wake");
       assert.equal(remainingReplies, 2 - steps);
       steps++;
       return { status: "ok", sent: 1 };
@@ -32,7 +33,7 @@ test("heartbeat timeout still checks durable messages to recover missed notifica
   let wakeCount = 0;
   let stepCount = 0;
   const runner = new OriginalSessionWakeRunner({
-    bridge: { step: async () => { stepCount++; return { status: "ok", sent: 0 }; } },
+    bridge: { step: async ({ wakeReason }) => { assert.equal(wakeReason, "timeout"); stepCount++; return { status: "ok", sent: 0 }; } },
     wakeSource: { waitForWake: async () => ({ status: ++wakeCount === 1 ? "timeout" : "closed" }) },
     heartbeatMs: 1000,
   });
