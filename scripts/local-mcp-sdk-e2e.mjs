@@ -521,20 +521,46 @@ try {
   assert.deepEqual(forbiddenRows, [], "rejected sender impersonation must not persist");
   console.log("Authenticated human and MCP AI exchanged messages in both directions; outsider RLS denied room access.");
 
-  // Seed durable bridge state for the first session so leaving proves that
-  // potentially private pending-response/cursor data is removed with revocation.
+  // Seed a real cursor and private pending answer for the first session so
+  // leaving proves that sensitive durable bridge state is removed with revocation.
   const seededBridgeState = await first.callTool({
     name: "load_original_session_bridge_state",
     arguments: { session_handle: one.session_handle },
   });
   assert.notEqual(seededBridgeState.isError, true,
-    "could not seed bridge state before leave: " + JSON.stringify(seededBridgeState));
+    "could not initialize bridge state before leave: " + JSON.stringify(seededBridgeState));
+  const latestGroupMessages = await request(
+    "/rest/v1/messages?select=id,created_at&room_id=eq." + room.id + "&order=created_at.desc&limit=1",
+  );
+  assert.equal(latestGroupMessages.length, 1,
+    "a persisted group message is required to exercise bridge-state cleanup");
+  const pendingFixture = latestGroupMessages[0];
+  const seededStateSave = await first.callTool({
+    name: "save_original_session_bridge_state",
+    arguments: {
+      session_handle: one.session_handle,
+      expected_revision: seededBridgeState.structuredContent.revision,
+      cursor_created_at: pendingFixture.created_at,
+      cursor_message_id: pendingFixture.id,
+      pending_message_id: pendingFixture.id,
+      pending_message_created_at: pendingFixture.created_at,
+      pending_response: "Private pending response used to verify cleanup",
+      blocked_message_id: null,
+      blocked_reason: null,
+    },
+  });
+  assert.notEqual(seededStateSave.isError, true,
+    "could not persist private bridge state before leave: " + JSON.stringify(seededStateSave));
+  assert.equal(seededStateSave.structuredContent?.saved, true,
+    "bridge state fixture did not persist");
   const firstSessionDigestBeforeLeave = createHash("sha256").update(one.session_handle, "utf8").digest("hex");
   const bridgeStateBeforeLeave = await request(
-    "/rest/v1/rub_minds_mcp_bridge_state?select=session_digest&session_digest=eq." + firstSessionDigestBeforeLeave,
+    "/rest/v1/rub_minds_mcp_bridge_state?select=session_digest,cursor_message_id,pending_response&session_digest=eq." + firstSessionDigestBeforeLeave,
   );
   assert.equal(bridgeStateBeforeLeave.length, 1,
     "bridge state should exist before revocation so cleanup is exercised");
+  assert.equal(bridgeStateBeforeLeave[0].cursor_message_id, pendingFixture.id);
+  assert.equal(bridgeStateBeforeLeave[0].pending_response, "Private pending response used to verify cleanup");
 
   // Race leave against an idempotent retry of the same join. Either the retry
   // observes the active join before leave wins, or it is rejected as revoked;
