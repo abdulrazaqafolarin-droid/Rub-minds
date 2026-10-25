@@ -167,3 +167,8 @@ The local Supabase integration job now uses `McpSessionMessageTransport` against
 ## Distinguishing Realtime wake-ups from recovery reads
 
 The MCP wait response's `delivery` field now distinguishes an actual observed Realtime callback (`realtime`) from a durable fallback query (`realtime-recovery-read`), an initial cursor read (`cursor-read`), an unavailable subscription, and a normal timeout. This makes the status honest and allows local integration tests to prove that the subscriber actually received the first new-message event instead of merely recovering the row after a timeout.
+
+
+## Local end-to-end tests for cursor paging and durable state
+
+The disposable local Supabase/MCP CI now calls `read_group_messages` with an exclusive cursor to read 60 same-timestamp rows in three 20-row pages. It checks each page boundary, carries forward `next_cursor`, and asserts all expected IDs are returned exactly once in order. The same workflow exercises the hosted MCP `load_original_session_bridge_state` and `save_original_session_bridge_state` tools: it checks a clean revision 0 snapshot, saves revision 1, retries with stale revision 0, and verifies the conflict response does not overwrite the stored state. These tests target the actual local Edge Function and local database, not production.

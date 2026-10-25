@@ -607,6 +607,61 @@ jobs:
             body: JSON.stringify(cursorRows),
           });
           assert.equal(cursorInsert.status, 201, "could not create cursor backlog: " + await cursorInsert.text());
+          // Verify the immediate read tool pages a backlog larger than the legacy
+          // 50-row snapshot. The exact composite cursor must continue across
+          // equal timestamps without duplicates or gaps.
+          const readPage1 = await rpc("tools/call", 20, {
+            name: "read_group_messages",
+            arguments: {
+              session_handle: joined.structuredContent.session_handle,
+              after_created_at: cursorTimestamp,
+              after_message_id: cursorAnchorId,
+              limit: 20,
+            },
+          });
+          assert.equal(readPage1.isError, undefined, "first immediate cursor page failed: " + JSON.stringify(readPage1));
+          assert.equal(readPage1.structuredContent?.messages?.length, 20);
+          assert.equal(readPage1.structuredContent.messages[0]?.id, cursorBacklog[0].id);
+          assert.equal(readPage1.structuredContent.messages.at(-1)?.id, cursorBacklog[19].id);
+          assert.deepEqual(readPage1.structuredContent.next_cursor, {
+            after_created_at: readPage1.structuredContent.messages.at(-1).created_at,
+            after_message_id: readPage1.structuredContent.messages.at(-1).id,
+          });
+
+          const readPage2 = await rpc("tools/call", 21, {
+            name: "read_group_messages",
+            arguments: {
+              session_handle: joined.structuredContent.session_handle,
+              ...readPage1.structuredContent.next_cursor,
+              limit: 20,
+            },
+          });
+          assert.equal(readPage2.isError, undefined, "second immediate cursor page failed: " + JSON.stringify(readPage2));
+          assert.equal(readPage2.structuredContent?.messages?.length, 20);
+          assert.equal(readPage2.structuredContent.messages[0]?.id, cursorBacklog[20].id);
+          assert.equal(readPage2.structuredContent.messages.at(-1)?.id, cursorBacklog[39].id);
+
+          const readPage3 = await rpc("tools/call", 22, {
+            name: "read_group_messages",
+            arguments: {
+              session_handle: joined.structuredContent.session_handle,
+              ...readPage2.structuredContent.next_cursor,
+              limit: 20,
+            },
+          });
+          assert.equal(readPage3.isError, undefined, "third immediate cursor page failed: " + JSON.stringify(readPage3));
+          assert.equal(readPage3.structuredContent?.messages?.length, 20);
+          assert.equal(readPage3.structuredContent.messages[0]?.id, cursorBacklog[40].id);
+          assert.equal(readPage3.structuredContent.messages.at(-1)?.id, cursorBacklog[59].id);
+          const pagedIds = [
+            ...readPage1.structuredContent.messages,
+            ...readPage2.structuredContent.messages,
+            ...readPage3.structuredContent.messages,
+          ].map(message => message.id);
+          assert.deepEqual(pagedIds, cursorBacklog.map(message => message.id),
+            "read_group_messages paging must return all rows exactly once in composite order");
+          console.log("Local MCP read_group_messages returned all 60 rows in three cursor pages.");
+
           const cursorRead = await rpc("tools/call", 9, {
             name: "wait_for_group_messages",
             arguments: {
@@ -644,6 +699,54 @@ jobs:
           assert.deepEqual(idleWait.structuredContent?.messages, [], "empty cursor page should not replay earlier messages");
           assert.deepEqual(idleWait.structuredContent?.next_cursor, cursorRead.structuredContent.next_cursor,
             "timeout must preserve the latest cursor so clients can retry without losing their position");
+          // Exercise persistent bridge-state tools through the live MCP server,
+          // including revision conflicts that must not overwrite a newer snapshot.
+          const stateLoad = await rpc("tools/call", 40, {
+            name: "load_original_session_bridge_state",
+            arguments: { session_handle: joined.structuredContent.session_handle },
+          });
+          assert.equal(stateLoad.isError, undefined, "could not load durable bridge state: " + JSON.stringify(stateLoad));
+          assert.equal(stateLoad.structuredContent?.revision, 0);
+          const stateSave = await rpc("tools/call", 41, {
+            name: "save_original_session_bridge_state",
+            arguments: {
+              session_handle: joined.structuredContent.session_handle,
+              expected_revision: 0,
+              cursor_created_at: null,
+              cursor_message_id: null,
+              pending_message_id: null,
+              pending_message_created_at: null,
+              pending_response: null,
+              blocked_message_id: null,
+              blocked_reason: null,
+            },
+          });
+          assert.equal(stateSave.isError, undefined, "could not save durable bridge state: " + JSON.stringify(stateSave));
+          assert.deepEqual(stateSave.structuredContent, { saved: true, conflict: false, revision: 1 });
+          const conflictSave = await rpc("tools/call", 42, {
+            name: "save_original_session_bridge_state",
+            arguments: {
+              session_handle: joined.structuredContent.session_handle,
+              expected_revision: 0,
+              cursor_created_at: null,
+              cursor_message_id: null,
+              pending_message_id: null,
+              pending_message_created_at: null,
+              pending_response: null,
+              blocked_message_id: null,
+              blocked_reason: null,
+            },
+          });
+          assert.equal(conflictSave.isError, undefined, "stale bridge-state save should be reported as a conflict, not a tool error");
+          assert.deepEqual(conflictSave.structuredContent, { saved: false, conflict: true, revision: 1 });
+          const stateReload = await rpc("tools/call", 43, {
+            name: "load_original_session_bridge_state",
+            arguments: { session_handle: joined.structuredContent.session_handle },
+          });
+          assert.equal(stateReload.structuredContent?.revision, 1,
+            "stale bridge-state save must not overwrite the stored revision");
+          console.log("Local MCP bridge-state load/save uses revision checks and rejects stale updates.");
+
           // Exercise a live wait call. New rows use timestamps after the existing
           // future-dated cursor fixture so they are guaranteed to be after its watermark.
           let liveWakeResult = null;
