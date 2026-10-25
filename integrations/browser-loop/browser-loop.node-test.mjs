@@ -535,3 +535,20 @@ test('participation modes shape prompts for smart chat, mentions-only, and task 
     assert.equal(JSON.parse(h.context.localStorage.getItem('rubMindsContinuationSettingsV1')).mode, mode);
   }
 });
+
+
+test('saved recovery link can be explicitly forgotten from a different provider page', () => {
+  const h = makeHarness({
+    scenario: 'done-first',
+    pathname: '/',
+    savedConversation: { url: 'https://chatgpt.com/c/mock-thread', provider: 'ChatGPT', savedAt: '2026-10-25T00:00:00Z', resumeId: 'resume-test-id-1234' },
+  });
+  const panel = h.document.getElementById('rubminds-continuation-panel');
+  const forget = panel.querySelector('#rm-forget-recovery');
+  assert.equal(forget.disabled, false);
+  forget.click();
+  assert.equal(h.context.localStorage.getItem('rubMindsConversationBindingV1'), null);
+  assert.match(panel.querySelector('#rm-recovery').textContent, /No recovery link saved/);
+  assert.match(panel.querySelector('#rm-status').textContent, /removed from this browser/);
+  assert.equal(h.sent.length, 0);
+});
