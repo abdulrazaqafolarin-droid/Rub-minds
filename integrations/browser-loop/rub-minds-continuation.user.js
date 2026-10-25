@@ -302,7 +302,7 @@
   el('rm-max').value = String(settings.maxRounds);
   el('rm-delay').value = String(settings.delaySec);
   el('rm-timeout').value = String(settings.timeoutMin);
-  el('rm-remember').checked = Boolean(savedConversation);
+  el('rm-remember').checked = Boolean(savedConversation && new URL(savedConversation.url).pathname === location.pathname);
   const status = (text) => { el('rm-status').textContent = text; };
   function updateRecoveryUi() {
     const message = el('rm-recovery');
