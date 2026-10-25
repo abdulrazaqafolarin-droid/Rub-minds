@@ -53,8 +53,16 @@ export class SupabaseRealtimeWakeSource {
           finish(reject, new Error(`Supabase Realtime subscription failed: ${status}`));
         }
       });
-    }).catch(error => {
+    }).catch(async error => {
+      // Failed subscription attempts must not leave a stale channel behind.
       this.channel = null;
+      if (typeof this.client.removeChannel === "function") {
+        try {
+          await this.client.removeChannel(channel);
+        } catch {
+          // Preserve the original subscription error; callers can retry with a new source.
+        }
+      }
       throw error;
     });
   }
