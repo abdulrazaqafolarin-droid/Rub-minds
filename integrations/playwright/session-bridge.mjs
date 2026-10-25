@@ -256,12 +256,30 @@ export class PlaywrightSessionBridge {
 
     const restored = await this.restoreDurableState({ signal });
     if (signal?.aborted) return { status: "cancelled", baselineMessages: 0 };
+    if (this.blockedMessage) {
+      return {
+        status: "blocked",
+        baselineMessages: 0,
+        blockedMessageId: this.blockedMessage.messageId,
+        reason: this.blockedMessage.reason,
+      };
+    }
     if (restored.hasResumeState) {
       this.initialized = true;
       return { status: "ready", baselineMessages: 0, restored: true };
     }
 
     if (this.processExistingMessages) {
+      // Explicit backlog processing starts before any real message, rather than
+      // from a bounded latest-50 snapshot. Seed an epoch cursor when no cursor
+      // was restored so subsequent immediate reads can page through the backlog.
+      if (!this.cursor) {
+        this.cursor = {
+          created_at: "1970-01-01T00:00:00.000Z",
+          id: "00000000-0000-1000-8000-000000000000",
+        };
+        await this.persistDurableState({ signal: signal?.aborted ? undefined : signal });
+      }
       this.initialized = true;
       return { status: "ready", baselineMessages: 0, processExistingMessages: true };
     }

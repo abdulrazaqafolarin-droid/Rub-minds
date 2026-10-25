@@ -271,7 +271,7 @@ export class McpSessionMessageTransport {
     if ((afterCreatedAt === null) !== (afterMessageId === null)) {
       throw new TypeError("wake cursor requires both timestamp and message ID");
     }
-    const args = { timeout_ms: boundedTimeout, limit: 100 };
+    const args = { timeout_ms: boundedTimeout, limit: 1 };
     if (afterCreatedAt !== null) {
       if (typeof afterCreatedAt !== "string" || typeof afterMessageId !== "string") {
         throw new TypeError("wake cursor timestamp and message ID must be strings");

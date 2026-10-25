@@ -240,6 +240,36 @@ test("wake runner establishes history baseline before subscribing and processes 
 });
 
 
+test("wake runner stops on restored durable blocked state before starting its wake source", async () => {
+  let started = 0;
+  let waits = 0;
+  let stepped = 0;
+  const runner = new OriginalSessionWakeRunner({
+    bridge: {
+      initialize: async () => ({
+        status: "blocked",
+        blockedMessageId: "20000000-0000-4000-8000-000000000002",
+        reason: "provider_prompt_in_progress",
+      }),
+      step: async () => { stepped++; return { status: "ok", sent: 0, processed: 0 }; },
+    },
+    wakeSource: {
+      start: async () => { started++; },
+      waitForWake: async () => { waits++; return { status: "wake" }; },
+      close: async () => {},
+    },
+  });
+  assert.deepEqual(await runner.run({ approved: true }), {
+    status: "blocked",
+    replies: 0,
+    blockedMessageId: "20000000-0000-4000-8000-000000000002",
+    reason: "provider_prompt_in_progress",
+  });
+  assert.equal(started, 0);
+  assert.equal(waits, 0);
+  assert.equal(stepped, 0);
+});
+
 test("wake runner treats a busy bridge step as non-fatal and keeps its bounded loop", async () => {
   let stepCalls = 0;
   let waitCalls = 0;

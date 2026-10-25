@@ -940,7 +940,7 @@ jobs:
           const savedBridgeState = await rpc("tools/call", 41, {
             name: "save_original_session_bridge_state",
             arguments: {
-              session_handle: joined.structuredContent.session_handle,
+              session_handle: secondJoin.structuredContent.session_handle,
               expected_revision: loadedBridgeState.structuredContent.revision,
               ...stateFields,
             },
@@ -960,7 +960,7 @@ jobs:
           const staleStateSave = await rpc("tools/call", 43, {
             name: "save_original_session_bridge_state",
             arguments: {
-              session_handle: joined.structuredContent.session_handle,
+              session_handle: secondJoin.structuredContent.session_handle,
               expected_revision: 0,
               cursor_created_at: null,
               cursor_message_id: null,
@@ -978,7 +978,7 @@ jobs:
           const clearedBridgeState = await rpc("tools/call", 44, {
             name: "save_original_session_bridge_state",
             arguments: {
-              session_handle: joined.structuredContent.session_handle,
+              session_handle: secondJoin.structuredContent.session_handle,
               expected_revision: 1,
               cursor_created_at: null,
               cursor_message_id: null,

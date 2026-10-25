@@ -61,6 +61,47 @@ test("processing startup history is an explicit option", async () => {
   assert.equal(sent[0].sourceMessageId, "history-1");
 });
 
+test("explicit backlog mode starts at the epoch cursor and pages older history", async () => {
+  const history = [
+    { id: "10000000-0000-4000-8000-000000000001", body: "oldest backlog row", sender_kind: "human", sender_id: "owner", created_at: "2020-01-01T00:00:00.000000Z" },
+    { id: "10000000-0000-4000-8000-000000000002", body: "second backlog row", sender_kind: "human", sender_id: "owner", created_at: "2020-01-02T00:00:00.000000Z" },
+  ];
+  const reads = [];
+  const sent = [];
+  const prompts = [];
+  const bridge = new PlaywrightSessionBridge({
+    page: { isClosed: () => false },
+    participantId: "self",
+    processExistingMessages: true,
+    maxMessagesPerStep: 1,
+    adapter: { ask: async (_page, body) => { prompts.push(body); return "reply: " + body; } },
+    readMessages: async options => {
+      reads.push(options);
+      const cursor = options.cursor
+        ? { id: options.cursor.after_message_id, created_at: options.cursor.after_created_at }
+        : { id: "00000000-0000-1000-8000-000000000000", created_at: "1970-01-01T00:00:00.000Z" };
+      return { messages: history.filter(message => compareMessageCursors(message, cursor) > 0) };
+    },
+    sendMessage: async (body, sourceMessageId) => { sent.push({ body, sourceMessageId }); return { ok: true }; },
+  });
+
+  await bridge.initialize({ approved: true });
+  assert.deepEqual(bridge.cursor, {
+    id: "00000000-0000-1000-8000-000000000000",
+    created_at: "1970-01-01T00:00:00.000Z",
+  });
+  assert.equal((await bridge.step({ approved: true })).sent, 1);
+  assert.equal(bridge.cursor.id, history[0].id);
+  assert.equal((await bridge.step({ approved: true })).sent, 1);
+  assert.equal(bridge.cursor.id, history[1].id);
+  assert.deepEqual(prompts, ["oldest backlog row", "second backlog row"]);
+  assert.deepEqual(sent.map(item => item.sourceMessageId), history.map(item => item.id));
+  assert.deepEqual(reads.map(item => item.cursor), [
+    null,
+    { after_created_at: "2020-01-01T00:00:00.000000Z", after_message_id: history[0].id },
+  ]);
+});
+
 test("seen-message memory stays bounded and evicts oldest IDs first", () => {
   const { bridge } = makeBridge({ maxSeenMessageIds: 50, messages: [] });
   for (let i = 0; i < 100; i++) bridge.markSeen("message-" + i);

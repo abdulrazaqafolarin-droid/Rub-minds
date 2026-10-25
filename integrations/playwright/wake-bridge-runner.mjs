@@ -86,6 +86,21 @@ export class OriginalSessionWakeRunner {
         finalStatus = "browser_closed";
         return { status: finalStatus, replies: this.replies };
       }
+      if (initialization?.status === "blocked") {
+        finalStatus = "blocked";
+        this.emit({
+          status: "blocked",
+          replies: this.replies,
+          blockedMessageId: initialization.blockedMessageId,
+          reason: initialization.reason,
+        });
+        return {
+          status: "blocked",
+          replies: this.replies,
+          blockedMessageId: initialization.blockedMessageId,
+          reason: initialization.reason,
+        };
+      }
 
       // A bounded handshake prevents a dead Realtime subscription from making
       // this runner look alive when it has no listener.

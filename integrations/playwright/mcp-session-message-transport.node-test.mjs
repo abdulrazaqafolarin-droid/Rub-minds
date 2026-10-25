@@ -130,7 +130,7 @@ test("uses the hosted MCP wait tool as a scoped wake source and forwards the bri
   assert.equal(request.arguments.after_created_at, cursor.after_created_at);
   assert.equal(request.arguments.after_message_id, cursor.after_message_id);
   assert.equal(request.arguments.timeout_ms, 4000);
-  assert.equal(request.arguments.limit, 100);
+  assert.equal(request.arguments.limit, 1);
   assert.equal(request.arguments.session_handle, SESSION);
   await source.close();
 });
