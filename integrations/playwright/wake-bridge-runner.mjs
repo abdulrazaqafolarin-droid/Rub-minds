@@ -64,6 +64,7 @@ export class OriginalSessionWakeRunner {
     else signal?.addEventListener("abort", abort, { once: true });
 
     let consecutiveErrors = 0;
+    let finalStatus = "finished";
     try {
       this.emit({ status: "running", replies: this.replies });
       if (this.controller.signal.aborted) {
@@ -80,7 +81,11 @@ export class OriginalSessionWakeRunner {
             signal: this.controller.signal,
             timeoutMs: this.heartbeatMs,
           });
-          if (this.controller.signal.aborted || wake?.status === "closed") break;
+          if (this.controller.signal.aborted) break;
+          if (wake?.status === "closed") {
+            finalStatus = "source_closed";
+            break;
+          }
           if (wake?.status !== "timeout" && wake?.status !== "wake") {
             throw new Error("Wake source returned an invalid status");
           }
@@ -121,7 +126,15 @@ export class OriginalSessionWakeRunner {
           if ([
             "browser_closed", "limit_reached", "blocked",
             "auth_required", "thread_mismatch", "cancelled",
-          ].includes(result.status)) break;
+          ].includes(result.status)) {
+            finalStatus = result.status;
+            this.emit({ status: finalStatus, replies: this.replies, lastResult: result });
+            break;
+          }
+          if (this.replies >= this.maxReplies) {
+            finalStatus = "limit_reached";
+            break;
+          }
         } catch (error) {
           if (this.controller.signal.aborted) break;
           consecutiveErrors += 1;
@@ -135,7 +148,7 @@ export class OriginalSessionWakeRunner {
       }
 
       return {
-        status: this.controller.signal.aborted ? "stopped" : "finished",
+        status: this.controller.signal.aborted ? "stopped" : finalStatus,
         replies: this.replies,
       };
     } finally {
@@ -152,7 +165,7 @@ export class OriginalSessionWakeRunner {
         });
       }
       this.emit({
-        status: controller?.signal.aborted ? "stopped" : "finished",
+        status: controller?.signal.aborted ? "stopped" : finalStatus,
         replies: this.replies,
       });
     }
