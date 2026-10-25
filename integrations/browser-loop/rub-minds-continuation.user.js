@@ -305,7 +305,7 @@
   let stopReason = '';
   let threadPath = null;
   let pauseWaiters = [];
-  let privateMemoryRequested = Boolean(privateMemoryBinding);
+
 
   const panel = document.createElement('section');
   panel.id = 'rubminds-continuation-panel';
@@ -409,6 +409,18 @@
   }
   updateRecoveryUi();
 
+  const refreshRecoveryWhenIdle = () => {
+    const deadline = Date.now() + settings.timeoutMin * 60_000;
+    const refresh = () => {
+      if (!isGenerating() || Date.now() >= deadline) {
+        updateRecoveryUi();
+        return;
+      }
+      setTimeout(refresh, 500);
+    };
+    setTimeout(refresh, 500);
+  };
+
   el('rm-remember').addEventListener('change', () => {
     if (el('rm-remember').checked) {
       if (!rememberCurrentConversation()) {
@@ -429,7 +441,9 @@
     savedConversation = null;
     el('rm-remember').checked = false;
     updateRecoveryUi();
-    status('Saved recovery link removed from this browser. Any private Rub Minds memory must be managed separately; the group was not changed.');
+    status(privateMemoryBinding
+      ? 'Local recovery link removed. The private-memory reference remains so you can explicitly request server-side deletion. Verify tool results; the group was not changed.'
+      : 'Saved recovery link removed from this browser. The group was not changed.');
   });
 
   el('rm-reopen').addEventListener('click', () => {
@@ -468,7 +482,6 @@
       ].join('\n\n');
       el('rm-save-private').disabled = true;
       await sendMessage(prompt, location.pathname, before.userCount, true);
-      privateMemoryRequested = true;
       privateMemoryBinding = {
         idempotencyKey,
         requestedAt: new Date().toISOString(),
@@ -477,6 +490,7 @@
       try { localStorage.setItem(PRIVATE_MEMORY_KEY, JSON.stringify(privateMemoryBinding)); } catch (_) {}
       updateRecoveryUi();
       status('Private-memory request submitted. Check the assistant reply for the actual MCP tool result; the prompt itself is not proof of storage.');
+      refreshRecoveryWhenIdle();
     } catch (error) {
       updateRecoveryUi();
       status(`Private link storage was not submitted: ${error?.message || String(error)}`);
@@ -505,6 +519,7 @@
       try { localStorage.setItem(PRIVATE_MEMORY_KEY, JSON.stringify(privateMemoryBinding)); } catch (_) {}
       updateRecoveryUi();
       status('Private-memory deletion request submitted. Verify the actual forget_memory tool result; this prompt is not proof that memory was deleted.');
+      refreshRecoveryWhenIdle();
     } catch (error) {
       updateRecoveryUi();
       status(`Private-memory deletion was not submitted: ${error?.message || String(error)}`);
