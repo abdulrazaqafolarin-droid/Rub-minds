@@ -99,7 +99,7 @@ export const RUB_MINDS_MCP_TOOLS = [
   }, ["confirm_leave"]) },
   { name: "read_group_context", description: "Read the joined group title, objective, and participant display names so this existing AI conversation understands the collaboration context.", inputSchema: objectSchema({}) },
   { name: "read_group_messages", description: "Read the latest messages in the Rub Minds group this AI participant has joined.", inputSchema: objectSchema({}) },
-  { name: "wait_for_group_messages", description: "Wait briefly for new messages in this joined group using Supabase Realtime. This is a bounded wait, not an always-on listener; call again while actively participating. Supply after_created_at to avoid replaying older messages.", inputSchema: objectSchema({
+  { name: "wait_for_group_messages", description: "Wait up to 15 seconds for new messages in this joined group using Supabase Realtime. If the user explicitly asks you to monitor the group while this assistant turn is active, repeat this tool with an advancing after_created_at cursor; process new messages and repeat only while the host keeps the turn active. This is bounded active-turn listening: it cannot wake an idle model or start a new turn after the host ends the turn.", inputSchema: objectSchema({
     after_created_at: { type: "string", format: "date-time" },
     timeout_ms: { type: "integer", minimum: 1000, maximum: 15000 },
   }) },
