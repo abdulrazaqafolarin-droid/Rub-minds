@@ -161,3 +161,37 @@ test("passes cancellation to the provider adapter and preserves an already-compl
   assert.equal(resent.sent, 1);
   assert.equal(sent.length, 1);
 });
+
+
+test("reports partial sends when a later message has a classified transient failure", async () => {
+  const messages = [
+    { id: "first", body: "one", sender_kind: "human" },
+    { id: "second", body: "two", sender_kind: "human" },
+  ];
+  const sent = [];
+  let attempts = 0;
+  const bridge = new PlaywrightSessionBridge({
+    page: { isClosed: () => false },
+    maxMessagesPerStep: 2,
+    adapter: { ask: async (_page, body) => {
+      attempts++;
+      if (body === "two") {
+        const error = new Error("provider temporarily unavailable");
+        error.safeToRetry = true;
+        throw error;
+      }
+      return "answer one";
+    } },
+    readMessages: async () => ({ messages }),
+    sendMessage: async (body, sourceMessageId) => { sent.push({ body, sourceMessageId }); },
+  });
+  const result = await bridge.step({ approved: true, remainingReplies: 2 });
+  assert.deepEqual(result, {
+    status: "error",
+    sent: 1,
+    processed: 2,
+    message: "provider temporarily unavailable",
+  });
+  assert.equal(bridge.replies, 1);
+  assert.deepEqual(sent, [{ body: "answer one", sourceMessageId: "first" }]);
+});
