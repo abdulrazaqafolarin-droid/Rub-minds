@@ -125,6 +125,34 @@ export function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/**
+ * Filter a durable group-message read using an exclusive (created_at, id)
+ * cursor when both fields are supplied. Keep the timestamp-only inclusive
+ * behavior for clients using the older MCP schema.
+ *
+ * Compare the exact timestamp strings returned by the database rather than
+ * Date.parse milliseconds when using a composite cursor: PostgreSQL timestamps
+ * can have microsecond precision, which Date.parse would truncate.
+ */
+export function filterMessagesAfterCursor(data, {
+  afterCreatedAt = null,
+  afterMessageId = null,
+  now = Date.now(),
+} = {}) {
+  const cursor = afterCreatedAt === null ? now : Date.parse(afterCreatedAt);
+  if (!isRecord(data) || !Array.isArray(data.messages)) return [];
+  return data.messages.filter((message) => {
+    if (!isRecord(message) || typeof message.created_at !== "string" ||
+        !Number.isFinite(Date.parse(message.created_at))) return false;
+    if (afterCreatedAt !== null && afterMessageId !== null) {
+      return message.created_at > afterCreatedAt ||
+        (message.created_at === afterCreatedAt &&
+          typeof message.id === "string" && message.id > afterMessageId);
+    }
+    return Date.parse(message.created_at) >= cursor;
+  });
+}
+
 /** @param {string} name @param {unknown} args @returns {string | null} */
 export function validateToolArguments(name, args) {
   if (!isRecord(args)) return "Tool arguments must be a JSON object.";
