@@ -27,7 +27,7 @@ const PROVIDERS = {
  */
 function buildGroupMessagePrompt(prompt, metadata = {}) {
   const safeLabel = value => typeof value === "string"
-    ? value.replace(/[\\r\\n\\t]/g, " ").slice(0, 80)
+    ? value.replace(/[\r\n\t]/g, " ").slice(0, 80)
     : "";
   const senderName = safeLabel(metadata.senderName) || "Unknown participant";
   const senderKind = safeLabel(metadata.senderKind) || "unknown";
@@ -38,7 +38,7 @@ function buildGroupMessagePrompt(prompt, metadata = {}) {
     "Group sender: " + senderName + " (" + senderKind + ")",
     "Group message content, represented as a JSON string:",
     JSON.stringify(prompt),
-  ].join("\\n");
+  ].join("\n");
 }
 
 function assertPage(page, provider) {
