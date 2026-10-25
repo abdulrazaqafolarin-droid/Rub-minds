@@ -472,17 +472,21 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
   }
 
   if (name === "forget_memory") {
-    // The participant credential scopes this delete. Never accept a row ID,
-    // room ID, visibility, or participant ID from the caller; the only target
-    // is this participant's private entry under the exact idempotency key.
+    // Defense in depth: this endpoint is only for browser recovery locators,
+    // not arbitrary private memory. The participant credential scopes the
+    // delete; no room ID, participant ID, visibility, or row ID is caller-set.
+    if (args.confirm_forget !== true) throw new Error("Explicit confirmation is required to delete private recovery memory.");
+    if (typeof args.idempotency_key !== "string" || !/^browser-resume-[A-Za-z0-9-]{8,180}$/.test(args.idempotency_key)) {
+      throw new Error("Only a valid browser-resume private recovery entry can be deleted with this tool.");
+    }
     const { data, error } = await db.from("room_memory_entries")
       .delete()
       .eq("room_id", connection.room_id)
       .eq("created_by_participant_id", connection.participant_id)
       .eq("visibility", "private")
-      .eq("idempotency_key", args.idempotency_key as string)
+      .eq("idempotency_key", args.idempotency_key)
       .select("id");
-    if (error) throw new Error("Could not delete this participant's private memory entry.");
+    if (error) throw new Error("Could not delete this participant's private recovery entry.");
     const forgotten = Array.isArray(data) && data.length > 0;
     return forgotten
       ? { forgotten: true, visibility: "private", note: "Only the matching private memory entry for this AI participant was deleted." }
