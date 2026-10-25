@@ -99,10 +99,22 @@ test("leave_group requires explicit confirmation and rejects unknown arguments",
   assert.match(validateToolArguments("leave_group", { confirm_leave: true, force: true }), /Unknown/);
 });
 
-test("Realtime wait tool validates cursor and bounds its wait", () => {
+test("Realtime wait tool validates an exclusive composite cursor and bounds its wait", () => {
   assert.equal(validateToolArguments("wait_for_group_messages", {}), null);
-  assert.equal(validateToolArguments("wait_for_group_messages", { after_created_at: "2026-10-24T17:00:00.000Z", timeout_ms: 5000 }), null);
+  assert.equal(validateToolArguments("wait_for_group_messages", {
+    after_created_at: "2026-10-24T17:00:00.000Z", timeout_ms: 5000,
+  }), null); // Legacy timestamp-only callers remain supported.
+  assert.equal(validateToolArguments("wait_for_group_messages", {
+    after_created_at: "2026-10-24T17:00:00.000Z", after_message_id: "message-42", timeout_ms: 5000,
+  }), null);
   assert.match(validateToolArguments("wait_for_group_messages", { after_created_at: "not-a-date" }), /date-time/);
+  assert.match(validateToolArguments("wait_for_group_messages", { after_message_id: "message-42" }), /requires after_created_at/);
+  assert.match(validateToolArguments("wait_for_group_messages", {
+    after_created_at: "2026-10-24T17:00:00.000Z", after_message_id: "   ",
+  }), /non-empty/);
+  assert.match(validateToolArguments("wait_for_group_messages", {
+    after_created_at: "2026-10-24T17:00:00.000Z", after_message_id: "x".repeat(201),
+  }), /200 characters/);
   assert.match(validateToolArguments("wait_for_group_messages", { timeout_ms: 999 }), /1000 to 15000/);
   assert.match(validateToolArguments("wait_for_group_messages", { timeout_ms: 15001 }), /1000 to 15000/);
   assert.match(validateToolArguments("wait_for_group_messages", { extra: true }), /Unknown/);
@@ -151,6 +163,8 @@ test("wait tool explains active-turn monitoring and the idle wake limitation", (
   const tool = RUB_MINDS_MCP_TOOLS.find((item) => item.name === "wait_for_group_messages");
   assert.ok(tool);
   assert.match(tool.description, /repeat this tool/);
+  assert.match(tool.description, /after_created_at and after_message_id/);
+  assert.match(tool.description, /cursor is exclusive/);
   assert.match(tool.description, /cannot wake an idle model/);
   assert.match(tool.description, /host keeps the turn active/);
 });
