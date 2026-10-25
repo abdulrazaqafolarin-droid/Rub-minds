@@ -315,7 +315,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       return await enrichGroupMessages({ ...data, messages: messagesAfterCursor(data) });
     };
     const initial = await invokeAgent(credential, "read");
-    if (hasNewMessages(initial)) return { timed_out: false, delivery: "realtime", ...(await onlyNewMessages(initial) as Record<string, unknown>) };
+    if (hasNewMessages(initial)) return { timed_out: false, delivery: "snapshot", ...(await onlyNewMessages(initial) as Record<string, unknown>) };
 
     const roomId = session.room_id;
     if (typeof roomId !== "string" || !/^[0-9a-f-]{36}$/i.test(roomId)) throw new Error("The joined group binding is invalid.");
@@ -346,10 +346,10 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       // Read after subscribing to close the read/subscribe race. Realtime payloads
       // are only wake-up signals; the authorized group read remains the source of truth.
       const afterSubscribe = await invokeAgent(credential, "read");
-      if (hasNewMessages(afterSubscribe)) return { timed_out: false, delivery: "realtime", ...(await onlyNewMessages(afterSubscribe) as Record<string, unknown>) };
+      if (hasNewMessages(afterSubscribe)) return { timed_out: false, delivery: "snapshot", ...(await onlyNewMessages(afterSubscribe) as Record<string, unknown>) };
       if (eventSeen) {
         const afterEvent = await invokeAgent(credential, "read");
-        if (hasNewMessages(afterEvent)) return { timed_out: false, delivery: "realtime", ...(await onlyNewMessages(afterEvent) as Record<string, unknown>) };
+        if (hasNewMessages(afterEvent)) return { timed_out: false, delivery: "snapshot", ...(await onlyNewMessages(afterEvent) as Record<string, unknown>) };
       }
       const eventOrTimeout = await new Promise<"message" | "timeout">((resolve) => {
         eventTimer = setTimeout(() => resolve("timeout"), timeoutMs);
