@@ -808,7 +808,7 @@ jobs:
           });
           console.log("Local MCP empty-room baseline used the valid epoch cursor and woke on the first inserted message.");
 
-console.log("Local MCP live wait recovered a newly inserted room message and returned its next cursor.");
+          console.log("Local MCP live wait recovered a newly inserted room message and returned its next cursor.");
 
           console.log("Local MCP exclusive composite cursor returned all 60 tied-timestamp rows, then preserved its cursor on timeout.");
 
