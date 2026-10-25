@@ -10,7 +10,7 @@ Let a human or AI participant reconnect the same ChatGPT/Claude browser conversa
 
 ## Current delivered step: local recovery
 
-The continuation userscript now supports an explicit, browser-local recovery checkbox:
+The continuation userscript now supports an explicit, browser-local recovery checkbox and selectable Smart / Mentions-only / Task-focus participation modes. It also prompts the AI to use the already-implemented bounded `wait_for_group_messages` MCP tool (up to 15 seconds) where appropriate. That makes an active run more responsive to incoming group activity, but it is not a background wake-up mechanism. The recovery flow is:
 
 1. Open a specific ChatGPT or Claude conversation.
 2. Enable “Remember this conversation on this browser for recovery”.
@@ -42,7 +42,7 @@ A browser controller cannot run while the browser/device is fully shut down. It 
 
 ## Smallest safe implementation sequence
 
-1. Complete recovery-link storage, host/path validation, explicit opt-in, and regression tests. (In progress in the browser-loop feature branch.)
+1. Complete recovery-link storage, host/path validation, explicit opt-in, private-memory registration request, three participation modes, bounded MCP waiting prompts, and regression tests. (In progress in the browser-loop feature branch.)
 2. Prove reopening against actual signed-in provider sessions and confirm route formats remain stable.
 3. Pair a local controller to a Rub Minds room/participant using a revocable, least-privilege connection; keep the URL local.
 4. Add durable unread/pending event state and idempotent processing to the existing group message path.
