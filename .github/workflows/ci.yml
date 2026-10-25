@@ -691,6 +691,27 @@ jobs:
             body: JSON.stringify(cursorRows),
           });
           assert.equal(cursorInsert.status, 201, "could not create cursor backlog: " + await cursorInsert.text());
+
+          // No-cursor reads are latest snapshots but must still honor the caller's
+          // page size. The 61-row fixture catches regressions that fall back to
+          // the legacy agent_exchange RPC's fixed latest-50 response.
+          const latestSnapshot = await rpc("tools/call", 19, {
+            name: "read_group_messages",
+            arguments: {
+              session_handle: joined.structuredContent.session_handle,
+              limit: 10,
+            },
+          });
+          assert.equal(latestSnapshot.isError, undefined,
+            "bounded latest-message snapshot failed: " + JSON.stringify(latestSnapshot));
+          assert.equal(latestSnapshot.structuredContent?.messages?.length, 10,
+            "no-cursor read_group_messages must honor limit=10 even with a backlog greater than 50");
+          assert.equal(latestSnapshot.structuredContent.messages[0]?.id, cursorBacklog[50].id,
+            "latest snapshot should return the newest 10 messages in chronological order");
+          assert.equal(latestSnapshot.structuredContent.messages.at(-1)?.id, cursorBacklog[59].id,
+            "latest snapshot must end at the newest group message");
+          console.log("Local MCP read_group_messages latest snapshot honors the bounded limit and chronological order.");
+
           // Verify the immediate read tool pages a backlog larger than the legacy
           // 50-row snapshot. The exact composite cursor must continue across
           // equal timestamps without duplicates or gaps.
