@@ -92,7 +92,7 @@ export class McpSessionMessageTransport {
 
   async callTool(name, args = {}, { signal } = {}) {
     if (typeof name !== "string" || !MESSAGE_TOOL_NAMES.has(name)) {
-      throw new TypeError("this transport only supports the Rub Minds group-message tools");
+      throw new TypeError("this transport only supports Rub Minds group-message and bridge-state tools");
     }
     if (!args || typeof args !== "object" || Array.isArray(args)) throw new TypeError("tool arguments must be an object");
     if (signal?.aborted) throw new Error("Rub Minds MCP call aborted");

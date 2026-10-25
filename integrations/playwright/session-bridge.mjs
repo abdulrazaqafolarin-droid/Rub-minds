@@ -463,7 +463,7 @@ export class PlaywrightSessionBridge {
 
       if (typeof response !== "string" || !response.trim()) {
         this.blockedMessage = { messageId: message.id, reason: "provider_response_empty_or_incomplete" };
-        await this.persistDurableState({ signal });
+        await this.persistDurableState({ signal: signal?.aborted ? undefined : signal });
         return {
           status: "blocked",
           sent,
@@ -496,6 +496,10 @@ export class PlaywrightSessionBridge {
       this.advanceCursor(message);
       this.replies++;
       sent++;
+      // Persist the acknowledged delivery and cursor together. If this save
+      // fails, the durable row still contains the pending answer, which is
+      // safe to retry because send_group_message deduplicates source_message_id.
+      await this.persistDurableState({ signal: signal?.aborted ? undefined : signal });
     }
 
     return { status: "ok", sent, processed };
