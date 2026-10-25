@@ -812,6 +812,84 @@ jobs:
             after_created_at: emptyWake.structuredContent.messages.at(-1).created_at,
             after_message_id: emptyWake.structuredContent.messages.at(-1).id,
           });
+          // Durable per-session bridge state is isolated to the joined MCP handle,
+          // uses compare-and-swap revisions, and can be explicitly cleared.
+          const loadedBridgeState = await rpc("tools/call", 40, {
+            name: "load_original_session_bridge_state",
+            arguments: { session_handle: joined.structuredContent.session_handle },
+          });
+          assert.equal(loadedBridgeState.isError, undefined,
+            "bridge-state load failed: " + JSON.stringify(loadedBridgeState));
+          assert.equal(loadedBridgeState.structuredContent.revision, 0);
+          assert.equal(loadedBridgeState.structuredContent.cursor, null);
+          const stateAnchorMessage = read.structuredContent.messages.at(-1);
+          assert.ok(stateAnchorMessage?.id && stateAnchorMessage?.created_at,
+            "state test needs one real message to anchor its cursor");
+          const stateFields = {
+            cursor_created_at: stateAnchorMessage.created_at,
+            cursor_message_id: stateAnchorMessage.id,
+            pending_message_id: null,
+            pending_message_created_at: null,
+            pending_response: null,
+            blocked_message_id: null,
+            blocked_reason: null,
+          };
+          const savedBridgeState = await rpc("tools/call", 41, {
+            name: "save_original_session_bridge_state",
+            arguments: {
+              session_handle: joined.structuredContent.session_handle,
+              expected_revision: loadedBridgeState.structuredContent.revision,
+              ...stateFields,
+            },
+          });
+          assert.equal(savedBridgeState.isError, undefined,
+            "bridge-state save failed: " + JSON.stringify(savedBridgeState));
+          assert.equal(savedBridgeState.structuredContent.saved, true);
+          assert.equal(savedBridgeState.structuredContent.revision, 1);
+          const reloadedBridgeState = await rpc("tools/call", 42, {
+            name: "load_original_session_bridge_state",
+            arguments: { session_handle: joined.structuredContent.session_handle },
+          });
+          assert.deepEqual(reloadedBridgeState.structuredContent.cursor, {
+            after_created_at: stateAnchorMessage.created_at,
+            after_message_id: stateAnchorMessage.id,
+          });
+          const staleStateSave = await rpc("tools/call", 43, {
+            name: "save_original_session_bridge_state",
+            arguments: {
+              session_handle: joined.structuredContent.session_handle,
+              expected_revision: 0,
+              cursor_created_at: null,
+              cursor_message_id: null,
+              pending_message_id: null,
+              pending_message_created_at: null,
+              pending_response: null,
+              blocked_message_id: null,
+              blocked_reason: null,
+            },
+          });
+          assert.equal(staleStateSave.isError, undefined);
+          assert.equal(staleStateSave.structuredContent.saved, false);
+          assert.equal(staleStateSave.structuredContent.conflict, true);
+          assert.equal(staleStateSave.structuredContent.revision, 1);
+          const clearedBridgeState = await rpc("tools/call", 44, {
+            name: "save_original_session_bridge_state",
+            arguments: {
+              session_handle: joined.structuredContent.session_handle,
+              expected_revision: 1,
+              cursor_created_at: null,
+              cursor_message_id: null,
+              pending_message_id: null,
+              pending_message_created_at: null,
+              pending_response: null,
+              blocked_message_id: null,
+              blocked_reason: null,
+            },
+          });
+          assert.equal(clearedBridgeState.structuredContent.saved, true);
+          assert.equal(clearedBridgeState.structuredContent.revision, 2);
+          console.log("Local MCP bridge state persisted, isolated by session, and rejected stale revisions.");
+
           console.log("Local MCP empty-room baseline used the valid epoch cursor and woke on the first inserted message.");
 
           console.log("Local MCP live wait recovered a newly inserted room message and returned its next cursor.");

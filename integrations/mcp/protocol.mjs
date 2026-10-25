@@ -109,6 +109,17 @@ export const RUB_MINDS_MCP_TOOLS = [
     body: { type: "string", minLength: 1, maxLength: 10000 },
     source_message_id: { type: "string", minLength: 1, maxLength: 200 },
   }, ["body"]) },
+  { name: "load_original_session_bridge_state", description: "Internal original-session bridge helper. Load the durable cursor and pending-delivery state for this joined MCP session. Use only when an explicitly authorized original-session bridge runtime is running.", inputSchema: objectSchema({}) },
+  { name: "save_original_session_bridge_state", description: "Internal original-session bridge helper. Atomically save this session's cursor, pending reply, and fail-closed status using the revision returned by load_original_session_bridge_state. A revision conflict means another writer changed state; stop and reload instead of overwriting it.", inputSchema: objectSchema({
+    expected_revision: { type: "integer", minimum: 0 },
+    cursor_created_at: { type: ["string", "null"] },
+    cursor_message_id: { type: ["string", "null"], format: "uuid" },
+    pending_message_id: { type: ["string", "null"], format: "uuid" },
+    pending_message_created_at: { type: ["string", "null"] },
+    pending_response: { type: ["string", "null"], maxLength: 10000 },
+    blocked_message_id: { type: ["string", "null"], format: "uuid" },
+    blocked_reason: { type: ["string", "null"], maxLength: 200 },
+  }, ["expected_revision", "cursor_created_at", "cursor_message_id", "pending_message_id", "pending_message_created_at", "pending_response", "blocked_message_id", "blocked_reason"]) },
   { name: "read_session_memory", description: "Read this participant's private imported session summaries and memory entries explicitly shared with the group.", inputSchema: objectSchema({}) },
   { name: "import_session_memory", description: "Import a structured session-memory document. Imported raw context is private to this AI participant; it is not automatically shared with the group.", inputSchema: objectSchema({ document: { type: "object" } }, ["document"]) },
   { name: "remember_memory", description: "Store a concise memory entry. Choose visibility explicitly: private or group. Group-visible entries can be read by other participants.", inputSchema: objectSchema({
@@ -235,7 +246,50 @@ export function validateToolArguments(name, args) {
     case "read_group_context":
     case "read_group_messages":
     case "read_session_memory":
+    case "load_original_session_bridge_state":
       return Object.keys(args).length ? "This tool takes no arguments." : null;
+    case "save_original_session_bridge_state": {
+      const allowed = [
+        "expected_revision", "cursor_created_at", "cursor_message_id",
+        "pending_message_id", "pending_message_created_at", "pending_response",
+        "blocked_message_id", "blocked_reason",
+      ];
+      if (Object.keys(args).some((key) => !allowed.includes(key)) || allowed.some((key) => !(key in args))) {
+        return "save_original_session_bridge_state requires exactly the documented state fields.";
+      }
+      if (!Number.isSafeInteger(args.expected_revision) || (args.expected_revision as number) < 0) {
+        return "expected_revision must be a non-negative safe integer.";
+      }
+      const validUuidOrNull = (value) => value === null || (
+        typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+      );
+      const validTimestampOrNull = (value) => value === null || (
+        typeof value === "string" &&
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(value) &&
+        Number.isFinite(Date.parse(value))
+      );
+      if (!validTimestampOrNull(args.cursor_created_at) || !validTimestampOrNull(args.pending_message_created_at)) {
+        return "Cursor and pending message timestamps must be ISO date-times with timezone.";
+      }
+      if (!validUuidOrNull(args.cursor_message_id) || !validUuidOrNull(args.pending_message_id) || !validUuidOrNull(args.blocked_message_id)) {
+        return "Message identifiers must be UUIDs or null.";
+      }
+      if ((args.cursor_created_at === null) !== (args.cursor_message_id === null)) {
+        return "Cursor timestamp and message ID must both be null or both be set.";
+      }
+      const pendingFields = [args.pending_message_id, args.pending_message_created_at, args.pending_response];
+      if (pendingFields.every((value) => value === null)) {
+        // A fully cleared pending response is valid.
+      } else if (pendingFields.some((value) => value === null) ||
+          typeof args.pending_response !== "string" || !args.pending_response.trim() || args.pending_response.length > 10000) {
+        return "Pending response fields must all be null or include message ID, timestamp, and a 1-10000 character response.";
+      }
+      if ((args.blocked_message_id === null) !== (args.blocked_reason === null) ||
+          (args.blocked_reason !== null && (typeof args.blocked_reason !== "string" || !args.blocked_reason.trim() || args.blocked_reason.length > 200))) {
+        return "Blocked message ID and reason must both be null or a bounded non-empty pair.";
+      }
+      return null;
+    }
     case "wait_for_group_messages":
       if (args.after_created_at !== undefined && (typeof args.after_created_at !== "string" ||
           !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(args.after_created_at) ||

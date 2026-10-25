@@ -115,6 +115,9 @@ async function terminateMcpSession(sessionDigest: string) {
       .is("revoked_at", null);
     if (revokeError) throw new Error("Could not revoke the AI participant session. Retry or wait for expiry.");
   }
+  const { error: stateDeleteError } = await db.from("rub_minds_mcp_bridge_state")
+    .delete().eq("session_digest", sessionDigest);
+  if (stateDeleteError) throw new Error("Could not clear original-session bridge state while terminating the MCP session.");
   const terminatedAt = new Date().toISOString();
   const tombstoneExpiry = new Date(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000).toISOString();
   const { error: terminateError } = await db.from("rub_minds_mcp_sessions").update({
@@ -161,6 +164,9 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
         .is("revoked_at", null).gt("expires_at", new Date().toISOString()).maybeSingle();
       if (activeConnectionError) throw new Error("Could not verify the existing AI participant session.");
       if (activeConnection) return { joined: true, room_id: session.room_id, participant_id: session.participant_id, note: "This MCP session is already joined to an active group." };
+      const { error: stateDeleteError } = await db.from("rub_minds_mcp_bridge_state")
+        .delete().eq("session_digest", session.session_digest as string);
+      if (stateDeleteError) throw new Error("Could not clear state for the expired AI participant session.");
       const { error: clearError } = await db.from("rub_minds_mcp_sessions").update({
         agent_credential_ciphertext: null, room_id: null, participant_id: null,
       }).eq("session_digest", session.session_digest as string)
@@ -505,6 +511,67 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     .eq("credential_digest", credentialDigest).is("revoked_at", null)
     .gt("expires_at", new Date().toISOString()).maybeSingle();
   if (connectionError || !connection) throw new Error("AI participant credential is invalid, expired, or revoked.");
+  const sessionDigest = typeof session.session_digest === "string" ? session.session_digest : "";
+  if (name === "load_original_session_bridge_state" || name === "save_original_session_bridge_state") {
+    if (!/^[a-f0-9]{64}$/.test(sessionDigest) ||
+        session.room_id !== connection.room_id || session.participant_id !== connection.participant_id) {
+      throw new Error("Original-session bridge state requires this session's current joined group binding.");
+    }
+
+    if (name === "load_original_session_bridge_state") {
+      const { error: seedError } = await db.from("rub_minds_mcp_bridge_state").upsert({
+        session_digest: sessionDigest,
+        room_id: connection.room_id,
+        participant_id: connection.participant_id,
+      }, { onConflict: "session_digest", ignoreDuplicates: true });
+      if (seedError) throw new Error("Could not initialize original-session bridge state.");
+      const { data: state, error } = await db.from("rub_minds_mcp_bridge_state")
+        .select("room_id, participant_id, cursor_created_at, cursor_message_id, pending_message_id, pending_message_created_at, pending_response, blocked_message_id, blocked_reason, revision, updated_at")
+        .eq("session_digest", sessionDigest).maybeSingle();
+      if (error || !state) throw new Error("Could not load original-session bridge state.");
+      if (state.room_id !== connection.room_id || state.participant_id !== connection.participant_id) {
+        throw new Error("Stored original-session bridge state does not match this joined group.");
+      }
+      return {
+        revision: Number(state.revision),
+        cursor: state.cursor_created_at && state.cursor_message_id
+          ? { after_created_at: state.cursor_created_at, after_message_id: state.cursor_message_id }
+          : null,
+        pending_response: state.pending_message_id && state.pending_message_created_at && state.pending_response
+          ? { source_message_id: state.pending_message_id, message_created_at: state.pending_message_created_at, body: state.pending_response }
+          : null,
+        blocked_message: state.blocked_message_id && state.blocked_reason
+          ? { message_id: state.blocked_message_id, reason: state.blocked_reason }
+          : null,
+        updated_at: state.updated_at,
+      };
+    }
+
+    const expectedRevision = args.expected_revision as number;
+    const { data: saved, error: saveError } = await db.from("rub_minds_mcp_bridge_state").update({
+      cursor_created_at: args.cursor_created_at,
+      cursor_message_id: args.cursor_message_id,
+      pending_message_id: args.pending_message_id,
+      pending_message_created_at: args.pending_message_created_at,
+      pending_response: args.pending_response,
+      blocked_message_id: args.blocked_message_id,
+      blocked_reason: args.blocked_reason,
+      revision: expectedRevision + 1,
+      updated_at: new Date().toISOString(),
+    }).eq("session_digest", sessionDigest)
+      .eq("room_id", connection.room_id)
+      .eq("participant_id", connection.participant_id)
+      .eq("revision", expectedRevision)
+      .select("revision").maybeSingle();
+    if (saveError) throw new Error("Could not save original-session bridge state.");
+    if (!saved) {
+      const { data: current } = await db.from("rub_minds_mcp_bridge_state")
+        .select("revision").eq("session_digest", sessionDigest).maybeSingle();
+      return { saved: false, conflict: true, revision: current ? Number(current.revision) : null };
+    }
+    return { saved: true, conflict: false, revision: Number(saved.revision) };
+  }
+
   await invokeAgent(credential, "read");
 
   if (name === "read_session_memory") {

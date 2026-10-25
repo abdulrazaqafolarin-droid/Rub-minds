@@ -216,6 +216,46 @@ test("message cursor filtering handles malformed input and missing cursor", () =
   ] }, { afterCreatedAt: null, now: 0 }).map(message => message.id), ["future"]);
 });
 
+test("bridge-state tools are discoverable and load requires no caller-controlled state", () => {
+  const tools = getModernMcpTools();
+  assert.ok(tools.some(tool => tool.name === "load_original_session_bridge_state"));
+  assert.ok(tools.some(tool => tool.name === "save_original_session_bridge_state"));
+  assert.equal(validateToolArguments("load_original_session_bridge_state", {}), null);
+  assert.match(validateToolArguments("load_original_session_bridge_state", { cursor: "caller-controlled" }), /no arguments/);
+});
+
+test("bridge-state saves require a full valid snapshot and expected revision", () => {
+  const valid = {
+    expected_revision: 0,
+    cursor_created_at: null,
+    cursor_message_id: null,
+    pending_message_id: null,
+    pending_message_created_at: null,
+    pending_response: null,
+    blocked_message_id: null,
+    blocked_reason: null,
+  };
+  assert.equal(validateToolArguments("save_original_session_bridge_state", valid), null);
+  assert.match(validateToolArguments("save_original_session_bridge_state", {
+    ...valid, expected_revision: -1,
+  }), /non-negative safe integer/);
+  assert.match(validateToolArguments("save_original_session_bridge_state", {
+    ...valid, cursor_created_at: "2026-10-24T17:00:00.000Z",
+  }), /both be null or both be set/);
+  assert.match(validateToolArguments("save_original_session_bridge_state", {
+    ...valid, pending_message_id: "11111111-1111-4111-8111-111111111111",
+  }), /all be null/);
+  assert.match(validateToolArguments("save_original_session_bridge_state", {
+    ...valid, pending_response: "   ",
+  }), /all be null or include/);
+  assert.match(validateToolArguments("save_original_session_bridge_state", {
+    ...valid, blocked_message_id: "11111111-1111-4111-8111-111111111111",
+  }), /both be null or a bounded/);
+  assert.match(validateToolArguments("save_original_session_bridge_state", {
+    ...valid, unexpected: true,
+  }), /exactly the documented/);
+});
+
 test("message tool rejects empty, oversized, and unknown arguments", () => {
   assert.equal(validateToolArguments("read_group_context", {}), null);
   assert.match(validateToolArguments("read_group_context", { room_id: "injected" }), /arguments/);
