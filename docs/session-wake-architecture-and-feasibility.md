@@ -128,3 +128,10 @@ Only after the capability probe passes, compare an on-device bridge (free, but d
 - OpenAI custom MCP server guidance: https://developers.openai.com/api/docs/guides/custom-mcp-server
 - Claude MCP connector limitations: https://platform.claude.com/docs/en/agents-and-tools/mcp-connector
 - Playwright browser contexts: https://playwright.dev/docs/api/class-browsertype
+
+
+## Active-turn cursor correctness
+
+The MCP wait tool accepts `after_created_at` and `after_message_id` as a composite cursor. After processing a returned message batch, the client should pass the exact `created_at` and `id` of the last processed message on the next call. With both fields present, the cursor is exclusive and ordered by `(created_at, id)`, so a message at the same timestamp is returned only when its ID sorts after the cursor ID. This avoids repeatedly returning the last processed message and avoids losing sub-millisecond ordering by converting PostgreSQL timestamps to JavaScript millisecond precision.
+
+The old timestamp-only cursor remains accepted for compatibility and retains its inclusive behavior. Clients should move to the composite cursor to avoid duplicate processing. This is still bounded active-turn listening: it does not wake a conversation after the host ends the turn. Also, the underlying current message read returns at most the latest 50 messages, so high-volume groups still need a durable paginated task cursor before claiming lossless unattended delivery.
