@@ -348,6 +348,17 @@ export class PlaywrightSessionBridge {
         baselineMessages: initialization.baselineMessages,
       };
     }
+    // A direct step() call can restore a blocked marker during initialize().
+    // Recheck it here before any message read or provider interaction.
+    if (this.blockedMessage) {
+      return {
+        status: "blocked",
+        sent: 0,
+        processed: 0,
+        blockedMessageId: this.blockedMessage.messageId,
+        reason: this.blockedMessage.reason,
+      };
+    }
 
     let sent = 0;
     let processed = 0;
