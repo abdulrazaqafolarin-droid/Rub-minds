@@ -121,6 +121,7 @@ export const RUB_MINDS_MCP_TOOLS = [
 ];
 
 /** Select messages after the last processed cursor from a newest-50, ascending read window. */
+/** @param {unknown} messages @param {number} cursorTimestamp @param {string | null} [cursorMessageId] */
 export function messagesAfterCursor(messages, cursorTimestamp, cursorMessageId = null) {
   if (!Array.isArray(messages)) return [];
   const valid = messages.filter((message) =>
