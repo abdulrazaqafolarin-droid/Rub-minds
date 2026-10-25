@@ -149,6 +149,32 @@ test("composite message cursor excludes the last message and preserves timestamp
   ]);
 });
 
+test("composite cursor normalizes timezone offsets and compares sub-millisecond fractions exactly", () => {
+  const cursor = "2026-10-24T17:00:00.123456+00:00";
+  const result = filterMessagesAfterCursor({ messages: [
+    { id: "00000000-0000-0000-0000-000000000099", created_at: "2026-10-24T19:00:00.123455+02:00", body: "one microsecond before" },
+    { id: "00000000-0000-0000-0000-000000000041", created_at: "2026-10-24T19:00:00.123456+02:00", body: "same instant, later id" },
+    { id: "00000000-0000-0000-0000-000000000001", created_at: "2026-10-24T19:00:00.123457+02:00", body: "one microsecond after" },
+  ] }, {
+    afterCreatedAt: cursor,
+    afterMessageId: "00000000-0000-0000-0000-000000000040",
+  });
+  assert.deepEqual(result.map(message => message.body), [
+    "same instant, later id",
+    "one microsecond after",
+  ]);
+});
+
+test("composite cursor rejects unparseable timestamps instead of guessing their order", () => {
+  const result = filterMessagesAfterCursor({ messages: [
+    { id: "00000000-0000-0000-0000-000000000099", created_at: "2026-10-24 17:00:00+00", body: "non-ISO" },
+  ] }, {
+    afterCreatedAt: "2026-10-24T17:00:00.000000Z",
+    afterMessageId: "00000000-0000-0000-0000-000000000040",
+  });
+  assert.deepEqual(result, []);
+});
+
 test("timestamp-only cursors remain inclusive for older MCP clients", () => {
   const stamp = "2026-10-24T17:00:00.000Z";
   const result = filterMessagesAfterCursor({ messages: [
