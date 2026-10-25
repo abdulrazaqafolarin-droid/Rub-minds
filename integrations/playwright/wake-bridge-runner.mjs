@@ -103,12 +103,9 @@ export class OriginalSessionWakeRunner {
           if (!result || typeof result !== "object" || typeof result.status !== "string") {
             throw new Error("bridge.step returned an invalid result");
           }
-          if (result.status === "error") {
-            throw new Error(typeof result.message === "string" ? result.message : "Wake bridge reported an error");
-          }
           const validStatuses = new Set([
-            "ok", "idle", "browser_closed", "limit_reached",
-            "blocked", "auth_required", "thread_mismatch", "cancelled",
+            "ok", "idle", "browser_closed", "limit_reached", "blocked",
+            "auth_required", "thread_mismatch", "cancelled", "error",
           ]);
           if (!validStatuses.has(result.status)) {
             throw new Error("bridge.step returned an unknown status");
@@ -117,9 +114,15 @@ export class OriginalSessionWakeRunner {
             throw new Error("bridge.step returned an invalid sent count");
           }
 
+          // Count any confirmed partial work before applying an error status.
+          // Adapters that complete one reply and then fail must not desynchronize
+          // this cap from the session bridge's own cumulative reply count.
           this.replies += result.sent;
-          consecutiveErrors = 0;
           this.emit({ status: "running", replies: this.replies, lastResult: result });
+          if (result.status === "error") {
+            throw new Error(typeof result.message === "string" ? result.message : "Wake bridge reported an error");
+          }
+          consecutiveErrors = 0;
 
           // These states require operator intervention or signify a hard stop;
           // never keep poking a login challenge or an ambiguous conversation.
