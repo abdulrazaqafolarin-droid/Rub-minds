@@ -95,3 +95,10 @@ The MCP wait tool returns an explicit `next_cursor` on successful message pages 
 
 
 The startup baseline read is deliberately independent of `maxMessagesPerStep`. That setting caps provider replies per poll, not history inspection; a baseline request asks for a bounded 100-row snapshot, so a bridge configured to answer one message per step doesn't accidentally start its cursor at the oldest row in a one-message page. The injected reader should return a current snapshot (e.g. the latest messages from the authorized group read), not use a long-poll that might yield live arrivals during initialization.
+
+
+## Hosted MCP message transport adapter
+
+`integrations/playwright/mcp-session-message-transport.mjs` now provides the concrete HTTP adapter between the session bridge and Rub Minds' hosted MCP message tools. Configure it with the MCP endpoint and the already-authorized Rub Minds session handle; `createBridgeAdapters()` returns the `readMessages` and `sendMessage` callbacks expected by `PlaywrightSessionBridge`. It uses a current message snapshot for startup baselining, then uses `wait_for_group_messages` with the exact composite cursor for bounded subsequent reads. Replies pass the source message ID so the server can deduplicate transport retries.
+
+The transport requires HTTPS except for explicit loopback development, rejects endpoints containing URL credentials/query tokens, validates the session-handle shape, uses bounded request timeouts and propagates cancellation, and does not log or expose the session handle. Its tests use a fake fetch implementation; they verify protocol framing and fail-closed behavior without making provider or production requests.
