@@ -771,3 +771,90 @@ test("reports partial sends when a later message has a classified transient fail
   assert.equal(bridge.replies, 1);
   assert.deepEqual(sent, [{ body: "answer one", sourceMessageId: "first" }]);
 });
+
+
+function makeDurableTestStore(snapshots) {
+  return {
+    load: async () => ({
+      revision: 0,
+      cursor: null,
+      pending_response: null,
+      blocked_message: null,
+    }),
+    save: async snapshot => {
+      snapshots.push(structuredClone(snapshot));
+      return { saved: true, conflict: false, revision: snapshot.expected_revision + 1 };
+    },
+  };
+}
+
+test("explicit approval denial stops this run without persisting an ambiguous blocker", async () => {
+  const snapshots = [];
+  const message = {
+    id: "10000000-0000-4000-8000-000000000001",
+    body: "please answer",
+    sender_id: "human",
+    sender_kind: "human",
+    created_at: "2026-01-01T00:00:00.000Z",
+  };
+  const bridge = new PlaywrightSessionBridge({
+    page: { isClosed: () => false },
+    participantId: "self",
+    processExistingMessages: true,
+    adapter: {
+      ask: async () => {
+        const error = new Error("Original-session message not approved");
+        error.code = "RUB_MINDS_APPROVAL_DENIED";
+        error.submissionState = "not_submitted";
+        throw error;
+      },
+    },
+    readMessages: async () => ({ messages: [message] }),
+    sendMessage: async () => { throw new Error("No answer should be sent after refusal"); },
+    stateStore: makeDurableTestStore(snapshots),
+  });
+
+  const result = await bridge.step({ approved: true });
+  assert.equal(result.status, "blocked");
+  assert.equal(result.reason, "approval_denied");
+  assert.equal(result.blockedMessageId, message.id);
+  assert.equal(bridge.blockedMessage, null);
+  assert.equal(snapshots.at(-1).blocked_message, null,
+    "an explicit refusal must not persist the crash-recovery ambiguity marker");
+});
+
+test("pre-submit cancellation releases the claim instead of recording an ambiguous provider outcome", async () => {
+  const snapshots = [];
+  const controller = new AbortController();
+  const message = {
+    id: "10000000-0000-4000-8000-000000000002",
+    body: "please answer",
+    sender_id: "human",
+    sender_kind: "human",
+    created_at: "2026-01-02T00:00:00.000Z",
+  };
+  const bridge = new PlaywrightSessionBridge({
+    page: { isClosed: () => false },
+    participantId: "self",
+    processExistingMessages: true,
+    adapter: {
+      ask: async (_page, _body, metadata) => {
+        assert.equal(metadata.signal, controller.signal);
+        controller.abort();
+        const error = new Error("cancelled before submit");
+        error.name = "AbortError";
+        error.submissionState = "not_submitted";
+        throw error;
+      },
+    },
+    readMessages: async () => ({ messages: [message] }),
+    sendMessage: async () => { throw new Error("No answer should be sent after cancellation"); },
+    stateStore: makeDurableTestStore(snapshots),
+  });
+
+  const result = await bridge.step({ approved: true, signal: controller.signal });
+  assert.equal(result.status, "cancelled");
+  assert.equal(bridge.blockedMessage, null);
+  assert.equal(snapshots.at(-1).blocked_message, null,
+    "pre-submit cancellation must release the durable claim");
+});
