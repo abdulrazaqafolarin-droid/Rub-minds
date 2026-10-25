@@ -134,6 +134,11 @@ export function isRecord(value) {
  * Date.parse milliseconds when using a composite cursor: PostgreSQL timestamps
  * can have microsecond precision, which Date.parse would truncate.
  */
+/**
+ * @param {unknown} data
+ * @param {{afterCreatedAt?: string | null, afterMessageId?: string | null, now?: number}} options
+ * @returns {Record<string, any>[]}
+ */
 export function filterMessagesAfterCursor(data, {
   afterCreatedAt = null,
   afterMessageId = null,
@@ -145,9 +150,9 @@ export function filterMessagesAfterCursor(data, {
     if (!isRecord(message) || typeof message.created_at !== "string" ||
         !Number.isFinite(Date.parse(message.created_at))) return false;
     if (afterCreatedAt !== null && afterMessageId !== null) {
+      if (typeof message.id !== "string") return false;
       return message.created_at > afterCreatedAt ||
-        (message.created_at === afterCreatedAt &&
-          typeof message.id === "string" && message.id > afterMessageId);
+        (message.created_at === afterCreatedAt && message.id > afterMessageId);
     }
     return Date.parse(message.created_at) >= cursor;
   });
