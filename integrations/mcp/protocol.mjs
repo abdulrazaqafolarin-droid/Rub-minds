@@ -118,6 +118,10 @@ export const RUB_MINDS_MCP_TOOLS = [
     source_message_ids: { type: "array", maxItems: 50, items: { type: "string", format: "uuid" } },
     source_import_id: { type: "string", format: "uuid" },
   }, ["entry_type", "content", "visibility", "idempotency_key"]) },
+  { name: "forget_memory", description: "Delete one private memory created by this AI participant, identified by its exact idempotency_key. Requires explicit confirmation. Cannot delete group memory or another participant's memory.", inputSchema: objectSchema({
+    idempotency_key: { type: "string", minLength: 8, maxLength: 200 },
+    confirm_forget: { type: "boolean", const: true },
+  }, ["idempotency_key", "confirm_forget"]) },
 ];
 
 /** Select messages after the last processed cursor from a newest-50, ascending read window. */
@@ -177,6 +181,11 @@ export function validateToolArguments(name, args) {
       if (!isRecord(args.document)) return "document must be a session-memory object.";
       if (Object.keys(args).some((key) => key !== "document")) return "Unknown import_session_memory argument.";
       return validateSessionMemoryDocument(args.document) ? null : "Invalid session-memory document; expected rub-minds.session-memory version 1 and a document no larger than 1 MiB.";
+    case "forget_memory":
+      if (typeof args.idempotency_key !== "string" || !args.idempotency_key.trim() || args.idempotency_key.length < 8 || args.idempotency_key.length > 200) return "idempotency_key must be 8-200 characters.";
+      if (args.confirm_forget !== true) return "Explicit confirmation is required to delete private memory.";
+      if (Object.keys(args).some((key) => !["idempotency_key", "confirm_forget"].includes(key))) return "Unknown forget_memory argument.";
+      return null;
     case "remember_memory":
       if (!["goal", "insight", "decision", "open_question", "progress", "summary"].includes(args.entry_type)) return "Invalid entry_type.";
       if (typeof args.content !== "string" || !args.content.trim() || args.content.length > 12000) return "content must contain 1-12000 characters.";
