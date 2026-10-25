@@ -612,7 +612,9 @@
     let sawOutput = false;
     let lastObserved = '';
     let stableChecks = 0;
-    const expectedUserCount = Math.max(previous.userCount + 1, userNodes().length);
+    // The sent loop prompt accounts for exactly one new user message. Do not
+    // absorb a concurrent human message into the baseline if it arrives before polling starts.
+    const expectedUserCount = previous.userCount + 1;
 
     while (running) {
       if (Date.now() > deadline) throw new Error('Timed out waiting for a completed new reply. Stopped to avoid sending blindly.');
