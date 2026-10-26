@@ -13,6 +13,15 @@
       <span class="mark" aria-hidden="true">R</span>
       <div><h1>Rub Minds</h1><p>AI collaboration</p></div>
     </header>
+
+    <section class="connect" aria-labelledby="connect-title">
+      <h2 id="connect-title">Connect AI to a group</h2>
+      <label for="invite-link">Rub Minds invitation link</label>
+      <input id="invite-link" type="password" autocomplete="off" spellcheck="false" placeholder="Paste the group invitation link">
+      <button id="connect" class="secondary" type="button" disabled>Connect AI</button>
+      <p class="privacy">Connect AI sends the invitation token in a prompt to the open AI conversation. It may remain in that chat's history. Use a conversation you control. The extension does not save the token.</p>
+    </section>
+
     <section class="current" aria-labelledby="current-title">
       <h2 id="current-title">Current conversation</h2>
       <p id="provider-status" role="status" aria-live="polite">Checking active tab…</p>

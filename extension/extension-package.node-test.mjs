@@ -34,6 +34,13 @@ test('popup has external script only, provider launch links and safe manual cont
   for (const id of ['start', 'pause', 'resume', 'stop']) assert.match(popup, new RegExp('id="' + id + '"'));
   assert.match(popup, /MCP must already be connected/i);
   assert.match(popup, /Starting is always a manual action/i);
+  assert.match(popup, /id="invite-link"/);
+  assert.match(popup, /id="connect"/);
+  assert.match(popup, /may remain in that chat's history/i);
+  assert.match(popupJs, /Only invitation links from https:\/\/rub-minds\.vercel\.app are accepted/);
+  assert.match(source, /join_group exactly once/);
+  assert.match(source, /confirm_join=true/);
+  assert.match(source, /Do not call send_group_message/);
 });
 
 test('popup injects only into a supported active tab and uses an allowlisted control protocol', () => {
@@ -58,7 +65,7 @@ async function runPopupHarness({ url = 'https://chatgpt.com/c/test-thread', repl
   const injections = [];
   let injected = !helperInitiallyMissing;
   const state = { provider: 'ChatGPT', running: false, paused: false, status: 'Idle — review the prompt and start manually.' };
-  for (const id of ['provider-status', 'loop-status', 'start', 'pause', 'resume', 'stop']) {
+  for (const id of ['provider-status', 'loop-status', 'start', 'pause', 'resume', 'stop', 'invite-link', 'connect']) {
     elements.set(id, {
       id,
       disabled: true,
@@ -75,7 +82,7 @@ async function runPopupHarness({ url = 'https://chatgpt.com/c/test-thread', repl
       sendMessage: async (tabId, message) => {
         sentMessages.push({ tabId, ...message });
         if (!replies || (message.action === 'status' && !injected)) throw new Error('Could not establish connection. Receiving end does not exist.');
-        if (message.action === 'start') {
+        if (message.action === 'connect') { state.status = 'Join request sent. Check the actual join_group tool result.'; }\n        else if (message.action === 'start') {
           state.running = true; state.paused = false; state.status = 'Cycle 1/1: sending continuation prompt…';
         } else if (message.action === 'pause') {
           state.paused = true; state.status = 'Paused.';
@@ -146,4 +153,38 @@ test('content script requires the exact sender extension ID before accepting con
 });
 test('popup setup guide link remains valid before the extension is merged', () => {
   assert.match(popup, /https:\/\/github\.com\/abdulrazaqafolarin-droid\/Rub-minds\/pull\/40\/files/);
+});
+
+test('Connect AI forwards only an official invitation token to the current active AI tab and clears the field', async () => {
+  const h = await runPopupHarness();
+  const token = 'a'.repeat(64);
+  h.elements.get('invite-link').value = 'https://rub-minds.vercel.app/?invite=' + token;
+  h.listeners.get('connect').get('click')();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const sent = h.sentMessages.find(x => x.action === 'connect');
+  assert.ok(sent);
+  assert.equal(sent.inviteToken, token);
+  assert.equal(sent.tabId, 42);
+  assert.equal(h.elements.get('invite-link').value, '');
+  assert.match(h.elements.get('provider-status').textContent, /Join request sent/i);
+});
+
+test('Connect AI rejects an untrusted host or malformed token without sending or clearing the input', async () => {
+  const h = await runPopupHarness();
+  const token = 'b'.repeat(64);
+  h.elements.get('invite-link').value = 'https://evil.example/?invite=' + token;
+  h.listeners.get('connect').get('click')();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(h.sentMessages.some(x => x.action === 'connect'), false);
+  assert.equal(h.elements.get('invite-link').value, 'https://evil.example/?invite=' + token);
+  assert.match(h.elements.get('provider-status').textContent, /Only invitation links from https:\/\/rub-minds\.vercel\.app are accepted/i);
+});
+
+test('Connect AI rejects a wrong token length even on the trusted invitation host', async () => {
+  const h = await runPopupHarness();
+  h.elements.get('invite-link').value = 'https://rub-minds.vercel.app/?invite=abc123';
+  h.listeners.get('connect').get('click')();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(h.sentMessages.some(x => x.action === 'connect'), false);
+  assert.match(h.elements.get('provider-status').textContent, /does not contain a valid invite token/i);
 });

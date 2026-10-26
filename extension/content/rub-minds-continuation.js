@@ -567,6 +567,36 @@
     ].join('\n\n');
   }
 
+  async function connectToGroup(inviteToken) {
+    if (typeof inviteToken !== 'string' || !/^[a-f0-9]{64}$/i.test(inviteToken)) {
+      throw new Error('A valid 64-character Rub Minds invitation token is required.');
+    }
+    if (running || paused) throw new Error('Stop the continuation loop before connecting this AI to a group.');
+    const conversationUrl = currentConversationUrl();
+    if (!conversationUrl || userNodes().length === 0 || replyNodes().length === 0) {
+      throw new Error('Open an existing ChatGPT or Claude conversation with visible messages first.');
+    }
+    if (!inputNode()) throw new Error('The provider composer could not be found.');
+    if (isGenerating()) throw new Error('Wait for the current AI response to finish before connecting.');
+    if (composerText(inputNode())) throw new Error('The composer contains a draft. Send or clear it manually before connecting.');
+
+    const before = snapshot();
+    const agentLabel = `${providerLabel} via Rub Minds extension`;
+    const prompt = [
+      'The user explicitly clicked Connect AI in the Rub Minds extension and authorized one attempt to join a Rub Minds group.',
+      'Use only the connected Rub Minds MCP tool join_group exactly once with these arguments: invite_token=' + JSON.stringify(inviteToken.toLowerCase()) + ', agent_label=' + JSON.stringify(agentLabel) + ', confirm_join=true.',
+      'If the join_group tool is unavailable, explain that Rub Minds MCP is not available in this conversation. Do not pretend that the AI joined.',
+      'Do not call send_group_message, read_group_messages, read_group_context, remember_memory, or any other tool as part of this connection step. Do not send a group message.',
+      'Treat the invitation token and returned session credentials as secrets. Do not repeat them in your reply or save them in memory. Report only the actual join_group tool result. Say joined only if the actual tool result confirms joined=true. If the session was already attached to a group, say so clearly; do not claim this invite switched groups.',
+      'Do not read, import, summarize, or reveal unrelated conversation history. Preserve this conversation and its existing working style.',
+    ].join('\\n\\n');
+
+    status('Submitting a one-time group-join request to this AI conversation…');
+    await sendMessage(prompt, location.pathname, before.userCount, true);
+    status('Join request sent. Check the AI reply and actual join_group tool result before starting collaboration. No group message was sent.');
+    updateButtons();
+  }
+
   const updateButtons = () => {
     el('rm-start').disabled = running;
     el('rm-pause').disabled = !running || paused;
@@ -613,6 +643,16 @@
       updateButtons();
       return { ok: true, state: getState() };
     },
+    connect(inviteToken) {
+      return connectToGroup(inviteToken)
+        .then(() => ({ ok: true, state: getState() }))
+        .catch((error) => {
+          const message = error?.message || String(error);
+          status(`Connection request was not sent: ${message}`);
+          updateButtons();
+          return { ok: false, error: message, state: getState() };
+        });
+    },
     getState() {
       return { ok: true, state: getState() };
     },
@@ -630,6 +670,10 @@
       if (action === 'status') {
         sendResponse(control.getState());
         return false;
+      }
+      if (action === 'connect') {
+        void control.connect(message.inviteToken).then(sendResponse);
+        return true;
       }
       if (!['start', 'pause', 'resume', 'stop'].includes(action)) {
         sendResponse({ ok: false, error: 'Unsupported extension action.', state: getState() });

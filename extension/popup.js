@@ -16,6 +16,7 @@ function setControls(enabled, state = null) {
   $('pause').disabled = !enabled || !state?.running || Boolean(state?.paused);
   $('resume').disabled = !enabled || !state?.running || !state?.paused;
   $('stop').disabled = !enabled || !state?.running;
+  $('connect').disabled = !enabled;
   if (state?.status) $('loop-status').textContent = state.status;
 }
 
@@ -53,6 +54,58 @@ async function sendAction(action) {
   }
 }
 
+function extractInviteToken(value) {
+  let url;
+  try { url = new URL(String(value || '').trim()); }
+  catch (_) { throw new Error('Paste a valid Rub Minds invitation link from the official site.'); }
+  if (url.protocol !== 'https:' || url.origin !== 'https://rub-minds.vercel.app' ||
+      url.hostname !== 'rub-minds.vercel.app') {
+    throw new Error('Only invitation links from https://rub-minds.vercel.app are accepted.');
+  }
+  const token = url.searchParams.get('invite');
+  if (typeof token !== 'string' || !/^[a-f0-9]{64}$/i.test(token)) {
+    throw new Error('The invitation link does not contain a valid invite token.');
+  }
+  return token.toLowerCase();
+}
+
+async function connectAI() {
+  if (activeTabId === null || !providerReady) await refresh();
+  if (activeTabId === null || !providerReady) return;
+  let inviteToken;
+  try {
+    inviteToken = extractInviteToken($('invite-link').value);
+  } catch (error) {
+    setMessage(error?.message || 'Paste a valid Rub Minds invitation link.', 'No join request was sent.');
+    return;
+  }
+
+  // Do not persist this bearer token; clear the field before passing it to the active tab.
+  $('invite-link').value = '';
+  $('connect').disabled = true;
+  setMessage('Sending a one-time connection request to the active AI conversation…');
+  try {
+    const result = await chrome.tabs.sendMessage(activeTabId, {
+      type: 'RUB_MINDS_EXTENSION_CONTROL',
+      action: 'connect',
+      inviteToken,
+    });
+    if (!result) throw new Error('The conversation helper did not respond. Reload the AI tab and try again.');
+    if (result.state) setControls(true, result.state);
+    if (result.ok) {
+      setMessage('Join request sent. Verify the actual join_group tool result before starting.', result.state?.status || '');
+    } else {
+      setMessage(result.error || 'The join request could not be submitted.', result.state?.status || '');
+    }
+  } catch (error) {
+    providerReady = false;
+    setControls(false);
+    setMessage(error?.message || 'Could not submit the join request. Reopen the popup to reconnect.');
+  } finally {
+    $('connect').disabled = !providerReady;
+  }
+}
+
 async function refresh() {
   activeTabId = null;
   providerReady = false;
@@ -87,6 +140,8 @@ async function refresh() {
     setMessage(error?.message || 'Open a supported AI conversation tab.');
   }
 }
+
+$('connect').addEventListener('click', () => { void connectAI(); });
 
 for (const action of ['start', 'pause', 'resume', 'stop']) {
   $(action).addEventListener('click', () => { void sendAction(action); });

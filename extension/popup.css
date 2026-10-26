@@ -19,3 +19,9 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 .providers { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
 .providers a { color: CanvasText; text-decoration: none; }
 .docs { display: block; margin-top: 12px; color: LinkText; font-size: 12px; text-decoration: none; }
+
+.connect { padding-bottom: 12px; border-bottom: 1px solid color-mix(in srgb, CanvasText 15%, transparent); }
+label[for="invite-link"] { display: block; margin: 0 0 6px; font-size: 12px; }
+#invite-link { display: block; width: 100%; margin: 0 0 7px; padding: 9px; border: 1px solid color-mix(in srgb, CanvasText 25%, transparent); border-radius: 8px; box-sizing: border-box; background: Canvas; color: CanvasText; font: inherit; font-size: 12px; }
+.secondary { width: 100%; font-weight: 650; }
+.privacy { margin: 7px 0 0; font-size: 10px; opacity: .78; line-height: 1.45; }
