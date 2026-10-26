@@ -82,7 +82,8 @@ async function runPopupHarness({ url = 'https://chatgpt.com/c/test-thread', repl
       sendMessage: async (tabId, message) => {
         sentMessages.push({ tabId, ...message });
         if (!replies || (message.action === 'status' && !injected)) throw new Error('Could not establish connection. Receiving end does not exist.');
-        if (message.action === 'connect') { state.status = 'Join request sent. Check the actual join_group tool result.'; }\n        else if (message.action === 'start') {
+        if (message.action === 'connect') { state.status = 'Join request sent. Check the actual join_group tool result.'; }
+        else if (message.action === 'start') {
           state.running = true; state.paused = false; state.status = 'Cycle 1/1: sending continuation prompt…';
         } else if (message.action === 'pause') {
           state.paused = true; state.status = 'Paused.';
