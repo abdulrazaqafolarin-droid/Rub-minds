@@ -318,14 +318,30 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Run controlled browser proof of concept
         run: npm run test:browser
-      - name: Package browser extension
+  package-extension:
+    name: Package browser extension
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Check extension and continuation script syntax
         run: |
           set -euo pipefail
           node --check integrations/browser-loop/rub-minds-continuation.user.js
           node --check extension/content/rub-minds-continuation.js
           node --check extension/popup.js
+      - name: Run extension-specific regression tests
+        run: node --test integrations/browser-loop/browser-loop.node-test.mjs extension/extension-package.node-test.mjs
+      - name: Create and verify installable ZIP
+        run: |
+          set -euo pipefail
           mkdir -p "$RUNNER_TEMP/rub-minds-extension/content"
-          cp extension/manifest.json extension/popup.html extension/popup.css extension/popup.js "$RUNNER_TEMP/rub-minds-extension/"
+          cp extension/manifest.json extension/popup.html extension/popup.css extension/popup.js extension/README.md "$RUNNER_TEMP/rub-minds-extension/"
           cp extension/content/rub-minds-continuation.js "$RUNNER_TEMP/rub-minds-extension/content/"
           (cd "$RUNNER_TEMP/rub-minds-extension" && zip -qr "$GITHUB_WORKSPACE/rub-minds-browser-extension.zip" .)
           unzip -t "$GITHUB_WORKSPACE/rub-minds-browser-extension.zip"

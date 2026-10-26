@@ -625,7 +625,7 @@
       typeof chrome.runtime.id === 'string') {
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (message?.type !== 'RUB_MINDS_EXTENSION_CONTROL') return false;
-      if (sender?.id && sender.id !== chrome.runtime.id) return false;
+      if (sender?.id !== chrome.runtime.id) return false;
       const action = message.action;
       if (action === 'status') {
         sendResponse(control.getState());

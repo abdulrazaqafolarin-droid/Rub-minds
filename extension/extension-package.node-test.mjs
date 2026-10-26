@@ -140,3 +140,10 @@ test('popup fails closed when the helper cannot be injected or contacted', async
   assert.equal(h.elements.get('start').disabled, true);
   assert.match(h.elements.get('provider-status').textContent, /Cannot inject into the current page/i);
 });
+
+test('content script requires the exact sender extension ID before accepting controls', () => {
+  assert.match(packaged, /if \(sender\?\.id !== chrome\.runtime\.id\) return false;/);
+});
+test('popup setup guide link remains valid before the extension is merged', () => {
+  assert.match(popup, /https:\/\/github\.com\/abdulrazaqafolarin-droid\/Rub-minds\/pull\/40\/files/);
+});

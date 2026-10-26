@@ -8,9 +8,12 @@ This is the first packaged browser-extension version of the existing continuatio
 - ChatGPT/Claude launch links and concise setup guidance.
 - The existing bounded continuation panel injected into ChatGPT and Claude pages.
 - Manual Start, Pause, Resume and Stop controls, participation modes, editable prompt, bounded cycle count, interruption checks, and local recovery options inherited from the existing helper.
-- The extension has no persistent `host_permissions` or auto-run content-script declaration. It uses `activeTab` plus `scripting` to inject its bundled helper into the current supported tab only after you open the toolbar popup. It has no background service worker, remote code, or extension-owned network requests.
+- The extension has no persistent `host_permissions` or auto-run content-script declaration. It requires the temporary `activeTab` permission plus `scripting` to inject its bundled helper into the current supported tab only after you open the toolbar popup. It has no background service worker, remote code, or extension-owned network requests.
 
 ## Install locally (developer/unpacked build)
+
+**Ready-to-install ZIP:** after the `package-extension` job succeeds, open the [latest extension workflow run](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/workflows/ci.yml?query=branch%3Afeat%2Fbrowser-extension-mvp), download the `rub-minds-browser-extension` artifact, and unzip it. The extracted folder contains `manifest.json` at its root; select that folder in Chrome/Edge's **Load unpacked** dialog. The artifact is temporary CI output (14-day retention), not a published store release.
+
 
 1. Download or clone this repository to your computer.
 2. Open `chrome://extensions` in Chrome or `edge://extensions` in Edge.
