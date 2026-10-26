@@ -42,7 +42,7 @@ test('popup injects only into a supported active tab and uses an allowlisted con
   assert.match(popupJs, /supportedHosts/);
   assert.match(packaged, /RUB_MINDS_EXTENSION_CONTROL/);
   assert.match(packaged, /!\['start', 'pause', 'resume', 'stop'\]\.includes\(action\)/);
-  assert.match(packaged, /sender\?\.id && sender\.id !== chrome\.runtime\.id/);
+  assert.match(packaged, /if \(sender\?\.id !== chrome\.runtime\.id\) return false;/);
 });
 
 test('extension package contains no network request primitives or remote script loading', () => {
