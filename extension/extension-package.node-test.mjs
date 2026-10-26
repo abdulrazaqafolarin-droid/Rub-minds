@@ -153,7 +153,7 @@ test('content script requires the exact sender extension ID before accepting con
   assert.match(packaged, /if \(sender\?\.id !== chrome\.runtime\.id\) return false;/);
 });
 test('popup setup guide link remains valid before the extension is merged', () => {
-  assert.match(popup, /https:\/\/github\.com\/abdulrazaqafolarin-droid\/Rub-minds\/pull\/40\/files/);
+  assert.match(popup, /https:\/\/github\.com\/abdulrazaqafolarin-droid\/Rub-minds\/blob\/main\/extension\/README\.md/);
 });
 
 test('Connect AI forwards only an official invitation token to the current active AI tab and clears the field', async () => {

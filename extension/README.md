@@ -13,8 +13,7 @@ This is the first packaged browser-extension version of the existing continuatio
 
 ## Install locally (developer/unpacked build)
 
-**Ready-to-install ZIP:** after the `package-extension` job succeeds, open the [latest extension workflow run](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/workflows/ci.yml?query=branch%3Afeat%2Fbrowser-extension-mvp), download the `rub-minds-browser-extension` artifact, and unzip it. The extracted folder contains `manifest.json` at its root; select that folder in Chrome/Edge's **Load unpacked** dialog. The artifact is temporary CI output (14-day retention), not a published store release.
-
+**Ready-to-install package:** after the `package-extension` job succeeds, open the [latest extension workflow run](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/workflows/ci.yml?query=branch%3Afeat%2Fbrowser-extension-mvp), download the `rub-minds-browser-extension` artifact, and extract it once. The extracted folder contains `manifest.json` at its root; select that folder in Chrome/Edge's **Load unpacked** dialog. The artifact is temporary CI output (14-day retention), not a published store release.
 
 1. Download or clone this repository to your computer.
 2. Open `chrome://extensions` in Chrome or `edge://extensions` in Edge.
