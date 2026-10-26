@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  messagesAfterCursor,
   MCP_PROTOCOL_VERSION,
   MCP_MODERN_PROTOCOL_VERSION,
   getModernMcpTools,
@@ -48,7 +49,7 @@ test("advertises invitation, messaging, and memory tools", () => {
   assert.equal(MCP_PROTOCOL_VERSION, "2025-06-18");
   assert.deepEqual(RUB_MINDS_MCP_TOOLS.map((tool) => tool.name), [
     "join_group", "leave_group", "read_group_context", "read_group_messages", "wait_for_group_messages", "send_group_message",
-    "read_session_memory", "import_session_memory", "remember_memory",
+    "read_session_memory", "import_session_memory", "remember_memory", "forget_memory",
   ]);
 });
 
@@ -102,6 +103,9 @@ test("leave_group requires explicit confirmation and rejects unknown arguments",
 test("Realtime wait tool validates cursor and bounds its wait", () => {
   assert.equal(validateToolArguments("wait_for_group_messages", {}), null);
   assert.equal(validateToolArguments("wait_for_group_messages", { after_created_at: "2026-10-24T17:00:00.000Z", timeout_ms: 5000 }), null);
+  assert.equal(validateToolArguments("wait_for_group_messages", { after_message_id: "550e8400-e29b-41d4-a716-446655440000", after_created_at: "2026-10-24T17:00:00.000Z", timeout_ms: 5000 }), null);
+  assert.match(validateToolArguments("wait_for_group_messages", { after_message_id: "550e8400-e29b-41d4-a716-446655440000", timeout_ms: 5000 }), /after_created_at is required/);
+  assert.match(validateToolArguments("wait_for_group_messages", { after_message_id: "not-a-uuid", after_created_at: "2026-10-24T17:00:00.000Z" }), /UUID/);
   assert.match(validateToolArguments("wait_for_group_messages", { after_created_at: "not-a-date" }), /date-time/);
   assert.match(validateToolArguments("wait_for_group_messages", { timeout_ms: 999 }), /1000 to 15000/);
   assert.match(validateToolArguments("wait_for_group_messages", { timeout_ms: 15001 }), /1000 to 15000/);
@@ -136,12 +140,71 @@ test("memory visibility is explicit and idempotency keys are bounded", () => {
   assert.match(validateToolArguments("remember_memory", { ...args, visibility: "all" }), /visibility/);
   assert.match(validateToolArguments("remember_memory", { ...args, idempotency_key: "x" }), /idempotency_key/);
   assert.match(validateToolArguments("remember_memory", { ...args, idempotency_key: "        " }), /idempotency_key/);
-  const sourceId = "123e4567-e89b-12d3-a456-426614174000";
+  const recoveryPrefix = "Original AI conversation recovery URL (private; do not post to group messages): ";
+  assert.equal(validateToolArguments("remember_memory", {
+    entry_type: "insight",
+    content: recoveryPrefix + "https://chatgpt.com/c/example",
+    visibility: "private",
+    idempotency_key: "browser-resume-12345678",
+  }), null);
+  assert.match(validateToolArguments("remember_memory", {
+    entry_type: "insight",
+    content: "An ordinary private note",
+    visibility: "private",
+    idempotency_key: "browser-resume-12345678",
+  }), /reserved for private browser-recovery locator/);
+  assert.match(validateToolArguments("remember_memory", {
+    entry_type: "insight",
+    content: recoveryPrefix + "https://chatgpt.com/c/example",
+    visibility: "group",
+    idempotency_key: "browser-resume-12345678",
+  }), /reserved for private browser-recovery locator/);
+  const sourceId = "550e8400-e29b-41d4-a716-446655440000";
   assert.equal(validateToolArguments("remember_memory", { ...args, source_message_ids: [sourceId] }), null);
   assert.match(validateToolArguments("remember_memory", { ...args, source_message_ids: [sourceId, sourceId] }), /unique UUIDs/);
+});
+
+test("forget_memory requires confirmation and accepts only an idempotency key", () => {
+  const args = { idempotency_key: "browser-resume-12345678", confirm_forget: true };
+  assert.equal(validateToolArguments("forget_memory", args), null);
+  assert.match(validateToolArguments("forget_memory", { idempotency_key: args.idempotency_key }), /Explicit confirmation/);
+  assert.match(validateToolArguments("forget_memory", { idempotency_key: "browser-resume-x", confirm_forget: true }), /browser-resume key/);
+  assert.match(validateToolArguments("forget_memory", { idempotency_key: "sdk-private-memory-one", confirm_forget: true }), /browser-resume key/);
+  assert.match(validateToolArguments("forget_memory", { ...args, visibility: "group" }), /Unknown/);
+  assert.match(validateToolArguments("forget_memory", {}), /idempotency_key/);
 });
 
 test("JSON-RPC helpers preserve request ids and error codes", () => {
   assert.deepEqual(rpcResult("abc", { ok: true }), { jsonrpc: "2.0", id: "abc", result: { ok: true } });
   assert.deepEqual(rpcError(2, -32601, "Method not found"), { jsonrpc: "2.0", id: 2, error: { code: -32601, message: "Method not found" } });
+});
+
+
+test("exact message cursor avoids replay and preserves newer messages with equal timestamps", () => {
+  const same = "2026-10-25T10:00:00.000Z";
+  const messages = [
+    { id: "older", created_at: "2026-10-25T09:59:59.000Z" },
+    { id: "cursor", created_at: same },
+    { id: "same-time-newer", created_at: same },
+    { id: "newer", created_at: "2026-10-25T10:00:01.000Z" },
+  ];
+  assert.deepEqual(messagesAfterCursor(messages, Date.parse(same), "cursor").map(m => m.id), ["same-time-newer", "newer"]);
+});
+
+test("time fallback uses strict greater-than and rejects malformed messages", () => {
+  const messages = [
+    { id: "equal", created_at: "2026-10-25T10:00:00.000Z" },
+    { id: "newer", created_at: "2026-10-25T10:00:01.000Z" },
+    { id: "bad", created_at: "not-a-date" },
+    null,
+  ];
+  assert.deepEqual(messagesAfterCursor(messages, Date.parse("2026-10-25T10:00:00.000Z")).map(m => m.id), ["newer"]);
+});
+
+test("missing exact cursor falls back to the timestamp", () => {
+  const messages = [
+    { id: "equal", created_at: "2026-10-25T10:00:00.000Z" },
+    { id: "newer", created_at: "2026-10-25T10:00:01.000Z" },
+  ];
+  assert.deepEqual(messagesAfterCursor(messages, Date.parse("2026-10-25T10:00:00.000Z"), "not-in-window").map(m => m.id), ["newer"]);
 });

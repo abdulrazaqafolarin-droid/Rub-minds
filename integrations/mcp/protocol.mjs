@@ -99,8 +99,9 @@ export const RUB_MINDS_MCP_TOOLS = [
   }, ["confirm_leave"]) },
   { name: "read_group_context", description: "Read the joined group title, objective, and participant display names so this existing AI conversation understands the collaboration context.", inputSchema: objectSchema({}) },
   { name: "read_group_messages", description: "Read the latest messages in the Rub Minds group this AI participant has joined.", inputSchema: objectSchema({}) },
-  { name: "wait_for_group_messages", description: "Wait briefly for new messages in this joined group using Supabase Realtime. This is a bounded wait, not an always-on listener; call again while actively participating. Supply after_created_at to avoid replaying older messages.", inputSchema: objectSchema({
+  { name: "wait_for_group_messages", description: "Wait briefly for new messages in this joined group using Supabase Realtime. This is a bounded wait, not an always-on listener; call again while actively participating. Supply after_message_id and after_created_at for the newest processed message to avoid replaying it.", inputSchema: objectSchema({
     after_created_at: { type: "string", format: "date-time" },
+    after_message_id: { type: "string", format: "uuid" },
     timeout_ms: { type: "integer", minimum: 1000, maximum: 15000 },
   }) },
   { name: "send_group_message", description: "Send a message to the joined Rub Minds group. The host platform may request confirmation before writing.", inputSchema: objectSchema({
@@ -117,7 +118,29 @@ export const RUB_MINDS_MCP_TOOLS = [
     source_message_ids: { type: "array", maxItems: 50, items: { type: "string", format: "uuid" } },
     source_import_id: { type: "string", format: "uuid" },
   }, ["entry_type", "content", "visibility", "idempotency_key"]) },
+  { name: "forget_memory", description: "Delete only a private browser recovery-link memory created by this AI participant, using its exact browser-resume idempotency key. Requires explicit confirmation. Cannot delete other private memories, group memory, or another participant's memory.", inputSchema: objectSchema({
+    idempotency_key: { type: "string", pattern: "^browser-resume-[A-Za-z0-9-]{8,180}$" },
+    confirm_forget: { type: "boolean", const: true },
+  }, ["idempotency_key", "confirm_forget"]) },
 ];
+
+/** Select messages after the last processed cursor from a newest-50, ascending read window. */
+/** @param {unknown} messages @param {number} cursorTimestamp @param {string | null} [cursorMessageId] */
+export function messagesAfterCursor(messages, cursorTimestamp, cursorMessageId = null) {
+  if (!Array.isArray(messages)) return [];
+  const valid = messages.filter((message) =>
+    message !== null && typeof message === "object" && !Array.isArray(message) &&
+    typeof message.created_at === "string" && Number.isFinite(Date.parse(message.created_at))
+  );
+  if (typeof cursorMessageId === "string") {
+    const index = valid.findIndex((message) => message.id === cursorMessageId);
+    // An exact ID cursor handles messages sharing the same timestamp.
+    if (index >= 0) return valid.slice(index + 1);
+  }
+  const cursor = Number.isFinite(cursorTimestamp) ? cursorTimestamp : Date.now();
+  // Strict greater-than avoids replaying the already processed cursor message.
+  return valid.filter((message) => Date.parse(message.created_at) > cursor);
+}
 
 /** @param {unknown} value @returns {value is Record<string, any>} */
 export function isRecord(value) {
@@ -144,8 +167,10 @@ export function validateToolArguments(name, args) {
       return Object.keys(args).length ? "This tool takes no arguments." : null;
     case "wait_for_group_messages":
       if (args.after_created_at !== undefined && (typeof args.after_created_at !== "string" || !Number.isFinite(Date.parse(args.after_created_at)))) return "after_created_at must be a valid date-time string.";
+      if (args.after_message_id !== undefined && args.after_created_at === undefined) return "after_created_at is required when after_message_id is supplied.";
+      if (args.after_message_id !== undefined && (typeof args.after_message_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(args.after_message_id))) return "after_message_id must be a UUID.";
       if (args.timeout_ms !== undefined && (!Number.isInteger(args.timeout_ms) || args.timeout_ms < 1000 || args.timeout_ms > 15000)) return "timeout_ms must be an integer from 1000 to 15000.";
-      if (Object.keys(args).some((key) => !["after_created_at", "timeout_ms"].includes(key))) return "Unknown wait_for_group_messages argument.";
+      if (Object.keys(args).some((key) => !["after_created_at", "after_message_id", "timeout_ms"].includes(key))) return "Unknown wait_for_group_messages argument.";
       return null;
     case "send_group_message":
       if (typeof args.body !== "string" || !args.body.trim() || args.body.length > 10000) return "body must contain 1-10000 characters.";
@@ -156,11 +181,24 @@ export function validateToolArguments(name, args) {
       if (!isRecord(args.document)) return "document must be a session-memory object.";
       if (Object.keys(args).some((key) => key !== "document")) return "Unknown import_session_memory argument.";
       return validateSessionMemoryDocument(args.document) ? null : "Invalid session-memory document; expected rub-minds.session-memory version 1 and a document no larger than 1 MiB.";
+    case "forget_memory":
+      if (typeof args.idempotency_key !== "string" || !/^browser-resume-[A-Za-z0-9-]{8,180}$/.test(args.idempotency_key)) return "idempotency_key must be a browser-resume key with 8-180 allowed characters after its prefix.";
+      if (args.confirm_forget !== true) return "Explicit confirmation is required to delete private recovery memory.";
+      if (Object.keys(args).some((key) => !["idempotency_key", "confirm_forget"].includes(key))) return "Unknown forget_memory argument.";
+      return null;
     case "remember_memory":
       if (!["goal", "insight", "decision", "open_question", "progress", "summary"].includes(args.entry_type)) return "Invalid entry_type.";
       if (typeof args.content !== "string" || !args.content.trim() || args.content.length > 12000) return "content must contain 1-12000 characters.";
       if (!["private", "group"].includes(args.visibility)) return "visibility must explicitly be private or group.";
       if (typeof args.idempotency_key !== "string" || !args.idempotency_key.trim() || args.idempotency_key.length < 8 || args.idempotency_key.length > 200) return "idempotency_key must be 8-200 characters.";
+      // Reserve this namespace for the exact kind of private browser locator
+      // that forget_memory is allowed to delete. Generic private notes must not
+      // become deletable just because they happen to use a matching key.
+      if (args.idempotency_key.startsWith("browser-resume-") &&
+          (args.entry_type !== "insight" || args.visibility !== "private" ||
+           !args.content.startsWith("Original AI conversation recovery URL (private; do not post to group messages): "))) {
+        return "browser-resume idempotency keys are reserved for private browser-recovery locator entries.";
+      }
       if (args.source_message_ids !== undefined && (
         !Array.isArray(args.source_message_ids) ||
         args.source_message_ids.length > 50 ||

@@ -14,6 +14,7 @@ import {
   rpcResult,
   validateSessionMemoryDocument,
   validateToolArguments,
+  messagesAfterCursor,
   isAllowedMcpOrigin,
   validateProtocolVersionHeader,
   applyMcpCors,
@@ -293,18 +294,20 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
 
   if (name === "wait_for_group_messages") {
     const timeoutMs = typeof args.timeout_ms === "number" ? args.timeout_ms : 10000;
+    const deadline = Date.now() + timeoutMs;
     const cursor = typeof args.after_created_at === "string" ? Date.parse(args.after_created_at) : Date.now();
-    const messagesAfterCursor = (data: unknown) => isRecord(data) && Array.isArray(data.messages)
-      ? data.messages.filter((message) => isRecord(message) && typeof message.created_at === "string" &&
-          Number.isFinite(Date.parse(message.created_at)) && Date.parse(message.created_at) >= cursor)
+    const cursorMessageId = typeof args.after_message_id === "string" ? args.after_message_id : null;
+    const selectMessagesAfterCursor = (data: unknown) => isRecord(data) && Array.isArray(data.messages)
+      ? messagesAfterCursor(data.messages, cursor, cursorMessageId)
       : [];
-    const hasNewMessages = (data: unknown) => messagesAfterCursor(data).length > 0;
+    const hasNewMessages = (data: unknown) => selectMessagesAfterCursor(data).length > 0;
     const onlyNewMessages = async (data: unknown) => {
       if (!isRecord(data)) return { messages: [] };
-      return await enrichGroupMessages({ ...data, messages: messagesAfterCursor(data) });
+      return await enrichGroupMessages({ ...data, messages: selectMessagesAfterCursor(data) });
     };
     const initial = await invokeAgent(credential, "read");
-    if (hasNewMessages(initial)) return { timed_out: false, delivery: "realtime", ...(await onlyNewMessages(initial) as Record<string, unknown>) };
+    if (hasNewMessages(initial)) return { timed_out: false, delivery: "snapshot", ...(await onlyNewMessages(initial) as Record<string, unknown>) };
+    if (Date.now() >= deadline) return { timed_out: true, delivery: "snapshot", messages: [] };
 
     const roomId = session.room_id;
     if (typeof roomId !== "string" || !/^[0-9a-f-]{36}$/i.test(roomId)) throw new Error("The joined group binding is invalid.");
@@ -312,17 +315,20 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     // authenticated session's room and payloads are never returned to the model.
     db.realtime.setAuth(serviceKey);
     const channel = db.channel("mcp-room-wait-" + roomId + "-" + crypto.randomUUID());
-    let eventSeen = false;
+    let eventVersion = 0;
+    let observedEventVersion = 0;
+    let realtimeWakeObserved = false;
     let wakeWaiter: (() => void) | null = null;
     let eventTimer: ReturnType<typeof setTimeout> | null = null;
     try {
       const subscribed = await new Promise<boolean>((resolve) => {
         let settled = false;
-        const timer = setTimeout(() => { if (!settled) { settled = true; resolve(false); } }, 3000);
+        const subscribeWaitMs = Math.max(1, Math.min(3000, deadline - Date.now()));
+        const timer = setTimeout(() => { if (!settled) { settled = true; resolve(false); } }, subscribeWaitMs);
         channel.on("postgres_changes", {
           event: "INSERT", schema: "public", table: "messages", filter: "room_id=eq." + roomId,
         }, () => {
-          eventSeen = true;
+          eventVersion += 1;
           wakeWaiter?.();
         }).subscribe((status: string) => {
           if (settled) return;
@@ -332,27 +338,75 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       });
       if (!subscribed) return { timed_out: true, delivery: "unavailable", messages: [], note: "Supabase Realtime subscription could not be established. Retry read_group_messages or wait_for_group_messages." };
 
-      // Read after subscribing to close the read/subscribe race. Realtime payloads
-      // are only wake-up signals; the authorized group read remains the source of truth.
-      const afterSubscribe = await invokeAgent(credential, "read");
-      if (hasNewMessages(afterSubscribe)) return { timed_out: false, delivery: "realtime", ...(await onlyNewMessages(afterSubscribe) as Record<string, unknown>) };
-      if (eventSeen) {
-        const afterEvent = await invokeAgent(credential, "read");
-        if (hasNewMessages(afterEvent)) return { timed_out: false, delivery: "realtime", ...(await onlyNewMessages(afterEvent) as Record<string, unknown>) };
+      // Realtime messages can arrive late, including the INSERT used to establish
+      // the cursor. Treat events only as wake-ups: snapshot the authorized group
+      // and ignore stale notifications that do not contain a message after cursor.
+      while (Date.now() < deadline) {
+        const eventVersionBeforeRead = eventVersion;
+        const snapshot = await invokeAgent(credential, "read");
+        if (hasNewMessages(snapshot)) {
+          return {
+            timed_out: false,
+            delivery: realtimeWakeObserved ? "realtime" : "snapshot",
+            ...(await onlyNewMessages(snapshot) as Record<string, unknown>),
+          };
+        }
+        const eventVersionAfterRead = eventVersion;
+        if (eventVersionAfterRead !== eventVersionBeforeRead) {
+          // An event raced the snapshot. Read again before advancing the cursor
+          // for notifications, or a newly committed message could be overlooked.
+          observedEventVersion = eventVersionAfterRead;
+          continue;
+        }
+        observedEventVersion = eventVersionAfterRead;
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) break;
+        const eventOrTimeout = await new Promise<"message" | "timeout">((resolve) => {
+          let settled = false;
+          eventTimer = setTimeout(() => {
+            if (!settled) {
+              settled = true;
+              wakeWaiter = null;
+              resolve("timeout");
+            }
+          }, remainingMs);
+          wakeWaiter = () => {
+            if (settled || eventVersion <= observedEventVersion) return;
+            settled = true;
+            if (eventTimer) clearTimeout(eventTimer);
+            eventTimer = null;
+            wakeWaiter = null;
+            resolve("message");
+          };
+          // Handle an event that arrived after the snapshot but before the wait
+          // callback was installed.
+          if (eventVersion > observedEventVersion) wakeWaiter();
+        });
+        wakeWaiter = null;
+        if (eventOrTimeout === "timeout") break;
+        // A signal does not prove there is a new authorized message. The next
+        // loop iteration verifies it; stale events simply continue waiting.
+        realtimeWakeObserved = true;
       }
-      const eventOrTimeout = await new Promise<"message" | "timeout">((resolve) => {
-        eventTimer = setTimeout(() => resolve("timeout"), timeoutMs);
-        wakeWaiter = () => {
-          if (eventTimer) clearTimeout(eventTimer);
-          resolve("message");
-        };
-        if (eventSeen) wakeWaiter();
-      });
-      if (eventOrTimeout === "timeout") return { timed_out: true, delivery: "realtime", messages: [] };
-      const afterEvent = await invokeAgent(credential, "read");
-      return { timed_out: !hasNewMessages(afterEvent), delivery: "realtime", ...(await onlyNewMessages(afterEvent) as Record<string, unknown>) };
+
+      // Always take a final authorized read at the deadline. Retry if a
+      // notification races this read, then report timeout only on a stable empty snapshot.
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const eventVersionBeforeRead = eventVersion;
+        const finalSnapshot = await invokeAgent(credential, "read");
+        if (hasNewMessages(finalSnapshot)) {
+          return {
+            timed_out: false,
+            delivery: realtimeWakeObserved ? "realtime" : "snapshot",
+            ...(await onlyNewMessages(finalSnapshot) as Record<string, unknown>),
+          };
+        }
+        if (eventVersion === eventVersionBeforeRead) break;
+      }
+      return { timed_out: true, delivery: "realtime", messages: [] };
     } finally {
       if (eventTimer) clearTimeout(eventTimer);
+      wakeWaiter = null;
       try { await db.removeChannel(channel); } catch { /* best-effort cleanup for this bounded subscription */ }
     }
   }
@@ -454,6 +508,30 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     }
     return { remembered: true, entry: data };
   }
+
+  if (name === "forget_memory") {
+    // Defense in depth: this endpoint is only for browser recovery locators,
+    // not arbitrary private memory. The participant credential scopes the
+    // delete; no room ID, participant ID, visibility, or row ID is caller-set.
+    if (args.confirm_forget !== true) throw new Error("Explicit confirmation is required to delete private recovery memory.");
+    if (typeof args.idempotency_key !== "string" || !/^browser-resume-[A-Za-z0-9-]{8,180}$/.test(args.idempotency_key)) {
+      throw new Error("Only a valid browser-resume private recovery entry can be deleted with this tool.");
+    }
+    const { data, error } = await db.from("room_memory_entries")
+      .delete()
+      .eq("room_id", connection.room_id)
+      .eq("created_by_participant_id", connection.participant_id)
+      .eq("visibility", "private")
+      .eq("entry_type", "insight")
+      .like("content", "Original AI conversation recovery URL (private; do not post to group messages): %")
+      .eq("idempotency_key", args.idempotency_key)
+      .select("id");
+    if (error) throw new Error("Could not delete this participant's private recovery entry.");
+    const forgotten = Array.isArray(data) && data.length > 0;
+    return forgotten
+      ? { forgotten: true, visibility: "private", note: "Only the matching private memory entry for this AI participant was deleted." }
+      : { forgotten: false, not_found: true, visibility: "private", note: "No matching private memory entry existed for this AI participant." };
+  }
   throw new Error("Unknown tool.");
 }
 
@@ -484,7 +562,7 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
       supportedVersions: [MCP_MODERN_PROTOCOL_VERSION],
       capabilities: { tools: {} },
       _meta: { "io.modelcontextprotocol/serverInfo": { name: "rub-minds", version: "0.1.0" } },
-      instructions: "Use join_group with explicit confirmation and a unique 64-character hexadecimal join_request_key. Reuse that key only when retrying the same join request. It returns an opaque session_handle that must be passed to subsequent tool calls; use leave_group with explicit confirmation to revoke the participant and terminate the handle. Session imports remain private by default; group memory is shared only when visibility is explicitly set to group.",
+      instructions: "Use join_group with explicit confirmation and a unique 64-character hexadecimal join_request_key. Reuse that key only when retrying the same join request. It returns an opaque session_handle that must be passed to subsequent tool calls; use leave_group with explicit confirmation to revoke the participant and terminate the handle. Session imports remain private by default; group memory is shared only when visibility is explicitly set to group. forget_memory requires explicit confirmation and deletes only this participant\u2019s private browser recovery locator entry.",
       ttlMs: 3600000,
       cacheScope: "public",
     }));
@@ -685,7 +763,7 @@ async function handleMcpRequest(request: Request) {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: { tools: {} },
       serverInfo: { name: "rub-minds", version: "0.1.0" },
-      instructions: "Use join_group with a valid invitation and explicit confirmation. Session imports are private by default; group memory is shared only when visibility is explicitly set to group.",
+      instructions: "Use join_group with a valid invitation and explicit confirmation. Session imports are private by default; group memory is shared only when visibility is explicitly set to group. forget_memory requires confirm_forget=true and deletes only the current participant\u2019s private browser recovery locator entry.",
     }), sessionId);
   }
 
