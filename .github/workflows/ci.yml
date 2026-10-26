@@ -318,6 +318,24 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Run controlled browser proof of concept
         run: npm run test:browser
+      - name: Package browser extension
+        run: |
+          set -euo pipefail
+          node --check integrations/browser-loop/rub-minds-continuation.user.js
+          node --check extension/content/rub-minds-continuation.js
+          node --check extension/popup.js
+          mkdir -p "$RUNNER_TEMP/rub-minds-extension/content"
+          cp extension/manifest.json extension/popup.html extension/popup.css extension/popup.js "$RUNNER_TEMP/rub-minds-extension/"
+          cp extension/content/rub-minds-continuation.js "$RUNNER_TEMP/rub-minds-extension/content/"
+          (cd "$RUNNER_TEMP/rub-minds-extension" && zip -qr "$GITHUB_WORKSPACE/rub-minds-browser-extension.zip" .)
+          unzip -t "$GITHUB_WORKSPACE/rub-minds-browser-extension.zip"
+      - name: Upload installable extension package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rub-minds-browser-extension
+          path: rub-minds-browser-extension.zip
+          if-no-files-found: error
+          retention-days: 14
 
   local-supabase-stack:
     runs-on: ubuntu-latest

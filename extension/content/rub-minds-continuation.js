@@ -575,17 +575,71 @@
     updateRecoveryUi();
   };
 
+  const getState = () => ({
+    provider: providerLabel,
+    running,
+    paused,
+    status: el('rm-status')?.textContent || '',
+  });
   const control = {
-    stop(reason = 'Stopped manually.') {
+    start() {
+      if (running) return { ok: false, state: getState() };
+      // runLoop validates the URL, visible conversation and composer before its first send.
+      void runLoop();
+      return { ok: true, state: getState() };
+    },
+    pause() {
+      if (!running || paused) return { ok: false, state: getState() };
+      paused = true;
+      status('Paused. The current provider reply, if any, will finish; no next prompt will be sent.');
+      updateButtons();
+      return { ok: true, state: getState() };
+    },
+    resume() {
+      if (!running || !paused) return { ok: false, state: getState() };
+      paused = false;
+      status('Resuming…');
+      for (const resolve of pauseWaiters.splice(0)) resolve();
+      updateButtons();
+      return { ok: true, state: getState() };
+    },
+    stop(reason = 'Stopped manually. No further prompts will be sent.') {
+      if (!running) return { ok: false, state: getState() };
       stopReason = reason;
       running = false;
       paused = false;
       for (const resolve of pauseWaiters.splice(0)) resolve();
       status(reason);
       updateButtons();
+      return { ok: true, state: getState() };
+    },
+    getState() {
+      return { ok: true, state: getState() };
     },
   };
   window.__RUBMINDS_CONTINUATION_LOOP__ = control;
+
+  // The extension popup can control this already-open page. Messages are accepted
+  // only from this extension, and only the explicit allowlisted actions are exposed.
+  if (typeof chrome === 'object' && chrome.runtime?.onMessage?.addListener &&
+      typeof chrome.runtime.id === 'string') {
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (message?.type !== 'RUB_MINDS_EXTENSION_CONTROL') return false;
+      if (sender?.id && sender.id !== chrome.runtime.id) return false;
+      const action = message.action;
+      if (action === 'status') {
+        sendResponse(control.getState());
+        return false;
+      }
+      if (!['start', 'pause', 'resume', 'stop'].includes(action)) {
+        sendResponse({ ok: false, error: 'Unsupported extension action.', state: getState() });
+        return false;
+      }
+      const result = control[action]();
+      sendResponse({ ...result, state: getState() });
+      return false;
+    });
+  }
 
   el('rm-collapse').addEventListener('click', () => {
     const controls = el('rm-controls');
@@ -593,21 +647,10 @@
     controls.style.display = hidden ? 'block' : 'none';
     el('rm-collapse').textContent = hidden ? '−' : '+';
   });
-  el('rm-start').addEventListener('click', () => { if (!running) runLoop(); });
-  el('rm-pause').addEventListener('click', () => {
-    if (!running || paused) return;
-    paused = true;
-    status('Paused. The current provider reply, if any, will finish; no next prompt will be sent.');
-    updateButtons();
-  });
-  el('rm-resume').addEventListener('click', () => {
-    if (!running || !paused) return;
-    paused = false;
-    status('Resuming…');
-    for (const resolve of pauseWaiters.splice(0)) resolve();
-    updateButtons();
-  });
-  el('rm-stop').addEventListener('click', () => control.stop('Stopped manually. No further prompts will be sent.'));
+  el('rm-start').addEventListener('click', () => control.start());
+  el('rm-pause').addEventListener('click', () => control.pause());
+  el('rm-resume').addEventListener('click', () => control.resume());
+  el('rm-stop').addEventListener('click', () => control.stop());
 
   async function waitWhilePaused() {
     while (running && paused) {

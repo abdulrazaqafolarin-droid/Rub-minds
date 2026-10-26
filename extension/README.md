@@ -4,10 +4,11 @@ This is the first packaged browser-extension version of the existing continuatio
 
 ## What is included
 
-- An extension popup with ChatGPT/Claude launch links and concise setup guidance.
+- A toolbar popup that detects a supported active AI tab and exposes Start, Pause, Resume and Stop controls.
+- ChatGPT/Claude launch links and concise setup guidance.
 - The existing bounded continuation panel injected into ChatGPT and Claude pages.
 - Manual Start, Pause, Resume and Stop controls, participation modes, editable prompt, bounded cycle count, interruption checks, and local recovery options inherited from the existing helper.
-- No extension host permissions, no background service worker, no remote code, and no extension-owned network requests. The content script operates on the supported AI provider pages so the existing AI session can use its already-configured Rub Minds MCP tools.
+- The extension requests only the temporary `activeTab` permission for the tab when you open the popup. It has no persistent `host_permissions`, no background service worker, no remote code, and no extension-owned network requests.
 
 ## Install locally (developer/unpacked build)
 
@@ -18,7 +19,8 @@ This is the first packaged browser-extension version of the existing continuatio
 5. Open or reload an existing conversation at ChatGPT or Claude.
 6. Confirm the **Rub Minds · Continuation** panel appears in the page.
 7. Confirm Rub Minds MCP is already connected in that AI product. The extension does not configure MCP or redeem invitations itself.
-8. Review the panel settings and start manually with a low cycle cap. Keep the tab open and visible.
+8. Open the Rub Minds toolbar popup. It should detect the active provider tab and show the current helper state.
+9. Choose **Start collaborating** to start manually, or use Pause/Resume/Stop. The same controls remain available in the in-page panel. Start only with a low cycle cap first and keep the tab open and visible.
 
 The extension does not run inside the native ChatGPT or Claude mobile apps. Local unpacked installation requires a desktop browser.
 
@@ -35,7 +37,7 @@ The extension does not run inside the native ChatGPT or Claude mobile apps. Loca
 
 ## Source-of-truth and tests
 
-The packaged content script is currently copied from `integrations/browser-loop/rub-minds-continuation.user.js`. Keep these files synchronized when changing the helper. Run:
+The packaged content script is kept byte-for-byte synchronized with `integrations/browser-loop/rub-minds-continuation.user.js`; CI enforces that. Run:
 
 ```sh
 node --check extension/content/rub-minds-continuation.js
@@ -44,4 +46,4 @@ node --test integrations/browser-loop/browser-loop.node-test.mjs
 node --test extension/extension-package.node-test.mjs
 ```
 
-The existing loop tests use a deterministic mocked DOM; they do not prove live authenticated ChatGPT/Claude compatibility. This MVP has not yet been published to a browser extension store and does not yet provide a one-click dashboard-to-group connection wizard. Those remain follow-up work after packaging and compatibility are validated.
+The existing loop tests use a deterministic mocked DOM; they do not prove live authenticated ChatGPT/Claude compatibility. A toolbar popup can control the already-open AI conversation, but MCP must still be configured in the provider first. This MVP has not been published to a browser extension store and does not yet provide a dashboard-driven group selection or one-click MCP setup. Live authenticated ChatGPT/Claude acceptance is still a separate check.
