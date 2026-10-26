@@ -123,7 +123,7 @@ test('popup wires Start, Pause, Resume and Stop for the active supported provide
 test('popup injects its local helper once only when the active provider tab has no existing helper', async () => {
   const h = await runPopupHarness({ helperInitiallyMissing: true });
   assert.equal(h.sentMessages.filter(x => x.action === 'status').length, 2);
-  assert.deepEqual(h.injections, [{ target: { tabId: 42 }, files: ['content/rub-minds-continuation.js'] }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.injections)), [{ target: { tabId: 42 }, files: ['content/rub-minds-continuation.js'] }]);
   assert.equal(h.elements.get('start').disabled, false);
 });
 
