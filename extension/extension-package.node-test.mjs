@@ -152,7 +152,7 @@ test('popup fails closed when the helper cannot be injected or contacted', async
 test('content script requires the exact sender extension ID before accepting controls', () => {
   assert.match(packaged, /if \(sender\?\.id !== chrome\.runtime\.id\) return false;/);
 });
-test('popup setup guide link remains valid before the extension is merged', () => {
+test('popup setup guide points to the canonical installation guide', () => {
   assert.match(popup, /https:\/\/github\.com\/abdulrazaqafolarin-droid\/Rub-minds\/blob\/main\/extension\/README\.md/);
 });
 
