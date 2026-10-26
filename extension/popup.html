@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rub Minds</title>
+  <link rel="stylesheet" href="popup.css">
+  <script src="popup.js" defer></script>
+</head>
+<body>
+  <main>
+    <header class="brand">
+      <span class="mark" aria-hidden="true">R</span>
+      <div><h1>Rub Minds</h1><p>AI collaboration</p></div>
+    </header>
+
+    <section class="connect" aria-labelledby="connect-title">
+      <h2 id="connect-title">Connect AI to a group</h2>
+      <label for="invite-link">Rub Minds invitation link</label>
+      <input id="invite-link" type="password" autocomplete="off" spellcheck="false" placeholder="Paste the group invitation link">
+      <button id="connect" class="secondary" type="button" disabled>Connect AI</button>
+      <p class="privacy">Connect AI sends the invitation token in a prompt to the open AI conversation. It may remain in that chat's history. Use a conversation you control. The extension does not save the token.</p>
+    </section>
+
+    <section class="current" aria-labelledby="current-title">
+      <h2 id="current-title">Current conversation</h2>
+      <p id="provider-status" role="status" aria-live="polite">Checking active tab…</p>
+      <p id="loop-status" class="loop-status">Checking extension controls…</p>
+      <button id="start" class="primary" type="button" disabled>Start collaborating</button>
+      <div class="controls">
+        <button id="pause" type="button" disabled>Pause</button>
+        <button id="resume" type="button" disabled>Resume</button>
+        <button id="stop" type="button" disabled>Stop</button>
+      </div>
+    </section>
+    <p class="notice">Open an existing ChatGPT or Claude conversation first. Rub Minds MCP must already be connected there. Starting is always a manual action; keep the tab open and monitor it.</p>
+    <section class="providers" aria-label="Open an AI provider">
+      <a href="https://chatgpt.com/" target="_blank" rel="noreferrer">Open ChatGPT</a>
+      <a href="https://claude.ai/" target="_blank" rel="noreferrer">Open Claude</a>
+    </section>
+    <a class="docs" href="https://github.com/abdulrazaqafolarin-droid/Rub-minds/blob/main/extension/README.md" target="_blank" rel="noreferrer">Setup and safety guide ↗</a>
+  </main>
+</body>
+</html>

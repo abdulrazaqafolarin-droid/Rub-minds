@@ -567,6 +567,36 @@
     ].join('\n\n');
   }
 
+  async function connectToGroup(inviteToken) {
+    if (typeof inviteToken !== 'string' || !/^[a-f0-9]{64}$/i.test(inviteToken)) {
+      throw new Error('A valid 64-character Rub Minds invitation token is required.');
+    }
+    if (running || paused) throw new Error('Stop the continuation loop before connecting this AI to a group.');
+    const conversationUrl = currentConversationUrl();
+    if (!conversationUrl || userNodes().length === 0 || replyNodes().length === 0) {
+      throw new Error('Open an existing ChatGPT or Claude conversation with visible messages first.');
+    }
+    if (!inputNode()) throw new Error('The provider composer could not be found.');
+    if (isGenerating()) throw new Error('Wait for the current AI response to finish before connecting.');
+    if (composerText(inputNode())) throw new Error('The composer contains a draft. Send or clear it manually before connecting.');
+
+    const before = snapshot();
+    const agentLabel = `${providerLabel} via Rub Minds extension`;
+    const prompt = [
+      'The user explicitly clicked Connect AI in the Rub Minds extension and authorized one attempt to join a Rub Minds group.',
+      'Use only the connected Rub Minds MCP tool join_group exactly once with these arguments: invite_token=' + JSON.stringify(inviteToken.toLowerCase()) + ', agent_label=' + JSON.stringify(agentLabel) + ', confirm_join=true.',
+      'If the join_group tool is unavailable, explain that Rub Minds MCP is not available in this conversation. Do not pretend that the AI joined.',
+      'Do not call send_group_message, read_group_messages, read_group_context, remember_memory, or any other tool as part of this connection step. Do not send a group message.',
+      'Treat the invitation token and returned session credentials as secrets. Do not repeat them in your reply or save them in memory. Report only the actual join_group tool result. Say joined only if the actual tool result confirms joined=true. If the session was already attached to a group, say so clearly; do not claim this invite switched groups.',
+      'Do not read, import, summarize, or reveal unrelated conversation history. Preserve this conversation and its existing working style.',
+    ].join('\n\n');
+
+    status('Submitting a one-time group-join request to this AI conversation…');
+    await sendMessage(prompt, location.pathname, before.userCount, true);
+    status('Join request sent. Check the AI reply and actual join_group tool result before starting collaboration. No group message was sent.');
+    updateButtons();
+  }
+
   const updateButtons = () => {
     el('rm-start').disabled = running;
     el('rm-pause').disabled = !running || paused;
@@ -575,17 +605,85 @@
     updateRecoveryUi();
   };
 
+  const getState = () => ({
+    provider: providerLabel,
+    running,
+    paused,
+    status: el('rm-status')?.textContent || '',
+  });
   const control = {
-    stop(reason = 'Stopped manually.') {
+    start() {
+      if (running) return { ok: false, state: getState() };
+      // runLoop validates the URL, visible conversation and composer before its first send.
+      void runLoop();
+      return { ok: true, state: getState() };
+    },
+    pause() {
+      if (!running || paused) return { ok: false, state: getState() };
+      paused = true;
+      status('Paused. The current provider reply, if any, will finish; no next prompt will be sent.');
+      updateButtons();
+      return { ok: true, state: getState() };
+    },
+    resume() {
+      if (!running || !paused) return { ok: false, state: getState() };
+      paused = false;
+      status('Resuming…');
+      for (const resolve of pauseWaiters.splice(0)) resolve();
+      updateButtons();
+      return { ok: true, state: getState() };
+    },
+    stop(reason = 'Stopped manually. No further prompts will be sent.') {
+      if (!running) return { ok: false, state: getState() };
       stopReason = reason;
       running = false;
       paused = false;
       for (const resolve of pauseWaiters.splice(0)) resolve();
       status(reason);
       updateButtons();
+      return { ok: true, state: getState() };
+    },
+    connect(inviteToken) {
+      return connectToGroup(inviteToken)
+        .then(() => ({ ok: true, state: getState() }))
+        .catch((error) => {
+          const message = error?.message || String(error);
+          status(`Connection request was not sent: ${message}`);
+          updateButtons();
+          return { ok: false, error: message, state: getState() };
+        });
+    },
+    getState() {
+      return { ok: true, state: getState() };
     },
   };
   window.__RUBMINDS_CONTINUATION_LOOP__ = control;
+
+  // The extension popup can control this already-open page. Messages are accepted
+  // only from this extension, and only the explicit allowlisted actions are exposed.
+  if (typeof chrome === 'object' && chrome.runtime?.onMessage?.addListener &&
+      typeof chrome.runtime.id === 'string') {
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (message?.type !== 'RUB_MINDS_EXTENSION_CONTROL') return false;
+      if (sender?.id !== chrome.runtime.id) return false;
+      const action = message.action;
+      if (action === 'status') {
+        sendResponse(control.getState());
+        return false;
+      }
+      if (action === 'connect') {
+        void control.connect(message.inviteToken).then(sendResponse);
+        return true;
+      }
+      if (!['start', 'pause', 'resume', 'stop'].includes(action)) {
+        sendResponse({ ok: false, error: 'Unsupported extension action.', state: getState() });
+        return false;
+      }
+      const result = control[action]();
+      sendResponse({ ...result, state: getState() });
+      return false;
+    });
+  }
 
   el('rm-collapse').addEventListener('click', () => {
     const controls = el('rm-controls');
@@ -593,21 +691,10 @@
     controls.style.display = hidden ? 'block' : 'none';
     el('rm-collapse').textContent = hidden ? '−' : '+';
   });
-  el('rm-start').addEventListener('click', () => { if (!running) runLoop(); });
-  el('rm-pause').addEventListener('click', () => {
-    if (!running || paused) return;
-    paused = true;
-    status('Paused. The current provider reply, if any, will finish; no next prompt will be sent.');
-    updateButtons();
-  });
-  el('rm-resume').addEventListener('click', () => {
-    if (!running || !paused) return;
-    paused = false;
-    status('Resuming…');
-    for (const resolve of pauseWaiters.splice(0)) resolve();
-    updateButtons();
-  });
-  el('rm-stop').addEventListener('click', () => control.stop('Stopped manually. No further prompts will be sent.'));
+  el('rm-start').addEventListener('click', () => control.start());
+  el('rm-pause').addEventListener('click', () => control.pause());
+  el('rm-resume').addEventListener('click', () => control.resume());
+  el('rm-stop').addEventListener('click', () => control.stop());
 
   async function waitWhilePaused() {
     while (running && paused) {
