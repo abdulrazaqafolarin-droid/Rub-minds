@@ -60,10 +60,24 @@ async function refresh() {
   try {
     const { provider } = await getActiveTab();
     setMessage(provider + ' tab detected. Checking helper…');
-    const result = await chrome.tabs.sendMessage(activeTabId, {
-      type: 'RUB_MINDS_EXTENSION_CONTROL',
-      action: 'status',
-    });
+    let result;
+    try {
+      result = await chrome.tabs.sendMessage(activeTabId, {
+        type: 'RUB_MINDS_EXTENSION_CONTROL',
+        action: 'status',
+      });
+    } catch (_) {
+      // Inject only after the user opens the toolbar popup on this supported active tab.
+      // Do not re-inject when the existing helper is responding: re-injection would stop its loop.
+      await chrome.scripting.executeScript({
+        target: { tabId: activeTabId },
+        files: ['content/rub-minds-continuation.js'],
+      });
+      result = await chrome.tabs.sendMessage(activeTabId, {
+        type: 'RUB_MINDS_EXTENSION_CONTROL',
+        action: 'status',
+      });
+    }
     if (!result?.ok || !result.state) throw new Error('Extension helper is not responding. Reload this tab, then reopen the popup.');
     setControls(true, result.state);
     setMessage(provider + ' helper ready. MCP connection must be configured separately.', result.state.status);

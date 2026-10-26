@@ -7,21 +7,8 @@
     "default_title": "Rub Minds",
     "default_popup": "popup.html"
   },
-  "content_scripts": [
-    {
-      "matches": [
-        "https://chatgpt.com/*",
-        "https://chat.openai.com/*",
-        "https://claude.ai/*"
-      ],
-      "js": [
-        "content/rub-minds-continuation.js"
-      ],
-      "run_at": "document_idle",
-      "all_frames": false
-    }
-  ],
   "permissions": [
-    "activeTab"
+    "activeTab",
+    "scripting"
   ]
 }

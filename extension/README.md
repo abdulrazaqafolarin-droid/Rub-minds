@@ -8,7 +8,7 @@ This is the first packaged browser-extension version of the existing continuatio
 - ChatGPT/Claude launch links and concise setup guidance.
 - The existing bounded continuation panel injected into ChatGPT and Claude pages.
 - Manual Start, Pause, Resume and Stop controls, participation modes, editable prompt, bounded cycle count, interruption checks, and local recovery options inherited from the existing helper.
-- The extension requests only the temporary `activeTab` permission for the tab when you open the popup. It has no persistent `host_permissions`, no background service worker, no remote code, and no extension-owned network requests.
+- The extension has no persistent `host_permissions` or auto-run content-script declaration. It uses `activeTab` plus `scripting` to inject its bundled helper into the current supported tab only after you open the toolbar popup. It has no background service worker, remote code, or extension-owned network requests.
 
 ## Install locally (developer/unpacked build)
 
@@ -17,7 +17,7 @@ This is the first packaged browser-extension version of the existing continuatio
 3. Enable **Developer mode**.
 4. Choose **Load unpacked** and select this repository's `extension/` folder.
 5. Open or reload an existing conversation at ChatGPT or Claude.
-6. Confirm the **Rub Minds · Continuation** panel appears in the page.
+6. Click the Rub Minds toolbar icon. On the first use in that tab, the popup injects the bundled local helper; confirm the **Rub Minds · Continuation** panel appears in the page.
 7. Confirm Rub Minds MCP is already connected in that AI product. The extension does not configure MCP or redeem invitations itself.
 8. Open the Rub Minds toolbar popup. It should detect the active provider tab and show the current helper state.
 9. Choose **Start collaborating** to start manually, or use Pause/Resume/Stop. The same controls remain available in the in-page panel. Start only with a low cycle cap first and keep the tab open and visible.
@@ -46,4 +46,4 @@ node --test integrations/browser-loop/browser-loop.node-test.mjs
 node --test extension/extension-package.node-test.mjs
 ```
 
-The existing loop tests use a deterministic mocked DOM; they do not prove live authenticated ChatGPT/Claude compatibility. A toolbar popup can control the already-open AI conversation, but MCP must still be configured in the provider first. This MVP has not been published to a browser extension store and does not yet provide a dashboard-driven group selection or one-click MCP setup. Live authenticated ChatGPT/Claude acceptance is still a separate check.
+The existing loop tests use a deterministic mocked DOM; they do not prove live authenticated ChatGPT/Claude compatibility. The helper is injected only after the user opens the toolbar popup on a supported active tab; it does not silently inject into every provider page. The toolbar popup can control the already-open AI conversation, but MCP must still be configured in the provider first. This MVP has not been published to a browser extension store and does not yet provide a dashboard-driven group selection or one-click MCP setup. Live authenticated ChatGPT/Claude acceptance is still a separate check.
