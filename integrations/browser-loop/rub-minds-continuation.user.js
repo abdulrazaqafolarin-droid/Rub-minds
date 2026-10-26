@@ -589,7 +589,7 @@
       'Do not call send_group_message, read_group_messages, read_group_context, remember_memory, or any other tool as part of this connection step. Do not send a group message.',
       'Treat the invitation token and returned session credentials as secrets. Do not repeat them in your reply or save them in memory. Report only the actual join_group tool result. Say joined only if the actual tool result confirms joined=true. If the session was already attached to a group, say so clearly; do not claim this invite switched groups.',
       'Do not read, import, summarize, or reveal unrelated conversation history. Preserve this conversation and its existing working style.',
-    ].join('\\n\\n');
+    ].join('\n\n');
 
     status('Submitting a one-time group-join request to this AI conversation…');
     await sendMessage(prompt, location.pathname, before.userCount, true);
