@@ -458,3 +458,44 @@ test('Windows driver closeGroup waits for pending navigation and leaves no orpha
   }
 });
 
+
+test('Windows driver releases an unused group context after concurrent open failures', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'rub-minds-backroom-'));
+  let announceBoth;
+  let releaseBoth;
+  const bothStarted = new Promise(resolve => { announceBoth = resolve; });
+  const gate = new Promise(resolve => { releaseBoth = resolve; });
+  let started = 0;
+  const { chromium, contexts } = fakeChromium({
+    beforeGoto: async () => {
+      started += 1;
+      if (started === 2) announceBoth();
+      await gate;
+      throw new Error('simulated parallel navigation failure');
+    },
+  });
+  try {
+    const driver = new WindowsPlaywrightDriver({ chromium, profileRoot: path.join(root, 'profiles') });
+    const first = driver.openManaged({
+      groupId: GROUP_A, sessionId: 'w-session-fail-a', provider: 'chatgpt',
+      url: 'https://chatgpt.com/', approvedOrigins: ['https://chatgpt.com'],
+    });
+    const second = driver.openManaged({
+      groupId: GROUP_A, sessionId: 'w-session-fail-b', provider: 'chatgpt',
+      url: 'https://chatgpt.com/c/another', approvedOrigins: ['https://chatgpt.com'],
+    });
+    await bothStarted;
+    releaseBoth();
+    const outcomes = await Promise.allSettled([first, second]);
+    assert.ok(outcomes.every(item => item.status === 'rejected' && /simulated parallel navigation failure/.test(item.reason.message)));
+    assert.equal(driver.sessions.size, 0);
+    assert.equal(driver.pendingSessions.size, 0);
+    assert.equal(driver.contexts.has(GROUP_A), false);
+    assert.equal(contexts.length, 1);
+    assert.equal(contexts[0].closeCalls, 1);
+  } finally {
+    releaseBoth();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
