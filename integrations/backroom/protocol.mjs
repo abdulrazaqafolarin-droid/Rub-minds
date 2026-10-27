@@ -154,6 +154,7 @@ export function validateBackroomCommand(input, registration, options = {}) {
   const policy = Object.hasOwn(POLICIES, input.action) ? POLICIES[input.action] : null;
   if (!policy) errors.push("unsupported action");
   else {
+    if (input.action === "task.cancel" && input.params?.targetRequestId === input.requestId) errors.push("a cancellation request cannot target itself");
     if (RESERVED_ACTIONS.has(input.action)) errors.push("terminal execution is reserved until a sandboxed platform adapter is released");
     if (!registered.valid || !registration.capabilities.includes(policy.capability)) errors.push("session has not granted capability " + policy.capability);
     checkParams(input.action, input.params, errors);
