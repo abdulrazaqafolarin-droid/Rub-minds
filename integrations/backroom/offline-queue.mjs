@@ -6,7 +6,11 @@ const TERMINAL = new Set(['succeeded', 'rejected', 'expired', 'cancelled', 'fail
 const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 function errorText(value) {
-  const text = value instanceof Error ? value.message : String(value ?? 'Unknown local execution error');
+  let text = 'Unknown local execution error';
+  try {
+    if (value instanceof Error && typeof value.message === 'string') text = value.message;
+    else if (typeof value === 'string') text = value;
+  } catch { /* Keep the safe fallback for hostile error objects. */ }
   return text.slice(0, 500) || 'Unknown local execution error';
 }
 
@@ -68,7 +72,7 @@ export class BackroomOfflineQueue {
     if (!Number.isFinite(now)) throw new TypeError('Queue clock must return a finite timestamp');
     if (!isRecord(command)) throw new TypeError('command must be an object');
     if (!BACKROOM_QUEUEABLE_ACTIONS.includes(command.action)) {
-      throw new Error('This action is not eligible for offline queueing: ' + String(command.action));
+      throw new Error('This action is not eligible for offline queueing: ' + (typeof command.action === 'string' ? command.action : '[non-string action]'));
     }
     const validation = validateBackroomCommand(command, registration, { now, trustedApproval });
     if (!validation.valid) throw new Error('Backroom command rejected: ' + validation.errors.join('; '));
@@ -128,6 +132,7 @@ export class BackroomOfflineQueue {
   /** Call once on host startup. Retrying an interrupted action is at-least-once;
    * the adapter must enforce idempotencyKey to avoid duplicate side effects. */
   async recoverInterrupted() {
+    if (this.draining) throw new Error('Cannot recover interrupted work while this queue is draining');
     return this.withMutation(async () => {
       const records = await this.list();
       let recovered = 0;
