@@ -55,19 +55,22 @@ async function invokeRoute(handler, page, url) {
 function fakeDriver() {
   const calls = [];
   const pages = new Map();
+  const pageGroups = new Map();
   return {
-    calls, pages,
+    calls, pages, pageGroups,
     async openManaged(input) {
       calls.push(['openManaged', input]);
       const page = new FakePage(input.url);
       const handle = { sessionId: input.sessionId, groupId: input.groupId, mode: 'managed', page };
       pages.set(input.sessionId, page);
+      pageGroups.set(input.sessionId, input.groupId);
       return handle;
     },
     async attachExisting(input) {
       calls.push(['attachExisting', input]);
       const handle = { sessionId: input.sessionId, groupId: input.groupId, mode: 'attach_existing', page: input.page };
       pages.set(input.sessionId, input.page);
+      pageGroups.set(input.sessionId, input.groupId);
       return handle;
     },
     async inspect(handle) {
@@ -77,12 +80,15 @@ function fakeDriver() {
       calls.push(['closeSession', handle.sessionId, options]);
       if (options?.connectionMode !== 'attach_existing' && !handle.page.isClosed()) await handle.page.close();
       pages.delete(handle.sessionId);
+      pageGroups.delete(handle.sessionId);
     },
     async closeGroup(groupId, handles) {
       calls.push(['closeGroup', groupId, handles.length]);
       for (const [sessionId, page] of pages) {
+        if (pageGroups.get(sessionId) !== groupId) continue;
         if (!page.isClosed() && !handles.some(h => h.handle.sessionId === sessionId && h.connectionMode === 'attach_existing')) await page.close();
         pages.delete(sessionId);
+        pageGroups.delete(sessionId);
       }
     },
   };
@@ -288,14 +294,17 @@ test('failed managed navigation closes its page and does not retain a false sess
   try {
     const driver = new WindowsPlaywrightDriver({ chromium, profileRoot: path.join(root, 'profiles') });
     const original = FakePage.prototype.goto;
-    FakePage.prototype.goto = async function () { throw new Error('simulated navigation failure'); };
-    await assert.rejects(driver.openManaged({
-      groupId: GROUP_A, sessionId: 'w-session-fail', provider: 'chatgpt',
-      url: 'https://chatgpt.com/', approvedOrigins: ['https://chatgpt.com'],
-    }), /simulated navigation failure/);
-    assert.equal(driver.sessions.has('w-session-fail'), false);
-    assert.equal(contexts[0].closeCalls, 1);
-    FakePage.prototype.goto = original;
+    try {
+      FakePage.prototype.goto = async function () { throw new Error('simulated navigation failure'); };
+      await assert.rejects(driver.openManaged({
+        groupId: GROUP_A, sessionId: 'w-session-fail', provider: 'chatgpt',
+        url: 'https://chatgpt.com/', approvedOrigins: ['https://chatgpt.com'],
+      }), /simulated navigation failure/);
+      assert.equal(driver.sessions.has('w-session-fail'), false);
+      assert.equal(contexts[0].closeCalls, 1);
+    } finally {
+      FakePage.prototype.goto = original;
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }
