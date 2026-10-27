@@ -50,7 +50,7 @@ test("permits a read command only for the registered group/session and granted c
   has(valid(command("conversation.read"), registration({ capabilities: ["session.inspect"] })), /has not granted capability/);
 });
 
-test("requires a trusted, current approval bound to the exact message and terminal command", () => {
+test("requires exact, current approvals for sensitive actions and keeps terminal execution disabled", () => {
   const send = command("conversation.send", { text: "Hello group" });
   has(valid(send), /requires a trusted approval/);
   assert.equal(valid(send, registration(), { trustedApproval: approval(send) }).valid, true);
@@ -61,7 +61,7 @@ test("requires a trusted, current approval bound to the exact message and termin
   has(valid(send, registration(), { trustedApproval: approval(send, { groupId: "20000000-0000-4000-8000-000000000002" }) }), /approval groupId does not match/);
   has(valid(send, registration(), { trustedApproval: approval(send, { expiresAt: "2026-10-27T09:59:59.000Z" }) }), /expired/);
   const terminal = command("terminal.execute", { command: "npm test" });
-  assert.equal(valid(terminal, registration(), { trustedApproval: approval(terminal) }).valid, true);
+  has(valid(terminal, registration(), { trustedApproval: approval(terminal) }), /reserved until a sandboxed platform adapter/);
 });
 
 test("rejects approvals supplied by untrusted command payloads", () => {
