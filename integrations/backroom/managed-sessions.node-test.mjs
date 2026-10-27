@@ -422,3 +422,39 @@ test('manager closeGroup waits for pending opens and rejects late registrations'
   assert.equal(driver.pages.get('session-01'), undefined);
 });
 
+
+test('Windows driver closeGroup waits for pending navigation and leaves no orphan context', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'rub-minds-backroom-'));
+  let announceGoto;
+  let releaseGoto;
+  const gotoStarted = new Promise(resolve => { announceGoto = resolve; });
+  const gotoGate = new Promise(resolve => { releaseGoto = resolve; });
+  const { chromium } = fakeChromium({ beforeGoto: async () => { announceGoto(); await gotoGate; } });
+  try {
+    const driver = new WindowsPlaywrightDriver({ chromium, profileRoot: path.join(root, 'profiles') });
+    const opening = driver.openManaged({
+      groupId: GROUP_A, sessionId: 'w-session-pending-close', provider: 'chatgpt',
+      url: 'https://chatgpt.com/', approvedOrigins: ['https://chatgpt.com'],
+    });
+    await gotoStarted;
+    const closing = driver.closeGroup(GROUP_A);
+    await assert.rejects(
+      driver.openManaged({
+        groupId: GROUP_A, sessionId: 'w-session-late', provider: 'chatgpt',
+        url: 'https://chatgpt.com/', approvedOrigins: ['https://chatgpt.com'],
+      }),
+      /group is closing/,
+    );
+    releaseGoto();
+    await assert.rejects(opening, /group began closing/);
+    await closing;
+    assert.equal(driver.sessions.size, 0);
+    assert.equal(driver.contexts.has(GROUP_A), false);
+    assert.equal([...driver.pendingSessions].length, 0);
+    assert.equal([...driver.pendingSessionGroups.values()].length, 0);
+  } finally {
+    releaseGoto();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
