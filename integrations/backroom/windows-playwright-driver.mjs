@@ -64,6 +64,7 @@ export class WindowsPlaywrightDriver {
     this.pendingContexts = new Map();
     this.sessions = new Map();
     this.pendingSessions = new Set();
+    this.pendingSessionGroups = new Map();
   }
 
   async profileDirectory(groupId) {
@@ -130,6 +131,7 @@ export class WindowsPlaywrightDriver {
     }
     const target = assertApprovedUrl(url, allowed);
     this.pendingSessions.add(sessionId);
+    this.pendingSessionGroups.set(sessionId, groupId);
     let context;
     let page;
     let wasContextEmpty = false;
@@ -151,7 +153,8 @@ export class WindowsPlaywrightDriver {
       if (page) { try { await page.close(); } catch { /* Preserve primary error. */ } }
       if (context && wasContextEmpty) {
         const stillUsed = [...this.sessions.values()].some(item => item.groupId === groupId && item.mode === 'managed');
-        if (!stillUsed) {
+        const anotherOpenPending = [...this.pendingSessionGroups].some(([pendingId, pendingGroup]) => pendingId !== sessionId && pendingGroup === groupId);
+        if (!stillUsed && !anotherOpenPending) {
           try { await context.close(); } catch { /* Preserve primary error. */ }
           this.contexts.delete(groupId);
         }
@@ -159,6 +162,7 @@ export class WindowsPlaywrightDriver {
       throw error;
     } finally {
       this.pendingSessions.delete(sessionId);
+      this.pendingSessionGroups.delete(sessionId);
     }
   }
 
@@ -173,11 +177,18 @@ export class WindowsPlaywrightDriver {
       if (!providerOrigins) throw new Error('Unsupported AI provider');
       for (const origin of allowed) if (!providerOrigins.includes(origin)) throw new Error('Origin is outside the provider allowlist');
     }
-    const current = await this.inspectPage(page);
-    if (current.isClosed || !allowed.has(current.origin)) throw new Error('Selected page is closed or outside the approved origin list');
-    const handle = Object.freeze({ sessionId, groupId, mode: 'attach_existing', page });
-    this.sessions.set(sessionId, { groupId, mode: 'attach_existing', page, approvedOrigins: allowed, provider });
-    return handle;
+    this.pendingSessions.add(sessionId);
+    this.pendingSessionGroups.set(sessionId, groupId);
+    try {
+      const current = await this.inspectPage(page);
+      if (current.isClosed || !allowed.has(current.origin)) throw new Error('Selected page is closed or outside the approved origin list');
+      const handle = Object.freeze({ sessionId, groupId, mode: 'attach_existing', page });
+      this.sessions.set(sessionId, { groupId, mode: 'attach_existing', page, approvedOrigins: allowed, provider });
+      return handle;
+    } finally {
+      this.pendingSessions.delete(sessionId);
+      this.pendingSessionGroups.delete(sessionId);
+    }
   }
 
   async inspectPage(page) {
@@ -227,10 +238,10 @@ export class WindowsPlaywrightDriver {
     // Attaching to an existing session unregisters the handle; it never closes the user's page.
   }
 
-  async closeGroup(groupId, handles = []) {
-    const trackedHandles = [...this.sessions.values()].filter(item => item.groupId === groupId);
-    for (const item of trackedHandles) {
-      this.sessions.delete(item.page === undefined ? '' : [...this.sessions.entries()].find(([, entry]) => entry === item)?.[0]);
+  async closeGroup(groupId) {
+    const entries = [...this.sessions.entries()].filter(([, item]) => item.groupId === groupId);
+    for (const [sessionId, item] of entries) {
+      this.sessions.delete(sessionId);
       if (item.mode === 'managed' && !item.page.isClosed()) {
         try { await item.page.close(); } catch { /* Continue cleanup. */ }
       }
@@ -240,7 +251,6 @@ export class WindowsPlaywrightDriver {
       try { await context.close(); }
       finally { this.contexts.delete(groupId); }
     }
-    // Any attached pages supplied by the user are intentionally left open.
-    void handles;
+    // Existing user pages are only unregistered; they are never closed.
   }
 }
