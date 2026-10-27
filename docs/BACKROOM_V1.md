@@ -43,21 +43,28 @@ A URL, invitation, or MCP connection does not itself grant access to another app
 
 The protocol validator is not authentication, transport, app automation or a sandbox. The host must authenticate callers, keep device credentials out of command payloads, use a trusted approval store, enforce idempotency, and audit actions. **Protocol v1 explicitly rejects terminal execution** until a separately reviewed sandboxed executor is released with bounded workspace access, cancellation, output limits and audit records.
 
+## Offline queue foundation
+
+`integrations/backroom/offline-queue.mjs` provides a storage-agnostic single-host queue engine for approved conversation sends and HTTPS navigation. It queues only those allowlisted actions, enforces limits and deduplication, does not execute while offline, rechecks the session/capabilities/trusted approval at replay, expires stale actions, bounds retry count, validates results, and supports cancellation. It persists only an opaque approval reference rather than the approval payload.
+
+This is **not yet durable local device behavior** because no Windows or Android storage adapter/local host is included. The storage adapter must protect queued content, avoid cloud syncing by default, and guarantee one active drainer per store. A crash during a side effect can make the outcome ambiguous; retries are at-least-once, so the platform adapter must enforce idempotency and avoid duplicate posts. Old or revoked approvals are never reused.
+
 ## Local-first release order
 
 1. Keep the existing group/invitation/MCP workflow as the first proof and verify the actual result, not just successful page navigation or tool discovery.
 2. Implement a Windows local host with authenticated loopback IPC and a managed browser adapter. Test against a controlled local provider before any real signed-in account.
 3. Implement Android-specific adapters with explicit Android permissions. Fail visibly when cross-app control is unavailable; do not promise control of every native app.
 4. Add the vibe-coding workspace around project context, group decisions, and tasks. Terminal execution stays disabled until a sandboxed executor is separately reviewed and tested.
-5. Add cloud execution only after revenue and measured cost limits justify it.
+5. Implement platform-protected queue storage and reconnect tests; then consider additional local actions.
+6. Add cloud execution only after revenue and measured cost limits justify it.
 
 ## Release gates
 
-- Protocol tests pass on every change.
+- Protocol and queue tests pass on every change.
 - No cross-group/session command or undeclared capability can run.
 - Incoming command data cannot self-approve an action.
 - Stale, future-dated, mismatched or expired approvals are rejected.
 - Unsafe schemes and URLs with embedded credentials are rejected.
-- Duplicate requests are idempotent, local actions can be cancelled, and execution is audited.
+- Reconnect never bypasses approval expiry/revocation; duplicates are controlled with idempotency keys.
 - Windows and Android are tested separately, then through the same group workflow.
 - No production Supabase migration, function deployment, or Vercel production deployment is part of this foundation change.
