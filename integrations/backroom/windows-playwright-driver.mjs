@@ -1,0 +1,246 @@
+import { createHash } from 'node:crypto';
+import { mkdir, realpath } from 'node:fs/promises';
+import path from 'node:path';
+import { BACKROOM_PROVIDER_ORIGINS } from './session-manager.mjs';
+
+const GROUP_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function exactOrigins(origins) {
+  if (!Array.isArray(origins) || origins.length < 1 || origins.length > 10) throw new TypeError('approvedOrigins must contain 1-10 exact HTTPS origins');
+  const normalized = origins.map(origin => {
+    if (typeof origin !== 'string') throw new TypeError('Each approved origin must be a string');
+    let parsed;
+    try { parsed = new URL(origin); } catch { throw new TypeError('Each approved origin must be an HTTPS origin'); }
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.origin !== origin ||
+        parsed.pathname !== '/' || parsed.search || parsed.hash) {
+      throw new TypeError('Each approved origin must be an exact HTTPS origin');
+    }
+    return parsed.origin;
+  });
+  if (new Set(normalized).size !== normalized.length) throw new TypeError('approvedOrigins must not contain duplicates');
+  return new Set(normalized);
+}
+
+function assertApprovedUrl(value, allowedOrigins) {
+  if (typeof value !== 'string' || value.length > 2048) throw new TypeError('URL must contain 1-2048 characters');
+  let parsed;
+  try { parsed = new URL(value); } catch { throw new TypeError('URL must be absolute'); }
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password) throw new Error('Only HTTPS URLs without embedded credentials are allowed');
+  if (!allowedOrigins.has(parsed.origin)) throw new Error('URL origin is not in the user-approved origin list');
+  return parsed.href;
+}
+
+function profileName(groupId) {
+  if (typeof groupId !== 'string' || !GROUP_ID.test(groupId)) throw new TypeError('groupId must be a UUID');
+  return createHash('sha256').update(groupId.toLowerCase()).digest('hex').slice(0, 32);
+}
+
+/**
+ * Windows managed-browser driver using Playwright Chromium.
+ *
+ * Every group gets a separate persistent profile directory. The profile stores
+ * provider login state locally; it must not be copied to Rub Minds or another
+ * group. The driver intentionally exposes only open/attach/inspect/close.
+ *
+ * A managed profile is a visible browser, not a clone of the provider app.
+ * Existing-session attachment accepts a page supplied by a separately
+ * authorized local adapter; it does not attach to arbitrary Chrome by itself.
+ */
+export class WindowsPlaywrightDriver {
+  constructor({ chromium, profileRoot, timeoutMs = 30_000 } = {}) {
+    if (!chromium || typeof chromium.launchPersistentContext !== 'function') {
+      throw new TypeError('Playwright chromium with launchPersistentContext is required');
+    }
+    if (typeof profileRoot !== 'string' || !profileRoot.trim() || !path.isAbsolute(profileRoot)) {
+      throw new TypeError('profileRoot must be an absolute local directory path');
+    }
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 120_000) {
+      throw new RangeError('timeoutMs must be between 1000 and 120000');
+    }
+    this.chromium = chromium;
+    this.profileRoot = path.resolve(profileRoot);
+    this.timeoutMs = timeoutMs;
+    this.contexts = new Map();
+    this.pendingContexts = new Map();
+    this.sessions = new Map();
+    this.pendingSessions = new Set();
+  }
+
+  async profileDirectory(groupId) {
+    const name = profileName(groupId);
+    await mkdir(this.profileRoot, { recursive: true, mode: 0o700 });
+    const realRoot = await realpath(this.profileRoot);
+    const candidate = path.resolve(realRoot, name);
+    if (!candidate.startsWith(realRoot + path.sep)) throw new Error('Profile path escaped the configured root');
+    await mkdir(candidate, { recursive: true, mode: 0o700 });
+    const realProfile = await realpath(candidate);
+    if (!realProfile.startsWith(realRoot + path.sep)) throw new Error('Profile directory resolves outside the configured root');
+    return realProfile;
+  }
+
+  async getContext(groupId) {
+    const existing = this.contexts.get(groupId);
+    if (existing) return existing;
+    const pending = this.pendingContexts.get(groupId);
+    if (pending) return pending;
+
+    const creation = (async () => {
+      const userDataDir = await this.profileDirectory(groupId);
+      const context = await this.chromium.launchPersistentContext(userDataDir, {
+        headless: false,
+        acceptDownloads: false,
+      });
+      this.contexts.set(groupId, context);
+      return context;
+    })();
+    this.pendingContexts.set(groupId, creation);
+    try { return await creation; }
+    finally { this.pendingContexts.delete(groupId); }
+  }
+
+  installNavigationGuard(page, allowedOrigins) {
+    if (typeof page.route !== 'function' || typeof page.mainFrame !== 'function') {
+      throw new TypeError('Playwright page must support route() and mainFrame() for navigation guards');
+    }
+    const mainFrame = page.mainFrame();
+    return page.route('**/*', async route => {
+      const request = route.request();
+      if (!request.isNavigationRequest() || request.frame() !== mainFrame) {
+        await route.continue();
+        return;
+      }
+      try {
+        assertApprovedUrl(request.url(), allowedOrigins);
+        await route.continue();
+      } catch {
+        await route.abort('blockedbyclient');
+      }
+    });
+  }
+
+  async openManaged({ groupId, sessionId, url, approvedOrigins, provider } = {}) {
+    if (!GROUP_ID.test(groupId || '')) throw new TypeError('groupId must be a UUID');
+    if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId.length > 200) throw new TypeError('sessionId must be a non-empty string');
+    if (this.sessions.has(sessionId) || this.pendingSessions.has(sessionId)) throw new Error('sessionId is already open');
+    const allowed = exactOrigins(approvedOrigins);
+    if (provider !== 'website') {
+      const providerOrigins = BACKROOM_PROVIDER_ORIGINS[provider];
+      if (!providerOrigins) throw new Error('Unsupported AI provider');
+      for (const origin of allowed) if (!providerOrigins.includes(origin)) throw new Error('Origin is outside the provider allowlist');
+    }
+    const target = assertApprovedUrl(url, allowed);
+    this.pendingSessions.add(sessionId);
+    let context;
+    let page;
+    let wasContextEmpty = false;
+    try {
+      context = await this.getContext(groupId);
+      wasContextEmpty = ![...this.sessions.values()].some(item => item.groupId === groupId && item.mode === 'managed');
+      page = await context.newPage();
+      await this.installNavigationGuard(page, allowed);
+      page.setDefaultNavigationTimeout?.(this.timeoutMs);
+      await page.goto(target, { waitUntil: 'domcontentloaded', timeout: this.timeoutMs });
+      const current = await this.inspectPage(page);
+      if (current.isClosed || !allowed.has(current.origin)) {
+        throw new Error('The browser did not remain on an approved HTTPS origin');
+      }
+      const handle = Object.freeze({ sessionId, groupId, mode: 'managed', page });
+      this.sessions.set(sessionId, { groupId, mode: 'managed', page, approvedOrigins: allowed, provider });
+      return handle;
+    } catch (error) {
+      if (page) { try { await page.close(); } catch { /* Preserve primary error. */ } }
+      if (context && wasContextEmpty) {
+        const stillUsed = [...this.sessions.values()].some(item => item.groupId === groupId && item.mode === 'managed');
+        if (!stillUsed) {
+          try { await context.close(); } catch { /* Preserve primary error. */ }
+          this.contexts.delete(groupId);
+        }
+      }
+      throw error;
+    } finally {
+      this.pendingSessions.delete(sessionId);
+    }
+  }
+
+  async attachExisting({ groupId, sessionId, page, approvedOrigins, provider } = {}) {
+    if (!GROUP_ID.test(groupId || '')) throw new TypeError('groupId must be a UUID');
+    if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId.length > 200) throw new TypeError('sessionId must be a non-empty string');
+    if (!page || typeof page.url !== 'function' || typeof page.isClosed !== 'function') throw new TypeError('An explicitly selected Playwright page is required');
+    if (this.sessions.has(sessionId) || this.pendingSessions.has(sessionId)) throw new Error('sessionId is already open');
+    const allowed = exactOrigins(approvedOrigins);
+    if (provider !== 'website') {
+      const providerOrigins = BACKROOM_PROVIDER_ORIGINS[provider];
+      if (!providerOrigins) throw new Error('Unsupported AI provider');
+      for (const origin of allowed) if (!providerOrigins.includes(origin)) throw new Error('Origin is outside the provider allowlist');
+    }
+    const current = await this.inspectPage(page);
+    if (current.isClosed || !allowed.has(current.origin)) throw new Error('Selected page is closed or outside the approved origin list');
+    const handle = Object.freeze({ sessionId, groupId, mode: 'attach_existing', page });
+    this.sessions.set(sessionId, { groupId, mode: 'attach_existing', page, approvedOrigins: allowed, provider });
+    return handle;
+  }
+
+  async inspectPage(page) {
+    if (!page || typeof page.isClosed !== 'function') throw new TypeError('Invalid page handle');
+    if (page.isClosed()) return { isClosed: true, origin: null, url: null };
+    const value = page.url();
+    let origin = null;
+    try {
+      const parsed = new URL(value);
+      if (parsed.protocol === 'https:' && !parsed.username && !parsed.password) origin = parsed.origin;
+    } catch { /* Invalid or non-HTTPS URLs have no authorized origin. */ }
+    return { isClosed: false, origin, url: value };
+  }
+
+  async inspect(handle) {
+    if (!handle || typeof handle.sessionId !== 'string') throw new TypeError('Invalid session handle');
+    const tracked = this.sessions.get(handle.sessionId);
+    if (!tracked || tracked.page !== handle.page || tracked.groupId !== handle.groupId) {
+      throw new Error('Session handle is not registered by this driver');
+    }
+    const current = await this.inspectPage(tracked.page);
+    return {
+      isClosed: current.isClosed,
+      url: current.url,
+      origin: current.origin,
+    };
+  }
+
+  async closeSession(handle) {
+    if (!handle || typeof handle.sessionId !== 'string') return;
+    const tracked = this.sessions.get(handle.sessionId);
+    if (!tracked || tracked.page !== handle.page) return;
+    this.sessions.delete(handle.sessionId);
+    if (tracked.mode === 'managed') {
+      try { if (!tracked.page.isClosed()) await tracked.page.close(); }
+      finally {
+        const remaining = [...this.sessions.values()].some(item => item.groupId === tracked.groupId && item.mode === 'managed');
+        if (!remaining) {
+          const context = this.contexts.get(tracked.groupId);
+          if (context) {
+            try { await context.close(); }
+            finally { this.contexts.delete(tracked.groupId); }
+          }
+        }
+      }
+    }
+    // Attaching to an existing session unregisters the handle; it never closes the user's page.
+  }
+
+  async closeGroup(groupId, handles = []) {
+    const trackedHandles = [...this.sessions.values()].filter(item => item.groupId === groupId);
+    for (const item of trackedHandles) {
+      this.sessions.delete(item.page === undefined ? '' : [...this.sessions.entries()].find(([, entry]) => entry === item)?.[0]);
+      if (item.mode === 'managed' && !item.page.isClosed()) {
+        try { await item.page.close(); } catch { /* Continue cleanup. */ }
+      }
+    }
+    const context = this.contexts.get(groupId);
+    if (context) {
+      try { await context.close(); }
+      finally { this.contexts.delete(groupId); }
+    }
+    // Any attached pages supplied by the user are intentionally left open.
+    void handles;
+  }
+}
