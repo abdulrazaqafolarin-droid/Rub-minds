@@ -558,3 +558,31 @@ test('closing the last registered tab keeps its context alive while another tab 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+
+test('prototype-named provider identifiers fail closed without throwing', async () => {
+  const sessions = manager(fakeDriver());
+  for (const provider of ['toString', 'constructor', '__proto__']) {
+    await assert.rejects(
+      sessions.openManaged(approvedInput({ provider })),
+      /Unsupported provider/,
+    );
+  }
+
+  const root = await mkdtemp(path.join(os.tmpdir(), 'rub-minds-backroom-'));
+  const { chromium } = fakeChromium();
+  try {
+    const windows = new WindowsPlaywrightDriver({ chromium, profileRoot: path.join(root, 'profiles') });
+    for (const provider of ['toString', 'constructor', '__proto__']) {
+      await assert.rejects(
+        windows.openManaged({
+          groupId: GROUP_A, sessionId: 'prototype-' + provider,
+          provider, url: inviteUrl, approvedOrigins: ['https://chatgpt.com'],
+        }),
+        /Unsupported AI provider/,
+      );
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
