@@ -60,7 +60,7 @@ test("requires exact, current approvals for sensitive actions and keeps terminal
   has(valid(send, registration(), { trustedApproval: approval(send, { requestedBy: { kind: "ai", id: "different-agent" } }) }), /approval requester does not match/);
   has(valid(send, registration(), { trustedApproval: approval(send, { groupId: "20000000-0000-4000-8000-000000000002" }) }), /approval groupId does not match/);
   has(valid(send, registration(), { trustedApproval: approval(send, { expiresAt: "2026-10-27T09:59:59.000Z" }) }), /expired/);
-  const terminal = command("terminal.execute", { command: "npm test" });
+  const terminal = command("terminal.execute", { executable: "npm", args: ["test"], workingDirectory: "C:/workspace" });
   has(valid(terminal, registration(), { trustedApproval: approval(terminal) }), /reserved until a sandboxed platform adapter/);
 });
 
@@ -108,4 +108,22 @@ test("rejects malformed validator options instead of throwing", () => {
   assert.equal(validateBackroomCommand(request, registration(), null).valid, false);
   assert.equal(validateBackroomCommand(request, registration(), { now: NaN }).valid, false);
   assert.equal(validateBackroomCommand(request, registration(), { now, unexpected: true }).valid, false);
+});
+
+test("task cancellation must identify the exact target request", () => {
+  assert.equal(valid(command("task.cancel", { targetRequestId: "request-to-stop" })).valid, true);
+  assert.equal(valid(command("task.cancel", {})).valid, false);
+  assert.equal(valid(command("task.cancel", { targetRequestId: "" })).valid, false);
+  assert.equal(valid(command("task.cancel", { targetRequestId: "request-to-stop", all: true })).valid, false);
+});
+
+test("terminal schema is structured and remains disabled in protocol v1", () => {
+  const structured = command("terminal.execute", {
+    executable: "npm", args: ["test"], workingDirectory: "C:/workspace",
+  });
+  has(valid(structured, registration(), { trustedApproval: approval(structured) }), /reserved until a sandboxed platform adapter/);
+  const invalidArgs = command("terminal.execute", {
+    executable: "npm", args: ["x".repeat(2001)], workingDirectory: "C:/workspace",
+  });
+  has(valid(invalidArgs, registration(), { trustedApproval: approval(invalidArgs) }), /args item/);
 });
