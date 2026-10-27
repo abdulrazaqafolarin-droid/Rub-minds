@@ -360,8 +360,14 @@ export class WindowsPlaywrightDriver {
         if (!remaining && !anotherOpenPending && !this.closingGroups.has(tracked.groupId)) {
           const context = this.contexts.get(tracked.groupId);
           if (context) {
-            await context.close();
-            if (this.contexts.get(tracked.groupId) === context) this.contexts.delete(tracked.groupId);
+            // Prevent a concurrent open from reusing a context while it closes.
+            this.contextCleanupGroups.add(tracked.groupId);
+            try {
+              await context.close();
+              if (this.contexts.get(tracked.groupId) === context) this.contexts.delete(tracked.groupId);
+            } finally {
+              this.contextCleanupGroups.delete(tracked.groupId);
+            }
           }
         }
       }
