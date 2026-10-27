@@ -41,6 +41,16 @@ export class BackroomOfflineQueue {
     this.maxRetries = maxRetries;
     this.maxRecords = maxRecords;
     this.draining = false;
+    this.mutationTail = Promise.resolve();
+  }
+
+  async withMutation(operation) {
+    const previous = this.mutationTail;
+    let release;
+    this.mutationTail = new Promise(resolve => { release = resolve; });
+    await previous;
+    try { return await operation(); }
+    finally { release(); }
   }
 
   async list() {
@@ -49,7 +59,11 @@ export class BackroomOfflineQueue {
     return records.map(cloneJson).sort((a, b) => a.queuedAt - b.queuedAt || a.requestId.localeCompare(b.requestId));
   }
 
-  async enqueue(command, registration, { trustedApproval = null } = {}) {
+  async enqueue(command, registration, options = {}) {
+    return this.withMutation(() => this.enqueueUnlocked(command, registration, options));
+  }
+
+  async enqueueUnlocked(command, registration, { trustedApproval = null } = {}) {
     const now = this.now();
     if (!Number.isFinite(now)) throw new TypeError('Queue clock must return a finite timestamp');
     if (!isRecord(command)) throw new TypeError('command must be an object');
@@ -100,29 +114,33 @@ export class BackroomOfflineQueue {
   }
 
   async cancel(requestId) {
-    const records = await this.list();
-    const item = records.find(record => record.requestId === requestId);
-    if (!item || item.status !== 'queued') return false;
-    item.status = 'cancelled';
-    item.lastError = null;
-    await this.storage.put(item);
-    return true;
+    return this.withMutation(async () => {
+      const records = await this.list();
+      const item = records.find(record => record.requestId === requestId);
+      if (!item || item.status !== 'queued') return false;
+      item.status = 'cancelled';
+      item.lastError = null;
+      await this.storage.put(item);
+      return true;
+    });
   }
 
   /** Call once on host startup. Retrying an interrupted action is at-least-once;
    * the adapter must enforce idempotencyKey to avoid duplicate side effects. */
   async recoverInterrupted() {
-    const records = await this.list();
-    let recovered = 0;
-    for (const item of records) {
-      if (item.status !== 'executing') continue;
-      item.status = 'queued';
-      item.retryCount += 1;
-      item.lastError = 'Recovered an interrupted execution; adapter idempotency is required';
-      await this.storage.put(item);
-      recovered += 1;
-    }
-    return recovered;
+    return this.withMutation(async () => {
+      const records = await this.list();
+      let recovered = 0;
+      for (const item of records) {
+        if (item.status !== 'executing') continue;
+        item.status = 'queued';
+        item.retryCount += 1;
+        item.lastError = 'Recovered an interrupted execution; adapter idempotency is required';
+        await this.storage.put(item);
+        recovered += 1;
+      }
+      return recovered;
+    });
   }
 
   async drain({ online, getRegistration, getTrustedApproval, execute, maxBatch = 20 } = {}) {
@@ -136,49 +154,97 @@ export class BackroomOfflineQueue {
     let processed = 0;
     try {
       const records = await this.list();
-      for (const item of records) {
+      for (const snapshot of records) {
         if (processed >= maxBatch) break;
-        if (item.status !== 'queued') continue;
-        const now = this.now();
-        if (!Number.isFinite(now)) throw new TypeError('Queue clock must return a finite timestamp');
-        if (now >= item.expiresAt) {
-          item.status = 'expired'; item.lastError = 'Queued action expired before execution';
-          await this.storage.put(item); processed += 1; continue;
-        }
+        if (snapshot.status !== 'queued') continue;
+        // Check expiry and re-read state before doing any external lookups.
+        const preflight = await this.withMutation(async () => {
+          const current = (await this.list()).find(record => record.requestId === snapshot.requestId);
+          if (!current || current.status !== 'queued') return { kind: 'skip' };
+          const now = this.now();
+          if (!Number.isFinite(now)) throw new TypeError('Queue clock must return a finite timestamp');
+          if (now >= current.expiresAt) {
+            current.status = 'expired';
+            current.lastError = 'Queued action expired before execution';
+            await this.storage.put(current);
+            return { kind: 'expired' };
+          }
+          return { kind: 'ready', item: current };
+        });
+        if (preflight.kind === 'skip') continue;
+        if (preflight.kind === 'expired') { processed += 1; continue; }
+        const item = preflight.item;
 
         let registration, trustedApproval;
         try {
           registration = await getRegistration(item);
           trustedApproval = item.approvalId ? await getTrustedApproval(item.approvalId, item) : null;
         } catch {
-          item.status = 'rejected'; item.lastError = 'Could not revalidate the local session and approval';
-          await this.storage.put(item); processed += 1; continue;
-        }
-        const validation = validateBackroomCommand(item.command, registration, { now, trustedApproval });
-        if (!validation.valid) {
-          item.status = 'rejected'; item.lastError = ('Revalidation failed: ' + validation.errors.join('; ')).slice(0, 500);
-          await this.storage.put(item); processed += 1; continue;
+          const changed = await this.withMutation(async () => {
+            const current = (await this.list()).find(record => record.requestId === item.requestId);
+            if (!current || current.status !== 'queued') return false;
+            current.status = 'rejected';
+            current.lastError = 'Could not revalidate the local session and approval';
+            await this.storage.put(current);
+            return true;
+          });
+          if (changed) processed += 1;
+          continue;
         }
 
-        item.status = 'executing'; item.lastError = null;
-        await this.storage.put(item);
+        // A cancel or another state change may happen while lookups are pending.
+        // Re-read state, expiry and approval immediately before claiming execution.
+        const claim = await this.withMutation(async () => {
+          const current = (await this.list()).find(record => record.requestId === item.requestId);
+          if (!current || current.status !== 'queued') return { kind: 'skip' };
+          const now = this.now();
+          if (!Number.isFinite(now)) throw new TypeError('Queue clock must return a finite timestamp');
+          if (now >= current.expiresAt) {
+            current.status = 'expired';
+            current.lastError = 'Queued action expired before execution';
+            await this.storage.put(current);
+            return { kind: 'expired' };
+          }
+          const validation = validateBackroomCommand(current.command, registration, { now, trustedApproval });
+          if (!validation.valid) {
+            current.status = 'rejected';
+            current.lastError = ('Revalidation failed: ' + validation.errors.join('; ')).slice(0, 500);
+            await this.storage.put(current);
+            return { kind: 'rejected' };
+          }
+          current.status = 'executing';
+          current.lastError = null;
+          await this.storage.put(current);
+          return { kind: 'claimed', item: current };
+        });
+        if (claim.kind === 'skip') continue;
+        if (claim.kind !== 'claimed') { processed += 1; continue; }
+        const claimed = claim.item;
         processed += 1;
         try {
-          const result = await execute(cloneJson(item.command), { idempotencyKey: item.idempotencyKey });
-          const resultValidation = validateBackroomResult(result, item.command);
+          const result = await execute(cloneJson(claimed.command), { idempotencyKey: claimed.idempotencyKey });
+          const resultValidation = validateBackroomResult(result, claimed.command);
           if (!resultValidation.valid) throw new Error('Executor returned an invalid result');
-          if (result.status === 'succeeded') item.status = 'succeeded';
-          else if (result.status === 'cancelled') item.status = 'cancelled';
-          else if (result.status === 'rejected') item.status = 'rejected';
-          else if (result.status === 'failed') item.status = 'failed';
-          else item.status = 'rejected';
-          item.lastError = item.status === 'succeeded' ? null : errorText(result.error || result.status);
-          await this.storage.put(item);
+          await this.withMutation(async () => {
+            const current = (await this.list()).find(record => record.requestId === claimed.requestId);
+            if (!current || current.status !== 'executing') return;
+            if (result.status === 'succeeded') current.status = 'succeeded';
+            else if (result.status === 'cancelled') current.status = 'cancelled';
+            else if (result.status === 'rejected') current.status = 'rejected';
+            else if (result.status === 'failed') current.status = 'failed';
+            else current.status = 'rejected';
+            current.lastError = current.status === 'succeeded' ? null : errorText(result.error || result.status);
+            await this.storage.put(current);
+          });
         } catch (error) {
-          item.retryCount += 1;
-          item.lastError = errorText(error);
-          item.status = item.retryCount > this.maxRetries ? 'failed' : 'queued';
-          await this.storage.put(item);
+          await this.withMutation(async () => {
+            const current = (await this.list()).find(record => record.requestId === claimed.requestId);
+            if (!current || current.status !== 'executing') return;
+            current.retryCount += 1;
+            current.lastError = errorText(error);
+            current.status = current.retryCount > this.maxRetries ? 'failed' : 'queued';
+            await this.storage.put(current);
+          });
         }
       }
       const final = await this.list();
