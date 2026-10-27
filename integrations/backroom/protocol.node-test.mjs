@@ -130,3 +130,13 @@ test("terminal schema is structured and remains disabled in protocol v1", () => 
   });
   has(valid(invalidArgs, registration(), { trustedApproval: approval(invalidArgs) }), /args item/);
 });
+
+
+test("malformed non-string capability and action values fail closed without throwing", () => {
+  const hostileCapability = Object.create(null);
+  const hostileAction = Object.create(null);
+  assert.doesNotThrow(() => validateBackroomRegistration(registration({ capabilities: [hostileCapability] })));
+  assert.equal(validateBackroomRegistration(registration({ capabilities: [hostileCapability] })).valid, false);
+  assert.doesNotThrow(() => valid(command(hostileAction)));
+  assert.equal(valid(command(hostileAction)).valid, false);
+});
