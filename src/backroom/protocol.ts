@@ -9,7 +9,8 @@ export const BACKROOM_PROTOCOL_VERSION = 1 as const;
 export const MAX_ACTION_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_LABEL_LENGTH = 120;
 const MAX_MESSAGE_LENGTH = 10_000;
-const MAX_TERMINAL_COMMAND_LENGTH = 2_000;
+const MAX_TERMINAL_ARGUMENT_LENGTH = 2_000;
+const MAX_TERMINAL_ARGUMENTS = 64;
 
 export type BackroomPlatform = 'windows' | 'android';
 export type BackroomConnectionMode = 'existing_session' | 'managed_session';
@@ -43,7 +44,7 @@ export interface BackroomActionPayloads {
   read_page: Record<string, never>;
   capture_screenshot: Record<string, never>;
   send_message: { text: string };
-  run_terminal_command: { command: string };
+  run_terminal_command: { executable: string; args: string[]; workingDirectory: string };
 }
 
 export type BackroomActionKind = keyof BackroomActionPayloads;
@@ -148,9 +149,16 @@ function validatePayload<K extends BackroomActionKind>(
     case 'send_message':
       requireText((payload as BackroomActionPayloads['send_message']).text, 'text', MAX_MESSAGE_LENGTH);
       return;
-    case 'run_terminal_command':
-      requireText((payload as BackroomActionPayloads['run_terminal_command']).command, 'command', MAX_TERMINAL_COMMAND_LENGTH);
+    case 'run_terminal_command': {
+      const value = payload as BackroomActionPayloads['run_terminal_command'];
+      requireText(value.executable, 'executable', 256);
+      requireText(value.workingDirectory, 'workingDirectory', 2_048);
+      if (!Array.isArray(value.args) || value.args.length > MAX_TERMINAL_ARGUMENTS) {
+        throw new TypeError(`args must contain 0-${MAX_TERMINAL_ARGUMENTS} strings`);
+      }
+      for (const arg of value.args) requireText(arg, 'argument', MAX_TERMINAL_ARGUMENT_LENGTH);
       return;
+    }
   }
 }
 
