@@ -11,8 +11,9 @@ const registration = (extra = {}) => ({
   consent: { granted: true, approvedBy: "human-01", approvedAt: "2026-10-27T09:55:00.000Z" }, ...extra,
 });
 const approval = (request, extra = {}) => ({
-  approvalId: "approval-01", approvedBy: "human-01", requestId: request.requestId, action: request.action,
-  groupId: request.groupId, sessionId: request.sessionId, params: request.params,
+  approvalId: "approval-01", approvedBy: "human-01", requestId: request.requestId,
+  idempotencyKey: request.idempotencyKey, action: request.action,
+  groupId: request.groupId, sessionId: request.sessionId, params: request.params, requestedBy: request.requestedBy,
   approvedAt: "2026-10-27T09:59:00.000Z", expiresAt: "2026-10-27T10:01:00.000Z", ...extra,
 });
 const command = (action, params = {}, extra = {}) => ({
@@ -55,6 +56,8 @@ test("requires a trusted, current approval bound to the exact message and termin
   assert.equal(valid(send, registration(), { trustedApproval: approval(send) }).valid, true);
   has(valid(send, registration(), { trustedApproval: approval(send, { action: "terminal.execute" }) }), /approval action does not match/);
   has(valid(send, registration(), { trustedApproval: approval(send, { params: { text: "changed after approval" } }) }), /approved params do not match/);
+  has(valid(send, registration(), { trustedApproval: approval(send, { idempotencyKey: "different-idempotency-key" }) }), /approval idempotencyKey does not match/);
+  has(valid(send, registration(), { trustedApproval: approval(send, { requestedBy: { kind: "ai", id: "different-agent" } }) }), /approval requester does not match/);
   has(valid(send, registration(), { trustedApproval: approval(send, { groupId: "20000000-0000-4000-8000-000000000002" }) }), /approval groupId does not match/);
   has(valid(send, registration(), { trustedApproval: approval(send, { expiresAt: "2026-10-27T09:59:59.000Z" }) }), /expired/);
   const terminal = command("terminal.execute", { command: "npm test" });
