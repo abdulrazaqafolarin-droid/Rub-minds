@@ -102,3 +102,10 @@ test("validates results and prevents cross-request result confusion", () => {
   has(validateBackroomResult({ ...response, sessionId: "other-session" }, request), /does not match/);
   has(validateBackroomResult({ ...response, status: "failed" }, request), /must include an error/);
 });
+
+test("rejects malformed validator options instead of throwing", () => {
+  const request = command("conversation.read");
+  assert.equal(validateBackroomCommand(request, registration(), null).valid, false);
+  assert.equal(validateBackroomCommand(request, registration(), { now: NaN }).valid, false);
+  assert.equal(validateBackroomCommand(request, registration(), { now, unexpected: true }).valid, false);
+});
