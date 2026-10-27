@@ -4,22 +4,22 @@ Backroom is the local control layer behind a Rub Minds group. The protocol is im
 
 ## Connection modes
 
-- \`attach_existing\`: register an already-open session when the OS and app permit the local adapter to identify and control it.
-- \`managed\`: open a real supported interface in a Backroom-managed environment, then register that session.
+- **attach_existing**: register an already-open session when the OS and app permit the local adapter to identify and control it.
+- **managed**: open a real supported interface in a Backroom-managed environment, then register that session.
 
 The group sees one registered session shape regardless of mode. A URL or MCP connection does not itself grant access to an authenticated provider session.
 
 ## Contract and safeguards
 
-\`protocol.mjs\` validates explicit consent, platform/mode/capability allowlists, group/session scoping, strict command parameters, HTTPS-only navigation, trusted approval expiry and action binding, and result correlation.
+The **protocol.mjs** module validates explicit consent, platform/mode/capability allowlists, group/session scoping, strict command parameters, HTTPS-only navigation, trusted approval expiry and action binding, and result correlation.
 
-Commands do not carry device credentials, provider cookies, passwords, or bearer tokens. Authentication is a separate trusted channel. The \`trustedApproval\` argument must come from the local host's protected approval store; an approval field embedded in an incoming command is rejected. These validators do not authenticate callers or execute actions.
+Commands do not carry device credentials, provider cookies, passwords, or bearer tokens. Authentication is a separate trusted channel. The trustedApproval argument must come from the local host's protected approval store; an approval field embedded in an incoming command is rejected. These validators do not authenticate callers or execute actions.
 
 ## Tests
 
-\`\`\`sh
+```sh
 node --test integrations/backroom/protocol.node-test.mjs
-\`\`\`
+```
 
 The tests cover Windows/Android registrations, consent, protocol versions, capability restrictions, group/session isolation, approval expiry/scope, unsafe URLs, malformed payloads, forged approval fields, and response correlation.
 
