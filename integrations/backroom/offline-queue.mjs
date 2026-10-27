@@ -132,8 +132,8 @@ export class BackroomOfflineQueue {
   /** Call once on host startup. Retrying an interrupted action is at-least-once;
    * the adapter must enforce idempotencyKey to avoid duplicate side effects. */
   async recoverInterrupted() {
-    if (this.draining) throw new Error('Cannot recover interrupted work while this queue is draining');
     return this.withMutation(async () => {
+      if (this.draining) throw new Error('Cannot recover interrupted work while this queue is draining');
       const records = await this.list();
       let recovered = 0;
       for (const item of records) {
