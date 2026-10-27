@@ -65,6 +65,43 @@ export class WindowsPlaywrightDriver {
     this.sessions = new Map();
     this.pendingSessions = new Set();
     this.pendingSessionGroups = new Map();
+    this.groupPendingCounts = new Map();
+    this.groupWaiters = new Map();
+    this.closingGroups = new Set();
+    this.groupClosePromises = new Map();
+  }
+
+  beginPending(sessionId, groupId) {
+    if (this.closingGroups.has(groupId)) throw new Error('Backroom group is closing');
+    if (this.sessions.has(sessionId) || this.pendingSessions.has(sessionId)) {
+      throw new Error('sessionId is already open');
+    }
+    this.pendingSessions.add(sessionId);
+    this.pendingSessionGroups.set(sessionId, groupId);
+    this.groupPendingCounts.set(groupId, (this.groupPendingCounts.get(groupId) || 0) + 1);
+  }
+
+  finishPending(sessionId, groupId) {
+    this.pendingSessions.delete(sessionId);
+    this.pendingSessionGroups.delete(sessionId);
+    const count = this.groupPendingCounts.get(groupId) || 0;
+    if (count <= 1) {
+      this.groupPendingCounts.delete(groupId);
+      const waiters = this.groupWaiters.get(groupId) || [];
+      this.groupWaiters.delete(groupId);
+      for (const resolve of waiters) resolve();
+    } else {
+      this.groupPendingCounts.set(groupId, count - 1);
+    }
+  }
+
+  waitForGroupIdle(groupId) {
+    if ((this.groupPendingCounts.get(groupId) || 0) === 0) return Promise.resolve();
+    return new Promise(resolve => {
+      const waiters = this.groupWaiters.get(groupId) || [];
+      waiters.push(resolve);
+      this.groupWaiters.set(groupId, waiters);
+    });
   }
 
   async profileDirectory(groupId) {
@@ -139,8 +176,7 @@ export class WindowsPlaywrightDriver {
       for (const origin of allowed) if (!providerOrigins.includes(origin)) throw new Error('Origin is outside the provider allowlist');
     }
     const target = assertApprovedUrl(url, allowed);
-    this.pendingSessions.add(sessionId);
-    this.pendingSessionGroups.set(sessionId, groupId);
+    this.beginPending(sessionId, groupId);
     let context;
     let page;
     let wasContextEmpty = false;
@@ -155,6 +191,9 @@ export class WindowsPlaywrightDriver {
       const current = await this.inspectPage(page);
       if (current.isClosed || !allowed.has(current.origin)) {
         throw new Error('The browser did not remain on an approved HTTPS origin');
+      }
+      if (this.closingGroups.has(groupId)) {
+        throw new Error('Backroom group began closing before this session could be registered');
       }
       const handle = Object.freeze({ sessionId, groupId, mode: 'managed', page });
       this.sessions.set(sessionId, { groupId, mode: 'managed', page, approvedOrigins: allowed, provider });
@@ -171,8 +210,7 @@ export class WindowsPlaywrightDriver {
       }
       throw error;
     } finally {
-      this.pendingSessions.delete(sessionId);
-      this.pendingSessionGroups.delete(sessionId);
+      this.finishPending(sessionId, groupId);
     }
   }
 
@@ -187,17 +225,16 @@ export class WindowsPlaywrightDriver {
       if (!providerOrigins) throw new Error('Unsupported AI provider');
       for (const origin of allowed) if (!providerOrigins.includes(origin)) throw new Error('Origin is outside the provider allowlist');
     }
-    this.pendingSessions.add(sessionId);
-    this.pendingSessionGroups.set(sessionId, groupId);
+    this.beginPending(sessionId, groupId);
     try {
       const current = await this.inspectPage(page);
       if (current.isClosed || !allowed.has(current.origin)) throw new Error('Selected page is closed or outside the approved origin list');
+      if (this.closingGroups.has(groupId)) throw new Error('Backroom group began closing before this session could be registered');
       const handle = Object.freeze({ sessionId, groupId, mode: 'attach_existing', page });
       this.sessions.set(sessionId, { groupId, mode: 'attach_existing', page, approvedOrigins: allowed, provider });
       return handle;
     } finally {
-      this.pendingSessions.delete(sessionId);
-      this.pendingSessionGroups.delete(sessionId);
+      this.finishPending(sessionId, groupId);
     }
   }
 
@@ -249,18 +286,32 @@ export class WindowsPlaywrightDriver {
   }
 
   async closeGroup(groupId) {
-    const entries = [...this.sessions.entries()].filter(([, item]) => item.groupId === groupId);
-    for (const [sessionId, item] of entries) {
-      this.sessions.delete(sessionId);
-      if (item.mode === 'managed' && !item.page.isClosed()) {
-        try { await item.page.close(); } catch { /* Continue cleanup. */ }
+    if (!GROUP_ID.test(groupId || '')) throw new TypeError('groupId must be a UUID');
+    const existingClose = this.groupClosePromises.get(groupId);
+    if (existingClose) return existingClose;
+    this.closingGroups.add(groupId);
+    const closing = (async () => {
+      // Block new opens now; close only after in-flight opens have either
+      // registered or cleaned up their uncommitted pages.
+      await this.waitForGroupIdle(groupId);
+      const entries = [...this.sessions.entries()].filter(([, item]) => item.groupId === groupId);
+      for (const [sessionId, item] of entries) {
+        this.sessions.delete(sessionId);
+        if (item.mode === 'managed' && !item.page.isClosed()) {
+          try { await item.page.close(); } catch { /* Continue cleanup. */ }
+        }
       }
-    }
-    const context = this.contexts.get(groupId);
-    if (context) {
-      try { await context.close(); }
-      finally { this.contexts.delete(groupId); }
-    }
-    // Existing user pages are only unregistered; they are never closed.
+      const context = this.contexts.get(groupId);
+      if (context) {
+        try { await context.close(); }
+        finally { this.contexts.delete(groupId); }
+      }
+      // Existing user pages are only unregistered; they are never closed.
+    })().finally(() => {
+      this.closingGroups.delete(groupId);
+      this.groupClosePromises.delete(groupId);
+    });
+    this.groupClosePromises.set(groupId, closing);
+    return closing;
   }
 }
