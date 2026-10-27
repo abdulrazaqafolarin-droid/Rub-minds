@@ -62,6 +62,8 @@ export class WindowsPlaywrightDriver {
     this.timeoutMs = timeoutMs;
     this.contexts = new Map();
     this.pendingContexts = new Map();
+    this.allowedOriginsByPage = new WeakMap();
+    this.navigationGuardedContexts = new WeakSet();
     this.sessions = new Map();
     this.pendingSessions = new Set();
     this.pendingSessionGroups = new Map();
@@ -150,12 +152,60 @@ export class WindowsPlaywrightDriver {
         headless: false,
         acceptDownloads: false,
       });
-      this.contexts.set(groupId, context);
-      return context;
+      try {
+        await this.installContextNavigationGuard(context);
+        this.contexts.set(groupId, context);
+        return context;
+      } catch (error) {
+        try { await context.close(); } catch { /* Preserve guard installation failure. */ }
+        throw error;
+      }
     })();
     this.pendingContexts.set(groupId, creation);
     try { return await creation; }
     finally { this.pendingContexts.delete(groupId); }
+  }
+
+  async installContextNavigationGuard(context) {
+    if (this.navigationGuardedContexts.has(context)) return;
+    if (typeof context.route !== 'function') {
+      throw new TypeError('Playwright context must support route() for popup navigation containment');
+    }
+    await context.route('**/*', async route => {
+      const request = route.request();
+      if (!request.isNavigationRequest()) {
+        await route.continue();
+        return;
+      }
+      let frame, page, mainFrame;
+      try {
+        frame = request.frame();
+        page = frame.page();
+        mainFrame = page.mainFrame();
+      } catch {
+        await route.abort('blockedbyclient');
+        return;
+      }
+      if (frame !== mainFrame) {
+        await route.continue();
+        return;
+      }
+      // Only a page explicitly registered by the managed-session driver has
+      // an origin allowlist. New tabs/popups are denied before their first
+      // top-level request, not just closed after the popup event.
+      const allowedOrigins = this.allowedOriginsByPage.get(page);
+      if (!allowedOrigins) {
+        await route.abort('blockedbyclient');
+        return;
+      }
+      try {
+        assertApprovedUrl(request.url(), allowedOrigins);
+        await route.continue();
+      } catch {
+        await route.abort('blockedbyclient');
+      }
+    });
+    this.navigationGuardedContexts.add(context);
   }
 
   installNavigationGuard(page, allowedOrigins) {
@@ -206,6 +256,7 @@ export class WindowsPlaywrightDriver {
       context = await this.getContext(groupId);
       wasContextEmpty = ![...this.sessions.values()].some(item => item.groupId === groupId && item.mode === 'managed');
       page = await context.newPage();
+      this.allowedOriginsByPage.set(page, allowed);
       await this.installNavigationGuard(page, allowed);
       this.installPopupGuard(page);
       page.setDefaultNavigationTimeout?.(this.timeoutMs);
@@ -221,7 +272,10 @@ export class WindowsPlaywrightDriver {
       this.sessions.set(sessionId, { groupId, mode: 'managed', page, approvedOrigins: allowed, provider });
       return handle;
     } catch (error) {
-      if (page) { try { await page.close(); } catch { /* Preserve primary error. */ } }
+      if (page) {
+        this.allowedOriginsByPage.delete(page);
+        try { await page.close(); } catch { /* Preserve primary error. */ }
+      }
       if (context && wasContextEmpty) {
         const stillUsed = [...this.sessions.values()].some(item => item.groupId === groupId && item.mode === 'managed');
         const anotherOpenPending = [...this.pendingSessionGroups].some(([pendingId, pendingGroup]) => pendingId !== sessionId && pendingGroup === groupId);
@@ -292,6 +346,7 @@ export class WindowsPlaywrightDriver {
     if (!tracked || tracked.page !== handle.page) return;
     this.sessions.delete(handle.sessionId);
     if (tracked.mode === 'managed') {
+      this.allowedOriginsByPage.delete(tracked.page);
       try { if (!tracked.page.isClosed()) await tracked.page.close(); }
       finally {
         const remaining = [...this.sessions.values()].some(
@@ -326,6 +381,7 @@ export class WindowsPlaywrightDriver {
       const entries = [...this.sessions.entries()].filter(([, item]) => item.groupId === groupId);
       for (const [sessionId, item] of entries) {
         this.sessions.delete(sessionId);
+        if (item.mode === 'managed') this.allowedOriginsByPage.delete(item.page);
         if (item.mode === 'managed' && !item.page.isClosed()) {
           try { await item.page.close(); } catch { /* Continue cleanup. */ }
         }
