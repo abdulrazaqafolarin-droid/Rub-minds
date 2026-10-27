@@ -16,12 +16,22 @@ class FakePage {
     this.currentUrl = initialUrl;
     this.closed = false;
     this.routes = [];
+    this.events = new Map();
     this.closeCalls = 0;
     this.timeoutMs = null;
   }
   url() { return this.currentUrl; }
   isClosed() { return this.closed; }
   mainFrame() { return this; }
+  on(event, listener) {
+    const listeners = this.events.get(event) || [];
+    listeners.push(listener);
+    this.events.set(event, listeners);
+  }
+  async triggerPopup(popup) {
+    for (const listener of this.events.get('popup') || []) listener(popup);
+    await new Promise(resolve => setImmediate(resolve));
+  }
   setDefaultNavigationTimeout(ms) { this.timeoutMs = ms; }
   async route(pattern, handler) { this.routes.push({ pattern, handler }); }
   async goto(url) {
@@ -322,6 +332,54 @@ test('attaching to an existing Windows page unregisters without closing the user
     });
     await driver.closeSession(handle);
     assert.equal(page.isClosed(), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Windows managed session closes unregistered popups instead of leaking new tabs', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'rub-minds-backroom-'));
+  const { chromium } = fakeChromium();
+  try {
+    const driver = new WindowsPlaywrightDriver({ chromium, profileRoot: path.join(root, 'profiles') });
+    const handle = await driver.openManaged({
+      groupId: GROUP_A, sessionId: 'w-session-popup', provider: 'chatgpt',
+      url: 'https://chatgpt.com/', approvedOrigins: ['https://chatgpt.com'],
+    });
+    const popup = new FakePage('https://evil.example/');
+    await handle.page.triggerPopup(popup);
+    assert.equal(popup.isClosed(), true);
+    await driver.closeSession(handle);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('Windows closeGroup closes only its managed group and preserves attached pages', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'rub-minds-backroom-'));
+  const { chromium, contexts } = fakeChromium();
+  try {
+    const driver = new WindowsPlaywrightDriver({ chromium, profileRoot: path.join(root, 'profiles') });
+    const managedA = await driver.openManaged({
+      groupId: GROUP_A, sessionId: 'w-session-group-a', provider: 'chatgpt',
+      url: 'https://chatgpt.com/', approvedOrigins: ['https://chatgpt.com'],
+    });
+    const managedB = await driver.openManaged({
+      groupId: GROUP_B, sessionId: 'w-session-group-b', provider: 'claude',
+      url: 'https://claude.ai/new', approvedOrigins: ['https://claude.ai'],
+    });
+    const attachedPage = new FakePage('https://claude.ai/chat/existing');
+    const attached = await driver.attachExisting({
+      groupId: GROUP_A, sessionId: 'w-session-attached', provider: 'claude',
+      page: attachedPage, approvedOrigins: ['https://claude.ai'],
+    });
+    await driver.closeGroup(GROUP_A, [managedA, attached]);
+    assert.equal(contexts[0].closeCalls, 1);
+    assert.equal(contexts[1].closeCalls, 0);
+    assert.equal(managedB.page.isClosed(), false);
+    assert.equal(attachedPage.isClosed(), false);
+    assert.equal(await driver.inspect(managedB).then(x => x.origin), 'https://claude.ai');
+    await driver.closeSession(managedB);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
