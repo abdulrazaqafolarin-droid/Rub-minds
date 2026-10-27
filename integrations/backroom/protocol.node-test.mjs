@@ -12,6 +12,7 @@ const registration = (extra = {}) => ({
 });
 const approval = (request, extra = {}) => ({
   approvalId: "approval-01", approvedBy: "human-01", requestId: request.requestId, action: request.action,
+  groupId: request.groupId, sessionId: request.sessionId, params: request.params,
   approvedAt: "2026-10-27T09:59:00.000Z", expiresAt: "2026-10-27T10:01:00.000Z", ...extra,
 });
 const command = (action, params = {}, extra = {}) => ({
@@ -27,10 +28,11 @@ test("accepts both Windows attach and Android managed registrations", () => {
   assert.equal(validateBackroomRegistration(registration({ platform: "android", connectionMode: "managed", deviceId: "android-01" })).valid, true);
 });
 
-test("rejects missing consent, unsupported platforms and malformed group IDs", () => {
+test("rejects missing consent, unsupported platforms and malformed group IDs or timestamps", () => {
   has(validateBackroomRegistration(registration({ consent: { granted: false } })), /explicit user consent/);
   has(validateBackroomRegistration(registration({ platform: "ios" })), /unsupported platform/);
   has(validateBackroomRegistration(registration({ groupId: "room-1" })), /groupId must be a UUID/);
+  has(validateBackroomRegistration(registration({ consent: { granted: true, approvedBy: "human-01", approvedAt: "2026-02-30T09:55:00.000Z" } })), /ISO timestamp/);
 });
 
 test("rejects unsupported versions/capabilities, duplicate capabilities and extra registration fields", () => {
@@ -47,11 +49,13 @@ test("permits a read command only for the registered group/session and granted c
   has(valid(command("conversation.read"), registration({ capabilities: ["session.inspect"] })), /has not granted capability/);
 });
 
-test("requires a trusted, current approval for message sends and terminal execution", () => {
+test("requires a trusted, current approval bound to the exact message and terminal command", () => {
   const send = command("conversation.send", { text: "Hello group" });
   has(valid(send), /requires a trusted approval/);
   assert.equal(valid(send, registration(), { trustedApproval: approval(send) }).valid, true);
   has(valid(send, registration(), { trustedApproval: approval(send, { action: "terminal.execute" }) }), /approval action does not match/);
+  has(valid(send, registration(), { trustedApproval: approval(send, { params: { text: "changed after approval" } }) }), /approved params do not match/);
+  has(valid(send, registration(), { trustedApproval: approval(send, { groupId: "20000000-0000-4000-8000-000000000002" }) }), /approval groupId does not match/);
   has(valid(send, registration(), { trustedApproval: approval(send, { expiresAt: "2026-10-27T09:59:59.000Z" }) }), /expired/);
   const terminal = command("terminal.execute", { command: "npm test" });
   assert.equal(valid(terminal, registration(), { trustedApproval: approval(terminal) }).valid, true);
@@ -78,6 +82,8 @@ test("rejects empty/oversized text and unrecognized action parameters", () => {
   assert.equal(valid(huge, registration(), { trustedApproval: approval(huge) }).valid, false);
   assert.equal(valid(command("conversation.read", { includePrivateHistory: true })).valid, false);
   assert.equal(valid(command("unknown.action")).valid, false);
+  assert.equal(valid(command("__proto__")).valid, false);
+  assert.equal(valid(command("constructor")).valid, false);
 });
 
 test("rejects unexpected command fields and malformed caller identity", () => {
