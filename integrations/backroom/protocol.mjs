@@ -18,10 +18,30 @@ const POLICIES = Object.freeze({
   "task.cancel": { capability: "task.cancel", approval: false, params: [] },
 });
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(Z|[+-](\d{2}):(\d{2}))$/;
 const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
 const nonempty = (value, limit = 128) => typeof value === "string" && value.trim().length > 0 && value.length <= limit;
-const timestamp = value => typeof value === "string" && ISO_DATE.test(value) && Number.isFinite(Date.parse(value));
+function timestamp(value) {
+  if (typeof value !== "string") return false;
+  const match = ISO_DATE.exec(value);
+  if (!match || !Number.isFinite(Date.parse(value))) return false;
+  const [year, month, day, hour, minute, second] = match.slice(1, 7).map(Number);
+  const wall = new Date(0);
+  wall.setUTCFullYear(year, month - 1, day);
+  wall.setUTCHours(hour, minute, second, 0);
+  if (wall.getUTCFullYear() !== year || wall.getUTCMonth() !== month - 1 || wall.getUTCDate() !== day ||
+      wall.getUTCHours() !== hour || wall.getUTCMinutes() !== minute || wall.getUTCSeconds() !== second) return false;
+  if (match[8] !== undefined && (Number(match[8]) > 23 || Number(match[9]) > 59)) return false;
+  return true;
+}
+function canonicalJson(value, depth = 0) {
+  if (depth > 32) throw new TypeError("Maximum JSON nesting exceeded");
+  if (Array.isArray(value)) return "[" + value.map(item => canonicalJson(item, depth + 1)).join(",") + "]";
+  if (record(value)) return "{" + Object.keys(value).sort().map(key => JSON.stringify(key) + ":" + canonicalJson(value[key], depth + 1)).join(",") + "}";
+  const encoded = JSON.stringify(value);
+  if (encoded === undefined) throw new TypeError("Only JSON-compatible values are supported");
+  return encoded;
+}
 const report = errors => Object.freeze({ valid: errors.length === 0, errors: Object.freeze(errors) });
 
 function required(errors, value, field, limit = 128) {
@@ -65,6 +85,12 @@ function checkApproval(approval, command, now, errors) {
   required(errors, approval.approvedBy, "approval.approvedBy");
   if (approval.requestId !== command.requestId) errors.push("approval requestId does not match command");
   if (approval.action !== command.action) errors.push("approval action does not match command");
+  if (approval.groupId !== command.groupId) errors.push("approval groupId does not match command");
+  if (approval.sessionId !== command.sessionId) errors.push("approval sessionId does not match command");
+  let paramsMatch = false;
+  try { paramsMatch = record(approval.params) && record(command.params) && canonicalJson(approval.params) === canonicalJson(command.params); }
+  catch { paramsMatch = false; }
+  if (!paramsMatch) errors.push("approved params do not match command");
   if (!timestamp(approval.approvedAt)) errors.push("approval.approvedAt must be an ISO timestamp");
   if (!timestamp(approval.expiresAt)) errors.push("approval.expiresAt must be an ISO timestamp");
   if (timestamp(approval.approvedAt) && timestamp(approval.expiresAt)) {
@@ -73,7 +99,7 @@ function checkApproval(approval, command, now, errors) {
     if (granted > now) errors.push("approval cannot be from the future");
     if (expires <= now) errors.push("approval has expired");
   }
-  onlyKeys(approval, ["approvalId", "approvedBy", "requestId", "action", "approvedAt", "expiresAt"], errors, "approval");
+  onlyKeys(approval, ["approvalId", "approvedBy", "requestId", "action", "groupId", "sessionId", "params", "approvedAt", "expiresAt"], errors, "approval");
 }
 
 function checkParams(action, params, errors) {
@@ -106,7 +132,7 @@ export function validateBackroomCommand(input, registration, { now = Date.now(),
   if (input.sessionId !== registration?.sessionId) errors.push("sessionId does not match registered session");
   if (!record(input.requestedBy) || !["human", "ai", "system"].includes(input.requestedBy.kind) || !nonempty(input.requestedBy.id)) errors.push("requestedBy must contain a supported kind and non-empty id");
   else onlyKeys(input.requestedBy, ["kind", "id"], errors, "requestedBy");
-  const policy = POLICIES[input.action];
+  const policy = Object.hasOwn(POLICIES, input.action) ? POLICIES[input.action] : null;
   if (!policy) errors.push("unsupported action");
   else {
     if (!registered.valid || !registration.capabilities.includes(policy.capability)) errors.push("session has not granted capability " + policy.capability);
