@@ -103,6 +103,41 @@ export class BackroomManagedSessions {
     this.now = now;
     this.sessions = new Map();
     this.pending = new Set();
+    this.groupPendingCounts = new Map();
+    this.groupWaiters = new Map();
+    this.closingGroups = new Set();
+    this.groupClosePromises = new Map();
+  }
+
+  beginGroupOperation(groupId, sessionId) {
+    if (this.closingGroups.has(groupId)) throw new Error('Backroom group is closing');
+    if (this.pending.has(sessionId) || this.sessions.has(sessionId)) {
+      throw new Error('sessionId is already registered or opening');
+    }
+    this.pending.add(sessionId);
+    this.groupPendingCounts.set(groupId, (this.groupPendingCounts.get(groupId) || 0) + 1);
+  }
+
+  finishGroupOperation(groupId, sessionId) {
+    this.pending.delete(sessionId);
+    const count = this.groupPendingCounts.get(groupId) || 0;
+    if (count <= 1) {
+      this.groupPendingCounts.delete(groupId);
+      const waiters = this.groupWaiters.get(groupId) || [];
+      this.groupWaiters.delete(groupId);
+      for (const resolve of waiters) resolve();
+    } else {
+      this.groupPendingCounts.set(groupId, count - 1);
+    }
+  }
+
+  waitForGroupIdle(groupId) {
+    if ((this.groupPendingCounts.get(groupId) || 0) === 0) return Promise.resolve();
+    return new Promise(resolve => {
+      const waiters = this.groupWaiters.get(groupId) || [];
+      waiters.push(resolve);
+      this.groupWaiters.set(groupId, waiters);
+    });
   }
 
   async openManaged(input) {
@@ -132,7 +167,7 @@ export class BackroomManagedSessions {
     const target = targetDetails(input);
     const openedAt = this.now();
     if (!ISO_TIMESTAMP(openedAt)) throw new TypeError('clock must return an ISO timestamp');
-    this.pending.add(input.sessionId);
+    this.beginGroupOperation(input.groupId, input.sessionId);
     let handle;
     try {
       if (connectionMode === 'managed') {
@@ -161,6 +196,9 @@ export class BackroomManagedSessions {
       catch { throw new Error('The adapter did not return a valid current page URL'); }
       if (liveUrl.protocol !== 'https:' || !target.approvedOrigins.includes(liveUrl.origin)) {
         throw new Error('The active page is outside the explicitly approved HTTPS origins');
+      }
+      if (this.closingGroups.has(input.groupId)) {
+        throw new Error('Backroom group began closing before the session could be registered');
       }
 
       const registration = {
@@ -197,7 +235,7 @@ export class BackroomManagedSessions {
       }
       throw error;
     } finally {
-      this.pending.delete(input.sessionId);
+      this.finishGroupOperation(input.groupId, input.sessionId);
     }
   }
 
@@ -249,12 +287,26 @@ export class BackroomManagedSessions {
 
   async closeGroup(groupId) {
     if (!GROUP_ID.test(groupId || '')) throw new TypeError('groupId must be a UUID');
-    const records = [...this.sessions.values()].filter(record => record.groupId === groupId);
-    await this.driver.closeGroup(groupId, records.map(record => ({
-      handle: record.handle,
-      connectionMode: record.connectionMode,
-    })));
-    for (const record of records) this.sessions.delete(record.sessionId);
-    return records.length;
+    const existingClose = this.groupClosePromises.get(groupId);
+    if (existingClose) return existingClose;
+
+    // Block new registrations immediately, then let in-flight opens unwind
+    // before taking the final session snapshot. This prevents late orphan tabs.
+    this.closingGroups.add(groupId);
+    const closing = (async () => {
+      await this.waitForGroupIdle(groupId);
+      const records = [...this.sessions.values()].filter(record => record.groupId === groupId);
+      await this.driver.closeGroup(groupId, records.map(record => ({
+        handle: record.handle,
+        connectionMode: record.connectionMode,
+      })));
+      for (const record of records) this.sessions.delete(record.sessionId);
+      return records.length;
+    })().finally(() => {
+      this.closingGroups.delete(groupId);
+      this.groupClosePromises.delete(groupId);
+    });
+    this.groupClosePromises.set(groupId, closing);
+    return closing;
   }
 }
