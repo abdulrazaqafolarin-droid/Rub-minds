@@ -77,7 +77,7 @@ describe('Backroom v1 platform-neutral action contract', () => {
     ['open_url', { url: 'https://example.com' }],
     ['capture_screenshot', {}],
     ['send_message', { text: 'Please review this implementation.' }],
-    ['run_terminal_command', { command: 'npm test' }],
+    ['run_terminal_command', { executable: 'npm', args: ['test'], workingDirectory: 'C:/projects/rub-minds' }],
   ] as const)('%s requires an explicit approval before execution', (kind, payload) => {
     const created = action(kind, payload as BackroomActionPayloads[typeof kind]);
     expect(created.requiresApproval).toBe(true);
@@ -91,7 +91,7 @@ describe('Backroom v1 platform-neutral action contract', () => {
   });
 
   it('requires the target capability even after approval', () => {
-    const created = action('run_terminal_command', { command: 'echo safe' });
+    const created = action('run_terminal_command', { executable: 'echo', args: ['safe'], workingDirectory: 'C:/workspace' });
     const approved = approveBackroomAction(created, 'owner-1', beforeExpiry);
     expect(() => claimBackroomAction(
       approved,
@@ -157,7 +157,7 @@ describe('Backroom v1 platform-neutral action contract', () => {
   it('requires stable, non-empty identifiers and bounded payloads', () => {
     expect(() => action('read_page', {}, { idempotencyKey: '' })).toThrow(/idempotencyKey/);
     expect(() => action('send_message', { text: '   ' })).toThrow(/text/);
-    expect(() => action('run_terminal_command', { command: 'x'.repeat(2_001) })).toThrow(/command/);
+    expect(() => action('run_terminal_command', { executable: 'echo', args: ['x'.repeat(2_001)], workingDirectory: 'C:/workspace' })).toThrow(/argument/);
   });
 });
 
