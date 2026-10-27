@@ -68,11 +68,13 @@ export class WindowsPlaywrightDriver {
     this.groupPendingCounts = new Map();
     this.groupWaiters = new Map();
     this.closingGroups = new Set();
+    this.contextCleanupGroups = new Set();
     this.groupClosePromises = new Map();
   }
 
   beginPending(sessionId, groupId) {
     if (this.closingGroups.has(groupId)) throw new Error('Backroom group is closing');
+    if (this.contextCleanupGroups.has(groupId)) throw new Error('Backroom group context is being cleaned up');
     if (this.sessions.has(sessionId) || this.pendingSessions.has(sessionId)) {
       throw new Error('sessionId is already open');
     }
@@ -81,11 +83,31 @@ export class WindowsPlaywrightDriver {
     this.groupPendingCounts.set(groupId, (this.groupPendingCounts.get(groupId) || 0) + 1);
   }
 
-  finishPending(sessionId, groupId) {
+  async finishPending(sessionId, groupId) {
     this.pendingSessions.delete(sessionId);
     this.pendingSessionGroups.delete(sessionId);
     const count = this.groupPendingCounts.get(groupId) || 0;
+
+    // If every concurrent open failed, the final operation must close the
+    // otherwise-unused persistent context. Keep the group blocked until cleanup
+    // finishes so a new open cannot attach to a context that is being closed.
     if (count <= 1) {
+      const hasManagedSession = [...this.sessions.values()].some(
+        item => item.groupId === groupId && item.mode === 'managed',
+      );
+      const context = this.contexts.get(groupId);
+      if (context && !hasManagedSession && !this.closingGroups.has(groupId)) {
+        this.contextCleanupGroups.add(groupId);
+        try {
+          await context.close();
+          if (this.contexts.get(groupId) === context) this.contexts.delete(groupId);
+        } catch {
+          // Keep the context registered if closing failed; a later closeGroup
+          // can retry cleanup without masking the original open error.
+        } finally {
+          this.contextCleanupGroups.delete(groupId);
+        }
+      }
       this.groupPendingCounts.delete(groupId);
       const waiters = this.groupWaiters.get(groupId) || [];
       this.groupWaiters.delete(groupId);
@@ -210,7 +232,7 @@ export class WindowsPlaywrightDriver {
       }
       throw error;
     } finally {
-      this.finishPending(sessionId, groupId);
+      await this.finishPending(sessionId, groupId);
     }
   }
 
