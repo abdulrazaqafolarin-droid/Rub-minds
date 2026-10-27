@@ -14,7 +14,7 @@ const POLICIES = Object.freeze({
   "conversation.send": { capability: "conversation.send", approval: true, params: ["text"] },
   "browser.navigate": { capability: "browser.navigate", approval: true, params: ["url"] },
   "screenshot.capture": { capability: "screenshot.capture", approval: true, params: ["purpose"] },
-  "terminal.execute": { capability: "terminal.execute", approval: true, params: ["command"] },
+  "terminal.execute": { capability: "terminal.execute", approval: true, params: ["executable", "args", "workingDirectory"] },
   "task.cancel": { capability: "task.cancel", approval: false, params: ["targetRequestId"] },
 });
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -120,9 +120,8 @@ function checkParams(action, params, errors) {
     }
     if (!nonempty(params.workingDirectory, 2048)) errors.push("params.workingDirectory must contain 1-2048 characters");
   }
-  if (action === "task.cancel") {
-    if (!nonempty(params.targetRequestId, 200)) errors.push("params.targetRequestId must identify the task to cancel");
-    if (params.targetRequestId === undefined) errors.push("params.targetRequestId is required");
+  if (action === "task.cancel" && !nonempty(params.targetRequestId, 200)) {
+    errors.push("params.targetRequestId must identify the task to cancel");
   }
   if (action === "screenshot.capture" && params.purpose !== undefined && !nonempty(params.purpose, 240)) errors.push("params.purpose must be a non-empty string of at most 240 characters when provided");
   if (action === "browser.navigate") {
