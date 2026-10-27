@@ -23,6 +23,13 @@ const record = value => value !== null && typeof value === "object" && !Array.is
 // This protocol reserves terminal commands until a separately reviewed sandboxed executor ships.
 const RESERVED_ACTIONS = new Set(["terminal.execute"]);
 const nonempty = (value, limit = 128) => typeof value === "string" && value.trim().length > 0 && value.length <= limit;
+function safeValueLabel(value) {
+  if (typeof value === "string") return value;
+  if (value === null) return "null";
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return "[array]";
+  return "[non-string value]";
+}
 function timestamp(value) {
   if (typeof value !== "string") return false;
   const match = ISO_DATE.exec(value);
@@ -68,7 +75,7 @@ export function validateBackroomRegistration(input) {
   if (!Array.isArray(input.capabilities)) errors.push("capabilities must be an array");
   else {
     if (new Set(input.capabilities).size !== input.capabilities.length) errors.push("capabilities must not contain duplicates");
-    for (const name of input.capabilities) if (!BACKROOM_CAPABILITIES.includes(name)) errors.push("unsupported capability: " + String(name));
+    for (const name of input.capabilities) if (!BACKROOM_CAPABILITIES.includes(name)) errors.push("unsupported capability: " + safeValueLabel(name));
   }
   if (!record(input.consent)) errors.push("consent record is required");
   else {
@@ -151,7 +158,7 @@ export function validateBackroomCommand(input, registration, options = {}) {
   if (input.sessionId !== registration?.sessionId) errors.push("sessionId does not match registered session");
   if (!record(input.requestedBy) || !["human", "ai", "system"].includes(input.requestedBy.kind) || !nonempty(input.requestedBy.id)) errors.push("requestedBy must contain a supported kind and non-empty id");
   else onlyKeys(input.requestedBy, ["kind", "id"], errors, "requestedBy");
-  const policy = Object.hasOwn(POLICIES, input.action) ? POLICIES[input.action] : null;
+  const policy = typeof input.action === "string" && Object.hasOwn(POLICIES, input.action) ? POLICIES[input.action] : null;
   if (!policy) errors.push("unsupported action");
   else {
     if (input.action === "task.cancel" && input.params?.targetRequestId === input.requestId) errors.push("a cancellation request cannot target itself");
