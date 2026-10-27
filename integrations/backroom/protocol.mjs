@@ -122,10 +122,13 @@ function checkParams(action, params, errors) {
 }
 
 /** trustedApproval must come from the local host approval store, never command input. */
-export function validateBackroomCommand(input, registration, { now = Date.now(), trustedApproval = null } = {}) {
+export function validateBackroomCommand(input, registration, options = {}) {
   const errors = [];
-  if (!Number.isFinite(now)) return report(["now must be a finite timestamp"]);
-  if (!record(input)) return report(["command must be an object"]);
+  if (!record(options)) return report(["options must be an object"]);
+  const { now = Date.now(), trustedApproval = null } = options;
+  onlyKeys(options, ["now", "trustedApproval"], errors, "options");
+  if (!Number.isFinite(now)) errors.push("now must be a finite timestamp");
+  if (!record(input)) return report([...errors, "command must be an object"]);
   const registered = validateBackroomRegistration(registration);
   if (!registered.valid) errors.push("registration is invalid");
   if (input.protocol !== BACKROOM_PROTOCOL) errors.push("unsupported protocol");
