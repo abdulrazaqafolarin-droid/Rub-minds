@@ -31,11 +31,11 @@ A URL, invitation, or MCP connection does not itself grant access to another app
 1. A human explicitly connects a device and selects the target group/session.
 2. The local host registers only capabilities that are actually available and approved.
 3. Each command is bound to the registered group and session and checked against the capability allowlist.
-4. Side-effecting commands (sending external messages, navigation, screenshots and terminal execution) require a current approval from the trusted local approval store.
+4. Side-effecting commands (sending external messages, navigation and screenshots) require current approval from the trusted local approval store.
 5. The platform adapter executes only supported actions and returns a correlated result.
 6. Offline local work stays queued. On reconnection, the host revalidates access and approval before execution; expired or revoked work is not replayed.
 
-The protocol validator is not authentication, transport, app automation or a sandbox. The host must authenticate callers, keep device credentials out of command payloads, use a trusted approval store, enforce idempotency, and audit actions. Terminal execution remains disabled until a bounded workspace and cancellation/output controls are implemented.
+The protocol validator is not authentication, transport, app automation or a sandbox. The host must authenticate callers, keep device credentials out of command payloads, use a trusted approval store, enforce idempotency, and audit actions. **Protocol v1 explicitly rejects terminal execution** until a separately reviewed sandboxed executor is released with bounded workspace access, cancellation, output limits and audit records.
 
 ## Local-first release order
 
