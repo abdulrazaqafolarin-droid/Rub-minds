@@ -142,8 +142,8 @@ async function refresh() {
 }
 
 $('connect').addEventListener('click', () => { void connectAI(); });
+$('check-connection').addEventListener('click', () => { void refresh(); });
 
 for (const action of ['start', 'pause', 'resume', 'stop']) {
   $(action).addEventListener('click', () => { void sendAction(action); });
 }
-void refresh();
