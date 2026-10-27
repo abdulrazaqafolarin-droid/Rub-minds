@@ -110,12 +110,14 @@ test("rejects malformed validator options instead of throwing", () => {
   assert.equal(validateBackroomCommand(request, registration(), { now, unexpected: true }).valid, false);
 });
 
-test("task cancellation must identify the exact target request", () => {
+test("task cancellation must identify a target and cannot target itself", () => {
   const cancelEnabled = registration({ capabilities: [...registration().capabilities, "task.cancel"] });
   assert.equal(valid(command("task.cancel", { targetRequestId: "request-to-stop" }), cancelEnabled).valid, true);
   assert.equal(valid(command("task.cancel", {}), cancelEnabled).valid, false);
   assert.equal(valid(command("task.cancel", { targetRequestId: "" }), cancelEnabled).valid, false);
   assert.equal(valid(command("task.cancel", { targetRequestId: "request-to-stop", all: true }), cancelEnabled).valid, false);
+  const self = command("task.cancel", { targetRequestId: "request-01" });
+  assert.equal(valid(self, cancelEnabled).valid, false);
 });
 
 test("terminal schema is structured and remains disabled in protocol v1", () => {
