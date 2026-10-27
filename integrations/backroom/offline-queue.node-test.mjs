@@ -49,10 +49,12 @@ test('requires a trusted approval before queuing external message sends', async 
   await assert.rejects(queue.enqueue(command(), registration()), /trusted approval/);
 });
 
-test('deduplicates the same request and rejects conflicting reuse of a request id', async () => {
+test('deduplicates concurrent identical requests and rejects conflicting reuse of a request id', async () => {
   const { queue } = fixture(); const req = command();
-  const first = await queue.enqueue(req, registration(), { trustedApproval: trustedFor(req) });
-  const duplicate = await queue.enqueue(req, registration(), { trustedApproval: trustedFor(req) });
+  const [first, duplicate] = await Promise.all([
+    queue.enqueue(req, registration(), { trustedApproval: trustedFor(req) }),
+    queue.enqueue(req, registration(), { trustedApproval: trustedFor(req) }),
+  ]);
   assert.equal(duplicate.requestId, first.requestId);
   const changed = command({ params: { text: 'Different payload' } });
   await assert.rejects(queue.enqueue(changed, registration(), { trustedApproval: approval(changed) }), /already exists/);
@@ -224,4 +226,49 @@ test('does not mark an action successful when the executor returns a result for 
   });
   const item = (await queue.list())[0];
   assert.notEqual(item.status, 'succeeded');
+});
+
+test('cancellation during asynchronous revalidation prevents the queued action from executing', async () => {
+  const { queue } = fixture();
+  const req = command();
+  await queue.enqueue(req, registration(), { trustedApproval: trustedFor(req) });
+  let markLookupStarted;
+  let releaseLookup;
+  const lookupStarted = new Promise(resolve => { markLookupStarted = resolve; });
+  const lookupGate = new Promise(resolve => { releaseLookup = resolve; });
+  let executions = 0;
+  const draining = queue.drain({
+    online: true,
+    getRegistration: async () => { markLookupStarted(); await lookupGate; return registration(); },
+    getTrustedApproval: async () => trustedFor(req),
+    execute: async () => { executions += 1; return successfulResult(req); },
+  });
+  await lookupStarted;
+  assert.equal(await queue.cancel(req.requestId), true);
+  releaseLookup();
+  await draining;
+  assert.equal(executions, 0);
+  assert.equal((await queue.list())[0].status, 'cancelled');
+});
+
+test('a concurrent drain on the same queue instance is reported busy', async () => {
+  const { queue } = fixture();
+  const req = command();
+  await queue.enqueue(req, registration(), { trustedApproval: trustedFor(req) });
+  let markExecutionStarted;
+  let releaseExecution;
+  const executionStarted = new Promise(resolve => { markExecutionStarted = resolve; });
+  const executionGate = new Promise(resolve => { releaseExecution = resolve; });
+  const firstDrain = queue.drain({
+    online: true,
+    getRegistration: async () => registration(),
+    getTrustedApproval: async () => trustedFor(req),
+    execute: async request => { markExecutionStarted(); await executionGate; return successfulResult(request); },
+  });
+  await executionStarted;
+  const secondDrain = await queue.drain({ online: true, getRegistration: async () => registration(), getTrustedApproval: async () => trustedFor(req), execute: async request => successfulResult(request) });
+  assert.equal(secondDrain.status, 'busy');
+  releaseExecution();
+  await firstDrain;
+  assert.equal((await queue.list())[0].status, 'succeeded');
 });
