@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "tsc -b && vite build",
+    "build": "node --test integrations/backroom/protocol.node-test.mjs && tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:browser": "node scripts/playwright-connection-poc.mjs",
