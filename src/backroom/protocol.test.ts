@@ -87,7 +87,7 @@ describe('Backroom v1 platform-neutral action contract', () => {
     const approved = approveBackroomAction(created, 'owner-1', beforeExpiry);
     expect(approved.status).toBe('queued');
     expect(approved.approvedBy).toBe('owner-1');
-    expect(claimBackroomAction(approved, session(), expiry).status).toBe('running');
+    expect(claimBackroomAction(approved, session(), beforeExpiry).status).toBe('running');
   });
 
   it('requires the target capability even after approval', () => {
@@ -145,7 +145,7 @@ describe('Backroom v1 platform-neutral action contract', () => {
       'owner-1',
       beforeExpiry,
     );
-    const running = claimBackroomAction(approved, session(), expiry);
+    const running = claimBackroomAction(approved, session(), '2026-10-27T10:01:30.000Z');
     const finished = finishBackroomAction(running, 'succeeded', '2026-10-27T10:02:00.000Z', 'Tests passed');
     expect(finished.status).toBe('succeeded');
     expect(finished.resultSummary).toBe('Tests passed');
