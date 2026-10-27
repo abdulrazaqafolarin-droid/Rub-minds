@@ -15,7 +15,7 @@ const POLICIES = Object.freeze({
   "browser.navigate": { capability: "browser.navigate", approval: true, params: ["url"] },
   "screenshot.capture": { capability: "screenshot.capture", approval: true, params: ["purpose"] },
   "terminal.execute": { capability: "terminal.execute", approval: true, params: ["command"] },
-  "task.cancel": { capability: "task.cancel", approval: false, params: [] },
+  "task.cancel": { capability: "task.cancel", approval: false, params: ["targetRequestId"] },
 });
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(Z|[+-](\d{2}):(\d{2}))$/;
@@ -112,7 +112,18 @@ function checkParams(action, params, errors) {
   if (!record(params)) { errors.push("params must be an object"); return; }
   onlyKeys(params, POLICIES[action].params, errors, "params");
   if (action === "conversation.send" && !nonempty(params.text, 10000)) errors.push("params.text must contain 1-10000 characters");
-  if (action === "terminal.execute" && !nonempty(params.command, 2000)) errors.push("params.command must contain 1-2000 characters");
+  if (action === "terminal.execute") {
+    if (!nonempty(params.executable, 256)) errors.push("params.executable must contain 1-256 characters");
+    if (!Array.isArray(params.args) || params.args.length > 64) errors.push("params.args must be an array of at most 64 strings");
+    else for (const arg of params.args) {
+      if (typeof arg !== "string" || arg.length > 2000) errors.push("each params.args item must be a string of at most 2000 characters");
+    }
+    if (!nonempty(params.workingDirectory, 2048)) errors.push("params.workingDirectory must contain 1-2048 characters");
+  }
+  if (action === "task.cancel") {
+    if (!nonempty(params.targetRequestId, 200)) errors.push("params.targetRequestId must identify the task to cancel");
+    if (params.targetRequestId === undefined) errors.push("params.targetRequestId is required");
+  }
   if (action === "screenshot.capture" && params.purpose !== undefined && !nonempty(params.purpose, 240)) errors.push("params.purpose must be a non-empty string of at most 240 characters when provided");
   if (action === "browser.navigate") {
     if (!nonempty(params.url, 2048)) errors.push("params.url must be a non-empty URL of at most 2048 characters");
