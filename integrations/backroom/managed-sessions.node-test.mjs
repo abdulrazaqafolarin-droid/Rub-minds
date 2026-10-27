@@ -499,3 +499,48 @@ test('Windows driver releases an unused group context after concurrent open fail
   }
 });
 
+
+
+test('closing the last registered tab keeps its context alive while another tab is opening', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'rub-minds-backroom-'));
+  let announceSecondGoto;
+  let releaseSecondGoto;
+  const secondGotoStarted = new Promise(resolve => { announceSecondGoto = resolve; });
+  const secondGotoGate = new Promise(resolve => { releaseSecondGoto = resolve; });
+  let gotoCount = 0;
+  const { chromium, contexts } = fakeChromium({
+    beforeGoto: async () => {
+      gotoCount += 1;
+      if (gotoCount === 2) {
+        announceSecondGoto();
+        await secondGotoGate;
+      }
+    },
+  });
+  try {
+    const driver = new WindowsPlaywrightDriver({ chromium, profileRoot: path.join(root, 'profiles') });
+    const first = await driver.openManaged({
+      groupId: GROUP_A, sessionId: 'w-session-first', provider: 'chatgpt',
+      url: 'https://chatgpt.com/', approvedOrigins: ['https://chatgpt.com'],
+    });
+    const openingSecond = driver.openManaged({
+      groupId: GROUP_A, sessionId: 'w-session-second', provider: 'chatgpt',
+      url: 'https://chatgpt.com/c/second', approvedOrigins: ['https://chatgpt.com'],
+    });
+    await secondGotoStarted;
+
+    await driver.closeSession(first);
+    assert.equal(contexts[0].closeCalls, 0, 'pending tab still needs its shared browser context');
+    releaseSecondGoto();
+    const second = await openingSecond;
+
+    assert.equal(second.page.isClosed(), false);
+    assert.equal(await driver.inspect(second).then(result => result.origin), 'https://chatgpt.com');
+    assert.equal(contexts[0].closeCalls, 0);
+    await driver.closeSession(second);
+    assert.equal(contexts[0].closeCalls, 1, 'context closes only after the final tab is gone');
+  } finally {
+    releaseSecondGoto();
+    await rm(root, { recursive: true, force: true });
+  }
+});
