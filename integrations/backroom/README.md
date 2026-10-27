@@ -7,9 +7,9 @@ Backroom is the local control layer behind a Rub Minds group. A platform-neutral
 - **attach_existing** registers a page explicitly selected by a local adapter after the user approves the connection. It does not automatically attach to any arbitrary open browser. The first Windows implementation accepts a Playwright page handle supplied by a separately authorized connector; automatic attachment to a normal Chrome process is not implemented.
 - **managed** opens a real site in a dedicated Backroom-managed browser profile scoped to the group.
 
-The shared manager and driver are in `session-manager.mjs` and `windows-playwright-driver.mjs`. The Windows driver uses Playwright Chromium and a persistent profile per group. Different groups do not share a browser profile. It rejects unapproved top-level navigation and closes unregistered popups. Attach mode never closes the user's existing page when the session is disconnected.
+The shared manager and driver are in `session-manager.mjs` and `windows-playwright-driver.mjs`. The Windows driver uses Playwright Chromium and a persistent profile per group. Different groups do not share a browser profile. It rejects unapproved top-level navigation at both page and context level, so unregistered popup destinations are blocked before their first top-level load and then closed as an additional safeguard. Attach mode never closes the user's existing page when the session is disconnected.
 
-The current session manager advertises only `session.inspect`. It does **not** yet send AI messages, read provider conversation content, click UI controls, capture screenshots, or run terminal commands. This is deliberate until a separately reviewed action executor exists.
+The current session manager advertises only `session.inspect`; `local-executor.mjs` validates scoped commands and returns correlated, sanitized inspection results. It does **not** yet send AI messages, read provider conversation content, click UI controls, capture screenshots, or run terminal commands. This is deliberate until a separately reviewed action executor exists.
 
 ## Explicit boundaries
 
@@ -40,10 +40,10 @@ npm run test:backroom
 Or run the Node tests directly:
 
 ```sh
-node --test integrations/backroom/protocol.node-test.mjs integrations/backroom/offline-queue.node-test.mjs integrations/backroom/managed-sessions.node-test.mjs
+node --test integrations/backroom/protocol.node-test.mjs integrations/backroom/offline-queue.node-test.mjs integrations/backroom/managed-sessions.node-test.mjs integrations/backroom/local-executor.node-test.mjs
 ```
 
-The suite covers registration and approval boundaries, queue bounds and retries, explicit consent, provider origin allowlists, no secret/path leakage in session records, dedicated profiles, navigation guard behavior, popup containment, group-scoped closure and preservation of already-open user pages.
+The suite covers registration and approval boundaries, queue bounds and retries, explicit consent, provider origin allowlists, no secret/path leakage in session records, scoped local inspection results, dedicated profiles, navigation guards, popup containment before load, group-scoped closure, concurrent open/close races, and preservation of already-open user pages.
 
 ## OS constraints
 
