@@ -119,6 +119,15 @@ export class WindowsPlaywrightDriver {
     });
   }
 
+  installPopupGuard(page) {
+    if (typeof page.on !== 'function') throw new TypeError('Playwright page must support popup events');
+    // Popups are separate sessions. V1 closes them rather than allowing an
+    // unregistered tab to escape the origin and session policy.
+    page.on('popup', popup => {
+      void Promise.resolve().then(() => popup.close()).catch(() => {});
+    });
+  }
+
   async openManaged({ groupId, sessionId, url, approvedOrigins, provider } = {}) {
     if (!GROUP_ID.test(groupId || '')) throw new TypeError('groupId must be a UUID');
     if (typeof sessionId !== 'string' || !sessionId.trim() || sessionId.length > 200) throw new TypeError('sessionId must be a non-empty string');
@@ -140,6 +149,7 @@ export class WindowsPlaywrightDriver {
       wasContextEmpty = ![...this.sessions.values()].some(item => item.groupId === groupId && item.mode === 'managed');
       page = await context.newPage();
       await this.installNavigationGuard(page, allowed);
+      this.installPopupGuard(page);
       page.setDefaultNavigationTimeout?.(this.timeoutMs);
       await page.goto(target, { waitUntil: 'domcontentloaded', timeout: this.timeoutMs });
       const current = await this.inspectPage(page);
