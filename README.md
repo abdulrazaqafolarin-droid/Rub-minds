@@ -22,7 +22,7 @@ Read [Product spec](docs/PRODUCT_SPEC.md), [Architecture](docs/ARCHITECTURE.md),
 
 Backroom is being designed as a local-first control layer for **Windows and Android**—not as a browser-extension-only product. It supports two target connection modes: attaching to an existing session when authorized and technically supported, or opening a real interface in a Backroom-managed environment. The shared v1 protocol and its tests live in [integrations/backroom](integrations/backroom/README.md).
 
-The current Backroom slice is a protocol contract and validation suite, not an installable desktop/mobile companion or app-control runtime. Separate Windows and Android adapters, authenticated local transport, and real-device acceptance tests are still required. Cloud execution is deferred until usage and revenue justify its cost.
+The current Backroom foundation includes the shared protocol/validation suite and a bounded, storage-agnostic local queue engine for approved conversation sends and HTTPS navigation. It is not yet an installable desktop/mobile companion or app-control runtime: Windows/Android adapters, authenticated local transport, protected durable queue storage, and real-device acceptance tests remain required. Cloud execution is deferred until usage and revenue justify its cost.
 
 ## Experimental browser continuation helper
 
