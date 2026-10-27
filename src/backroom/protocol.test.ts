@@ -96,7 +96,7 @@ describe('Backroom v1 platform-neutral action contract', () => {
     expect(() => claimBackroomAction(
       approved,
       session({ capabilities: ['read_page'] }),
-      expiry,
+      beforeExpiry,
     )).toThrow(/lacks required capability: terminal_execute/);
   });
 
@@ -106,11 +106,11 @@ describe('Backroom v1 platform-neutral action contract', () => {
       'owner-1',
       beforeExpiry,
     );
-    expect(() => claimBackroomAction(approved, session({ groupId: 'another-group' }), expiry))
+    expect(() => claimBackroomAction(approved, session({ groupId: 'another-group' }), beforeExpiry))
       .toThrow(/scope do not match/);
-    expect(() => claimBackroomAction(approved, session({ id: 'another-session' }), expiry))
+    expect(() => claimBackroomAction(approved, session({ id: 'another-session' }), beforeExpiry))
       .toThrow(/scope do not match/);
-    expect(() => claimBackroomAction(approved, session({ status: 'disconnected' }), expiry))
+    expect(() => claimBackroomAction(approved, session({ status: 'disconnected' }), beforeExpiry))
       .toThrow(/not connected/);
   });
 
@@ -141,7 +141,7 @@ describe('Backroom v1 platform-neutral action contract', () => {
 
   it('enforces terminal state transitions and keeps the result bounded', () => {
     const approved = approveBackroomAction(
-      action('run_terminal_command', { command: 'npm test' }),
+      action('run_terminal_command', { executable: 'npm', args: ['test'], workingDirectory: 'C:/projects/rub-minds' }),
       'owner-1',
       beforeExpiry,
     );
