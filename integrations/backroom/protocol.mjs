@@ -84,13 +84,17 @@ function checkApproval(approval, command, now, errors) {
   required(errors, approval.approvalId, "approval.approvalId", 200);
   required(errors, approval.approvedBy, "approval.approvedBy");
   if (approval.requestId !== command.requestId) errors.push("approval requestId does not match command");
+  if (approval.idempotencyKey !== command.idempotencyKey) errors.push("approval idempotencyKey does not match command");
   if (approval.action !== command.action) errors.push("approval action does not match command");
   if (approval.groupId !== command.groupId) errors.push("approval groupId does not match command");
   if (approval.sessionId !== command.sessionId) errors.push("approval sessionId does not match command");
-  let paramsMatch = false;
-  try { paramsMatch = record(approval.params) && record(command.params) && canonicalJson(approval.params) === canonicalJson(command.params); }
-  catch { paramsMatch = false; }
+  let paramsMatch = false, requesterMatches = false;
+  try {
+    paramsMatch = record(approval.params) && record(command.params) && canonicalJson(approval.params) === canonicalJson(command.params);
+    requesterMatches = record(approval.requestedBy) && record(command.requestedBy) && canonicalJson(approval.requestedBy) === canonicalJson(command.requestedBy);
+  } catch { paramsMatch = false; requesterMatches = false; }
   if (!paramsMatch) errors.push("approved params do not match command");
+  if (!requesterMatches) errors.push("approval requester does not match command");
   if (!timestamp(approval.approvedAt)) errors.push("approval.approvedAt must be an ISO timestamp");
   if (!timestamp(approval.expiresAt)) errors.push("approval.expiresAt must be an ISO timestamp");
   if (timestamp(approval.approvedAt) && timestamp(approval.expiresAt)) {
@@ -99,7 +103,7 @@ function checkApproval(approval, command, now, errors) {
     if (granted > now) errors.push("approval cannot be from the future");
     if (expires <= now) errors.push("approval has expired");
   }
-  onlyKeys(approval, ["approvalId", "approvedBy", "requestId", "action", "groupId", "sessionId", "params", "approvedAt", "expiresAt"], errors, "approval");
+  onlyKeys(approval, ["approvalId", "approvedBy", "requestId", "idempotencyKey", "action", "groupId", "sessionId", "params", "requestedBy", "approvedAt", "expiresAt"], errors, "approval");
 }
 
 function checkParams(action, params, errors) {
