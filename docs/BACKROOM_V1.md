@@ -30,12 +30,13 @@ The protocol and session registry are platform-neutral. OS permissions, local tr
 - `integrations/backroom/protocol.mjs`: protocol v1 input, capability, approval and result validation.
 - `integrations/backroom/offline-queue.mjs`: bounded queue engine with freshness checks and replay safeguards. Storage is injected; no secure durable adapter yet.
 - `integrations/backroom/session-manager.mjs`: consent-gated session registration shared by platform drivers. It records only origin—not full private URL path/query or page title—and advertises only `session.inspect`.
-- `integrations/backroom/windows-playwright-driver.mjs`: visible Chromium managed sessions with separate persistent profiles per group, exact top-level origin allowlists, and pop-up containment. Attach-existing accepts an explicitly selected Playwright page handle; it does not automatically attach to ordinary Chrome.
+- `integrations/backroom/windows-playwright-driver.mjs`: visible Chromium managed sessions with separate persistent profiles per group, exact top-level origin allowlists, context-level blocking for unregistered popup navigation before load, and popup containment. Attach-existing accepts an explicitly selected Playwright page handle; it does not automatically attach to ordinary Chrome.
+- `integrations/backroom/local-executor.mjs`: validates a command against the session's group/session/capability scope and executes `session.inspect` only, returning a correlated result without the full conversation URL or query string.
 - `integrations/backroom/managed-sessions.node-test.mjs`: fake-driver and fake-Chromium acceptance tests. These validate policy/state behavior, **not** real provider compatibility.
 
 ## Current behavior and limits
 
-The Windows driver can open a managed site in a persistent group profile and inspect the live page's HTTPS origin. It does **not** yet read or send messages inside ChatGPT/Claude, click controls, capture screenshots, run a terminal, or provide a remote device channel. The existing-session path requires a caller that already has a valid page handle.
+The Windows driver can open a managed site in a persistent group profile and inspect the live page's HTTPS origin. The local executor supports only the read-only `session.inspect` operation. It does **not** yet read or send messages inside ChatGPT/Claude, click controls, capture screenshots, run a terminal, or provide a remote device channel. The existing-session path requires a caller that already has a valid page handle.
 
 The Android driver is **not yet implemented**. The generic manager accepts an Android-specific driver, but that is an interface seam, not a claim that an Android APK or native control layer exists.
 
@@ -75,7 +76,7 @@ This is not yet durable local device behavior because the storage interface has 
 
 ## Release gates
 
-- All protocol, queue and session-manager tests pass.
+- All protocol, queue, session-manager and local-executor tests pass.
 - No cross-group/session access or unapproved capability can be registered.
 - Incoming command data cannot self-approve an action.
 - Unsafe schemes, embedded URL credentials and unapproved top-level navigation are blocked.
