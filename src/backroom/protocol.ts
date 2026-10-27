@@ -192,12 +192,15 @@ export function approveBackroomAction<K extends BackroomActionKind>(
   approvedAt: string,
 ): BackroomAction<K> {
   requireText(approvedBy, 'approvedBy', 200);
-  timestampMs(approvedAt, 'approvedAt');
+  const approved = timestampMs(approvedAt, 'approvedAt');
   if (action.status !== 'awaiting_approval') {
     throw new Error('Only actions awaiting approval can be approved');
   }
   if (!action.requiresApproval) throw new Error('This action does not require approval');
-  if (Date.parse(approvedAt) > Date.parse(action.expiresAt)) {
+  if (approved < Date.parse(action.requestedAt)) {
+    throw new Error('Actions cannot be approved before they are requested');
+  }
+  if (approved >= Date.parse(action.expiresAt)) {
     throw new Error('Expired actions cannot be approved');
   }
   return { ...action, approvedBy, approvedAt, status: 'queued' };
@@ -213,6 +216,9 @@ export function claimBackroomAction<K extends BackroomActionKind>(
   if (started >= Date.parse(action.expiresAt)) throw new Error('Expired actions cannot be executed');
   if (action.requiresApproval && (!action.approvedBy || !action.approvedAt)) {
     throw new Error('Explicit human approval is required');
+  }
+  if (action.approvedAt && Date.parse(action.approvedAt) > started) {
+    throw new Error('Action cannot start before its approval');
   }
   if (session.protocolVersion !== BACKROOM_PROTOCOL_VERSION) {
     throw new Error('Unsupported Backroom protocol version');
