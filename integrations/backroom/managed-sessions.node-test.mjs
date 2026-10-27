@@ -16,6 +16,7 @@ class FakePage {
     this.currentUrl = initialUrl;
     this.closed = false;
     this.routes = [];
+    this.contextRoutes = [];
     this.events = new Map();
     this.closeCalls = 0;
     this.timeoutMs = null;
@@ -23,6 +24,7 @@ class FakePage {
   url() { return this.currentUrl; }
   isClosed() { return this.closed; }
   mainFrame() { return this; }
+  page() { return this; }
   on(event, listener) {
     const listeners = this.events.get(event) || [];
     listeners.push(listener);
@@ -40,6 +42,11 @@ class FakePage {
     if (route) {
       const outcome = await invokeRoute(route.handler, this, url);
       if (outcome !== 'continued') throw new Error('navigation blocked');
+    } else {
+      for (const contextRoute of [...this.contextRoutes].reverse()) {
+        const outcome = await invokeRoute(contextRoute.handler, this, url);
+        if (outcome !== 'continued') throw new Error('navigation blocked');
+      }
     }
     this.currentUrl = url;
   }
@@ -121,9 +128,12 @@ function fakeChromium({ beforeGoto } = {}) {
       launches.push({ userDataDir, options });
       const context = {
         pagesList: [],
+        routeHandlers: [],
         closeCalls: 0,
+        async route(pattern, handler) { this.routeHandlers.push({ pattern, handler }); },
         async newPage() {
           const page = new FakePage();
+          page.contextRoutes = this.routeHandlers;
           if (beforeGoto) {
             const originalGoto = page.goto.bind(page);
             page.goto = async (...args) => { await beforeGoto(page, ...args); return originalGoto(...args); };
@@ -354,7 +364,11 @@ test('Windows managed session closes unregistered popups instead of leaking new 
       groupId: GROUP_A, sessionId: 'w-session-popup', provider: 'chatgpt',
       url: 'https://chatgpt.com/', approvedOrigins: ['https://chatgpt.com'],
     });
-    const popup = new FakePage('https://evil.example/');
+    const popup = new FakePage();
+    popup.contextRoutes = handle.page.contextRoutes;
+    await assert.rejects(popup.goto('https://evil.example/'), /navigation blocked/);
+    assert.equal(popup.url(), 'about:blank', 'the context guard blocks the popup before it loads the URL');
+    assert.equal(popup.isClosed(), false, 'the route guard blocks navigation even before the popup event cleanup');
     await handle.page.triggerPopup(popup);
     assert.equal(popup.isClosed(), true);
     await driver.closeSession(handle);
