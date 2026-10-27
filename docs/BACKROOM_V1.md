@@ -19,12 +19,18 @@ Rub Minds group + existing MCP gateway
          adapters  adapters
 ```
 
-The protocol is shared. OS permissions, session discovery, browser/app control, terminal execution and local approval UX belong to platform-specific adapters. Support two connection modes:
+The protocol is shared. OS permissions, session discovery, browser/app control and local approval UX belong to platform-specific adapters. Support two connection modes:
 
 - **attach_existing** — register an existing session only when the operating system and application permit authorized attachment.
 - **managed** — open the real supported interface in a Backroom-managed environment, then register it.
 
 A URL, invitation, or MCP connection does not itself grant access to another app's authenticated session.
+
+## Platform constraints
+
+- **Windows:** use supported app APIs or Microsoft UI Automation where available. Some UI automation requires an unlocked, interactive desktop; a Windows adapter must report when it cannot safely act. See [Microsoft UI Automation](https://learn.microsoft.com/en-us/windows/win32/winauto/entry-uiauto-win32).
+- **Android:** prefer provider APIs, explicit Android intents, and supported managed web sessions. Do not make general-purpose autonomous control through `AccessibilityService` the default design: Android requires users to explicitly enable these services, and [Google Play policy restricts Accessibility API use to autonomously initiate, plan and execute actions](https://support.google.com/googleplay/android-developer/answer/10964491) except qualifying accessibility tools. Any exception needs a separate product/policy review. Android background execution is system-controlled; see [foreground-service start restrictions](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start).
+- When an app or OS does not expose the needed capability, show `unsupported` or `waiting_for_user` rather than claiming control. These limitations do not change the shared protocol.
 
 ## Command path
 
@@ -42,7 +48,7 @@ The protocol validator is not authentication, transport, app automation or a san
 1. Keep the existing group/invitation/MCP workflow as the first proof and verify the actual result, not just successful page navigation or tool discovery.
 2. Implement a Windows local host with authenticated loopback IPC and a managed browser adapter. Test against a controlled local provider before any real signed-in account.
 3. Implement Android-specific adapters with explicit Android permissions. Fail visibly when cross-app control is unavailable; do not promise control of every native app.
-4. Add the vibe-coding workspace around project context, group decisions, tasks and approved terminal workflows.
+4. Add the vibe-coding workspace around project context, group decisions, and tasks. Terminal execution stays disabled until a sandboxed executor is separately reviewed and tested.
 5. Add cloud execution only after revenue and measured cost limits justify it.
 
 ## Release gates
