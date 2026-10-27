@@ -294,12 +294,19 @@ export class WindowsPlaywrightDriver {
     if (tracked.mode === 'managed') {
       try { if (!tracked.page.isClosed()) await tracked.page.close(); }
       finally {
-        const remaining = [...this.sessions.values()].some(item => item.groupId === tracked.groupId && item.mode === 'managed');
-        if (!remaining) {
+        const remaining = [...this.sessions.values()].some(
+          item => item.groupId === tracked.groupId && item.mode === 'managed',
+        );
+        const anotherOpenPending = [...this.pendingSessionGroups.values()].some(
+          groupId => groupId === tracked.groupId,
+        );
+        // Do not shut down a group's shared context while another open is in
+        // progress. The final pending operation will clean it up if it fails.
+        if (!remaining && !anotherOpenPending && !this.closingGroups.has(tracked.groupId)) {
           const context = this.contexts.get(tracked.groupId);
           if (context) {
-            try { await context.close(); }
-            finally { this.contexts.delete(tracked.groupId); }
+            await context.close();
+            if (this.contexts.get(tracked.groupId) === context) this.contexts.delete(tracked.groupId);
           }
         }
       }
@@ -325,8 +332,8 @@ export class WindowsPlaywrightDriver {
       }
       const context = this.contexts.get(groupId);
       if (context) {
-        try { await context.close(); }
-        finally { this.contexts.delete(groupId); }
+        await context.close();
+        if (this.contexts.get(groupId) === context) this.contexts.delete(groupId);
       }
       // Existing user pages are only unregistered; they are never closed.
     })().finally(() => {
