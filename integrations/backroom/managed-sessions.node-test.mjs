@@ -113,7 +113,7 @@ function approvedInput(overrides = {}) {
     ...overrides,
   };
 }
-function fakeChromium() {
+function fakeChromium({ beforeGoto } = {}) {
   const launches = [];
   const contexts = [];
   const chromium = {
@@ -122,7 +122,15 @@ function fakeChromium() {
       const context = {
         pagesList: [],
         closeCalls: 0,
-        async newPage() { const page = new FakePage(); this.pagesList.push(page); return page; },
+        async newPage() {
+          const page = new FakePage();
+          if (beforeGoto) {
+            const originalGoto = page.goto.bind(page);
+            page.goto = async (...args) => { await beforeGoto(page, ...args); return originalGoto(...args); };
+          }
+          this.pagesList.push(page);
+          return page;
+        },
         async pages() { return this.pagesList; },
         async close() { this.closeCalls++; for (const page of this.pagesList) page.closed = true; },
       };
@@ -384,3 +392,33 @@ test('Windows closeGroup closes only its managed group and preserves attached pa
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('manager closeGroup waits for pending opens and rejects late registrations', async () => {
+  const driver = fakeDriver();
+  const originalOpen = driver.openManaged.bind(driver);
+  let announceOpen;
+  let releaseOpen;
+  const opened = new Promise(resolve => { announceOpen = resolve; });
+  const gate = new Promise(resolve => { releaseOpen = resolve; });
+  driver.openManaged = async input => {
+    const handle = await originalOpen(input);
+    announceOpen();
+    await gate;
+    return handle;
+  };
+  const sessions = manager(driver);
+  const opening = sessions.openManaged(approvedInput());
+  await opened;
+  const closing = sessions.closeGroup(GROUP_A);
+  await assert.rejects(
+    sessions.openManaged(approvedInput({ sessionId: 'session-late' })),
+    /group is closing/,
+  );
+  releaseOpen();
+  await assert.rejects(opening, /group began closing/);
+  assert.equal(await closing, 0);
+  assert.equal(sessions.listSessions({ groupId: GROUP_A }).length, 0);
+  assert.equal(driver.pages.has('session-01'), false);
+  assert.equal(driver.pages.get('session-01'), undefined);
+});
+
