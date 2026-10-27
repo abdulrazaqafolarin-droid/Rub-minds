@@ -268,6 +268,7 @@ test('a concurrent drain on the same queue instance is reported busy', async () 
   await executionStarted;
   const secondDrain = await queue.drain({ online: true, getRegistration: async () => registration(), getTrustedApproval: async () => trustedFor(req), execute: async request => successfulResult(request) });
   assert.equal(secondDrain.status, 'busy');
+  await assert.rejects(queue.recoverInterrupted(), /while this queue is draining/);
   releaseExecution();
   await firstDrain;
   assert.equal((await queue.list())[0].status, 'succeeded');
