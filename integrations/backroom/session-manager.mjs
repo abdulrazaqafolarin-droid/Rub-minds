@@ -46,7 +46,7 @@ function targetDetails({ provider, url, approvedOrigins, userApproved, approvedB
   if (new Set(normalized).size !== normalized.length) throw new TypeError('approvedOrigins must not contain duplicates');
   if (!normalized.includes(parsed.origin)) throw new Error('The initial URL origin must be explicitly approved');
 
-  const knownProvider = BACKROOM_PROVIDER_ORIGINS[provider];
+  const knownProvider = Object.hasOwn(BACKROOM_PROVIDER_ORIGINS, provider) ? BACKROOM_PROVIDER_ORIGINS[provider] : undefined;
   if (provider !== 'website') {
     if (!knownProvider) throw new Error('Unsupported provider; use website only with an explicitly approved origin');
     for (const origin of normalized) {
