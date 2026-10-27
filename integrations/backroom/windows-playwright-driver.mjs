@@ -243,7 +243,7 @@ export class WindowsPlaywrightDriver {
     if (this.sessions.has(sessionId) || this.pendingSessions.has(sessionId)) throw new Error('sessionId is already open');
     const allowed = exactOrigins(approvedOrigins);
     if (provider !== 'website') {
-      const providerOrigins = BACKROOM_PROVIDER_ORIGINS[provider];
+      const providerOrigins = Object.hasOwn(BACKROOM_PROVIDER_ORIGINS, provider) ? BACKROOM_PROVIDER_ORIGINS[provider] : undefined;
       if (!providerOrigins) throw new Error('Unsupported AI provider');
       for (const origin of allowed) if (!providerOrigins.includes(origin)) throw new Error('Origin is outside the provider allowlist');
     }
@@ -297,7 +297,7 @@ export class WindowsPlaywrightDriver {
     if (this.sessions.has(sessionId) || this.pendingSessions.has(sessionId)) throw new Error('sessionId is already open');
     const allowed = exactOrigins(approvedOrigins);
     if (provider !== 'website') {
-      const providerOrigins = BACKROOM_PROVIDER_ORIGINS[provider];
+      const providerOrigins = Object.hasOwn(BACKROOM_PROVIDER_ORIGINS, provider) ? BACKROOM_PROVIDER_ORIGINS[provider] : undefined;
       if (!providerOrigins) throw new Error('Unsupported AI provider');
       for (const origin of allowed) if (!providerOrigins.includes(origin)) throw new Error('Origin is outside the provider allowlist');
     }
