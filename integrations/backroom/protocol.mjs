@@ -20,6 +20,8 @@ const POLICIES = Object.freeze({
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(Z|[+-](\d{2}):(\d{2}))$/;
 const record = value => value !== null && typeof value === "object" && !Array.isArray(value);
+// This protocol reserves terminal commands until a separately reviewed sandboxed executor ships.
+const RESERVED_ACTIONS = new Set(["terminal.execute"]);
 const nonempty = (value, limit = 128) => typeof value === "string" && value.trim().length > 0 && value.length <= limit;
 function timestamp(value) {
   if (typeof value !== "string") return false;
@@ -142,6 +144,7 @@ export function validateBackroomCommand(input, registration, options = {}) {
   const policy = Object.hasOwn(POLICIES, input.action) ? POLICIES[input.action] : null;
   if (!policy) errors.push("unsupported action");
   else {
+    if (RESERVED_ACTIONS.has(input.action)) errors.push("terminal execution is reserved until a sandboxed platform adapter is released");
     if (!registered.valid || !registration.capabilities.includes(policy.capability)) errors.push("session has not granted capability " + policy.capability);
     checkParams(input.action, input.params, errors);
     if (policy.approval) checkApproval(trustedApproval, input, now, errors);
