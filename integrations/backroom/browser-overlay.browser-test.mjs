@@ -47,6 +47,7 @@ test("drag overlay selects one real composer and returns a unique selector witho
   await dragAround(page,"#prompt");
   const result=await page.evaluate(()=>window.__RM_BACKROOM_SELECTION_V1__);
   assert.equal(result.state,"selected");
+  assert.match(result.selectionId,/^[a-f0-9-]{36}$/i,"selection must carry a fresh unguessable per-selection identifier");
   assert.equal(result.selector,'textarea[aria-label="Prompt"]');
   assert.equal(await page.locator("#count").textContent(),"0","selection must never click Send");
   assert.equal(await page.locator("#prompt").inputValue(),"","selection must not type into the composer");
