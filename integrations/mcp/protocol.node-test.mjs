@@ -132,7 +132,7 @@ test("session export is explicit, private, and honestly reports transcript compl
   const modern = getModernMcpTools().find((tool) => tool.name === "prepare_session_export");
   assert.ok(modern.inputSchema.required.includes("session_handle"));
   assert.match(SESSION_EXPORT_INSTRUCTIONS, /chronological order with speaker labels/);
-  assert.match(SESSION_EXPORT_INSTRUCTIONS, /\\[REDACTED SECRET\\]/);
+  assert.ok(SESSION_EXPORT_INSTRUCTIONS.includes("[REDACTED SECRET]"));
   assert.match(SESSION_EXPORT_INSTRUCTIONS, /transcript_complete=false/);
   assert.match(SESSION_EXPORT_INSTRUCTIONS, /Do not send raw transcript content/);
 });
