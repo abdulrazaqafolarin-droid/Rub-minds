@@ -334,9 +334,11 @@ export class BrowserHostRuntime {
     if (approved !== true) throw new Error("explicit draft approval required");
     if (typeof text !== "string" || !text.trim() || text.length > 10_000) throw new TypeError("draft text must be 1-10000 characters");
     const binding = this.#bindings.get(targetId);
-    if (!binding) throw new Error("registered browser target unavailable");
+    if (!binding) throw Object.assign(new Error("registered browser target unavailable"), { status: 404 });
     const target = binding.target;
-    if (typeof roomId !== "string" || roomId !== target.roomId) throw new Error("Target belongs to a different Rub Minds group.");
+    if (typeof roomId !== "string" || roomId !== target.roomId) {
+      throw Object.assign(new Error("Target belongs to a different Rub Minds group."), { status: 409 });
+    }
     const command = {
       id: randomUUID(), eventId: randomUUID(), roomId: target.roomId,
       hostId: target.hostId, spaceId: target.spaceId, sessionId: target.sessionId,

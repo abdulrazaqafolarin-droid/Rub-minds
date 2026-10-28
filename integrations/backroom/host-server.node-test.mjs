@@ -88,7 +88,7 @@ function fakeBrowserRuntime() {
   getSelection:async()=>({state:selected?.state||"unavailable"}),
   registerSelectedTarget:async(id,roomId)=>{if(id!==pageId||selected?.state!=="selected"||roomId!==selectionRoom)throw Error("selection missing or wrong room");const t={id:targetId,pageId,roomId,title:"Test chat",site:"chatgpt.com",surface:"browser_tab",operations:["draft"]};targets.push(t);return t},
   listTargets:()=>targets,
-  draft:async(id,text,{approved,roomId}={})=>{if(approved!==true)throw Error("approval required");if(!targets.some(t=>t.id===id&&t.roomId===roomId))throw Error("target scope mismatch");return {state:"completed",result:{drafted:true,submitted:false},submitted:false}},
+  draft:async(id,text,{approved,roomId}={})=>{if(approved!==true)throw Error("approval required");if(!targets.some(t=>t.id===id&&t.roomId===roomId)){const error=Error("target scope mismatch");error.status=409;throw error}return {state:"completed",result:{drafted:true,submitted:false},submitted:false}},
   testSetSelected:()=>{selected={state:"selected"};},
   pageId,targetId,
  };
@@ -108,6 +108,8 @@ test("browser control routes require host pairing and expose truthful capability
   assert.equal((await fetch(base+"/v1/browser/targets",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId:"12345678-1234-4234-9234-123456789014"})})).status,201);
   const draft=await fetch(base+"/v1/browser/draft",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({targetId:browserRuntime.targetId,roomId:"12345678-1234-4234-9234-123456789014",text:"draft only",approved:true})});
   assert.equal(draft.status,200);assert.equal((await draft.json()).submitted,false);
+  const wrongGroup=await fetch(base+"/v1/browser/draft",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({targetId:browserRuntime.targetId,roomId:"12345678-1234-4234-9234-123456789099",text:"wrong room",approved:true})});
+  assert.equal(wrongGroup.status,409);
   assert.equal((await fetch(base+"/v1/unpair",{method:"POST",headers:auth})).status,200);
   assert.equal((await fetch(base+"/v1/browser/pages",{headers:auth})).status,401);
  },{browserRuntime});
