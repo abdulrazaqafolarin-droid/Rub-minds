@@ -49,7 +49,7 @@ export class BrowserDraftAdapter {
   async execute({ command, target }) {
     if (command.operation!=="draft" || target.locatorValue!==this.selector || target.appId!==this.appId || target.sessionId!==this.sessionId || target.identityFingerprint!==this.identityFingerprint) throw new Error("binding changed");
     const f = await this.#field();
-    // Check and insert in one synchronous page task. A separate value read then
+    // Check and insert in one page task. A separate value read then
     // locator.fill() could overwrite a human draft typed between the two actions.
     const bindingMarker = /\[data-rm-backroom-binding="([a-f0-9-]{36})"\]$/i.exec(this.selector)?.[1] ?? null;
     const insertionRequest = {
@@ -59,7 +59,7 @@ export class BrowserDraftAdapter {
     // URL and DOM identity must be rechecked in the same synchronous page task
     // that writes. Checking them only in #field() leaves a navigation/rerender
     // window between preflight and insertion.
-    const performInsertion = (element, request) => {
+    const performInsertion = async (element, request) => {
       const identityState = () => {
         const current = window.location;
         if (current.origin !== request.origin || current.pathname !== request.path ||
@@ -101,8 +101,10 @@ export class BrowserDraftAdapter {
       if (readValue() === null) return { state: "unavailable" };
       if (readValue() !== "") return { state: "occupied" };
       element.focus({ preventScroll: true });
-      // Focus handlers can reroute a SPA, replace the composer, or populate it.
-      // Recheck all of those conditions before touching its value.
+      // Let focus-handler microtasks settle before the final validation. No
+      // await occurs between that validation and the value mutation, so another
+      // task cannot interleave after the empty-field check.
+      await Promise.resolve();
       const postFocusIdentity = identityState();
       if (postFocusIdentity !== "valid") return { state: postFocusIdentity };
       if (readValue() === null) return { state: "unavailable" };
