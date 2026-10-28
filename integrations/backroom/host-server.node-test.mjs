@@ -140,3 +140,15 @@ test("browser target registration rejects missing or malformed group IDs", async
   }
  },{browserRuntime});
 });
+
+test("server without a platform runtime advertises no capabilities and fails closed", async () => {
+ await withHost(async({base,origin})=>{
+  const credentials=await (await pair(base,origin)).json();
+  const auth={Origin:origin,Authorization:"Bearer "+credentials.sessionToken};
+  const status=await (await fetch(base+"/v1/host",{headers:auth})).json();
+  assert.equal(status.executionReady,false);
+  assert.equal(Object.values(status.capabilities).some(Boolean),false);
+  const start=await fetch(base+"/v1/browser/start",{method:"POST",headers:auth});
+  assert.equal(start.status,503);
+ });
+});

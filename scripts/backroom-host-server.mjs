@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { HostPairingAuthority } from "../integrations/backroom/host-pairing.mjs";
-import { BrowserHostRuntime } from "../integrations/backroom/browser-host-runtime.mjs";
 
 const DEFAULT_ORIGINS = [
   "https://rub-minds.vercel.app",
@@ -24,6 +23,18 @@ function parseOrigins(value) {
   const origins = value.split(",").map(value => value.trim()).filter(Boolean);
   // Exact origins only. URLs, paths, wildcard domains and implicit substring matching are forbidden.
   return origins;
+}
+
+function disabledBrowserRuntime() {
+  const status = () => ({ running: false, pages: 0, capabilities: {
+    browserDraft: false, desktopAccessibility: false, androidAccessibility: false, terminal: false,
+  } });
+  const unavailable = async () => { throw new Error("browser_runtime_unavailable"); };
+  return {
+    status, stop: async () => status(), start: unavailable, listPages: async () => [],
+    listTargets: () => [], startSelection: unavailable, getSelection: async () => ({ state: "unavailable" }),
+    registerSelectedTarget: unavailable, draft: unavailable,
+  };
 }
 function writeJson(response, status, body, corsHeaders = {}) {
   response.writeHead(status, { ...noCache, ...corsHeaders, "Content-Type": "application/json; charset=utf-8" });
@@ -268,7 +279,10 @@ export function createBackroomHostServer({
 }
 
 export async function runBackroomHost() {
-  const instance = createBackroomHostServer();
+  const hostId = randomUUID();
+  const { BrowserHostRuntime } = await import("../integrations/backroom/browser-host-runtime.mjs");
+  const browserRuntime = new BrowserHostRuntime({ hostId });
+  const instance = createBackroomHostServer({ hostId, browserRuntime });
   const address = await instance.start();
   process.stdout.write([
     "",
