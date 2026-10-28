@@ -160,6 +160,29 @@ test("server without a platform runtime advertises no capabilities and fails clo
  });
 });
 
+test("host rejects malformed and oversized JSON bodies without passing them to browser controls", async () => {
+ const browserRuntime=fakeBrowserRuntime();
+ await withHost(async({base,origin})=>{
+  const credentials=await (await pair(base,origin)).json();
+  const auth={Origin:origin,Authorization:"Bearer "+credentials.sessionToken};
+  await fetch(base+"/v1/browser/start",{method:"POST",headers:auth});
+  const malformed=await fetch(base+"/v1/browser/open",{
+   method:"POST",headers:{...auth,"Content-Type":"application/json"},body:"{not-json"
+  });
+  assert.equal(malformed.status,400);
+  assert.equal((await malformed.json()).error,"invalid_json");
+  const array=await fetch(base+"/v1/browser/open",{
+   method:"POST",headers:{...auth,"Content-Type":"application/json"},body:"[]"
+  });
+  assert.equal(array.status,400);
+  const oversized=await fetch(base+"/v1/browser/open",{
+   method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({url:"https://chatgpt.com/",padding:"x".repeat(17*1024)})
+  });
+  assert.equal(oversized.status,413);
+  assert.equal((await oversized.json()).error,"request_too_large");
+ },{browserRuntime});
+});
+
 test("browser open route accepts standard JSON content types and rejects non-JSON", async () => {
  const browserRuntime=fakeBrowserRuntime();
  await withHost(async({base,origin})=>{
