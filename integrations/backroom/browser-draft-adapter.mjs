@@ -63,7 +63,7 @@ export class BrowserDraftAdapter {
       const identityState = () => {
         const current = window.location;
         if (current.origin !== request.origin || current.pathname !== request.path ||
-          current.search !== request.search || current.hash !== request.hash) return "conversation_changed";
+          current.search !== request.search || current.hash !== request.hash) return { state: "conversation_changed" };
         if (!(element instanceof HTMLElement) || !element.isConnected ||
           !element.matches(request.selector) ||
           (request.bindingMarker && element.getAttribute("data-rm-backroom-binding") !== request.bindingMarker) ||
