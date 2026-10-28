@@ -4,7 +4,7 @@
 
 Backroom is **not browser-only**. A Rub Minds group can coordinate existing ChatGPT/Claude web conversations, native desktop AI applications, Windows applications, integrated terminal sessions, and Android AI phone applications, each as a registered **space**. The UI's **drag-to-select typing area** must be offered on **all** five surfaces. A selection creates a typed, room/host/space/session-scoped **interaction target**; it does not itself type text or confer permission.
 
-The first committed module is `target-registry.mjs`, a dependency-free domain contract with validation, immutable registrations, revision-checked rebinds, explicit scope resolution, and tenant-bound deletion. It intentionally does **not** claim that any native overlay, Android service, desktop driver, background host, or provider UI adapter is operational.
+The target registry is a dependency-free domain contract with validation, immutable registrations, revision-checked rebinds, explicit scope resolution, and tenant-bound deletion. This branch now also contains a loopback-only local host and a working design for an attended Playwright browser-draft path. It still does **not** claim native overlays, Android services, desktop accessibility, terminal control, production-provider compatibility, or live MCP/session synchronization.
 
 ## Planned system boundaries
 
@@ -64,9 +64,9 @@ No cookie harvesting, authentication bypass, covert accessibility control or sil
 ### Next implementation slices and acceptance gates
 
 1. **Universal registry** (this slice): validate all five surfaces, region bounds, isolation, stale revision and rebind. Pure Node tests.
-2. **Space lifecycle:** paired hosts, registered sessions, capability negotiation, online/offline states and policies. Mock adapter first.
+2. **Space lifecycle:** basic local-host pairing, status, expiry and unpair exist for one local browser host. Multi-host session lifecycle, capability negotiation across platforms, stronger durable replay controls and room/host policy synchronization remain.
 3. **Consent-aware dispatcher:** durable at-most-once *effect* design using idempotent event claims; on ambiguous UI submit **do not blindly replay**. User-directed retries and clear status.
-4. **Selection overlay MVP:** start with browser and a controlled desktop test application; do *not* confine the interface design to browser. Android UX/prototype and PTY selection independently validated.
+4. **Selection overlay MVP:** a browser DOM selection overlay and controlled-host registration path exist, with a Chromium E2E test defined. Desktop UI Automation, Android overlay/accessibility UX and PTY selection remain separate prototypes.
 5. **Group round trip:** route one approved group event -> correct space -> `@RMConnects` prompt -> verified provider response -> idempotent group reply. Explicitly test wrong-focus/wrong-session refusal.
 6. **Platform adapters:** Playwright/browser; Windows UI Automation/CUA; named PTY; ARTEMIS/Android accessibility. Test on actual installed apps including native ChatGPT/Claude where policy and permissions allow.
 7. **Hardening & release:** OS access denial, display rotation, window move, app crash, login expiry, session reuse, multi-group isolation, reconnection, stale commands, adversarial group prompt content and kill switch. No production deploy before gates.
@@ -84,9 +84,9 @@ References to inspect before integrating third-party source: `google/artemis`, `
 
 ## Current pull request additions
 
-The branch now includes a responsive Backroom UI in `src/BackroomApp.tsx` and `src/backroom.css`. Authenticated members can select a group, create local space cards for the five interface types, switch spaces, and drag a rectangle across a clearly marked simulated preview. The group header links to `/?backroom=1&room=<id>`.
+The branch includes a responsive Backroom UI in `src/BackroomApp.tsx` and `src/backroom.css`. Authenticated members can select a group, create local space cards for five interface types, and drag a rectangle across a clearly marked simulated preview. A separate host dialog supports local-host pairing, managed Chromium launch, selecting a browser composer, group-scoped target registration/removal and confirmed draft insertion. The non-browser space cards and preview remain illustrative. The group header links to `/?backroom=1&room=<id>`.
 
-Space layouts are local to the signed-in user and room. This is not an installed device host or native operating-system overlay. The dispatcher and target registry are implemented as independent modules and are not yet wired to UI execution. Real device control remains blocked pending host pairing, permissions, identity checks and platform adapters.
+Space layouts are local to the signed-in user and room. The local host runs separately on the user's computer and is not a hosted worker or an OS-wide overlay. The browser path uses the target registry, bounded dispatcher, host guard and Playwright to insert text into an empty, user-selected field without sending. Native device control remains blocked pending platform drivers, permissions and live tests; provider response capture and group-to-app-to-group automation are not implemented.
 
 Verification required before merge: `npm run test:backroom`, `npm run test:runtime`, `npm run build`, mobile and desktop visual checks, and a focused security review. A failed workflow without job steps does not count as an executed test.
 
@@ -94,10 +94,10 @@ Verification required before merge: `npm run test:backroom`, `npm run test:runti
 
 The local Backroom core now has a cross-platform target registry, bounded consent-aware dispatcher, and preflight device-host guard. The guard checks host-declared capabilities, room/space/session scope, live app identity, focus, connection, locator kind, user policy and adapter result verification before accepting successful outcomes. Preflight denials are reported as `failed`; ambiguous execution outcomes are `needs_review` and are never retried blindly.
 
-Four Node test files cover 21 named test scenarios. The **actual GitHub source and tests** were additionally evaluated in a sandboxed JavaScript runner and all 21 scenarios passed. This is useful focused evidence, **not equivalent** to a native Node test run or TypeScript production build.
+The current Backroom unit-test snapshot contains 70 test cases across 10 unit-test files. They pass in an isolated JavaScript harness using lightweight browser, URL, crypto and OS stubs. This is useful test-logic evidence, **not equivalent** to a native Node test run, a real HTTP integration test, Chromium E2E or a TypeScript/Vite production build.
 
-The latest available GitHub Actions record for the earlier branch head reported failed jobs with **zero executed job steps**; the reason remains unverified. Do not interpret the job result as tested product code or as proof of a TypeScript failure. Avoid rerunning costly CI blindly; obtain CI availability or an authorized local Node test/build result before merging.
+The latest observed GitHub Actions attempts failed at job setup with **zero executed job steps and no runner assigned**; fetching job logs returned `BlobNotFound`, so the underlying CI availability issue is still unverified. Do not treat this as a product-code test or proof of a TypeScript failure. To respect the repository's Actions-minute budget, avoid blind reruns; obtain a working runner or an authorized local Node/build result before merge.
 
 The interactive preview has a keyboard-accessible `Select sample input` action in addition to pointer/touch drag selection. Its selection remains illustrative rather than an OS-wide overlay.
 
-Remaining release blockers: native test runner and `tsc`/Vite build, browser responsive/accessibility audit, authenticated host pairing, OS adapter implementations, live device tests and group-to-app-to-group verification.
+Remaining release blockers: native `node --test` results, `tsc`/Vite build, actual Chromium E2E execution, browser responsive/accessibility audit, native Android/Windows/desktop/terminal adapters, live provider tests and the end-to-end group-to-app-to-group/MCP round trip.
