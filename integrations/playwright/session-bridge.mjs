@@ -21,6 +21,7 @@ export class PlaywrightSessionBridge {
     maxMessagesPerStep = 1,
     allowAiHandoff = false,
     maxAiHandoffDepth = 2,
+    maxSeenMessages = 5000,
   }) {
     if (!page || !adapter || typeof adapter.ask !== "function") {
       throw new TypeError("Playwright page and AI adapter.ask are required");
@@ -46,10 +47,13 @@ export class PlaywrightSessionBridge {
     if (!Number.isInteger(maxAiHandoffDepth) || maxAiHandoffDepth < 1 || maxAiHandoffDepth > 8) {
       throw new RangeError("maxAiHandoffDepth must be between 1 and 8");
     }
+    if (!Number.isSafeInteger(maxSeenMessages) || maxSeenMessages < 1 || maxSeenMessages > 100_000) {
+      throw new RangeError("maxSeenMessages must be between 1 and 100000");
+    }
 
     Object.assign(this, {
       page, adapter, readMessages, sendMessage, participantId,
-      intervalMs, maxReplies, maxMessagesPerStep, allowAiHandoff, maxAiHandoffDepth,
+      intervalMs, maxReplies, maxMessagesPerStep, allowAiHandoff, maxAiHandoffDepth, maxSeenMessages,
     });
     this.running = false;
     this.replies = 0;
@@ -79,6 +83,13 @@ export class PlaywrightSessionBridge {
       if (!message || typeof message.id !== "string" || typeof message.body !== "string") continue;
       if (this.seen.has(message.id)) continue;
 
+      // Keep the per-session dedupe set bounded. On exhaustion, stop visibly
+      // instead of evicting old IDs and risking duplicate provider work on a
+      // replayed message. The caller must explicitly reset/review the session.
+      if (this.seen.size >= this.maxSeenMessages) {
+        return { status: "seen_budget_reached", sent, processed,
+          reason: "Seen-message budget reached; stop and review session state before restarting." };
+      }
       // Mark every observed ID once, including ignored messages, so polling does
       // not repeatedly reconsider the same event.
       this.seen.add(message.id);
@@ -128,7 +139,7 @@ export class PlaywrightSessionBridge {
     try {
       while (this.running && !signal?.aborted && this.replies < this.maxReplies) {
         const outcome = await this.step({ approved, remainingReplies: this.maxReplies - this.replies });
-        if (outcome.status === "browser_closed" || outcome.status === "limit_reached") break;
+        if (outcome.status === "browser_closed" || outcome.status === "limit_reached" || outcome.status === "seen_budget_reached") break;
         await new Promise(resolve => setTimeout(resolve, this.intervalMs));
       }
     } finally {
