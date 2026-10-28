@@ -339,43 +339,7 @@ test("emergency stop is authenticated, closes browser, revokes sessions and latc
  },{browserRuntime});
 });
 
-test("emergency stop is authenticated, closes browser, revokes sessions and latches until host restart", async () => {
- const browserRuntime=fakeBrowserRuntime();
- await withHost(async({base,origin,host})=>{
-  const unauthorized=await fetch(base+"/v1/host/stop",{method:"POST",headers:{Origin:origin}});
-  assert.equal(unauthorized.status,401);
-  assert.equal(host.killSwitchTripped,false);
 
-  const credentials=await (await pair(base,origin)).json();
-  const auth={Origin:origin,Authorization:"Bearer "+credentials.sessionToken};
-  await fetch(base+"/v1/browser/start",{method:"POST",headers:auth});
-  assert.equal(browserRuntime.status().running,true);
-
-  const response=await fetch(base+"/v1/host/stop",{method:"POST",headers:auth});
-  assert.equal(response.status,200);
-  const result=await response.json();
-  assert.equal(result.stopped,true);
-  assert.equal(result.browserClosed,true);
-  assert.equal(result.sessionsRevoked,true);
-  assert.equal(result.restartRequired,true);
-  assert.equal(browserRuntime.status().running,false);
-  assert.equal(host.killSwitchTripped,true);
-
-  const health=await fetch(base+"/health",{headers:{Origin:origin}});
-  assert.equal(health.status,423);
-  assert.equal((await health.json()).status,"stopped");
-
-  const status=await fetch(base+"/v1/host",{headers:auth});
-  assert.equal(status.status,423);
-  const restart=await fetch(base+"/v1/browser/start",{method:"POST",headers:auth});
-  assert.equal(restart.status,423);
-  const rePair=await pair(base,origin);
-  assert.equal(rePair.status,423);
-
-  const repeat=await fetch(base+"/v1/host/stop",{method:"POST",headers:auth});
-  assert.equal(repeat.status,423);
- },{browserRuntime});
-});
 
 test("wrong-origin callers cannot trigger the emergency stop", async () => {
  const browserRuntime=fakeBrowserRuntime();
