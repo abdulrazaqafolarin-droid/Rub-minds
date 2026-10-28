@@ -253,15 +253,59 @@ test("the transport must explicitly acknowledge delivery before the bridge count
   }
 });
 
-test("the polling loop stops immediately on ambiguous reply delivery", async () => {
+test("automatic run bootstraps existing room history instead of replaying it", async () => {
+  const { bridge, calls, sent } = makeBridge({ maxReplies: 1 });
+  let reads = 0;
+  bridge.readMessages = async () => ({
+    room_id: "room-1",
+    messages: reads++ === 0
+      ? [{ id: "prior", body: "answer this old task", sender_kind: "human" }]
+      : [
+          { id: "prior", body: "answer this old task", sender_kind: "human" },
+          { id: "fresh", body: "answer the new task", sender_kind: "human" },
+        ],
+  });
+  await bridge.run({ approved: true });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].body, "answer the new task");
+  assert.deepEqual(sent.map(item => item.sourceMessageId), ["fresh"]);
+  assert.equal(bridge.seen.has("prior"), true);
+  assert.equal(bridge.seen.has("fresh"), true);
+});
+
+test("automatic run stops when its starting history exceeds the dedupe budget", async () => {
   const { bridge, calls } = makeBridge({
-    maxReplies: 5,
-    messages: [{ id: "ambiguous-loop", body: "only once", sender_kind: "human" }],
+    maxSeenMessages: 1,
+    messages: [
+      { id: "history-1", body: "old 1", sender_kind: "human" },
+      { id: "history-2", body: "old 2", sender_kind: "human" },
+    ],
+  });
+  const result = await bridge.run({ approved: true });
+  assert.equal(result, undefined);
+  assert.equal(bridge.running, false);
+  assert.equal(calls.length, 0);
+  assert.equal(bridge.seen.size, 1);
+});
+
+test("the polling loop stops immediately on ambiguous reply delivery", async () => {
+  const { bridge, calls } = makeBridge({ maxReplies: 5 });
+  let reads = 0;
+  bridge.readMessages = async () => ({
+    room_id: "room-1",
+    messages: reads++ === 0
+      ? [{ id: "old-history", body: "old", sender_kind: "human" }]
+      : [
+          { id: "old-history", body: "old", sender_kind: "human" },
+          { id: "ambiguous-loop", body: "only once", sender_kind: "human" },
+        ],
   });
   bridge.sendMessage = async () => { throw new Error("response may already have committed"); };
   await bridge.run({ approved: true });
   assert.equal(bridge.running, false);
   assert.equal(calls.length, 1, "ambiguous delivery must stop the loop before provider re-execution");
+  assert.equal(calls[0].body, "only once");
+  assert.equal(bridge.seen.has("old-history"), true);
   assert.equal(bridge.seen.has("ambiguous-loop"), true);
 });
 
