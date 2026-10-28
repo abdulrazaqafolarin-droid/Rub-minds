@@ -11,6 +11,7 @@ create table if not exists public.backroom_wake_jobs (
   session_digest text not null check (session_digest ~ '^[0-9a-f]{64}$'),
   binding_id text not null check (char_length(btrim(binding_id)) between 1 and 128),
   target_id text not null check (char_length(btrim(target_id)) between 1 and 128),
+  target_identity_fingerprint text not null check (char_length(btrim(target_identity_fingerprint)) between 1 and 512),
   target_revision integer not null check (target_revision > 0),
   event_id text not null check (char_length(btrim(event_id)) between 1 and 256),
   operation text not null default 'draft' check (operation = 'draft'),
@@ -67,6 +68,7 @@ create or replace function public.enqueue_backroom_wake_job(
   p_session_digest text,
   p_binding_id text,
   p_target_id text,
+  p_target_identity_fingerprint text,
   p_target_revision integer,
   p_event_id text,
   p_prompt text,
@@ -94,6 +96,7 @@ begin
     or p_session_id is null or char_length(btrim(p_session_id)) not between 1 and 256
     or p_binding_id is null or char_length(btrim(p_binding_id)) not between 1 and 128
     or p_target_id is null or char_length(btrim(p_target_id)) not between 1 and 128
+    or p_target_identity_fingerprint is null or char_length(btrim(p_target_identity_fingerprint)) not between 1 and 512
     or p_event_id is null or char_length(btrim(p_event_id)) not between 1 and 256
     or p_target_revision is null or p_target_revision < 1 then
     raise exception 'Invalid Backroom target binding';
@@ -110,11 +113,11 @@ begin
 
   insert into public.backroom_wake_jobs (
     job_key, owner_id, room_id, participant_id, host_id, space_id, session_id,
-    session_digest, binding_id, target_id, target_revision, event_id, prompt,
+    session_digest, binding_id, target_id, target_identity_fingerprint, target_revision, event_id, prompt,
     prompt_digest, expires_at
   ) values (
     p_job_key, p_owner_id, p_room_id, p_participant_id, p_host_id, p_space_id, p_session_id,
-    p_session_digest, p_binding_id, p_target_id, p_target_revision, p_event_id, p_prompt,
+    p_session_digest, p_binding_id, p_target_id, p_target_identity_fingerprint, p_target_revision, p_event_id, p_prompt,
     v_prompt_digest, pg_catalog.clock_timestamp() + pg_catalog.make_interval(secs => p_ttl_seconds)
   )
   on conflict (job_key) do nothing
@@ -137,6 +140,7 @@ begin
     or v_existing.session_digest is distinct from p_session_digest
     or v_existing.binding_id is distinct from p_binding_id
     or v_existing.target_id is distinct from p_target_id
+    or v_existing.target_identity_fingerprint is distinct from p_target_identity_fingerprint
     or v_existing.target_revision is distinct from p_target_revision
     or v_existing.event_id is distinct from p_event_id
     or v_existing.prompt_digest is distinct from v_prompt_digest then
@@ -165,6 +169,7 @@ returns table (
   out_session_id text,
   out_binding_id text,
   out_target_id text,
+  out_target_identity_fingerprint text,
   out_target_revision integer,
   out_prompt text,
   out_attempt_count integer,
@@ -226,12 +231,12 @@ begin
     from minted m
     where j.id = m.id
     returning j.id as job_id, j.job_key, j.event_id, j.owner_id, j.room_id, j.participant_id,
-      j.space_id, j.session_id, j.binding_id, j.target_id, j.target_revision, j.prompt,
+      j.space_id, j.session_id, j.binding_id, j.target_id, j.target_identity_fingerprint, j.target_revision, j.prompt,
       j.attempt_count, j.expires_at, m.token as lease_token
   )
   select leased.job_id, leased.job_key, leased.event_id, leased.owner_id, leased.room_id,
     leased.participant_id, leased.space_id, leased.session_id, leased.binding_id, leased.target_id,
-    leased.target_revision, leased.prompt, leased.attempt_count, leased.expires_at, leased.lease_token
+    leased.target_identity_fingerprint, leased.target_revision, leased.prompt, leased.attempt_count, leased.expires_at, leased.lease_token
   from leased;
 end;
 $claim$;
@@ -341,7 +346,7 @@ begin
 end;
 $expire$;
 
-revoke all on function public.enqueue_backroom_wake_job(text,uuid,uuid,uuid,text,text,text,text,text,text,integer,text,text,integer) from public, anon, authenticated;
+revoke all on function public.enqueue_backroom_wake_job(text,uuid,uuid,uuid,text,text,text,text,text,text,text,integer,text,text,integer) from public, anon, authenticated;
 revoke all on function public.claim_backroom_wake_jobs(text,text,integer,integer) from public, anon, authenticated;
 revoke all on function public.ack_backroom_wake_job(uuid,text,text,text,text) from public, anon, authenticated;
 revoke all on function public.retry_backroom_wake_job(uuid,text,text,text,integer,text) from public, anon, authenticated;
