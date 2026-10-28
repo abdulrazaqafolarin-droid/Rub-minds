@@ -471,6 +471,7 @@ export class BrowserHostRuntime {
       const adapter = new BrowserDraftAdapter({
         page, origin: url.origin, path: url.pathname, search: url.search, hash: url.hash, selector: boundSelector,
         appId: target.appId, sessionId: pageId, identityFingerprint: target.identityFingerprint,
+        nodeHandle: selectedNodeHandle,
       });
       const guard = new LocalExecutionGuard({
         host: { hostId: this.hostId, deviceLabel: "Backroom local browser", surfaces: ["browser_tab"], operations: ["draft"] },
@@ -566,6 +567,7 @@ export class BrowserHostRuntime {
   async draft(targetId, text, { approved = false, roomId } = {}) {
     if (approved !== true) throw new Error("explicit draft approval required");
     if (typeof text !== "string" || !text.trim() || text.length > 10_000) throw new TypeError("draft text must be 1-10000 characters");
+    await this.listTargets();
     const binding = this.#bindings.get(targetId);
     if (!binding) throw Object.assign(new Error("registered browser target unavailable"), { status: 404 });
     const target = binding.target;
