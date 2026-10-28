@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { PlaywrightSessionBridge } from "./session-bridge.mjs";
 
-function makeBridge({ messages = [], participantId = "self", maxReplies = 10, maxMessagesPerStep = 1, allowAiHandoff = false, maxAiHandoffDepth = 2 } = {}) {
+function makeBridge({ messages = [], participantId = "self", maxReplies = 10, maxMessagesPerStep = 1, allowAiHandoff = false, maxAiHandoffDepth = 2, maxSeenMessages = 5000 } = {}) {
   const calls = [];
   const sent = [];
   const bridge = new PlaywrightSessionBridge({
@@ -12,6 +12,7 @@ function makeBridge({ messages = [], participantId = "self", maxReplies = 10, ma
     maxMessagesPerStep,
     allowAiHandoff,
     maxAiHandoffDepth,
+    maxSeenMessages,
     adapter: { ask: async (_page, body, meta) => { calls.push({ body, meta }); return "reply: " + body; } },
     readMessages: async () => ({ messages }),
     sendMessage: async (body, sourceMessageId) => { sent.push({ body, sourceMessageId }); return { ok: true }; },
@@ -73,6 +74,27 @@ test("constructor rejects unbounded or ill-typed AI handoff settings", async () 
   assert.throws(() => new PlaywrightSessionBridge({ ...base, allowAiHandoff: "yes" }), /allowAiHandoff/);
   assert.throws(() => new PlaywrightSessionBridge({ ...base, maxAiHandoffDepth: 9 }), /maxAiHandoffDepth/);
   assert.throws(() => new PlaywrightSessionBridge({ ...base, maxAiHandoffDepth: 0 }), /maxAiHandoffDepth/);
+  assert.throws(() => new PlaywrightSessionBridge({ ...base, maxSeenMessages: 0 }), /maxSeenMessages/);
+  assert.throws(() => new PlaywrightSessionBridge({ ...base, maxSeenMessages: 100001 }), /maxSeenMessages/);
+});
+
+test("seen-message budget stops safely instead of allowing unbounded dedupe growth", async () => {
+  const { bridge, calls, sent } = makeBridge({
+    maxMessagesPerStep: 10,
+    maxSeenMessages: 2,
+    messages: [
+      { id: "human-1", body: "one reply is allowed", sender_kind: "human" },
+      { id: "ignored-system", body: "ignored event", sender_kind: "system" },
+      { id: "human-2", body: "must not start after cap", sender_kind: "human" },
+    ],
+  });
+  const result = await bridge.step({ approved: true });
+  assert.equal(result.status, "seen_budget_reached");
+  assert.equal(bridge.seen.size, 2, "the dedupe set must not grow beyond its configured cap");
+  assert.equal(result.sent, 1);
+  assert.equal(calls.length, 1);
+  assert.equal(sent.length, 1);
+  assert.match(result.reason, /review session state/);
 });
 
 test("deduplicates previously seen message IDs across polling steps", async () => {
