@@ -77,6 +77,13 @@ export class HostPairingAuthority {
     record.revoked = true;
     return true;
   }
+  revokeAll({ origin, token } = {}) {
+    // A kill switch is a host-level capability: only a currently authorized,
+    // same-origin paired client may revoke every paired session.
+    if (!this.authorize({ origin, token })) return false;
+    for (const session of this.#sessions.values()) session.revoked = true;
+    return true;
+  }
   pairingStatus() {
     return Object.freeze({ available: !this.#pairingUsed && this.#now() < this.#pairingExpiresAt,
       expiresAt: this.#pairingExpiresAt, attemptsRemaining: Math.max(0, this.maxPairAttempts - this.#attempts) });
