@@ -64,3 +64,16 @@ test("parallel steps execute at most once", async () => {
   await Promise.all([dispatcher.step("job", { approved: true }), dispatcher.step("job", { approved: true })]);
   assert.equal(calls, 1);
 });
+
+test("cancel during authorization prevents action", async () => {
+  let release = () => {};
+  let calls = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const { dispatcher, command } = setup(async () => { calls++; return { state: "completed" }; }, async () => { await gate; return true; });
+  dispatcher.enqueue(command);
+  const pending = dispatcher.step("job", { approved: true });
+  assert.equal(dispatcher.cancel("job"), true);
+  release();
+  assert.equal((await pending).state, "cancelled");
+  assert.equal(calls, 0);
+});
