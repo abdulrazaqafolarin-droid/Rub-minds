@@ -2,11 +2,13 @@
  * Draft-only adapter contract for an explicitly selected, inspectable terminal editor.
  *
  * This is not a generic shell executor and does not launch a PTY. A real host
- * driver must identify a named terminal session and atomically recheck identity
+ * driver must identify a named terminal session and explicitly distinguish an
+ * `assistant_composer` from a raw shell prompt, then atomically recheck identity
  * plus the empty input buffer. Text containing control characters or line
  * separators is rejected so a draft cannot carry an Enter/newline command.
  */
 const MAX_TERMINAL_DRAFT_CHARS = 4_000;
+const REQUIRED_TERMINAL_INPUT_KIND = "assistant_composer";
 const hasTerminalControls = text => {
   for (const character of text) {
     const code = character.codePointAt(0);
@@ -29,11 +31,11 @@ export class TerminalDraftAdapter {
   }
 
   async #current() {
-    const state = await this.driver.inspect({ locator: this.locatorValue });
+    const state = await this.driver.inspect({ locator: this.locatorValue, expectedInputKind: REQUIRED_TERMINAL_INPUT_KIND });
     if (!state || state.connected !== true || state.focused !== true || state.editable !== true ||
       state.surface !== "terminal" || state.appId !== this.appId ||
       state.sessionId !== this.sessionId || state.identityFingerprint !== this.identityFingerprint ||
-      state.locatorValue !== this.locatorValue || typeof state.text !== "string") {
+      state.locatorValue !== this.locatorValue || state.inputKind !== REQUIRED_TERMINAL_INPUT_KIND || typeof state.text !== "string") {
       throw new Error("terminal focus, input buffer or session identity changed");
     }
     return state;
@@ -83,7 +85,7 @@ export class TerminalDraftAdapter {
     // its atomic write. submit:false is a contract, not a request to press Enter.
     const write = await this.driver.writeTextIfEmpty({
       locator: this.locatorValue, text, appId: this.appId, sessionId: this.sessionId,
-      identityFingerprint: this.identityFingerprint, expectedText: "", submit: false,
+      identityFingerprint: this.identityFingerprint, expectedText: "", expectedInputKind: REQUIRED_TERMINAL_INPUT_KIND, submit: false,
     });
     if (!write || write.state === "occupied" || write.state === "unavailable") {
       const error = new Error(write?.state === "occupied"
