@@ -80,7 +80,7 @@ export function createBackroomHostServer({
   if (host !== "127.0.0.1") throw new TypeError("Backroom host must bind to IPv4 loopback only");
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new RangeError("invalid port");
   const authority = new HostPairingAuthority({ allowedOrigins, pairingCode, hostId, now });
-  const browser = browserRuntime ?? new BrowserHostRuntime({ hostId: authority.hostId });
+  const browser = browserRuntime ?? disabledBrowserRuntime();
   let actualPort = port;
   const server = createServer(async (request, response) => {
     if (typeof request.url !== "string" || !request.url.startsWith("/") || request.url.startsWith("//")) {
