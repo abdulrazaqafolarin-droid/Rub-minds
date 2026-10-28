@@ -20,7 +20,11 @@ const isEditable = node => {
   if (node.closest('[aria-hidden="true"],[inert]')) return false;
   if ("disabled" in node && node.disabled) return false;
   if ("readOnly" in node && node.readOnly) return false;
+  if (node.getAttribute("aria-disabled") === "true" || node.getAttribute("aria-readonly") === "true") return false;
   if (node instanceof HTMLInputElement && ["password","hidden","button","checkbox","radio","submit","reset","file","image","range","color"].includes(node.type)) return false;
+  // A role=textbox is not necessarily writable; only native fields and truly
+  // contenteditable nodes are eligible for registration.
+  if (!(node instanceof HTMLInputElement) && !(node instanceof HTMLTextAreaElement) && !node.isContentEditable) return false;
   const box = node.getBoundingClientRect();
   const style = getComputedStyle(node);
   return box.width > 8 && box.height > 8 && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) !== 0;

@@ -8,7 +8,7 @@ const nativeSurfaces = new Set(["desktop_app","windows_app","android_app"]);
 export class NativeAccessibilityDraftAdapter {
   constructor({driver,surface,appId,sessionId,identityFingerprint,locatorValue}) {
     if(!nativeSurfaces.has(surface))throw new TypeError("unsupported native surface");
-    if(!driver||typeof driver.inspect!=="function"||typeof driver.writeText!=="function")throw new TypeError("native accessibility driver required");
+    if(!driver||typeof driver.inspect!=="function"||typeof driver.writeTextIfEmpty!=="function")throw new TypeError("native accessibility driver must support inspect and writeTextIfEmpty");
     if([appId,sessionId,identityFingerprint,locatorValue].some(v=>typeof v!=="string"||!v))throw new TypeError("native binding required");
     Object.assign(this,{driver,surface,appId,sessionId,identityFingerprint,locatorValue});
   }
@@ -36,11 +36,24 @@ export class NativeAccessibilityDraftAdapter {
       target.appId!==this.appId||target.sessionId!==this.sessionId||
       target.identityFingerprint!==this.identityFingerprint)throw new Error("native binding changed");
     const before=await this.#current();
-    if(before.text!=="")throw new Error("cannot replace occupied native input");
-    // Driver.writeText must only enter text; never implicitly click submit or send.
-    await this.driver.writeText({locator:this.locatorValue,text:command.text,appId:this.appId,sessionId:this.sessionId});
+    if(before.text!=="") {
+      const error=new Error("cannot replace occupied native input");
+      error.code="BACKROOM_PREFLIGHT";
+      throw error;
+    }
+    // Driver must re-check emptiness and identity inside the platform operation.
+    // This reduces the inspect/write race; it must never press submit or send.
+    const write=await this.driver.writeTextIfEmpty({
+      locator:this.locatorValue,text:command.text,appId:this.appId,sessionId:this.sessionId,
+      identityFingerprint:this.identityFingerprint,expectedText:"",
+    });
+    if(!write||write.state==="occupied"||write.state==="unavailable") {
+      const error=new Error(write?.state==="occupied"?"native input became occupied":"native input is no longer available");
+      error.code="BACKROOM_PREFLIGHT";
+      throw error;
+    }
     const after=await this.#current();
-    return after.text===command.text ?
+    return write.state==="written"&&after.text===command.text ?
       {state:"completed",verified:true,result:{drafted:true,submitted:false}} :
       {state:"needs_review",verified:false};
   }

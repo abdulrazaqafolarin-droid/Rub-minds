@@ -6,7 +6,7 @@ function fixture(surface="android_app",opts={}) {
  const bound={surface,appId:"com.example.ai",sessionId:"thread-7",
    identityFingerprint:"window-7",locatorValue:"compose",connected:true,focused:true,editable:true};
  const driver={inspect:async()=>({...bound,text:content,...opts.state}),
-   writeText:async({text})=>{writes++;content=opts.corrupt?"unexpected":text}};
+   writeTextIfEmpty:async({text,expectedText})=>{if(content!==expectedText)return {state:"occupied"};writes++;content=opts.corrupt?"unexpected":text;return {state:opts.corrupt?"unverified":"written"}}};
  const adapter=new NativeAccessibilityDraftAdapter({driver,surface,...bound});
  const target={...bound,locatorKind:"accessibility"};
  return {adapter,target,writes:()=>writes,value:()=>content};
@@ -40,4 +40,17 @@ test("native adapter rejects automatic submit",async()=>{
  const f=fixture();
  await assert.rejects(()=>f.adapter.execute({command:{operation:"submit",text:"send"},target:f.target}),/binding/);
  assert.equal(f.writes(),0);
+});
+
+test("native driver must reject a text field that became occupied before write",async()=>{
+ let value="";
+ const driver={
+  inspect:async()=>({surface:"android_app",appId:"com.example.ai",sessionId:"thread-7",identityFingerprint:"window-7",locatorValue:"input-node",connected:true,focused:true,editable:true,text:value}),
+  writeTextIfEmpty:async({text,expectedText})=>{value="human raced";return {state:"occupied"}}
+ };
+ const adapter=new NativeAccessibilityDraftAdapter({driver,surface:"android_app",appId:"com.example.ai",sessionId:"thread-7",identityFingerprint:"window-7",locatorValue:"input-node"});
+ const target={surface:"android_app",locatorKind:"accessibility",locatorValue:"input-node",appId:"com.example.ai",sessionId:"thread-7",identityFingerprint:"window-7"};
+ const command={operation:"draft",text:"AI draft"};
+ await assert.rejects(()=>adapter.execute({command,target}),/became occupied/);
+ assert.equal(value,"human raced");
 });
