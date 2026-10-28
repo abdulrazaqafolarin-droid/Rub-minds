@@ -99,3 +99,16 @@ test("target is invalidated when the SPA changes its query or hash conversation 
  await assert.rejects(()=>runtime.draft(target.id,"stale",{approved:true,roomId:"room-1"}),/target unavailable/i);
  await runtime.stop();
 });
+
+test("a drag selection is cancelled when the active conversation route changes",async()=>{
+ const p=fakePage({url:"https://chatgpt.com/c/one?thread=one"}),runtime=factory(fakeContext([p]));await runtime.start();
+ const [page]=await runtime.listPages();
+ await runtime.startSelection(page.pageId,"room-1");
+ p.setUrl("https://chatgpt.com/c/one?thread=two");
+ const result=await runtime.getSelection(page.pageId);
+ assert.equal(result.state,"cancelled");
+ assert.match(result.message,/conversation changed/);
+ p.setSelection({state:"selected",selector:"[role=textbox]"});
+ await assert.rejects(()=>runtime.registerSelectedTarget(page.pageId,"room-1"),/conversation/);
+ await runtime.stop();
+});
