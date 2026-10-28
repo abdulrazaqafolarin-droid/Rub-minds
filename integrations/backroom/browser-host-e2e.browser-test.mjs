@@ -226,6 +226,33 @@ test("real local host -> Playwright browser overlay -> group-scoped target -> ve
   assert.equal(await focusFillPage.locator("#prompt").inputValue(),"site inserted text on focus");
   await focusFillHandle.dispose();
 
+  // A focus handler could mutate an ordinary input into a password field
+  // after preflight. Revalidate type and visibility before changing any value.
+  const typeRacePage=await realContext.newPage();
+  await typeRacePage.goto(fixture.origin+"/chat");
+  await typeRacePage.evaluate(()=>{
+   const field=document.createElement("input");
+   field.id="type-race";field.type="text";field.style.cssText="display:block;width:320px;height:48px;margin-top:24px";
+   document.body.append(field);
+   field.addEventListener("focus",()=>{field.type="password";});
+  });
+  const typeRaceHandle=await typeRacePage.locator("#type-race").elementHandle();
+  const typeRaceAdapter=new BrowserDraftAdapter({
+   page:typeRacePage,origin:fixture.origin,path:"/chat",selector:"#type-race",
+   appId:fixture.origin,sessionId:"type-race",identityFingerprint:"type-race-conversation",
+   nodeHandle:typeRaceHandle,
+  });
+  await assert.rejects(()=>typeRaceAdapter.execute({
+   command:{operation:"draft",text:"must not be written to a password field"},target:{
+    surface:"browser_tab",locatorKind:"dom",locatorValue:"#type-race",appId:fixture.origin,
+    sessionId:"type-race",identityFingerprint:"type-race-conversation",
+   }
+  }),/composer is no longer editable/i);
+  assert.equal(await typeRacePage.locator("#type-race").inputValue(),"");
+  assert.equal(await typeRacePage.locator("#type-race").getAttribute("type"),"password",
+   "test must actually mutate the field type after focus");
+  await typeRaceHandle.dispose();
+
   const unpaired=await requestJson(hostBase,fixture.origin,"/v1/unpair",{method:"POST",token});
   assert.equal(unpaired.response.status,200);
   const denied=await requestJson(hostBase,fixture.origin,"/v1/browser/pages",{token});
