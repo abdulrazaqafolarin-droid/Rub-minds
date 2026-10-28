@@ -37,7 +37,7 @@ test("deny and wrong target identity fail closed", async () => {
   assert.equal((await denied.dispatcher.step("job", { approved: true })).reason, "not_authorized");
   const wrong = setup();
   wrong.dispatcher.enqueue({ ...wrong.command, identityFingerprint: "different" });
-  await assert.rejects(() => wrong.dispatcher.step("job", { approved: true }), /identity changed/);
+  assert.equal((await wrong.dispatcher.step("job", { approved: true })).reason, "stale_or_wrong_target");
 });
 test("ambiguous adapter effects require review", async () => {
   let calls = 0;

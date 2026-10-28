@@ -73,11 +73,15 @@ export class BackroomDispatcher {
     }
     // Resolve target immediately before any interaction; adapter must check
     // live focus, app identity, capabilities, permissions and consent again.
-    const target = this.registry.resolve(c.targetId, {
+    let target;
+    try { target = this.registry.resolve(c.targetId, {
       roomId: c.roomId, hostId: c.hostId, spaceId: c.spaceId,
       sessionId: c.sessionId, identityFingerprint: c.identityFingerprint,
       expectedRevision: c.targetRevision,
-    });
+    }); } catch {
+      job.status = { ...job.status, state: "failed", reason: "stale_or_wrong_target" };
+      return job.status;
+    }
     job.status = { ...job.status, state: "running", attempts: job.status.attempts + 1 };
     try {
       const outcome = await this.adapter.execute({ command: c, target });
@@ -85,7 +89,11 @@ export class BackroomDispatcher {
         throw new Error("adapter did not return a verifiable outcome");
       }
       job.status = { ...job.status, state: outcome.state, result: outcome.result ?? null };
-    } catch {
+    } catch (error) {
+      if (error && error.code === "BACKROOM_PREFLIGHT") {
+        job.status = { ...job.status, state: "failed", reason: "device_preflight_denied" };
+        return job.status;
+      }
       // Ambiguous UI effects are not automatically retried. The host must
       // reconcile visually before creating a new user-authorized command.
       job.status = { ...job.status, state: "needs_review", reason: "effect_unconfirmed" };

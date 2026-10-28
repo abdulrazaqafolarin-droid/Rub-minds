@@ -51,14 +51,14 @@ test("group event -> native app identity check -> permitted draft -> deduplicate
 test("wrong app foreground cannot receive the group draft", async () => {
   const { dispatcher, writes } = createSystem({ appId: "other.native.app" });
   dispatcher.enqueue(command);
-  assert.equal((await dispatcher.step(command.id, { approved: true })).state, "needs_review");
+  assert.equal((await dispatcher.step(command.id, { approved: true })).state, "failed");
   assert.equal(writes(), 0);
 });
 test("offline, denied or unfocused native app cannot receive the draft", async () => {
   for (const settings of [{ online: false }, { allowed: false }, { focused: false }]) {
     const { dispatcher, writes } = createSystem(settings);
     dispatcher.enqueue(command);
-    assert.equal((await dispatcher.step(command.id, { approved: true })).state, "needs_review");
+    assert.equal((await dispatcher.step(command.id, { approved: true })).state, "failed");
     assert.equal(writes(), 0);
   }
 });
