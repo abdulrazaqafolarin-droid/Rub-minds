@@ -393,6 +393,8 @@ export class BrowserHostRuntime {
       return await page.evaluate(expectedAttemptId => {
         const state = window.__RM_BACKROOM_SELECTION_V1__;
         if (!state || state.attemptId !== expectedAttemptId) return false;
+        const cleanup = window["__RM_BACKROOM_SELECTION_CLEANUP_V1__"];
+        if (typeof cleanup === "function") cleanup();
         document.getElementById("__rm_backroom_target_overlay_v1")?.remove();
         window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = null;
         delete window.__RM_BACKROOM_SELECTION_V1__;
