@@ -29,11 +29,13 @@ function writeJson(response, status, body, corsHeaders = {}) {
 async function readJson(request) {
   const chunks = [];
   let bytes = 0;
+  let tooLarge = false;
   for await (const chunk of request) {
     bytes += chunk.length;
-    if (bytes > MAX_BODY_BYTES) throw Object.assign(new Error("request_too_large"), { status: 413 });
-    chunks.push(chunk);
+    if (bytes > MAX_BODY_BYTES) { tooLarge = true; continue; }
+    if (!tooLarge) chunks.push(chunk);
   }
+  if (tooLarge) throw Object.assign(new Error("request_too_large"), { status: 413 });
   try {
     const result = JSON.parse(Buffer.concat(chunks).toString("utf8"));
     if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error();
@@ -87,7 +89,8 @@ export function createBackroomHostServer({
       cors["Access-Control-Allow-Private-Network"] = "true";
     }
     if (request.method === "OPTIONS") {
-      writeJson(response, 204, {}, cors);
+      response.writeHead(204, { ...noCache, ...cors });
+      response.end();
       return;
     }
     const url = new URL(request.url ?? "/", `http://127.0.0.1:${actualPort}`);
@@ -162,27 +165,30 @@ export function createBackroomHostServer({
   };
 }
 
-if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+export async function runBackroomHost() {
   const instance = createBackroomHostServer();
-  try {
-    const address = await instance.start();
-    process.stdout.write([
-      "",
-      "Rub Minds Backroom local host",
-      `Address: http://${address.host}:${address.port}`,
-      `Host ID: ${address.hostId}`,
-      `Allowed web origins: ${parseOrigins(process.env.BACKROOM_ALLOWED_ORIGINS).join(", ")}`,
-      "Pairing code (one use, expires in 10 minutes):",
-      instance.pairingCode,
-      "No app-control drivers are installed. Pairing exposes host status only.",
-      "Keep this terminal private. Stop host with Ctrl+C.",
-      "",
-    ].join("\n"));
-    const stop = async () => { await instance.close(); process.exitCode = 0; };
-    process.once("SIGINT", stop);
-    process.once("SIGTERM", stop);
-  } catch (error) {
-    process.stderr.write(`Backroom host failed to start: ${error.message}\n`);
+  const address = await instance.start();
+  process.stdout.write([
+    "",
+    "Rub Minds Backroom local host",
+    `Address: http://${address.host}:${address.port}`,
+    `Host ID: ${address.hostId}`,
+    `Allowed web origins: ${parseOrigins(process.env.BACKROOM_ALLOWED_ORIGINS).join(", ")}`,
+    "Pairing code (one use, expires in 10 minutes):",
+    instance.pairingCode,
+    "No app-control drivers are installed. Pairing exposes host status only.",
+    "Keep this terminal private. Stop host with Ctrl+C.",
+    "",
+  ].join("\\n"));
+  const stop = async () => { await instance.close(); process.exitCode = 0; };
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  return instance;
+}
+
+if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+  runBackroomHost().catch(error => {
+    process.stderr.write(`Backroom host failed to start: ${error.message}\\n`);
     process.exitCode = 1;
-  }
+  });
 }
