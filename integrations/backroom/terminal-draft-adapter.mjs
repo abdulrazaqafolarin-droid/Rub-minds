@@ -7,7 +7,14 @@
  * separators is rejected so a draft cannot carry an Enter/newline command.
  */
 const MAX_TERMINAL_DRAFT_CHARS = 4_000;
-const TERMINAL_CONTROL = /[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]/u;
+const hasTerminalControls = text => {
+  for (const character of text) {
+    const code = character.codePointAt(0);
+    if ((code >= 0 && code <= 0x1f) || (code >= 0x7f && code <= 0x9f) ||
+      code === 0x2028 || code === 0x2029) return true;
+  }
+  return false;
+};
 
 export class TerminalDraftAdapter {
   constructor({ driver, appId, sessionId, identityFingerprint, locatorValue }) {
@@ -61,7 +68,7 @@ export class TerminalDraftAdapter {
     }
     const text = command.text;
     if (typeof text !== "string" || !text.trim() || text.length > MAX_TERMINAL_DRAFT_CHARS ||
-      TERMINAL_CONTROL.test(text)) {
+      hasTerminalControls(text)) {
       throw new TypeError("terminal drafts must be 1-4000 characters of single-line text without control characters");
     }
 
