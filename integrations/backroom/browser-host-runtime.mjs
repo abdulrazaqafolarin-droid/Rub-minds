@@ -390,14 +390,13 @@ export class BrowserHostRuntime {
       if (await baseLocator.count() !== 1 || !(await baseLocator.isVisible()) || !(await baseLocator.isEnabled())) {
         throw new Error("Selected input is no longer unique, visible and enabled. Select it again.");
       }
-      const baseNodeHandle = await baseLocator.elementHandle();
-      if (!baseNodeHandle) throw new Error("Could not verify the selected input. Select it again.");
-      let sameNode = false;
-      try {
-        sameNode = await selectedNodeHandle.evaluate((node, original) =>
-          node === original && node instanceof HTMLElement && node.isConnected, baseNodeHandle);
-      } catch {}
-      try { await baseNodeHandle.dispose(); } catch {}
+      const sameNode = await selectedNodeHandle.evaluate((node, selector) => {
+        if (!(node instanceof HTMLElement) || !node.isConnected || !node.matches(selector)) return false;
+        try {
+          const matches = document.querySelectorAll(selector);
+          return matches.length === 1 && matches[0] === node;
+        } catch { return false; }
+      }, selection.selector).catch(() => false);
       if (!sameNode) throw new Error("The selected input changed after the drag gesture. Select it again.");
 
       marker = await selectedNodeHandle.getAttribute("data-rm-backroom-binding");
@@ -456,13 +455,14 @@ export class BrowserHostRuntime {
       if (boundSelector.length > 700) throw new Error("Bound selector is too long. Select a simpler input.");
       const boundLocator = page.locator(boundSelector);
       if (await boundLocator.count() !== 1) throw new Error("The selected input changed while it was being registered. Select it again.");
-      const boundNodeHandle = await boundLocator.elementHandle();
-      if (!boundNodeHandle) throw new Error("Could not verify the bound input. Select it again.");
-      let sameBoundNode = false;
-      try {
-        sameBoundNode = await boundNodeHandle.evaluate((node, original) => node === original && node.isConnected, selectedNodeHandle);
-      } catch {}
-      try { await boundNodeHandle.dispose(); } catch {}
+      const sameBoundNode = await selectedNodeHandle.evaluate((node, selector) => {
+        if (!(node instanceof HTMLElement) || !node.isConnected || !node.matches(selector) ||
+          node.getAttribute("data-rm-backroom-binding") !== selector.slice(selector.lastIndexOf('="') + 2, -2)) return false;
+        try {
+          const matches = document.querySelectorAll(selector);
+          return matches.length === 1 && matches[0] === node;
+        } catch { return false; }
+      }, boundSelector).catch(() => false);
       if (!sameBoundNode) throw new Error("The input changed while its target was being registered. Select it again.");
 
       const target = {
@@ -536,13 +536,14 @@ export class BrowserHostRuntime {
             const locator = binding.page.locator(binding.target.locatorValue);
             selectorCount = await locator.count();
             if (selectorCount === 1) {
-              const liveHandle = await locator.elementHandle();
-              if (!liveHandle) selectorCount = 0;
-              else {
-                const sameNode = await liveHandle.evaluate((node, original) => node === original, binding.nodeHandle).catch(() => false);
-                try { await liveHandle.dispose(); } catch {}
-                if (!sameNode) selectorCount = 0;
-              }
+              const sameNode = await binding.nodeHandle.evaluate((node, selector) => {
+                if (!(node instanceof HTMLElement) || !node.isConnected || !node.matches(selector)) return false;
+                try {
+                  const matches = document.querySelectorAll(selector);
+                  return matches.length === 1 && matches[0] === node;
+                } catch { return false; }
+              }, binding.target.locatorValue).catch(() => false);
+              if (!sameNode) selectorCount = 0;
             }
           }
         }
