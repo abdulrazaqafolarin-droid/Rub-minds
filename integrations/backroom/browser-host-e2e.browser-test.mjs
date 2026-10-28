@@ -286,9 +286,17 @@ test("real local host -> Playwright browser overlay -> group-scoped target -> ve
   });
   assert.equal(pendingSelection.response.status,200);
   assert.equal(pendingSelection.body.state,"pending");
+  assert.match(pendingSelection.body.selectionAttemptId,/^[a-f0-9-]{36}$/i);
   assert.equal(await page.locator("#__rm_backroom_target_overlay_v1").count(),1);
+  const staleCancel=await requestJson(hostBase,fixture.origin,"/v1/browser/select/cancel",{
+   method:"POST",token,body:{pageId,roomId:cancelRoom,attemptId:"42345678-1234-4234-9234-123456789099"}
+  });
+  assert.equal(staleCancel.response.status,200);
+  assert.equal(staleCancel.body.cancelled,false);
+  assert.equal(await page.locator("#__rm_backroom_target_overlay_v1").count(),1,
+   "a mismatched attempt ID must not remove the active overlay");
   const cancelledSelection=await requestJson(hostBase,fixture.origin,"/v1/browser/select/cancel",{
-   method:"POST",token,body:{pageId,roomId:cancelRoom}
+   method:"POST",token,body:{pageId,roomId:cancelRoom,attemptId:pendingSelection.body.selectionAttemptId}
   });
   assert.equal(cancelledSelection.response.status,200);
   assert.equal(cancelledSelection.body.cancelled,true);
