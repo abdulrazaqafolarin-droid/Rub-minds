@@ -182,6 +182,7 @@ returns table (
   out_target_identity_fingerprint text,
   out_target_revision integer,
   out_prompt text,
+  out_prompt_digest text,
   out_attempt_count integer,
   out_expires_at timestamptz,
   out_lease_token text
@@ -250,11 +251,12 @@ begin
     where j.id = m.id
     returning j.id as job_id, j.job_key, j.event_id, j.owner_id, j.room_id, j.participant_id,
       j.space_id, j.session_id, j.binding_id, j.target_id, j.target_identity_fingerprint, j.target_revision, j.prompt,
-      j.attempt_count, j.expires_at, m.token as lease_token
+      j.prompt_digest, j.attempt_count, j.expires_at, m.token as lease_token
   )
   select leased.job_id, leased.job_key, leased.event_id, leased.owner_id, leased.room_id,
     leased.participant_id, leased.space_id, leased.session_id, leased.binding_id, leased.target_id,
-    leased.target_identity_fingerprint, leased.target_revision, leased.prompt, leased.attempt_count, leased.expires_at, leased.lease_token
+    leased.target_identity_fingerprint, leased.target_revision, leased.prompt, leased.prompt_digest,
+    leased.attempt_count, leased.expires_at, leased.lease_token
   from leased;
 end;
 $claim$;
