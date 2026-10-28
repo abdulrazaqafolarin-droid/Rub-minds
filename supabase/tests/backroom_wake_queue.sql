@@ -59,7 +59,8 @@ begin
 
   select * into v_claim from public.claim_backroom_wake_jobs('host-test',v_session_digest,5,30) limit 1;
   if not found or v_claim.out_job_id::text <> (v_first->>'job_id')
-    or v_claim.out_attempt_count <> 1 or v_claim.out_lease_token is null then
+    or v_claim.out_attempt_count <> 1 or v_claim.out_lease_token is null
+    or v_claim.out_target_identity_fingerprint <> 'fingerprint-1' then
     raise exception 'Claim must return the job and a one-shot lease token';
   end if;
   select count(*) into v_count from public.claim_backroom_wake_jobs('host-test',v_session_digest,5,30);
