@@ -17,15 +17,14 @@ export class BrowserDraftAdapter {
     const field = this.page.locator(this.selector);
     if (await field.count() !== 1 || !(await field.isVisible()) || !(await field.isEnabled())) throw new Error("composer unavailable");
     if (this.nodeHandle) {
-      const liveHandle = await field.elementHandle();
-      if (!liveHandle) throw new Error("composer unavailable");
-      let sameNode = false;
-      try {
-        sameNode = await liveHandle.evaluate((node, original) =>
-          node === original && node instanceof HTMLElement && node.isConnected, this.nodeHandle);
-      } catch {}
-      try { await liveHandle.dispose(); } catch {}
-      if (!sameNode) throw new Error("composer replaced after target registration");
+      const isExactNode = await this.nodeHandle.evaluate((node, selector) => {
+        if (!(node instanceof HTMLElement) || !node.isConnected || !node.matches(selector)) return false;
+        try {
+          const matches = document.querySelectorAll(selector);
+          return matches.length === 1 && matches[0] === node;
+        } catch { return false; }
+      }, this.selector).catch(() => false);
+      if (!isExactNode) throw new Error("composer replaced after target registration");
     }
     return field;
   }
