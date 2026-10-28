@@ -84,7 +84,7 @@ begin
     repeat('2',64),v_owner,v_room,v_participant,'host-test','space-1','session-2',repeat('c',64),
     'binding-2','target-2','fingerprint-2',2,'event-2','@RMconnects'||chr(10)||'Event: event-2',3600);
   select * into v_claim_retry from public.claim_backroom_wake_jobs('host-test',repeat('c',64),1,30) limit 1;
-  if not found or v_claim_retry.out_job_id::text <> v_retry_job->>'job_id' then
+  if not found or v_claim_retry.out_job_id::text <> (v_retry_job->>'job_id') then
     raise exception 'Expected the second session job to be claimed';
   end if;
   v_retry_state := public.retry_backroom_wake_job(
