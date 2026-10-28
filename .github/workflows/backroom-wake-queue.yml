@@ -45,6 +45,14 @@ jobs:
           create role anon nologin;
           create role authenticated nologin;
           create role service_role nologin;
+          create table public.rub_minds_mcp_sessions (
+            session_digest text primary key,
+            agent_credential_ciphertext text,
+            room_id uuid,
+            participant_id uuid,
+            expires_at timestamptz not null,
+            terminated_at timestamptz
+          );
           SQL
       - name: Apply durable wake queue migration
         env:
