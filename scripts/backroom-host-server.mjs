@@ -181,7 +181,7 @@ export async function runBackroomHost() {
     "No app-control drivers are installed. Pairing exposes host status only.",
     "Keep this terminal private. Stop host with Ctrl+C.",
     "",
-  ].join("\\n"));
+  ].join("\n"));
   const stop = async () => { await instance.close(); process.exitCode = 0; };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
