@@ -118,6 +118,7 @@ export default function BackroomApp() {
   const [hostModal, setHostModal] = useState(false);
   const [hostBusy, setHostBusy] = useState(false);
   const [hostMessage, setHostMessage] = useState('');
+  const [hostStopped, setHostStopped] = useState(false);
   const [browserPages, setBrowserPages] = useState<BrowserPageRow[]>([]);
   const [browserTargets, setBrowserTargets] = useState<BrowserTargetRow[]>([]);
   const [selectedBrowserTarget, setSelectedBrowserTarget] = useState('');
@@ -155,8 +156,12 @@ export default function BackroomApp() {
       if (authError || !data.user) { setError('Sign in to Rub Minds before opening Backroom.'); return; }
       setUser(data.user);
       try {
+        const stoppedKey = 'rub-backroom-host-stopped-v1:' + data.user.id;
+        const emergencyStopped = sessionStorage.getItem(stoppedKey) === '1';
+        setHostStopped(emergencyStopped);
         const savedRaw = sessionStorage.getItem('rub-backroom-host-session-v1:' + data.user.id);
-        if (savedRaw) {
+        if (emergencyStopped && savedRaw) sessionStorage.removeItem('rub-backroom-host-session-v1:' + data.user.id);
+        if (savedRaw && !emergencyStopped) {
           const saved = JSON.parse(savedRaw) as { origin?: string; sessionToken?: string; info?: HostStatus };
           if (saved.origin && typeof saved.sessionToken === 'string' && /^[a-f0-9]{64}$/i.test(saved.sessionToken) &&
             saved.info && typeof saved.info.hostId === 'string' && typeof saved.info.protocolVersion === 'string' &&
@@ -260,8 +265,9 @@ export default function BackroomApp() {
     try {
       const origin = localHostOrigin(hostUrl.trim());
       const healthResponse = await fetchLocalHost(origin + '/health', { cache: 'no-store' });
+      const health = await healthResponse.json().catch(() => ({})) as { status?: string; protocolVersion?: string };
+      if (health.status === 'stopped') throw new Error('Emergency stop is latched on this host. Stop and restart the local host process before pairing again.');
       if (!healthResponse.ok) throw new Error('Local host health check failed.');
-      const health = await healthResponse.json() as { status?: string; protocolVersion?: string };
       if (health.status !== 'ok' || health.protocolVersion !== '1') throw new Error('Unsupported local host protocol.');
       const pairResponse = await fetchLocalHost(origin + '/v1/pair', {
         method: 'POST', cache: 'no-store',
@@ -281,7 +287,8 @@ export default function BackroomApp() {
       if (hostInfo?.hostId !== info.hostId) {
         setBrowserPages([]); setBrowserTargets([]); setSelectedBrowserTarget('');
       }
-      setHostUrl(origin); setHostToken(credentials.sessionToken); setHostInfo(info);
+      setHostUrl(origin); setHostToken(credentials.sessionToken); setHostInfo(info); setHostStopped(false);
+      try { sessionStorage.removeItem('rub-backroom-host-stopped-v1:' + user?.id); } catch {}
       try {
         sessionStorage.setItem('rub-backroom-host-session-v1:' + user?.id, JSON.stringify({
           origin, sessionToken: credentials.sessionToken, info,
@@ -330,6 +337,37 @@ export default function BackroomApp() {
       }
       setBrowserPages([]); setBrowserTargets([]); setSelectedBrowserTarget('');
       setHostMessage(e instanceof Error ? e.message : 'Host status check failed.');
+    } finally { setHostBusy(false); }
+  }
+  async function emergencyStopLocalHost() {
+    if (!hostToken || !hostInfo || hostBusy || browserBusy) return;
+    if (!window.confirm(
+      'EMERGENCY STOP: Close the managed browser, revoke every paired host session, and block new pairing until the local host process is restarted? Any open AI drafts will remain unsent.'
+    )) return;
+    setHostBusy(true); setHostMessage('');
+    try {
+      const response = await fetchLocalHost(localHostOrigin(hostUrl) + '/v1/host/stop', {
+        method: 'POST', headers: { Authorization: 'Bearer ' + hostToken }, cache: 'no-store',
+      });
+      const result = await response.json().catch(() => ({})) as {
+        stopped?: boolean; browserClosed?: boolean; sessionsRevoked?: boolean; restartRequired?: boolean; hint?: string; error?: string;
+      };
+      if (!response.ok || result.stopped !== true) {
+        throw new Error(result.hint || 'Emergency stop could not be confirmed. Stop the local host process with Ctrl+C and close any remaining browser windows.');
+      }
+      try {
+        sessionStorage.removeItem('rub-backroom-host-session-v1:' + user?.id);
+        sessionStorage.setItem('rub-backroom-host-stopped-v1:' + user?.id, '1');
+      } catch {}
+      setHostToken(''); setHostInfo(null); setHostStopped(true);
+      setBrowserPages([]); setBrowserTargets([]); setSelectedBrowserTarget('');
+      activeBrowserSelection.current = null;
+      selectionGeneration.current += 1;
+      setBrowserNotice('');
+      setHostModal(false);
+      setNotice('Emergency stop confirmed. The managed browser is closed, paired sessions are revoked, and new pairing is blocked until the local host process is restarted.');
+    } catch (e) {
+      setHostMessage(e instanceof Error ? e.message : 'Emergency stop failed.');
     } finally { setHostBusy(false); }
   }
   async function unpairLocalHost() {
@@ -593,7 +631,7 @@ export default function BackroomApp() {
       <div className="br-side-footer"><span>{hostInfo?.connected ? <Check size={15}/> : <WifiOff size={15}/>} {hostInfo?.connected ? "Local host connected" : hostInfo ? "Local host not reachable" : "No device host connected"}</span><small>{hostInfo?.capabilities.browserDraft ? "Browser draft only · native drivers unavailable" : hostInfo?.connected ? "Host online · browser driver not started" : "Workspace layouts remain local · no active device control"}</small></div>
     </aside>
     <main className="br-main">
-      <header className="br-topbar"><div className="br-breadcrumb"><a href="/"><ArrowLeft size={15}/> Groups</a><span>/</span><b>Backroom</b></div><div className="br-top-right"><button type="button" className={'br-status-pill' + (hostInfo ? ' paired' : '')} onClick={() => setHostModal(true)}><span/> {hostInfo?.connected ? (hostInfo.capabilities.browserDraft ? 'Host paired · browser ready' : 'Host paired · browser idle') : hostInfo ? 'Host offline · session saved' : 'Host offline'}</button><span className="br-avatar">{user.email?.slice(0, 1).toUpperCase() || 'U'}</span></div></header>
+      <header className="br-topbar"><div className="br-breadcrumb"><a href="/"><ArrowLeft size={15}/> Groups</a><span>/</span><b>Backroom</b></div><div className="br-top-right"><button type="button" className={'br-status-pill' + (hostInfo ? ' paired' : '') + (hostStopped ? ' br-status-stopped' : '')} onClick={() => setHostModal(true)}><span/> {hostStopped ? 'Emergency stop · restart required' : hostInfo?.connected ? (hostInfo.capabilities.browserDraft ? 'Host paired · browser ready' : 'Host paired · browser idle') : hostInfo ? 'Host offline · session saved' : 'Host offline'}</button><span className="br-avatar">{user.email?.slice(0, 1).toUpperCase() || 'U'}</span></div></header>
       {!room ? <div className="br-empty"><Layers3 size={42}/><h1>Choose a Rub Minds group</h1><p>Backroom spaces are scoped to your authenticated group. Select one from the sidebar to begin.</p></div> :
       <div className="br-content">
         <div className="br-title-row"><div><div className="br-eyebrow"><Activity size={14}/> MULTI-SPACE COORDINATION</div><h1>Backroom <span>workspace</span></h1><p>One group. Multiple AI interfaces. Start with an explicitly approved browser draft.</p></div><button className="br-primary" onClick={() => setAdding(true)} disabled={spaces.length >= 30}><Plus size={17}/> New space</button></div>
@@ -605,13 +643,14 @@ export default function BackroomApp() {
         <div className="br-bottom-note"><Cpu size={16}/><span>Backroom foundation preview — group-scoped local layouts only. No hidden device access, background AI replies or remote commands.</span><a href="https://github.com/abdulrazaqafolarin-droid/Rub-minds/pull/47" target="_blank" rel="noreferrer">Development status <ExternalLink size={13}/></a></div>
       </div>}
     </main>
-    {hostModal && <div className="br-modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setHostModal(false); }}><div className="br-modal" role="dialog" aria-modal="true" aria-labelledby="br-host-title"><div className="br-modal-top"><div className="br-modal-icon"><Cpu size={22}/></div><button className="br-icon-button" onClick={() => setHostModal(false)} aria-label="Close host pairing"><X size={20}/></button></div><h2 id="br-host-title">{hostInfo ? 'Local host connection' : 'Pair a local host'}</h2><p>Run the Backroom host on this same computer, then enter its one-time code. Use a current Chrome or Edge browser; local-network permission may be required. Embedded webviews, Firefox or Safari may block this HTTP loopback connection. Pairing connects host status first; only the managed browser draft adapter is available today.</p>{hostMessage && <div className="br-host-message" role="status">{hostMessage}</div>}{!hostInfo ? <><label htmlFor="br-host-url">Local host address</label><input id="br-host-url" autoFocus value={hostUrl} onChange={e => setHostUrl(e.target.value)} placeholder="http://127.0.0.1:43781" autoCapitalize="none" spellCheck={false}/><label htmlFor="br-pair-code">One-time pairing code</label><input id="br-pair-code" value={pairingCode} onChange={e => setPairingCode(e.target.value.trim().slice(0, 32))} placeholder="Paste code from the host terminal" autoComplete="off" autoCapitalize="none" spellCheck={false}/><div className="br-warning"><ShieldCheck size={19}/><div><b>Local-only connection</b><p>The host should bind to 127.0.0.1. Never share the pairing code or session token with a Rub Minds group.</p></div></div><div className="br-modal-actions"><button className="br-secondary" onClick={() => setHostModal(false)}>Close</button><button className="br-primary" onClick={() => void pairLocalHost()} disabled={hostBusy || !/^[a-f0-9]{32}$/i.test(pairingCode.trim())}>{hostBusy ? 'Pairing…' : 'Pair host'} <ArrowRight size={16}/></button></div></> : <><div className="br-detail"><span>Host ID</span><b>{hostInfo.hostId}</b></div><div className="br-detail"><span>Connection</span><b>{hostInfo.connected ? 'Authenticated' : 'Offline'}</b></div><div className="br-detail"><span>Available local capability</span><b className="br-muted">{hostInfo.capabilities.browserDraft ? 'Browser draft insertion only' : 'No execution driver enabled'}</b></div><div className="br-warning"><ShieldCheck size={19}/><div><b>{hostInfo.capabilities.browserDraft ? 'Browser draft adapter ready' : 'Browser adapter not started'}</b><p>{hostInfo.capabilities.browserDraft ? 'The managed browser supports inserting text into an explicitly registered empty composer. It never presses Send.' : 'Launch a dedicated visible browser profile. Log into AI websites yourself; Backroom does not copy existing cookies or sign you in.'} Native Windows, Android and terminal drivers are still unavailable.</p></div></div>
+    {hostModal && <div className="br-modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setHostModal(false); }}><div className="br-modal" role="dialog" aria-modal="true" aria-labelledby="br-host-title"><div className="br-modal-top"><div className="br-modal-icon"><Cpu size={22}/></div><button className="br-icon-button" onClick={() => setHostModal(false)} aria-label="Close host pairing"><X size={20}/></button></div><h2 id="br-host-title">{hostStopped ? 'Emergency stop is active' : hostInfo ? 'Local host connection' : 'Pair a local host'}</h2><p>Run the Backroom host on this same computer, then enter its one-time code. Use a current Chrome or Edge browser; local-network permission may be required. Embedded webviews, Firefox or Safari may block this HTTP loopback connection. Pairing connects host status first; only the managed browser draft adapter is available today.</p>{hostMessage && <div className="br-host-message" role="status">{hostMessage}</div>}{hostStopped ? <><div className="br-host-message br-host-stopped" role="status">This host is emergency-stopped. The managed browser is closed, all existing pairing sessions were revoked, and the host refuses new commands and pairing. Stop the local host terminal with Ctrl+C, restart it to generate a fresh one-time code, and pair again.</div><div className="br-modal-actions"><button className="br-secondary" onClick={() => setHostModal(false)}>Close</button></div></> : !hostInfo ? <><label htmlFor="br-host-url">Local host address</label><input id="br-host-url" autoFocus value={hostUrl} onChange={e => setHostUrl(e.target.value)} placeholder="http://127.0.0.1:43781" autoCapitalize="none" spellCheck={false}/><label htmlFor="br-pair-code">One-time pairing code</label><input id="br-pair-code" value={pairingCode} onChange={e => setPairingCode(e.target.value.trim().slice(0, 32))} placeholder="Paste code from the host terminal" autoComplete="off" autoCapitalize="none" spellCheck={false}/><div className="br-warning"><ShieldCheck size={19}/><div><b>Local-only connection</b><p>The host should bind to 127.0.0.1. Never share the pairing code or session token with a Rub Minds group.</p></div></div><div className="br-modal-actions"><button className="br-secondary" onClick={() => setHostModal(false)}>Close</button><button className="br-primary" onClick={() => void pairLocalHost()} disabled={hostBusy || !/^[a-f0-9]{32}$/i.test(pairingCode.trim())}>{hostBusy ? 'Pairing…' : 'Pair host'} <ArrowRight size={16}/></button></div></> : <><div className="br-detail"><span>Host ID</span><b>{hostInfo.hostId}</b></div><div className="br-detail"><span>Connection</span><b>{hostInfo.connected ? 'Authenticated' : 'Offline'}</b></div><div className="br-detail"><span>Available local capability</span><b className="br-muted">{hostInfo.capabilities.browserDraft ? 'Browser draft insertion only' : 'No execution driver enabled'}</b></div><div className="br-warning"><ShieldCheck size={19}/><div><b>{hostInfo.capabilities.browserDraft ? 'Browser draft adapter ready' : 'Browser adapter not started'}</b><p>{hostInfo.capabilities.browserDraft ? 'The managed browser supports inserting text into an explicitly registered empty composer. It never presses Send.' : 'Launch a dedicated visible browser profile. Log into AI websites yourself; Backroom does not copy existing cookies or sign you in.'} Native Windows, Android and terminal drivers are still unavailable.</p></div></div>
 <div className="br-browser-panel"><div className="br-browser-panel-head"><div><b>Managed browser</b><small>Visible Chromium · local profile only</small></div><button className="br-secondary" onClick={() => void refreshBrowserInventory()} disabled={browserBusy || !hostInfo.capabilities.browserDraft}><Activity size={14}/> Refresh tabs</button></div>
 {!hostInfo.capabilities.browserDraft ? <button className="br-primary br-browser-launch" onClick={() => void startManagedBrowser()} disabled={browserBusy}>{browserBusy ? 'Starting browser…' : 'Launch managed browser'} <ArrowRight size={15}/></button> : <>
 <div className="br-browser-open"><label className="br-browser-field-label" htmlFor="br-browser-url">Open an AI website</label><div className="br-browser-open-row"><input id="br-browser-url" type="url" value={browserUrl} onChange={e=>setBrowserUrl(e.target.value)} placeholder="https://chatgpt.com/" autoCapitalize="none" spellCheck={false}/><button className="br-primary" onClick={() => void openManagedUrl()} disabled={browserBusy || !browserUrl.trim()}>Open</button></div><div className="br-browser-quick"><button className="br-secondary" onClick={()=>setBrowserUrl('https://chatgpt.com/')} disabled={browserBusy}>ChatGPT</button><button className="br-secondary" onClick={()=>setBrowserUrl('https://claude.ai/new')} disabled={browserBusy}>Claude</button></div></div><div className="br-browser-pages">{browserPages.map(page => <div className="br-browser-page" key={page.pageId}><div className="br-browser-page-icon"><Monitor size={16}/></div><div className="br-browser-page-label"><b>{page.site}</b><small>{page.title || 'Untitled conversation tab'}</small></div><button className="br-secondary" onClick={() => void registerBrowserInput(page.pageId)} disabled={browserBusy}>Select input</button></div>)}{!browserPages.length && <p className="br-browser-empty">No supported browser tabs found. Open a conversation in the managed browser and refresh.</p>}</div>
 {roomBrowserTargets.length>0 && <><label className="br-browser-field-label" htmlFor="br-browser-target">Registered typing area</label><select id="br-browser-target" value={selectedBrowserTarget} onChange={e=>setSelectedBrowserTarget(e.target.value)}><option value="">Choose a typing target</option>{roomBrowserTargets.map(t=><option key={t.id} value={t.id}>{t.site} · {t.title}</option>)}</select><div className="br-browser-target-actions"><button className="br-secondary" onClick={() => void removeBrowserTarget()} disabled={browserBusy || !roomBrowserTargets.some(t => t.id === selectedBrowserTarget)}>Remove selected target</button></div><label className="br-browser-field-label" htmlFor="br-group-message">Source group message (optional)</label><select id="br-group-message" value={selectedGroupMessageId} onChange={e => { const id = e.target.value; setSelectedGroupMessageId(id); const message = groupMessages.find(m => m.id === id); if (message) setBrowserDraftText(message.body); }}><option value="">Write a manual draft instead</option>{groupMessages.map(m => <option key={m.id} value={m.id}>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · {m.body.slice(0, 90).replace(/\s+/g, ' ')}</option>)}</select><label className="br-browser-field-label" htmlFor="br-browser-draft">Text to draft (not sent)</label><textarea id="br-browser-draft" rows={3} maxLength={10000} value={browserDraftText} onChange={e=>setBrowserDraftText(e.target.value)} placeholder="Write the exact text to insert into the selected composer…"/><button className="br-primary br-browser-draft" onClick={() => void draftToBrowser()} disabled={browserBusy || !roomBrowserTargets.some(t => t.id === selectedBrowserTarget) || !browserDraftText.trim()}>Insert draft — never send <ArrowRight size={15}/></button><p className="br-browser-caption">Target registration stores the selector locally. Text is inserted only after confirmation, only into an empty input, and is read back to verify success.</p></>}
 <button className="br-secondary br-browser-stop" onClick={() => void stopManagedBrowser()} disabled={browserBusy}>Close managed browser</button></>}
 {browserNotice && <div className="br-host-message" role="status">{browserNotice}</div>}</div>
+<div className="br-emergency-stop-row"><div><b>Emergency stop</b><small>Close Chromium, revoke all paired sessions, and block reconnection until the host is restarted.</small></div><button className="br-danger-action" onClick={() => void emergencyStopLocalHost()} disabled={hostBusy || browserBusy || !hostToken}>Stop all</button></div>
 <div className="br-modal-actions"><button className="br-secondary" onClick={() => void unpairLocalHost()} disabled={hostBusy || browserBusy}>Unpair</button><button className="br-primary" onClick={() => void checkLocalHost()} disabled={hostBusy || browserBusy}>{hostBusy ? 'Checking…' : 'Check connection'}</button></div></>}</div></div>}
     {adding && <div className="br-modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setAdding(false); }}><div className="br-modal" role="dialog" aria-modal="true" aria-labelledby="br-modal-title"><div className="br-modal-top"><div className="br-modal-icon"><Plus size={22}/></div><button className="br-icon-button" onClick={() => setAdding(false)} aria-label="Close"><X size={20}/></button></div><h2 id="br-modal-title">Add a new space</h2><p>Choose the kind of interface this workspace will connect to.</p><label htmlFor="br-name">Space name</label><input id="br-name" maxLength={60} autoFocus placeholder="e.g. Claude research assistant" value={name} onChange={e => setName(e.target.value)}/><label htmlFor="br-app">App or session label <span>(optional)</span></label><input id="br-app" maxLength={100} placeholder="e.g. Claude Desktop · Research thread" value={app} onChange={e => setApp(e.target.value)}/><div className="br-modal-label">Interface type</div><div className="br-surface-options">{surfaces.map(s => { const Icon = iconFor(s.id); return <button key={s.id} className={'br-surface-option' + (surface === s.id ? ' chosen' : '')} onClick={() => setSurface(s.id)}><Icon size={20}/><span><b>{s.name}</b><small>{s.detail}</small></span>{surface === s.id && <Check size={17}/>}</button>; })}</div><div className="br-modal-actions"><button className="br-secondary" onClick={() => setAdding(false)}>Cancel</button><button className="br-primary" onClick={add} disabled={!name.trim()}>Create space <ArrowRight size={16}/></button></div></div></div>}
   </div>;
