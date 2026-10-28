@@ -175,7 +175,8 @@ export default function BackroomApp() {
       if (!response.ok) {
         try { sessionStorage.removeItem('rub-backroom-host-session-v1:' + user?.id); } catch {}
         setHostToken(''); setHostInfo(null);
-        throw new Error('Host session expired or was revoked. Restart the local host to generate a fresh pairing code.');
+        setHostMessage('Host session expired or was revoked. Restart the local host to generate a fresh pairing code.');
+        return;
       }
       const info = await response.json() as HostStatus;
       setHostInfo(info);
