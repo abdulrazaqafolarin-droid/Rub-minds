@@ -181,7 +181,7 @@ export function createBackroomHostServer({
           return;
         }
         if (request.method === "POST" && url.pathname === "/v1/browser/open") {
-          if (!/^application\\/json(?:\\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
             writeJson(response, 415, { error: "application_json_required" }, cors);
             return;
           }
