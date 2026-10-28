@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { mkdir } from "node:fs/promises";
+import { chmod, lstat, mkdir } from "node:fs/promises";
 import { TargetRegistry } from "./target-registry.mjs";
 import { BackroomDispatcher } from "./dispatcher.mjs";
 import { LocalExecutionGuard } from "./host-runtime.mjs";
@@ -256,6 +256,14 @@ export class BrowserHostRuntime {
     if (this.#starting) return this.#starting;
     this.#starting = (async () => {
       await mkdir(this.profileDir, { recursive: true, mode: 0o700 });
+      // The persistent Chromium profile contains authenticated AI-site cookies.
+      // mkdir's mode is ignored when the directory already exists, so enforce
+      // private POSIX permissions on every launch and reject a symlink target.
+      const profileInfo = await lstat(this.profileDir);
+      if (profileInfo.isSymbolicLink() || !profileInfo.isDirectory()) {
+        throw new Error("Managed browser profile path must be a real directory, not a symbolic link.");
+      }
+      if (process.platform !== "win32") await chmod(this.profileDir, 0o700);
       const chromium = await this.chromiumProvider();
       const context = await chromium.launchPersistentContext(this.profileDir, {
         ...this.launchOptions, headless: this.headless, viewport: null, acceptDownloads: false,
