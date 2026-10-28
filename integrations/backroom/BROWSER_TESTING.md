@@ -1,6 +1,6 @@
 # Controlled browser verification
 
-`browser-draft-adapter.mjs` is the first operational-adapter code for the Backroom host contract. The caller must supply an explicitly authorized Playwright page. The adapter may **draft** into an empty composer only; it never clicks Send. It verifies exact origin/path/query/hash, the exact retained DOM element identity, a single visible enabled locator, an empty draft, session identity and a read-back check. URL and element identity are rechecked inside the same synchronous page task as insertion to fail closed if the SPA changes conversation during preflight.
+`browser-draft-adapter.mjs` is the first operational-adapter code for the Backroom host contract. The caller must supply an explicitly authorized Playwright page. The adapter may **draft** into an empty composer only; it never clicks Send. It verifies exact origin/path/query/hash, the exact retained DOM element identity, a single visible enabled locator, an empty draft, session identity and a read-back check. URL, node identity, editability, visibility and empty state are rechecked in the page task immediately before insertion; focus-handler microtasks are allowed to settle, and there is no await between final validation and mutating the field. This fails closed for SPA route changes, copied DOM markers, focus handlers that populate the field, and input type changes.
 
 Run `npm run test:backroom` for pure domain tests.
 
