@@ -1,0 +1,14 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {bindInput,planWake,mayDispatch} from './coordination-core.mjs';
+const b=bindInput({bindingId:'b1',groupId:'g1',participantId:'claude',sessionId:'s1',runtimeId:'android',targetId:'input1',capabilities:['draft'],confirmedAt:1});
+const p={groupId:'g1',participantId:'claude',sessionId:'s1',status:'ready',mode:'mentions'};
+const e={id:'e1',groupId:'g1',authorId:'human',type:'mention',targets:['claude']};
+const plan=()=>planWake({event:e,participant:p,binding:b});
+test('addressed wake queues draft, never send',()=>{const r=plan();assert.equal(r.action,'queue');assert.equal(r.job.requestedAction,'draft');assert.equal(r.job.requiresApproval,true);assert.match(r.job.prompt,/^@RMconnects/);});
+test('cross-group and self ignored',()=>{assert.equal(planWake({event:{...e,groupId:'g2'},participant:p,binding:b}).action,'skip');assert.equal(planWake({event:{...e,authorId:'claude'},participant:p,binding:b}).action,'skip');});
+test('duplicate and unrelated events ignored',()=>{assert.equal(planWake({event:e,participant:p,binding:b,alreadyQueued:true}).action,'skip');assert.equal(planWake({event:{...e,targets:[]},participant:p,binding:b}).action,'skip');});
+test('smart receives messages but task mode requires a task',()=>{assert.equal(planWake({event:{...e,type:'message',targets:[]},participant:{...p,mode:'smart'},binding:b}).action,'queue');assert.equal(planWake({event:{...e,type:'message'},participant:{...p,mode:'task'},binding:b}).action,'skip');});
+test('busy, paused, offline, stale and revoked defer',()=>{for(const status of ['busy','paused','offline','stale','revoked'])assert.equal(planWake({event:e,participant:{...p,status},binding:b}).action,'defer');});
+test('invalid binding and malformed IDs rejected',()=>{assert.throws(()=>bindInput({...b,capabilities:['draft','draft']}));assert.throws(()=>bindInput({...b,targetId:'bad\nvalue'}));});
+test('dispatch rechecks consent, draft, foreground and scope',()=>{const input={job:plan().job,binding:b,participant:p,approved:true,composerEmpty:true,foregroundSessionId:'s1'};assert.deepEqual(mayDispatch(input),{ok:true,action:'draft-only'});for(const change of [{approved:false},{composerEmpty:false},{foregroundSessionId:'s2'},{binding:{...b,targetId:'other'}},{participant:{...p,groupId:'g2'}},{participant:{...p,status:'busy'}}])assert.equal(mayDispatch({...input,...change}).ok,false);});
