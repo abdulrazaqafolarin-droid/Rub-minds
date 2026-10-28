@@ -49,7 +49,17 @@ test("CORS preflight allows private-network header only for approved origin",asy
   assert.equal(bad.status,403);
  });
 });
-test("expired pairing codes cannot be redeemed",async()=>{\n let now=1000;\n const host=createBackroomHostServer({port:0,allowedOrigins:["https://rub-minds.vercel.app"],pairingCode:"ab".repeat(16),now:()=>now,pairingTtlMs:1000});\n const {port}=await host.start();\n try{now=2000;assert.equal((await pair("http://127.0.0.1:"+port,"https://rub-minds.vercel.app")).status,401)}finally{await host.close()}\n});\ntest("health endpoint is no-store and query strings are rejected",async()=>{
+test("expired pairing codes cannot be redeemed", async () => {
+ let now = 1000;
+ const host = createBackroomHostServer({ port:0, allowedOrigins:["https://rub-minds.vercel.app"],
+   pairingCode:"ab".repeat(16), now:()=>now, pairingTtlMs:1000 });
+ const {port} = await host.start();
+ try {
+   now = 2000;
+   assert.equal((await pair("http://127.0.0.1:"+port, "https://rub-minds.vercel.app")).status, 401);
+ } finally { await host.close(); }
+});
+test("health endpoint is no-store and query strings are rejected",async()=>{
  await withHost(async({base,origin})=>{
   const healthy=await fetch(base+"/health",{headers:{Origin:origin}});
   assert.equal(healthy.status,200);assert.equal(healthy.headers.get("cache-control"),"no-store, max-age=0");
