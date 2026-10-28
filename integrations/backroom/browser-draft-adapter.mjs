@@ -66,7 +66,10 @@ export class BrowserDraftAdapter {
         return { state: "unavailable" };
       }
       if (!(element instanceof HTMLElement) || !element.isConnected) return { state: "unverified" };
-      if (!(element.isContentEditable)) element.dispatchEvent(new Event("change", { bubbles: true }));
+      if (!element.isContentEditable) {
+        element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+        element.dispatchEvent(new Event("change", { bubbles: true }));
+      }
       return { state: readValue() === text ? "inserted" : "unverified" };
     }, command.text);
     if (insertion.state === "occupied" || insertion.state === "unavailable") {
