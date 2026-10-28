@@ -98,9 +98,10 @@ test("AI-to-AI handoff only runs when enabled and within an explicit server turn
 test("constructor rejects unbounded or ill-typed AI handoff settings", async () => {
   const base = {
     page: { isClosed: () => false },
+    roomId: "room-1",
     adapter: { ask: async () => "reply" },
-    readMessages: async () => ({ messages: [] }),
-    sendMessage: async () => {},
+    readMessages: async () => ({ room_id: "room-1", messages: [] }),
+    sendMessage: async () => ({ ok: true }),
   };
   assert.throws(() => new PlaywrightSessionBridge({ ...base, allowAiHandoff: "yes" }), /allowAiHandoff/);
   assert.throws(() => new PlaywrightSessionBridge({ ...base, maxAiHandoffDepth: 9 }), /maxAiHandoffDepth/);
