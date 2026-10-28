@@ -16,6 +16,7 @@ export class PlaywrightSessionBridge {
     readMessages,
     sendMessage,
     participantId = null,
+    roomId,
     intervalMs = 5000,
     maxReplies = 20,
     maxMessagesPerStep = 1,
@@ -32,6 +33,9 @@ export class PlaywrightSessionBridge {
     }
     if (participantId !== null && (typeof participantId !== "string" || !participantId)) {
       throw new TypeError("participantId must be a non-empty string when provided");
+    }
+    if (typeof roomId !== "string" || !roomId.trim() || roomId.length > 120) {
+      throw new TypeError("roomId must identify the one Rub Minds group this bridge is allowed to process");
     }
     if (!Number.isInteger(intervalMs) || intervalMs < 1000) {
       throw new RangeError("intervalMs must be >= 1000");
@@ -56,7 +60,7 @@ export class PlaywrightSessionBridge {
     }
 
     Object.assign(this, {
-      page, adapter, readMessages, sendMessage, participantId,
+      page, adapter, readMessages, sendMessage, participantId, roomId,
       intervalMs, maxReplies, maxMessagesPerStep, maxMessageChars, allowAiHandoff, maxAiHandoffDepth, maxSeenMessages,
     });
     this.running = false;
@@ -78,6 +82,16 @@ export class PlaywrightSessionBridge {
     const result = await this.readMessages();
     if (!result || !Array.isArray(result.messages)) {
       throw new Error("Invalid group message response");
+    }
+    const resultRoomId = result.room_id ?? result.roomId;
+    if (resultRoomId !== this.roomId || (result.room_id !== undefined && result.roomId !== undefined && result.room_id !== result.roomId)) {
+      throw new Error("Group message response belongs to a different Rub Minds room");
+    }
+    // Validate all rows before the first provider effect. Do not partially
+    // process a mixed-room batch returned by a faulty or compromised transport.
+    if (result.messages.some(message => message && typeof message === "object" &&
+      message.room_id !== undefined && message.room_id !== this.roomId)) {
+      throw new Error("Cross-room message encountered in group message response");
     }
 
     let sent = 0;
