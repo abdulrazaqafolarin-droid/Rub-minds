@@ -109,25 +109,37 @@ export class PlaywrightSessionBridge {
       }
 
       processed++;
+      let response;
       try {
-        const response = await this.adapter.ask(this.page, message.body, {
+        response = await this.adapter.ask(this.page, message.body, {
           messageId: message.id,
           senderKind: message.sender_kind,
           senderName: message.display_name ?? null,
         });
-        if (typeof response !== "string" || !response.trim()) continue;
-
-        // The transport should use source message IDs as idempotency keys. If
-        // the send result is ambiguous, a retry must not create a duplicate.
-        await this.sendMessage(response.trim(), message.id);
-        this.replies++;
-        sent++;
       } catch (error) {
-        // Provider failures are safe to retry. For ambiguous send failures the
-        // backend's source_message_id dedupe is the final protection.
+        // A provider-side failure occurred before a response was returned, so
+        // a later explicit step may safely retry this message.
         this.seen.delete(message.id);
         throw error;
       }
+      if (typeof response !== "string" || !response.trim()) continue;
+
+      try {
+        // The transport should use source message IDs as idempotency keys.
+        await this.sendMessage(response.trim(), message.id);
+      } catch {
+        // A send rejection can be ambiguous: the server may have accepted the
+        // response before the connection failed. Keep the message ID in the
+        // dedupe set and stop the loop for review rather than asking the
+        // provider again or risking a duplicate reply.
+        return {
+          status: "send_outcome_ambiguous", sent, processed,
+          messageId: message.id,
+          reason: "Response delivery could not be confirmed. Verify the group before retrying.",
+        };
+      }
+      this.replies++;
+      sent++;
     }
     return { status: "ok", sent, processed };
   }
@@ -139,7 +151,7 @@ export class PlaywrightSessionBridge {
     try {
       while (this.running && !signal?.aborted && this.replies < this.maxReplies) {
         const outcome = await this.step({ approved, remainingReplies: this.maxReplies - this.replies });
-        if (outcome.status === "browser_closed" || outcome.status === "limit_reached" || outcome.status === "seen_budget_reached") break;
+        if (outcome.status === "browser_closed" || outcome.status === "limit_reached" || outcome.status === "seen_budget_reached" || outcome.status === "send_outcome_ambiguous") break;
         await new Promise(resolve => setTimeout(resolve, this.intervalMs));
       }
     } finally {
