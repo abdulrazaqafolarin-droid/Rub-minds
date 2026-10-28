@@ -202,6 +202,7 @@ export class BrowserHostRuntime {
           this.#context = null;
           for (const binding of this.#bindings.values()) {
             try { this.registry.unregister(binding.target.id, { roomId: binding.target.roomId, hostId: this.hostId }); } catch {}
+            try { binding.nodeHandle?.dispose().catch(() => {}); } catch {}
           }
           this.#pages.clear();
           this.#selectionRooms.clear();
