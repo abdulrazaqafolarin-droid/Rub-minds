@@ -12,6 +12,7 @@ const allowedOrigins = new Set([
   "http://127.0.0.1:5173",
 ]);
 const MAX_DOCUMENT_BYTES = 1024 * 1024;
+const MAX_REQUEST_BYTES = MAX_DOCUMENT_BYTES * 6 + 65536;
 
 function headersFor(origin: string | null) {
   const headers: Record<string, string> = {
@@ -57,7 +58,7 @@ Deno.serve(async (request: Request) => {
   if (request.method !== "GET" && request.method !== "POST") {
     return reply(405, { error: "Method not allowed" }, headers);
   }
-  if (Number(request.headers.get("content-length") || "0") > MAX_DOCUMENT_BYTES + 65536) {
+  if (Number(request.headers.get("content-length") || "0") > MAX_REQUEST_BYTES) {
     return reply(413, { error: "Request too large" }, headers);
   }
 
@@ -96,8 +97,13 @@ Deno.serve(async (request: Request) => {
   }
 
   if (request.method === "POST") {
+    let rawBody: string;
+    try { rawBody = await request.text(); } catch { return reply(400, { error: "Invalid request body" }, headers); }
+    if (new TextEncoder().encode(rawBody).byteLength > MAX_REQUEST_BYTES) {
+      return reply(413, { error: "Request too large" }, headers);
+    }
     let input: unknown;
-    try { input = await request.json(); } catch { return reply(400, { error: "Invalid JSON" }, headers); }
+    try { input = JSON.parse(rawBody); } catch { return reply(400, { error: "Invalid JSON" }, headers); }
     if (!input || typeof input !== "object" || Array.isArray(input)) {
       return reply(400, { error: "Expected a JSON object" }, headers);
     }
