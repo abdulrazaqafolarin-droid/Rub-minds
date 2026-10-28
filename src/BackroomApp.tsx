@@ -22,36 +22,39 @@ const iconFor = (s: Surface) => s === 'android_app' ? Smartphone : s === 'termin
 const randomId = () => crypto.randomUUID();
 const clamp = (n: number) => Math.min(100, Math.max(0, n));
 const hostCapabilityKeys = ['browserDraft', 'desktopAccessibility', 'androidAccessibility', 'terminal'] as const;
+class HostStatusValidationError extends Error {
+  constructor(message: string) { super(message); this.name = 'HostStatusValidationError'; }
+}
 function parseHostStatus(value: unknown, expectedHostId?: string): HostStatus {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Local host returned an invalid status document.');
+    throw new HostStatusValidationError('Local host returned an invalid status document.');
   }
   const row = value as Record<string, unknown>;
   if (typeof row.hostId !== 'string' || !row.hostId ||
     (expectedHostId !== undefined && row.hostId !== expectedHostId)) {
-    throw new Error('Local host identity changed. Verify the host terminal and pair with the intended host again.');
+    throw new HostStatusValidationError('Local host identity changed. Verify the host terminal and pair with the intended host again.');
   }
-  if (row.protocolVersion !== '1') throw new Error('Unsupported local host protocol. Restart/update the local host before pairing.');
+  if (row.protocolVersion !== '1') throw new HostStatusValidationError('Unsupported local host protocol. Restart/update the local host before pairing.');
   if (row.connected !== true || typeof row.label !== 'string' || !row.label ||
     typeof row.expiresAt !== 'number' || !Number.isFinite(row.expiresAt) ||
     typeof row.executionReady !== 'boolean' || typeof row.nextStep !== 'string') {
-    throw new Error('Local host returned an incomplete or unauthenticated status.');
+    throw new HostStatusValidationError('Local host returned an incomplete or unauthenticated status.');
   }
   if (row.browserPages !== undefined &&
     (typeof row.browserPages !== 'number' || !Number.isSafeInteger(row.browserPages) || row.browserPages < 0)) {
-    throw new Error('Local host returned an invalid browser-page count.');
+    throw new HostStatusValidationError('Local host returned an invalid browser-page count.');
   }
   if (!row.capabilities || typeof row.capabilities !== 'object' || Array.isArray(row.capabilities)) {
-    throw new Error('Local host returned invalid capabilities.');
+    throw new HostStatusValidationError('Local host returned invalid capabilities.');
   }
   const supplied = row.capabilities as Record<string, unknown>;
   const capabilities: Record<string, boolean> = {};
   for (const key of hostCapabilityKeys) {
-    if (typeof supplied[key] !== 'boolean') throw new Error('Local host returned an invalid capability flag.');
+    if (typeof supplied[key] !== 'boolean') throw new HostStatusValidationError('Local host returned an invalid capability flag.');
     capabilities[key] = supplied[key] as boolean;
   }
   if (row.executionReady !== Object.values(capabilities).some(Boolean)) {
-    throw new Error('Local host status conflicts with its declared capabilities.');
+    throw new HostStatusValidationError('Local host status conflicts with its declared capabilities.');
   }
   return {
     hostId: row.hostId,
@@ -270,12 +273,20 @@ export default function BackroomApp() {
       try { sessionStorage.setItem('rub-backroom-host-session-v1:' + user?.id, JSON.stringify({ origin: localHostOrigin(hostUrl), sessionToken: hostToken, info })); } catch {}
       setHostMessage(info.capabilities.browserDraft ? 'Host is reachable. Browser draft insertion is active; native and terminal drivers remain unavailable.' : 'Host is reachable. Launch the managed browser to enable draft-only browser input; native and terminal drivers remain unavailable.');
     } catch (e) {
-      // A stale "browserDraft: true" must never leave an offline host looking
-      // executable. Keep the token for an explicit retry, but clear all targets.
-      setHostInfo(previous => previous ? {
-        ...previous, connected: false, executionReady: false, browserPages: 0,
-        capabilities: { ...previous.capabilities, browserDraft: false },
-      } : previous);
+      // A malformed status or host identity change is not a transient network
+      // failure. Drop the cached bearer and require a fresh pairing rather than
+      // continue sending a token to a different local process.
+      if (e instanceof HostStatusValidationError) {
+        try { sessionStorage.removeItem('rub-backroom-host-session-v1:' + user?.id); } catch {}
+        setHostToken(''); setHostInfo(null);
+      } else {
+        // A stale "browserDraft: true" must never leave an offline host looking
+        // executable. Keep the token for an explicit retry, but clear all targets.
+        setHostInfo(previous => previous ? {
+          ...previous, connected: false, executionReady: false, browserPages: 0,
+          capabilities: { ...previous.capabilities, browserDraft: false },
+        } : previous);
+      }
       setBrowserPages([]); setBrowserTargets([]); setSelectedBrowserTarget('');
       setHostMessage(e instanceof Error ? e.message : 'Host status check failed.');
     } finally { setHostBusy(false); }
