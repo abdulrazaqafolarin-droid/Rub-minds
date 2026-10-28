@@ -21,6 +21,50 @@ const surfaces: { id: Surface; name: string; detail: string }[] = [
 const iconFor = (s: Surface) => s === 'android_app' ? Smartphone : s === 'terminal' ? SquareTerminal : s === 'browser_tab' ? Monitor : s === 'windows_app' ? Laptop : Bot;
 const randomId = () => crypto.randomUUID();
 const clamp = (n: number) => Math.min(100, Math.max(0, n));
+const hostCapabilityKeys = ['browserDraft', 'desktopAccessibility', 'androidAccessibility', 'terminal'] as const;
+function parseHostStatus(value: unknown, expectedHostId?: string): HostStatus {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Local host returned an invalid status document.');
+  }
+  const row = value as Record<string, unknown>;
+  if (typeof row.hostId !== 'string' || !row.hostId ||
+    (expectedHostId !== undefined && row.hostId !== expectedHostId)) {
+    throw new Error('Local host identity changed. Verify the host terminal and pair with the intended host again.');
+  }
+  if (row.protocolVersion !== '1') throw new Error('Unsupported local host protocol. Restart/update the local host before pairing.');
+  if (row.connected !== true || typeof row.label !== 'string' || !row.label ||
+    typeof row.expiresAt !== 'number' || !Number.isFinite(row.expiresAt) ||
+    typeof row.executionReady !== 'boolean' || typeof row.nextStep !== 'string') {
+    throw new Error('Local host returned an incomplete or unauthenticated status.');
+  }
+  if (row.browserPages !== undefined &&
+    (typeof row.browserPages !== 'number' || !Number.isSafeInteger(row.browserPages) || row.browserPages < 0)) {
+    throw new Error('Local host returned an invalid browser-page count.');
+  }
+  if (!row.capabilities || typeof row.capabilities !== 'object' || Array.isArray(row.capabilities)) {
+    throw new Error('Local host returned invalid capabilities.');
+  }
+  const supplied = row.capabilities as Record<string, unknown>;
+  const capabilities: Record<string, boolean> = {};
+  for (const key of hostCapabilityKeys) {
+    if (typeof supplied[key] !== 'boolean') throw new Error('Local host returned an invalid capability flag.');
+    capabilities[key] = supplied[key] as boolean;
+  }
+  if (row.executionReady !== Object.values(capabilities).some(Boolean)) {
+    throw new Error('Local host status conflicts with its declared capabilities.');
+  }
+  return {
+    hostId: row.hostId,
+    label: row.label,
+    expiresAt: row.expiresAt,
+    protocolVersion: '1',
+    connected: true,
+    executionReady: row.executionReady,
+    capabilities,
+    nextStep: row.nextStep,
+    ...(typeof row.browserPages === 'number' ? { browserPages: row.browserPages } : {}),
+  };
+}
 
 function Preview({ surface, onSelect, selected }: { surface: Surface; onSelect: (r: Rect) => void; selected: Rect | null }) {
   const [start, setStart] = useState<{ x: number; y: number } | null>(null);
@@ -189,8 +233,7 @@ export default function BackroomApp() {
         headers: { Authorization: 'Bearer ' + credentials.sessionToken }, cache: 'no-store',
       });
       if (!infoResponse.ok) throw new Error('Host paired, but its status could not be verified. Restart host and pair again.');
-      const info = await infoResponse.json() as HostStatus;
-      if (info.hostId !== credentials.hostId) throw new Error('Host identity changed during pairing.');
+      const info = parseHostStatus(await infoResponse.json(), credentials.hostId);
       if (hostInfo?.hostId !== info.hostId) {
         setBrowserPages([]); setBrowserTargets([]); setSelectedBrowserTarget('');
       }
@@ -222,7 +265,7 @@ export default function BackroomApp() {
         setHostMessage('Host session expired or was revoked. Restart the local host to generate a fresh pairing code.');
         return;
       }
-      const info = await response.json() as HostStatus;
+      const info = parseHostStatus(await response.json(), hostInfo?.hostId);
       setHostInfo(info);
       try { sessionStorage.setItem('rub-backroom-host-session-v1:' + user?.id, JSON.stringify({ origin: localHostOrigin(hostUrl), sessionToken: hostToken, info })); } catch {}
       setHostMessage(info.capabilities.browserDraft ? 'Host is reachable. Browser draft insertion is active; native and terminal drivers remain unavailable.' : 'Host is reachable. Launch the managed browser to enable draft-only browser input; native and terminal drivers remain unavailable.');
