@@ -35,3 +35,23 @@
 
 ## Release gate
 Keep PR #48 in draft until the clean test suite, isolated SQL workflow, real provider round-trip, host authentication, target revalidation, offline recovery and device-level acceptance have passed. No automatic Send or production migration is enabled by this PR.
+
+## Durable wake queue milestone
+
+The proposed Supabase migration `20261029090000_backroom_wake_queue.sql` adds a private, RLS-enabled wake-job table and service-role-only RPCs:
+- Idempotent enqueue that rejects reuse of a key for different content.
+- Jobs bound to owner, group, participant, host, runtime space, original session, target ID, target identity fingerprint and target revision.
+- A digest of the exact wake prompt and bounded expiry.
+- Atomic leases using `FOR UPDATE SKIP LOCKED`; plaintext lease tokens are returned only to the trusted backend while only SHA-256 digests are stored.
+- Token-bound acknowledgement, bounded retry, owner-scoped cancellation and expiry processing.
+- Retry and claim limits intended to prevent infinite work.
+
+The server-only `durable-wake-store.mjs` adapter maps the store RPCs, validates all response shapes, and rejects a missing/expired/replayed retry lease. Its tests use a mocked Supabase RPC client and do not execute PostgreSQL.
+
+## Validation status / release discipline
+
+A Vercel preview for earlier commit `a8e6954` reported 135 runtime tests passing, and 22 focused coordinator/dispatcher integration tests passing; its frontend build succeeded. These logs predate the durable-wake-store changes and do not validate the migration or latest adapter revision. The free Vercel API daily deployment limit currently prevents a newer preview. GitHub Actions jobs were still being skipped when checked; the migration must be run against an isolated PostgreSQL 17 instance using `supabase/tests/backroom_wake_queue.sql`.
+
+Do **not** apply this migration to production until the isolated SQL workflow succeeds, a clean-checkout test suite passes, and the actual server integration is implemented and validated. The RPCs are service-role-only, so the service endpoint must derive `owner_id` from an authenticated caller and validate the group participant/session binding; never trust those IDs from a browser request.
+
+The current durable store and local dispatcher are still separate components: a durable claim/lease is not itself an approved local device action. Production orchestration must correlate both outcomes and handle expired leases, cancellation races, host disconnects and ambiguous UI effects before automatic draft insertion is enabled.
