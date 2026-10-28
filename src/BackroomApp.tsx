@@ -11,7 +11,7 @@ type Rect = { x: number; y: number; width: number; height: number };
 type HostStatus = { hostId: string; label: string; expiresAt: number; protocolVersion: string; connected: boolean; executionReady: boolean; capabilities: Record<string, boolean>; nextStep: string; browserPages?: number };
 type BrowserPageRow = { pageId: string; title: string; site: string; canSelect: boolean };
 type BrowserTargetRow = { id: string; pageId: string; roomId: string; title: string; site: string; surface: string; operations: string[] };
-type PendingBrowserSelection = { pageId: string; roomId: string; generation: number };
+type PendingBrowserSelection = { pageId: string; roomId: string; generation: number; attemptId: string | null };
 const surfaces: { id: Surface; name: string; detail: string }[] = [
   { id: 'browser_tab', name: 'Browser session', detail: 'ChatGPT, Claude and other browser conversations' },
   { id: 'desktop_app', name: 'Desktop AI app', detail: 'Native Claude, ChatGPT or other desktop applications' },
@@ -188,9 +188,9 @@ export default function BackroomApp() {
     if (pending && (pending.roomId !== room?.id || !hostToken)) {
       activeBrowserSelection.current = null;
       selectionGeneration.current += 1;
-      if (hostToken) {
+      if (hostToken && pending.attemptId) {
         void hostApi('/v1/browser/select/cancel', {
-          method: 'POST', body: { pageId: pending.pageId, roomId: pending.roomId },
+          method: 'POST', body: { pageId: pending.pageId, roomId: pending.roomId, attemptId: pending.attemptId },
         }).catch(() => {});
       }
       setBrowserNotice('Input selection cancelled because the active group or host session changed.');
@@ -460,22 +460,35 @@ export default function BackroomApp() {
     const selectedRoomId = room?.id;
     if (!selectedRoomId) { setBrowserNotice('Select a Rub Minds group before registering a typing area.'); return; }
     const generation = ++selectionGeneration.current;
-    activeBrowserSelection.current = { pageId, roomId: selectedRoomId, generation };
+    activeBrowserSelection.current = { pageId, roomId: selectedRoomId, generation, attemptId: null };
+    let selectionAttemptId: string | null = null;
     const isCurrentSelection = () =>
       selectionGeneration.current === generation &&
       activeBrowserSelection.current?.generation === generation &&
       activeBrowserSelection.current?.pageId === pageId &&
       activeBrowserSelection.current?.roomId === selectedRoomId;
     const cancelServerSelection = async () => {
+      // Cancellation must name the attempt started by this invocation, so a
+      // delayed request cannot cancel a newer selection in the same room.
+      if (!selectionAttemptId) return;
       try {
         await hostApi('/v1/browser/select/cancel', {
-          method: 'POST', body: { pageId, roomId: selectedRoomId },
+          method: 'POST', body: { pageId, roomId: selectedRoomId, attemptId: selectionAttemptId },
         });
       } catch { /* Host loss and group changes still cancel the local polling loop. */ }
     };
     setBrowserBusy(true); setBrowserNotice('Selection started. Switch to the managed browser and drag a rectangle around exactly one text input. Press Escape to cancel.');
     try {
-      await hostApi('/v1/browser/select', { method: 'POST', body: { pageId, roomId: selectedRoomId } });
+      const started = await hostApi<{ state: string; selectionAttemptId?: string }>(
+        '/v1/browser/select', { method: 'POST', body: { pageId, roomId: selectedRoomId } },
+      );
+      if (typeof started.selectionAttemptId !== 'string' || !/^[a-f0-9-]{36}$/i.test(started.selectionAttemptId)) {
+        throw new Error('Local host returned an invalid selection attempt ID. Restart the host before retrying.');
+      }
+      selectionAttemptId = started.selectionAttemptId;
+      if (isCurrentSelection() && activeBrowserSelection.current) {
+        activeBrowserSelection.current = { ...activeBrowserSelection.current, attemptId: selectionAttemptId };
+      }
       if (!isCurrentSelection()) { await cancelServerSelection(); return; }
       for (let attempt = 0; attempt < 120; attempt++) {
         await new Promise<void>(resolve => window.setTimeout(resolve, 500));
