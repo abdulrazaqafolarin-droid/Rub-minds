@@ -62,6 +62,7 @@ export class BackroomDispatcher {
     try {
     const c = job.command;
     const allowed = await this.authorize(c);
+    if (job.status.state === 'cancelled') return job.status;
     if (allowed !== true) {
       job.status = { ...job.status, state: "failed", reason: "not_authorized" };
       return job.status;
