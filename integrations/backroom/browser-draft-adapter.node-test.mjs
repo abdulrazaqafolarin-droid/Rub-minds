@@ -54,11 +54,11 @@ test("submitting or using another conversation is prohibited",async()=>{
 
 test("a query or fragment change invalidates the bound conversation",async()=>{
  for(const options of [
-  {url:"https://example.test/conversations/abc?thread=two"},
-  {url:"https://example.test/conversations/abc#another"},
+  {url:"https://example.test/conversation/123?thread=two"},
+  {url:"https://example.test/conversation/123#another"},
  ]) {
   const f=fixture(options);
   await assert.rejects(()=>f.adapter.execute({command:{operation:"draft",text:"hello"},target:f.target}),/conversation changed/);
-  assert.equal(f.fills(),0);
+  assert.equal(f.filled(),0);
  }
 });
