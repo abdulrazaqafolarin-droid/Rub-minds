@@ -293,15 +293,25 @@ export class BrowserHostRuntime {
     return { page, url: safeUrl };
   }
   async startSelection(pageId, roomId) {
-    const { page } = this.#page(pageId);
+    const { page, url } = this.#page(pageId);
     if (typeof roomId !== "string" || !roomId.trim() || roomId.length > 120) throw new TypeError("group roomId required");
-    this.#selectionRooms.set(pageId, roomId);
+    this.#selectionRooms.set(pageId, {
+      roomId,
+      fingerprint: url.origin + url.pathname + url.search + url.hash + ":" + pageId,
+    });
     try { await page.evaluate(installSelectionOverlay); }
     catch (error) { this.#selectionRooms.delete(pageId); throw error; }
     return { state: "pending", pageId, instruction: "Switch to the managed browser and drag around exactly one editable input." };
   }
   async getSelection(pageId) {
-    const { page } = this.#page(pageId);
+    const { page, url } = this.#page(pageId);
+    const pending = this.#selectionRooms.get(pageId);
+    const fingerprint = url.origin + url.pathname + url.search + url.hash + ":" + pageId;
+    if (pending && pending.fingerprint !== fingerprint) {
+      this.#selectionRooms.delete(pageId);
+      try { await page.evaluate(() => { document.getElementById("__rm_backroom_target_overlay_v1")?.remove(); }); } catch {}
+      return { state: "cancelled", message: "The conversation changed. Start selection again in the current tab." };
+    }
     const selection = await page.evaluate(() => window.__RM_BACKROOM_SELECTION_V1__ ?? null);
     if (!selection || typeof selection !== "object") return { state: "unavailable" };
     const output = { state: selection.state };
@@ -316,8 +326,13 @@ export class BrowserHostRuntime {
   }
   async registerSelectedTarget(pageId, roomId) {
     if (typeof roomId !== "string" || !roomId.trim() || roomId.length > 120) throw new TypeError("group roomId required");
-    if (this.#selectionRooms.get(pageId) !== roomId) throw new Error("Selection belongs to another Rub Minds group; select the input again.");
     const { page, url } = this.#page(pageId);
+    const selectionBinding = this.#selectionRooms.get(pageId);
+    const currentFingerprint = url.origin + url.pathname + url.search + url.hash + ":" + pageId;
+    if (!selectionBinding || selectionBinding.roomId !== roomId || selectionBinding.fingerprint !== currentFingerprint) {
+      this.#selectionRooms.delete(pageId);
+      throw new Error("Selection belongs to another group or conversation; select the input again.");
+    }
     const selection = await page.evaluate(() => window.__RM_BACKROOM_SELECTION_V1__ ?? null);
     if (!selection || selection.state !== "selected" || typeof selection.selector !== "string" || selection.selector.length > 500) {
       throw new Error("Select one input in the managed browser first.");
