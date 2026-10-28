@@ -41,6 +41,7 @@ export class SupabaseBackroomWakeStore{
    p_session_digest:requireMatch(input.sessionDigest,HEX64,'sessionDigest'),
    p_binding_id:requireLabel(p.bindingId,'bindingId',128),
    p_target_id:requireLabel(p.targetId,'targetId',128),
+   p_target_identity_fingerprint:requireLabel(target.identityFingerprint,'identityFingerprint',512),
    p_target_revision:requireInt(target.revision,'targetRevision',1,2147483647),
    p_event_id:requireLabel(p.eventId,'eventId',256),
    p_prompt:requireLabel(p.prompt,'prompt',12000),
@@ -67,7 +68,7 @@ export class SupabaseBackroomWakeStore{
       !Number.isSafeInteger(row.out_attempt_count)||row.out_attempt_count<1||row.out_attempt_count>5||
       !Number.isSafeInteger(row.out_target_revision)||row.out_target_revision<1||
       typeof row.out_prompt!=='string'||!row.out_prompt.startsWith('@RMconnects\n'))throw new Error('Queue returned malformed lease');
-   return Object.freeze({jobId:row.out_job_id,jobKey:row.out_job_key,eventId:row.out_event_id,
+   return Object.freeze({jobId:row.out_job_id,jobKey:row.out_job_key,eventId:row.out_event_id,hostId,sessionDigest,
     ownerId:row.out_owner_id,roomId:row.out_room_id,participantId:row.out_participant_id,
     spaceId:row.out_space_id,sessionId:row.out_session_id,bindingId:row.out_binding_id,
     targetId:row.out_target_id,targetRevision:row.out_target_revision,prompt:row.out_prompt,
