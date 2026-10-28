@@ -94,7 +94,7 @@ Verification required before merge: `npm run test:backroom`, `npm run test:runti
 
 The local Backroom core now has a cross-platform target registry, bounded consent-aware dispatcher, and preflight device-host guard. The guard checks host-declared capabilities, room/space/session scope, live app identity, focus, connection, locator kind, user policy and adapter result verification before accepting successful outcomes. Preflight denials are reported as `failed`; ambiguous execution outcomes are `needs_review` and are never retried blindly.
 
-The current Backroom unit-test snapshot contains 72 test cases across 10 unit-test files. They pass in an isolated JavaScript harness using lightweight browser, URL, crypto and OS stubs. This is useful test-logic evidence, **not equivalent** to a native Node test run, a real HTTP integration test, Chromium E2E or a TypeScript/Vite production build.
+The current Backroom unit-test snapshot contains 73 test cases across 10 unit-test files. They pass in an isolated JavaScript harness using lightweight browser, URL, crypto and OS stubs. This is useful test-logic evidence, **not equivalent** to a native Node test run, a real HTTP integration test, Chromium E2E or a TypeScript/Vite production build.
 
 The latest observed GitHub Actions attempts failed at job setup with **zero executed job steps and no runner assigned**; fetching job logs returned `BlobNotFound`, so the underlying CI availability issue is still unverified. Do not treat this as a product-code test or proof of a TypeScript failure. To respect the repository's Actions-minute budget, avoid blind reruns; obtain a working runner or an authorized local Node/build result before merge.
 
