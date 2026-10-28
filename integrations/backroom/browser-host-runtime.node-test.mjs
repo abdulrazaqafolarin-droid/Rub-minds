@@ -15,6 +15,7 @@ function fakePage({url="https://chatgpt.com/c/test",title="Research thread",sele
     if(input!=="")return {state:"occupied"};
     input=arg;return {state:"inserted"};
    }
+   if(code.includes("connected:")&&code.includes("value:"))return {connected:nodeId===capturedNodeId,value:input};
    if(code.includes("element instanceof HTMLInputElement")&&code.includes("element.value")&&!code.includes("const readValue"))return input;
    if(code.includes("setAttribute")&&code.includes("data-rm-backroom-binding")){
     if(nodeId!==capturedNodeId)return {state:"unavailable",marker:""};
@@ -25,7 +26,7 @@ function fakePage({url="https://chatgpt.com/c/test",title="Research thread",sele
     if(nodeId===capturedNodeId&&markerNodeId===capturedNodeId&&bindingMarker===arg)bindingMarker=null;
     return true;
    }
-   if(code.includes("RM_BACKROOM_SELECTION_V1")&&selection?.selectedAt===arg){
+   if(code.includes("RM_BACKROOM_SELECTION_V1")&&selection?.selectionId===arg){
     selection=null;selectedElementNodeId=null;return true;
    }
    return true;
@@ -72,13 +73,13 @@ function fakePage({url="https://chatgpt.com/c/test",title="Research thread",sele
    if(fn.toString().includes("RM_BACKROOM_SELECTION_V1"))return null;
    return null;
   },
-  evaluateHandle:async(fn,expectedAt)=>{
+  evaluateHandle:async(fn,expectedSelectionId)=>{
    const code=String(fn);
-   const valid=code.includes("RM_BACKROOM_SELECTED_ELEMENT_V1__")&&selection?.state==="selected"&&selection.selectedAt===expectedAt;
+   const valid=code.includes("RM_BACKROOM_SELECTED_ELEMENT_V1__")&&selection?.state==="selected"&&selection.selectionId===expectedSelectionId;
    const handle=valid?makeHandle(selectedElementNodeId):null;
    return {asElement:()=>handle,dispose:async()=>{if(!handle)disposedHandles++;}};
   },
-  setSelection:v=>{selection={...v,selectedAt:v.selectedAt??++selectionSerial};selectedElementNodeId=nodeId;},
+  setSelection:v=>{const stamp=++selectionSerial;selection={...v,selectedAt:v.selectedAt??stamp,selectionId:v.selectionId??("aaaaaaaa-bbbb-4ccc-8ddd-"+String(stamp).padStart(12,"0"))};selectedElementNodeId=nodeId;},
   value:()=>input,setValue:v=>{input=v},setUrl:v=>pageUrl=v,
   replaceNode:({preserveMarker=false}={})=>{nodeId++;if(!preserveMarker){bindingMarker=null;markerNodeId=null;}else markerNodeId=nodeId;},
   setBindingMarker:v=>{bindingMarker=v;markerNodeId=v?nodeId:null},bindingMarker:()=>bindingMarker,disposedHandles:()=>disposedHandles,
