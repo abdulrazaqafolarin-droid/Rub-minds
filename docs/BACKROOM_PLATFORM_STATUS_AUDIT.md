@@ -7,6 +7,20 @@
 
 **Rub Minds' production hosting and core Supabase backend are active. The full requested platform is not complete yet.** Backroom has a browser-draft foundation in the draft branch, but not universal native control or a demonstrated, continuously synchronized original-session group round trip.
 
+## Latest status recheck (2026-10-28 20:49 UTC)
+
+This addendum supersedes older branch/preview references below where they differ. The checks were read-only; no deployment, merge, migration, function, Auth setting or database mutation was performed.
+
+- **Current PR head:** `147be4da5abf4c9256e52ce218fbe6aff449c1a8`. PR #47 is open, draft, unmerged, base `main`, and GitHub reports it mergeable. Keep it draft until release gates pass.
+- **Latest ready Vercel Preview:** `c811bfe7092ae62907b152ccc82ce97a063ec65d`, URL [open Preview](https://rub-minds-jotc0coad-abdulrazaqafolarin-droids-projects.vercel.app) · [deployment inspector](https://vercel.com/abdulrazaqafolarin-droids-projects/rub-minds/BUUEqbLzL4k2hoHzWP7SHcWJK2y7). This preview is behind the current PR head and does not validate the latest source.
+- **Current-head Vercel status:** GitHub's combined commit status for `147be4d` reports the Vercel check as failed with a link to the Vercel build-rate-limit page. That is deployment-quota evidence, not a compiler/test failure. No current-head build has been verified; do not trigger repeated builds while the quota block remains.
+- **GitHub Actions:** latest run [40757591722](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/40757591722) for `147be4d` is `skipped`. The workflow intentionally skips jobs for draft PRs; this is neither a pass nor a code failure. The current checked-in tests have not been executed in a native Node 22 checkout for this head.
+- **Production:** Vercel reports the `rub-minds.vercel.app` alias as `READY`, target `production`, from `main` at `4e81797aa9113ca416ae96be003c95817a51b0d0`. The Backroom branch remains isolated from production.
+- **Supabase:** project `zucaeevlbwhcvjwbhwmq` reports `ACTIVE_HEALTHY` in `eu-west-2`, PostgreSQL 17.11. Live migration history contains 18 migrations through `public_invite_rate_limits`; five Edge Functions report `ACTIVE`: `agent-messages` v4, `redeem-ai-invite` v2, `ai-invite-discovery` v2, `session-memory` v2 and `rub-minds-mcp` v3. This is service/deployment metadata, not proof of end-to-end provider interoperability or that required runtime secrets are configured correctly.
+- **Feature status:** the latest source adds route-and-node-bound browser draft insertion checks and a terminal draft-only adapter contract, but the actual browser E2E and native terminal/OS drivers are still not verified. The browser adapter does not complete the desired existing-AI-session → group message → AI response → group reply loop.
+
+The most important next step is a clean checkout at this exact head and a real Node 22 dependency install/build/test run, followed by the checked-in controlled Chromium E2E. Since the current build service is rate-limited and Actions jobs are skipped while draft, avoid repeated deploy retries. Keep production unchanged.
+
 ## Verified platform status
 
 | Area | Verified state | What this proves—and does not prove |
