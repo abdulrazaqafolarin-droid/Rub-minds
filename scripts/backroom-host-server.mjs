@@ -215,11 +215,12 @@ export function createBackroomHostServer({
           const input = await readJson(request);
           if (url.pathname === "/v1/browser/select/cancel") {
             if (typeof input.pageId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.pageId) ||
-              typeof input.roomId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.roomId)) {
-              writeJson(response, 400, { error: "invalid_page_or_room_id" }, cors);
+              typeof input.roomId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.roomId) ||
+              typeof input.attemptId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.attemptId)) {
+              writeJson(response, 400, { error: "invalid_page_room_or_attempt_id" }, cors);
               return;
             }
-            const cancelled = await browser.cancelSelection(input.pageId, input.roomId);
+            const cancelled = await browser.cancelSelection(input.pageId, input.roomId, input.attemptId);
             writeJson(response, 200, { cancelled }, cors);
             return;
           }
