@@ -184,11 +184,41 @@ export class PlaywrightSessionBridge {
     return { status: "ok", sent, processed };
   }
 
+  async #primeSeenMessages() {
+    // Automatic polling treats the current snapshot as history. Only messages
+    // that arrive after this baseline can initiate provider work on this run.
+    const result = await this.readMessages();
+    if (!result || !Array.isArray(result.messages)) throw new Error("Invalid group message response");
+    const resultRoomId = result.room_id ?? result.roomId;
+    if (resultRoomId !== this.roomId ||
+      (result.room_id !== undefined && result.roomId !== undefined && result.room_id !== result.roomId)) {
+      throw new Error("Group message response belongs to a different Rub Minds room");
+    }
+    if (result.messages.some(message => message && typeof message === "object" &&
+      message.room_id !== undefined && message.room_id !== this.roomId)) {
+      throw new Error("Cross-room message encountered in group message response");
+    }
+    let marked = 0;
+    for (const message of result.messages) {
+      if (!message || typeof message.id !== "string" || message.id.length < 1 || message.id.length > 200) continue;
+      if (this.seen.has(message.id)) continue;
+      if (this.seen.size >= this.maxSeenMessages) {
+        return { status: "seen_budget_reached", marked,
+          reason: "Startup history exceeds the seen-message budget; review session state before processing." };
+      }
+      this.seen.add(message.id);
+      marked++;
+    }
+    return { status: "primed", marked };
+  }
+
   async run({ approved = false, signal } = {}) {
     if (!approved) throw new Error("Explicit approval required");
     if (this.running) throw new Error("Bridge already running");
     this.running = true;
     try {
+      const baseline = await this.#primeSeenMessages();
+      if (baseline.status === "seen_budget_reached") return baseline;
       while (this.running && !signal?.aborted && this.replies < this.maxReplies) {
         const outcome = await this.step({ approved, remainingReplies: this.maxReplies - this.replies });
         if (outcome.status === "browser_closed" || outcome.status === "limit_reached" || outcome.status === "seen_budget_reached" || outcome.status === "send_outcome_ambiguous" || outcome.status === "message_too_large") break;
