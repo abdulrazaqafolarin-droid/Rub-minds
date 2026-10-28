@@ -157,6 +157,18 @@ test("an ambiguous group-send failure does not re-run the provider or invite dup
   assert.equal(sent.length, 1, "the simulated accepted reply must not be duplicated");
 });
 
+test("the polling loop stops immediately on ambiguous reply delivery", async () => {
+  const { bridge, calls } = makeBridge({
+    maxReplies: 5,
+    messages: [{ id: "ambiguous-loop", body: "only once", sender_kind: "human" }],
+  });
+  bridge.sendMessage = async () => { throw new Error("response may already have committed"); };
+  await bridge.run({ approved: true });
+  assert.equal(bridge.running, false);
+  assert.equal(calls.length, 1, "ambiguous delivery must stop the loop before provider re-execution");
+  assert.equal(bridge.seen.has("ambiguous-loop"), true);
+});
+
 test("retries a message after a transient provider failure", async () => {
   const { bridge, sent } = makeBridge({ messages: [{ id: "retry-me", body: "continue", sender_kind: "human" }] });
   let attempts = 0;
