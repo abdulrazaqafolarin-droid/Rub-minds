@@ -3,14 +3,14 @@ import assert from "node:assert/strict";
 import { BrowserHostRuntime } from "./browser-host-runtime.mjs";
 
 function fakePage({url="https://chatgpt.com/c/test",title="Research thread",selection=null,closed=false}={}) {
- const handlers={}; let input="", pageUrl=url, bindingMarker=null, nodeId=1, markerNodeId=null, disposedHandles=0, selectedElementNodeId=null, selectionSerial=100;
+ const handlers={}; let input="", pageUrl=url, bindingMarker=null, nodeId=1, markerNodeId=null, disposedHandles=0, selectedElementNodeId=null, selectionSerial=100, activeAttemptId=null;
  const makeHandle = capturedNodeId => ({
   nodeId:capturedNodeId,
   getAttribute:async name=>name==="data-rm-backroom-binding"&&markerNodeId===capturedNodeId?bindingMarker:null,
   evaluate:async(fn,arg)=>{
    const code=String(fn);
    if(code.includes("node === window.__RM_BACKROOM_SELECTED_ELEMENT_V1__")&&code.includes("expected.selectionId")){
-    return capturedNodeId===selectedElementNodeId&&selection?.selectionId===arg?.selectionId&&
+    return capturedNodeId===selectedElementNodeId&&selection?.attemptId===arg?.attemptId&&selection?.selectionId===arg?.selectionId&&
       markerNodeId===capturedNodeId&&bindingMarker===arg?.marker;
    }
    if(code.includes("document.querySelectorAll")&&code.includes("matches[0] === node")){
@@ -35,8 +35,12 @@ function fakePage({url="https://chatgpt.com/c/test",title="Research thread",sele
     if(nodeId===capturedNodeId&&markerNodeId===capturedNodeId&&bindingMarker===arg)bindingMarker=null;
     return true;
    }
-   if(code.includes("RM_BACKROOM_SELECTION_V1")&&selection?.selectionId===arg){
-    selection=null;selectedElementNodeId=null;return true;
+   if(code.includes("RM_BACKROOM_SELECTION_V1")){
+    const expectedAttempt=arg&&typeof arg==="object"?arg.attemptId:null;
+    const expectedSelection=arg&&typeof arg==="object"?arg.selectionId:arg;
+    if(selection?.selectionId===expectedSelection&&(!expectedAttempt||selection?.attemptId===expectedAttempt)){
+      selection=null;selectedElementNodeId=null;activeAttemptId=null;return true;
+    }
    }
    return true;
   },
@@ -74,24 +78,33 @@ function fakePage({url="https://chatgpt.com/c/test",title="Research thread",sele
  return {
   handlers,isClosed:()=>closed,url:()=>pageUrl,title:async()=>title,on:(event,fn)=>{handlers[event]=fn},
   goto:async value=>{pageUrl=value},locator,
-  evaluate:async fn=>{
+  evaluate:async(fn,arg)=>{
+   const code=String(fn);
    if(typeof fn==="function" && fn.name==="installSelectionOverlay") {
-    selection=null;selectedElementNodeId=null;return {state:"pending"};
+    activeAttemptId=arg;selection={state:"pending",attemptId:arg};selectedElementNodeId=null;return {state:"pending"};
    }
-   if(selection && fn.toString().includes("RM_BACKROOM_SELECTION_V1"))return selection;
-   if(fn.toString().includes("RM_BACKROOM_SELECTION_V1"))return null;
+   if(code.includes("ACTIVE_SELECTION_ATTEMPT_V1__")&&code.includes("expectedAttemptId")){
+    if(selection?.attemptId!==arg)return false;
+    selection=null;selectedElementNodeId=null;
+    if(activeAttemptId===arg)activeAttemptId=null;
+    return true;
+   }
+   if(code.includes("current?.attemptId === expectedAttemptId"))return selection?.attemptId===arg?selection:null;
+   if(selection && code.includes("RM_BACKROOM_SELECTION_V1"))return selection;
+   if(code.includes("RM_BACKROOM_SELECTION_V1"))return null;
    return null;
   },
-  evaluateHandle:async(fn,expectedSelectionId)=>{
+  evaluateHandle:async(fn,expected)=>{
    const code=String(fn);
-   const valid=code.includes("RM_BACKROOM_SELECTED_ELEMENT_V1__")&&selection?.state==="selected"&&selection.selectionId===expectedSelectionId;
+   const valid=code.includes("RM_BACKROOM_SELECTED_ELEMENT_V1__")&&selection?.state==="selected"&&selection.attemptId===expected?.attemptId&&selection.selectionId===expected?.selectionId;
    const handle=valid?makeHandle(selectedElementNodeId):null;
    return {asElement:()=>handle,dispose:async()=>{if(!handle)disposedHandles++;}};
   },
-  setSelection:v=>{const stamp=++selectionSerial;selection={...v,selectedAt:v.selectedAt??stamp,selectionId:v.selectionId??("aaaaaaaa-bbbb-4ccc-8ddd-"+String(stamp).padStart(12,"0"))};selectedElementNodeId=nodeId;},
+  setSelection:v=>{const stamp=++selectionSerial;selection={...v,attemptId:v.attemptId??activeAttemptId,selectedAt:v.selectedAt??stamp,selectionId:v.selectionId??("aaaaaaaa-bbbb-4ccc-8ddd-"+String(stamp).padStart(12,"0"))};selectedElementNodeId=nodeId;},
   value:()=>input,setValue:v=>{input=v},setUrl:v=>pageUrl=v,
   replaceNode:({preserveMarker=false}={})=>{nodeId++;if(!preserveMarker){bindingMarker=null;markerNodeId=null;}else markerNodeId=nodeId;},
   setBindingMarker:v=>{bindingMarker=v;markerNodeId=v?nodeId:null},bindingMarker:()=>bindingMarker,disposedHandles:()=>disposedHandles,
+  selectionState:()=>selection,activeSelectionAttempt:()=>activeAttemptId,selectedElementNodeId:()=>selectedElementNodeId,
   close:()=>{closed=true;handlers.close?.()},
  };
 }
@@ -207,6 +220,40 @@ test("target is invalidated when the SPA changes its query or hash conversation 
  p.setUrl("https://chatgpt.com/c/one?thread=two");
  assert.equal((await runtime.listTargets()).length,0);
  await assert.rejects(()=>runtime.draft(target.id,"stale",{approved:true,roomId:"room-1"}),/target unavailable/i);
+ await runtime.stop();
+});
+
+test("selection attempt nonce prevents stale selected-element reuse after a new attempt",async()=>{
+ const p=fakePage(),runtime=factory(fakeContext([p]));await runtime.start();
+ const [page]=await runtime.listPages();
+ await runtime.startSelection(page.pageId,"room-1");
+ const firstAttempt=p.activeSelectionAttempt();
+ p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]'});
+ await runtime.startSelection(page.pageId,"room-1");
+ const secondAttempt=p.activeSelectionAttempt();
+ assert.notEqual(firstAttempt,secondAttempt);
+ p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]',attemptId:firstAttempt});
+ const stale=await runtime.getSelection(page.pageId);
+ assert.equal(stale.state,"cancelled");
+ await assert.rejects(()=>runtime.registerSelectedTarget(page.pageId,"room-1"),/Select one input/);
+ assert.equal((await runtime.listTargets()).length,0);
+ await runtime.stop();
+});
+
+test("a route-changed selection clears its retained element reference",async()=>{
+ const p=fakePage({url:"https://chatgpt.com/c/one?thread=one"}),runtime=factory(fakeContext([p]));await runtime.start();
+ const [page]=await runtime.listPages();
+ await runtime.startSelection(page.pageId,"room-1");
+ p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]'});
+ const attempt=p.activeSelectionAttempt();
+ p.setUrl("https://chatgpt.com/c/one?thread=two");
+ const result=await runtime.getSelection(page.pageId);
+ assert.equal(result.state,"cancelled");
+ assert.equal(p.selectionState(),null);
+ assert.equal(p.selectedElementNodeId(),null);
+ assert.equal(p.activeSelectionAttempt(),null);
+ assert.equal((await runtime.getSelection(page.pageId)).state,"unavailable");
+ assert.ok(attempt);
  await runtime.stop();
 });
 
