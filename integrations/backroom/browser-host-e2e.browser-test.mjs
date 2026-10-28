@@ -98,6 +98,51 @@ test("real local host -> Playwright browser overlay -> group-scoped target -> ve
    body:{targetId:registered.body.id,roomId:"22345678-1234-4234-9234-123456789014",text:"cross-group",approved:true}});
   assert.notEqual(crossRoom.response.status,200);
   assert.equal(await page.locator("#prompt").inputValue(),exactText);
+  // A webpage can copy a public DOM attribute to another composer. The
+  // host must confirm marker ownership against the exact selected ElementHandle.
+  const originalMarker=await page.locator("#prompt").getAttribute("data-rm-backroom-binding");
+  assert.ok(originalMarker,"the first target should own a DOM binding marker");
+  await page.evaluate(() => {
+   const original=document.querySelector("#prompt");
+   const clone=original.cloneNode(true);
+   clone.id="prompt-copy";
+   clone.setAttribute("aria-label","Alternate prompt");
+   clone.value="";
+   original.parentElement.append(clone);
+  });
+  assert.equal(await page.locator("#prompt-copy").getAttribute("data-rm-backroom-binding"),originalMarker,
+   "fixture deliberately copies the original marker onto another writable input");
+  const roomTwo="22345678-1234-4234-9234-123456789014";
+  const selectCopy=await requestJson(hostBase,fixture.origin,"/v1/browser/select",{
+   method:"POST",token,body:{pageId,roomId:roomTwo}
+  });
+  assert.equal(selectCopy.response.status,200);
+  const cloneBox=await page.locator("#prompt-copy").boundingBox();
+  assert.ok(cloneBox,"copied composer should be visible");
+  await page.mouse.move(cloneBox.x-8,cloneBox.y-8);
+  await page.mouse.down();
+  await page.mouse.move(cloneBox.x+cloneBox.width+8,cloneBox.y+cloneBox.height+8,{steps:6});
+  await page.mouse.up();
+  const selectedCopy=await requestJson(hostBase,fixture.origin,"/v1/browser/selection/"+pageId,{token});
+  assert.equal(selectedCopy.body.state,"selected");
+  assert.equal(selectedCopy.body.ariaLabel,"Alternate prompt");
+  const registeredCopy=await requestJson(hostBase,fixture.origin,"/v1/browser/targets",{
+   method:"POST",token,body:{pageId,roomId:roomTwo}
+  });
+  assert.equal(registeredCopy.response.status,201);
+  assert.notEqual(registeredCopy.body.id,registered.body.id);
+  const replacementMarker=await page.locator("#prompt-copy").getAttribute("data-rm-backroom-binding");
+  assert.ok(replacementMarker);
+  assert.notEqual(replacementMarker,originalMarker,"a copied marker cannot claim the original target's identity");
+  assert.equal(await page.locator("#prompt").getAttribute("data-rm-backroom-binding"),originalMarker,
+   "the original target marker should remain attached to its original node");
+  const roomTwoDraft=await requestJson(hostBase,fixture.origin,"/v1/browser/draft",{method:"POST",token,
+   body:{targetId:registeredCopy.body.id,roomId:roomTwo,text:"Independent room two draft",approved:true}});
+  assert.equal(roomTwoDraft.response.status,200);
+  assert.equal(roomTwoDraft.body.submitted,false);
+  assert.equal(await page.locator("#prompt-copy").inputValue(),"Independent room two draft");
+  assert.equal(await page.locator("#prompt").inputValue(),exactText);
+  assert.equal(await page.locator("#sent-count").textContent(),"0","copied-marker test must never click Send");
   const unpaired=await requestJson(hostBase,fixture.origin,"/v1/unpair",{method:"POST",token});
   assert.equal(unpaired.response.status,200);
   const denied=await requestJson(hostBase,fixture.origin,"/v1/browser/pages",{token});
