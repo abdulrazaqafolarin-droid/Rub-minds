@@ -67,3 +67,19 @@ This is a development integration test for the browser adapter only. It does not
 ### SPA session identity check
 
 Browser targets now bind to the exact origin, path, query string and hash at registration. The runtime prunes the registered locator if a tab changes route or closes. This prevents a locator selected for one SPA conversation from silently being reused after an in-place navigation to another session. The target must be selected again for the new conversation.
+
+
+## Local host setup checklist
+
+1. Use a computer with Node.js 20+ (the project is validated using Node 22) and the repository dependencies installed with the development dependencies included.
+2. Run `npx playwright install chromium` once if the managed Chromium browser is missing.
+3. Start `npm run backroom:host` on that same computer. The host listens on `127.0.0.1` only, prints a one-time pairing code and shows the exact allowed website origins.
+4. Open the Rub Minds Backroom page in a browser on that same computer. The host URL must stay `http://127.0.0.1:43781` unless a different local port was configured.
+5. Pair the host, launch Managed Browser, open ChatGPT/Claude, and log into your own account yourself. Select one composer by dragging around it. Select a group message or draft text manually and confirm insertion.
+6. Verify the text is only a draft and not sent. The browser target is tied to that exact page route and Rub Minds room; any route/group change requires a new selection.
+
+Do not start this local host on a shared, public or production server. It is a per-user local process, not a hosted worker. A phone opening Backroom on the hosted website cannot control a laptop's `127.0.0.1`; the host and Backroom web page have to run on the same device. Native phone control is not implemented by this browser adapter.
+
+## Data boundary
+
+The browser profile is a separate local Playwright profile and is not copied from Chrome/Edge/Firefox or the ChatGPT/Claude native apps. Cookies and conversation state remain in that profile. Backroom lists only tab title and site for its browser inventory; it does not scrape conversation content. Text is supplied by the user or selected from group messages only when the user chooses it in the UI. The host stores target selector, route fingerprint, page ID, host ID and group ID in process memory only. The only local profile directory is `~/.rub-minds/backroom/browser-profile`.
