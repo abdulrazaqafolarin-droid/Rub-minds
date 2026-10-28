@@ -116,7 +116,7 @@ test("target is invalidated when the SPA changes its query or hash conversation 
  await runtime.startSelection(page.pageId,"room-1");
  p.setSelection({state:"selected",selector:"[role=textbox]",tagName:"textarea"});
  const target=await runtime.registerSelectedTarget(page.pageId,"room-1");
- assert.equal(runtime.listTargets().length,1);
+ assert.equal((await runtime.listTargets()).length,1);
  p.setUrl("https://chatgpt.com/c/one?thread=two");
  assert.equal((await runtime.listTargets()).length,0);
  await assert.rejects(()=>runtime.draft(target.id,"stale",{approved:true,roomId:"room-1"}),/target unavailable/i);
