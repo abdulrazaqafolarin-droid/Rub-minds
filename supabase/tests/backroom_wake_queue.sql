@@ -23,7 +23,8 @@ begin
     (repeat('c',64),'ci-ciphertext-c',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
     (repeat('d',64),'ci-ciphertext-d',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
     (repeat('e',64),'ci-ciphertext-e',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
-    (repeat('f',64),'ci-ciphertext-f',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',pg_catalog.clock_timestamp());
+    (repeat('f',64),'ci-ciphertext-f',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',pg_catalog.clock_timestamp()),
+    (repeat('6',64),'ci-ciphertext-6',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
 
   if not (select relrowsecurity from pg_catalog.pg_class where oid='public.backroom_wake_jobs'::regclass) then
     raise exception 'Backroom wake jobs must have RLS enabled';
@@ -117,6 +118,16 @@ begin
   if not public.ack_backroom_wake_job(v_claim_retry.out_job_id,'host-test',repeat('c',64),v_claim_retry.out_lease_token,'ignored') then
     raise exception 'A valid ignored outcome should acknowledge the event cursor';
   end if;
+
+  -- Revocation between claim and acknowledgement invalidates the outstanding lease.
+  v_retry_job := public.enqueue_backroom_wake_job(
+    repeat('6',64),v_owner,v_room,v_participant,'host-test','space-1','session-6',repeat('6',64),
+    'binding-6','target-6','fingerprint-6',1,'event-6','@RMconnects'||chr(10)||'Event: event-6',3600);
+  select * into v_claim_retry from public.claim_backroom_wake_jobs('host-test',repeat('6',64),1,30) limit 1;
+  if not found then raise exception 'Expected the revocation-test lease to be claimed'; end if;
+  update public.rub_minds_mcp_sessions set terminated_at=pg_catalog.clock_timestamp() where session_digest=repeat('6',64);
+  v_ok := public.ack_backroom_wake_job(v_claim_retry.out_job_id,'host-test',repeat('6',64),v_claim_retry.out_lease_token,'acknowledged');
+  if v_ok then raise exception 'Revoked MCP sessions must not acknowledge outstanding leases'; end if;
 
   v_cancel_job := public.enqueue_backroom_wake_job(
     repeat('3',64),v_owner,v_room,v_participant,'host-test','space-1','session-3',repeat('d',64),
