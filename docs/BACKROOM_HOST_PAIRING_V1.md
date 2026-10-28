@@ -4,7 +4,7 @@
 - A Node.js loopback-only control plane in `scripts/backroom-host-server.mjs`, runnable with `npm run backroom:host` via `scripts/backroom-host.mjs`.
 - Exact-origin browser allowlist. Configure additional preview origins with `BACKROOM_ALLOWED_ORIGINS=https://rub-minds.vercel.app,https://your-exact-preview-host.example`; never use wildcards.
 - One-time 128-bit pairing code printed once in the local terminal, 10-minute expiry and attempt limit. Successful pairing issues a random 256-bit session bearer, stores only its SHA-256 digest in host memory and binds it to the exact web origin.
-- Loopback-only bind, Host-header checks, JSON size limit, no-store responses, CORS preflight and private-network preflight support.
+- Loopback-only bind, Host-header checks, JSON size limit, no-store responses, strict CORS preflight support for supported browser Local Network Access.
 - Authenticated host status and explicit unpair. Status deliberately states that app execution capabilities are false until platform drivers are installed.
 - Node HTTP integration tests for pairing, origin binding, replay, revocation, CORS, expiry and safe capability reporting.
 
@@ -21,4 +21,9 @@ This local host does not listen on a LAN address, does not run arbitrary shell c
 - The GitHub Actions runner currently fails before any job steps run, so native Node/TypeScript CI is not evidence yet.
 - Pairing/session state is in memory; restarting the host invalidates the session.
 - Status endpoint advertises no execution capability. Current native and browser driver modules remain disconnected from the server until the next milestone.
-- Browser private-network access behavior varies by browser version and user settings. The interface should tell the user to confirm local network permission if a browser blocks the request.
+- Current Chromium-based browsers are moving to Local Network Access permission prompts. This host intentionally relies on exact-origin standard CORS and does not rely on the deprecated Access-Control-Allow-Private-Network preflight header. Browser support varies; the user must allow loopback/local-network access when prompted. Safari/WebKit behavior differs.
+
+
+## Current browser policy reference
+
+The official Chrome guidance and MDN explain that Local Network Access permissions govern browser requests to loopback/local addresses and that deprecated Private Network Access preflight headers should not be the primary mechanism. See [Chrome Local Network Access](https://developer.chrome.com/blog/local-network-access?hl=en) and [MDN Local Network Access](https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Local_network_access).

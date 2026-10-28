@@ -91,9 +91,6 @@ export function createBackroomHostServer({
       "Access-Control-Allow-Headers": "Authorization, Content-Type",
       "Access-Control-Max-Age": "300",
     };
-    if (request.headers["access-control-request-private-network"] === "true") {
-      cors["Access-Control-Allow-Private-Network"] = "true";
-    }
     if (request.method === "OPTIONS") {
       response.writeHead(204, { ...noCache, ...cors });
       response.end();

@@ -41,11 +41,18 @@ test("bearer token is bound to exact origin and revocation takes effect",async()
   assert.equal((await fetch(base+"/v1/host",{headers:{Origin:origin,Authorization:"Bearer "+c.sessionToken}})).status,401);
  });
 });
-test("CORS preflight allows private-network header only for approved origin",async()=>{
- await withHost(async({base,origin})=>{
-  const good=await fetch(base+"/v1/pair",{method:"OPTIONS",headers:{Origin:origin,"Access-Control-Request-Method":"POST","Access-Control-Request-Headers":"content-type","Access-Control-Request-Private-Network":"true"}});
-  assert.equal(good.status,204);assert.equal(good.headers.get("access-control-allow-origin"),origin);assert.equal(good.headers.get("access-control-allow-private-network"),"true");
-  const bad=await fetch(base+"/v1/pair",{method:"OPTIONS",headers:{Origin:"https://evil.test"}});
+test("CORS preflight is exact-origin and does not rely on deprecated PNA headers", async () => {
+ await withHost(async ({base,origin}) => {
+  const good=await fetch(base+"/v1/host", {method:"OPTIONS", headers:{
+    Origin:origin, "Access-Control-Request-Method":"GET",
+    "Access-Control-Request-Headers":"authorization,content-type"
+  }});
+  assert.equal(good.status,204);
+  assert.equal(good.headers.get("access-control-allow-origin"),origin);
+  assert.match(good.headers.get("access-control-allow-methods") || "",/GET/);
+  assert.equal(good.headers.get("access-control-allow-headers"),"Authorization, Content-Type");
+  assert.equal(good.headers.get("access-control-allow-private-network"),null);
+  const bad=await fetch(base+"/v1/host",{method:"OPTIONS",headers:{Origin:"https://evil.test"}});
   assert.equal(bad.status,403);
  });
 });
