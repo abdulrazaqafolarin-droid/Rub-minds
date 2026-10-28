@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { validateSessionMemoryDocument } from "../../../integrations/mcp/protocol.mjs";
 
 const databaseUrl = Deno.env.get("SUPABASE_URL");
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -11,6 +12,7 @@ const allowedOrigins = new Set([
   "http://127.0.0.1:5173",
 ]);
 const MAX_DOCUMENT_BYTES = 1024 * 1024;
+const MAX_REQUEST_BYTES = MAX_DOCUMENT_BYTES * 6 + 65536;
 
 function headersFor(origin: string | null) {
   const headers: Record<string, string> = {
@@ -40,22 +42,10 @@ async function sha256(value: string) {
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
 }
 function validateDocument(value: unknown): { document: Record<string, unknown>; bytes: number } | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (!validateSessionMemoryDocument(value)) return null;
   const document = value as Record<string, unknown>;
-  const serialized = stableStringify(document);
-  const bytes = new TextEncoder().encode(serialized).byteLength;
-  if (bytes > MAX_DOCUMENT_BYTES) return null;
-  if (document.schema !== "rub-minds.session-memory" || document.version !== 1) return null;
-  if (typeof document.summary !== "string" || document.summary.length > 20000) return null;
-  if (typeof document.current_goal !== "string" || document.current_goal.length > 4000) return null;
-  if (!document.source || typeof document.source !== "object" || Array.isArray(document.source)) return null;
-  const source = document.source as Record<string, unknown>;
-  if (typeof source.platform !== "string" || source.platform.trim().length < 1 || source.platform.length > 80) return null;
-  if (document.sharing && typeof document.sharing === "object") {
-    const sharing = document.sharing as Record<string, unknown>;
-    if (sharing.raw_history_visibility !== undefined && sharing.raw_history_visibility !== "private") return null;
-  }
-  return { document, bytes };
+  const bytes = new TextEncoder().encode(stableStringify(document)).byteLength;
+  return bytes <= MAX_DOCUMENT_BYTES ? { document, bytes } : null;
 }
 
 Deno.serve(async (request: Request) => {
@@ -68,7 +58,7 @@ Deno.serve(async (request: Request) => {
   if (request.method !== "GET" && request.method !== "POST") {
     return reply(405, { error: "Method not allowed" }, headers);
   }
-  if (Number(request.headers.get("content-length") || "0") > MAX_DOCUMENT_BYTES + 65536) {
+  if (Number(request.headers.get("content-length") || "0") > MAX_REQUEST_BYTES) {
     return reply(413, { error: "Request too large" }, headers);
   }
 
@@ -107,8 +97,13 @@ Deno.serve(async (request: Request) => {
   }
 
   if (request.method === "POST") {
+    let rawBody: string;
+    try { rawBody = await request.text(); } catch { return reply(400, { error: "Invalid request body" }, headers); }
+    if (new TextEncoder().encode(rawBody).byteLength > MAX_REQUEST_BYTES) {
+      return reply(413, { error: "Request too large" }, headers);
+    }
     let input: unknown;
-    try { input = await request.json(); } catch { return reply(400, { error: "Invalid JSON" }, headers); }
+    try { input = JSON.parse(rawBody); } catch { return reply(400, { error: "Invalid JSON" }, headers); }
     if (!input || typeof input !== "object" || Array.isArray(input)) {
       return reply(400, { error: "Expected a JSON object" }, headers);
     }

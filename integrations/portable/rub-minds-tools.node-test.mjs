@@ -44,6 +44,36 @@ test("imports session document through the fixed Rub Minds memory endpoint", asy
   }
 });
 
+test("uploads a private conversation transcript without posting it to the group-message endpoint", async () => {
+  const originalFetch = globalThis.fetch;
+  let captured;
+  const transcriptDocument = {
+    ...document,
+    transcript_text: "User: Can you help me?\\nAssistant: Yes.",
+    transcript_complete: true,
+  };
+  globalThis.fetch = async (url, options) => {
+    captured = { url: String(url), options };
+    return new Response(JSON.stringify({ imported: true, visibility: "private" }), {
+      status: 201, headers: { "Content-Type": "application/json" },
+    });
+  };
+  try {
+    const tools = createRubMindsTools({ credential });
+    const result = await tools.importSessionDocument(transcriptDocument);
+    assert.deepEqual(result, { imported: true, visibility: "private" });
+    assert.equal(captured.url, "https://zucaeevlbwhcvjwbhwmq.supabase.co/functions/v1/session-memory");
+    const payload = JSON.parse(captured.options.body);
+    assert.equal(payload.operation, "import");
+    assert.equal(payload.document.transcript_text, transcriptDocument.transcript_text);
+    assert.equal(payload.document.transcript_complete, true);
+    assert.equal(payload.document.sharing.raw_history_visibility, "private");
+    assert.equal(captured.options.headers.Authorization, "Bearer " + credential);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("reads session memory using the same scoped credential and fixed endpoint", async () => {
   const originalFetch = globalThis.fetch;
   let captured;

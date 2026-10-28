@@ -19,6 +19,7 @@ import {
   validateProtocolVersionHeader,
   applyMcpCors,
   isJsonContentType,
+  SESSION_EXPORT_INSTRUCTIONS,
 } from "../../../integrations/mcp/protocol.mjs";
 
 const databaseUrl = Deno.env.get("SUPABASE_URL");
@@ -158,7 +159,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
         .select("id").eq("credential_digest", await sha256(existingCredential))
         .is("revoked_at", null).gt("expires_at", new Date().toISOString()).maybeSingle();
       if (activeConnectionError) throw new Error("Could not verify the existing AI participant session.");
-      if (activeConnection) return { joined: true, room_id: session.room_id, participant_id: session.participant_id, note: "This MCP session is already joined to an active group." };
+      if (activeConnection) return { joined: true, room_id: session.room_id, participant_id: session.participant_id, note: "This MCP session is already joined to an active group.", post_join_next_step: "Ask the session owner for consent unless already explicitly authorized. If consent is given, call prepare_session_export with confirm_export=true; otherwise do not capture. Never post raw session history to the group." };
       const { error: clearError } = await db.from("rub_minds_mcp_sessions").update({
         agent_credential_ciphertext: null, room_id: null, participant_id: null,
       }).eq("session_digest", session.session_digest as string)
@@ -243,7 +244,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
             concurrentBinding.participant_id === data.participant_id &&
             concurrentBinding.terminated_at === null &&
             Date.parse(concurrentBinding.expires_at) > Date.now()) {
-          return { joined: true, room_id: data.room_id, participant_id: data.participant_id, expires_at: concurrentBinding.expires_at, replayed: true };
+          return { joined: true, room_id: data.room_id, participant_id: data.participant_id, expires_at: concurrentBinding.expires_at, replayed: true, post_join_next_step: "If session capture has not been completed or declined, call prepare_session_export with confirm_export=true. It returns instructions for importing a private context document; never post raw session history to the group." };
         }
       } else {
         await db.from("agent_connections").update({ revoked_at: new Date().toISOString() })
@@ -258,7 +259,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       await db.from("rub_minds_mcp_sessions").delete().lt("terminated_at", new Date(now - TERMINATED_TOMBSTONE_HOURS * 60 * 60 * 1000).toISOString());
     }
     // Critical: never return data.agent_secret to the MCP client or model.
-    return { joined: true, room_id: data.room_id, participant_id: data.participant_id, expires_at: expiresAt };
+    return { joined: true, room_id: data.room_id, participant_id: data.participant_id, expires_at: expiresAt, post_join_next_step: "If session capture has not been completed or declined, call prepare_session_export with confirm_export=true. It returns instructions for importing a private context document; never post raw session history to the group." };
   }
 
   if (name === "leave_group") {
@@ -422,6 +423,15 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     .gt("expires_at", new Date().toISOString()).maybeSingle();
   if (connectionError || !connection) throw new Error("AI participant credential is invalid, expired, or revoked.");
   await invokeAgent(credential, "read");
+
+  if (name === "prepare_session_export") {
+    if (args.confirm_export !== true) throw new Error("Explicit confirmation is required before requesting session capture.");
+    return {
+      export_requested: true,
+      storage_visibility: "private to this AI participant",
+      instructions: SESSION_EXPORT_INSTRUCTIONS,
+    };
+  }
 
   if (name === "read_session_memory") {
     const { data: imports, error: importsError } = await db.from("room_session_imports")
