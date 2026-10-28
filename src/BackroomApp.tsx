@@ -178,6 +178,10 @@ export default function BackroomApp() {
   const room = rooms.find(r => r.id === roomId);
   useEffect(() => {
     // Never carry a selected source message or target across Rub Minds groups.
+    setSelectedBrowserTarget('');
+    setSelectedGroupMessageId('');
+    setBrowserDraftText('@RMConnects: this is a local Backroom draft test. Please acknowledge without sending anything.');
+    setBrowserNotice('');
     // Cancel a pending browser overlay server-side as well; otherwise a selection
     // begun for the previous group could finish after the user changes rooms.
     const pending = activeBrowserSelection.current;
@@ -191,10 +195,6 @@ export default function BackroomApp() {
       }
       setBrowserNotice('Input selection cancelled because the active group or host session changed.');
     }
-    setSelectedBrowserTarget('');
-    setSelectedGroupMessageId('');
-    setBrowserDraftText('@RMConnects: this is a local Backroom draft test. Please acknowledge without sending anything.');
-    setBrowserNotice('');
   }, [room?.id, hostToken]);
   useEffect(() => {
     if (!room?.id) { setGroupMessages([]); setSelectedGroupMessageId(''); return; }
