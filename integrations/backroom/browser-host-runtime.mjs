@@ -22,7 +22,8 @@ const isEditable = node => {
   if (("disabled" in node && node.disabled) || node.matches(":disabled")) return false;
   if ("readOnly" in node && node.readOnly) return false;
   if (node.getAttribute("aria-disabled") === "true" || node.getAttribute("aria-readonly") === "true") return false;
-  if (node instanceof HTMLInputElement && ["password","hidden","button","checkbox","radio","submit","reset","file","image","range","color"].includes(node.type)) return false;
+  // Backroom drafts natural-language prompts only, not structured form values.
+  if (node instanceof HTMLInputElement && !["text","search","url","tel","email"].includes(node.type)) return false;
   // A role=textbox is not necessarily writable; only native fields and truly
   // contenteditable nodes are eligible for registration.
   if (!(node instanceof HTMLInputElement) && !(node instanceof HTMLTextAreaElement) && !node.isContentEditable) return false;
