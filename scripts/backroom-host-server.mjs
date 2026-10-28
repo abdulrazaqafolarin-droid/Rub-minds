@@ -1,0 +1,188 @@
+import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
+import { HostPairingAuthority } from "../integrations/backroom/host-pairing.mjs";
+
+const DEFAULT_ORIGINS = [
+  "https://rub-minds.vercel.app",
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+];
+const MAX_BODY_BYTES = 16 * 1024;
+const PROTOCOL_VERSION = "1";
+const noCache = {
+  "Cache-Control": "no-store, max-age=0",
+  "Pragma": "no-cache",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
+};
+
+function parseOrigins(value) {
+  if (!value) return DEFAULT_ORIGINS;
+  const origins = value.split(",").map(value => value.trim()).filter(Boolean);
+  // Exact origins only. URLs, paths, wildcard domains and implicit substring matching are forbidden.
+  return origins;
+}
+function writeJson(response, status, body, corsHeaders = {}) {
+  response.writeHead(status, { ...noCache, ...corsHeaders, "Content-Type": "application/json; charset=utf-8" });
+  response.end(JSON.stringify(body));
+}
+async function readJson(request) {
+  const chunks = [];
+  let bytes = 0;
+  for await (const chunk of request) {
+    bytes += chunk.length;
+    if (bytes > MAX_BODY_BYTES) throw Object.assign(new Error("request_too_large"), { status: 413 });
+    chunks.push(chunk);
+  }
+  try {
+    const result = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error();
+    return result;
+  } catch {
+    throw Object.assign(new Error("invalid_json"), { status: 400 });
+  }
+}
+function validLoopbackHost(header, port) {
+  return header === `127.0.0.1:${port}` || header === `localhost:${port}` ||
+    (port === 80 && (header === "127.0.0.1" || header === "localhost"));
+}
+function bearer(request) {
+  const value = request.headers.authorization ?? "";
+  const match = /^Bearer ([a-f0-9]{64})$/i.exec(value);
+  return match?.[1] ?? null;
+}
+
+/**
+ * Creates a loopback-only local host control plane. Pairing is ephemeral and
+ * never enables native input on its own. Browser/desktop/Android drivers must be
+ * registered separately and declare their real capabilities.
+ */
+export function createBackroomHostServer({
+  port = 43781, host = "127.0.0.1", allowedOrigins = parseOrigins(process.env.BACKROOM_ALLOWED_ORIGINS),
+  pairingCode, hostId = randomUUID(), now = () => Date.now(),
+} = {}) {
+  if (host !== "127.0.0.1") throw new TypeError("Backroom host must bind to IPv4 loopback only");
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new RangeError("invalid port");
+  const authority = new HostPairingAuthority({ allowedOrigins, pairingCode, hostId, now });
+  let actualPort = port;
+  const server = createServer(async (request, response) => {
+    const requestOrigin = request.headers.origin;
+    const requestHost = request.headers.host ?? "";
+    if (!validLoopbackHost(requestHost, actualPort)) {
+      writeJson(response, 403, { error: "invalid_host_header" });
+      return;
+    }
+    if (!authority.canServeOrigin(requestOrigin)) {
+      writeJson(response, 403, { error: "origin_not_allowed" });
+      return;
+    }
+    const cors = {
+      "Access-Control-Allow-Origin": requestOrigin,
+      "Vary": "Origin",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type",
+      "Access-Control-Max-Age": "300",
+    };
+    if (request.headers["access-control-request-private-network"] === "true") {
+      cors["Access-Control-Allow-Private-Network"] = "true";
+    }
+    if (request.method === "OPTIONS") {
+      writeJson(response, 204, {}, cors);
+      return;
+    }
+    const url = new URL(request.url ?? "/", `http://127.0.0.1:${actualPort}`);
+    if (url.search || url.hash) {
+      writeJson(response, 400, { error: "query_not_supported" }, cors);
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/health") {
+      writeJson(response, 200, { status: "ok", protocolVersion: PROTOCOL_VERSION }, cors);
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/v1/pair") {
+      try {
+        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+          writeJson(response, 415, { error: "application_json_required" }, cors);
+          return;
+        }
+        const input = await readJson(request);
+        const paired = authority.pair({ origin: requestOrigin, pairingCode: input.pairingCode, clientLabel: input.clientLabel });
+        writeJson(response, 200, { hostId: paired.hostId, sessionToken: paired.token, expiresAt: paired.expiresAt,
+          clientLabel: paired.clientLabel, protocolVersion: PROTOCOL_VERSION }, cors);
+      } catch (error) {
+        const code = error?.message;
+        const status = error?.status ?? (code === "pairing_rate_limited" ? 429 :
+          code === "origin_not_allowed" ? 403 : 401);
+        writeJson(response, status, { error: status === 413 ? "request_too_large" : "pairing_failed" }, cors);
+      }
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/v1/host") {
+      const session = authority.authorize({ origin: requestOrigin, token: bearer(request) });
+      if (!session) { writeJson(response, 401, { error: "host_session_invalid" }, cors); return; }
+      writeJson(response, 200, {
+        hostId: session.hostId, label: session.clientLabel, expiresAt: session.expiresAt,
+        protocolVersion: PROTOCOL_VERSION, connected: true,
+        executionReady: false,
+        capabilities: { browserDraft: false, desktopAccessibility: false, androidAccessibility: false, terminal: false },
+        nextStep: "Install and authorize a platform adapter before interacting with applications.",
+      }, cors);
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/v1/unpair") {
+      const token = bearer(request);
+      if (!token || !authority.revoke({ origin: requestOrigin, token })) {
+        writeJson(response, 401, { error: "host_session_invalid" }, cors);
+        return;
+      }
+      writeJson(response, 200, { revoked: true }, cors);
+      return;
+    }
+    writeJson(response, 404, { error: "not_found" }, cors);
+  });
+  return {
+    server,
+    authority,
+    get pairingCode() { return authority.pairingCode; },
+    async start() {
+      await new Promise((resolve, reject) => {
+        const onError = error => { server.off("listening", onListening); reject(error); };
+        const onListening = () => { server.off("error", onError); resolve(); };
+        server.once("error", onError);
+        server.once("listening", onListening);
+        server.listen(port, host);
+      });
+      actualPort = server.address().port;
+      return Object.freeze({ host: "127.0.0.1", port: actualPort, hostId: authority.hostId });
+    },
+    close() {
+      if (!server.listening) return Promise.resolve();
+      return new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    },
+  };
+}
+
+if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+  const instance = createBackroomHostServer();
+  try {
+    const address = await instance.start();
+    process.stdout.write([
+      "",
+      "Rub Minds Backroom local host",
+      `Address: http://${address.host}:${address.port}`,
+      `Host ID: ${address.hostId}`,
+      `Allowed web origins: ${parseOrigins(process.env.BACKROOM_ALLOWED_ORIGINS).join(", ")}`,
+      "Pairing code (one use, expires in 10 minutes):",
+      instance.pairingCode,
+      "No app-control drivers are installed. Pairing exposes host status only.",
+      "Keep this terminal private. Stop host with Ctrl+C.",
+      "",
+    ].join("\n"));
+    const stop = async () => { await instance.close(); process.exitCode = 0; };
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+  } catch (error) {
+    process.stderr.write(`Backroom host failed to start: ${error.message}\n`);
+    process.exitCode = 1;
+  }
+}

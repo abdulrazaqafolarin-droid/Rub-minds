@@ -1,0 +1,58 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {createBackroomHostServer} from "../../scripts/backroom-host-server.mjs";
+
+async function withHost(fn, options={}) {
+  const host=createBackroomHostServer({port:0,allowedOrigins:["https://rub-minds.vercel.app","http://localhost:5173"],pairingCode:"ab".repeat(16),hostId:"host-test",...options});
+  const {port}=await host.start();
+  try { await fn({host,base:"http://127.0.0.1:"+port,origin:"https://rub-minds.vercel.app"}); }
+  finally { await host.close(); }
+}
+async function pair(base,origin,code="ab".repeat(16)) {
+ return fetch(base+"/v1/pair",{method:"POST",headers:{Origin:origin,"Content-Type":"application/json"},body:JSON.stringify({pairingCode:code,clientLabel:"Test browser"})});
+}
+test("host binds loopback and refuses wildcard origins",async()=>{
+ assert.throws(()=>createBackroomHostServer({host:"0.0.0.0",allowedOrigins:["https://rub-minds.vercel.app"]}),/loopback/);
+ assert.throws(()=>createBackroomHostServer({allowedOrigins:["*"]}),/exact/);
+});
+test("one-time pairing yields origin-bound scoped status and no execution capabilities",async()=>{
+ await withHost(async({base,origin})=>{
+  const result=await pair(base,origin);assert.equal(result.status,200);
+  const credentials=await result.json();assert.equal(credentials.hostId,"host-test");assert.match(credentials.sessionToken,/^[a-f0-9]{64}$/);
+  const info=await fetch(base+"/v1/host",{headers:{Origin:origin,Authorization:"Bearer "+credentials.sessionToken}});
+  assert.equal(info.status,200);const data=await info.json();assert.equal(data.connected,true);assert.equal(data.executionReady,false);
+  assert.equal(Object.values(data.capabilities).some(Boolean),false);
+  assert.equal((await pair(base,origin)).status,401);
+ });
+});
+test("pairing rejects wrong code, wrong origin and replays",async()=>{
+ await withHost(async({base,origin})=>{
+  assert.equal((await pair(base,origin,"cd".repeat(16))).status,401);
+  assert.equal((await pair(base,"http://evil.test")).status,403);
+  assert.equal((await pair(base,origin)).status,200);
+  assert.equal((await pair(base,origin)).status,401);
+ });
+});
+test("bearer token is bound to exact origin and revocation takes effect",async()=>{
+ await withHost(async({base,origin})=>{
+  const c=await (await pair(base,origin)).json();
+  assert.equal((await fetch(base+"/v1/host",{headers:{Origin:"http://localhost:5173",Authorization:"Bearer "+c.sessionToken}})).status,401);
+  assert.equal((await fetch(base+"/v1/unpair",{method:"POST",headers:{Origin:origin,Authorization:"Bearer "+c.sessionToken}})).status,200);
+  assert.equal((await fetch(base+"/v1/host",{headers:{Origin:origin,Authorization:"Bearer "+c.sessionToken}})).status,401);
+ });
+});
+test("CORS preflight allows private-network header only for approved origin",async()=>{
+ await withHost(async({base,origin})=>{
+  const good=await fetch(base+"/v1/pair",{method:"OPTIONS",headers:{Origin:origin,"Access-Control-Request-Method":"POST","Access-Control-Request-Headers":"content-type","Access-Control-Request-Private-Network":"true"}});
+  assert.equal(good.status,204);assert.equal(good.headers.get("access-control-allow-origin"),origin);assert.equal(good.headers.get("access-control-allow-private-network"),"true");
+  const bad=await fetch(base+"/v1/pair",{method:"OPTIONS",headers:{Origin:"https://evil.test"}});
+  assert.equal(bad.status,403);
+ });
+});
+test("expired pairing codes cannot be redeemed",async()=>{\n let now=1000;\n const host=createBackroomHostServer({port:0,allowedOrigins:["https://rub-minds.vercel.app"],pairingCode:"ab".repeat(16),now:()=>now,pairingTtlMs:1000});\n const {port}=await host.start();\n try{now=2000;assert.equal((await pair("http://127.0.0.1:"+port,"https://rub-minds.vercel.app")).status,401)}finally{await host.close()}\n});\ntest("health endpoint is no-store and query strings are rejected",async()=>{
+ await withHost(async({base,origin})=>{
+  const healthy=await fetch(base+"/health",{headers:{Origin:origin}});
+  assert.equal(healthy.status,200);assert.equal(healthy.headers.get("cache-control"),"no-store, max-age=0");
+  assert.equal((await fetch(base+"/health?token=oops",{headers:{Origin:origin}})).status,400);
+ });
+});
