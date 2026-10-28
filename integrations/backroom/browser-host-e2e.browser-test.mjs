@@ -280,6 +280,31 @@ test("real local host -> Playwright browser overlay -> group-scoped target -> ve
   assert.equal(await microtaskPage.locator("#microtask-race").inputValue(),"value appeared in focus microtask");
   await microtaskHandle.dispose();
 
+  // A focus microtask can also change the conversation route. The insertion
+  // task must recheck the URL after focus and before mutating the composer.
+  const focusRoutePage=await realContext.newPage();
+  await focusRoutePage.goto(fixture.origin+"/chat");
+  await focusRoutePage.evaluate(()=>{
+   const field=document.querySelector("#prompt");
+   field.addEventListener("focus",()=>queueMicrotask(()=>{
+    history.replaceState({}, "", "/another-conversation");
+   }),{once:true});
+  });
+  const focusRouteHandle=await focusRoutePage.locator("#prompt").elementHandle();
+  const focusRouteAdapter=new BrowserDraftAdapter({
+   page:focusRoutePage,origin:fixture.origin,path:"/chat",selector:"#prompt",
+   appId:fixture.origin,sessionId:"focus-route",identityFingerprint:"focus-route-conversation",
+   nodeHandle:focusRouteHandle,
+  });
+  await assert.rejects(()=>focusRouteAdapter.execute({
+   command:{operation:"draft",text:"must not cross a route changed on focus"},
+   target:{surface:"browser_tab",locatorKind:"dom",locatorValue:"#prompt",appId:fixture.origin,
+    sessionId:"focus-route",identityFingerprint:"focus-route-conversation"},
+  }),/conversation changed.*draft insertion/i);
+  assert.equal(new URL(focusRoutePage.url()).pathname,"/another-conversation");
+  assert.equal(await focusRoutePage.locator("#prompt").inputValue(),"");
+  await focusRouteHandle.dispose();
+
   // The focused node must remain the exact registered composer. Some SPA
   // frameworks replace a field synchronously when it receives focus.
   const swapPage=await realContext.newPage();
