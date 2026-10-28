@@ -81,3 +81,11 @@ No cookie harvesting, authentication bypass, covert accessibility control or sil
 - `integrations/backroom/target-registry.mjs`: this first universal surface contract.
 
 References to inspect before integrating third-party source: `google/artemis`, `trycua/cua`, uploaded TwinSpace `ARCHITECTURE.md` and `CHATGPT_BUNDLE.md`. Audit module-level licenses and deployment requirements before copying or vendoring anything. No third-party code has been copied in this slice.
+
+## Current pull request additions
+
+The branch now includes a responsive Backroom UI in `src/BackroomApp.tsx` and `src/backroom.css`. Authenticated members can select a group, create local space cards for the five interface types, switch spaces, and drag a rectangle across a clearly marked simulated preview. The group header links to `/?backroom=1&room=<id>`.
+
+Space layouts are local to the signed-in user and room. This is not an installed device host or native operating-system overlay. The dispatcher and target registry are implemented as independent modules and are not yet wired to UI execution. Real device control remains blocked pending host pairing, permissions, identity checks and platform adapters.
+
+Verification required before merge: `npm run test:backroom`, `npm run test:runtime`, `npm run build`, mobile and desktop visual checks, and a focused security review. A failed workflow without job steps does not count as an executed test.
