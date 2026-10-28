@@ -326,11 +326,11 @@ export class BrowserHostRuntime {
     const target = {
       id: randomUUID(), roomId, hostId: this.hostId,
       spaceId: "browser:" + pageId, sessionId: pageId,
-      appId: url.origin, identityFingerprint: url.origin + url.pathname + ":" + pageId,
+      appId: url.origin, identityFingerprint: url.origin + url.pathname + url.search + url.hash + ":" + pageId,
       surface: "browser_tab", locatorKind: "dom", locatorValue: selection.selector, revision: 1,
     };
     const adapter = new BrowserDraftAdapter({
-      page, origin: url.origin, path: url.pathname, selector: selection.selector,
+      page, origin: url.origin, path: url.pathname, search: url.search, hash: url.hash, selector: selection.selector,
       appId: target.appId, sessionId: pageId, identityFingerprint: target.identityFingerprint,
     });
     const guard = new LocalExecutionGuard({
@@ -347,6 +347,22 @@ export class BrowserHostRuntime {
     return { id: target.id, pageId, roomId: target.roomId, title, site: url.hostname, surface: "browser_tab", operations: ["draft"], submittedAutomatically: false };
   }
   listTargets() {
+    // Drop locators when the tab navigates to a different conversation, including
+    // query/hash-routed sessions. A saved selector is never rebound automatically.
+    for (const [targetId, binding] of this.#bindings) {
+      let current = null;
+      try {
+        if (!binding.page.isClosed()) current = safeSiteUrl(binding.page.url());
+      } catch {}
+      const fingerprint = current
+        ? current.origin + current.pathname + current.search + current.hash + ":" + binding.pageId
+        : "";
+      if (fingerprint !== binding.target.identityFingerprint) {
+        this.#bindings.delete(targetId);
+        this.#targets.delete(targetId);
+        try { this.registry.unregister(targetId, { roomId: binding.target.roomId, hostId: this.hostId }); } catch {}
+      }
+    }
     return [...this.#targets.values()].map(({ target, pageId, title, site }) => ({
       id: target.id, pageId, roomId: target.roomId, title, site, surface: target.surface, operations: ["draft"],
     }));

@@ -62,3 +62,8 @@ Use the **Open an AI website** field or the ChatGPT/Claude quick links. The loca
 `npm run test:backroom:browser` includes a real headless Chromium acceptance test over the local HTTP host, not only an adapter mock. It starts a controlled local chat page, pairs with the host API, launches a managed persistent Playwright context in a temporary profile, uses the actual drag-selection overlay, registers the selected input to one group, inserts and verifies a draft, asserts the Send counter remains zero, rejects a repeated write into an occupied composer, rejects cross-group target use, and confirms unpair revokes access. The test deletes its temporary profile on completion.
 
 This is a development integration test for the browser adapter only. It does not test ChatGPT/Claude production sites, native apps, OS accessibility or background participation. Requires an installed Playwright Chromium browser; use `npx playwright install chromium` before running it.
+
+
+### SPA session identity check
+
+Browser targets now bind to the exact origin, path, query string and hash at registration. The runtime prunes the registered locator if a tab changes route or closes. This prevents a locator selected for one SPA conversation from silently being reused after an in-place navigation to another session. The target must be selected again for the new conversation.

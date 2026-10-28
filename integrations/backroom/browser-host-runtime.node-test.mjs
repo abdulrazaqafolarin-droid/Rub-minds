@@ -86,3 +86,16 @@ test("managed browser opens a second tab instead of replacing existing work",asy
  assert.equal((await runtime.listPages()).length,2);
  await runtime.stop();
 });
+
+test("target is invalidated when the SPA changes its query or hash conversation identity",async()=>{
+ const p=fakePage({url:"https://chatgpt.com/c/one?thread=one"}),runtime=factory(fakeContext([p]));await runtime.start();
+ const [page]=await runtime.listPages();
+ await runtime.startSelection(page.pageId,"room-1");
+ p.setSelection({state:"selected",selector:"[role=textbox]",tagName:"textarea"});
+ const target=await runtime.registerSelectedTarget(page.pageId,"room-1");
+ assert.equal(runtime.listTargets().length,1);
+ p.setUrl("https://chatgpt.com/c/one?thread=two");
+ assert.equal(runtime.listTargets().length,0);
+ await assert.rejects(()=>runtime.draft(target.id,"stale",{approved:true,roomId:"room-1"}),/target unavailable/i);
+ await runtime.stop();
+});

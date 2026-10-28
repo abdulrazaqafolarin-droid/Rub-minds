@@ -3,16 +3,16 @@
  * No automatic submit, credential access or external browser creation.
  */
 export class BrowserDraftAdapter {
-  constructor({ page, origin, path, selector, appId, sessionId, identityFingerprint }) {
+  constructor({ page, origin, path, search = "", hash = "", selector, appId, sessionId, identityFingerprint }) {
     if (!page || typeof page.url !== "function" || typeof page.locator !== "function") throw new TypeError("Playwright page required");
     if ([origin,path,selector,appId,sessionId,identityFingerprint].some(x=>typeof x!=="string"||!x)) throw new TypeError("binding incomplete");
     if (!["http:", "https:"].includes(new URL(origin).protocol) || new URL(origin).origin!==origin || !path.startsWith("/")) throw new TypeError("invalid URL binding");
-    Object.assign(this, { page, origin, path, selector, appId, sessionId, identityFingerprint });
+    Object.assign(this, { page, origin, path, search, hash, selector, appId, sessionId, identityFingerprint });
   }
   async #field() {
     if (this.page.isClosed()) throw new Error("page closed");
     const url = new URL(this.page.url());
-    if (url.origin !== this.origin || url.pathname !== this.path) throw new Error("conversation changed");
+    if (url.origin !== this.origin || url.pathname !== this.path || url.search !== this.search || url.hash !== this.hash) throw new Error("conversation changed");
     const field = this.page.locator(this.selector);
     if (await field.count() !== 1 || !(await field.isVisible()) || !(await field.isEnabled())) throw new Error("composer unavailable");
     return field;
