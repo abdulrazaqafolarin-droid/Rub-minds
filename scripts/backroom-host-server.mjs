@@ -82,6 +82,7 @@ export function createBackroomHostServer({
   const authority = new HostPairingAuthority({ allowedOrigins, pairingCode, hostId, now, pairingTtlMs, sessionTtlMs, maxPairAttempts });
   const browser = browserRuntime ?? disabledBrowserRuntime();
   let actualPort = port;
+  let killSwitchTripped = false;
   const server = createServer(async (request, response) => {
     if (typeof request.url !== "string" || !request.url.startsWith("/") || request.url.startsWith("//")) {
       writeJson(response, 400, { error: "invalid_request_target" });
@@ -115,7 +116,53 @@ export function createBackroomHostServer({
       return;
     }
     if (request.method === "GET" && url.pathname === "/health") {
-      writeJson(response, 200, { status: "ok", protocolVersion: PROTOCOL_VERSION }, cors);
+      writeJson(response, killSwitchTripped ? 423 : 200, {
+        status: killSwitchTripped ? "stopped" : "ok",
+        protocolVersion: PROTOCOL_VERSION,
+        restartRequired: killSwitchTripped,
+      }, cors);
+      return;
+    }
+    if (url.pathname === "/v1/host/stop") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed" }, cors);
+        return;
+      }
+      if (killSwitchTripped) {
+        writeJson(response, 423, { error: "host_stopped", hint: "Emergency stop is latched. Restart the local host process to pair again." }, cors);
+        return;
+      }
+      const token = bearer(request);
+      if (!token || !authority.authorize({ origin: requestOrigin, token })) {
+        writeJson(response, 401, { error: "host_session_invalid" }, cors);
+        return;
+      }
+      // Latch the stop before awaiting the browser close. All new operations
+      // fail closed while in-flight Playwright operations are interrupted by
+      // context closure. Re-pairing requires restarting the host process.
+      killSwitchTripped = true;
+      const sessionsRevoked = authority.revokeAll({ origin: requestOrigin, token });
+      let closeError = null;
+      try { await browser.stop(); } catch { closeError = true; }
+      const browserClosed = browser.status()?.running !== true;
+      const stopped = sessionsRevoked && browserClosed && !closeError;
+      writeJson(response, stopped ? 200 : 503, {
+        stopped: true,
+        browserClosed,
+        sessionsRevoked,
+        restartRequired: true,
+        error: stopped ? undefined : "emergency_stop_incomplete",
+        hint: stopped
+          ? "The managed browser is closed and all paired sessions are revoked. Restart the local host process before pairing again."
+          : "Emergency stop is latched and pairing is blocked, but browser closure could not be fully verified. Stop the local host process with Ctrl+C and close any remaining browser windows.",
+      }, cors);
+      return;
+    }
+    if (killSwitchTripped) {
+      writeJson(response, 423, {
+        error: "host_stopped",
+        hint: "Emergency stop is latched. Restart the local host process to pair again.",
+      }, cors);
       return;
     }
     if (request.method === "POST" && url.pathname === "/v1/pair") {
@@ -296,6 +343,7 @@ export function createBackroomHostServer({
     server,
     authority,
     get pairingCode() { return authority.pairingCode; },
+    get killSwitchTripped() { return killSwitchTripped; },
     async start() {
       await new Promise((resolve, reject) => {
         const onError = error => { server.off("listening", onListening); reject(error); };
