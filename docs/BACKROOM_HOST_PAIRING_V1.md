@@ -83,3 +83,8 @@ Do not start this local host on a shared, public or production server. It is a p
 ## Data boundary
 
 The browser profile is a separate local Playwright profile and is not copied from Chrome/Edge/Firefox or the ChatGPT/Claude native apps. Cookies and conversation state remain in that profile. Backroom lists only tab title and site for its browser inventory; it does not scrape conversation content. Text is supplied by the user or selected from group messages only when the user chooses it in the UI. The host stores target selector, route fingerprint, page ID, host ID and group ID in process memory only. The only local profile directory is `~/.rub-minds/backroom/browser-profile`.
+
+
+### DOM node identity and target cleanup
+
+Each registered input receives a temporary `data-rm-backroom-binding` marker in the managed page. The saved locator requires both the original accessible selector and this marker, so if the application replaces its composer DOM node while keeping the same route and label, the old target fails closed instead of binding to the replacement. Target inventory revalidates the marker and route and prunes stale entries. Removing a target clears the marker only when no other room-bound target still references the same input; this leaves any text already in the application untouched.

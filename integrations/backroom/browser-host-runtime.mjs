@@ -165,7 +165,6 @@ export class BrowserHostRuntime {
   #targets = new Map();
   #bindings = new Map();
   #selectionRooms = new Map();
-  #browserModule = null;
   constructor({ hostId, profileDir = join(homedir(), ".rub-minds", "backroom", "browser-profile"),
     chromiumProvider = async () => (await import("playwright")).chromium,
     headless = false, launchOptions = {} } = {}) {
@@ -324,8 +323,23 @@ export class BrowserHostRuntime {
     }
     return output;
   }
+  async #clearBindingMarker(binding) {
+    if (!binding?.marker) return;
+    const stillUsed = [...this.#bindings.values()].some(other =>
+      other.target.id !== binding.target.id && other.pageId === binding.pageId && other.marker === binding.marker);
+    if (stillUsed || binding.page.isClosed()) return;
+    try {
+      const markerSelector = '[data-rm-backroom-binding="' + binding.marker + '"]';
+      const marker = binding.page.locator(markerSelector);
+      if (await marker.count() === 1 &&
+        await marker.getAttribute("data-rm-backroom-binding") === binding.marker) {
+        await marker.evaluate(node => node.removeAttribute("data-rm-backroom-binding"));
+      }
+    } catch {}
+  }
   async registerSelectedTarget(pageId, roomId) {
     if (typeof roomId !== "string" || !roomId.trim() || roomId.length > 120) throw new TypeError("group roomId required");
+    await this.listTargets();
     const { page, url } = this.#page(pageId);
     const selectionBinding = this.#selectionRooms.get(pageId);
     const currentFingerprint = url.origin + url.pathname + url.search + url.hash + ":" + pageId;
@@ -338,14 +352,51 @@ export class BrowserHostRuntime {
       throw new Error("Select one input in the managed browser first.");
     }
     const title = (await page.title().catch(() => "Browser input")).slice(0, 100);
+    const baseLocator = page.locator(selection.selector);
+    if (await baseLocator.count() !== 1 || !(await baseLocator.isVisible()) || !(await baseLocator.isEnabled())) {
+      throw new Error("Selected input is no longer unique, visible and enabled. Select it again.");
+    }
+    let marker = await baseLocator.getAttribute("data-rm-backroom-binding");
+    if (marker && !/^[a-f0-9-]{36}$/i.test(marker)) {
+      throw new Error("Selected input has a conflicting binding attribute. Reload the tab and select again.");
+    }
+    if (!marker) {
+      const requestedMarker = randomUUID();
+      const attach = await baseLocator.evaluate((node, value) => {
+        if (!(node instanceof HTMLElement) || !node.isConnected) return { state: "unavailable", marker: "" };
+        const current = node.getAttribute("data-rm-backroom-binding");
+        if (current) return { state: "existing", marker: current };
+        node.setAttribute("data-rm-backroom-binding", value);
+        return { state: "bound", marker: value };
+      }, requestedMarker);
+      if (!attach || attach.state === "unavailable" || !/^[a-f0-9-]{36}$/i.test(attach.marker)) {
+        throw new Error("Could not bind the selected DOM input. Select it again.");
+      }
+      marker = attach.marker;
+      if (attach.state === "existing" && ![...this.#bindings.values()].some(binding =>
+        binding.pageId === pageId && binding.marker === marker)) {
+        throw new Error("This input has a stale Backroom binding. Reload the tab and select again.");
+      }
+    }
+    const alreadyRegistered = [...this.#bindings.values()].find(binding =>
+      binding.pageId === pageId && binding.marker === marker && binding.target.roomId === roomId);
+    if (alreadyRegistered) {
+      this.#selectionRooms.delete(pageId);
+      await page.evaluate(() => { const state = window.__RM_BACKROOM_SELECTION_V1__; if (state) delete window.__RM_BACKROOM_SELECTION_V1__; });
+      const existing = this.#targets.get(alreadyRegistered.target.id);
+      return { id: alreadyRegistered.target.id, pageId, roomId, title: existing?.title ?? title,
+        site: existing?.site ?? url.hostname, surface: "browser_tab", operations: ["draft"], submittedAutomatically: false };
+    }
+    const boundSelector = selection.selector + '[data-rm-backroom-binding="' + marker + '"]';
+    if (boundSelector.length > 700) throw new Error("Bound selector is too long. Select a simpler input.");
     const target = {
       id: randomUUID(), roomId, hostId: this.hostId,
       spaceId: "browser:" + pageId, sessionId: pageId,
       appId: url.origin, identityFingerprint: url.origin + url.pathname + url.search + url.hash + ":" + pageId,
-      surface: "browser_tab", locatorKind: "dom", locatorValue: selection.selector, revision: 1,
+      surface: "browser_tab", locatorKind: "dom", locatorValue: boundSelector, revision: 1,
     };
     const adapter = new BrowserDraftAdapter({
-      page, origin: url.origin, path: url.pathname, search: url.search, hash: url.hash, selector: selection.selector,
+      page, origin: url.origin, path: url.pathname, search: url.search, hash: url.hash, selector: boundSelector,
       appId: target.appId, sessionId: pageId, identityFingerprint: target.identityFingerprint,
     });
     const guard = new LocalExecutionGuard({
@@ -356,31 +407,44 @@ export class BrowserHostRuntime {
     if (!current.connected || !current.focused) throw new Error("Input must be visible, unique, and empty before registering the draft-only target.");
     this.registry.register(target);
     this.#targets.set(target.id, { target, pageId, title, site: url.hostname });
-    this.#bindings.set(target.id, { target, pageId, page, adapter, guard });
+    this.#bindings.set(target.id, { target, pageId, page, adapter, guard, marker, baseSelector: selection.selector });
     await page.evaluate(() => { const state = window.__RM_BACKROOM_SELECTION_V1__; if (state) delete window.__RM_BACKROOM_SELECTION_V1__; });
     this.#selectionRooms.delete(pageId);
     return { id: target.id, pageId, roomId: target.roomId, title, site: url.hostname, surface: "browser_tab", operations: ["draft"], submittedAutomatically: false };
   }
-  listTargets() {
-    // Drop locators when the tab navigates to a different conversation, including
-    // query/hash-routed sessions. A saved selector is never rebound automatically.
-    for (const [targetId, binding] of this.#bindings) {
-      let current = null;
+  async listTargets() {
+    // Revalidate both route and the exact DOM node marker. If a SPA swaps out a
+    // composer in-place, the newly rendered input is never silently rebound.
+    for (const [targetId, binding] of [...this.#bindings]) {
+      let current = null, selectorCount = 0;
       try {
-        if (!binding.page.isClosed()) current = safeSiteUrl(binding.page.url());
+        if (!binding.page.isClosed()) {
+          current = safeSiteUrl(binding.page.url());
+          if (current) selectorCount = await binding.page.locator(binding.target.locatorValue).count();
+        }
       } catch {}
       const fingerprint = current
         ? current.origin + current.pathname + current.search + current.hash + ":" + binding.pageId
         : "";
-      if (fingerprint !== binding.target.identityFingerprint) {
+      if (fingerprint !== binding.target.identityFingerprint || selectorCount !== 1) {
         this.#bindings.delete(targetId);
         this.#targets.delete(targetId);
         try { this.registry.unregister(targetId, { roomId: binding.target.roomId, hostId: this.hostId }); } catch {}
+        await this.#clearBindingMarker(binding);
       }
     }
     return [...this.#targets.values()].map(({ target, pageId, title, site }) => ({
       id: target.id, pageId, roomId: target.roomId, title, site, surface: target.surface, operations: ["draft"],
     }));
+  }
+  async unregisterTarget(targetId, roomId) {
+    const binding = this.#bindings.get(targetId);
+    if (!binding || binding.target.roomId !== roomId) return false;
+    this.#bindings.delete(targetId);
+    this.#targets.delete(targetId);
+    try { this.registry.unregister(targetId, { roomId: binding.target.roomId, hostId: this.hostId }); } catch {}
+    await this.#clearBindingMarker(binding);
+    return true;
   }
   async draft(targetId, text, { approved = false, roomId } = {}) {
     if (approved !== true) throw new Error("explicit draft approval required");

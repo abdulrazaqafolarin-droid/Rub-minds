@@ -32,8 +32,8 @@ function disabledBrowserRuntime() {
   const unavailable = async () => { throw new Error("browser_runtime_unavailable"); };
   return {
     status, stop: async () => status(), start: unavailable, openUrl: unavailable, listPages: async () => [],
-    listTargets: () => [], startSelection: unavailable, getSelection: async () => ({ state: "unavailable" }),
-    registerSelectedTarget: unavailable, draft: unavailable,
+    listTargets: async () => [], startSelection: unavailable, getSelection: async () => ({ state: "unavailable" }),
+    registerSelectedTarget: unavailable, unregisterTarget: async () => false, draft: unavailable,
   };
 }
 function writeJson(response, status, body, corsHeaders = {}) {
@@ -172,7 +172,7 @@ export function createBackroomHostServer({
           return;
         }
         if (request.method === "GET" && url.pathname === "/v1/browser/targets") {
-          writeJson(response, 200, { targets: browser.listTargets() }, cors);
+          writeJson(response, 200, { targets: await browser.listTargets() }, cors);
           return;
         }
         const selectionMatch = /^\/v1\/browser\/selection\/([a-f0-9-]{36})$/i.exec(url.pathname);
@@ -206,7 +206,7 @@ export function createBackroomHostServer({
           return;
         }
         if (request.method === "POST" && [
-          "/v1/browser/select", "/v1/browser/targets", "/v1/browser/draft",
+          "/v1/browser/select", "/v1/browser/targets", "/v1/browser/targets/unregister", "/v1/browser/draft",
         ].includes(url.pathname)) {
           if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
             writeJson(response, 415, { error: "application_json_required" }, cors);
@@ -220,6 +220,16 @@ export function createBackroomHostServer({
               return;
             }
             writeJson(response, 200, await browser.startSelection(input.pageId, input.roomId), cors);
+            return;
+          }
+          if (url.pathname === "/v1/browser/targets/unregister") {
+            if (typeof input.targetId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.targetId) ||
+              typeof input.roomId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.roomId)) {
+              writeJson(response, 400, { error: "invalid_target_or_room_id" }, cors);
+              return;
+            }
+            const removed = await browser.unregisterTarget(input.targetId, input.roomId);
+            writeJson(response, removed ? 200 : 404, { removed }, cors);
             return;
           }
           if (url.pathname === "/v1/browser/targets") {

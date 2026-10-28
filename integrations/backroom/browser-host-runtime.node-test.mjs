@@ -3,20 +3,43 @@ import assert from "node:assert/strict";
 import { BrowserHostRuntime } from "./browser-host-runtime.mjs";
 
 function fakePage({url="https://chatgpt.com/c/test",title="Research thread",selection=null,closed=false}={}) {
- const handlers={}; let input="", pageUrl=url;
+ const handlers={}; let input="", pageUrl=url, bindingMarker=null;
+ const locator = (selector="") => {
+  const markerMatch=/\\[data-rm-backroom-binding="([^"]+)"\\]$/.exec(selector);
+  const expectedMarker=markerMatch?.[1];
+  const isBound=Boolean(expectedMarker);
+  return {
+   count:async()=>isBound?(bindingMarker===expectedMarker?1:0):1,
+   isVisible:async()=>true,isEnabled:async()=>true,
+   inputValue:async()=>input,
+   getAttribute:async name=>name==="data-rm-backroom-binding"?bindingMarker:null,
+   evaluate:async(fn,arg)=>{
+    const code=String(fn);
+    if(code.includes("setAttribute")&&code.includes("data-rm-backroom-binding")){
+      if(bindingMarker)return {state:"existing",marker:bindingMarker};
+      bindingMarker=arg;return {state:"bound",marker:bindingMarker};
+    }
+    if(code.includes("removeAttribute")&&code.includes("data-rm-backroom-binding")){
+      if(isBound&&bindingMarker===expectedMarker)bindingMarker=null;
+      return true;
+    }
+    if(isBound&&bindingMarker!==expectedMarker)throw Error("stale target element");
+    if(input!=="")return {state:"occupied"};
+    input=arg;return {state:"inserted"};
+   }
+  };
+ };
  return {
-  handlers, isClosed:()=>closed, url:()=>pageUrl, title:async()=>title,
-  on:(event,fn)=>{handlers[event]=fn},
-  goto:async value=>{pageUrl=value}, 
-  locator:()=>({count:async()=>1,isVisible:async()=>true,isEnabled:async()=>true,inputValue:async()=>input,
-    evaluate:async(_fn,text)=>{if(input!=="")return {state:"occupied"};input=text;return {state:"inserted"}}}),
+  handlers,isClosed:()=>closed,url:()=>pageUrl,title:async()=>title,on:(event,fn)=>{handlers[event]=fn},
+  goto:async value=>{pageUrl=value},locator,
   evaluate:async fn=>{
    if(typeof fn==="function" && fn.name==="installSelectionOverlay")return {state:"pending"};
    if(selection && fn.toString().includes("RM_BACKROOM_SELECTION_V1"))return selection;
    if(fn.toString().includes("RM_BACKROOM_SELECTION_V1"))return null;
    return null;
   },
-  setSelection:v=>selection=v, value:()=>input, setUrl:v=>pageUrl=v, close:()=>{closed=true;handlers.close?.()},
+  setSelection:v=>selection=v,value:()=>input,setUrl:v=>pageUrl=v,replaceNode:()=>{bindingMarker=null},
+  close:()=>{closed=true;handlers.close?.()},
  };
 }
 function fakeContext(pages=[]) {
@@ -46,7 +69,7 @@ test("selection registration requires one selected target and an empty composer"
  await assert.rejects(()=>runtime.registerSelectedTarget(page.pageId, "room-1"),/Select one input/);
  p.setSelection({state:"selected",selector:"[role=textbox]",tagName:"textarea"});
  const target=await runtime.registerSelectedTarget(page.pageId, "room-1");assert.equal(target.operations[0],"draft");
- assert.equal(runtime.listTargets().length,1);await runtime.stop();
+ assert.equal((await runtime.listTargets()).length,1);await runtime.stop();
 });
 test("draft requires explicit approval and never reports submitted",async()=>{
  const p=fakePage(),runtime=factory(fakeContext([p]));await runtime.start();
@@ -95,7 +118,7 @@ test("target is invalidated when the SPA changes its query or hash conversation 
  const target=await runtime.registerSelectedTarget(page.pageId,"room-1");
  assert.equal(runtime.listTargets().length,1);
  p.setUrl("https://chatgpt.com/c/one?thread=two");
- assert.equal(runtime.listTargets().length,0);
+ assert.equal((await runtime.listTargets()).length,0);
  await assert.rejects(()=>runtime.draft(target.id,"stale",{approved:true,roomId:"room-1"}),/target unavailable/i);
  await runtime.stop();
 });
@@ -110,5 +133,42 @@ test("a drag selection is cancelled when the active conversation route changes",
  assert.match(result.message,/conversation changed/);
  p.setSelection({state:"selected",selector:"[role=textbox]"});
  await assert.rejects(()=>runtime.registerSelectedTarget(page.pageId,"room-1"),/conversation/);
+ await runtime.stop();
+});
+
+test("in-place composer replacement invalidates the target instead of rebinding it",async()=>{
+ const p=fakePage(),runtime=factory(fakeContext([p]));await runtime.start();
+ const [page]=await runtime.listPages();
+ await runtime.startSelection(page.pageId,"room-1");
+ p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]',tagName:"textarea"});
+ const target=await runtime.registerSelectedTarget(page.pageId,"room-1");
+ assert.equal((await runtime.listTargets()).length,1);
+ p.replaceNode();
+ assert.equal((await runtime.listTargets()).length,0);
+ await assert.rejects(()=>runtime.draft(target.id,"stale",{approved:true,roomId:"room-1"}),/target unavailable/i);
+ await runtime.stop();
+});
+test("the same selected node reuses its group target instead of making duplicates",async()=>{
+ const p=fakePage(),runtime=factory(fakeContext([p]));await runtime.start();
+ const [page]=await runtime.listPages();
+ await runtime.startSelection(page.pageId,"room-1");p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]'});
+ const first=await runtime.registerSelectedTarget(page.pageId,"room-1");
+ await runtime.startSelection(page.pageId,"room-1");p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]'});
+ const second=await runtime.registerSelectedTarget(page.pageId,"room-1");
+ assert.equal(second.id,first.id);
+ assert.equal((await runtime.listTargets()).length,1);
+ await runtime.stop();
+});
+test("unregister removes its DOM marker only after the last room binding is removed",async()=>{
+ const p=fakePage(),runtime=factory(fakeContext([p]));await runtime.start();
+ const [page]=await runtime.listPages();
+ await runtime.startSelection(page.pageId,"room-1");p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]'});
+ const first=await runtime.registerSelectedTarget(page.pageId,"room-1");
+ await runtime.startSelection(page.pageId,"room-2");p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]'});
+ const second=await runtime.registerSelectedTarget(page.pageId,"room-2");
+ assert.equal(await runtime.unregisterTarget(first.id,"room-1"),true);
+ assert.equal((await runtime.listTargets()).length,1);
+ assert.equal(await runtime.unregisterTarget(second.id,"room-2"),true);
+ assert.equal((await runtime.listTargets()).length,0);
  await runtime.stop();
 });

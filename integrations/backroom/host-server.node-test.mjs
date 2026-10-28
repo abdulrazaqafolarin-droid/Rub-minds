@@ -88,7 +88,8 @@ function fakeBrowserRuntime() {
   startSelection:async(id,roomId)=>{if(id!==pageId)throw Error("page not found");selectionRoom=roomId;selected={state:"pending"};return selected},
   getSelection:async()=>({state:selected?.state||"unavailable"}),
   registerSelectedTarget:async(id,roomId)=>{if(id!==pageId||selected?.state!=="selected"||roomId!==selectionRoom)throw Error("selection missing or wrong room");const t={id:targetId,pageId,roomId,title:"Test chat",site:"chatgpt.com",surface:"browser_tab",operations:["draft"]};targets.push(t);return t},
-  listTargets:()=>targets,
+  listTargets:async()=>targets,
+  unregisterTarget:async(id,roomId)=>{const index=targets.findIndex(t=>t.id===id&&t.roomId===roomId);if(index<0)return false;targets.splice(index,1);return true},
   draft:async(id,text,{approved,roomId}={})=>{if(approved!==true)throw Error("approval required");if(!targets.some(t=>t.id===id&&t.roomId===roomId)){const error=Error("target scope mismatch");error.status=409;throw error}return {state:"completed",result:{drafted:true,submitted:false},submitted:false}},
   testSetSelected:()=>{selected={state:"selected"};},
   pageId,targetId,
@@ -166,5 +167,24 @@ test("disabled browser runtime reports an actionable 503 instead of a misleading
   const response=await fetch(base+"/v1/browser/open",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({url:"https://chatgpt.com/"})});
   assert.equal(response.status,503);
   assert.equal((await response.json()).error,"browser_runtime_unavailable");
+ });
+});
+
+test("browser target removal is authenticated, room-scoped and idempotently denied",async()=>{
+ const browserRuntime=fakeBrowserRuntime();
+ await withHost(async({base,origin})=>{
+  const credentials=await (await pair(base,origin)).json();
+  const auth={Origin:origin,Authorization:"Bearer "+credentials.sessionToken};
+  const unauthorized=await fetch(base+"/v1/browser/targets/unregister",{method:"POST",headers:{Origin:origin,"Content-Type":"application/json"},body:JSON.stringify({targetId:browserRuntime.targetId,roomId:"12345678-1234-4234-9234-123456789014"})});
+  assert.equal(unauthorized.status,401);
+  await fetch(base+"/v1/browser/start",{method:"POST",headers:auth});
+  await fetch(base+"/v1/browser/select",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId:"12345678-1234-4234-9234-123456789014"})});
+  browserRuntime.testSetSelected();
+  await fetch(base+"/v1/browser/targets",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId:"12345678-1234-4234-9234-123456789014"})});
+  const wrongRoom=await fetch(base+"/v1/browser/targets/unregister",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({targetId:browserRuntime.targetId,roomId:"22345678-1234-4234-9234-123456789014"})});
+  assert.equal(wrongRoom.status,404);
+  const removed=await fetch(base+"/v1/browser/targets/unregister",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({targetId:browserRuntime.targetId,roomId:"12345678-1234-4234-9234-123456789014"})});
+  assert.equal(removed.status,200);
+  assert.equal((await removed.json()).removed,true);
  });
 });
