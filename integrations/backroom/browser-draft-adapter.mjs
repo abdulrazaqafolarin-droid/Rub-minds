@@ -66,9 +66,23 @@ export class BrowserDraftAdapter {
           current.search !== request.search || current.hash !== request.hash) return "conversation_changed";
         if (!(element instanceof HTMLElement) || !element.isConnected ||
           !element.matches(request.selector) ||
-          (request.bindingMarker && element.getAttribute("data-rm-backroom-binding") !== request.bindingMarker)) {
+          (request.bindingMarker && element.getAttribute("data-rm-backroom-binding") !== request.bindingMarker) ||
+          element.closest('[aria-hidden="true"],[inert]') ||
+          ("disabled" in element && element.disabled) || ("readOnly" in element && element.readOnly) ||
+          element.getAttribute("aria-disabled") === "true" || element.getAttribute("aria-readonly") === "true") {
           return "unavailable";
         }
+        if (element instanceof HTMLInputElement &&
+          ["password","hidden","button","checkbox","radio","submit","reset","file","image","range","color"].includes(element.type)) {
+          return "unavailable";
+        }
+        if (!(element instanceof HTMLInputElement) && !(element instanceof HTMLTextAreaElement) && !element.isContentEditable) {
+          return "unavailable";
+        }
+        const bounds = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        if (bounds.width <= 8 || bounds.height <= 8 || style.display === "none" ||
+          style.visibility === "hidden" || Number(style.opacity) === 0) return "unavailable";
         try {
           const matches = document.querySelectorAll(request.selector);
           if (matches.length !== 1 || matches[0] !== element) return "unavailable";
