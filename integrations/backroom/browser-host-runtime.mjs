@@ -14,7 +14,7 @@ const safeSiteUrl = value => {
   } catch {}
   return null;
 };
-function installSelectionOverlay() {
+export function installSelectionOverlay() {
 const isEditable = node => {
   if (!(node instanceof HTMLElement) || !node.isConnected) return false;
   if (node.closest('[aria-hidden="true"],[inert]')) return false;

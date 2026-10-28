@@ -14,7 +14,7 @@
     "test:mcp": "node --test integrations/mcp/protocol.node-test.mjs integrations/mcp/credential-crypto.node-test.mjs integrations/mcp/join-credential.node-test.mjs integrations/mcp/session-handle.node-test.mjs integrations/mcp/credential-keyring.node-test.mjs integrations/mcp/session-handle-keyring.node-test.mjs",
     "test:loop": "node --test integrations/browser-loop/browser-loop.node-test.mjs",
     "test:backroom": "node --test integrations/backroom/target-registry.node-test.mjs integrations/backroom/dispatcher.node-test.mjs integrations/backroom/host-runtime.node-test.mjs integrations/backroom/integration.node-test.mjs integrations/backroom/browser-draft-adapter.node-test.mjs integrations/backroom/selection-geometry.node-test.mjs integrations/backroom/native-accessibility-adapter.node-test.mjs integrations/backroom/native-integration.node-test.mjs integrations/backroom/host-pairing.node-test.mjs integrations/backroom/host-server.node-test.mjs integrations/backroom/browser-host-runtime.node-test.mjs",
-    "test:backroom:browser": "node --test integrations/backroom/browser-draft.browser-test.mjs",
+    "test:backroom:browser": "node --test integrations/backroom/browser-draft.browser-test.mjs integrations/backroom/browser-overlay.browser-test.mjs",
     "backroom:host": "node scripts/backroom-host.mjs"
   },
   "dependencies": {
