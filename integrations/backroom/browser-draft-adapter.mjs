@@ -60,20 +60,23 @@ export class BrowserDraftAdapter {
     // that writes. Checking them only in #field() leaves a navigation/rerender
     // window between preflight and insertion.
     const performInsertion = (element, request) => {
-      const current = window.location;
-      if (current.origin !== request.origin || current.pathname !== request.path ||
-        current.search !== request.search || current.hash !== request.hash) {
-        return { state: "conversation_changed" };
-      }
-      if (!(element instanceof HTMLElement) || !element.isConnected ||
-        !element.matches(request.selector) ||
-        (request.bindingMarker && element.getAttribute("data-rm-backroom-binding") !== request.bindingMarker)) {
-        return { state: "unavailable" };
-      }
-      try {
-        const matches = document.querySelectorAll(request.selector);
-        if (matches.length !== 1 || matches[0] !== element) return { state: "unavailable" };
-      } catch { return { state: "unavailable" }; }
+      const identityState = () => {
+        const current = window.location;
+        if (current.origin !== request.origin || current.pathname !== request.path ||
+          current.search !== request.search || current.hash !== request.hash) return "conversation_changed";
+        if (!(element instanceof HTMLElement) || !element.isConnected ||
+          !element.matches(request.selector) ||
+          (request.bindingMarker && element.getAttribute("data-rm-backroom-binding") !== request.bindingMarker)) {
+          return "unavailable";
+        }
+        try {
+          const matches = document.querySelectorAll(request.selector);
+          if (matches.length !== 1 || matches[0] !== element) return "unavailable";
+        } catch { return "unavailable"; }
+        return "valid";
+      };
+      const initialIdentity = identityState();
+      if (initialIdentity !== "valid") return { state: initialIdentity };
       if (("disabled" in element && element.disabled) || ("readOnly" in element && element.readOnly) ||
         element.getAttribute("aria-disabled") === "true" || element.getAttribute("aria-readonly") === "true") {
         return { state: "unavailable" };
@@ -84,6 +87,12 @@ export class BrowserDraftAdapter {
       if (readValue() === null) return { state: "unavailable" };
       if (readValue() !== "") return { state: "occupied" };
       element.focus({ preventScroll: true });
+      // Focus handlers can reroute a SPA, replace the composer, or populate it.
+      // Recheck all of those conditions before touching its value.
+      const postFocusIdentity = identityState();
+      if (postFocusIdentity !== "valid") return { state: postFocusIdentity };
+      if (readValue() === null) return { state: "unavailable" };
+      if (readValue() !== "") return { state: "occupied" };
       if (element instanceof HTMLInputElement) {
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(element, request.text);
       } else if (element instanceof HTMLTextAreaElement) {
@@ -117,7 +126,7 @@ export class BrowserDraftAdapter {
       ? await this.nodeHandle.evaluate(performInsertion, insertionRequest)
       : await f.evaluate(performInsertion, insertionRequest);
     if (insertion.state === "conversation_changed") {
-      const error = new Error("conversation changed immediately before draft insertion");
+      const error = new Error("conversation changed immediately before or during draft insertion");
       error.code = "BACKROOM_PREFLIGHT";
       throw error;
     }
