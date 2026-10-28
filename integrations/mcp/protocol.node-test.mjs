@@ -15,6 +15,7 @@ import {
   validateProtocolVersionHeader,
   applyMcpCors,
   isJsonContentType,
+  SESSION_EXPORT_INSTRUCTIONS,
 } from "./protocol.mjs";
 
 
@@ -48,7 +49,7 @@ test("current stateless protocol validates request metadata and mirrored headers
 test("advertises invitation, messaging, and memory tools", () => {
   assert.equal(MCP_PROTOCOL_VERSION, "2025-06-18");
   assert.deepEqual(RUB_MINDS_MCP_TOOLS.map((tool) => tool.name), [
-    "join_group", "leave_group", "read_group_context", "read_group_messages", "wait_for_group_messages", "send_group_message",
+    "join_group", "prepare_session_export", "leave_group", "read_group_context", "read_group_messages", "wait_for_group_messages", "send_group_message",
     "read_session_memory", "import_session_memory", "remember_memory", "forget_memory",
   ]);
 });
@@ -121,6 +122,21 @@ test("message tool rejects empty, oversized, and unknown arguments", () => {
   assert.match(validateToolArguments("send_group_message", { body: "hello", admin: true }), /Unknown/);
 });
 
+test("session export is explicit, private, and honestly reports transcript completeness", () => {
+  const legacy = RUB_MINDS_MCP_TOOLS.find((tool) => tool.name === "prepare_session_export");
+  assert.ok(legacy);
+  assert.deepEqual(legacy.inputSchema.required, ["confirm_export"]);
+  assert.equal(validateToolArguments("prepare_session_export", { confirm_export: true }), null);
+  assert.match(validateToolArguments("prepare_session_export", { confirm_export: false }), /Explicit confirmation/);
+  assert.match(validateToolArguments("prepare_session_export", { confirm_export: true, force: true }), /Unknown/);
+  const modern = getModernMcpTools().find((tool) => tool.name === "prepare_session_export");
+  assert.ok(modern.inputSchema.required.includes("session_handle"));
+  assert.match(SESSION_EXPORT_INSTRUCTIONS, /chronological order with speaker labels/);
+  assert.match(SESSION_EXPORT_INSTRUCTIONS, /\\[REDACTED SECRET\\]/);
+  assert.match(SESSION_EXPORT_INSTRUCTIONS, /transcript_complete=false/);
+  assert.match(SESSION_EXPORT_INSTRUCTIONS, /Do not send raw transcript content/);
+});
+
 test("session memory requires a strict private packet schema and bounded fields", () => {
   const valid = { schema: "rub-minds.session-memory", version: 1, summary: "summary", current_goal: "goal", source: { platform: "ChatGPT" }, sharing: { raw_history_visibility: "private" } };
   assert.equal(validateSessionMemoryDocument(valid), true);
@@ -132,6 +148,13 @@ test("session memory requires a strict private packet schema and bounded fields"
   assert.equal(validateSessionMemoryDocument({ ...valid, version: 2 }), false);
   assert.equal(validateSessionMemoryDocument({ ...valid, summary: " " }), false);
   assert.equal(validateSessionMemoryDocument({ ...valid, summary: "x".repeat(20001) }), false);
+  const transcript = { ...valid, transcript_text: "user: Hi\\nassistant: Hello", transcript_complete: false };
+  assert.equal(validateSessionMemoryDocument(transcript), true);
+  assert.equal(validateSessionMemoryDocument({ ...transcript, transcript_complete: true }), true);
+  assert.equal(validateSessionMemoryDocument({ ...valid, transcript_complete: true }), false);
+  assert.equal(validateSessionMemoryDocument({ ...valid, transcript_text: 42 }), false);
+  assert.equal(validateSessionMemoryDocument({ ...valid, transcript_text: "x".repeat(900001) }), false);
+  assert.equal(validateSessionMemoryDocument({ ...transcript, transcript_file_url: "https://attacker.example" }), false);
 });
 
 test("memory visibility is explicit and idempotency keys are bounded", () => {
