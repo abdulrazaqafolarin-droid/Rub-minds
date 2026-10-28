@@ -455,14 +455,14 @@ export class BrowserHostRuntime {
       if (boundSelector.length > 700) throw new Error("Bound selector is too long. Select a simpler input.");
       const boundLocator = page.locator(boundSelector);
       if (await boundLocator.count() !== 1) throw new Error("The selected input changed while it was being registered. Select it again.");
-      const sameBoundNode = await selectedNodeHandle.evaluate((node, selector) => {
-        if (!(node instanceof HTMLElement) || !node.isConnected || !node.matches(selector) ||
-          node.getAttribute("data-rm-backroom-binding") !== selector.slice(selector.lastIndexOf('="') + 2, -2)) return false;
+      const sameBoundNode = await selectedNodeHandle.evaluate((node, binding) => {
+        if (!(node instanceof HTMLElement) || !node.isConnected || !node.matches(binding.selector) ||
+          node.getAttribute("data-rm-backroom-binding") !== binding.marker) return false;
         try {
-          const matches = document.querySelectorAll(selector);
+          const matches = document.querySelectorAll(binding.selector);
           return matches.length === 1 && matches[0] === node;
         } catch { return false; }
-      }, boundSelector).catch(() => false);
+      }, { selector: boundSelector, marker }).catch(() => false);
       if (!sameBoundNode) throw new Error("The input changed while its target was being registered. Select it again.");
 
       const target = {
