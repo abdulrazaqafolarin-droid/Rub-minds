@@ -162,6 +162,10 @@ export class BrowserDraftAdapter {
       throw error;
     }
     if (insertion.state !== "inserted") return { state:"needs_review", verified:false };
+    // Insertion may have succeeded even if the page navigates or the input
+    // detaches before readback. Never report that ambiguity as a clean failure
+    // (which could encourage an unsafe retry into another conversation).
+    try {
     if (this.nodeHandle) {
       const finalState = await this.nodeHandle.evaluate((element, expected) => {
         const current = window.location;
@@ -186,5 +190,8 @@ export class BrowserDraftAdapter {
       return { state:"needs_review", verified:false };
     }
     return { state:"completed", verified:true, result:{ drafted:true, submitted:false } };
+    } catch {
+      return { state:"needs_review", verified:false };
+    }
   }
 }
