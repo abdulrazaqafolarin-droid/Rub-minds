@@ -157,6 +157,25 @@ test("an ambiguous group-send failure does not re-run the provider or invite dup
   assert.equal(sent.length, 1, "the simulated accepted reply must not be duplicated");
 });
 
+test("the transport must explicitly acknowledge delivery before the bridge counts a reply", async () => {
+  for (const deliveryResult of [undefined, false, { ok: false }, { status: "queued" }]) {
+    const { bridge, calls, sent } = makeBridge({
+      messages: [{ id: "no-ack", body: "send me", sender_kind: "human" }],
+    });
+    bridge.sendMessage = async (body, sourceMessageId) => {
+      sent.push({ body, sourceMessageId });
+      return deliveryResult;
+    };
+    const outcome = await bridge.step({ approved: true });
+    assert.equal(outcome.status, "send_outcome_ambiguous");
+    assert.equal(bridge.replies, 0, "unacknowledged sends must not increase the confirmed-reply counter");
+    assert.equal(bridge.seen.has("no-ack"), true);
+    await bridge.step({ approved: true });
+    assert.equal(calls.length, 1, "an unacknowledged send must not re-run provider work");
+    assert.equal(sent.length, 1);
+  }
+});
+
 test("the polling loop stops immediately on ambiguous reply delivery", async () => {
   const { bridge, calls } = makeBridge({
     maxReplies: 5,
