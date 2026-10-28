@@ -34,6 +34,7 @@ const isEditable = node => {
   const OVERLAY_ID = "__rm_backroom_target_overlay_v1";
   document.getElementById(OVERLAY_ID)?.remove();
   window[KEY] = { state: "pending" };
+  window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = null;
   const root = document.createElement("div");
   root.id = OVERLAY_ID;
   root.style.cssText = "position:fixed;inset:0;z-index:2147483647;cursor:crosshair;touch-action:none;background:rgba(8,12,25,.15);";
@@ -46,7 +47,7 @@ const isEditable = node => {
   document.documentElement.append(root);
   let start = null;
   let finished = false;
-  const endState = state => { window[KEY] = state; root.remove(); window.removeEventListener("keydown", onKey, true); };
+  const endState = state => { window[KEY] = state; if (state.state !== "selected") window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = null; root.remove(); window.removeEventListener("keydown", onKey, true); };
   const onKey = event => {
     if (event.key === "Escape" && !finished) {
       finished = true;
@@ -89,6 +90,7 @@ const isEditable = node => {
   const fail = message => {
     finished = true;
     window[KEY] = { state: "failed", message };
+    window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = null;
     hint.textContent = message;
     hint.style.background = "#541d2b";
     window.setTimeout(() => endState(window[KEY]), 1200);
@@ -143,6 +145,7 @@ const isEditable = node => {
     const selector = uniqueSelector(node);
     if (!selector) { fail("Could not create a stable input selector. Try another area."); return; }
     finished = true;
+    window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = node;
     window[KEY] = {
       state: "selected", selector, tagName: node.tagName.toLowerCase(),
       role: node.getAttribute("role") || "", ariaLabel: node.getAttribute("aria-label") || "",
@@ -355,94 +358,164 @@ export class BrowserHostRuntime {
       throw new Error("Selection belongs to another group or conversation; select the input again.");
     }
     const selection = await page.evaluate(() => window.__RM_BACKROOM_SELECTION_V1__ ?? null);
-    if (!selection || selection.state !== "selected" || typeof selection.selector !== "string" || selection.selector.length > 500) {
+    if (!selection || selection.state !== "selected" || typeof selection.selector !== "string" ||
+      selection.selector.length > 500 || !Number.isFinite(selection.selectedAt)) {
       throw new Error("Select one input in the managed browser first.");
     }
-    const title = (await page.title().catch(() => "Browser input")).slice(0, 100);
-    const baseLocator = page.locator(selection.selector);
-    if (await baseLocator.count() !== 1 || !(await baseLocator.isVisible()) || !(await baseLocator.isEnabled())) {
-      throw new Error("Selected input is no longer unique, visible and enabled. Select it again.");
+
+    // Keep the exact DOM element the drag gesture selected. A selector alone is
+    // insufficient because React/SPA pages can replace an input between the
+    // selection gesture and registration while reusing the same label/selector.
+    const selectedHandle = await page.evaluateHandle(expectedAt => {
+      const state = window.__RM_BACKROOM_SELECTION_V1__;
+      const node = window.__RM_BACKROOM_SELECTED_ELEMENT_V1__;
+      return state?.state === "selected" && state.selectedAt === expectedAt && node instanceof HTMLElement
+        ? node : null;
+    }, selection.selectedAt);
+    const selectedNodeHandle = selectedHandle.asElement();
+    if (!selectedNodeHandle) {
+      await selectedHandle.dispose();
+      throw new Error("The selected input changed. Drag around it again.");
     }
-    let marker = await baseLocator.getAttribute("data-rm-backroom-binding");
-    if (marker && !/^[a-f0-9-]{36}$/i.test(marker)) {
-      throw new Error("Selected input has a conflicting binding attribute. Reload the tab and select again.");
-    }
-    if (marker && ![...this.#bindings.values()].some(binding =>
-      binding.pageId === pageId && binding.marker === marker)) {
-      // A site may coincidentally use our data attribute. Only reuse a marker
-      // issued by this running host; clear an unowned UUID marker before rebinding.
-      const staleMarker = marker;
-      const cleared = await baseLocator.evaluate((node, expected) => {
-        if (!(node instanceof HTMLElement) || node.getAttribute("data-rm-backroom-binding") !== expected) return false;
-        node.removeAttribute("data-rm-backroom-binding");
-        return true;
-      }, staleMarker);
-      if (!cleared) throw new Error("Could not clear an unowned DOM marker. Reload the tab and select again.");
-      marker = null;
-    }
-    if (!marker) {
-      const requestedMarker = randomUUID();
-      const attach = await baseLocator.evaluate((node, value) => {
-        if (!(node instanceof HTMLElement) || !node.isConnected) return { state: "unavailable", marker: "" };
-        const current = node.getAttribute("data-rm-backroom-binding");
-        if (current) return { state: "existing", marker: current };
-        node.setAttribute("data-rm-backroom-binding", value);
-        return { state: "bound", marker: value };
-      }, requestedMarker);
-      if (!attach || attach.state === "unavailable" || !/^[a-f0-9-]{36}$/i.test(attach.marker)) {
-        throw new Error("Could not bind the selected DOM input. Select it again.");
-      }
-      marker = attach.marker;
-      if (attach.state === "existing" && ![...this.#bindings.values()].some(binding =>
-        binding.pageId === pageId && binding.marker === marker)) {
-        throw new Error("This input has a stale Backroom binding. Reload the tab and select again.");
-      }
-    }
-    const alreadyRegistered = [...this.#bindings.values()].find(binding =>
-      binding.pageId === pageId && binding.marker === marker && binding.target.roomId === roomId);
-    if (alreadyRegistered) {
-      this.#selectionRooms.delete(pageId);
-      await page.evaluate(() => { const state = window.__RM_BACKROOM_SELECTION_V1__; if (state) delete window.__RM_BACKROOM_SELECTION_V1__; });
-      const existing = this.#targets.get(alreadyRegistered.target.id);
-      return { id: alreadyRegistered.target.id, pageId, roomId, title: existing?.title ?? title,
-        site: existing?.site ?? url.hostname, surface: "browser_tab", operations: ["draft"], submittedAutomatically: false };
-    }
-    const boundSelector = selection.selector + '[data-rm-backroom-binding="' + marker + '"]';
-    if (boundSelector.length > 700) throw new Error("Bound selector is too long. Select a simpler input.");
-    const boundLocator = page.locator(boundSelector);
-    if (await boundLocator.count() !== 1) throw new Error("The selected input changed while it was being registered. Select it again.");
-    const nodeHandle = await boundLocator.elementHandle();
-    if (!nodeHandle || await nodeHandle.getAttribute("data-rm-backroom-binding") !== marker) {
-      try { await nodeHandle?.dispose(); } catch {}
-      throw new Error("Could not verify the original selected input. Select it again.");
-    }
-    const target = {
-      id: randomUUID(), roomId, hostId: this.hostId,
-      spaceId: "browser:" + pageId, sessionId: pageId,
-      appId: url.origin, identityFingerprint: url.origin + url.pathname + url.search + url.hash + ":" + pageId,
-      surface: "browser_tab", locatorKind: "dom", locatorValue: boundSelector, revision: 1,
-    };
-    const adapter = new BrowserDraftAdapter({
-      page, origin: url.origin, path: url.pathname, search: url.search, hash: url.hash, selector: boundSelector,
-      appId: target.appId, sessionId: pageId, identityFingerprint: target.identityFingerprint,
-    });
-    const guard = new LocalExecutionGuard({
-      host: { hostId: this.hostId, deviceLabel: "Backroom local browser", surfaces: ["browser_tab"], operations: ["draft"] },
-      adapter, permission: async () => true, isConnected: async () => this.#context !== null && !page.isClosed(),
-    });
+
+    let marker = null;
+    let createdBindingMarker = false;
+    let retainedNodeHandle = false;
     try {
+      const title = (await page.title().catch(() => "Browser input")).slice(0, 100);
+      const baseLocator = page.locator(selection.selector);
+      if (await baseLocator.count() !== 1 || !(await baseLocator.isVisible()) || !(await baseLocator.isEnabled())) {
+        throw new Error("Selected input is no longer unique, visible and enabled. Select it again.");
+      }
+      const baseNodeHandle = await baseLocator.elementHandle();
+      if (!baseNodeHandle) throw new Error("Could not verify the selected input. Select it again.");
+      let sameNode = false;
+      try {
+        sameNode = await selectedNodeHandle.evaluate((node, original) =>
+          node === original && node instanceof HTMLElement && node.isConnected, baseNodeHandle);
+      } catch {}
+      try { await baseNodeHandle.dispose(); } catch {}
+      if (!sameNode) throw new Error("The selected input changed after the drag gesture. Select it again.");
+
+      marker = await selectedNodeHandle.getAttribute("data-rm-backroom-binding");
+      if (marker && !/^[a-f0-9-]{36}$/i.test(marker)) {
+        throw new Error("Selected input has a conflicting binding attribute. Reload the tab and select again.");
+      }
+      if (marker && ![...this.#bindings.values()].some(binding =>
+        binding.pageId === pageId && binding.marker === marker)) {
+        // Never trust a site-owned marker simply because it has UUID syntax.
+        const staleMarker = marker;
+        const cleared = await selectedNodeHandle.evaluate((node, expected) => {
+          if (!(node instanceof HTMLElement) || !node.isConnected ||
+            node.getAttribute("data-rm-backroom-binding") !== expected) return false;
+          node.removeAttribute("data-rm-backroom-binding");
+          return true;
+        }, staleMarker);
+        if (!cleared) throw new Error("Could not clear an unowned DOM marker. Reload the tab and select again.");
+        marker = null;
+      }
+      if (!marker) {
+        const requestedMarker = randomUUID();
+        const attach = await selectedNodeHandle.evaluate((node, value) => {
+          if (!(node instanceof HTMLElement) || !node.isConnected) return { state: "unavailable", marker: "" };
+          const current = node.getAttribute("data-rm-backroom-binding");
+          if (current) return { state: "existing", marker: current };
+          node.setAttribute("data-rm-backroom-binding", value);
+          return { state: "bound", marker: value };
+        }, requestedMarker);
+        if (!attach || attach.state === "unavailable" || !/^[a-f0-9-]{36}$/i.test(attach.marker)) {
+          throw new Error("Could not bind the selected DOM input. Select it again.");
+        }
+        marker = attach.marker;
+        createdBindingMarker = attach.state === "bound";
+        if (attach.state === "existing" && ![...this.#bindings.values()].some(binding =>
+          binding.pageId === pageId && binding.marker === marker)) {
+          throw new Error("This input has a stale Backroom binding. Reload the tab and select again.");
+        }
+      }
+
+      const alreadyRegistered = [...this.#bindings.values()].find(binding =>
+        binding.pageId === pageId && binding.marker === marker && binding.target.roomId === roomId);
+      if (alreadyRegistered) {
+        await selectedNodeHandle.evaluate((node, expectedAt) => {
+          const state = window.__RM_BACKROOM_SELECTION_V1__;
+          if (node instanceof HTMLElement && state?.selectedAt === expectedAt) {
+            window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = null;
+            delete window.__RM_BACKROOM_SELECTION_V1__;
+          }
+        }, selection.selectedAt).catch(() => {});
+        const existing = this.#targets.get(alreadyRegistered.target.id);
+        return { id: alreadyRegistered.target.id, pageId, roomId, title: existing?.title ?? title,
+          site: existing?.site ?? url.hostname, surface: "browser_tab", operations: ["draft"], submittedAutomatically: false };
+      }
+
+      const boundSelector = selection.selector + '[data-rm-backroom-binding="' + marker + '"]';
+      if (boundSelector.length > 700) throw new Error("Bound selector is too long. Select a simpler input.");
+      const boundLocator = page.locator(boundSelector);
+      if (await boundLocator.count() !== 1) throw new Error("The selected input changed while it was being registered. Select it again.");
+      const boundNodeHandle = await boundLocator.elementHandle();
+      if (!boundNodeHandle) throw new Error("Could not verify the bound input. Select it again.");
+      let sameBoundNode = false;
+      try {
+        sameBoundNode = await boundNodeHandle.evaluate((node, original) => node === original && node.isConnected, selectedNodeHandle);
+      } catch {}
+      try { await boundNodeHandle.dispose(); } catch {}
+      if (!sameBoundNode) throw new Error("The input changed while its target was being registered. Select it again.");
+
+      const target = {
+        id: randomUUID(), roomId, hostId: this.hostId,
+        spaceId: "browser:" + pageId, sessionId: pageId,
+        appId: url.origin, identityFingerprint: url.origin + url.pathname + url.search + url.hash + ":" + pageId,
+        surface: "browser_tab", locatorKind: "dom", locatorValue: boundSelector, revision: 1,
+      };
+      const adapter = new BrowserDraftAdapter({
+        page, origin: url.origin, path: url.pathname, search: url.search, hash: url.hash, selector: boundSelector,
+        appId: target.appId, sessionId: pageId, identityFingerprint: target.identityFingerprint,
+      });
+      const guard = new LocalExecutionGuard({
+        host: { hostId: this.hostId, deviceLabel: "Backroom local browser", surfaces: ["browser_tab"], operations: ["draft"] },
+        adapter, permission: async () => true, isConnected: async () => this.#context !== null && !page.isClosed(),
+      });
       const current = await adapter.probe({ target, operation: "draft" });
       if (!current.connected || !current.focused) throw new Error("Input must be visible, unique, and empty before registering the draft-only target.");
-      await page.evaluate(() => { const state = window.__RM_BACKROOM_SELECTION_V1__; if (state) delete window.__RM_BACKROOM_SELECTION_V1__; });
+      await selectedNodeHandle.evaluate((node, expectedAt) => {
+        const state = window.__RM_BACKROOM_SELECTION_V1__;
+        if (node instanceof HTMLElement && state?.selectedAt === expectedAt &&
+          window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ === node) {
+          window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = null;
+          delete window.__RM_BACKROOM_SELECTION_V1__;
+        }
+      }, selection.selectedAt);
       this.registry.register(target);
-    } catch (error) {
-      try { await nodeHandle.dispose(); } catch {}
-      throw error;
+      this.#targets.set(target.id, { target, pageId, title, site: url.hostname });
+      this.#bindings.set(target.id, { target, pageId, page, adapter, guard, marker, nodeHandle: selectedNodeHandle, baseSelector: selection.selector });
+      this.#selectionRooms.delete(pageId);
+      retainedNodeHandle = true;
+      return { id: target.id, pageId, roomId: target.roomId, title, site: url.hostname,
+        surface: "browser_tab", operations: ["draft"], submittedAutomatically: false };
+    } finally {
+      if (!retainedNodeHandle) {
+        if (createdBindingMarker && marker) {
+          try {
+            await selectedNodeHandle.evaluate((node, expected) => {
+              if (node instanceof HTMLElement && node.getAttribute("data-rm-backroom-binding") === expected) {
+                node.removeAttribute("data-rm-backroom-binding");
+              }
+            }, marker);
+          } catch {}
+        }
+        try {
+          await selectedNodeHandle.evaluate(expectedAt => {
+            const state = window.__RM_BACKROOM_SELECTION_V1__;
+            if (state?.selectedAt === expectedAt) {
+              window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = null;
+              delete window.__RM_BACKROOM_SELECTION_V1__;
+            }
+          }, selection.selectedAt);
+        } catch {}
+        try { await selectedNodeHandle.dispose(); } catch {}
+      }
     }
-    this.#targets.set(target.id, { target, pageId, title, site: url.hostname });
-    this.#bindings.set(target.id, { target, pageId, page, adapter, guard, marker, nodeHandle, baseSelector: selection.selector });
-    this.#selectionRooms.delete(pageId);
-    return { id: target.id, pageId, roomId: target.roomId, title, site: url.hostname, surface: "browser_tab", operations: ["draft"], submittedAutomatically: false };
   }
   async listTargets() {
     // Revalidate both route and the exact DOM node marker. If a SPA swaps out a
