@@ -38,7 +38,7 @@ export class HostPairingAuthority {
     this.#now = now;
     this.pairingCode = pairingCode ?? randomBytes(16).toString("hex");
     if (!CODE_RE.test(this.pairingCode)) throw new TypeError("pairingCode must be 128-bit hexadecimal");
-    this.#pairingDigest = sha256(this.pairingCode);
+    this.#pairingDigest = sha256(this.pairingCode.toLowerCase());
     this.#pairingExpiresAt = this.#now() + pairingTtlMs;
     this.sessionTtlMs = sessionTtlMs;
     this.maxPairAttempts = maxPairAttempts;
@@ -50,13 +50,13 @@ export class HostPairingAuthority {
     this.#attempts++;
     if (this.#pairingUsed || this.#now() >= this.#pairingExpiresAt) throw new Error("pairing_expired");
     if (typeof pairingCode !== "string" || !CODE_RE.test(pairingCode) ||
-      !timingSafeEqual(sha256(pairingCode), this.#pairingDigest)) throw new Error("pairing_invalid");
+      !timingSafeEqual(sha256(pairingCode.toLowerCase()), this.#pairingDigest)) throw new Error("pairing_invalid");
     if (typeof clientLabel !== "string" || clientLabel.trim().length < 1 || clientLabel.length > 80) {
       throw new Error("invalid_client_label");
     }
     this.#pairingUsed = true;
     const token = randomBytes(32).toString("hex");
-    const digest = sha256(token).toString("hex");
+    const digest = sha256(token.toLowerCase()).toString("hex");
     const expiresAt = this.#now() + this.sessionTtlMs;
     this.#sessions.set(digest, { origin, clientLabel: clientLabel.trim(), expiresAt, revoked: false });
     return Object.freeze({ token, hostId: this.hostId, expiresAt, clientLabel: clientLabel.trim() });
@@ -72,7 +72,7 @@ export class HostPairingAuthority {
   revoke({ origin, token } = {}) {
     const session = this.authorize({ origin, token });
     if (!session) return false;
-    const digest = sha256(token).toString("hex");
+    const digest = sha256(token.toLowerCase()).toString("hex");
     const record = this.#sessions.get(digest);
     record.revoked = true;
     return true;
