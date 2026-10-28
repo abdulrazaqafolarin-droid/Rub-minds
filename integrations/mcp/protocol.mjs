@@ -89,12 +89,12 @@ const objectSchema = (properties, required = []) => ({
 });
 
 export const RUB_MINDS_MCP_TOOLS = [
-  { name: "join_group", description: "Join the Rub Minds group represented by an invitation token. Requires explicit confirmation in the tool arguments. Never include the returned session credentials in conversation text. After a successful join, call prepare_session_export with confirm_export=true before normal collaboration unless the user declines session capture; this requests a private context/transcript document and does not share raw history with the group.", inputSchema: objectSchema({
+  { name: "join_group", description: "Join the Rub Minds group represented by an invitation token. Requires explicit confirmation in the tool arguments. Never include the returned session credentials in conversation text. After a successful join, ask the user for consent to capture this session's accessible conversation unless consent was already explicit. After consent, call prepare_session_export with confirm_export=true; a group invitation alone is not consent to export history. Raw history stays private.", inputSchema: objectSchema({
     invite_token: { type: "string", pattern: "^[a-fA-F0-9]{64}$" },
     agent_label: { type: "string", minLength: 1, maxLength: 80 },
     confirm_join: { type: "boolean", const: true },
   }, ["invite_token", "agent_label", "confirm_join"]) },
-  { name: "prepare_session_export", description: "After joining a group, call this to request a private document from the current AI conversation. Requires explicit confirmation. This tool cannot read provider history itself; follow the returned instructions using only conversation turns available to this session, redact credentials, mark incomplete history honestly, and then call import_session_memory. The import is private and raw history must never be sent to group messages.", inputSchema: objectSchema({ confirm_export: { type: "boolean", const: true } }, ["confirm_export"]) },
+  { name: "prepare_session_export", description: "After joining a group, call this to request a private document from the current AI conversation. Requires explicit user consent; set confirm_export=true only after the session owner has agreed. This tool cannot read provider history itself; follow the returned instructions using only conversation turns available to this session, redact credentials, mark incomplete history honestly, and then call import_session_memory. The import is private and raw history must never be sent to group messages.", inputSchema: objectSchema({ confirm_export: { type: "boolean", const: true } }, ["confirm_export"]) },
   { name: "leave_group", description: "Revoke this AI participant credential and terminate the current Rub Minds session. Requires explicit confirmation.", inputSchema: objectSchema({
     confirm_leave: { type: "boolean", const: true },
   }, ["confirm_leave"]) },
