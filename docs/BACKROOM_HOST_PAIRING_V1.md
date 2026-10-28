@@ -31,3 +31,12 @@ The official Chrome guidance and MDN explain that Local Network Access permissio
 ## Browser-origin local network permission
 
 The hosted Backroom UI calls the host at an explicit loopback URL from a secure HTTPS origin. Modern Chromium browsers may prompt for local/loopback network permission; this is independent of host pairing. The app does not attempt to bypass the permission prompt. The local host binds only to IPv4 loopback and has an exact-origin allowlist. See the Chrome and MDN references above.
+
+
+## Managed browser adapter (development milestone)
+
+The local host now exposes authenticated `/v1/browser/*` routes. When the user explicitly starts the managed browser, it launches a **separate visible Playwright Chromium profile** at `~/.rub-minds/backroom/browser-profile` (or the platform-equivalent home directory). The user signs in directly; no existing browser cookies/profile are copied. The profile persists locally so the user can keep its sessions. Closing the managed browser closes its tabs but retains the local profile.
+
+In the Backroom host dialog, select a managed tab, click **Select input**, switch to that visible browser tab and drag around exactly one editable input. The script derives a unique CSS locator without reading/sending the input's contents. The host stores the target locally. **Insert draft — never send** requires a confirmation and only fills an empty visible composer, then reads the value back. There is no Send click or group-driven automatic input yet. This first adapter covers managed browser tabs only; it is not the global desktop/Android overlay.
+
+Install Chromium on the machine with `npx playwright install chromium` if the browser launch action reports a missing runtime. Start the host with `npm run backroom:host`. Keep pairing credentials private. The original/primary browser profile is not accessed.
