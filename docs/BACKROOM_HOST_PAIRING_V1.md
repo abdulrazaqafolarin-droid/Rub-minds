@@ -45,3 +45,8 @@ Install Chromium on the machine with `npx playwright install chromium` if the br
 ## Rub Minds group-scoped draft routing
 
 A target is registered with the UUID of the currently selected Rub Minds group. The browser host stores that room ID in the target and requires the same room ID for every draft call; a target created in Group A cannot be used by the UI to draft while Group B is selected. Backroom retrieves recent messages only through the signed-in member's existing Supabase membership policies. A person selects a specific group message (or enters text manually), sees the exact draft text, and confirms **Insert draft — never send**. This is still a user-directed drafting workflow; it does not turn every group message into an automatic browser action, and it does not submit text or autonomously wake ChatGPT/Claude.
+
+
+## Chrome / Edge loopback requests
+
+Backroom calls `127.0.0.1` from the secure hosted UI. Browser-side host requests set `targetAddressSpace: 'loopback'` for engines that support this Local Network Access signal. This does not bypass permissions: the browser may prompt the user to allow Rub Minds to connect to loopback. Other browsers may not support this option, so device pairing must show an actionable unsupported-browser error rather than pretending a host is offline. Reference: [Chrome Local Network Access](https://developer.chrome.com/blog/local-network-access) and [Microsoft Edge Local Network Access guidance (updated March 2026)](https://learn.microsoft.com/en-us/deployedge/ms-edge-local-network-access).

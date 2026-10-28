@@ -146,6 +146,11 @@ export default function BackroomApp() {
   }
   const current = spaces.find(s => s.id === active);
   const roomBrowserTargets = browserTargets.filter(target => target.roomId === room?.id);
+  function fetchLocalHost(url: string, init: RequestInit = {}) {
+    // Chrome/Edge Local Network Access requires a secure origin and treats this
+    // request as loopback. Browser permission prompts still require user consent.
+    return fetch(url, { ...init, targetAddressSpace: 'loopback' } as RequestInit & { targetAddressSpace: 'loopback' });
+  }
   function localHostOrigin(value: string) {
     const parsed = new URL(value);
     if (parsed.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(parsed.hostname) ||
@@ -157,11 +162,11 @@ export default function BackroomApp() {
     setHostBusy(true); setHostMessage('');
     try {
       const origin = localHostOrigin(hostUrl.trim());
-      const healthResponse = await fetch(origin + '/health', { cache: 'no-store' });
+      const healthResponse = await fetchLocalHost(origin + '/health', { cache: 'no-store' });
       if (!healthResponse.ok) throw new Error('Local host health check failed.');
       const health = await healthResponse.json() as { status?: string; protocolVersion?: string };
       if (health.status !== 'ok' || health.protocolVersion !== '1') throw new Error('Unsupported local host protocol.');
-      const pairResponse = await fetch(origin + '/v1/pair', {
+      const pairResponse = await fetchLocalHost(origin + '/v1/pair', {
         method: 'POST', cache: 'no-store',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pairingCode: pairingCode.trim(), clientLabel: 'Rub Minds Backroom' }),
@@ -171,7 +176,7 @@ export default function BackroomApp() {
         : 'Pairing failed. Check the one-time code and make sure the host has not already been paired.');
       const credentials = await pairResponse.json() as { sessionToken?: string; hostId?: string; expiresAt?: number; protocolVersion?: string };
       if (!credentials.sessionToken || !credentials.hostId || credentials.protocolVersion !== '1') throw new Error('Local host returned an incomplete pairing response.');
-      const infoResponse = await fetch(origin + '/v1/host', {
+      const infoResponse = await fetchLocalHost(origin + '/v1/host', {
         headers: { Authorization: 'Bearer ' + credentials.sessionToken }, cache: 'no-store',
       });
       if (!infoResponse.ok) throw new Error('Host paired, but its status could not be verified. Restart host and pair again.');
@@ -195,7 +200,7 @@ export default function BackroomApp() {
     if (!hostToken) return;
     setHostBusy(true); setHostMessage('');
     try {
-      const response = await fetch(localHostOrigin(hostUrl) + '/v1/host', {
+      const response = await fetchLocalHost(localHostOrigin(hostUrl) + '/v1/host', {
         headers: { Authorization: 'Bearer ' + hostToken }, cache: 'no-store',
       });
       if (!response.ok) {
@@ -217,7 +222,7 @@ export default function BackroomApp() {
     if (!hostToken) return;
     setHostBusy(true); setHostMessage('');
     try {
-      const response = await fetch(localHostOrigin(hostUrl) + '/v1/unpair', {
+      const response = await fetchLocalHost(localHostOrigin(hostUrl) + '/v1/unpair', {
         method: 'POST', headers: { Authorization: 'Bearer ' + hostToken }, cache: 'no-store',
       });
       if (!response.ok) throw new Error('Could not revoke the host session. Keep this tab open and retry.');
@@ -236,7 +241,7 @@ export default function BackroomApp() {
       headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(options.body);
     }
-    const response = await fetch(localHostOrigin(hostUrl) + path, init);
+    const response = await fetchLocalHost(localHostOrigin(hostUrl) + path, init);
     const payload = await response.json().catch(() => ({})) as { error?: string; message?: string; hint?: string };
     if (!response.ok) throw new Error(payload.hint || payload.message ||
       (payload.error === 'host_session_invalid' ? 'Host pairing expired; restart the host and pair again.' :

@@ -117,11 +117,26 @@ test("browser drafting endpoint requires explicit approval and JSON content type
  await withHost(async({base,origin})=>{
   const creds=await (await pair(base,origin)).json();const auth={Origin:origin,Authorization:"Bearer "+creds.sessionToken};
   await fetch(base+"/v1/browser/start",{method:"POST",headers:auth});
+  await fetch(base+"/v1/browser/select",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId:"12345678-1234-4234-9234-123456789014"})});
   browserRuntime.testSetSelected();
   await fetch(base+"/v1/browser/targets",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId:"12345678-1234-4234-9234-123456789014"})});
   const noApproval=await fetch(base+"/v1/browser/draft",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({targetId:browserRuntime.targetId,roomId:"12345678-1234-4234-9234-123456789014",text:"text",approved:false})});
   assert.equal(noApproval.status,403);
   const noJson=await fetch(base+"/v1/browser/select",{method:"POST",headers:auth,body:"{}"});
   assert.equal(noJson.status,415);
+ },{browserRuntime});
+});
+
+test("browser target registration rejects missing or malformed group IDs", async () => {
+ const browserRuntime=fakeBrowserRuntime();
+ await withHost(async({base,origin})=>{
+  const credentials=await (await pair(base,origin)).json();
+  const auth={Origin:origin,Authorization:"Bearer "+credentials.sessionToken};
+  await fetch(base+"/v1/browser/start",{method:"POST",headers:auth});
+  for(const roomId of [undefined,"not-a-room"]) {
+   const body={pageId:browserRuntime.pageId};if(roomId!==undefined)body.roomId=roomId;
+   const response=await fetch(base+"/v1/browser/targets",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify(body)});
+   assert.equal(response.status,400);
+  }
  },{browserRuntime});
 });
