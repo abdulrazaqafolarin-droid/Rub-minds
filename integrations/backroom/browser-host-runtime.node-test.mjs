@@ -22,7 +22,7 @@ function fakePage({url="https://chatgpt.com/c/test",title="Research thread",sele
    if(code.includes("const readValue")){
     if(nodeId!==capturedNodeId)return {state:"unavailable"};
     if(input!=="")return {state:"occupied"};
-    input=arg;return {state:"inserted"};
+    input=arg && typeof arg==="object" && typeof arg.text==="string"?arg.text:arg;return {state:"inserted"};
    }
    if(code.includes("connected:")&&code.includes("value:"))return {connected:nodeId===capturedNodeId,value:input};
    if(code.includes("element instanceof HTMLInputElement")&&code.includes("element.value")&&!code.includes("const readValue"))return input;
