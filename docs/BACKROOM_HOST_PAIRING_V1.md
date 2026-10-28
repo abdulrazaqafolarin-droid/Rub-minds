@@ -5,7 +5,7 @@
 - Exact-origin browser allowlist. Configure additional preview origins with `BACKROOM_ALLOWED_ORIGINS=https://rub-minds.vercel.app,https://your-exact-preview-host.example`; never use wildcards.
 - One-time 128-bit pairing code printed once in the local terminal, 10-minute expiry and attempt limit. Successful pairing issues a random 256-bit session bearer, stores only its SHA-256 digest in host memory and binds it to the exact web origin.
 - Loopback-only bind, Host-header checks, JSON size limit, no-store responses, strict CORS preflight support for supported browser Local Network Access.
-- Authenticated host status and explicit unpair. Status deliberately states that app execution capabilities are false until platform drivers are installed.
+- Authenticated host status and explicit unpair. Status advertises browser-draft capability only while the managed browser runtime is running; native desktop, Android and terminal capabilities remain false.
 - Node HTTP integration tests for pairing, origin binding, replay, revocation, CORS, expiry and safe capability reporting.
 
 ## Run
@@ -15,12 +15,12 @@ npm run backroom:host
 Open Backroom in an allowed origin, enter the pairing code from the same machine's terminal, and inspect local host status. Pairing code and session token are bearer secrets. Keep the terminal private, do not paste these values into a group, issue tracker or screenshot. The web UI holds the session token in tab-scoped sessionStorage so a refresh can restore the pairing. It is never placed in a URL or group message. XSS on the allowed web origin could access it; keep the app origin secure and the session is revoked at unpair/expiry. Closing the tab normally clears the token. A host restart invalidates in-memory session records and requires a new pairing code. Restarting the host invalidates the session and requires a new pairing code.
 
 ## Security boundary
-This local host does not listen on a LAN address, does not run arbitrary shell commands, does not silently access app credentials, and does not yet automate any application. Pairing is host identification, not permission to act on every surface. A browser page alone cannot install the native phone/desktop overlays. Actual interaction requires separate user-approved platform drivers and per-action authorization. Because a local HTTP host is a privileged local interface, only exact origins should be allowed; use private/local development origins only when testing locally.
+This local host does not listen on a LAN address, run arbitrary shell commands, or access app credentials. Its current browser adapter can launch a separate visible Playwright Chromium profile and insert user-approved text into one explicitly selected, empty composer; it never presses Send. Pairing is host identification, not permission to act on every surface. Native Android, desktop-app and Windows-app drivers are not installed, and browser drafting is not an MCP-backed live-session bridge. Actual native interaction requires separate user-approved platform drivers and per-action authorization. Because a local HTTP host is a privileged local interface, only exact origins should be allowed; use private/local development origins only when testing locally.
 
 ## Known limitations
 - The GitHub Actions runner currently fails before any job steps run, so native Node/TypeScript CI is not evidence yet.
 - Pairing/session state is in memory; restarting the host invalidates the session.
-- Status endpoint advertises no execution capability. Current native and browser driver modules remain disconnected from the server until the next milestone.
+- Host status reports `browserDraft: true` only when the managed browser runtime is running; `desktopAccessibility`, `androidAccessibility` and `terminal` remain false. Browser draft insertion is connected to the local host API, but native drivers and AI-session/MCP live participation remain future work.
 - Current Chromium-based browsers are moving to Local Network Access permission prompts. This host intentionally relies on exact-origin standard CORS and does not rely on the deprecated Access-Control-Allow-Private-Network preflight header. Browser support varies; the user must allow loopback/local-network access when prompted. Safari/WebKit behavior differs.
 
 
@@ -59,7 +59,7 @@ Use the **Open an AI website** field or the ChatGPT/Claude quick links. The loca
 
 ## Full browser-host acceptance test
 
-`npm run test:backroom:browser` includes a real headless Chromium acceptance test over the local HTTP host, not only an adapter mock. It starts a controlled local chat page, pairs with the host API, launches a managed persistent Playwright context in a temporary profile, uses the actual drag-selection overlay, registers the selected input to one group, inserts and verifies a draft, asserts the Send counter remains zero, rejects a repeated write into an occupied composer, rejects cross-group target use, and confirms unpair revokes access. The test deletes its temporary profile on completion.
+`npm run test:backroom:browser` includes a real headless Chromium acceptance test over the local HTTP host, not only an adapter mock. It starts a controlled local chat page, pairs with the host API, launches a managed persistent Playwright context in a temporary profile, uses the actual drag-selection overlay, registers the selected input to one group, inserts and verifies a draft, asserts the Send counter remains zero, rejects a repeated write into an occupied composer, rejects cross-group target use, verifies that a copied DOM marker cannot impersonate the original target, tests a conversation-route change racing the final insertion check, and confirms unpair revokes access. The test deletes its temporary profile on completion.
 
 This is a development integration test for the browser adapter only. It does not test ChatGPT/Claude production sites, native apps, OS accessibility or background participation. Requires an installed Playwright Chromium browser; use `npx playwright install chromium` before running it.
 
