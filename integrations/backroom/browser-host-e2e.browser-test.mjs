@@ -253,6 +253,31 @@ test("real local host -> Playwright browser overlay -> group-scoped target -> ve
    "test must actually mutate the field type after focus");
   await typeRaceHandle.dispose();
 
+  // A site's focus handler can enqueue a microtask that populates a field.
+  // The adapter should yield to those microtasks and recheck the value atomically.
+  const microtaskPage=await realContext.newPage();
+  await microtaskPage.goto(fixture.origin+"/chat");
+  await microtaskPage.evaluate(()=>{
+   const field=document.createElement("input");
+   field.id="microtask-race";field.type="text";field.style.cssText="display:block;width:320px;height:48px;margin-top:24px";
+   document.body.append(field);
+   field.addEventListener("focus",()=>queueMicrotask(()=>{field.value="value appeared in focus microtask";}));
+  });
+  const microtaskHandle=await microtaskPage.locator("#microtask-race").elementHandle();
+  const microtaskAdapter=new BrowserDraftAdapter({
+   page:microtaskPage,origin:fixture.origin,path:"/chat",selector:"#microtask-race",
+   appId:fixture.origin,sessionId:"microtask-race",identityFingerprint:"microtask-race-conversation",
+   nodeHandle:microtaskHandle,
+  });
+  await assert.rejects(()=>microtaskAdapter.execute({
+   command:{operation:"draft",text:"must not overwrite the microtask value"},target:{
+    surface:"browser_tab",locatorKind:"dom",locatorValue:"#microtask-race",appId:fixture.origin,
+    sessionId:"microtask-race",identityFingerprint:"microtask-race-conversation",
+   }
+  }),/existing draft cannot be overwritten/i);
+  assert.equal(await microtaskPage.locator("#microtask-race").inputValue(),"value appeared in focus microtask");
+  await microtaskHandle.dispose();
+
   const unpaired=await requestJson(hostBase,fixture.origin,"/v1/unpair",{method:"POST",token});
   assert.equal(unpaired.response.status,200);
   const denied=await requestJson(hostBase,fixture.origin,"/v1/browser/pages",{token});
