@@ -32,7 +32,7 @@ function disabledBrowserRuntime() {
   const unavailable = async () => { throw new Error("browser_runtime_unavailable"); };
   return {
     status, stop: async () => status(), start: unavailable, openUrl: unavailable, listPages: async () => [],
-    listTargets: async () => [], startSelection: unavailable, getSelection: async () => ({ state: "unavailable" }),
+    listTargets: async () => [], startSelection: unavailable, cancelSelection: async () => false, getSelection: async () => ({ state: "unavailable" }),
     registerSelectedTarget: unavailable, unregisterTarget: async () => false, draft: unavailable,
   };
 }
@@ -206,13 +206,23 @@ export function createBackroomHostServer({
           return;
         }
         if (request.method === "POST" && [
-          "/v1/browser/select", "/v1/browser/targets", "/v1/browser/targets/unregister", "/v1/browser/draft",
+          "/v1/browser/select", "/v1/browser/select/cancel", "/v1/browser/targets", "/v1/browser/targets/unregister", "/v1/browser/draft",
         ].includes(url.pathname)) {
           if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
             writeJson(response, 415, { error: "application_json_required" }, cors);
             return;
           }
           const input = await readJson(request);
+          if (url.pathname === "/v1/browser/select/cancel") {
+            if (typeof input.pageId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.pageId) ||
+              typeof input.roomId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.roomId)) {
+              writeJson(response, 400, { error: "invalid_page_or_room_id" }, cors);
+              return;
+            }
+            const cancelled = await browser.cancelSelection(input.pageId, input.roomId);
+            writeJson(response, 200, { cancelled }, cors);
+            return;
+          }
           if (url.pathname === "/v1/browser/select") {
             if (typeof input.pageId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.pageId) ||
               typeof input.roomId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.roomId)) {
