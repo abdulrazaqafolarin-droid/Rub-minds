@@ -42,6 +42,43 @@ test("an exact selected element handle refuses a replacement composer before wri
  assert.equal(writes,0);
 });
 
+test("a selected element handle is the actual write target, not the re-resolved locator",async()=>{
+ let exactValue="",locatorWrites=0,handleWrites=0;
+ const originalHandle={
+  nodeId:1,
+  evaluate:async(fn,arg)=>{
+   const code=String(fn);
+   if(code.includes("node === original"))return true;
+   if(code.includes("const readValue")){
+    if(exactValue!=="")return {state:"occupied"};
+    handleWrites++;exactValue=arg;return {state:"inserted"};
+   }
+   if(code.includes("connected:")&&code.includes("value:"))return {connected:true,value:exactValue};
+   if(code.includes("element instanceof HTMLInputElement")&&code.includes("element.value"))return exactValue;
+   return true;
+  },
+ };
+ const liveHandle={nodeId:1,evaluate:async(fn,arg)=>String(fn).includes("node === original")?1===arg?.nodeId:false,dispose:async()=>{}};
+ const field={
+  count:async()=>1,isVisible:async()=>true,isEnabled:async()=>true,
+  elementHandle:async()=>liveHandle,
+  inputValue:async()=>"",textContent:async()=>"",
+  evaluate:async()=>{locatorWrites++;return {state:"inserted"}}
+ };
+ const page={isClosed:()=>false,url:()=>"https://example.test/conversation/123",locator:()=>field};
+ const adapter=new BrowserDraftAdapter({
+  page,origin:"https://example.test",path:"/conversation/123",selector:"[role=textbox]",
+  appId:"ai",sessionId:"123",identityFingerprint:"app:123",nodeHandle:originalHandle
+ });
+ const target={surface:"browser_tab",locatorKind:"dom",locatorValue:"[role=textbox]",appId:"ai",sessionId:"123",identityFingerprint:"app:123"};
+ assert.equal((await adapter.probe({target,operation:"draft"})).focused,true);
+ const result=await adapter.execute({command:{operation:"draft",text:"draft on selected node"},target});
+ assert.equal(result.state,"completed");
+ assert.equal(exactValue,"draft on selected node");
+ assert.equal(handleWrites,1);
+ assert.equal(locatorWrites,0);
+});
+
 test("changed app URL, duplicate or hidden composer fails before write",async()=>{
  for(const options of [{url:"https://evil.test/conversation/123"},{url:"https://example.test/conversation/99"},{visible:false},{count:2},{closed:true}]){
   const f=fixture(options);
