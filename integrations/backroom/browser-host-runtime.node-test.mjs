@@ -10,6 +10,12 @@ function fakePage({url="https://chatgpt.com/c/test",title="Research thread",sele
   evaluate:async(fn,arg)=>{
    const code=String(fn);
    if(code.includes("node === original"))return capturedNodeId===arg?.nodeId;
+   if(code.includes("const readValue")){
+    if(nodeId!==capturedNodeId)return {state:"unavailable"};
+    if(input!=="")return {state:"occupied"};
+    input=arg;return {state:"inserted"};
+   }
+   if(code.includes("element instanceof HTMLInputElement")&&code.includes("element.value")&&!code.includes("const readValue"))return input;
    if(code.includes("setAttribute")&&code.includes("data-rm-backroom-binding")){
     if(nodeId!==capturedNodeId)return {state:"unavailable",marker:""};
     if(bindingMarker)return {state:"existing",marker:bindingMarker};
