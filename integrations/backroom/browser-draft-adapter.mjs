@@ -32,8 +32,41 @@ export class BrowserDraftAdapter {
   async execute({ command, target }) {
     if (command.operation!=="draft" || target.locatorValue!==this.selector || target.appId!==this.appId || target.sessionId!==this.sessionId || target.identityFingerprint!==this.identityFingerprint) throw new Error("binding changed");
     const f = await this.#field();
-    if (await this.#read(f) !== "") throw new Error("existing draft cannot be overwritten");
-    await f.fill(command.text);
+    // Check and insert in one synchronous page task. A separate value read then
+    // locator.fill() could overwrite a human draft typed between the two actions.
+    const insertion = await f.evaluate((element, text) => {
+      if (!(element instanceof HTMLElement) || !element.isConnected ||
+        ("disabled" in element && element.disabled) || ("readOnly" in element && element.readOnly) ||
+        element.getAttribute("aria-disabled") === "true" || element.getAttribute("aria-readonly") === "true") {
+        return { state: "unavailable" };
+      }
+      const readValue = () => element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
+        ? element.value
+        : element.isContentEditable ? element.textContent ?? "" : null;
+      if (readValue() === null) return { state: "unavailable" };
+      if (readValue() !== "") return { state: "occupied" };
+      element.focus({ preventScroll: true });
+      if (element instanceof HTMLInputElement) {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(element, text);
+      } else if (element instanceof HTMLTextAreaElement) {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(element, text);
+      } else if (element.isContentEditable) {
+        element.textContent = text;
+      } else {
+        return { state: "unavailable" };
+      }
+      element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+      return { state: readValue() === text ? "inserted" : "unverified" };
+    }, command.text);
+    if (insertion.state === "occupied" || insertion.state === "unavailable") {
+      const error = new Error(insertion.state === "occupied"
+        ? "existing draft cannot be overwritten"
+        : "composer is no longer editable");
+      error.code = "BACKROOM_PREFLIGHT";
+      throw error;
+    }
+    if (insertion.state !== "inserted") return { state:"needs_review", verified:false };
     if (await this.#read(f) !== command.text) return { state:"needs_review", verified:false };
     return { state:"completed", verified:true, result:{ drafted:true, submitted:false } };
   }
