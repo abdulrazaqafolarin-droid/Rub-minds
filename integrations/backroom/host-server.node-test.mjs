@@ -341,6 +341,34 @@ test("emergency stop is authenticated, closes browser, revokes sessions and latc
 
 
 
+test("failed browser closure still latches stop and revokes sessions", async () => {
+ const browserRuntime=fakeBrowserRuntime();
+ const normalStop=browserRuntime.stop.bind(browserRuntime);
+ let stopCalls=0;
+ browserRuntime.stop=async()=>{
+  stopCalls++;
+  if(stopCalls===1)throw new Error("simulated close failure");
+  return normalStop();
+ };
+ await withHost(async({base,origin,host})=>{
+  const credentials=await (await pair(base,origin)).json();
+  const auth={Origin:origin,Authorization:"Bearer "+credentials.sessionToken};
+  await fetch(base+"/v1/browser/start",{method:"POST",headers:auth});
+
+  const response=await fetch(base+"/v1/host/stop",{method:"POST",headers:auth});
+  assert.equal(response.status,503);
+  const result=await response.json();
+  assert.equal(result.stopped,true);
+  assert.equal(result.browserClosed,false);
+  assert.equal(result.sessionsRevoked,true);
+  assert.equal(result.restartRequired,true);
+  assert.equal(result.error,"emergency_stop_incomplete");
+  assert.equal(host.killSwitchTripped,true);
+  assert.equal(browserRuntime.status().running,true,"a failed close must not be misreported as successful");
+  assert.equal((await fetch(base+"/v1/browser/start",{method:"POST",headers:auth})).status,423);
+ },{browserRuntime});
+});
+
 test("wrong-origin callers cannot trigger the emergency stop", async () => {
  const browserRuntime=fakeBrowserRuntime();
  await withHost(async({base,origin})=>{
