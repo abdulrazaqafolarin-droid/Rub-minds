@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { validateSessionMemoryDocument } from "../../../integrations/mcp/protocol.mjs";
 
 const databaseUrl = Deno.env.get("SUPABASE_URL");
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -40,30 +41,10 @@ async function sha256(value: string) {
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
 }
 function validateDocument(value: unknown): { document: Record<string, unknown>; bytes: number } | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (!validateSessionMemoryDocument(value)) return null;
   const document = value as Record<string, unknown>;
-  const serialized = stableStringify(document);
-  const bytes = new TextEncoder().encode(serialized).byteLength;
-  if (bytes > MAX_DOCUMENT_BYTES) return null;
-  if (document.schema !== "rub-minds.session-memory" || document.version !== 1) return null;
-  if (Object.keys(document).some((key) => !["schema", "version", "summary", "current_goal", "source", "sharing", "transcript_text", "transcript_complete"].includes(key))) return null;
-  if (typeof document.summary !== "string" || !document.summary.trim() || document.summary.length > 20000) return null;
-  if (typeof document.current_goal !== "string" || document.current_goal.length > 4000) return null;
-  if (!document.source || typeof document.source !== "object" || Array.isArray(document.source)) return null;
-  const source = document.source as Record<string, unknown>;
-  if (Object.keys(source).some((key) => !["platform", "session_label"].includes(key)) ||
-      typeof source.platform !== "string" || !source.platform.trim() || source.platform.length > 80) return null;
-  if (source.session_label !== undefined &&
-      (typeof source.session_label !== "string" || source.session_label.length > 160)) return null;
-  if (!document.sharing || typeof document.sharing !== "object" || Array.isArray(document.sharing)) return null;
-  const sharing = document.sharing as Record<string, unknown>;
-  if (Object.keys(sharing).some((key) => key !== "raw_history_visibility") ||
-      sharing.raw_history_visibility !== "private") return null;
-  if (document.transcript_text !== undefined &&
-      (typeof document.transcript_text !== "string" || document.transcript_text.length > 900000)) return null;
-  if (document.transcript_complete !== undefined &&
-      (typeof document.transcript_complete !== "boolean" || typeof document.transcript_text !== "string")) return null;
-  return { document, bytes };
+  const bytes = new TextEncoder().encode(stableStringify(document)).byteLength;
+  return bytes <= MAX_DOCUMENT_BYTES ? { document, bytes } : null;
 }
 
 Deno.serve(async (request: Request) => {
