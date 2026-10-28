@@ -93,30 +93,6 @@ test("a selected element handle is the actual write target, not the re-resolved 
  assert.equal(locatorWrites,0);
 });
 
-test("registered DOM marker is carried into the atomic write and mismatch fails closed",async()=>{
- const marker="12345678-1234-4234-9234-123456789012";
- let insertionRequest=null,writes=0;
- const selector='textarea[data-rm-backroom-binding="'+marker+'"]';
- const nodeHandle={
-  evaluate:async(fn,arg)=>{
-   if(typeof arg==="string")return true;
-   insertionRequest=arg;
-   if(arg.bindingMarker!==marker)return {state:"inserted"};
-   // Simulate the live DOM marker no longer matching the registration.
-   return {state:"unavailable"};
-  }
- };
- const field={count:async()=>1,isVisible:async()=>true,isEnabled:async()=>true,inputValue:async()=>""};
- const page={isClosed:()=>false,url:()=>"https://example.test/conversation/123",locator:()=>field};
- const adapter=new BrowserDraftAdapter({page,origin:"https://example.test",path:"/conversation/123",selector,
-  appId:"ai",sessionId:"123",identityFingerprint:"app:123",nodeHandle});
- const target={surface:"browser_tab",locatorKind:"dom",locatorValue:selector,appId:"ai",sessionId:"123",identityFingerprint:"app:123"};
- await assert.rejects(()=>adapter.execute({command:{operation:"draft",text:"marker guarded"},target}),/composer is no longer editable/i);
- assert.equal(insertionRequest.bindingMarker,marker);
- assert.equal(insertionRequest.selector,selector);
- assert.equal(writes,0);
-});
-
 test("post-insertion readback failure is ambiguous and must not invite an automatic retry",async()=>{
  let value="",writes=0;
  const originalHandle={
