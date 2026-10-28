@@ -74,7 +74,7 @@ export class BrowserDraftAdapter {
           return "unavailable";
         }
         if (element instanceof HTMLInputElement &&
-          ["password","hidden","button","checkbox","radio","submit","reset","file","image","range","color"].includes(element.type)) {
+          !["text","search","url","tel","email"].includes(element.type)) {
           return "unavailable";
         }
         if (!(element instanceof HTMLInputElement) && !(element instanceof HTMLTextAreaElement) && !element.isContentEditable) {
