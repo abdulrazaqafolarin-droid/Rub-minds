@@ -64,6 +64,40 @@ test("selection refuses a rectangle that encloses more than one editable input",
   assert.match(result.message,/only one input/);
  });
 });
+test("restarting after a failed drag removes the old overlay listener and stale timer",async()=>{
+ await controlledPage(async page=>{
+  await page.evaluate(()=>{
+   const listeners=new Set();
+   const nativeAdd=window.addEventListener.bind(window);
+   const nativeRemove=window.removeEventListener.bind(window);
+   window.__backroomTestKeyListeners=listeners;
+   window.addEventListener=function(type,listener,options){
+    if(type==="keydown")listeners.add(listener);
+    return nativeAdd(type,listener,options);
+   };
+   window.removeEventListener=function(type,listener,options){
+    if(type==="keydown")listeners.delete(listener);
+    return nativeRemove(type,listener,options);
+   };
+  });
+  await page.evaluate(installSelectionOverlay);
+  await page.mouse.move(12,220);await page.mouse.down();
+  await page.mouse.move(14,222,{steps:1});await page.mouse.up();
+  assert.equal((await page.evaluate(()=>window.__RM_BACKROOM_SELECTION_V1__)).state,"failed");
+  await page.evaluate(installSelectionOverlay);
+  assert.equal(await page.evaluate(()=>window.__backroomTestKeyListeners.size),1,
+   "only the latest overlay should own a keydown listener");
+  await dragAround(page,"#prompt");
+  assert.equal((await page.evaluate(()=>window.__RM_BACKROOM_SELECTION_V1__)).state,"selected");
+  await page.waitForTimeout(1300);
+  assert.equal((await page.evaluate(()=>window.__RM_BACKROOM_SELECTION_V1__)).state,"selected",
+   "a stale failure timer must not replace a later successful selection");
+  assert.equal(await page.evaluate(()=>window.__backroomTestKeyListeners.size),0,
+   "a completed selection must remove its keyboard listener");
+  assert.equal(await page.locator("#count").textContent(),"0");
+ });
+});
+
 test("Escape cancels the overlay without changing the active input",async()=>{
  await controlledPage(async page=>{
   await page.evaluate(installSelectionOverlay);
