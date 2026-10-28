@@ -98,7 +98,8 @@ export default function BackroomApp() {
         if (savedRaw) {
           const saved = JSON.parse(savedRaw) as { origin?: string; sessionToken?: string; info?: HostStatus };
           if (saved.origin && typeof saved.sessionToken === 'string' && /^[a-f0-9]{64}$/i.test(saved.sessionToken) &&
-            saved.info && typeof saved.info.hostId === 'string') {
+            saved.info && typeof saved.info.hostId === 'string' && typeof saved.info.protocolVersion === 'string' &&
+            typeof saved.info.capabilities === 'object' && saved.info.capabilities !== null) {
             const origin = localHostOrigin(saved.origin);
             setHostUrl(origin);
             setHostToken(saved.sessionToken);
@@ -255,7 +256,12 @@ export default function BackroomApp() {
       headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(options.body);
     }
-    const response = await fetchLocalHost(localHostOrigin(hostUrl) + path, init);
+    let response: Response;
+    try {
+      response = await fetchLocalHost(localHostOrigin(hostUrl) + path, init);
+    } catch {
+      throw new Error('Could not reach the local host. Allow Rub Minds loopback/local-network access in your browser and verify the host is running on this same device.');
+    }
     const payload = await response.json().catch(() => ({})) as { error?: string; message?: string; hint?: string };
     if (!response.ok) {
       if (payload.error === 'host_session_invalid') {
