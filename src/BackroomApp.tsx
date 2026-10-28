@@ -356,16 +356,29 @@ export default function BackroomApp() {
   async function refreshBrowserInventory() {
     setBrowserBusy(true); setBrowserNotice('');
     try {
-      const [pageResult, targetResult] = await Promise.all([
+      const [runtimeStatus, pageResult, targetResult] = await Promise.all([
+        hostApi<{ running: boolean; pages: number; capabilities: Record<string, boolean> }>('/v1/browser/status'),
         hostApi<{ pages: BrowserPageRow[] }>('/v1/browser/pages'),
         hostApi<{ targets: BrowserTargetRow[] }>('/v1/browser/targets'),
       ]);
+      if (typeof runtimeStatus.running !== 'boolean' || !Number.isSafeInteger(runtimeStatus.pages) ||
+        runtimeStatus.pages < 0 || !runtimeStatus.capabilities ||
+        hostCapabilityKeys.some(key => typeof runtimeStatus.capabilities[key] !== 'boolean')) {
+        throw new Error('Local host returned invalid browser runtime status.');
+      }
+      const capabilities = { ...runtimeStatus.capabilities, browserDraft: runtimeStatus.running && runtimeStatus.capabilities.browserDraft };
+      setHostInfo(previous => previous ? {
+        ...previous, executionReady: Object.values(capabilities).some(Boolean),
+        capabilities, browserPages: runtimeStatus.pages,
+      } : previous);
       setBrowserPages(pageResult.pages);
       setBrowserTargets(targetResult.targets);
       if (selectedBrowserTarget && !targetResult.targets.some(t => t.id === selectedBrowserTarget && t.roomId === room?.id)) setSelectedBrowserTarget('');
-      setBrowserNotice(pageResult.pages.length
-        ? 'Managed browser is ready. Choose a tab to register its typing area.'
-        : 'No web conversation is open yet. Open a supported HTTPS page in the managed browser, then refresh tabs.');
+      setBrowserNotice(!runtimeStatus.running
+        ? 'Managed browser is stopped. Launch it before opening or selecting an AI composer.'
+        : pageResult.pages.length
+          ? 'Managed browser is ready. Choose a tab to register its typing area.'
+          : 'No web conversation is open yet. Open a supported HTTPS page in the managed browser, then refresh tabs.');
     } catch (e) { setBrowserNotice(e instanceof Error ? e.message : 'Could not read managed browser tabs.'); }
     finally { setBrowserBusy(false); }
   }
