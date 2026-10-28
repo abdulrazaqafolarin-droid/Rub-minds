@@ -382,7 +382,7 @@ test("wrong-origin callers cannot trigger the emergency stop", async () => {
  await withHost(async({base,origin})=>{
   const credentials=await (await pair(base,origin)).json();
   const hostile=await fetch(base+"/v1/host/stop",{method:"POST",headers:{
-   Origin:"http://localhost:5173",Authorization:"Bearer "+credentials.sessionToken,
+   Origin:"https://evil.test",Authorization:"Bearer "+credentials.sessionToken,
   }});
   assert.equal(hostile.status,403);
   assert.equal(browserRuntime.status().running,false);
