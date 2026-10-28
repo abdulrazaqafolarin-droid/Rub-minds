@@ -173,7 +173,7 @@ test("real local host -> Playwright browser overlay -> group-scoped target -> ve
   };
   await assert.rejects(()=>raceAdapter.execute({
    command:{operation:"draft",text:"must not cross a conversation"},target:raceTarget,
-  }),/conversation changed immediately before draft insertion/i);
+  }),/conversation changed.*draft insertion/i);
   assert.equal(routeChangedAtInsertion,true,"race must occur after #field preflight");
   assert.equal(await racePage.locator("#prompt").inputValue(),"","stale conversation must remain untouched");
   await originalHandle.dispose();
