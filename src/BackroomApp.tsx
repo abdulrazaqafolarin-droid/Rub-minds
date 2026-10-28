@@ -2,7 +2,7 @@ import { useEffect, useState, type PointerEvent } from 'react';
 import { Activity, ArrowLeft, ArrowRight, Bot, Check, ChevronDown, CircleHelp, Command, Cpu, ExternalLink, Laptop, Layers3, Monitor, MousePointer2, Plus, ShieldCheck, Smartphone, SquareTerminal, Trash2, WifiOff, X } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
-import { listCloudRooms, type CloudRoom } from './cloudRooms';
+import { listCloudMessages, listCloudRooms, subscribeToCloudMessages, type CloudMessage, type CloudRoom } from './cloudRooms';
 import './backroom.css';
 
 type Surface = 'browser_tab' | 'desktop_app' | 'windows_app' | 'terminal' | 'android_app';
@@ -60,6 +60,8 @@ export default function BackroomApp() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [rooms, setRooms] = useState<CloudRoom[]>([]);
+  const [groupMessages, setGroupMessages] = useState<CloudMessage[]>([]);
+  const [selectedGroupMessageId, setSelectedGroupMessageId] = useState('');
   const [error, setError] = useState('');
   const [hostUrl, setHostUrl] = useState('http://127.0.0.1:43781');
   const [pairingCode, setPairingCode] = useState('');
@@ -111,6 +113,21 @@ export default function BackroomApp() {
     return () => { alive = false; };
   }, []);
   const room = rooms.find(r => r.id === roomId);
+  useEffect(() => {
+    if (!room?.id) { setGroupMessages([]); setSelectedGroupMessageId(''); return; }
+    let alive = true;
+    const refreshMessages = async () => {
+      try {
+        const messages = await listCloudMessages(room.id);
+        if (alive) setGroupMessages(messages.slice(-60).reverse());
+      } catch {
+        if (alive) { setGroupMessages([]); setBrowserNotice('Could not read group messages. You can still type a local draft manually.'); }
+      }
+    };
+    void refreshMessages();
+    const unsubscribe = subscribeToCloudMessages(room.id, () => { void refreshMessages(); });
+    return () => { alive = false; unsubscribe(); };
+  }, [room?.id]);
   const storageKey = user && room ? 'rub-backroom-spaces-v1:' + user.id + ':' + room.id : '';
   useEffect(() => {
     setActive(''); setSelection(null); setSpaces([]);
@@ -236,7 +253,7 @@ export default function BackroomApp() {
       ]);
       setBrowserPages(pageResult.pages);
       setBrowserTargets(targetResult.targets);
-      if (selectedBrowserTarget && !targetResult.targets.some(t => t.id === selectedBrowserTarget)) setSelectedBrowserTarget('');
+      if (selectedBrowserTarget && !targetResult.targets.some(t => t.id === selectedBrowserTarget && t.roomId === room?.id)) setSelectedBrowserTarget('');
       setBrowserNotice(pageResult.pages.length
         ? 'Managed browser is ready. Choose a tab to register its typing area.'
         : 'No web conversation is open yet. Open a supported HTTPS page in the managed browser, then refresh tabs.');
@@ -343,7 +360,7 @@ export default function BackroomApp() {
 <div className="br-browser-panel"><div className="br-browser-panel-head"><div><b>Managed browser</b><small>Visible Chromium · local profile only</small></div><button className="br-secondary" onClick={() => void refreshBrowserInventory()} disabled={browserBusy || !hostInfo.capabilities.browserDraft}><Activity size={14}/> Refresh tabs</button></div>
 {!hostInfo.capabilities.browserDraft ? <button className="br-primary br-browser-launch" onClick={() => void startManagedBrowser()} disabled={browserBusy}>{browserBusy ? 'Starting browser…' : 'Launch managed browser'} <ArrowRight size={15}/></button> : <>
 <div className="br-browser-pages">{browserPages.map(page => <div className="br-browser-page" key={page.pageId}><div className="br-browser-page-icon"><Monitor size={16}/></div><div className="br-browser-page-label"><b>{page.site}</b><small>{page.title || 'Untitled conversation tab'}</small></div><button className="br-secondary" onClick={() => void registerBrowserInput(page.pageId)} disabled={browserBusy}>Select input</button></div>)}{!browserPages.length && <p className="br-browser-empty">No supported browser tabs found. Open a conversation in the managed browser and refresh.</p>}</div>
-{roomBrowserTargets.length>0 && <><label className="br-browser-field-label" htmlFor="br-browser-target">Registered typing area</label><select id="br-browser-target" value={selectedBrowserTarget} onChange={e=>setSelectedBrowserTarget(e.target.value)}><option value="">Choose a typing target</option>{roomBrowserTargets.map(t=><option key={t.id} value={t.id}>{t.site} · {t.title}</option>)}</select><label className="br-browser-field-label" htmlFor="br-browser-draft">Text to draft (not sent)</label><textarea id="br-browser-draft" rows={3} maxLength={10000} value={browserDraftText} onChange={e=>setBrowserDraftText(e.target.value)} placeholder="Write the exact text to insert into the selected composer…"/><button className="br-primary br-browser-draft" onClick={() => void draftToBrowser()} disabled={browserBusy || !roomBrowserTargets.some(t => t.id === selectedBrowserTarget) || !browserDraftText.trim()}>Insert draft — never send <ArrowRight size={15}/></button><p className="br-browser-caption">Target registration stores the selector locally. Text is inserted only after confirmation, only into an empty input, and is read back to verify success.</p></>}
+{roomBrowserTargets.length>0 && <><label className="br-browser-field-label" htmlFor="br-browser-target">Registered typing area</label><select id="br-browser-target" value={selectedBrowserTarget} onChange={e=>setSelectedBrowserTarget(e.target.value)}><option value="">Choose a typing target</option>{roomBrowserTargets.map(t=><option key={t.id} value={t.id}>{t.site} · {t.title}</option>)}</select><label className="br-browser-field-label" htmlFor="br-group-message">Source group message (optional)</label><select id="br-group-message" value={selectedGroupMessageId} onChange={e => { const id = e.target.value; setSelectedGroupMessageId(id); const message = groupMessages.find(m => m.id === id); if (message) setBrowserDraftText(message.body); }}><option value="">Write a manual draft instead</option>{groupMessages.map(m => <option key={m.id} value={m.id}>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · {m.body.slice(0, 90).replace(/\s+/g, ' ')}</option>)}</select><label className="br-browser-field-label" htmlFor="br-browser-draft">Text to draft (not sent)</label><textarea id="br-browser-draft" rows={3} maxLength={10000} value={browserDraftText} onChange={e=>setBrowserDraftText(e.target.value)} placeholder="Write the exact text to insert into the selected composer…"/><button className="br-primary br-browser-draft" onClick={() => void draftToBrowser()} disabled={browserBusy || !roomBrowserTargets.some(t => t.id === selectedBrowserTarget) || !browserDraftText.trim()}>Insert draft — never send <ArrowRight size={15}/></button><p className="br-browser-caption">Target registration stores the selector locally. Text is inserted only after confirmation, only into an empty input, and is read back to verify success.</p></>}
 <button className="br-secondary br-browser-stop" onClick={() => void stopManagedBrowser()} disabled={browserBusy}>Close managed browser</button></>}
 {browserNotice && <div className="br-host-message" role="status">{browserNotice}</div>}</div>
 <div className="br-modal-actions"><button className="br-secondary" onClick={() => void unpairLocalHost()} disabled={hostBusy || browserBusy}>Unpair</button><button className="br-primary" onClick={() => void checkLocalHost()} disabled={hostBusy || browserBusy}>{hostBusy ? 'Checking…' : 'Check connection'}</button></div></>}</div></div>}

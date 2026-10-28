@@ -310,7 +310,7 @@ export class BrowserHostRuntime {
     this.#targets.set(target.id, { target, pageId, title, site: url.hostname });
     this.#bindings.set(target.id, { target, pageId, page, adapter, guard });
     await page.evaluate(() => { const state = window.__RM_BACKROOM_SELECTION_V1__; if (state) delete window.__RM_BACKROOM_SELECTION_V1__; });
-    return { id: target.id, pageId, title, site: url.hostname, surface: "browser_tab", operations: ["draft"], submittedAutomatically: false };
+    return { id: target.id, pageId, roomId: target.roomId, title, site: url.hostname, surface: "browser_tab", operations: ["draft"], submittedAutomatically: false };
   }
   listTargets() {
     return [...this.#targets.values()].map(({ target, pageId, title, site }) => ({

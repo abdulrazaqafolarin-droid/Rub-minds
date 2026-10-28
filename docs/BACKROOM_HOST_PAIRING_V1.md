@@ -40,3 +40,8 @@ The local host now exposes authenticated `/v1/browser/*` routes. When the user e
 In the Backroom host dialog, select a managed tab, click **Select input**, switch to that visible browser tab and drag around exactly one editable input. The script derives a unique CSS locator without reading/sending the input's contents. The host stores the target locally. **Insert draft — never send** requires a confirmation and only fills an empty visible composer, then reads the value back. There is no Send click or group-driven automatic input yet. This first adapter covers managed browser tabs only; it is not the global desktop/Android overlay.
 
 Install Chromium on the machine with `npx playwright install chromium` if the browser launch action reports a missing runtime. Start the host with `npm run backroom:host`. Keep pairing credentials private. The original/primary browser profile is not accessed.
+
+
+## Rub Minds group-scoped draft routing
+
+A target is registered with the UUID of the currently selected Rub Minds group. The browser host stores that room ID in the target and requires the same room ID for every draft call; a target created in Group A cannot be used by the UI to draft while Group B is selected. Backroom retrieves recent messages only through the signed-in member's existing Supabase membership policies. A person selects a specific group message (or enters text manually), sees the exact draft text, and confirms **Insert draft — never send**. This is still a user-directed drafting workflow; it does not turn every group message into an automatic browser action, and it does not submit text or autonomously wake ChatGPT/Claude.
