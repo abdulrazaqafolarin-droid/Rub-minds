@@ -417,20 +417,26 @@ export class BrowserHostRuntime {
     await this.#clearSelectionAttempt(page, binding.attemptId);
     return true;
   }
-  async getSelection(pageId) {
+  async getSelection(pageId, expectedAttemptId) {
     const { page, url } = this.#page(pageId);
+    if (typeof expectedAttemptId !== "string" || !/^[a-f0-9-]{36}$/i.test(expectedAttemptId)) {
+      throw new TypeError("selection attempt ID required");
+    }
     const pending = this.#selectionRooms.get(pageId);
     if (!pending) return { state: "unavailable", message: "No active input selection. Start selection again." };
+    if (pending.attemptId !== expectedAttemptId) {
+      return { state: "cancelled", message: "This selection was replaced by a newer attempt. Start selection again." };
+    }
     const fingerprint = url.origin + url.pathname + url.search + url.hash + ":" + pageId;
     if (pending.fingerprint !== fingerprint) {
       if (this.#selectionRooms.get(pageId) === pending) this.#selectionRooms.delete(pageId);
       await this.#clearSelectionAttempt(page, pending.attemptId);
       return { state: "cancelled", message: "The conversation changed. Start selection again in the current tab." };
     }
-    const selection = await page.evaluate(expectedAttemptId => {
+    const selection = await page.evaluate(attemptId => {
       const current = window.__RM_BACKROOM_SELECTION_V1__ ?? null;
-      return current?.attemptId === expectedAttemptId ? current : null;
-    }, pending.attemptId);
+      return current?.attemptId === attemptId ? current : null;
+    }, expectedAttemptId);
     if (!selection || typeof selection !== "object") {
       return { state: "cancelled", message: "The selection expired or was replaced. Start selection again." };
     }
@@ -462,23 +468,29 @@ export class BrowserHostRuntime {
       try { await binding.nodeHandle?.dispose(); } catch {}
     }
   }
-  async registerSelectedTarget(pageId, roomId) {
+  async registerSelectedTarget(pageId, roomId, expectedAttemptId) {
     if (typeof roomId !== "string" || !roomId.trim() || roomId.length > 120) throw new TypeError("group roomId required");
+    if (typeof expectedAttemptId !== "string" || !/^[a-f0-9-]{36}$/i.test(expectedAttemptId)) {
+      throw new TypeError("selection attempt ID required");
+    }
     await this.listTargets();
     const { page, url } = this.#page(pageId);
     const selectionBinding = this.#selectionRooms.get(pageId);
+    if (!selectionBinding || selectionBinding.attemptId !== expectedAttemptId) {
+      throw new Error("Selection attempt has expired or was replaced. Start selection again.");
+    }
     const currentFingerprint = url.origin + url.pathname + url.search + url.hash + ":" + pageId;
-    if (!selectionBinding || selectionBinding.roomId !== roomId || selectionBinding.fingerprint !== currentFingerprint) {
-      if (selectionBinding && this.#selectionRooms.get(pageId) === selectionBinding) {
+    if (selectionBinding.roomId !== roomId || selectionBinding.fingerprint !== currentFingerprint) {
+      if (this.#selectionRooms.get(pageId) === selectionBinding) {
         this.#selectionRooms.delete(pageId);
         await this.#clearSelectionAttempt(page, selectionBinding.attemptId);
       }
       throw new Error("Selection belongs to another group or conversation; select the input again.");
     }
-    const selection = await page.evaluate(expectedAttemptId => {
+    const selection = await page.evaluate(attemptId => {
       const current = window.__RM_BACKROOM_SELECTION_V1__ ?? null;
-      return current?.attemptId === expectedAttemptId ? current : null;
-    }, selectionBinding.attemptId);
+      return current?.attemptId === attemptId ? current : null;
+    }, expectedAttemptId);
     if (!selection || selection.state !== "selected" || selection.attemptId !== selectionBinding.attemptId ||
       typeof selection.selector !== "string" || selection.selector.length > 500 ||
       !/^[a-f0-9-]{36}$/i.test(selection.selectionId)) {
