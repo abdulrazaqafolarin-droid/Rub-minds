@@ -1,5 +1,7 @@
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { HostPairingAuthority } from "../integrations/backroom/host-pairing.mjs";
 
 const DEFAULT_ORIGINS = [
@@ -186,7 +188,7 @@ export async function runBackroomHost() {
   return instance;
 }
 
-if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   runBackroomHost().catch(error => {
     process.stderr.write(`Backroom host failed to start: ${error.message}\\n`);
     process.exitCode = 1;
