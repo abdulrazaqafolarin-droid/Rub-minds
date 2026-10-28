@@ -7,7 +7,8 @@ function fakePage({url="https://chatgpt.com/c/test",title="Research thread",sele
  return {
   handlers, isClosed:()=>closed, url:()=>pageUrl, title:async()=>title,
   on:(event,fn)=>{handlers[event]=fn},
-  locator:()=>({count:async()=>1,isVisible:async()=>true,isEnabled:async()=>true,inputValue:async()=>input,fill:async text=>{input=text}}),
+  locator:()=>({count:async()=>1,isVisible:async()=>true,isEnabled:async()=>true,inputValue:async()=>input,
+    evaluate:async(_fn,text)=>{if(input!=="")return {state:"occupied"};input=text;return {state:"inserted"}}}),
   evaluate:async fn=>{
    if(typeof fn==="function" && fn.name==="installSelectionOverlay")return {state:"pending"};
    if(selection && fn.toString().includes("RM_BACKROOM_SELECTION_V1"))return selection;

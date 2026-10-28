@@ -40,7 +40,7 @@ test("a human draft appearing during preflight is never overwritten",async()=>{
  const f=fixture({raceValue:"Human typed while task was preparing"});
  await assert.rejects(()=>f.adapter.execute({command:{operation:"draft",text:"AI text"},target:f.target}),/overwritten/);
  assert.equal(f.value(),"Human typed while task was preparing");
- assert.equal(f.fills(),0);
+ assert.equal(f.filled(),0);
 });
 test("unverified write does not count as success",async()=>{
  const f=fixture({corrupt:true});
