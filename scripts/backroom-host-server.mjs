@@ -328,7 +328,7 @@ export async function runBackroomHost() {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   runBackroomHost().catch(error => {
-    process.stderr.write(`Backroom host failed to start: ${error.message}\\n`);
+    process.stderr.write(`Backroom host failed to start: ${error.message}\n`);
     process.exitCode = 1;
   });
 }
