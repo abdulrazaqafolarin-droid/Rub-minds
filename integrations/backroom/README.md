@@ -1,63 +1,56 @@
 # Rub Minds Backroom — shared protocol v1
 
-Backroom is the local control layer behind a Rub Minds group. The protocol is implemented once; Windows and Android use different adapters for capabilities exposed by supported browsers, app APIs and the operating system. Do not assume that every app exposes remote control.
+Backroom is the local control layer behind a Rub Minds group. A platform-neutral session manager is shared by Windows and Android; each OS implements its own driver. Backroom opens the real supported interface rather than cloning ChatGPT, Claude, Chrome or a terminal.
 
-## Connection modes
+## Session modes
 
-- **attach_existing**: register an already-open session when the OS and app permit the local adapter to identify and control it.
-- **managed**: open a real supported interface in a Backroom-managed environment, then register that session.
+- **attach_existing** registers a page explicitly selected by a local adapter after the user approves the connection. It does not automatically attach to any arbitrary open browser. The first Windows implementation accepts a Playwright page handle supplied by a separately authorized connector; automatic attachment to a normal Chrome process is not implemented.
+- **managed** opens a real site in a dedicated Backroom-managed browser profile scoped to the group.
 
-The group sees one registered session shape regardless of mode. A URL or MCP connection does not itself grant access to an authenticated provider session.
+The shared manager and driver are in `session-manager.mjs` and `windows-playwright-driver.mjs`. The Windows driver uses Playwright Chromium and a persistent profile per group. Different groups do not share a browser profile. It rejects unapproved top-level navigation at both page and context level, so unregistered popup destinations are blocked before their first top-level load and then closed as an additional safeguard. Attach mode never closes the user's existing page when the session is disconnected.
 
-## Contract and safeguards
+The current session manager advertises only `session.inspect`; `local-executor.mjs` validates scoped commands and returns correlated, sanitized inspection results. It does **not** yet send AI messages, read provider conversation content, click UI controls, capture screenshots, or run terminal commands. This is deliberate until a separately reviewed action executor exists.
 
-The **protocol.mjs** module validates explicit consent, platform/mode/capability allowlists, group/session scoping, strict action parameters, HTTPS-only navigation, trusted approval expiry and exact action binding, and result correlation.
+## Explicit boundaries
 
-Commands do not carry device credentials, provider cookies, passwords, or bearer tokens. Authentication is a separate trusted channel. The `trustedApproval` argument must come from the local host's protected approval store; an approval field embedded in an incoming command is rejected. These validators do not authenticate callers or execute actions. **Protocol v1 rejects `terminal.execute` even when approved**; the future contract uses an executable + argument list + working directory, not an arbitrary shell string, and a separately reviewed sandboxed executor is required before enabling terminal control. Task cancellation must name the exact target request.
+- The session record stores the approved origin, not the full conversation URL, path, query string, invite token or page title.
+- URL origins must be exact HTTPS origins. Embedded credentials, unapproved provider domains and unsupported schemes are rejected.
+- The Windows Playwright driver blocks top-level navigation outside the origin allowlist and closes unregistered popups. This is defense in depth, not a full browser/network sandbox: provider subresources can still communicate with their own and third-party origins.
+- Managed profiles contain local provider login state and browser history. Keep them on the device; never upload profile directories or cookies to Rub Minds.
+- An existing-session attach requires a supported local page handle. Neither an invitation URL nor an MCP connection automatically grants control of another app's authenticated session.
+- The generic session manager accepts a platform-specific driver, but **an Android driver is not implemented yet**. Android support must use native-supported mechanisms, not assume Playwright can drive native apps.
+- These modules do not implement authenticated IPC or a remote device command channel. Do not expose the driver object or browser page to a remote caller.
 
-## Local offline queue engine
+## Offline queue foundation
 
-`offline-queue.mjs` is a storage-agnostic, single-host queue engine for only two explicitly supported operations: approved external conversation messages and HTTPS navigation. It:
-- enforces queue and payload size limits, FIFO batches and request-ID deduplication;
-- stores an opaque approval reference, not the approval payload or bearer secret;
-- keeps actions queued while offline and expires old actions;
-- rechecks the currently registered session, permissions and trusted approval before replay;
-- bounds retries, validates correlated executor results, supports pending cancellation and recovers interrupted work with an explicit at-least-once warning.
+`offline-queue.mjs` is a bounded, storage-agnostic queue engine for approved conversation sends and HTTPS navigation only. It checks limits/deduplication, waits while offline, expires old work, refreshes session and trusted-approval state before replay, passes idempotency keys to the executor, validates correlated results, and handles cancellation/recovery races.
 
-**It is not yet a durable device queue.** The platform host must supply durable local storage with OS-appropriate protection and ensure there is only one active drainer per store. An interrupted action may have reached its target before the host crashed; the adapter must enforce the idempotency key to prevent duplicate side effects. Never replay an expired/revoked approval. Raw command content is stored locally, so the eventual storage adapter must protect sensitive content and not sync it to the group by default.
+This queue engine is **not yet durable local-device behavior**. It depends on injected storage methods and requires a single active drainer per store. No Windows/Android protected storage adapter is included. A crash during an external side effect can make the outcome ambiguous; any production adapter must enforce idempotency to avoid duplicate sends. Raw queued content remains on the device and must be protected locally, not synchronized to the group by default.
 
-Terminal execution is deliberately not queueable and is rejected by protocol v1 until a separately reviewed sandboxed executor exists.
+Terminal execution is reserved and rejected in v1 until a separately reviewed sandboxed executor ships. It must accept structured executable/arguments/working-directory values rather than a raw shell string.
 
 ## Tests
 
-Run the complete Backroom contract and queue suite:
+Run the complete Backroom suite:
 
 ```sh
 npm run test:backroom
 ```
 
-Or run the focused files directly:
+Or run the Node tests directly:
 
 ```sh
-node --test integrations/backroom/protocol.node-test.mjs integrations/backroom/offline-queue.node-test.mjs
+node --test integrations/backroom/protocol.node-test.mjs integrations/backroom/offline-queue.node-test.mjs integrations/backroom/managed-sessions.node-test.mjs integrations/backroom/local-executor.node-test.mjs
 ```
 
-The tests cover cross-platform registration, consent and capability isolation, stale/forged approvals, unsafe URLs, action/result correlation, terminal blocking, queue bounds, offline behavior, expiry, fresh approval lookup, revoked capability handling, FIFO batches, retries, cancellation, at-least-once recovery and deduplication.
+The suite covers registration and approval boundaries, queue bounds and retries, explicit consent, provider origin allowlists, no secret/path leakage in session records, scoped local inspection results, dedicated profiles, navigation guards, popup containment before load, group-scoped closure, concurrent open/close races, and preservation of already-open user pages.
 
-## Platform constraints
+## OS constraints
 
-Windows can use Microsoft UI Automation for controls that expose supported automation patterns, but some interactions require an unlocked, interactive desktop ([Microsoft reference](https://learn.microsoft.com/en-us/windows/win32/winauto/entry-uiauto-win32)).
+Windows UI automation works only for controls exposed through supported APIs; some interactions require an unlocked, interactive desktop ([Microsoft UI Automation](https://learn.microsoft.com/en-us/windows/win32/winauto/entry-uiauto-win32)).
 
-Android should prefer app-specific APIs, intents and supported managed web sessions. Do not build the product around general-purpose autonomous `AccessibilityService` control: [Google Play policy restricts Accessibility API use for autonomous action planning/execution](https://support.google.com/googleplay/android-developer/answer/10964491) except qualifying accessibility tools. Any accessibility-based design requires separate platform/policy review. Android background tasks can be suspended or restricted; see [Android background-start restrictions](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start). Unsupported operations must report a visible limitation.
+Android should prefer app-specific APIs, intents and supported managed web sessions. Do not build the product around general-purpose autonomous AccessibilityService control: [Google Play policy restricts Accessibility API use for autonomous action planning/execution](https://support.google.com/googleplay/android-developer/answer/10964491) except qualifying accessibility tools. Any accessibility-based design requires separate platform/policy review. Android background tasks can be suspended or restricted; see [Android foreground-service restrictions](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start).
 
 ## Not yet implemented by this slice
 
-This is a shared contract plus queue engine—not yet an installable Windows companion, Android APK, browser/app driver, local IPC service, OS-backed durable storage adapter, or command executor. Those must be added behind the contract and tested against real devices. This local-first stage requires no always-on paid cloud worker.
-
-## Minimal order of implementation
-
-1. Preserve and verify the group/invitation/MCP read-send-read-back flow.
-2. Implement a Windows local host with authenticated loopback IPC and managed browser support.
-3. Implement Android-specific adapters with explicit OS permissions; unsupported cross-app control must fail visibly.
-4. Add OS-protected durable queue storage, audit and reconnect acceptance tests. Keep terminal actions disabled until workspace scoping, approval, cancellation, output bounds and sandbox tests exist.
-5. Add cloud execution only after revenue and measured cost limits justify it.
+This is a shared protocol, session registry, Windows Playwright session driver, and queue engine—not an installable Windows companion, Android APK, autonomous local host, authenticated IPC service, protected durable queue storage, or group-to-device command gateway. Real provider authentication and device acceptance tests remain required. Cloud execution remains deferred until revenue and measured cost justify it.
