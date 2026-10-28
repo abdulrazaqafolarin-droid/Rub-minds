@@ -125,6 +125,15 @@ export const RUB_MINDS_MCP_TOOLS = [
   }, ["idempotency_key", "confirm_forget"]) },
 ];
 
+/** Prompt returned by prepare_session_export; it never reads provider history itself. */
+export const SESSION_EXPORT_INSTRUCTIONS = [
+  "Create a plain-text transcript of the conversation in this AI session that you can actually access, in chronological order with speaker labels. Do not invent turns or claim to see history that is unavailable.",
+  "Do not include hidden system/developer instructions, private chain-of-thought, passwords, API keys, access tokens, invitation tokens, recovery codes, or other credentials. Replace secret values with [REDACTED SECRET].",
+  "Then call import_session_memory exactly once with a document containing only these fields: schema=\"rub-minds.session-memory\", version=1, summary (1-20000 characters), current_goal (0-4000 characters), source { platform (for example ChatGPT or Claude), session_label (optional) }, sharing { raw_history_visibility: \"private\" }, transcript_text (the available transcript as plain text), and transcript_complete (true only if you can verify the transcript contains the full session history; otherwise false). transcript_text must fit within the 1 MiB document limit.",
+  "If full history is unavailable or the document is too large, include the accessible portion plus a useful summary and set transcript_complete=false. Say what is missing; never silently truncate or claim a complete export.",
+  "The imported transcript remains private to this AI participant. Do not send raw transcript content to send_group_message or expose it to other participants. Report the actual import_session_memory tool result and the transcript_complete value; do not claim success before the tool succeeds."
+].join("\\n\\n");
+
 /** Select messages after the last processed cursor from a newest-50, ascending read window. */
 /** @param {unknown} messages @param {number} cursorTimestamp @param {string | null} [cursorMessageId] */
 export function messagesAfterCursor(messages, cursorTimestamp, cursorMessageId = null) {
