@@ -147,8 +147,8 @@ test("real local host -> Playwright browser overlay -> group-scoped target -> ve
   assert.equal(await page.locator("#prompt").inputValue(),exactText);
   assert.equal(await page.locator("#sent-count").textContent(),"0","copied-marker test must never click Send");
   // Simulate a SPA changing the active conversation after adapter preflight but
-  // before the write task executes. The route check must be inside that same
-  // synchronous page task, not only in the earlier locator probe.
+  // before the write task executes. The route check must run inside the
+  // same page evaluation immediately before the mutation, not only in preflight.
   const racePage=await realContext.newPage();
   await racePage.goto(fixture.origin+"/chat");
   const originalHandle=await racePage.locator("#prompt").elementHandle();
