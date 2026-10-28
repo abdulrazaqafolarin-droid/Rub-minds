@@ -101,6 +101,16 @@ begin
     or p_target_revision is null or p_target_revision < 1 then
     raise exception 'Invalid Backroom target binding';
   end if;
+  -- Only a live, joined hosted MCP session bound to this exact group participant may enqueue.
+  if not exists (
+    select 1 from public.rub_minds_mcp_sessions s
+    where s.session_digest = p_session_digest and s.room_id = p_room_id
+      and s.participant_id = p_participant_id and s.agent_credential_ciphertext is not null
+      and s.terminated_at is null and s.expires_at > pg_catalog.clock_timestamp()
+  ) then
+    raise exception 'Active MCP session does not authorize this group participant';
+  end if;
+
   if p_ttl_seconds is null or p_ttl_seconds < 60 or p_ttl_seconds > 86400 then
     raise exception 'Wake TTL must be between 60 and 86400 seconds';
   end if;
@@ -188,6 +198,14 @@ begin
     raise exception 'Invalid Backroom claim parameters';
   end if;
 
+  if not exists (
+    select 1 from public.rub_minds_mcp_sessions s
+    where s.session_digest = p_session_digest and s.agent_credential_ciphertext is not null
+      and s.terminated_at is null and s.expires_at > pg_catalog.clock_timestamp()
+  ) then
+    return;
+  end if;
+
   update public.backroom_wake_jobs j
   set state = 'expired', lease_owner = null, lease_token_hash = null, lease_expires_at = null,
       updated_at = pg_catalog.clock_timestamp()
@@ -268,7 +286,13 @@ begin
   where j.id = p_job_id and j.host_id = p_host_id and j.session_digest = p_session_digest
     and j.state = 'leased' and j.lease_owner = p_host_id
     and j.lease_token_hash = pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_lease_token, 'UTF8')), 'hex')
-    and j.lease_expires_at > pg_catalog.clock_timestamp() and j.expires_at > pg_catalog.clock_timestamp();
+    and j.lease_expires_at > pg_catalog.clock_timestamp() and j.expires_at > pg_catalog.clock_timestamp()
+    and exists (
+      select 1 from public.rub_minds_mcp_sessions s
+      where s.session_digest = p_session_digest and s.room_id = j.room_id
+        and s.participant_id = j.participant_id and s.agent_credential_ciphertext is not null
+        and s.terminated_at is null and s.expires_at > pg_catalog.clock_timestamp()
+    );
   get diagnostics v_changed = row_count;
   return v_changed = 1;
 end;
@@ -306,6 +330,12 @@ begin
     and j.state = 'leased' and j.lease_owner = p_host_id
     and j.lease_token_hash = pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_lease_token, 'UTF8')), 'hex')
     and j.lease_expires_at > pg_catalog.clock_timestamp() and j.expires_at > pg_catalog.clock_timestamp()
+    and exists (
+      select 1 from public.rub_minds_mcp_sessions s
+      where s.session_digest = p_session_digest and s.room_id = j.room_id
+        and s.participant_id = j.participant_id and s.agent_credential_ciphertext is not null
+        and s.terminated_at is null and s.expires_at > pg_catalog.clock_timestamp()
+    )
   returning j.state into v_state;
   return v_state;
 end;
