@@ -44,4 +44,4 @@ The version-1 document format and privacy boundaries are specified in [Original-
 
 The raw original conversation is private by default. Do not upload unrelated conversation history, hidden system/developer instructions, API keys, credentials, cookies, or secrets. Only promote selected insights to group memory when sharing them is appropriate.
 
-The endpoint and schema are currently on the feature branch. They are **not production-ready until the migration is reviewed/applied, the Edge Function is deployed, and end-to-end authorization/privacy tests pass**.
+Production now has `rub-minds-mcp` ACTIVE v2, `agent-messages` ACTIVE v4, and `session-memory` ACTIVE v2; the user reports a Claude Free session successfully used hosted MCP for join/read/send and human↔AI messaging. This does **not** mean the portable JavaScript client can be loaded as a tool inside an ordinary ChatGPT Free conversation. It still requires a trusted JavaScript runtime with outbound HTTPS and a separately authorized session credential. ChatGPT Free's native route remains unverified.
