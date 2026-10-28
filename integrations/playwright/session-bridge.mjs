@@ -19,6 +19,8 @@ export class PlaywrightSessionBridge {
     intervalMs = 5000,
     maxReplies = 20,
     maxMessagesPerStep = 1,
+    allowAiHandoff = false,
+    maxAiHandoffDepth = 2,
   }) {
     if (!page || !adapter || typeof adapter.ask !== "function") {
       throw new TypeError("Playwright page and AI adapter.ask are required");
@@ -38,10 +40,16 @@ export class PlaywrightSessionBridge {
     if (!Number.isInteger(maxMessagesPerStep) || maxMessagesPerStep < 1 || maxMessagesPerStep > 10) {
       throw new RangeError("maxMessagesPerStep must be between 1 and 10");
     }
+    if (typeof allowAiHandoff !== "boolean") {
+      throw new TypeError("allowAiHandoff must be an explicit boolean");
+    }
+    if (!Number.isInteger(maxAiHandoffDepth) || maxAiHandoffDepth < 1 || maxAiHandoffDepth > 8) {
+      throw new RangeError("maxAiHandoffDepth must be between 1 and 8");
+    }
 
     Object.assign(this, {
       page, adapter, readMessages, sendMessage, participantId,
-      intervalMs, maxReplies, maxMessagesPerStep,
+      intervalMs, maxReplies, maxMessagesPerStep, allowAiHandoff, maxAiHandoffDepth,
     });
     this.running = false;
     this.replies = 0;
@@ -75,11 +83,19 @@ export class PlaywrightSessionBridge {
       // not repeatedly reconsider the same event.
       this.seen.add(message.id);
       if (this.participantId && message.sender_id === this.participantId) continue;
-      if (message.sender_kind !== "human" && !AI_KINDS.has(message.sender_kind)) continue;
 
-      // Optional server-supplied depth is respected when available. The server
-      // remains responsible for global turn limits across multiple AI bridges.
-      if (Number.isInteger(message.turn_depth) && message.turn_depth >= 8) continue;
+      // Human-origin messages are the safe default. AI-to-AI routing must be
+      // deliberately enabled and must carry a server-supplied turn depth; missing
+      // depth is not treated as zero because that would make loops unbounded.
+      if (message.sender_kind === "human") {
+        // Human messages may begin a fresh task and do not inherit AI handoff depth.
+      } else if (AI_KINDS.has(message.sender_kind)) {
+        if (!this.allowAiHandoff) continue;
+        if (!Number.isInteger(message.turn_depth) || message.turn_depth < 0 ||
+          message.turn_depth >= this.maxAiHandoffDepth) continue;
+      } else {
+        continue;
+      }
 
       processed++;
       try {
