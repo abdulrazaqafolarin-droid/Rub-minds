@@ -18,8 +18,8 @@ const safeSiteUrl = value => {
 export function installSelectionOverlay() {
 const isEditable = node => {
   if (!(node instanceof HTMLElement) || !node.isConnected) return false;
-  if (node.closest('[aria-hidden="true"],[inert]')) return false;
-  if ("disabled" in node && node.disabled) return false;
+  if (node.closest('[aria-hidden="true"],[inert],[hidden]')) return false;
+  if (("disabled" in node && node.disabled) || node.matches(":disabled")) return false;
   if ("readOnly" in node && node.readOnly) return false;
   if (node.getAttribute("aria-disabled") === "true" || node.getAttribute("aria-readonly") === "true") return false;
   if (node instanceof HTMLInputElement && ["password","hidden","button","checkbox","radio","submit","reset","file","image","range","color"].includes(node.type)) return false;
@@ -27,8 +27,19 @@ const isEditable = node => {
   // contenteditable nodes are eligible for registration.
   if (!(node instanceof HTMLInputElement) && !(node instanceof HTMLTextAreaElement) && !node.isContentEditable) return false;
   const box = node.getBoundingClientRect();
-  const style = getComputedStyle(node);
-  return box.width > 8 && box.height > 8 && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) !== 0;
+  if (box.width <= 8 || box.height <= 8) return false;
+  // Check ancestors too: opacity, inert, and visibility are not all inherited
+  // in a way that a leaf-only style check can reliably detect.
+  let current = node;
+  while (current instanceof HTMLElement) {
+    const style = getComputedStyle(current);
+    if (current.hasAttribute("hidden") || current.hasAttribute("inert") ||
+      current.getAttribute("aria-hidden") === "true" || style.display === "none" ||
+      style.visibility === "hidden" || style.visibility === "collapse" ||
+      Number(style.opacity) === 0 || style.pointerEvents === "none") return false;
+    current = current.parentElement;
+  }
+  return true;
 };
   const KEY = "__RM_BACKROOM_SELECTION_V1__";
   const OVERLAY_ID = "__rm_backroom_target_overlay_v1";
