@@ -75,11 +75,11 @@ function bearer(request) {
  */
 export function createBackroomHostServer({
   port = 43781, host = "127.0.0.1", allowedOrigins = parseOrigins(process.env.BACKROOM_ALLOWED_ORIGINS),
-  pairingCode, hostId = randomUUID(), now = () => Date.now(), browserRuntime,
+  pairingCode, hostId = randomUUID(), now = () => Date.now(), pairingTtlMs, sessionTtlMs, maxPairAttempts, browserRuntime,
 } = {}) {
   if (host !== "127.0.0.1") throw new TypeError("Backroom host must bind to IPv4 loopback only");
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new RangeError("invalid port");
-  const authority = new HostPairingAuthority({ allowedOrigins, pairingCode, hostId, now });
+  const authority = new HostPairingAuthority({ allowedOrigins, pairingCode, hostId, now, pairingTtlMs, sessionTtlMs, maxPairAttempts });
   const browser = browserRuntime ?? disabledBrowserRuntime();
   let actualPort = port;
   const server = createServer(async (request, response) => {
