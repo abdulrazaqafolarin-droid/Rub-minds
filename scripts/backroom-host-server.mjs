@@ -31,7 +31,7 @@ function disabledBrowserRuntime() {
   } });
   const unavailable = async () => { throw new Error("browser_runtime_unavailable"); };
   return {
-    status, stop: async () => status(), start: unavailable, listPages: async () => [],
+    status, stop: async () => status(), start: unavailable, openUrl: unavailable, listPages: async () => [],
     listTargets: () => [], startSelection: unavailable, getSelection: async () => ({ state: "unavailable" }),
     registerSelectedTarget: unavailable, draft: unavailable,
   };
@@ -245,7 +245,8 @@ export function createBackroomHostServer({
         writeJson(response, 404, { error: "not_found" }, cors);
       } catch (error) {
         const message = typeof error?.message === "string" ? error.message.slice(0, 180) : "browser_operation_failed";
-        writeJson(response, error?.status ?? 400, { error: "browser_operation_failed", message }, cors);
+        const status = error?.status ?? (message === "browser_runtime_unavailable" ? 503 : 400);
+        writeJson(response, status, { error: status === 503 ? "browser_runtime_unavailable" : "browser_operation_failed", message }, cors);
       }
       return;
     }
