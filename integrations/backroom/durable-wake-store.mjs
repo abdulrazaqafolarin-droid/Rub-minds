@@ -68,12 +68,20 @@ export class SupabaseBackroomWakeStore{
       !Number.isSafeInteger(row.out_attempt_count)||row.out_attempt_count<1||row.out_attempt_count>5||
       typeof row.out_target_identity_fingerprint!=='string'||row.out_target_identity_fingerprint.trim()===''||row.out_target_identity_fingerprint.length>512||
       !Number.isSafeInteger(row.out_target_revision)||row.out_target_revision<1||
-      typeof row.out_prompt!=='string'||!row.out_prompt.startsWith('@RMconnects\n'))throw new Error('Queue returned malformed lease');
+      typeof row.out_prompt!=='string'||row.out_prompt.length>12000||!row.out_prompt.startsWith('@RMconnects\n')||
+      !HEX64.test(row.out_prompt_digest)||
+      createHash('sha256').update(row.out_prompt,'utf8').digest('hex')!==row.out_prompt_digest||
+      typeof row.out_event_id!=='string'||row.out_event_id.trim()===''||row.out_event_id.length>256||
+      typeof row.out_space_id!=='string'||row.out_space_id.trim()===''||row.out_space_id.length>128||
+      typeof row.out_session_id!=='string'||row.out_session_id.trim()===''||row.out_session_id.length>256||
+      typeof row.out_binding_id!=='string'||row.out_binding_id.trim()===''||row.out_binding_id.length>128||
+      typeof row.out_target_id!=='string'||row.out_target_id.trim()===''||row.out_target_id.length>128||
+      !Number.isFinite(Date.parse(row.out_expires_at)))throw new Error('Queue returned malformed lease');
    return Object.freeze({jobId:row.out_job_id,jobKey:row.out_job_key,eventId:row.out_event_id,hostId,sessionDigest,
     ownerId:row.out_owner_id,roomId:row.out_room_id,participantId:row.out_participant_id,
     spaceId:row.out_space_id,sessionId:row.out_session_id,bindingId:row.out_binding_id,
     targetId:row.out_target_id,targetIdentityFingerprint:row.out_target_identity_fingerprint,
-    targetRevision:row.out_target_revision,prompt:row.out_prompt,
+    targetRevision:row.out_target_revision,prompt:row.out_prompt,promptDigest:row.out_prompt_digest,
     attemptCount:row.out_attempt_count,expiresAt:row.out_expires_at,leaseToken:row.out_lease_token});
   });
  }
