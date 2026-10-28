@@ -260,6 +260,25 @@ test("selection attempt nonce prevents stale selected-element reuse after a new 
  await runtime.stop();
 });
 
+test("stale polling and registration calls cannot consume a newer selection attempt",async()=>{
+ const p=fakePage(),runtime=factory(fakeContext([p]));await runtime.start();
+ const [page]=await runtime.listPages();
+ await runtime.startSelection(page.pageId,"room-1");
+ const firstAttempt=p.activeSelectionAttempt();
+ await runtime.startSelection(page.pageId,"room-1");
+ const secondAttempt=p.activeSelectionAttempt();
+ p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]',attemptId:secondAttempt});
+ const stalePoll=await runtime.getSelection(page.pageId,firstAttempt);
+ assert.equal(stalePoll.state,"cancelled");
+ assert.equal((await runtime.getSelection(page.pageId,secondAttempt)).state,"selected");
+ await assert.rejects(()=>runtime.registerSelectedTarget(page.pageId,"room-1",firstAttempt),/expired or was replaced/);
+ assert.equal((await runtime.getSelection(page.pageId,secondAttempt)).state,"selected");
+ const target=await runtime.registerSelectedTarget(page.pageId,"room-1",secondAttempt);
+ assert.equal(target.operations[0],"draft");
+ assert.equal((await runtime.listTargets()).length,1);
+ await runtime.stop();
+});
+
 test("a route-changed selection clears its retained element reference",async()=>{
  const p=fakePage({url:"https://chatgpt.com/c/one?thread=one"}),runtime=factory(fakeContext([p]));await runtime.start();
  const [page]=await runtime.listPages();
@@ -267,12 +286,12 @@ test("a route-changed selection clears its retained element reference",async()=>
  p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]'});
  const attempt=p.activeSelectionAttempt();
  p.setUrl("https://chatgpt.com/c/one?thread=two");
- const result=await runtime.getSelection(page.pageId, p.activeSelectionAttempt());
+ const result=await runtime.getSelection(page.pageId, attempt);
  assert.equal(result.state,"cancelled");
  assert.equal(p.selectionState(),null);
  assert.equal(p.selectedElementNodeId(),null);
  assert.equal(p.activeSelectionAttempt(),null);
- assert.equal((await runtime.getSelection(page.pageId, p.activeSelectionAttempt())).state,"unavailable");
+ assert.equal((await runtime.getSelection(page.pageId, attempt)).state,"unavailable");
  assert.ok(attempt);
  await runtime.stop();
 });
@@ -281,6 +300,7 @@ test("a drag selection is cancelled when the active conversation route changes",
  const p=fakePage({url:"https://chatgpt.com/c/one?thread=one"}),runtime=factory(fakeContext([p]));await runtime.start();
  const [page]=await runtime.listPages();
  await runtime.startSelection(page.pageId,"room-1");
+ const attempt=p.activeSelectionAttempt();
  p.setUrl("https://chatgpt.com/c/one?thread=two");
  const result=await runtime.getSelection(page.pageId, attempt);
  assert.equal(result.state,"cancelled");
