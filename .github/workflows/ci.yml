@@ -8,6 +8,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
 jobs:
   mcp-migration:
     # Draft PRs are not release candidates. Skip runner allocation until ready for review.
