@@ -399,13 +399,27 @@ export class BrowserHostRuntime {
       }, selection.selector).catch(() => false);
       if (!sameNode) throw new Error("The selected input changed after the drag gesture. Select it again.");
 
+      const isMarkerOwnedBySelectedNode = async (candidate, expectedMarker = candidate) => {
+        for (const existingBinding of this.#bindings.values()) {
+          if (existingBinding.pageId !== pageId || existingBinding.marker !== candidate) continue;
+          const isSameNode = await existingBinding.nodeHandle.evaluate((node, selectionId) => {
+            const state = window.__RM_BACKROOM_SELECTION_V1__;
+            return node instanceof HTMLElement && node.isConnected &&
+              node === window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ &&
+              state?.selectionId === selectionId &&
+              node.getAttribute("data-rm-backroom-binding") === expectedMarker;
+          }, selection.selectionId).catch(() => false);
+          if (isSameNode) return true;
+        }
+        return false;
+      };
       marker = await selectedNodeHandle.getAttribute("data-rm-backroom-binding");
       if (marker && !/^[a-f0-9-]{36}$/i.test(marker)) {
         throw new Error("Selected input has a conflicting binding attribute. Reload the tab and select again.");
       }
-      if (marker && ![...this.#bindings.values()].some(binding =>
-        binding.pageId === pageId && binding.marker === marker)) {
-        // Never trust a site-owned marker simply because it has UUID syntax.
+      if (marker && !(await isMarkerOwnedBySelectedNode(marker))) {
+        // A site can copy a valid-looking marker from an old composer. Ownership
+        // is accepted only when a retained host handle is the exact selected node.
         const staleMarker = marker;
         const cleared = await selectedNodeHandle.evaluate((node, expected) => {
           if (!(node instanceof HTMLElement) || !node.isConnected ||
@@ -430,9 +444,27 @@ export class BrowserHostRuntime {
         }
         marker = attach.marker;
         createdBindingMarker = attach.state === "bound";
-        if (attach.state === "existing" && ![...this.#bindings.values()].some(binding =>
-          binding.pageId === pageId && binding.marker === marker)) {
-          throw new Error("This input has a stale Backroom binding. Reload the tab and select again.");
+        if (attach.state === "existing" && !(await isMarkerOwnedBySelectedNode(marker))) {
+          const cleared = await selectedNodeHandle.evaluate((node, expected) => {
+            if (!(node instanceof HTMLElement) || !node.isConnected ||
+              node.getAttribute("data-rm-backroom-binding") !== expected) return false;
+            node.removeAttribute("data-rm-backroom-binding");
+            return true;
+          }, marker);
+          if (!cleared) throw new Error("Selected input acquired a conflicting marker. Select it again.");
+          const replacementMarker = randomUUID();
+          const rebound = await selectedNodeHandle.evaluate((node, value) => {
+            if (!(node instanceof HTMLElement) || !node.isConnected || node.hasAttribute("data-rm-backroom-binding")) {
+              return { state: "unavailable", marker: "" };
+            }
+            node.setAttribute("data-rm-backroom-binding", value);
+            return { state: "bound", marker: value };
+          }, replacementMarker);
+          if (rebound?.state !== "bound" || rebound.marker !== replacementMarker) {
+            throw new Error("Could not securely bind the selected input. Select it again.");
+          }
+          marker = replacementMarker;
+          createdBindingMarker = true;
         }
       }
 
