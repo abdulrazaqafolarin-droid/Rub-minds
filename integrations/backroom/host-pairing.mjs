@@ -63,7 +63,7 @@ export class HostPairingAuthority {
   }
   authorize({ origin, token } = {}) {
     if (!this.canServeOrigin(origin) || typeof token !== "string" || !TOKEN_RE.test(token)) return null;
-    const digest = sha256(token).toString("hex");
+    const digest = sha256(token.toLowerCase()).toString("hex");
     const session = this.#sessions.get(digest);
     if (!session || session.revoked || session.origin !== origin || this.#now() >= session.expiresAt) return null;
     return Object.freeze({ hostId: this.hostId, origin: session.origin,
