@@ -104,7 +104,17 @@ export class BrowserDraftAdapter {
       throw error;
     }
     if (insertion.state !== "inserted") return { state:"needs_review", verified:false };
-    if (await this.#read(f) !== command.text) return { state:"needs_review", verified:false };
+    if (this.nodeHandle) {
+      const finalState = await this.nodeHandle.evaluate(element => ({
+        connected: element instanceof HTMLElement && element.isConnected,
+        value: element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
+          ? element.value
+          : element instanceof HTMLElement && element.isContentEditable ? element.textContent ?? "" : null,
+      }));
+      if (!finalState.connected || finalState.value !== command.text) return { state:"needs_review", verified:false };
+    } else if (await this.#read(f) !== command.text) {
+      return { state:"needs_review", verified:false };
+    }
     return { state:"completed", verified:true, result:{ drafted:true, submitted:false } };
   }
 }
