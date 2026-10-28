@@ -280,6 +280,59 @@ test("real local host -> Playwright browser overlay -> group-scoped target -> ve
   assert.equal(await microtaskPage.locator("#microtask-race").inputValue(),"value appeared in focus microtask");
   await microtaskHandle.dispose();
 
+  // The focused node must remain the exact registered composer. Some SPA
+  // frameworks replace a field synchronously when it receives focus.
+  const swapPage=await realContext.newPage();
+  await swapPage.goto(fixture.origin+"/chat");
+  await swapPage.evaluate(()=>{
+   const field=document.querySelector("#prompt");
+   field.addEventListener("focus",()=>{
+    const replacement=field.cloneNode(true);
+    replacement.value="";
+    field.replaceWith(replacement);
+   },{once:true});
+  });
+  const swapHandle=await swapPage.locator("#prompt").elementHandle();
+  const swapAdapter=new BrowserDraftAdapter({
+   page:swapPage,origin:fixture.origin,path:"/chat",selector:"#prompt",
+   appId:fixture.origin,sessionId:"swap-session",identityFingerprint:"swap-conversation",
+   nodeHandle:swapHandle,
+  });
+  const swapTarget={
+   surface:"browser_tab",locatorKind:"dom",locatorValue:"#prompt",appId:fixture.origin,
+   sessionId:"swap-session",identityFingerprint:"swap-conversation",
+  };
+  await assert.rejects(()=>swapAdapter.execute({
+   command:{operation:"draft",text:"must not be redirected to replacement"},target:swapTarget,
+  }),/composer is no longer editable/i);
+  assert.equal(await swapPage.locator("#prompt").inputValue(),"",
+   "focus-triggered DOM replacement must not receive a draft");
+  assert.equal(await page.locator("#sent-count").textContent(),"0");
+  await swapHandle.dispose();
+
+  // A focus handler might hide the original input without detaching it.
+  // Post-focus validation must refuse even if its selector remains unique.
+  const hiddenPage=await realContext.newPage();
+  await hiddenPage.goto(fixture.origin+"/chat");
+  await hiddenPage.evaluate(()=>{
+   const field=document.querySelector("#prompt");
+   field.addEventListener("focus",()=>{field.style.display="none";},{once:true});
+  });
+  const hiddenHandle=await hiddenPage.locator("#prompt").elementHandle();
+  const hiddenAdapter=new BrowserDraftAdapter({
+   page:hiddenPage,origin:fixture.origin,path:"/chat",selector:"#prompt",
+   appId:fixture.origin,sessionId:"hidden-session",identityFingerprint:"hidden-conversation",
+   nodeHandle:hiddenHandle,
+  });
+  await assert.rejects(()=>hiddenAdapter.execute({
+   command:{operation:"draft",text:"must not write into a hidden input"},
+   target:{surface:"browser_tab",locatorKind:"dom",locatorValue:"#prompt",appId:fixture.origin,
+    sessionId:"hidden-session",identityFingerprint:"hidden-conversation"},
+  }),/composer is no longer editable/i);
+  assert.equal(await hiddenPage.locator("#prompt").inputValue(),"");
+  assert.equal(await hiddenPage.locator("#prompt").evaluate(node=>getComputedStyle(node).display),"none");
+  await hiddenHandle.dispose();
+
   // A room change/cancel must remove the active overlay, its keyboard listener
   // and its selected-element reference without removing previously registered targets.
   const cancelRoom="32345678-1234-4234-9234-123456789014";
