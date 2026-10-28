@@ -157,6 +157,24 @@ test("does not reply to unknown sender kinds or excessive server-supplied turn d
   assert.equal(calls.length, 0);
 });
 
+test("durable message IDs count as explicit delivery acknowledgements", async () => {
+  for (const receipt of [{ id: "db-row-1" }, { message_id: "db-message-2", duplicate: false }, { messageId: "db-message-3" }]) {
+    const { bridge, calls, sent } = makeBridge({
+      messages: [{ id: "incoming", body: "reply once", sender_kind: "human" }],
+    });
+    bridge.sendMessage = async (body, sourceMessageId) => {
+      sent.push({ body, sourceMessageId });
+      return receipt;
+    };
+    const outcome = await bridge.step({ approved: true });
+    assert.equal(outcome.sent, 1);
+    assert.equal(outcome.status, "ok");
+    assert.equal(bridge.replies, 1);
+    assert.equal(calls.length, 1);
+    assert.equal(sent.length, 1);
+  }
+});
+
 test("an ambiguous group-send failure does not re-run the provider or invite duplicate replies", async () => {
   const { bridge, calls, sent } = makeBridge({
     maxMessagesPerStep: 2,
