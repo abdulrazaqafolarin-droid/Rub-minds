@@ -93,6 +93,30 @@ test("a selected element handle is the actual write target, not the re-resolved 
  assert.equal(locatorWrites,0);
 });
 
+test("post-insertion readback failure is ambiguous and must not invite an automatic retry",async()=>{
+ let value="",writes=0;
+ const originalHandle={
+  evaluate:async(fn,arg)=>{
+   const code=String(fn);
+   if(code.includes("node.matches(selector)"))return true;
+   if(code.includes("element instanceof HTMLInputElement")&&code.includes("element.value")&&!code.includes("correctConversation"))return value;
+   if(code.includes("const readValue")){value=arg.text;writes++;return {state:"inserted"};}
+   if(code.includes("correctConversation"))throw Error("execution context destroyed after insertion");
+   return true;
+  }
+ };
+ const field={count:async()=>1,isVisible:async()=>true,isEnabled:async()=>true,inputValue:async()=>value};
+ const page={isClosed:()=>false,url:()=>"https://example.test/conversation/123",locator:()=>field};
+ const adapter=new BrowserDraftAdapter({page,origin:"https://example.test",path:"/conversation/123",
+  selector:"[role=textbox]",appId:"ai",sessionId:"123",identityFingerprint:"app:123",nodeHandle:originalHandle});
+ const target={surface:"browser_tab",locatorKind:"dom",locatorValue:"[role=textbox]",appId:"ai",sessionId:"123",identityFingerprint:"app:123"};
+ const result=await adapter.execute({command:{operation:"draft",text:"possible draft"},target});
+ assert.equal(result.state,"needs_review");
+ assert.equal(result.verified,false);
+ assert.equal(writes,1);
+ assert.equal(value,"possible draft");
+});
+
 test("changed app URL, duplicate or hidden composer fails before write",async()=>{
  for(const options of [{url:"https://evil.test/conversation/123"},{url:"https://example.test/conversation/99"},{visible:false},{count:2},{closed:true}]){
   const f=fixture(options);
