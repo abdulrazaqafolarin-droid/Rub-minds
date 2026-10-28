@@ -256,7 +256,10 @@ export function createBackroomHostServer({
       } catch (error) {
         const message = typeof error?.message === "string" ? error.message.slice(0, 180) : "browser_operation_failed";
         const status = error?.status ?? (message === "browser_runtime_unavailable" ? 503 : 400);
-        writeJson(response, status, { error: status === 503 ? "browser_runtime_unavailable" : "browser_operation_failed", message }, cors);
+        const code = message === "request_too_large" ? "request_too_large" :
+          message === "invalid_json" ? "invalid_json" :
+          status === 503 ? "browser_runtime_unavailable" : "browser_operation_failed";
+        writeJson(response, status, { error: code, message }, cors);
       }
       return;
     }
