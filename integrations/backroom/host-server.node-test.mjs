@@ -88,9 +88,10 @@ test("health endpoint is no-store and query strings are rejected",async()=>{
 });
 
 function fakeBrowserRuntime() {
- let running=false, selected=null, selectionRoom=null, targets=[];
+ let running=false, selected=null, selectionRoom=null, selectionAttemptId=null, selectionCounter=0, targets=[];
  const pageId="12345678-1234-4234-9234-123456789012";
  const targetId="12345678-1234-4234-9234-123456789013";
+ const makeSelectionAttempt=()=> "32345678-1234-4234-9234-"+String(++selectionCounter).padStart(12,"0");
  const status=()=>({running,pages:running?1:0,capabilities:{browserDraft:running,desktopAccessibility:false,androidAccessibility:false,terminal:false}});
  return {
   status,
@@ -98,8 +99,8 @@ function fakeBrowserRuntime() {
   openUrl:async url=>({pageId,title:"Test chat",site:new URL(url).hostname,canSelect:true}),
   stop:async()=>{running=false;targets=[];return status()},
   listPages:async()=>running?[{pageId,title:"Test chat",site:"chatgpt.com",canSelect:true}]:[],
-  startSelection:async(id,roomId)=>{if(id!==pageId)throw Error("page not found");selectionRoom=roomId;selected={state:"pending"};return selected},
-  cancelSelection:async(id,roomId)=>{if(id!==pageId||roomId!==selectionRoom||!selected)return false;selectionRoom=null;selected=null;return true},
+  startSelection:async(id,roomId)=>{if(id!==pageId)throw Error("page not found");selectionRoom=roomId;selectionAttemptId=makeSelectionAttempt();selected={state:"pending",selectionAttemptId};return selected},
+  cancelSelection:async(id,roomId,attemptId)=>{if(id!==pageId||roomId!==selectionRoom||attemptId!==selectionAttemptId||!selected)return false;selectionRoom=null;selectionAttemptId=null;selected=null;return true},
   getSelection:async()=>({state:selected?.state||"unavailable"}),
   registerSelectedTarget:async(id,roomId)=>{if(id!==pageId||selected?.state!=="selected"||roomId!==selectionRoom)throw Error("selection missing or wrong room");const t={id:targetId,pageId,roomId,title:"Test chat",site:"chatgpt.com",surface:"browser_tab",operations:["draft"]};targets.push(t);return t},
   listTargets:async()=>targets,
@@ -157,15 +158,27 @@ test("selection cancellation requires the paired host and matching group",async(
   await fetch(base+"/v1/browser/start",{method:"POST",headers:auth});
   const select=await fetch(base+"/v1/browser/select",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId})});
   assert.equal(select.status,200);
-  const wrongRoom=await fetch(base+"/v1/browser/select/cancel",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId:"22345678-1234-4234-9234-123456789014"})});
+  const selection=await select.json();
+  assert.match(selection.selectionAttemptId,/^[a-f0-9-]{36}$/i);
+  const wrongRoom=await fetch(base+"/v1/browser/select/cancel",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId:"22345678-1234-4234-9234-123456789014",attemptId:selection.selectionAttemptId})});
   assert.equal(wrongRoom.status,200);
   assert.equal((await wrongRoom.json()).cancelled,false);
-  const cancelled=await fetch(base+"/v1/browser/select/cancel",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId})});
+  const wrongAttempt=await fetch(base+"/v1/browser/select/cancel",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId,attemptId:"42345678-1234-4234-9234-123456789099"})});
+  assert.equal(wrongAttempt.status,200);
+  assert.equal((await wrongAttempt.json()).cancelled,false);
+  // A late cancellation carrying attempt A must not cancel a newer attempt B.
+  const secondSelect=await fetch(base+"/v1/browser/select",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId})});
+  const secondSelection=await secondSelect.json();
+  assert.notEqual(secondSelection.selectionAttemptId,selection.selectionAttemptId);
+  const lateCancel=await fetch(base+"/v1/browser/select/cancel",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId,attemptId:selection.selectionAttemptId})});
+  assert.equal(lateCancel.status,200);
+  assert.equal((await lateCancel.json()).cancelled,false);
+  const cancelled=await fetch(base+"/v1/browser/select/cancel",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId,attemptId:secondSelection.selectionAttemptId})});
   assert.equal(cancelled.status,200);
   assert.equal((await cancelled.json()).cancelled,true);
   const stale=await fetch(base+"/v1/browser/targets",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId})});
   assert.equal(stale.status,400);
-  const invalid=await fetch(base+"/v1/browser/select/cancel",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId:"bad"})});
+  const invalid=await fetch(base+"/v1/browser/select/cancel",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId:"bad",attemptId:selection.selectionAttemptId})});
   assert.equal(invalid.status,400);
  });
 });
