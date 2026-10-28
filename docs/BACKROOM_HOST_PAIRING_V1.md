@@ -55,3 +55,10 @@ Backroom calls `127.0.0.1` from the secure hosted UI. Browser-side host requests
 ## Opening an AI site in the managed browser
 
 Use the **Open an AI website** field or the ChatGPT/Claude quick links. The local host validates the destination and only permits HTTPS sites or explicit loopback HTTP URLs. It reuses a blank tab or opens a new tab; it never silently navigates away from an existing nonblank tab. The user logs in and chooses the conversation themselves. Site navigation happens in the visible managed browser and is not a hidden background request.
+
+
+## Full browser-host acceptance test
+
+`npm run test:backroom:browser` includes a real headless Chromium acceptance test over the local HTTP host, not only an adapter mock. It starts a controlled local chat page, pairs with the host API, launches a managed persistent Playwright context in a temporary profile, uses the actual drag-selection overlay, registers the selected input to one group, inserts and verifies a draft, asserts the Send counter remains zero, rejects a repeated write into an occupied composer, rejects cross-group target use, and confirms unpair revokes access. The test deletes its temporary profile on completion.
+
+This is a development integration test for the browser adapter only. It does not test ChatGPT/Claude production sites, native apps, OS accessibility or background participation. Requires an installed Playwright Chromium browser; use `npx playwright install chromium` before running it.
