@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { BrowserHostRuntime } from "./browser-host-runtime.mjs";
 
 function fakePage({url="https://chatgpt.com/c/test",title="Research thread",selection=null,closed=false}={}) {
- const handlers={}; let input="", pageUrl=url, bindingMarker=null;
+ const handlers={}; let input="", pageUrl=url, bindingMarker=null, nodeId=1, markerNodeId=null;
  const locator = (selector="") => {
   const markerMatch=/\[data-rm-backroom-binding="([^"]+)"\]$/.exec(selector);
   const expectedMarker=markerMatch?.[1];
@@ -12,15 +12,33 @@ function fakePage({url="https://chatgpt.com/c/test",title="Research thread",sele
    count:async()=>isBound?(bindingMarker===expectedMarker?1:0):1,
    isVisible:async()=>true,isEnabled:async()=>true,
    inputValue:async()=>input,
-   getAttribute:async name=>name==="data-rm-backroom-binding"?bindingMarker:null,
+   getAttribute:async name=>name==="data-rm-backroom-binding"?(isBound&&bindingMarker!==expectedMarker?null:bindingMarker):null,
+   elementHandle:async()=>{
+    if(isBound&&bindingMarker!==expectedMarker)return null;
+    const capturedNodeId=nodeId;
+    return {
+     nodeId:capturedNodeId,
+     getAttribute:async name=>name==="data-rm-backroom-binding"&&markerNodeId===capturedNodeId?bindingMarker:null,
+     evaluate:async(fn,arg)=>{
+      const code=String(fn);
+      if(code.includes("node === original"))return capturedNodeId===arg?.nodeId;
+      if(code.includes("removeAttribute")&&code.includes("data-rm-backroom-binding")){
+       if(nodeId===capturedNodeId&&markerNodeId===capturedNodeId&&bindingMarker===arg)bindingMarker=null;
+       return true;
+      }
+      return true;
+     },
+     dispose:async()=>{},
+    };
+   },
    evaluate:async(fn,arg)=>{
     const code=String(fn);
     if(code.includes("setAttribute")&&code.includes("data-rm-backroom-binding")){
       if(bindingMarker)return {state:"existing",marker:bindingMarker};
-      bindingMarker=arg;return {state:"bound",marker:bindingMarker};
+      bindingMarker=arg;markerNodeId=nodeId;return {state:"bound",marker:bindingMarker};
     }
     if(code.includes("removeAttribute")&&code.includes("data-rm-backroom-binding")){
-      if(!isBound||bindingMarker===expectedMarker)bindingMarker=null;
+      if(!isBound||bindingMarker===expectedMarker){bindingMarker=null;markerNodeId=null;}
       return true;
     }
     if(isBound&&bindingMarker!==expectedMarker)throw Error("stale target element");
@@ -38,8 +56,8 @@ function fakePage({url="https://chatgpt.com/c/test",title="Research thread",sele
    if(fn.toString().includes("RM_BACKROOM_SELECTION_V1"))return null;
    return null;
   },
-  setSelection:v=>selection=v,value:()=>input,setValue:v=>{input=v},setUrl:v=>pageUrl=v,replaceNode:()=>{bindingMarker=null},
-  setBindingMarker:v=>{bindingMarker=v},bindingMarker:()=>bindingMarker,
+  setSelection:v=>selection=v,value:()=>input,setValue:v=>{input=v},setUrl:v=>pageUrl=v,replaceNode:({preserveMarker=false}={})=>{nodeId++;if(!preserveMarker){bindingMarker=null;markerNodeId=null;}else markerNodeId=nodeId;},
+  setBindingMarker:v=>{bindingMarker=v;markerNodeId=v?nodeId:null},bindingMarker:()=>bindingMarker,
   close:()=>{closed=true;handlers.close?.()},
  };
 }
@@ -149,6 +167,19 @@ test("in-place composer replacement invalidates the target instead of rebinding 
  await assert.rejects(()=>runtime.draft(target.id,"stale",{approved:true,roomId:"room-1"}),/target unavailable/i);
  await runtime.stop();
 });
+test("a copied DOM binding marker cannot impersonate the original composer node",async()=>{
+ const p=fakePage(),runtime=factory(fakeContext([p]));await runtime.start();
+ const [page]=await runtime.listPages();
+ await runtime.startSelection(page.pageId,"room-1");
+ p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]',tagName:"textarea"});
+ const target=await runtime.registerSelectedTarget(page.pageId,"room-1");
+ assert.equal((await runtime.listTargets()).length,1);
+ p.replaceNode({preserveMarker:true});
+ assert.equal((await runtime.listTargets()).length,0);
+ await assert.rejects(()=>runtime.draft(target.id,"stale",{approved:true,roomId:"room-1"}),/target unavailable/i);
+ await runtime.stop();
+});
+
 test("the same selected node reuses its group target instead of making duplicates",async()=>{
  const p=fakePage(),runtime=factory(fakeContext([p]));await runtime.start();
  const [page]=await runtime.listPages();
