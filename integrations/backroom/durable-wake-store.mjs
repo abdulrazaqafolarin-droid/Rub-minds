@@ -66,12 +66,14 @@ export class SupabaseBackroomWakeStore{
    if(!row||!UUID.test(row.out_job_id)||!HEX64.test(row.out_job_key)||!LEASE.test(row.out_lease_token)||
       !UUID.test(row.out_owner_id)||!UUID.test(row.out_room_id)||!UUID.test(row.out_participant_id)||
       !Number.isSafeInteger(row.out_attempt_count)||row.out_attempt_count<1||row.out_attempt_count>5||
+      typeof row.out_target_identity_fingerprint!=='string'||row.out_target_identity_fingerprint.trim()===''||row.out_target_identity_fingerprint.length>512||
       !Number.isSafeInteger(row.out_target_revision)||row.out_target_revision<1||
       typeof row.out_prompt!=='string'||!row.out_prompt.startsWith('@RMconnects\n'))throw new Error('Queue returned malformed lease');
    return Object.freeze({jobId:row.out_job_id,jobKey:row.out_job_key,eventId:row.out_event_id,hostId,sessionDigest,
     ownerId:row.out_owner_id,roomId:row.out_room_id,participantId:row.out_participant_id,
     spaceId:row.out_space_id,sessionId:row.out_session_id,bindingId:row.out_binding_id,
-    targetId:row.out_target_id,targetRevision:row.out_target_revision,prompt:row.out_prompt,
+    targetId:row.out_target_id,targetIdentityFingerprint:row.out_target_identity_fingerprint,
+    targetRevision:row.out_target_revision,prompt:row.out_prompt,
     attemptCount:row.out_attempt_count,expiresAt:row.out_expires_at,leaseToken:row.out_lease_token});
   });
  }
@@ -91,7 +93,7 @@ export class SupabaseBackroomWakeStore{
    p_job_id:jobId,p_host_id:hostId,p_session_digest:sessionDigest,p_lease_token:leaseToken,
    p_retry_after_seconds:retryAfterSeconds,p_error_code:errorCode,
   });
-  if(data!==null&&!['pending','failed'].includes(data))throw new Error('Queue returned invalid retry state');
+  if(!['pending','failed'].includes(data))throw new Error('Retry rejected: lease is invalid, expired, replayed, or job is no longer retryable');
   return data;
  }
  async cancel({jobId,ownerId}={}){
