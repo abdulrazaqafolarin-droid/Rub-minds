@@ -43,20 +43,22 @@ begin
   v_repeat := public.enqueue_backroom_wake_job(
     repeat('1',64),v_owner,v_room,v_participant,'host-test','space-1','session-1',v_session_digest,
     'binding-1','target-1',1,'event-1','@RMconnects'||chr(10)||'Event: event-1',3600);
-  if v_first->>'created' <> 'true' or v_repeat->>'created' <> 'false'
-    or v_first->>'job_id' <> v_repeat->>'job_id' then
+  if (v_first->>'created') <> 'true' or (v_repeat->>'created') <> 'false'
+    or (v_first->>'job_id') <> (v_repeat->>'job_id') then
     raise exception 'Identical enqueue retries must return the same job idempotently';
   end if;
   begin
     perform public.enqueue_backroom_wake_job(
       repeat('1',64),v_owner,v_room,v_participant,'host-test','space-1','session-1',v_session_digest,
       'binding-1','target-1',1,'event-1','@RMconnects'||chr(10)||'different prompt',3600);
-  exception when others then v_conflict := true;
+  exception when others then
+      if sqlerrm <> 'Wake idempotency key conflicts with a different request' then raise; end if;
+      v_conflict := true;
   end;
   if not v_conflict then raise exception 'Same idempotency key with a different prompt must fail'; end if;
 
   select * into v_claim from public.claim_backroom_wake_jobs('host-test',v_session_digest,5,30) limit 1;
-  if not found or v_claim.out_job_id::text <> v_first->>'job_id'
+  if not found or v_claim.out_job_id::text <> (v_first->>'job_id')
     or v_claim.out_attempt_count <> 1 or v_claim.out_lease_token is null then
     raise exception 'Claim must return the job and a one-shot lease token';
   end if;
@@ -87,6 +89,7 @@ begin
   v_retry_state := public.retry_backroom_wake_job(
     v_claim_retry.out_job_id,'host-test',repeat('c',64),v_claim_retry.out_lease_token,1,'transport_error');
   if v_retry_state <> 'pending' then raise exception 'A retryable failure should return to pending'; end if;
+  update public.backroom_wake_jobs set available_at=pg_catalog.clock_timestamp()-interval '1 second' where id=v_claim_retry.out_job_id;
   select * into v_claim_retry from public.claim_backroom_wake_jobs('host-test',repeat('c',64),1,30) limit 1;
   if not found or v_claim_retry.out_attempt_count <> 2 then raise exception 'Retry should be reclaimable and increment attempts'; end if;
   if not public.ack_backroom_wake_job(v_claim_retry.out_job_id,'host-test',repeat('c',64),v_claim_retry.out_lease_token,'ignored') then
