@@ -51,9 +51,30 @@ export class BrowserDraftAdapter {
     const f = await this.#field();
     // Check and insert in one synchronous page task. A separate value read then
     // locator.fill() could overwrite a human draft typed between the two actions.
-    const performInsertion = (element, text) => {
+    const bindingMarker = /\\[data-rm-backroom-binding="([a-f0-9-]{36})"\\]$/i.exec(this.selector)?.[1] ?? null;
+    const insertionRequest = {
+      text: command.text, origin: this.origin, path: this.path, search: this.search, hash: this.hash,
+      selector: this.selector, bindingMarker,
+    };
+    // URL and DOM identity must be rechecked in the same synchronous page task
+    // that writes. Checking them only in #field() leaves a navigation/rerender
+    // window between preflight and insertion.
+    const performInsertion = (element, request) => {
+      const current = window.location;
+      if (current.origin !== request.origin || current.pathname !== request.path ||
+        current.search !== request.search || current.hash !== request.hash) {
+        return { state: "conversation_changed" };
+      }
       if (!(element instanceof HTMLElement) || !element.isConnected ||
-        ("disabled" in element && element.disabled) || ("readOnly" in element && element.readOnly) ||
+        !element.matches(request.selector) ||
+        (request.bindingMarker && element.getAttribute("data-rm-backroom-binding") !== request.bindingMarker)) {
+        return { state: "unavailable" };
+      }
+      try {
+        const matches = document.querySelectorAll(request.selector);
+        if (matches.length !== 1 || matches[0] !== element) return { state: "unavailable" };
+      } catch { return { state: "unavailable" }; }
+      if (("disabled" in element && element.disabled) || ("readOnly" in element && element.readOnly) ||
         element.getAttribute("aria-disabled") === "true" || element.getAttribute("aria-readonly") === "true") {
         return { state: "unavailable" };
       }
@@ -64,9 +85,9 @@ export class BrowserDraftAdapter {
       if (readValue() !== "") return { state: "occupied" };
       element.focus({ preventScroll: true });
       if (element instanceof HTMLInputElement) {
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(element, text);
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(element, request.text);
       } else if (element instanceof HTMLTextAreaElement) {
-        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(element, text);
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(element, request.text);
       } else if (element.isContentEditable) {
         // execCommand runs the browser's editing pipeline synchronously and emits
         // an input event; directly setting textContent often leaves rich-editor
@@ -78,23 +99,28 @@ export class BrowserDraftAdapter {
         range.collapse(false);
         selection.removeAllRanges();
         selection.addRange(range);
-        if (!document.execCommand("insertText", false, text)) return { state: "unavailable" };
+        if (!document.execCommand("insertText", false, request.text)) return { state: "unavailable" };
       } else {
         return { state: "unavailable" };
       }
       if (!(element instanceof HTMLElement) || !element.isConnected) return { state: "unverified" };
       if (!element.isContentEditable) {
-        element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+        element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: request.text }));
         element.dispatchEvent(new Event("change", { bubbles: true }));
       }
-      return { state: readValue() === text ? "inserted" : "unverified" };
+      return { state: readValue() === request.text ? "inserted" : "unverified" };
     };
     // When a target came from the interactive selection overlay, write through
     // the retained ElementHandle itself, not a locator that could resolve to a
     // replacement composer while the SPA is rerendering.
     const insertion = this.nodeHandle
-      ? await this.nodeHandle.evaluate(performInsertion, command.text)
-      : await f.evaluate(performInsertion, command.text);
+      ? await this.nodeHandle.evaluate(performInsertion, insertionRequest)
+      : await f.evaluate(performInsertion, insertionRequest);
+    if (insertion.state === "conversation_changed") {
+      const error = new Error("conversation changed immediately before draft insertion");
+      error.code = "BACKROOM_PREFLIGHT";
+      throw error;
+    }
     if (insertion.state === "occupied" || insertion.state === "unavailable") {
       const error = new Error(insertion.state === "occupied"
         ? "existing draft cannot be overwritten"
@@ -104,12 +130,24 @@ export class BrowserDraftAdapter {
     }
     if (insertion.state !== "inserted") return { state:"needs_review", verified:false };
     if (this.nodeHandle) {
-      const finalState = await this.nodeHandle.evaluate(element => ({
-        connected: element instanceof HTMLElement && element.isConnected,
-        value: element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
-          ? element.value
-          : element instanceof HTMLElement && element.isContentEditable ? element.textContent ?? "" : null,
-      }));
+      const finalState = await this.nodeHandle.evaluate((element, expected) => {
+        const current = window.location;
+        const correctConversation = current.origin === expected.origin && current.pathname === expected.path &&
+          current.search === expected.search && current.hash === expected.hash;
+        const correctNode = element instanceof HTMLElement && element.isConnected && element.matches(expected.selector) &&
+          (!expected.bindingMarker || element.getAttribute("data-rm-backroom-binding") === expected.bindingMarker);
+        let uniqueNode = false;
+        try {
+          const matches = document.querySelectorAll(expected.selector);
+          uniqueNode = matches.length === 1 && matches[0] === element;
+        } catch {}
+        return {
+          connected: correctConversation && correctNode && uniqueNode,
+          value: element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
+            ? element.value
+            : element instanceof HTMLElement && element.isContentEditable ? element.textContent ?? "" : null,
+        };
+      }, insertionRequest);
       if (!finalState.connected || finalState.value !== command.text) return { state:"needs_review", verified:false };
     } else if (await this.#read(f) !== command.text) {
       return { state:"needs_review", verified:false };
