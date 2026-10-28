@@ -9,6 +9,10 @@ function fakePage({url="https://chatgpt.com/c/test",title="Research thread",sele
   getAttribute:async name=>name==="data-rm-backroom-binding"&&markerNodeId===capturedNodeId?bindingMarker:null,
   evaluate:async(fn,arg)=>{
    const code=String(fn);
+   if(code.includes("node === window.__RM_BACKROOM_SELECTED_ELEMENT_V1__")&&code.includes("expected.selectionId")){
+    return capturedNodeId===selectedElementNodeId&&selection?.selectionId===arg?.selectionId&&
+      markerNodeId===capturedNodeId&&bindingMarker===arg?.marker;
+   }
    if(code.includes("document.querySelectorAll")&&code.includes("matches[0] === node")){
     const selector=typeof arg==="string"?arg:arg?.selector;
     const markerMatch=typeof selector==="string"?/\[data-rm-backroom-binding="([^"]+)"\]$/.exec(selector):null;
