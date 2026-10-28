@@ -71,3 +71,47 @@ test('a new open cannot reuse a managed context during last-session shutdown', a
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('existing browser page belongs to only one group, and detach never closes it', async () => {
+  const driver = new WindowsPlaywrightDriver({
+    chromium: { async launchPersistentContext() { throw new Error('not expected'); } },
+    profileRoot: path.join(tmpdir(), 'backroom-mock-profile'),
+  });
+  let closed = false;
+  const page = {
+    url() { return 'https://chatgpt.com/c/private-conversation'; },
+    isClosed() { return closed; },
+    async close() { closed = true; },
+  };
+  const secondGroup = '123e4567-e89b-42d3-a456-426614174001';
+  const inputs = { page, provider: 'chatgpt', approvedOrigins: allowed };
+  const first = await driver.attachExisting({ ...inputs, groupId, sessionId: 'existing-one' });
+  await assert.rejects(
+    driver.attachExisting({ ...inputs, groupId: secondGroup, sessionId: 'existing-two' }),
+    /already attached/,
+  );
+  assert.equal((await driver.inspect(first)).origin, 'https://chatgpt.com');
+  await driver.closeGroup(groupId);
+  assert.equal(closed, false, 'the original user browser page must stay open');
+  const second = await driver.attachExisting({ ...inputs, groupId: secondGroup, sessionId: 'existing-two' });
+  assert.equal(second.groupId, secondGroup);
+  await driver.closeSession(second);
+  assert.equal(closed, false, 'detaching a user page must not close it');
+});
+
+test('failed attachment does not claim the page', async () => {
+  const driver = new WindowsPlaywrightDriver({
+    chromium: { async launchPersistentContext() { throw new Error('not expected'); } },
+    profileRoot: path.join(tmpdir(), 'backroom-mock-profile'),
+  });
+  let url = 'https://unapproved.example/';
+  const page = { url() { return url; }, isClosed() { return false; } };
+  await assert.rejects(
+    driver.attachExisting({ groupId, sessionId: 'retry', page, provider: 'chatgpt', approvedOrigins: allowed }),
+    /outside the approved/,
+  );
+  url = 'https://chatgpt.com/c/now-approved';
+  const handle = await driver.attachExisting({ groupId, sessionId: 'retry', page, provider: 'chatgpt', approvedOrigins: allowed });
+  assert.equal(handle.sessionId, 'retry');
+  await driver.closeGroup(groupId);
+});
