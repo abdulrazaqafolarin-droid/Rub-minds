@@ -13,6 +13,7 @@ textarea{display:block;margin-top:120px;width:480px;height:90px;padding:8px}
 <h1>Local Backroom overlay test</h1>
 <label for="prompt">Prompt</label><textarea id="prompt" aria-label="Prompt"></textarea>
 <label for="notes">Notes</label><textarea id="notes" aria-label="Notes"></textarea>
+<label for="date-input">Date field</label><input id="date-input" type="date" aria-label="Date field" style="display:block;margin-top:18px;width:240px;height:34px">
 <div id="readonly" role="textbox" aria-readonly="true" style="margin-top:24px;width:480px;height:50px;border:1px solid #ccc">Not editable</div><button id="send" type="button">Send</button><output id="count">0</output>
 <script>document.querySelector('#send').addEventListener('click',()=>{document.querySelector('#count').textContent=String(Number(document.querySelector('#count').textContent)+1)})</script>
 </body></html>`;
@@ -104,6 +105,18 @@ test("Escape cancels the overlay without changing the active input",async()=>{
   await page.keyboard.press("Escape");
   const result=await page.evaluate(()=>window.__RM_BACKROOM_SELECTION_V1__);
   assert.equal(result.state,"cancelled");
+  assert.equal(await page.locator("#count").textContent(),"0");
+ });
+});
+
+test("structured date controls are not selectable as prompt draft targets",async()=>{
+ await controlledPage(async page=>{
+  await page.evaluate(installSelectionOverlay);
+  await dragAround(page,"#date-input");
+  const result=await page.evaluate(()=>window.__RM_BACKROOM_SELECTION_V1__);
+  assert.equal(result.state,"failed");
+  assert.match(result.message,/No editable input/);
+  assert.equal(await page.locator("#date-input").inputValue(),"");
   assert.equal(await page.locator("#count").textContent(),"0");
  });
 });
