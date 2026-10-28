@@ -67,17 +67,19 @@ test("real local host -> Playwright browser overlay -> group-scoped target -> ve
   assert.ok(page,"managed Playwright page should open the controlled chat page");
   const select=await requestJson(hostBase,fixture.origin,"/v1/browser/select",{method:"POST",token,body:{pageId,roomId:ROOM_ID}});
   assert.equal(select.response.status,200);
+  const selectionAttemptId=select.body.selectionAttemptId;
+  assert.match(selectionAttemptId,/^[a-f0-9-]{36}$/i);
   const box=await page.locator("#prompt").boundingBox();
   assert.ok(box,"composer should be visible to the selection overlay");
   await page.mouse.move(box.x-8,box.y-8);
   await page.mouse.down();
   await page.mouse.move(box.x+box.width+8,box.y+box.height+8,{steps:6});
   await page.mouse.up();
-  const selected=await requestJson(hostBase,fixture.origin,"/v1/browser/selection/"+pageId,{token});
+  const selected=await requestJson(hostBase,fixture.origin,"/v1/browser/selection/"+pageId+"/"+selectionAttemptId,{token});
   assert.equal(selected.response.status,200);
   assert.equal(selected.body.state,"selected");
   assert.equal(selected.body.ariaLabel,"AI prompt");
-  const registered=await requestJson(hostBase,fixture.origin,"/v1/browser/targets",{method:"POST",token,body:{pageId,roomId:ROOM_ID}});
+  const registered=await requestJson(hostBase,fixture.origin,"/v1/browser/targets",{method:"POST",token,body:{pageId,roomId:ROOM_ID,attemptId:selectionAttemptId}});
   assert.equal(registered.response.status,201);
   assert.equal(registered.body.submittedAutomatically,false);
   const exactText="@RMConnects: please review the group's latest task. Do not send automatically.";
@@ -124,11 +126,11 @@ test("real local host -> Playwright browser overlay -> group-scoped target -> ve
   await page.mouse.down();
   await page.mouse.move(cloneBox.x+cloneBox.width+8,cloneBox.y+cloneBox.height+8,{steps:6});
   await page.mouse.up();
-  const selectedCopy=await requestJson(hostBase,fixture.origin,"/v1/browser/selection/"+pageId,{token});
+  const selectedCopy=await requestJson(hostBase,fixture.origin,"/v1/browser/selection/"+pageId+"/"+selectCopy.body.selectionAttemptId,{token});
   assert.equal(selectedCopy.body.state,"selected");
   assert.equal(selectedCopy.body.ariaLabel,"Alternate prompt");
   const registeredCopy=await requestJson(hostBase,fixture.origin,"/v1/browser/targets",{
-   method:"POST",token,body:{pageId,roomId:roomTwo}
+   method:"POST",token,body:{pageId,roomId:roomTwo,attemptId:selectCopy.body.selectionAttemptId}
   });
   assert.equal(registeredCopy.response.status,201);
   assert.notEqual(registeredCopy.body.id,registered.body.id);
