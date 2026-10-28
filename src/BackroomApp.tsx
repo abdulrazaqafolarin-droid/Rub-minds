@@ -485,20 +485,23 @@ export default function BackroomApp() {
       if (typeof started.selectionAttemptId !== 'string' || !/^[a-f0-9-]{36}$/i.test(started.selectionAttemptId)) {
         throw new Error('Local host returned an invalid selection attempt ID. Restart the host before retrying.');
       }
-      selectionAttemptId = started.selectionAttemptId;
+      const currentAttemptId = started.selectionAttemptId;
+      selectionAttemptId = currentAttemptId;
       if (isCurrentSelection() && activeBrowserSelection.current) {
-        activeBrowserSelection.current = { ...activeBrowserSelection.current, attemptId: selectionAttemptId };
+        activeBrowserSelection.current = { ...activeBrowserSelection.current, attemptId: currentAttemptId };
       }
       if (!isCurrentSelection()) { await cancelServerSelection(); return; }
       for (let attempt = 0; attempt < 120; attempt++) {
         await new Promise<void>(resolve => window.setTimeout(resolve, 500));
         if (!isCurrentSelection()) { await cancelServerSelection(); return; }
-        const result = await hostApi<{ state: string; message?: string }>('/v1/browser/selection/' + encodeURIComponent(pageId));
+        const result = await hostApi<{ state: string; message?: string }>(
+          '/v1/browser/selection/' + encodeURIComponent(pageId) + '/' + encodeURIComponent(currentAttemptId),
+        );
         if (!isCurrentSelection()) { await cancelServerSelection(); return; }
         if (result.state === 'selected') {
           if (!isCurrentSelection()) { await cancelServerSelection(); return; }
           const target = await hostApi<BrowserTargetRow>('/v1/browser/targets', {
-            method: 'POST', body: { pageId, roomId: selectedRoomId },
+            method: 'POST', body: { pageId, roomId: selectedRoomId, attemptId: currentAttemptId },
           });
           if (!isCurrentSelection()) {
             // A room switch may race with the target registration response.
