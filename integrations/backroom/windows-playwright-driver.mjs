@@ -65,6 +65,10 @@ export class WindowsPlaywrightDriver {
     this.allowedOriginsByPage = new WeakMap();
     this.navigationGuardedContexts = new WeakSet();
     this.sessions = new Map();
+    // A browser page must belong to one Backroom session only. Reusing it in
+    // two groups would expose the same private conversation across groups.
+    this.claimedPages = new WeakSet();
+    this.pendingPages = new WeakSet();
     this.pendingSessions = new Set();
     this.pendingSessionGroups = new Map();
     this.groupPendingCounts = new Map();
@@ -301,16 +305,22 @@ export class WindowsPlaywrightDriver {
       if (!providerOrigins) throw new Error('Unsupported AI provider');
       for (const origin of allowed) if (!providerOrigins.includes(origin)) throw new Error('Origin is outside the provider allowlist');
     }
+    if (this.claimedPages.has(page) || this.pendingPages.has(page)) {
+      throw new Error('Selected page is already attached to another Backroom session');
+    }
     this.beginPending(sessionId, groupId);
+    this.pendingPages.add(page);
     try {
       const current = await this.inspectPage(page);
       if (current.isClosed || !allowed.has(current.origin)) throw new Error('Selected page is closed or outside the approved origin list');
       if (this.closingGroups.has(groupId)) throw new Error('Backroom group began closing before this session could be registered');
       const handle = Object.freeze({ sessionId, groupId, mode: 'attach_existing', page });
       this.sessions.set(sessionId, { groupId, mode: 'attach_existing', page, approvedOrigins: allowed, provider });
+      this.claimedPages.add(page);
       return handle;
     } finally {
-      this.finishPending(sessionId, groupId);
+      this.pendingPages.delete(page);
+      await this.finishPending(sessionId, groupId);
     }
   }
 
@@ -345,6 +355,7 @@ export class WindowsPlaywrightDriver {
     const tracked = this.sessions.get(handle.sessionId);
     if (!tracked || tracked.page !== handle.page) return;
     this.sessions.delete(handle.sessionId);
+    if (tracked.mode === 'attach_existing') this.claimedPages.delete(tracked.page);
     if (tracked.mode === 'managed') {
       this.allowedOriginsByPage.delete(tracked.page);
       try { if (!tracked.page.isClosed()) await tracked.page.close(); }
@@ -388,6 +399,7 @@ export class WindowsPlaywrightDriver {
       for (const [sessionId, item] of entries) {
         this.sessions.delete(sessionId);
         if (item.mode === 'managed') this.allowedOriginsByPage.delete(item.page);
+        else this.claimedPages.delete(item.page);
         if (item.mode === 'managed' && !item.page.isClosed()) {
           try { await item.page.close(); } catch { /* Continue cleanup. */ }
         }
