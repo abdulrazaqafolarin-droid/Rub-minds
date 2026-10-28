@@ -14,6 +14,7 @@ const safeSiteUrl = value => {
   } catch {}
   return null;
 };
+function installSelectionOverlay() {
 const isEditable = node => {
   if (!(node instanceof HTMLElement) || !node.isConnected) return false;
   if (node.closest('[aria-hidden="true"],[inert]')) return false;
@@ -24,7 +25,6 @@ const isEditable = node => {
   const style = getComputedStyle(node);
   return box.width > 8 && box.height > 8 && style.display !== "none" && style.visibility !== "hidden" && Number(style.opacity) !== 0;
 };
-function installSelectionOverlay() {
   const KEY = "__RM_BACKROOM_SELECTION_V1__";
   const OVERLAY_ID = "__rm_backroom_target_overlay_v1";
   document.getElementById(OVERLAY_ID)?.remove();
@@ -192,6 +192,9 @@ export class BrowserHostRuntime {
       context.on("close", () => {
         if (this.#context === context) {
           this.#context = null;
+          for (const binding of this.#bindings.values()) {
+            try { this.registry.unregister(binding.target.id, { roomId: binding.target.roomId, hostId: this.hostId }); } catch {}
+          }
           this.#pages.clear();
           this.#targets.clear();
           this.#bindings.clear();
@@ -206,13 +209,13 @@ export class BrowserHostRuntime {
   async stop() {
     const context = this.#context;
     this.#context = null;
-    if (context) await context.close();
     for (const binding of this.#bindings.values()) {
       try { this.registry.unregister(binding.target.id, { roomId: binding.target.roomId, hostId: this.hostId }); } catch {}
     }
     this.#pages.clear();
     this.#targets.clear();
     this.#bindings.clear();
+    if (context) await context.close();
     return this.status();
   }
   #attachPage(page) {
@@ -300,8 +303,6 @@ export class BrowserHostRuntime {
       host: { hostId: this.hostId, deviceLabel: "Backroom local browser", surfaces: ["browser_tab"], operations: ["draft"] },
       adapter, permission: async () => true, isConnected: async () => this.#context !== null && !page.isClosed(),
     });
-    const probe = await guard.execute.bind; // keep the target guard independent of UI state
-    void probe;
     const current = await adapter.probe({ target, operation: "draft" });
     if (!current.connected || !current.focused) throw new Error("Input must be visible, unique, and empty before registering the draft-only target.");
     this.registry.register(target);
