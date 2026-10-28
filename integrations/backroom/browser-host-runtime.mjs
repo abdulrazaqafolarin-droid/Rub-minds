@@ -220,6 +220,7 @@ export class BrowserHostRuntime {
     this.#context = null;
     for (const binding of this.#bindings.values()) {
       try { this.registry.unregister(binding.target.id, { roomId: binding.target.roomId, hostId: this.hostId }); } catch {}
+      try { await binding.nodeHandle?.dispose(); } catch {}
     }
     this.#pages.clear();
     this.#selectionRooms.clear();
@@ -242,6 +243,7 @@ export class BrowserHostRuntime {
             this.#bindings.delete(targetId);
             this.#targets.delete(targetId);
             try { this.registry.unregister(targetId, { roomId: binding.target.roomId, hostId: this.hostId }); } catch {}
+            try { binding.nodeHandle?.dispose(); } catch {}
           }
         }
       });
@@ -324,18 +326,22 @@ export class BrowserHostRuntime {
     return output;
   }
   async #clearBindingMarker(binding) {
-    if (!binding?.marker) return;
+    if (!binding) return;
     const stillUsed = [...this.#bindings.values()].some(other =>
       other.target.id !== binding.target.id && other.pageId === binding.pageId && other.marker === binding.marker);
-    if (stillUsed || binding.page.isClosed()) return;
     try {
-      const markerSelector = '[data-rm-backroom-binding="' + binding.marker + '"]';
-      const marker = binding.page.locator(markerSelector);
-      if (await marker.count() === 1 &&
-        await marker.getAttribute("data-rm-backroom-binding") === binding.marker) {
-        await marker.evaluate(node => node.removeAttribute("data-rm-backroom-binding"));
+      // Keep cleanup tied to the original ElementHandle. A webpage can copy a
+      // data attribute to a replacement node; a selector alone is not identity.
+      if (!stillUsed && binding.marker && binding.nodeHandle && !binding.page.isClosed()) {
+        await binding.nodeHandle.evaluate((node, expected) => {
+          if (node instanceof HTMLElement && node.getAttribute("data-rm-backroom-binding") === expected) {
+            node.removeAttribute("data-rm-backroom-binding");
+          }
+        }, binding.marker);
       }
-    } catch {}
+    } catch {} finally {
+      try { await binding.nodeHandle?.dispose(); } catch {}
+    }
   }
   async registerSelectedTarget(pageId, roomId) {
     if (typeof roomId !== "string" || !roomId.trim() || roomId.length > 120) throw new TypeError("group roomId required");
@@ -402,6 +408,13 @@ export class BrowserHostRuntime {
     }
     const boundSelector = selection.selector + '[data-rm-backroom-binding="' + marker + '"]';
     if (boundSelector.length > 700) throw new Error("Bound selector is too long. Select a simpler input.");
+    const boundLocator = page.locator(boundSelector);
+    if (await boundLocator.count() !== 1) throw new Error("The selected input changed while it was being registered. Select it again.");
+    const nodeHandle = await boundLocator.elementHandle();
+    if (!nodeHandle || await nodeHandle.getAttribute("data-rm-backroom-binding") !== marker) {
+      try { await nodeHandle?.dispose(); } catch {}
+      throw new Error("Could not verify the original selected input. Select it again.");
+    }
     const target = {
       id: randomUUID(), roomId, hostId: this.hostId,
       spaceId: "browser:" + pageId, sessionId: pageId,
@@ -416,11 +429,16 @@ export class BrowserHostRuntime {
       host: { hostId: this.hostId, deviceLabel: "Backroom local browser", surfaces: ["browser_tab"], operations: ["draft"] },
       adapter, permission: async () => true, isConnected: async () => this.#context !== null && !page.isClosed(),
     });
-    const current = await adapter.probe({ target, operation: "draft" });
-    if (!current.connected || !current.focused) throw new Error("Input must be visible, unique, and empty before registering the draft-only target.");
-    this.registry.register(target);
+    try {
+      const current = await adapter.probe({ target, operation: "draft" });
+      if (!current.connected || !current.focused) throw new Error("Input must be visible, unique, and empty before registering the draft-only target.");
+      this.registry.register(target);
+    } catch (error) {
+      try { await nodeHandle.dispose(); } catch {}
+      throw error;
+    }
     this.#targets.set(target.id, { target, pageId, title, site: url.hostname });
-    this.#bindings.set(target.id, { target, pageId, page, adapter, guard, marker, baseSelector: selection.selector });
+    this.#bindings.set(target.id, { target, pageId, page, adapter, guard, marker, nodeHandle, baseSelector: selection.selector });
     await page.evaluate(() => { const state = window.__RM_BACKROOM_SELECTION_V1__; if (state) delete window.__RM_BACKROOM_SELECTION_V1__; });
     this.#selectionRooms.delete(pageId);
     return { id: target.id, pageId, roomId: target.roomId, title, site: url.hostname, surface: "browser_tab", operations: ["draft"], submittedAutomatically: false };
@@ -433,7 +451,19 @@ export class BrowserHostRuntime {
       try {
         if (!binding.page.isClosed()) {
           current = safeSiteUrl(binding.page.url());
-          if (current) selectorCount = await binding.page.locator(binding.target.locatorValue).count();
+          if (current) {
+            const locator = binding.page.locator(binding.target.locatorValue);
+            selectorCount = await locator.count();
+            if (selectorCount === 1) {
+              const liveHandle = await locator.elementHandle();
+              if (!liveHandle) selectorCount = 0;
+              else {
+                const sameNode = await liveHandle.evaluate((node, original) => node === original, binding.nodeHandle).catch(() => false);
+                try { await liveHandle.dispose(); } catch {}
+                if (!sameNode) selectorCount = 0;
+              }
+            }
+          }
         }
       } catch {}
       const fingerprint = current
