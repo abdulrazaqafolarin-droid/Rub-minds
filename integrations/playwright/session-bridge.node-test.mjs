@@ -2,12 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { PlaywrightSessionBridge } from "./session-bridge.mjs";
 
-function makeBridge({ messages = [], participantId = "self", maxReplies = 10, maxMessagesPerStep = 1, maxMessageChars = 12000, allowAiHandoff = false, maxAiHandoffDepth = 2, maxSeenMessages = 5000 } = {}) {
+function makeBridge({ messages = [], participantId = "self", roomId = "room-1", maxReplies = 10, maxMessagesPerStep = 1, maxMessageChars = 12000, allowAiHandoff = false, maxAiHandoffDepth = 2, maxSeenMessages = 5000 } = {}) {
   const calls = [];
   const sent = [];
   const bridge = new PlaywrightSessionBridge({
     page: { isClosed: () => false },
     participantId,
+    roomId,
     maxReplies,
     maxMessagesPerStep,
     maxMessageChars,
@@ -15,7 +16,7 @@ function makeBridge({ messages = [], participantId = "self", maxReplies = 10, ma
     maxAiHandoffDepth,
     maxSeenMessages,
     adapter: { ask: async (_page, body, meta) => { calls.push({ body, meta }); return "reply: " + body; } },
-    readMessages: async () => ({ messages }),
+    readMessages: async () => ({ room_id: roomId, messages }),
     sendMessage: async (body, sourceMessageId) => { sent.push({ body, sourceMessageId }); return { ok: true }; },
   });
   return { bridge, calls, sent };
@@ -25,6 +26,35 @@ test("requires explicit approval before reading group messages", async () => {
   const { bridge, calls } = makeBridge({ messages: [{ id: "m1", body: "hello", sender_kind: "human" }] });
   await assert.rejects(() => bridge.step(), /Explicit approval/);
   assert.equal(calls.length, 0);
+});
+
+test("constructor requires one explicit group binding", () => {
+  const base = {
+    page: { isClosed: () => false },
+    adapter: { ask: async () => "reply" },
+    readMessages: async () => ({ room_id: "room-1", messages: [] }),
+    sendMessage: async () => ({ ok: true }),
+  };
+  assert.throws(() => new PlaywrightSessionBridge(base), /roomId/);
+  assert.throws(() => new PlaywrightSessionBridge({ ...base, roomId: " " }), /roomId/);
+});
+
+test("wrong-room and mixed-room message batches are rejected before provider access", async () => {
+  const { bridge, calls, sent } = makeBridge({
+    messages: [{ id: "should-not-run", body: "private task", sender_kind: "human" }],
+  });
+  bridge.readMessages = async () => ({ room_id: "room-2", messages: [{ id: "should-not-run", body: "private task", sender_kind: "human" }] });
+  await assert.rejects(() => bridge.step({ approved: true }), /different Rub Minds room/);
+  assert.equal(calls.length, 0);
+  assert.equal(sent.length, 0);
+
+  bridge.readMessages = async () => ({ room_id: "room-1", messages: [
+    { id: "valid", body: "valid", sender_kind: "human", room_id: "room-1" },
+    { id: "private", body: "other room", sender_kind: "human", room_id: "room-2" },
+  ] });
+  await assert.rejects(() => bridge.step({ approved: true }), /Cross-room message/);
+  assert.equal(calls.length, 0, "entire mixed-room batches must be rejected before a provider effect");
+  assert.equal(sent.length, 0);
 });
 
 test("defaults to human-origin messages and ignores its own and other AI messages", async () => {
@@ -97,8 +127,9 @@ test("oversized group messages stop before provider access and require review", 
 test("constructor rejects unsafe message-size limits", () => {
   const base = {
     page: { isClosed: () => false },
+    roomId: "room-1",
     adapter: { ask: async () => "reply" },
-    readMessages: async () => ({ messages: [] }),
+    readMessages: async () => ({ room_id: "room-1", messages: [] }),
     sendMessage: async () => ({ ok: true }),
   };
   assert.throws(() => new PlaywrightSessionBridge({ ...base, maxMessageChars: 0 }), /maxMessageChars/);
