@@ -46,7 +46,7 @@ The proposed Supabase migration `20261029090000_backroom_wake_queue.sql` adds a 
 - Token-bound acknowledgement, bounded retry, owner-scoped cancellation and expiry processing.
 - Retry and claim limits intended to prevent infinite work.
 
-The server-only `durable-wake-store.mjs` adapter maps the store RPCs, validates all response shapes, and rejects a missing/expired/replayed retry lease. Its tests use a mocked Supabase RPC client and do not execute PostgreSQL.
+The server-only `durable-wake-store.mjs` adapter maps the store RPCs, validates the identity-bound lease metadata and exact prompt SHA-256, and rejects a missing/expired/replayed retry lease. `durable-coordinator.mjs` now routes only policy-eligible events into that durable queue after confirming the participant, group, selected target, session, target revision and draft capability. Its tests use a mocked Supabase RPC client and do not execute PostgreSQL.
 
 ## Validation status / release discipline
 
