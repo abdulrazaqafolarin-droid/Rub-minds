@@ -99,8 +99,8 @@ test("post-insertion readback failure is ambiguous and must not invite an automa
   evaluate:async(fn,arg)=>{
    const code=String(fn);
    if(code.includes("node.matches(selector)"))return true;
-   if(code.includes("element instanceof HTMLInputElement")&&code.includes("element.value")&&!code.includes("correctConversation"))return value;
    if(code.includes("const readValue")){value=arg.text;writes++;return {state:"inserted"};}
+   if(code.includes("element instanceof HTMLInputElement")&&code.includes("element.value")&&!code.includes("correctConversation"))return value;
    if(code.includes("correctConversation"))throw Error("execution context destroyed after insertion");
    return true;
   }
