@@ -482,14 +482,17 @@ export class BrowserHostRuntime {
       });
       const current = await adapter.probe({ target, operation: "draft" });
       if (!current.connected || !current.focused) throw new Error("Input must be visible, unique, and empty before registering the draft-only target.");
-      await selectedNodeHandle.evaluate((node, expectedAt) => {
+      const clearedSelection = await selectedNodeHandle.evaluate((node, expectedSelectionId) => {
         const state = window.__RM_BACKROOM_SELECTION_V1__;
-        if (node instanceof HTMLElement && state?.selectionId === expectedAt &&
+        if (node instanceof HTMLElement && state?.selectionId === expectedSelectionId &&
           window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ === node) {
           window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = null;
           delete window.__RM_BACKROOM_SELECTION_V1__;
+          return true;
         }
+        return false;
       }, selection.selectionId);
+      if (!clearedSelection) throw new Error("Selection changed while registering the target. Select the input again.");
       this.registry.register(target);
       this.#targets.set(target.id, { target, pageId, title, site: url.hostname });
       this.#bindings.set(target.id, { target, pageId, page, adapter, guard, marker, nodeHandle: selectedNodeHandle, baseSelector: selection.selector });
@@ -515,7 +518,7 @@ export class BrowserHostRuntime {
               window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = null;
               delete window.__RM_BACKROOM_SELECTION_V1__;
             }
-          }, selection.selectedAt);
+          }, selection.selectionId);
         } catch {}
         try { await selectedNodeHandle.dispose(); } catch {}
       }
