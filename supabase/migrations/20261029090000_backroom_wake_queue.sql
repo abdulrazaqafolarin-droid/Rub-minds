@@ -253,7 +253,7 @@ begin
   if p_job_id is null or p_host_id is null or char_length(btrim(p_host_id)) not between 1 and 128
     or p_session_digest is null or p_session_digest !~ '^[0-9a-f]{64}$'
     or p_lease_token is null or p_lease_token !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-    or p_outcome not in ('acknowledged','ignored') then
+    or p_outcome is null or p_outcome not in ('acknowledged','ignored') then
     raise exception 'Invalid Backroom acknowledgement';
   end if;
   update public.backroom_wake_jobs j
