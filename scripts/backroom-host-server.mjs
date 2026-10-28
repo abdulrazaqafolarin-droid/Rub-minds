@@ -190,8 +190,9 @@ export function createBackroomHostServer({
           }
           const input = await readJson(request);
           if (url.pathname === "/v1/browser/select") {
-            if (typeof input.pageId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.pageId)) {
-              writeJson(response, 400, { error: "invalid_page_id" }, cors);
+            if (typeof input.pageId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.pageId) ||
+              typeof input.roomId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.roomId)) {
+              writeJson(response, 400, { error: "invalid_page_or_room_id" }, cors);
               return;
             }
             writeJson(response, 200, await browser.startSelection(input.pageId), cors);
@@ -202,18 +203,18 @@ export function createBackroomHostServer({
               writeJson(response, 400, { error: "invalid_page_id" }, cors);
               return;
             }
-            writeJson(response, 201, await browser.registerSelectedTarget(input.pageId), cors);
+            writeJson(response, 201, await browser.registerSelectedTarget(input.pageId, input.roomId), cors);
             return;
           }
           if (input.approved !== true) {
             writeJson(response, 403, { error: "explicit_user_approval_required" }, cors);
             return;
           }
-          if (typeof input.targetId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.targetId)) {
-            writeJson(response, 400, { error: "invalid_target_id" }, cors);
+          if (typeof input.targetId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.targetId) || typeof input.roomId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.roomId)) {
+            writeJson(response, 400, { error: "invalid_target_or_room_id" }, cors);
             return;
           }
-          const result = await browser.draft(input.targetId, input.text, { approved: true });
+          const result = await browser.draft(input.targetId, input.text, { approved: true, roomId: input.roomId });
           writeJson(response, result.state === "completed" ? 200 : 409, result, cors);
           return;
         }

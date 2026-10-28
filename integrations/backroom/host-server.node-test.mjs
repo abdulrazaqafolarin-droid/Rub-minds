@@ -88,7 +88,7 @@ function fakeBrowserRuntime() {
   getSelection:async()=>({state:selected?.state||"unavailable"}),
   registerSelectedTarget:async id=>{if(id!==pageId||selected?.state!=="selected")throw Error("selection missing");const t={id:targetId,pageId,title:"Test chat",site:"chatgpt.com",surface:"browser_tab",operations:["draft"]};targets.push(t);return t},
   listTargets:()=>targets,
-  draft:async(id,text,{approved}={})=>{if(approved!==true)throw Error("approval required");if(!targets.some(t=>t.id===id))throw Error("target missing");return {state:"completed",result:{drafted:true,submitted:false},submitted:false}},
+  draft:async(id,text,{approved,roomId}={})=>{if(approved!==true)throw Error("approval required");if(!targets.some(t=>t.id===id&&t.roomId===roomId))throw Error("target scope mismatch");return {state:"completed",result:{drafted:true,submitted:false},submitted:false}},
   testSetSelected:()=>{selected={state:"selected"};},
   pageId,targetId,
  };
@@ -105,8 +105,8 @@ test("browser control routes require host pairing and expose truthful capability
   assert.equal(pages.pages[0].site,"chatgpt.com");
   assert.equal((await fetch(base+"/v1/browser/select",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId})})).status,200);
   browserRuntime.testSetSelected();
-  assert.equal((await fetch(base+"/v1/browser/targets",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId})})).status,201);
-  const draft=await fetch(base+"/v1/browser/draft",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({targetId:browserRuntime.targetId,text:"draft only",approved:true})});
+  assert.equal((await fetch(base+"/v1/browser/targets",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId:"12345678-1234-4234-9234-123456789014"})})).status,201);
+  const draft=await fetch(base+"/v1/browser/draft",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({targetId:browserRuntime.targetId,roomId:"12345678-1234-4234-9234-123456789014",text:"draft only",approved:true})});
   assert.equal(draft.status,200);assert.equal((await draft.json()).submitted,false);
   assert.equal((await fetch(base+"/v1/unpair",{method:"POST",headers:auth})).status,200);
   assert.equal((await fetch(base+"/v1/browser/pages",{headers:auth})).status,401);
@@ -118,8 +118,8 @@ test("browser drafting endpoint requires explicit approval and JSON content type
   const creds=await (await pair(base,origin)).json();const auth={Origin:origin,Authorization:"Bearer "+creds.sessionToken};
   await fetch(base+"/v1/browser/start",{method:"POST",headers:auth});
   browserRuntime.testSetSelected();
-  await fetch(base+"/v1/browser/targets",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId})});
-  const noApproval=await fetch(base+"/v1/browser/draft",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({targetId:browserRuntime.targetId,text:"text",approved:false})});
+  await fetch(base+"/v1/browser/targets",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId:"12345678-1234-4234-9234-123456789014"})});
+  const noApproval=await fetch(base+"/v1/browser/draft",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({targetId:browserRuntime.targetId,roomId:"12345678-1234-4234-9234-123456789014",text:"text",approved:false})});
   assert.equal(noApproval.status,403);
   const noJson=await fetch(base+"/v1/browser/select",{method:"POST",headers:auth,body:"{}"});
   assert.equal(noJson.status,415);

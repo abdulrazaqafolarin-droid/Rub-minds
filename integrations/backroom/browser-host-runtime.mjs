@@ -282,7 +282,8 @@ export class BrowserHostRuntime {
     }
     return output;
   }
-  async registerSelectedTarget(pageId) {
+  async registerSelectedTarget(pageId, roomId) {
+    if (typeof roomId !== "string" || !roomId.trim() || roomId.length > 120) throw new TypeError("group roomId required");
     const { page, url } = this.#page(pageId);
     const selection = await page.evaluate(() => window.__RM_BACKROOM_SELECTION_V1__ ?? null);
     if (!selection || selection.state !== "selected" || typeof selection.selector !== "string" || selection.selector.length > 500) {
@@ -290,7 +291,7 @@ export class BrowserHostRuntime {
     }
     const title = (await page.title().catch(() => "Browser input")).slice(0, 100);
     const target = {
-      id: randomUUID(), roomId: "local-host", hostId: this.hostId,
+      id: randomUUID(), roomId, hostId: this.hostId,
       spaceId: "browser:" + pageId, sessionId: pageId,
       appId: url.origin, identityFingerprint: url.origin + url.pathname + ":" + pageId,
       surface: "browser_tab", locatorKind: "dom", locatorValue: selection.selector, revision: 1,
@@ -313,15 +314,16 @@ export class BrowserHostRuntime {
   }
   listTargets() {
     return [...this.#targets.values()].map(({ target, pageId, title, site }) => ({
-      id: target.id, pageId, title, site, surface: target.surface, operations: ["draft"],
+      id: target.id, pageId, roomId: target.roomId, title, site, surface: target.surface, operations: ["draft"],
     }));
   }
-  async draft(targetId, text, { approved = false } = {}) {
+  async draft(targetId, text, { approved = false, roomId } = {}) {
     if (approved !== true) throw new Error("explicit draft approval required");
     if (typeof text !== "string" || !text.trim() || text.length > 10_000) throw new TypeError("draft text must be 1-10000 characters");
     const binding = this.#bindings.get(targetId);
     if (!binding) throw new Error("registered browser target unavailable");
     const target = binding.target;
+    if (typeof roomId !== "string" || roomId !== target.roomId) throw new Error("Target belongs to a different Rub Minds group.");
     const command = {
       id: randomUUID(), eventId: randomUUID(), roomId: target.roomId,
       hostId: target.hostId, spaceId: target.spaceId, sessionId: target.sessionId,
