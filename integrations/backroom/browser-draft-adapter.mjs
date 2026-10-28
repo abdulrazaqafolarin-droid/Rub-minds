@@ -67,8 +67,9 @@ export class BrowserDraftAdapter {
         if (!(element instanceof HTMLElement) || !element.isConnected ||
           !element.matches(request.selector) ||
           (request.bindingMarker && element.getAttribute("data-rm-backroom-binding") !== request.bindingMarker) ||
-          element.closest('[aria-hidden="true"],[inert]') ||
-          ("disabled" in element && element.disabled) || ("readOnly" in element && element.readOnly) ||
+          element.closest('[aria-hidden="true"],[inert],[hidden]') ||
+          ("disabled" in element && element.disabled) || element.matches(":disabled") ||
+          ("readOnly" in element && element.readOnly) ||
           element.getAttribute("aria-disabled") === "true" || element.getAttribute("aria-readonly") === "true") {
           return "unavailable";
         }
@@ -80,9 +81,16 @@ export class BrowserDraftAdapter {
           return "unavailable";
         }
         const bounds = element.getBoundingClientRect();
-        const style = getComputedStyle(element);
-        if (bounds.width <= 8 || bounds.height <= 8 || style.display === "none" ||
-          style.visibility === "hidden" || Number(style.opacity) === 0) return "unavailable";
+        if (bounds.width <= 8 || bounds.height <= 8) return "unavailable";
+        let ancestor = element;
+        while (ancestor instanceof HTMLElement) {
+          const style = getComputedStyle(ancestor);
+          if (ancestor.hasAttribute("hidden") || ancestor.hasAttribute("inert") ||
+            ancestor.getAttribute("aria-hidden") === "true" || style.display === "none" ||
+            style.visibility === "hidden" || style.visibility === "collapse" ||
+            Number(style.opacity) === 0 || style.pointerEvents === "none") return "unavailable";
+          ancestor = ancestor.parentElement;
+        }
         try {
           const matches = document.querySelectorAll(request.selector);
           if (matches.length !== 1 || matches[0] !== element) return "unavailable";
