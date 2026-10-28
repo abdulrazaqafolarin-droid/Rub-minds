@@ -30,7 +30,7 @@ The official Chrome guidance and MDN explain that Local Network Access permissio
 
 ## Browser-origin local network permission
 
-The hosted Backroom UI calls the host at an explicit loopback URL from a secure HTTPS origin. Modern Chromium browsers may prompt for local/loopback network permission; this is independent of host pairing. The app does not attempt to bypass the permission prompt. The local host binds only to IPv4 loopback and has an exact-origin allowlist. See the Chrome and MDN references above.
+The hosted Backroom UI calls the host at an explicit loopback URL from a secure HTTPS origin. Modern Chromium browsers may prompt for local/loopback network permission; this is independent of host pairing. The app does not attempt to bypass the permission prompt. `RequestInit.targetAddressSpace` is experimental rather than baseline: current MDN compatibility data lists Chrome support from version 142 and does not list desktop Firefox or Safari support; embedded webviews can differ. Test pairing in current desktop Chrome/Edge and show an actionable error when the browser blocks loopback access. The local host binds only to IPv4 loopback and has an exact-origin allowlist. See [Chrome Local Network Access](https://developer.chrome.com/blog/local-network-access?hl=en), [MDN Local Network Access](https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Local_network_access), and [MDN Request.targetAddressSpace compatibility](https://developer.mozilla.org/en-US/docs/Web/API/Request/targetAddressSpace).
 
 
 ## Managed browser adapter (development milestone)
