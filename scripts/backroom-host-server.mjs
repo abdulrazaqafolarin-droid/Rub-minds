@@ -175,9 +175,9 @@ export function createBackroomHostServer({
           writeJson(response, 200, { targets: await browser.listTargets() }, cors);
           return;
         }
-        const selectionMatch = /^\/v1\/browser\/selection\/([a-f0-9-]{36})$/i.exec(url.pathname);
+        const selectionMatch = /^\/v1\/browser\/selection\/([a-f0-9-]{36})\/([a-f0-9-]{36})$/i.exec(url.pathname);
         if (request.method === "GET" && selectionMatch) {
-          writeJson(response, 200, await browser.getSelection(selectionMatch[1]), cors);
+          writeJson(response, 200, await browser.getSelection(selectionMatch[1], selectionMatch[2]), cors);
           return;
         }
         if (request.method === "POST" && url.pathname === "/v1/browser/open") {
@@ -244,11 +244,13 @@ export function createBackroomHostServer({
             return;
           }
           if (url.pathname === "/v1/browser/targets") {
-            if (typeof input.pageId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.pageId) || typeof input.roomId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.roomId)) {
-              writeJson(response, 400, { error: "invalid_page_or_room_id" }, cors);
+            if (typeof input.pageId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.pageId) ||
+              typeof input.roomId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.roomId) ||
+              typeof input.attemptId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.attemptId)) {
+              writeJson(response, 400, { error: "invalid_page_room_or_attempt_id" }, cors);
               return;
             }
-            writeJson(response, 201, await browser.registerSelectedTarget(input.pageId, input.roomId), cors);
+            writeJson(response, 201, await browser.registerSelectedTarget(input.pageId, input.roomId, input.attemptId), cors);
             return;
           }
           if (input.approved !== true) {
