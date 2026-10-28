@@ -563,8 +563,14 @@ export default function BackroomApp() {
       );
       setBrowserNotice(result.state === 'completed'
         ? 'Draft inserted and verified. Send was not clicked.'
-        : 'Draft was not inserted (' + result.state + (result.reason ? ': ' + result.reason : '') + '). Re-register the target if the app or input changed.');
-    } catch (e) { setBrowserNotice(e instanceof Error ? e.message : 'Draft failed.'); }
+        : result.state === 'needs_review'
+          ? 'Draft outcome is uncertain. Check the actual AI composer before doing anything else. Do not retry automatically or assume the text was not inserted.'
+          : 'Draft was not verified (' + result.state + (result.reason ? ': ' + result.reason : '') + '). Check the AI composer before retrying.');
+    } catch (e) {
+      setBrowserNotice('Could not confirm the draft operation: ' +
+        (e instanceof Error ? e.message : 'Connection or execution error.') +
+        ' Check the AI composer manually before retrying; the text may already have been inserted.');
+    }
     finally { setBrowserBusy(false); }
   }
   function add() {
