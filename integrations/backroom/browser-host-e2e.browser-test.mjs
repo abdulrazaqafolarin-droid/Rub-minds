@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { chromium } from "playwright";
 import { BrowserHostRuntime } from "./browser-host-runtime.mjs";
+import { BrowserDraftAdapter } from "./browser-draft-adapter.mjs";
 import { createBackroomHostServer } from "../../scripts/backroom-host-server.mjs";
 
 const ROOM_ID = "12345678-1234-4234-9234-123456789014";
@@ -143,6 +144,40 @@ test("real local host -> Playwright browser overlay -> group-scoped target -> ve
   assert.equal(await page.locator("#prompt-copy").inputValue(),"Independent room two draft");
   assert.equal(await page.locator("#prompt").inputValue(),exactText);
   assert.equal(await page.locator("#sent-count").textContent(),"0","copied-marker test must never click Send");
+  // Simulate a SPA changing the active conversation after adapter preflight but
+  // before the write task executes. The route check must be inside that same
+  // synchronous page task, not only in the earlier locator probe.
+  const racePage=await realContext.newPage();
+  await racePage.goto(fixture.origin+"/chat");
+  const originalHandle=await racePage.locator("#prompt").elementHandle();
+  assert.ok(originalHandle,"race-test composer should have a retained element handle");
+  let routeChangedAtInsertion=false;
+  const racingHandle={
+   evaluate:async(fn,arg)=>{
+    if(!routeChangedAtInsertion && String(fn).includes("current.origin !== request.origin")){
+     routeChangedAtInsertion=true;
+     await racePage.evaluate(()=>history.replaceState({}, "", "/other-conversation"));
+    }
+    return originalHandle.evaluate(fn,arg);
+   },
+   dispose:()=>originalHandle.dispose(),
+  };
+  const raceAdapter=new BrowserDraftAdapter({
+   page:racePage,origin:fixture.origin,path:"/chat",selector:"#prompt",
+   appId:fixture.origin,sessionId:"race-session",identityFingerprint:"race-conversation",
+   nodeHandle:racingHandle,
+  });
+  const raceTarget={
+   surface:"browser_tab",locatorKind:"dom",locatorValue:"#prompt",appId:fixture.origin,
+   sessionId:"race-session",identityFingerprint:"race-conversation",
+  };
+  await assert.rejects(()=>raceAdapter.execute({
+   command:{operation:"draft",text:"must not cross a conversation"},target:raceTarget,
+  }),/conversation changed immediately before draft insertion/i);
+  assert.equal(routeChangedAtInsertion,true,"race must occur after #field preflight");
+  assert.equal(await racePage.locator("#prompt").inputValue(),"","stale conversation must remain untouched");
+  await originalHandle.dispose();
+
   const unpaired=await requestJson(hostBase,fixture.origin,"/v1/unpair",{method:"POST",token});
   assert.equal(unpaired.response.status,200);
   const denied=await requestJson(hostBase,fixture.origin,"/v1/browser/pages",{token});
