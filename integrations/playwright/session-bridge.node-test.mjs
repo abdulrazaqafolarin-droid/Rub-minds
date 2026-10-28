@@ -130,6 +130,33 @@ test("does not reply to unknown sender kinds or excessive server-supplied turn d
   assert.equal(calls.length, 0);
 });
 
+test("an ambiguous group-send failure does not re-run the provider or invite duplicate replies", async () => {
+  const { bridge, calls, sent } = makeBridge({
+    maxMessagesPerStep: 2,
+    messages: [{ id: "ambiguous-send", body: "submit once", sender_kind: "human" }],
+  });
+  let sendAttempts = 0;
+  bridge.sendMessage = async (body, sourceMessageId) => {
+    sendAttempts++;
+    // Simulate a server that accepted the reply but lost its HTTP response.
+    sent.push({ body, sourceMessageId });
+    throw new Error("connection reset after commit");
+  };
+
+  const first = await bridge.step({ approved: true });
+  assert.equal(first.status, "send_outcome_ambiguous");
+  assert.equal(first.messageId, "ambiguous-send");
+  assert.equal(calls.length, 1, "provider is asked only once before the ambiguous delivery");
+  assert.equal(sendAttempts, 1);
+  assert.equal(bridge.seen.has("ambiguous-send"), true, "keep the source ID to prevent a second provider call");
+
+  const second = await bridge.step({ approved: true });
+  assert.deepEqual(second, { status: "ok", sent: 0, processed: 0 });
+  assert.equal(calls.length, 1);
+  assert.equal(sendAttempts, 1);
+  assert.equal(sent.length, 1, "the simulated accepted reply must not be duplicated");
+});
+
 test("retries a message after a transient provider failure", async () => {
   const { bridge, sent } = makeBridge({ messages: [{ id: "retry-me", body: "continue", sender_kind: "human" }] });
   let attempts = 0;
