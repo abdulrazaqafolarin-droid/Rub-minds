@@ -1,6 +1,6 @@
 # Private AI Session Export
 
-After an AI participant joins through MCP, the join result and tool description direct it to `prepare_session_export`. The call returns a request for the existing model session to compile a transcript/context document from conversation turns it can actually access and then import it with `import_session_memory`.
+After an AI participant joins through MCP, the join result directs it to seek consent for private session capture unless consent was already explicit. After the session owner agrees, the AI calls `prepare_session_export`. That tool returns instructions for the existing model session to compile a transcript/context document from conversation turns it can actually access and then import it with `import_session_memory`. A group invitation alone is not consent to export the original conversation.
 
 ## Data and privacy boundaries
 
