@@ -38,7 +38,7 @@ function fakePage({url="https://chatgpt.com/c/test",title="Research thread",sele
    if(fn.toString().includes("RM_BACKROOM_SELECTION_V1"))return null;
    return null;
   },
-  setSelection:v=>selection=v,value:()=>input,setUrl:v=>pageUrl=v,replaceNode:()=>{bindingMarker=null},
+  setSelection:v=>selection=v,value:()=>input,setValue:v=>{input=v},setUrl:v=>pageUrl=v,replaceNode:()=>{bindingMarker=null},
   setBindingMarker:v=>{bindingMarker=v},bindingMarker:()=>bindingMarker,
   close:()=>{closed=true;handlers.close?.()},
  };
@@ -194,6 +194,7 @@ test("repeated browser drafts do not exhaust the bounded dispatcher queue",async
  p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]'});
  const target=await runtime.registerSelectedTarget(page.pageId,"room-1");
  for(let i=0;i<220;i++){
+  p.setValue("");
   const result=await runtime.draft(target.id,"draft "+i,{approved:true,roomId:"room-1"});
   assert.equal(result.state,"completed");
  }
