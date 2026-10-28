@@ -432,6 +432,7 @@ export class BrowserHostRuntime {
     try {
       const current = await adapter.probe({ target, operation: "draft" });
       if (!current.connected || !current.focused) throw new Error("Input must be visible, unique, and empty before registering the draft-only target.");
+      await page.evaluate(() => { const state = window.__RM_BACKROOM_SELECTION_V1__; if (state) delete window.__RM_BACKROOM_SELECTION_V1__; });
       this.registry.register(target);
     } catch (error) {
       try { await nodeHandle.dispose(); } catch {}
@@ -439,7 +440,6 @@ export class BrowserHostRuntime {
     }
     this.#targets.set(target.id, { target, pageId, title, site: url.hostname });
     this.#bindings.set(target.id, { target, pageId, page, adapter, guard, marker, nodeHandle, baseSelector: selection.selector });
-    await page.evaluate(() => { const state = window.__RM_BACKROOM_SELECTION_V1__; if (state) delete window.__RM_BACKROOM_SELECTION_V1__; });
     this.#selectionRooms.delete(pageId);
     return { id: target.id, pageId, roomId: target.roomId, title, site: url.hostname, surface: "browser_tab", operations: ["draft"], submittedAutomatically: false };
   }
