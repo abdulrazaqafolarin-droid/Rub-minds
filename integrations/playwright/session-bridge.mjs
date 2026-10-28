@@ -141,7 +141,12 @@ export class PlaywrightSessionBridge {
         // The transport should use source message IDs as idempotency keys and
         // explicitly acknowledge accepted delivery.
         const delivery = await this.sendMessage(response.trim(), message.id);
-        if (!(delivery === true || delivery?.ok === true || delivery?.status === "sent")) {
+        // Supported transports return an explicit success flag/status or a
+        // durable message row/ID (Supabase rows use id; agent_exchange returns
+        // message_id). Undefined and false-like responses are not acknowledgements.
+        const hasDurableMessageId = [delivery?.id, delivery?.message_id, delivery?.messageId]
+          .some(value => typeof value === "string" && value.length > 0);
+        if (!(delivery === true || delivery?.ok === true || delivery?.status === "sent" || hasDurableMessageId)) {
           return {
             status: "send_outcome_ambiguous", sent, processed,
             messageId: message.id,
