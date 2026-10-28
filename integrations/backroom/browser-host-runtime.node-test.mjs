@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { chmod, mkdir, mkdtemp, rm, stat, symlink } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { BrowserHostRuntime } from "./browser-host-runtime.mjs";
 
 function fakePage({url="https://chatgpt.com/c/test",title="Research thread",selection=null,closed=false}={}) {
@@ -396,4 +399,51 @@ test("repeated browser drafts do not exhaust the bounded dispatcher queue",async
   assert.equal(result.state,"completed");
  }
  await runtime.stop();
+});
+
+
+test("existing persistent browser profile permissions are restricted on POSIX", async () => {
+ const root = await mkdtemp(join(tmpdir(), "rub-backroom-profile-permissions-"));
+ const profileDir = join(root, "profile");
+ await mkdir(profileDir, { recursive: true, mode: 0o700 });
+ const context = fakeContext([]);
+ const runtime = new BrowserHostRuntime({
+  hostId: "host", profileDir,
+  chromiumProvider: async () => ({ launchPersistentContext: async () => context }),
+ });
+ try {
+  if (process.platform !== "win32") await chmod(profileDir, 0o755);
+  await runtime.start();
+  if (process.platform !== "win32") {
+   assert.equal((await stat(profileDir)).mode & 0o777, 0o700,
+    "an existing profile directory must not keep permissive permissions");
+  }
+ } finally {
+  await runtime.stop().catch(() => {});
+  await rm(root, { recursive: true, force: true });
+ }
+});
+
+test("managed browser refuses a symbolic-link profile path", async (t) => {
+ if (process.platform === "win32") {
+  t.skip("Creating symbolic links may require elevated Windows privileges.");
+  return;
+ }
+ const root = await mkdtemp(join(tmpdir(), "rub-backroom-profile-symlink-"));
+ const actualDir = join(root, "actual-profile");
+ const profileLink = join(root, "profile-link");
+ await mkdir(actualDir, { mode: 0o700 });
+ await symlink(actualDir, profileLink, "dir");
+ let launches = 0;
+ const runtime = new BrowserHostRuntime({
+  hostId: "host", profileDir: profileLink,
+  chromiumProvider: async () => ({ launchPersistentContext: async () => { launches++; return fakeContext([]); } }),
+ });
+ try {
+  await assert.rejects(() => runtime.start(), /real directory, not a symbolic link/i);
+  assert.equal(launches, 0, "Chromium must not launch against a symlinked profile path");
+ } finally {
+  await runtime.stop().catch(() => {});
+  await rm(root, { recursive: true, force: true });
+ }
 });
