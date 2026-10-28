@@ -6,7 +6,7 @@ function fixture(surface="android_app",opts={}) {
  const bound={surface,appId:"com.example.ai",sessionId:"thread-7",
    identityFingerprint:"window-7",locatorValue:"compose",connected:true,focused:true,editable:true};
  const driver={inspect:async()=>({...bound,text:content,...opts.state}),
-   writeTextIfEmpty:async({text,expectedText})=>{if(content!==expectedText)return {state:"occupied"};writes++;content=opts.corrupt?"unexpected":text;return {state:opts.corrupt?"unverified":"written"}}};
+   writeTextIfEmpty:async({text,expectedText})=>{if(content!==expectedText)return {state:"occupied"};writes++;content=opts.corrupt?"unexpected":text;return {state:opts.corrupt?"unverified":"written",submitted:false}}};
  const adapter=new NativeAccessibilityDraftAdapter({driver,surface,...bound});
  const target={...bound,locatorKind:"accessibility"};
  return {adapter,target,writes:()=>writes,value:()=>content};
@@ -40,6 +40,25 @@ test("native adapter rejects automatic submit",async()=>{
  const f=fixture();
  await assert.rejects(()=>f.adapter.execute({command:{operation:"submit",text:"send"},target:f.target}),/binding/);
  assert.equal(f.writes(),0);
+});
+
+test("native adapter does not claim draft-only success without explicit no-submit attestation",async()=>{
+ for (const writeResult of [
+  {state:"written"},
+  {state:"written",submitted:true},
+  {state:"unverified",submitted:false},
+ ]) {
+  let contentText="";
+  const driver={
+   inspect:async()=>({...{surface:"android_app",appId:"com.example.ai",sessionId:"thread-7",identityFingerprint:"window-7",locatorValue:"compose",connected:true,focused:true,editable:true},text:contentText}),
+   writeTextIfEmpty:async({text})=>{contentText=text;return writeResult},
+  };
+  const adapter=new NativeAccessibilityDraftAdapter({driver,surface:"android_app",appId:"com.example.ai",sessionId:"thread-7",identityFingerprint:"window-7",locatorValue:"compose"});
+  const target={surface:"android_app",locatorKind:"accessibility",locatorValue:"compose",appId:"com.example.ai",sessionId:"thread-7",identityFingerprint:"window-7"};
+  const result=await adapter.execute({command:{operation:"draft",text:"draft"},target});
+  assert.equal(result.state,"needs_review");
+  assert.equal(result.verified,false);
+ }
 });
 
 test("native driver must reject a text field that became occupied before write",async()=>{
