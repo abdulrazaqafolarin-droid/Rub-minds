@@ -160,6 +160,29 @@ test("server without a platform runtime advertises no capabilities and fails clo
  });
 });
 
+test("browser open route accepts standard JSON content types and rejects non-JSON", async () => {
+ const browserRuntime=fakeBrowserRuntime();
+ await withHost(async({base,origin})=>{
+  const credentials=await (await pair(base,origin)).json();
+  const auth={Origin:origin,Authorization:"Bearer "+credentials.sessionToken};
+  await fetch(base+"/v1/browser/start",{method:"POST",headers:auth});
+  const nonJson=await fetch(base+"/v1/browser/open",{
+   method:"POST",headers:{...auth,"Content-Type":"text/plain"},body:JSON.stringify({url:"https://chatgpt.com/"})
+  });
+  assert.equal(nonJson.status,415);
+  const standard=await fetch(base+"/v1/browser/open",{
+   method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({url:"https://chatgpt.com/"})
+  });
+  assert.equal(standard.status,200);
+  assert.equal((await standard.json()).site,"chatgpt.com");
+  const charset=await fetch(base+"/v1/browser/open",{
+   method:"POST",headers:{...auth,"Content-Type":"application/json; charset=utf-8"},body:JSON.stringify({url:"https://claude.ai/"})
+  });
+  assert.equal(charset.status,200);
+  assert.equal((await charset.json()).site,"claude.ai");
+ },{browserRuntime});
+});
+
 test("disabled browser runtime reports an actionable 503 instead of a misleading bad request", async () => {
  await withHost(async({base,origin})=>{
   const credentials=await (await pair(base,origin)).json();
