@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { BrowserHostRuntime } from "./browser-host-runtime.mjs";
 
 function fakePage({url="https://chatgpt.com/c/test",title="Research thread",selection=null,closed=false}={}) {
- const handlers={}; let input="", pageUrl=url, bindingMarker=null, nodeId=1, markerNodeId=null;
+ const handlers={}; let input="", pageUrl=url, bindingMarker=null, nodeId=1, markerNodeId=null, disposedHandles=0;
  const locator = (selector="") => {
   const markerMatch=/\[data-rm-backroom-binding="([^"]+)"\]$/.exec(selector);
   const expectedMarker=markerMatch?.[1];
@@ -28,7 +28,7 @@ function fakePage({url="https://chatgpt.com/c/test",title="Research thread",sele
       }
       return true;
      },
-     dispose:async()=>{},
+     dispose:async()=>{disposedHandles++;},
     };
    },
    evaluate:async(fn,arg)=>{
@@ -57,7 +57,7 @@ function fakePage({url="https://chatgpt.com/c/test",title="Research thread",sele
    return null;
   },
   setSelection:v=>selection=v,value:()=>input,setValue:v=>{input=v},setUrl:v=>pageUrl=v,replaceNode:({preserveMarker=false}={})=>{nodeId++;if(!preserveMarker){bindingMarker=null;markerNodeId=null;}else markerNodeId=nodeId;},
-  setBindingMarker:v=>{bindingMarker=v;markerNodeId=v?nodeId:null},bindingMarker:()=>bindingMarker,
+  setBindingMarker:v=>{bindingMarker=v;markerNodeId=v?nodeId:null},bindingMarker:()=>bindingMarker,disposedHandles:()=>disposedHandles,
   close:()=>{closed=true;handlers.close?.()},
  };
 }
@@ -75,6 +75,21 @@ test("host starts a visible managed context and only advertises browser capabili
  assert.deepEqual((await runtime.listPages()).map(x=>x.site),["claude.ai"]);
  await runtime.stop();assert.equal(runtime.status().running,false);
 });
+test("unexpected browser-context closure drops targets and releases retained DOM handles",async()=>{
+ const p=fakePage(),context=fakeContext([p]),runtime=factory(context);await runtime.start();
+ const [page]=await runtime.listPages();
+ await runtime.startSelection(page.pageId,"room-1");
+ p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]',tagName:"textarea"});
+ const target=await runtime.registerSelectedTarget(page.pageId,"room-1");
+ assert.equal((await runtime.listTargets()).length,1);
+ const disposedBefore=p.disposedHandles();
+ await context.close();
+ assert.equal(runtime.status().running,false);
+ assert.equal((await runtime.listTargets()).length,0);
+ assert.ok(p.disposedHandles()>disposedBefore,"retained element handles must be released");
+ await assert.rejects(()=>runtime.draft(target.id,"stale",{approved:true,roomId:"room-1"}),/target unavailable/i);
+});
+
 test("only web pages are listed and page output hides conversation paths",async()=>{
  const pages=[fakePage({url:"https://chatgpt.com/c/private-thread"}),fakePage({url:"file:///private.txt"}),fakePage({url:"about:blank"})];
  const runtime=factory(fakeContext(pages));await runtime.start();
