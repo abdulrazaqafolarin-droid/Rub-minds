@@ -19,6 +19,7 @@ export function validateCommand(command) {
 export class BackroomDispatcher {
   #jobs = new Map();
   #events = new Map();
+  #inflight = new Set();
   constructor({ registry = new TargetRegistry(), adapter, authorize, maxJobs = 200 } = {}) {
     if (!adapter || typeof adapter.execute !== "function") throw new TypeError("adapter.execute required");
     if (typeof authorize !== "function") throw new TypeError("authorize callback required");
@@ -56,6 +57,9 @@ export class BackroomDispatcher {
     if (!job) throw new Error("unknown command");
     if (!STATES.has(job.status.state)) throw new Error("invalid state");
     if (job.status.state !== "queued" && job.status.state !== "awaiting_approval") return job.status;
+    if (this.#inflight.has(id)) return job.status;
+    this.#inflight.add(id);
+    try {
     const c = job.command;
     const allowed = await this.authorize(c);
     if (allowed !== true) {
@@ -86,5 +90,6 @@ export class BackroomDispatcher {
       job.status = { ...job.status, state: "needs_review", reason: "effect_unconfirmed" };
     }
     return job.status;
+    } finally { this.#inflight.delete(id); }
   }
 }
