@@ -7,7 +7,7 @@ function fixture(options = {}) {
   let state = {
     connected: true, focused: true, editable: true, surface: "terminal",
     appId: "terminal.vscode", sessionId: "pty-session-7",
-    identityFingerprint: "window:42:pty:7", locatorValue: "terminal/session/7",
+    identityFingerprint: "window:42:pty:7", locatorValue: "terminal/session/7", inputKind: "assistant_composer",
     ...options.state,
   };
   let writes = 0;
@@ -19,6 +19,7 @@ function fixture(options = {}) {
       if (options.onWrite) return options.onWrite({ request, getText: () => text, setText: value => { text = value; }, getState: () => state, setState: value => { state = { ...state, ...value }; } });
       if (state.sessionId !== request.sessionId ||
           state.identityFingerprint !== request.identityFingerprint ||
+          state.inputKind !== request.expectedInputKind ||
           text !== request.expectedText) return { state: text !== "" ? "occupied" : "unavailable", submitted: false };
       writes++;
       text = request.text;
@@ -76,6 +77,14 @@ test("lost focus or changed PTY identity blocks a draft", async () => {
     await assert.rejects(() => f.adapter.execute({ command: { operation: "draft", text: "draft" }, target: f.target }), /identity changed/);
     assert.equal(f.writes(), 0);
   }
+});
+
+test("a raw shell prompt is not accepted as an AI assistant composer", async () => {
+  const f = fixture({ state: { inputKind: "shell_prompt" } });
+  assert.equal((await f.adapter.probe({ target: f.target, operation: "draft" })).connected, false);
+  await assert.rejects(() => f.adapter.execute({ command: { operation: "draft", text: "rm -rf ~" }, target: f.target }), /input buffer or session identity changed/);
+  assert.equal(f.writes(), 0);
+  assert.equal(f.text(), "");
 });
 
 test("an already occupied terminal prompt is never overwritten", async () => {
