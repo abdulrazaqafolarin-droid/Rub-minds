@@ -146,7 +146,7 @@ test("unexpected browser-context closure drops targets and releases retained DOM
  const [page]=await runtime.listPages();
  await runtime.startSelection(page.pageId,"room-1");
  p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]',tagName:"textarea"});
- const target=await runtime.registerSelectedTarget(page.pageId,"room-1");
+ const target=await runtime.registerSelectedTarget(page.pageId, "room-1", p.activeSelectionAttempt());
  assert.equal((await runtime.listTargets()).length,1);
  const disposedBefore=p.disposedHandles();
  await context.close();
@@ -166,15 +166,15 @@ test("selection registration requires one selected target and an empty composer"
  const p=fakePage(),runtime=factory(fakeContext([p]));await runtime.start();
  const [page]=await runtime.listPages();
  await runtime.startSelection(page.pageId, "room-1");
- await assert.rejects(()=>runtime.registerSelectedTarget(page.pageId, "room-1"),/Select one input/);
+ await assert.rejects(()=>runtime.registerSelectedTarget(page.pageId, "room-1", p.activeSelectionAttempt()),/Select one input/);
  p.setSelection({state:"selected",selector:"[role=textbox]",tagName:"textarea"});
- const target=await runtime.registerSelectedTarget(page.pageId, "room-1");assert.equal(target.operations[0],"draft");
+ const target=await runtime.registerSelectedTarget(page.pageId, "room-1", p.activeSelectionAttempt());assert.equal(target.operations[0],"draft");
  assert.equal((await runtime.listTargets()).length,1);await runtime.stop();
 });
 test("draft requires explicit approval and never reports submitted",async()=>{
  const p=fakePage(),runtime=factory(fakeContext([p]));await runtime.start();
  const [page]=await runtime.listPages();await runtime.startSelection(page.pageId, "room-1");p.setSelection({state:"selected",selector:"[role=textbox]",tagName:"textarea"});
- const target=await runtime.registerSelectedTarget(page.pageId, "room-1");
+ const target=await runtime.registerSelectedTarget(page.pageId, "room-1", p.activeSelectionAttempt());
  await assert.rejects(()=>runtime.draft(target.id,"hello",{roomId:"room-1"}),/approval/);
  const result=await runtime.draft(target.id,"hello",{approved:true,roomId:"room-1"});
  assert.equal(result.state,"completed");assert.equal(result.submitted,false);assert.equal(p.value(),"hello");
@@ -215,7 +215,7 @@ test("target is invalidated when the SPA changes its query or hash conversation 
  const [page]=await runtime.listPages();
  await runtime.startSelection(page.pageId,"room-1");
  p.setSelection({state:"selected",selector:"[role=textbox]",tagName:"textarea"});
- const target=await runtime.registerSelectedTarget(page.pageId,"room-1");
+ const target=await runtime.registerSelectedTarget(page.pageId, "room-1", p.activeSelectionAttempt());
  assert.equal((await runtime.listTargets()).length,1);
  p.setUrl("https://chatgpt.com/c/one?thread=two");
  assert.equal((await runtime.listTargets()).length,0);
@@ -229,16 +229,16 @@ test("selection cancellation is group- and attempt-scoped and clears the overlay
  await runtime.startSelection(page.pageId,"room-1");
  const attemptId=p.activeSelectionAttempt();
  p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]'});
- assert.equal((await runtime.getSelection(page.pageId)).state,"selected");
+ assert.equal((await runtime.getSelection(page.pageId, p.activeSelectionAttempt())).state,"selected");
  assert.equal(await runtime.cancelSelection(page.pageId,"room-2",attemptId),false);
  assert.equal(await runtime.cancelSelection(page.pageId,"room-1","42345678-1234-4234-9234-123456789099"),false);
- assert.equal((await runtime.getSelection(page.pageId)).state,"selected");
+ assert.equal((await runtime.getSelection(page.pageId, p.activeSelectionAttempt())).state,"selected");
  assert.equal(await runtime.cancelSelection(page.pageId,"room-1",attemptId),true);
  assert.equal(p.selectionState(),null);
  assert.equal(p.selectedElementNodeId(),null);
  assert.equal(p.activeSelectionAttempt(),null);
- assert.equal((await runtime.getSelection(page.pageId)).state,"unavailable");
- await assert.rejects(()=>runtime.registerSelectedTarget(page.pageId,"room-1"),/Selection belongs to another group/);
+ assert.equal((await runtime.getSelection(page.pageId, attemptId)).state,"unavailable");
+ await assert.rejects(()=>runtime.registerSelectedTarget(page.pageId, "room-1", attemptId),/Selection attempt has expired/);
  assert.ok(attemptId);
  await runtime.stop();
 });
@@ -253,9 +253,9 @@ test("selection attempt nonce prevents stale selected-element reuse after a new 
  const secondAttempt=p.activeSelectionAttempt();
  assert.notEqual(firstAttempt,secondAttempt);
  p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]',attemptId:firstAttempt});
- const stale=await runtime.getSelection(page.pageId);
+ const stale=await runtime.getSelection(page.pageId, p.activeSelectionAttempt());
  assert.equal(stale.state,"cancelled");
- await assert.rejects(()=>runtime.registerSelectedTarget(page.pageId,"room-1"),/Select one input/);
+ await assert.rejects(()=>runtime.registerSelectedTarget(page.pageId, "room-1", p.activeSelectionAttempt()),/Select one input/);
  assert.equal((await runtime.listTargets()).length,0);
  await runtime.stop();
 });
@@ -267,12 +267,12 @@ test("a route-changed selection clears its retained element reference",async()=>
  p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]'});
  const attempt=p.activeSelectionAttempt();
  p.setUrl("https://chatgpt.com/c/one?thread=two");
- const result=await runtime.getSelection(page.pageId);
+ const result=await runtime.getSelection(page.pageId, p.activeSelectionAttempt());
  assert.equal(result.state,"cancelled");
  assert.equal(p.selectionState(),null);
  assert.equal(p.selectedElementNodeId(),null);
  assert.equal(p.activeSelectionAttempt(),null);
- assert.equal((await runtime.getSelection(page.pageId)).state,"unavailable");
+ assert.equal((await runtime.getSelection(page.pageId, p.activeSelectionAttempt())).state,"unavailable");
  assert.ok(attempt);
  await runtime.stop();
 });
@@ -282,11 +282,11 @@ test("a drag selection is cancelled when the active conversation route changes",
  const [page]=await runtime.listPages();
  await runtime.startSelection(page.pageId,"room-1");
  p.setUrl("https://chatgpt.com/c/one?thread=two");
- const result=await runtime.getSelection(page.pageId);
+ const result=await runtime.getSelection(page.pageId, attempt);
  assert.equal(result.state,"cancelled");
  assert.match(result.message,/conversation changed/);
  p.setSelection({state:"selected",selector:"[role=textbox]"});
- await assert.rejects(()=>runtime.registerSelectedTarget(page.pageId,"room-1"),/conversation/);
+ await assert.rejects(()=>runtime.registerSelectedTarget(page.pageId, "room-1", attempt),/attempt has expired/);
  await runtime.stop();
 });
 
@@ -296,7 +296,7 @@ test("a composer replaced after drag selection is not silently rebound during re
  await runtime.startSelection(page.pageId,"room-1");
  p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]',tagName:"textarea"});
  p.replaceNode();
- await assert.rejects(()=>runtime.registerSelectedTarget(page.pageId,"room-1"),/changed after the drag gesture/i);
+ await assert.rejects(()=>runtime.registerSelectedTarget(page.pageId, "room-1", p.activeSelectionAttempt()),/changed after the drag gesture/i);
  assert.equal((await runtime.listTargets()).length,0);
  await runtime.stop();
 });
@@ -306,7 +306,7 @@ test("in-place composer replacement invalidates the target instead of rebinding 
  const [page]=await runtime.listPages();
  await runtime.startSelection(page.pageId,"room-1");
  p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]',tagName:"textarea"});
- const target=await runtime.registerSelectedTarget(page.pageId,"room-1");
+ const target=await runtime.registerSelectedTarget(page.pageId, "room-1", p.activeSelectionAttempt());
  assert.equal((await runtime.listTargets()).length,1);
  p.replaceNode();
  assert.equal((await runtime.listTargets()).length,0);
@@ -318,7 +318,7 @@ test("a copied DOM binding marker cannot impersonate the original composer node"
  const [page]=await runtime.listPages();
  await runtime.startSelection(page.pageId,"room-1");
  p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]',tagName:"textarea"});
- const target=await runtime.registerSelectedTarget(page.pageId,"room-1");
+ const target=await runtime.registerSelectedTarget(page.pageId, "room-1", p.activeSelectionAttempt());
  assert.equal((await runtime.listTargets()).length,1);
  p.replaceNode({preserveMarker:true});
  assert.equal((await runtime.listTargets()).length,0);
@@ -330,9 +330,9 @@ test("the same selected node reuses its group target instead of making duplicate
  const p=fakePage(),runtime=factory(fakeContext([p]));await runtime.start();
  const [page]=await runtime.listPages();
  await runtime.startSelection(page.pageId,"room-1");p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]'});
- const first=await runtime.registerSelectedTarget(page.pageId,"room-1");
+ const first=await runtime.registerSelectedTarget(page.pageId, "room-1", p.activeSelectionAttempt());
  await runtime.startSelection(page.pageId,"room-1");p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]'});
- const second=await runtime.registerSelectedTarget(page.pageId,"room-1");
+ const second=await runtime.registerSelectedTarget(page.pageId, "room-1", p.activeSelectionAttempt());
  assert.equal(second.id,first.id);
  assert.equal((await runtime.listTargets()).length,1);
  await runtime.stop();
@@ -341,9 +341,9 @@ test("unregister removes its DOM marker only after the last room binding is remo
  const p=fakePage(),runtime=factory(fakeContext([p]));await runtime.start();
  const [page]=await runtime.listPages();
  await runtime.startSelection(page.pageId,"room-1");p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]'});
- const first=await runtime.registerSelectedTarget(page.pageId,"room-1");
+ const first=await runtime.registerSelectedTarget(page.pageId, "room-1", p.activeSelectionAttempt());
  await runtime.startSelection(page.pageId,"room-2");p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]'});
- const second=await runtime.registerSelectedTarget(page.pageId,"room-2");
+ const second=await runtime.registerSelectedTarget(page.pageId, "room-2", p.activeSelectionAttempt());
  assert.equal(await runtime.unregisterTarget(first.id,"room-1"),true);
  assert.equal((await runtime.listTargets()).length,1);
  assert.equal(await runtime.unregisterTarget(second.id,"room-2"),true);
@@ -358,7 +358,7 @@ test("site-owned marker attributes are cleared before host binding",async()=>{
  const [page]=await runtime.listPages();
  await runtime.startSelection(page.pageId,"room-1");
  p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]'});
- const target=await runtime.registerSelectedTarget(page.pageId,"room-1");
+ const target=await runtime.registerSelectedTarget(page.pageId, "room-1", p.activeSelectionAttempt());
  assert.notEqual(p.bindingMarker(),foreign);
  assert.equal((await runtime.listTargets()).length,1);
  await runtime.stop();
@@ -369,7 +369,7 @@ test("repeated browser drafts do not exhaust the bounded dispatcher queue",async
  const [page]=await runtime.listPages();
  await runtime.startSelection(page.pageId,"room-1");
  p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]'});
- const target=await runtime.registerSelectedTarget(page.pageId,"room-1");
+ const target=await runtime.registerSelectedTarget(page.pageId, "room-1", p.activeSelectionAttempt());
  for(let i=0;i<220;i++){
   p.setValue("");
   const result=await runtime.draft(target.id,"draft "+i,{approved:true,roomId:"room-1"});
