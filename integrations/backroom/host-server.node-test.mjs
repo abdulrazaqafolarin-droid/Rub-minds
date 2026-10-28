@@ -82,6 +82,7 @@ function fakeBrowserRuntime() {
  return {
   status,
   start:async()=>{running=true;return status()},
+  openUrl:async url=>({pageId,title:"Test chat",site:new URL(url).hostname,canSelect:true}),
   stop:async()=>{running=false;targets=[];return status()},
   listPages:async()=>running?[{pageId,title:"Test chat",site:"chatgpt.com",canSelect:true}]:[],
   startSelection:async(id,roomId)=>{if(id!==pageId)throw Error("page not found");selectionRoom=roomId;selected={state:"pending"};return selected},
@@ -101,6 +102,9 @@ test("browser control routes require host pairing and expose truthful capability
   assert.equal((await fetch(base+"/v1/browser/start",{method:"POST",headers:auth})).status,200);
   const hostStatus=await (await fetch(base+"/v1/host",{headers:auth})).json();
   assert.equal(hostStatus.capabilities.browserDraft,true);assert.equal(hostStatus.capabilities.androidAccessibility,false);
+  const opened=await fetch(base+"/v1/browser/open",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({url:"https://chatgpt.com/"})});
+  assert.equal(opened.status,200);
+  assert.equal((await opened.json()).site,"chatgpt.com");
   const pages=await (await fetch(base+"/v1/browser/pages",{headers:auth})).json();
   assert.equal(pages.pages[0].site,"chatgpt.com");
   assert.equal((await fetch(base+"/v1/browser/select",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId:"12345678-1234-4234-9234-123456789014"})})).status,200);

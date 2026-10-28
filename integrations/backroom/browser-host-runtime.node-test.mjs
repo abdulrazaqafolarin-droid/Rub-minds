@@ -7,6 +7,7 @@ function fakePage({url="https://chatgpt.com/c/test",title="Research thread",sele
  return {
   handlers, isClosed:()=>closed, url:()=>pageUrl, title:async()=>title,
   on:(event,fn)=>{handlers[event]=fn},
+  goto:async value=>{pageUrl=value}, 
   locator:()=>({count:async()=>1,isVisible:async()=>true,isEnabled:async()=>true,inputValue:async()=>input,
     evaluate:async(_fn,text)=>{if(input!=="")return {state:"occupied"};input=text;return {state:"inserted"}}}),
   evaluate:async fn=>{
@@ -20,7 +21,7 @@ function fakePage({url="https://chatgpt.com/c/test",title="Research thread",sele
 }
 function fakeContext(pages=[]) {
  const handlers={};
- return {handlers,pages:()=>pages, on:(event,fn)=>{handlers[event]=fn}, close:async()=>{handlers.close?.();}};
+ return {handlers,pages:()=>pages, newPage:async()=>{const p=fakePage({url:"about:blank"});pages.push(p);return p;}, on:(event,fn)=>{handlers[event]=fn}, close:async()=>{handlers.close?.();}};
 }
 function factory(context) {
  return new BrowserHostRuntime({hostId:"host",profileDir:"/tmp/profile-test",chromiumProvider:async()=>({launchPersistentContext:async()=>context})});
@@ -60,5 +61,28 @@ test("closed pages and unsupported protocols are rejected",async()=>{
  const p=fakePage({url:"file:///private.txt"}),runtime=factory(fakeContext([p]));await runtime.start();
  assert.equal((await runtime.listPages()).length,0);
  await assert.rejects(()=>runtime.startSelection("unknown"),/unavailable/);
+ await runtime.stop();
+});
+
+test("managed browser opens safe URLs and reuses only a blank tab",async()=>{
+ const blank=fakePage({url:"about:blank"});
+ const context=fakeContext([blank]);
+ const runtime=factory(context);await runtime.start();
+ const page=await runtime.openUrl("https://chatgpt.com/");
+ assert.equal(page.site,"chatgpt.com");
+ assert.equal((await runtime.listPages()).length,1);
+ await assert.rejects(()=>runtime.openUrl("javascript:alert(1)"),/Only HTTPS/);
+ await assert.rejects(()=>runtime.openUrl("http://example.com"),/Only HTTPS/);
+ await assert.rejects(()=>runtime.openUrl("https://user:password@example.com"),/Only HTTPS/);
+ await runtime.stop();
+});
+test("managed browser opens a second tab instead of replacing existing work",async()=>{
+ const existing=fakePage({url:"https://claude.ai/chat/active"});
+ const context=fakeContext([existing]);
+ const runtime=factory(context);await runtime.start();
+ const opened=await runtime.openUrl("https://chatgpt.com/");
+ assert.equal(existing.url(),"https://claude.ai/chat/active");
+ assert.equal(opened.site,"chatgpt.com");
+ assert.equal((await runtime.listPages()).length,2);
  await runtime.stop();
 });

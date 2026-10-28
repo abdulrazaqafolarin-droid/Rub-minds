@@ -10,6 +10,7 @@ import { BrowserDraftAdapter } from "./browser-draft-adapter.mjs";
 const safeSiteUrl = value => {
   try {
     const url = new URL(value);
+    if (url.username || url.password || url.protocol === "javascript:" || url.protocol === "file:") return null;
     if (url.protocol === "https:" || (url.protocol === "http:" && ["localhost","127.0.0.1"].includes(url.hostname))) return url;
   } catch {}
   return null;
@@ -166,7 +167,8 @@ export class BrowserHostRuntime {
   #selectionRooms = new Map();
   #browserModule = null;
   constructor({ hostId, profileDir = join(homedir(), ".rub-minds", "backroom", "browser-profile"),
-    chromiumProvider = async () => (await import("playwright")).chromium } = {}) {
+    chromiumProvider = async () => (await import("playwright")).chromium,
+    headless = false, launchOptions = {} } = {}) {
     if (typeof hostId !== "string" || !hostId) throw new TypeError("hostId required");
     this.hostId = hostId;
     this.profileDir = profileDir;
@@ -181,6 +183,8 @@ export class BrowserHostRuntime {
       authorize: async () => true,
     });
     this.chromiumProvider = chromiumProvider;
+    this.headless = headless === true;
+    this.launchOptions = { ...launchOptions };
   }
   get running() { return Boolean(this.#context); }
   async start() {
@@ -190,7 +194,7 @@ export class BrowserHostRuntime {
       await mkdir(this.profileDir, { recursive: true, mode: 0o700 });
       const chromium = await this.chromiumProvider();
       const context = await chromium.launchPersistentContext(this.profileDir, {
-        headless: false, viewport: null, acceptDownloads: false,
+        ...this.launchOptions, headless: this.headless, viewport: null, acceptDownloads: false,
       });
       this.#context = context;
       context.on("page", page => this.#attachPage(page));
@@ -248,6 +252,23 @@ export class BrowserHostRuntime {
   status() {
     return Object.freeze({ running: this.running, pages: this.#pages.size,
       capabilities: Object.freeze({ browserDraft: this.running, desktopAccessibility: false, androidAccessibility: false, terminal: false }) });
+  }
+  async openUrl(value) {
+    if (!this.#context) throw new Error("Start the managed browser first.");
+    if (typeof value !== "string" || value.length > 2048) throw new TypeError("Enter a valid HTTPS website URL.");
+    const url = safeSiteUrl(value.trim());
+    if (!url) throw new Error("Only HTTPS sites and explicit localhost/127.0.0.1 HTTP addresses are allowed.");
+    const pages = this.#context.pages();
+    // Reuse only a blank tab; do not silently replace a page containing user work.
+    let page = pages.find(item => !item.isClosed() && item.url() === "about:blank");
+    if (!page) page = await this.#context.newPage();
+    await page.goto(url.href, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    const pageId = this.#attachPage(page);
+    let title = "Untitled tab";
+    try { title = (await page.title()).trim().slice(0, 100) || title; } catch {}
+    const current = safeSiteUrl(page.url());
+    if (!current) throw new Error("Navigation redirected to an unsupported destination.");
+    return Object.freeze({ pageId, title, site: current.hostname, canSelect: true });
   }
   async listPages() {
     if (!this.#context) return [];

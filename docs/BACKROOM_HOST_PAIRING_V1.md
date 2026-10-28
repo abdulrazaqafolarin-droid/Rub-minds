@@ -50,3 +50,8 @@ A target is registered with the UUID of the currently selected Rub Minds group. 
 ## Chrome / Edge loopback requests
 
 Backroom calls `127.0.0.1` from the secure hosted UI. Browser-side host requests set `targetAddressSpace: 'loopback'` for engines that support this Local Network Access signal. This does not bypass permissions: the browser may prompt the user to allow Rub Minds to connect to loopback. Other browsers may not support this option, so device pairing must show an actionable unsupported-browser error rather than pretending a host is offline. Reference: [Chrome Local Network Access](https://developer.chrome.com/blog/local-network-access) and [Microsoft Edge Local Network Access guidance (updated March 2026)](https://learn.microsoft.com/en-us/deployedge/ms-edge-local-network-access).
+
+
+## Opening an AI site in the managed browser
+
+Use the **Open an AI website** field or the ChatGPT/Claude quick links. The local host validates the destination and only permits HTTPS sites or explicit loopback HTTP URLs. It reuses a blank tab or opens a new tab; it never silently navigates away from an existing nonblank tab. The user logs in and chooses the conversation themselves. Site navigation happens in the visible managed browser and is not a hidden background request.

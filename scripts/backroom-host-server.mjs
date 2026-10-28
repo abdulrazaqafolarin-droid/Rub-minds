@@ -180,6 +180,19 @@ export function createBackroomHostServer({
           writeJson(response, 200, await browser.getSelection(selectionMatch[1]), cors);
           return;
         }
+        if (request.method === "POST" && url.pathname === "/v1/browser/open") {
+          if (!/^application\\/json(?:\\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+            writeJson(response, 415, { error: "application_json_required" }, cors);
+            return;
+          }
+          const input = await readJson(request);
+          if (typeof input.url !== "string" || input.url.length > 2048) {
+            writeJson(response, 400, { error: "invalid_url" }, cors);
+            return;
+          }
+          writeJson(response, 200, await browser.openUrl(input.url), cors);
+          return;
+        }
         if (request.method === "POST" && url.pathname === "/v1/browser/start") {
           try {
             writeJson(response, 200, await browser.start(), cors);
