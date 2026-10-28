@@ -278,6 +278,31 @@ test("real local host -> Playwright browser overlay -> group-scoped target -> ve
   assert.equal(await microtaskPage.locator("#microtask-race").inputValue(),"value appeared in focus microtask");
   await microtaskHandle.dispose();
 
+  // A room change/cancel must remove the active overlay, its keyboard listener
+  // and its selected-element reference without removing previously registered targets.
+  const cancelRoom="32345678-1234-4234-9234-123456789014";
+  const pendingSelection=await requestJson(hostBase,fixture.origin,"/v1/browser/select",{
+   method:"POST",token,body:{pageId,roomId:cancelRoom}
+  });
+  assert.equal(pendingSelection.response.status,200);
+  assert.equal(pendingSelection.body.state,"pending");
+  assert.equal(await page.locator("#__rm_backroom_target_overlay_v1").count(),1);
+  const cancelledSelection=await requestJson(hostBase,fixture.origin,"/v1/browser/select/cancel",{
+   method:"POST",token,body:{pageId,roomId:cancelRoom}
+  });
+  assert.equal(cancelledSelection.response.status,200);
+  assert.equal(cancelledSelection.body.cancelled,true);
+  assert.deepEqual(await page.evaluate(()=>({
+   overlay:!!document.getElementById("__rm_backroom_target_overlay_v1"),
+   selectionPresent:!!window.__RM_BACKROOM_SELECTION_V1__,
+   selectedElementPresent:!!window.__RM_BACKROOM_SELECTED_ELEMENT_V1__,
+   cleanupPresent:typeof window.__RM_BACKROOM_SELECTION_CLEANUP_V1__==="function",
+   activeAttempt:window.__RM_BACKROOM_ACTIVE_SELECTION_ATTEMPT_V1__??null,
+  })),{
+   overlay:false,selectionPresent:false,selectedElementPresent:false,cleanupPresent:false,activeAttempt:null,
+  });
+  const existingTargets=await requestJson(hostBase,fixture.origin,"/v1/browser/targets",{token});
+  assert.ok(existingTargets.body.targets.some(target=>target.id===registered.body.id));
   const unpaired=await requestJson(hostBase,fixture.origin,"/v1/unpair",{method:"POST",token});
   assert.equal(unpaired.response.status,200);
   const denied=await requestJson(hostBase,fixture.origin,"/v1/browser/pages",{token});
