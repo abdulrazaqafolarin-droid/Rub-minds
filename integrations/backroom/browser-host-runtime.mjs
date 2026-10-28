@@ -144,12 +144,15 @@ const isEditable = node => {
     const node = candidates[0];
     const selector = uniqueSelector(node);
     if (!selector) { fail("Could not create a stable input selector. Try another area."); return; }
+    let selectionId;
+    try { selectionId = window.crypto.randomUUID(); }
+    catch { fail("Could not create a secure selection token. Reload the tab and try again."); return; }
     finished = true;
     window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = node;
     window[KEY] = {
       state: "selected", selector, tagName: node.tagName.toLowerCase(),
       role: node.getAttribute("role") || "", ariaLabel: node.getAttribute("aria-label") || "",
-      selectedAt: Date.now(),
+      selectionId, selectedAt: Date.now(),
     };
     hint.textContent = "Input selected. Return to Rub Minds Backroom.";
     hint.style.background = "#153a32";
@@ -359,19 +362,19 @@ export class BrowserHostRuntime {
     }
     const selection = await page.evaluate(() => window.__RM_BACKROOM_SELECTION_V1__ ?? null);
     if (!selection || selection.state !== "selected" || typeof selection.selector !== "string" ||
-      selection.selector.length > 500 || !Number.isFinite(selection.selectedAt)) {
+      selection.selector.length > 500 || !/^[a-f0-9-]{36}$/i.test(selection.selectionId)) {
       throw new Error("Select one input in the managed browser first.");
     }
 
     // Keep the exact DOM element the drag gesture selected. A selector alone is
     // insufficient because React/SPA pages can replace an input between the
     // selection gesture and registration while reusing the same label/selector.
-    const selectedHandle = await page.evaluateHandle(expectedAt => {
+    const selectedHandle = await page.evaluateHandle(expectedSelectionId => {
       const state = window.__RM_BACKROOM_SELECTION_V1__;
       const node = window.__RM_BACKROOM_SELECTED_ELEMENT_V1__;
-      return state?.state === "selected" && state.selectedAt === expectedAt && node instanceof HTMLElement
+      return state?.state === "selected" && state.selectionId === expectedSelectionId && node instanceof HTMLElement
         ? node : null;
-    }, selection.selectedAt);
+    }, selection.selectionId);
     const selectedNodeHandle = selectedHandle.asElement();
     if (!selectedNodeHandle) {
       await selectedHandle.dispose();
@@ -439,11 +442,11 @@ export class BrowserHostRuntime {
       if (alreadyRegistered) {
         await selectedNodeHandle.evaluate((node, expectedAt) => {
           const state = window.__RM_BACKROOM_SELECTION_V1__;
-          if (node instanceof HTMLElement && state?.selectedAt === expectedAt) {
+          if (node instanceof HTMLElement && state?.selectionId === expectedAt) {
             window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = null;
             delete window.__RM_BACKROOM_SELECTION_V1__;
           }
-        }, selection.selectedAt).catch(() => {});
+        }, selection.selectionId).catch(() => {});
         const existing = this.#targets.get(alreadyRegistered.target.id);
         return { id: alreadyRegistered.target.id, pageId, roomId, title: existing?.title ?? title,
           site: existing?.site ?? url.hostname, surface: "browser_tab", operations: ["draft"], submittedAutomatically: false };
@@ -481,12 +484,12 @@ export class BrowserHostRuntime {
       if (!current.connected || !current.focused) throw new Error("Input must be visible, unique, and empty before registering the draft-only target.");
       await selectedNodeHandle.evaluate((node, expectedAt) => {
         const state = window.__RM_BACKROOM_SELECTION_V1__;
-        if (node instanceof HTMLElement && state?.selectedAt === expectedAt &&
+        if (node instanceof HTMLElement && state?.selectionId === expectedAt &&
           window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ === node) {
           window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = null;
           delete window.__RM_BACKROOM_SELECTION_V1__;
         }
-      }, selection.selectedAt);
+      }, selection.selectionId);
       this.registry.register(target);
       this.#targets.set(target.id, { target, pageId, title, site: url.hostname });
       this.#bindings.set(target.id, { target, pageId, page, adapter, guard, marker, nodeHandle: selectedNodeHandle, baseSelector: selection.selector });
@@ -508,7 +511,7 @@ export class BrowserHostRuntime {
         try {
           await selectedNodeHandle.evaluate(expectedAt => {
             const state = window.__RM_BACKROOM_SELECTION_V1__;
-            if (state?.selectedAt === expectedAt) {
+            if (state?.selectionId === expectedAt) {
               window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = null;
               delete window.__RM_BACKROOM_SELECTION_V1__;
             }
