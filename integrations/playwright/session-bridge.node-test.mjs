@@ -282,7 +282,8 @@ test("automatic run stops when its starting history exceeds the dedupe budget", 
     ],
   });
   const result = await bridge.run({ approved: true });
-  assert.equal(result, undefined);
+  assert.equal(result.status, "seen_budget_reached");
+  assert.equal(result.marked, 1);
   assert.equal(bridge.running, false);
   assert.equal(calls.length, 0);
   assert.equal(bridge.seen.size, 1);
