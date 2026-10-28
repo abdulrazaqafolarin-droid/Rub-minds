@@ -31,7 +31,7 @@ test("conversation identity is rechecked atomically immediately before insertion
  const f=fixture({insertionUrl:"https://example.test/conversation/456"});
  await assert.rejects(
   ()=>f.adapter.execute({command:{operation:"draft",text:"must not cross conversations"},target:f.target}),
-  /conversation changed immediately before draft insertion/i
+  /conversation changed.*draft insertion/i
  );
  assert.equal(f.value(),"");
  assert.equal(f.filled(),0);
