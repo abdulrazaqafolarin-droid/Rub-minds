@@ -51,7 +51,7 @@ export class BrowserDraftAdapter {
     const f = await this.#field();
     // Check and insert in one synchronous page task. A separate value read then
     // locator.fill() could overwrite a human draft typed between the two actions.
-    const bindingMarker = /\\[data-rm-backroom-binding="([a-f0-9-]{36})"\\]$/i.exec(this.selector)?.[1] ?? null;
+    const bindingMarker = /\[data-rm-backroom-binding="([a-f0-9-]{36})"\]$/i.exec(this.selector)?.[1] ?? null;
     const insertionRequest = {
       text: command.text, origin: this.origin, path: this.path, search: this.search, hash: this.hash,
       selector: this.selector, bindingMarker,
