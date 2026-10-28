@@ -3,11 +3,12 @@
  * No automatic submit, credential access or external browser creation.
  */
 export class BrowserDraftAdapter {
-  constructor({ page, origin, path, search = "", hash = "", selector, appId, sessionId, identityFingerprint }) {
+  constructor({ page, origin, path, search = "", hash = "", selector, appId, sessionId, identityFingerprint, nodeHandle = null }) {
     if (!page || typeof page.url !== "function" || typeof page.locator !== "function") throw new TypeError("Playwright page required");
     if ([origin,path,selector,appId,sessionId,identityFingerprint].some(x=>typeof x!=="string"||!x)) throw new TypeError("binding incomplete");
     if (!["http:", "https:"].includes(new URL(origin).protocol) || new URL(origin).origin!==origin || !path.startsWith("/")) throw new TypeError("invalid URL binding");
-    Object.assign(this, { page, origin, path, search, hash, selector, appId, sessionId, identityFingerprint });
+    if (nodeHandle !== null && (!nodeHandle || typeof nodeHandle.evaluate !== "function")) throw new TypeError("exact DOM element handle required");
+    Object.assign(this, { page, origin, path, search, hash, selector, appId, sessionId, identityFingerprint, nodeHandle });
   }
   async #field() {
     if (this.page.isClosed()) throw new Error("page closed");
@@ -15,9 +16,26 @@ export class BrowserDraftAdapter {
     if (url.origin !== this.origin || url.pathname !== this.path || url.search !== this.search || url.hash !== this.hash) throw new Error("conversation changed");
     const field = this.page.locator(this.selector);
     if (await field.count() !== 1 || !(await field.isVisible()) || !(await field.isEnabled())) throw new Error("composer unavailable");
+    if (this.nodeHandle) {
+      const liveHandle = await field.elementHandle();
+      if (!liveHandle) throw new Error("composer unavailable");
+      let sameNode = false;
+      try {
+        sameNode = await liveHandle.evaluate((node, original) =>
+          node === original && node instanceof HTMLElement && node.isConnected, this.nodeHandle);
+      } catch {}
+      try { await liveHandle.dispose(); } catch {}
+      if (!sameNode) throw new Error("composer replaced after target registration");
+    }
     return field;
   }
   async #read(field) {
+    if (this.nodeHandle) {
+      return this.nodeHandle.evaluate(element => {
+        if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) return element.value;
+        return element instanceof HTMLElement && element.isContentEditable ? element.textContent ?? "" : null;
+      });
+    }
     try { return await field.inputValue(); }
     catch { return await field.textContent(); }
   }
@@ -34,7 +52,7 @@ export class BrowserDraftAdapter {
     const f = await this.#field();
     // Check and insert in one synchronous page task. A separate value read then
     // locator.fill() could overwrite a human draft typed between the two actions.
-    const insertion = await f.evaluate((element, text) => {
+    const performInsertion = (element, text) => {
       if (!(element instanceof HTMLElement) || !element.isConnected ||
         ("disabled" in element && element.disabled) || ("readOnly" in element && element.readOnly) ||
         element.getAttribute("aria-disabled") === "true" || element.getAttribute("aria-readonly") === "true") {
@@ -71,7 +89,13 @@ export class BrowserDraftAdapter {
         element.dispatchEvent(new Event("change", { bubbles: true }));
       }
       return { state: readValue() === text ? "inserted" : "unverified" };
-    }, command.text);
+    };
+    // When a target came from the interactive selection overlay, write through
+    // the retained ElementHandle itself, not a locator that could resolve to a
+    // replacement composer while the SPA is rerendering.
+    const insertion = this.nodeHandle
+      ? await this.nodeHandle.evaluate(performInsertion, command.text)
+      : await f.evaluate(performInsertion, command.text);
     if (insertion.state === "occupied" || insertion.state === "unavailable") {
       const error = new Error(insertion.state === "occupied"
         ? "existing draft cannot be overwritten"
