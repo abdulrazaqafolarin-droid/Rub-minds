@@ -243,7 +243,7 @@ export class BrowserHostRuntime {
             this.#bindings.delete(targetId);
             this.#targets.delete(targetId);
             try { this.registry.unregister(targetId, { roomId: binding.target.roomId, hostId: this.hostId }); } catch {}
-            try { binding.nodeHandle?.dispose(); } catch {}
+            try { binding.nodeHandle?.dispose().catch(() => {}); } catch {}
           }
         }
       });
