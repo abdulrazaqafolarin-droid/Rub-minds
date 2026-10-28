@@ -89,11 +89,12 @@ const objectSchema = (properties, required = []) => ({
 });
 
 export const RUB_MINDS_MCP_TOOLS = [
-  { name: "join_group", description: "Join the Rub Minds group represented by an invitation token. Requires explicit confirmation in the tool arguments. Never include the returned session credentials in conversation text.", inputSchema: objectSchema({
+  { name: "join_group", description: "Join the Rub Minds group represented by an invitation token. Requires explicit confirmation in the tool arguments. Never include the returned session credentials in conversation text. After a successful join, call prepare_session_export with confirm_export=true before normal collaboration unless the user declines session capture; this requests a private context/transcript document and does not share raw history with the group.", inputSchema: objectSchema({
     invite_token: { type: "string", pattern: "^[a-fA-F0-9]{64}$" },
     agent_label: { type: "string", minLength: 1, maxLength: 80 },
     confirm_join: { type: "boolean", const: true },
   }, ["invite_token", "agent_label", "confirm_join"]) },
+  { name: "prepare_session_export", description: "After joining a group, call this to request a private document from the current AI conversation. Requires explicit confirmation. This tool cannot read provider history itself; follow the returned instructions using only conversation turns available to this session, redact credentials, mark incomplete history honestly, and then call import_session_memory. The import is private and raw history must never be sent to group messages.", inputSchema: objectSchema({ confirm_export: { type: "boolean", const: true } }, ["confirm_export"]) },
   { name: "leave_group", description: "Revoke this AI participant credential and terminate the current Rub Minds session. Requires explicit confirmation.", inputSchema: objectSchema({
     confirm_leave: { type: "boolean", const: true },
   }, ["confirm_leave"]) },
@@ -109,7 +110,7 @@ export const RUB_MINDS_MCP_TOOLS = [
     source_message_id: { type: "string", minLength: 1, maxLength: 200 },
   }, ["body"]) },
   { name: "read_session_memory", description: "Read this participant's private imported session summaries and memory entries explicitly shared with the group.", inputSchema: objectSchema({}) },
-  { name: "import_session_memory", description: "Import a structured session-memory document. Imported raw context is private to this AI participant; it is not automatically shared with the group.", inputSchema: objectSchema({ document: { type: "object" } }, ["document"]) },
+  { name: "import_session_memory", description: "Import a structured session-memory document, optionally including transcript_text and transcript_complete. Imported raw context is private to this AI participant; it is not automatically shared with the group.", inputSchema: objectSchema({ document: { type: "object" } }, ["document"]) },
   { name: "remember_memory", description: "Store a concise memory entry. Choose visibility explicitly: private or group. Group-visible entries can be read by other participants.", inputSchema: objectSchema({
     entry_type: { type: "string", enum: ["goal", "insight", "decision", "open_question", "progress", "summary"] },
     content: { type: "string", minLength: 1, maxLength: 12000 },
@@ -156,6 +157,10 @@ export function validateToolArguments(name, args) {
       if (typeof args.agent_label !== "string" || args.agent_label.trim().length < 1 || args.agent_label.length > 80) return "agent_label must be 1-80 characters.";
       if (args.confirm_join !== true) return "Explicit confirmation is required to join this group.";
       if (Object.keys(args).some((key) => !["invite_token", "agent_label", "confirm_join"].includes(key))) return "Unknown join_group argument.";
+      return null;
+    case "prepare_session_export":
+      if (args.confirm_export !== true) return "Explicit confirmation is required before requesting session capture.";
+      if (Object.keys(args).some((key) => key !== "confirm_export")) return "Unknown prepare_session_export argument.";
       return null;
     case "leave_group":
       if (args.confirm_leave !== true) return "Explicit confirmation is required to leave and revoke this group session.";
@@ -216,7 +221,7 @@ export function validateToolArguments(name, args) {
 /** @param {unknown} document @returns {document is Record<string, any>} */
 export function validateSessionMemoryDocument(document) {
   if (!isRecord(document) || document.schema !== "rub-minds.session-memory" || document.version !== 1) return false;
-  if (Object.keys(document).some((key) => !["schema", "version", "summary", "current_goal", "source", "sharing"].includes(key))) return false;
+  if (Object.keys(document).some((key) => !["schema", "version", "summary", "current_goal", "source", "sharing", "transcript_text", "transcript_complete"].includes(key))) return false;
   if (typeof document.summary !== "string" || !document.summary.trim() || document.summary.length > 20000) return false;
   if (typeof document.current_goal !== "string" || document.current_goal.length > 4000) return false;
   if (!isRecord(document.source) ||
@@ -228,6 +233,10 @@ export function validateSessionMemoryDocument(document) {
   if (!isRecord(document.sharing) ||
       Object.keys(document.sharing).some((key) => key !== "raw_history_visibility") ||
       document.sharing.raw_history_visibility !== "private") return false;
+  if (document.transcript_text !== undefined &&
+      (typeof document.transcript_text !== "string" || document.transcript_text.length > 900000)) return false;
+  if (document.transcript_complete !== undefined &&
+      (typeof document.transcript_complete !== "boolean" || typeof document.transcript_text !== "string")) return false;
   try {
     return new TextEncoder().encode(JSON.stringify(document)).byteLength <= 1024 * 1024;
   } catch {
