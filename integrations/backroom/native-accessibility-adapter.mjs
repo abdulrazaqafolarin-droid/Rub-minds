@@ -53,7 +53,9 @@ export class NativeAccessibilityDraftAdapter {
       throw error;
     }
     const after=await this.#current();
-    return write.state==="written"&&after.text===command.text ?
+    // A native driver must explicitly attest that it did not submit. A text
+    // match alone cannot prove that Enter/Send was not triggered by the driver.
+    return write.state==="written"&&write.submitted===false&&after.text===command.text ?
       {state:"completed",verified:true,result:{drafted:true,submitted:false}} :
       {state:"needs_review",verified:false};
   }
