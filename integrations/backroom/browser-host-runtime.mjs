@@ -405,6 +405,18 @@ export class BrowserHostRuntime {
       }, attemptId);
     } catch { return false; }
   }
+  async cancelSelection(pageId, roomId) {
+    const page = this.#pages.get(pageId);
+    if (!page || page.isClosed()) return false;
+    const binding = this.#selectionRooms.get(pageId);
+    if (!binding || binding.roomId !== roomId) return false;
+    // Remove only the attempt being cancelled. If a newer attempt superseded
+    // this one while the request was in flight, leave the newer overlay alone.
+    if (this.#selectionRooms.get(pageId) !== binding) return false;
+    this.#selectionRooms.delete(pageId);
+    await this.#clearSelectionAttempt(page, binding.attemptId);
+    return true;
+  }
   async getSelection(pageId) {
     const { page, url } = this.#page(pageId);
     const pending = this.#selectionRooms.get(pageId);
