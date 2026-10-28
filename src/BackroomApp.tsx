@@ -103,7 +103,7 @@ export default function BackroomApp() {
             const origin = localHostOrigin(saved.origin);
             setHostUrl(origin);
             setHostToken(saved.sessionToken);
-            setHostInfo({ ...saved.info, connected: false });
+            setHostInfo({ ...saved.info, connected: false, executionReady: false, browserPages: 0, capabilities: { ...saved.info.capabilities, browserDraft: false } });
             setHostMessage('Saved host session restored for this tab. Check connection before use.');
           } else sessionStorage.removeItem('rub-backroom-host-session-v1:' + data.user.id);
         }
@@ -311,8 +311,15 @@ export default function BackroomApp() {
       if (!status.running) throw new Error('Managed browser did not start.');
       setHostInfo(previous => previous ? { ...previous, executionReady: true, capabilities: { ...previous.capabilities, browserDraft: true } } : previous);
       setBrowserNotice('Managed browser opened. Sign in to ChatGPT or Claude yourself, then open a conversation.');
-      const result = await hostApi<{ pages: BrowserPageRow[] }>('/v1/browser/pages');
-      setBrowserPages(result.pages);
+      const [pageResult, targetResult] = await Promise.all([
+        hostApi<{ pages: BrowserPageRow[] }>('/v1/browser/pages'),
+        hostApi<{ targets: BrowserTargetRow[] }>('/v1/browser/targets'),
+      ]);
+      setBrowserPages(pageResult.pages);
+      setBrowserTargets(targetResult.targets);
+      if (selectedBrowserTarget && !targetResult.targets.some(t => t.id === selectedBrowserTarget && t.roomId === room?.id)) {
+        setSelectedBrowserTarget('');
+      }
       void checkLocalHost();
     } catch (e) {
       setBrowserNotice(e instanceof Error ? e.message : 'Could not start the managed browser. Install Chromium with npx playwright install chromium.');
