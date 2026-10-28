@@ -41,6 +41,19 @@ test("bearer token is bound to exact origin and revocation takes effect",async()
   assert.equal((await fetch(base+"/v1/host",{headers:{Origin:origin,Authorization:"Bearer "+c.sessionToken}})).status,401);
  });
 });
+test("loopback host-header validation blocks DNS-rebinding style requests",async()=>{
+ await withHost(async({base,origin})=>{
+  const good=await fetch(base+"/health",{headers:{Origin:origin}});
+  assert.equal(good.status,200);
+  const port=new URL(base).port;
+  const rebinding=await fetch(base+"/health",{headers:{Origin:origin,Host:"attacker.example:"+port}});
+  assert.equal(rebinding.status,403);
+  assert.equal((await rebinding.json()).error,"invalid_host_header");
+  const wrongLoopback=await fetch(base+"/health",{headers:{Origin:origin,Host:"127.0.0.1:1"}});
+  assert.equal(wrongLoopback.status,403);
+ });
+});
+
 test("CORS preflight is exact-origin and does not rely on deprecated PNA headers", async () => {
  await withHost(async ({base,origin}) => {
   const good=await fetch(base+"/v1/host", {method:"OPTIONS", headers:{
