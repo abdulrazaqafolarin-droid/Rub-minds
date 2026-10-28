@@ -213,9 +213,23 @@ export default function BackroomApp() {
   }
   const current = spaces.find(s => s.id === active);
   const roomBrowserTargets = browserTargets.filter(target => target.roomId === room?.id);
+  function supportsLoopbackNetworkRequests() {
+    // Feature-detect the browser API instead of assuming every embedded WebView
+    // implements RequestInit.targetAddressSpace. Creating this Request does not
+    // contact localhost or grant permission; the following fetch still prompts.
+    try {
+      const probe = new Request('http://127.0.0.1/', {
+        mode: 'cors', targetAddressSpace: 'loopback',
+      } as RequestInit & { targetAddressSpace: 'loopback' });
+      return (probe as Request & { targetAddressSpace?: string }).targetAddressSpace === 'loopback';
+    } catch { return false; }
+  }
   function fetchLocalHost(url: string, init: RequestInit = {}) {
-    // Chrome/Edge Local Network Access requires a secure origin and treats this
-    // request as loopback. Browser permission prompts still require user consent.
+    // Local Network Access is permission-gated in supported Chromium builds.
+    // Don't mislabel unsupported browsers as an offline host.
+    if (!supportsLoopbackNetworkRequests()) {
+      throw new Error('This browser does not support the loopback permission signal needed by Rub Minds. Use current desktop Chrome or Edge; Firefox, Safari and some embedded WebViews may block this connection.');
+    }
     return fetch(url, { ...init, targetAddressSpace: 'loopback' } as RequestInit & { targetAddressSpace: 'loopback' });
   }
   function localHostOrigin(value: string) {
@@ -330,12 +344,13 @@ export default function BackroomApp() {
     let response: Response;
     try {
       response = await fetchLocalHost(localHostOrigin(hostUrl) + path, init);
-    } catch {
+    } catch (error) {
       setHostInfo(previous => previous ? {
         ...previous, connected: false, executionReady: false, browserPages: 0,
         capabilities: { ...previous.capabilities, browserDraft: false },
       } : previous);
       setBrowserPages([]); setBrowserTargets([]); setSelectedBrowserTarget('');
+      if (error instanceof Error && error.message.startsWith('This browser does not support the loopback permission signal')) throw error;
       throw new Error('Could not reach the local host. Allow Rub Minds loopback/local-network access in your browser and verify the host is running on this same device.');
     }
     const payload = await response.json().catch(() => ({})) as { error?: string; message?: string; hint?: string };
