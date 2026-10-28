@@ -9,7 +9,7 @@ concurrency:
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/backroom-coordination-core-v1]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
