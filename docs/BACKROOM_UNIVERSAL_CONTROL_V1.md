@@ -89,3 +89,15 @@ The branch now includes a responsive Backroom UI in `src/BackroomApp.tsx` and `s
 Space layouts are local to the signed-in user and room. This is not an installed device host or native operating-system overlay. The dispatcher and target registry are implemented as independent modules and are not yet wired to UI execution. Real device control remains blocked pending host pairing, permissions, identity checks and platform adapters.
 
 Verification required before merge: `npm run test:backroom`, `npm run test:runtime`, `npm run build`, mobile and desktop visual checks, and a focused security review. A failed workflow without job steps does not count as an executed test.
+
+## Quality review note (2026-10-28)
+
+The local Backroom core now has a cross-platform target registry, bounded consent-aware dispatcher, and preflight device-host guard. The guard checks host-declared capabilities, room/space/session scope, live app identity, focus, connection, locator kind, user policy and adapter result verification before accepting successful outcomes. Preflight denials are reported as `failed`; ambiguous execution outcomes are `needs_review` and are never retried blindly.
+
+Four Node test files cover 21 named test scenarios. The **actual GitHub source and tests** were additionally evaluated in a sandboxed JavaScript runner and all 21 scenarios passed. This is useful focused evidence, **not equivalent** to a native Node test run or TypeScript production build.
+
+The latest available GitHub Actions record for the earlier branch head reported failed jobs with **zero executed job steps**; the reason remains unverified. Do not interpret the job result as tested product code or as proof of a TypeScript failure. Avoid rerunning costly CI blindly; obtain CI availability or an authorized local Node test/build result before merging.
+
+The interactive preview has a keyboard-accessible `Select sample input` action in addition to pointer/touch drag selection. Its selection remains illustrative rather than an OS-wide overlay.
+
+Remaining release blockers: native test runner and `tsc`/Vite build, browser responsive/accessibility audit, authenticated host pairing, OS adapter implementations, live device tests and group-to-app-to-group verification.
