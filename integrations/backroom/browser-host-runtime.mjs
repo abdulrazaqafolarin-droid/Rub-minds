@@ -386,7 +386,7 @@ export class BrowserHostRuntime {
       await this.#clearSelectionAttempt(page, binding.attemptId);
       throw new Error("A newer selection attempt replaced this one. Start selection again.");
     }
-    return { state: "pending", pageId, instruction: "Switch to the managed browser and drag around exactly one editable input." };
+    return { state: "pending", pageId, selectionAttemptId: binding.attemptId, instruction: "Switch to the managed browser and drag around exactly one editable input." };
   }
   async #clearSelectionAttempt(page, attemptId) {
     try {
@@ -405,13 +405,13 @@ export class BrowserHostRuntime {
       }, attemptId);
     } catch { return false; }
   }
-  async cancelSelection(pageId, roomId) {
+  async cancelSelection(pageId, roomId, attemptId) {
     const page = this.#pages.get(pageId);
     if (!page || page.isClosed()) return false;
     const binding = this.#selectionRooms.get(pageId);
-    if (!binding || binding.roomId !== roomId) return false;
-    // Remove only the attempt being cancelled. If a newer attempt superseded
-    // this one while the request was in flight, leave the newer overlay alone.
+    if (!binding || binding.roomId !== roomId || binding.attemptId !== attemptId) return false;
+    // Attempt IDs make delayed cancellation idempotent without allowing a stale
+    // cancellation request to remove a newer overlay in the same room.
     if (this.#selectionRooms.get(pageId) !== binding) return false;
     this.#selectionRooms.delete(pageId);
     await this.#clearSelectionAttempt(page, binding.attemptId);
