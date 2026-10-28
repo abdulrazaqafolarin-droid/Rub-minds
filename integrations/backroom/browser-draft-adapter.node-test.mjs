@@ -23,6 +23,25 @@ test("authorized draft is verified and not submitted",async()=>{
  assert.deepEqual((await f.adapter.execute({command:{operation:"draft",text:"hello"},target:f.target})).result,{drafted:true,submitted:false});
  assert.equal(f.value(),"hello");assert.equal(f.filled(),1);
 });
+test("an exact selected element handle refuses a replacement composer before writing",async()=>{
+ let writes=0;
+ const originalHandle={nodeId:1,evaluate:async()=>{throw Error("detached target should not be evaluated for insertion");}};
+ const replacementHandle={nodeId:2,evaluate:async(fn,arg)=>String(fn).includes("node === original")?2===arg?.nodeId:(writes++,{state:"inserted"}),dispose:async()=>{}};
+ const field={
+  count:async()=>1,isVisible:async()=>true,isEnabled:async()=>true,
+  elementHandle:async()=>replacementHandle,inputValue:async()=>""
+ };
+ const page={isClosed:()=>false,url:()=>"https://example.test/conversation/123",locator:()=>field};
+ const adapter=new BrowserDraftAdapter({
+  page,origin:"https://example.test",path:"/conversation/123",selector:"[role=textbox]",
+  appId:"ai",sessionId:"123",identityFingerprint:"app:123",nodeHandle:originalHandle
+ });
+ const target={surface:"browser_tab",locatorKind:"dom",locatorValue:"[role=textbox]",appId:"ai",sessionId:"123",identityFingerprint:"app:123"};
+ assert.equal((await adapter.probe({target,operation:"draft"})).connected,false);
+ await assert.rejects(()=>adapter.execute({command:{operation:"draft",text:"must not be written"},target}),/composer replaced/i);
+ assert.equal(writes,0);
+});
+
 test("changed app URL, duplicate or hidden composer fails before write",async()=>{
  for(const options of [{url:"https://evil.test/conversation/123"},{url:"https://example.test/conversation/99"},{visible:false},{count:2},{closed:true}]){
   const f=fixture(options);
