@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { HostPairingAuthority } from "../integrations/backroom/host-pairing.mjs";
+import { BrowserHostRuntime } from "../integrations/backroom/browser-host-runtime.mjs";
 
 const DEFAULT_ORIGINS = [
   "https://rub-minds.vercel.app",
@@ -63,11 +64,12 @@ function bearer(request) {
  */
 export function createBackroomHostServer({
   port = 43781, host = "127.0.0.1", allowedOrigins = parseOrigins(process.env.BACKROOM_ALLOWED_ORIGINS),
-  pairingCode, hostId = randomUUID(), now = () => Date.now(),
+  pairingCode, hostId = randomUUID(), now = () => Date.now(), browserRuntime,
 } = {}) {
   if (host !== "127.0.0.1") throw new TypeError("Backroom host must bind to IPv4 loopback only");
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new RangeError("invalid port");
   const authority = new HostPairingAuthority({ allowedOrigins, pairingCode, hostId, now });
+  const browser = browserRuntime ?? new BrowserHostRuntime({ hostId: authority.hostId });
   let actualPort = port;
   const server = createServer(async (request, response) => {
     if (typeof request.url !== "string" || !request.url.startsWith("/") || request.url.startsWith("//")) {
@@ -126,13 +128,100 @@ export function createBackroomHostServer({
     if (request.method === "GET" && url.pathname === "/v1/host") {
       const session = authority.authorize({ origin: requestOrigin, token: bearer(request) });
       if (!session) { writeJson(response, 401, { error: "host_session_invalid" }, cors); return; }
+      const runtimeStatus = browser.status();
+      const executionReady = Object.values(runtimeStatus.capabilities).some(Boolean);
       writeJson(response, 200, {
         hostId: session.hostId, label: session.clientLabel, expiresAt: session.expiresAt,
-        protocolVersion: PROTOCOL_VERSION, connected: true,
-        executionReady: false,
-        capabilities: { browserDraft: false, desktopAccessibility: false, androidAccessibility: false, terminal: false },
-        nextStep: "Install and authorize a platform adapter before interacting with applications.",
+        protocolVersion: PROTOCOL_VERSION, connected: true, executionReady,
+        browserPages: runtimeStatus.pages,
+        capabilities: runtimeStatus.capabilities,
+        nextStep: runtimeStatus.running
+          ? "Register an input target in the managed browser; native drivers remain unavailable."
+          : "Launch the managed browser to register a browser input target.",
       }, cors);
+      return;
+    }
+    if (url.pathname.startsWith("/v1/browser/")) {
+      if (request.method !== "GET" && request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed" }, cors);
+        return;
+      }
+      const session = authority.authorize({ origin: requestOrigin, token: bearer(request) });
+      if (!session) {
+        writeJson(response, 401, { error: "host_session_invalid" }, cors);
+        return;
+      }
+      try {
+        if (request.method === "GET" && url.pathname === "/v1/browser/status") {
+          writeJson(response, 200, browser.status(), cors);
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/v1/browser/pages") {
+          writeJson(response, 200, { pages: await browser.listPages() }, cors);
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/v1/browser/targets") {
+          writeJson(response, 200, { targets: browser.listTargets() }, cors);
+          return;
+        }
+        const selectionMatch = /^\/v1\/browser\/selection\/([a-f0-9-]{36})$/i.exec(url.pathname);
+        if (request.method === "GET" && selectionMatch) {
+          writeJson(response, 200, await browser.getSelection(selectionMatch[1]), cors);
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/v1/browser/start") {
+          try {
+            writeJson(response, 200, await browser.start(), cors);
+          } catch {
+            writeJson(response, 503, { error: "browser_runtime_unavailable", hint: "Install the Playwright Chromium browser on this computer and retry." }, cors);
+          }
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/v1/browser/stop") {
+          writeJson(response, 200, await browser.stop(), cors);
+          return;
+        }
+        if (request.method === "POST" && [
+          "/v1/browser/select", "/v1/browser/targets", "/v1/browser/draft",
+        ].includes(url.pathname)) {
+          if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+            writeJson(response, 415, { error: "application_json_required" }, cors);
+            return;
+          }
+          const input = await readJson(request);
+          if (url.pathname === "/v1/browser/select") {
+            if (typeof input.pageId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.pageId)) {
+              writeJson(response, 400, { error: "invalid_page_id" }, cors);
+              return;
+            }
+            writeJson(response, 200, await browser.startSelection(input.pageId), cors);
+            return;
+          }
+          if (url.pathname === "/v1/browser/targets") {
+            if (typeof input.pageId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.pageId)) {
+              writeJson(response, 400, { error: "invalid_page_id" }, cors);
+              return;
+            }
+            writeJson(response, 201, await browser.registerSelectedTarget(input.pageId), cors);
+            return;
+          }
+          if (input.approved !== true) {
+            writeJson(response, 403, { error: "explicit_user_approval_required" }, cors);
+            return;
+          }
+          if (typeof input.targetId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.targetId)) {
+            writeJson(response, 400, { error: "invalid_target_id" }, cors);
+            return;
+          }
+          const result = await browser.draft(input.targetId, input.text, { approved: true });
+          writeJson(response, result.state === "completed" ? 200 : 409, result, cors);
+          return;
+        }
+        writeJson(response, 404, { error: "not_found" }, cors);
+      } catch (error) {
+        const message = typeof error?.message === "string" ? error.message.slice(0, 180) : "browser_operation_failed";
+        writeJson(response, error?.status ?? 400, { error: "browser_operation_failed", message }, cors);
+      }
       return;
     }
     if (request.method === "POST" && url.pathname === "/v1/unpair") {
@@ -184,7 +273,7 @@ export async function runBackroomHost() {
     `Allowed web origins: ${parseOrigins(process.env.BACKROOM_ALLOWED_ORIGINS).join(", ")}`,
     "Pairing code (one use, expires in 10 minutes):",
     instance.pairingCode,
-    "No app-control drivers are installed. Pairing exposes host status only.",
+    "Browser automation is available after installing Playwright Chromium; native phone, desktop accessibility and terminal drivers are not installed.",
     "Keep this terminal private. Stop host with Ctrl+C.",
     "",
   ].join("\n"));
