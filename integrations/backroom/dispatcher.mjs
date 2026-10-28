@@ -26,6 +26,7 @@ export class BackroomDispatcher {
     this.registry = registry;
     this.adapter = adapter;
     this.authorize = authorize;
+    if (!Number.isSafeInteger(maxJobs) || maxJobs < 1) throw new RangeError("maxJobs must be a positive safe integer");
     this.maxJobs = maxJobs;
   }
   enqueue(input) {
@@ -35,7 +36,7 @@ export class BackroomDispatcher {
       if (JSON.stringify(prior.command) !== JSON.stringify(command)) throw new Error("command ID conflict");
       return prior.status;
     }
-    const eventKey = [command.roomId, command.hostId, command.eventId, command.targetId, command.operation].join(":");
+    const eventKey = JSON.stringify([command.roomId, command.hostId, command.eventId, command.targetId, command.operation]);
     const eventOwner = this.#events.get(eventKey);
     if (eventOwner) return this.#jobs.get(eventOwner).status;
     if (this.#jobs.size >= this.maxJobs) throw new Error("queue full");
@@ -45,6 +46,20 @@ export class BackroomDispatcher {
     return status;
   }
   status(id) { return this.#jobs.get(id)?.status ?? null; }
+  /**
+   * Release a terminal job's memory and its dedupe key after the caller has
+   * consumed the outcome. Pending/running jobs cannot be forgotten.
+   */
+  forget(id) {
+    const job = this.#jobs.get(id);
+    if (!job || this.#inflight.has(id) ||
+      !["completed", "failed", "cancelled", "needs_review"].includes(job.status.state)) return false;
+    const c = job.command;
+    const eventKey = JSON.stringify([c.roomId, c.hostId, c.eventId, c.targetId, c.operation]);
+    if (this.#events.get(eventKey) === id) this.#events.delete(eventKey);
+    this.#jobs.delete(id);
+    return true;
+  }
   cancel(id) {
     const job = this.#jobs.get(id);
     if (!job) return false;

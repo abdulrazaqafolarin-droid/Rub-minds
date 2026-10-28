@@ -77,3 +77,31 @@ test("cancel during authorization prevents action", async () => {
   assert.equal((await pending).state, "cancelled");
   assert.equal(calls, 0);
 });
+
+test("event dedupe uses tuple encoding and cannot collide on delimiter characters", () => {
+ const { dispatcher, command } = setup();
+ const a = { ...command, id:"a", roomId:"room:part", hostId:"host" };
+ const b = { ...command, id:"b", roomId:"room", hostId:"part:host" };
+ assert.equal(dispatcher.enqueue(a).id,"a");
+ assert.equal(dispatcher.enqueue(b).id,"b");
+});
+test("maxJobs must be a positive safe integer", () => {
+ const { registry } = setup();
+ for (const maxJobs of [0,-1,1.2,NaN,Infinity,"2"]) {
+  assert.throws(()=>new BackroomDispatcher({registry,adapter:{execute:async()=>({state:"completed"})},authorize:async()=>true,maxJobs}),/maxJobs/);
+ }
+});
+test("forget frees capacity and removes dedupe state only for terminal jobs", async () => {
+ const { dispatcher, command } = setup();
+ const limited=new BackroomDispatcher({
+  registry:dispatcher.registry, adapter:{execute:async()=>({state:"completed"})},
+  authorize:async()=>true,maxJobs:1,
+ });
+ limited.enqueue(command);
+ assert.equal(limited.forget("job"),false,"queued job cannot be forgotten");
+ assert.equal((await limited.step("job",{approved:true})).state,"completed");
+ assert.equal(limited.forget("job"),true);
+ assert.equal(limited.status("job"),null);
+ const replacement={...command,id:"job2"};
+ assert.equal(limited.enqueue(replacement).id,"job2","capacity and event-key should be released");
+});

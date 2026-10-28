@@ -186,3 +186,16 @@ test("site-owned marker attributes are cleared before host binding",async()=>{
  assert.equal((await runtime.listTargets()).length,1);
  await runtime.stop();
 });
+
+test("repeated browser drafts do not exhaust the bounded dispatcher queue",async()=>{
+ const p=fakePage(),runtime=factory(fakeContext([p]));await runtime.start();
+ const [page]=await runtime.listPages();
+ await runtime.startSelection(page.pageId,"room-1");
+ p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]'});
+ const target=await runtime.registerSelectedTarget(page.pageId,"room-1");
+ for(let i=0;i<220;i++){
+  const result=await runtime.draft(target.id,"draft "+i,{approved:true,roomId:"room-1"});
+  assert.equal(result.state,"completed");
+ }
+ await runtime.stop();
+});

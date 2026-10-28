@@ -475,8 +475,14 @@ export class BrowserHostRuntime {
       targetRevision: target.revision, operation: "draft", text,
     };
     this.dispatcher.enqueue(command);
-    await this.dispatcher.step(command.id);
-    const result = await this.dispatcher.step(command.id, { approved: true });
-    return { state: result.state, reason: result.reason ?? null, result: result.result ?? null, submitted: false };
+    try {
+      await this.dispatcher.step(command.id);
+      const result = await this.dispatcher.step(command.id, { approved: true });
+      return { state: result.state, reason: result.reason ?? null, result: result.result ?? null, submitted: false };
+    } finally {
+      // The HTTP caller receives the final outcome synchronously; no polling API
+      // retains this per-draft job. Release bounded in-memory dispatcher capacity.
+      this.dispatcher.forget(command.id);
+    }
   }
 }
