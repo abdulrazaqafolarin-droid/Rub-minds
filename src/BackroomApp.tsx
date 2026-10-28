@@ -227,7 +227,13 @@ export default function BackroomApp() {
       try { sessionStorage.setItem('rub-backroom-host-session-v1:' + user?.id, JSON.stringify({ origin: localHostOrigin(hostUrl), sessionToken: hostToken, info })); } catch {}
       setHostMessage(info.capabilities.browserDraft ? 'Host is reachable. Browser draft insertion is active; native and terminal drivers remain unavailable.' : 'Host is reachable. Launch the managed browser to enable draft-only browser input; native and terminal drivers remain unavailable.');
     } catch (e) {
-      setHostInfo(previous => previous ? { ...previous, connected: false } : previous);
+      // A stale "browserDraft: true" must never leave an offline host looking
+      // executable. Keep the token for an explicit retry, but clear all targets.
+      setHostInfo(previous => previous ? {
+        ...previous, connected: false, executionReady: false, browserPages: 0,
+        capabilities: { ...previous.capabilities, browserDraft: false },
+      } : previous);
+      setBrowserPages([]); setBrowserTargets([]); setSelectedBrowserTarget('');
       setHostMessage(e instanceof Error ? e.message : 'Host status check failed.');
     } finally { setHostBusy(false); }
   }
@@ -260,6 +266,11 @@ export default function BackroomApp() {
     try {
       response = await fetchLocalHost(localHostOrigin(hostUrl) + path, init);
     } catch {
+      setHostInfo(previous => previous ? {
+        ...previous, connected: false, executionReady: false, browserPages: 0,
+        capabilities: { ...previous.capabilities, browserDraft: false },
+      } : previous);
+      setBrowserPages([]); setBrowserTargets([]); setSelectedBrowserTarget('');
       throw new Error('Could not reach the local host. Allow Rub Minds loopback/local-network access in your browser and verify the host is running on this same device.');
     }
     const payload = await response.json().catch(() => ({})) as { error?: string; message?: string; hint?: string };
