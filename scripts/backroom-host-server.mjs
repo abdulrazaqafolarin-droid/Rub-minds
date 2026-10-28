@@ -381,6 +381,7 @@ export async function runBackroomHost() {
     "Pairing code (one use, expires in 10 minutes):",
     instance.pairingCode,
     "Browser automation is available after installing Playwright Chromium; native phone, desktop accessibility and terminal drivers are not installed.",
+    "The Backroom Emergency Stop closes the managed browser, revokes paired sessions and latches the host until this process is restarted.",
     "Keep this terminal private. Stop host with Ctrl+C.",
     "",
   ].join("\n"));
