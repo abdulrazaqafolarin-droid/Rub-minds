@@ -80,14 +80,15 @@ test("group event -> named terminal session -> explicitly approved draft, never 
   let submits = 0;
   const driver = {
     inspect: async () => ({
-      connected: true, focused: true, editable: true, surface: "terminal",
+      connected: true, focused: true, editable: true, surface: "terminal", inputKind: "assistant_composer",
       appId: target.appId, sessionId: target.sessionId,
       identityFingerprint: target.identityFingerprint, locatorValue: target.locatorValue, text: buffer,
     }),
     writeTextIfEmpty: async request => {
       if (request.submit !== false) submits++;
       if (request.appId !== target.appId || request.sessionId !== target.sessionId ||
-          request.identityFingerprint !== target.identityFingerprint || request.expectedText !== "" || buffer !== "") {
+          request.identityFingerprint !== target.identityFingerprint || request.expectedInputKind !== "assistant_composer" ||
+          request.expectedText !== "" || buffer !== "") {
         return { state: buffer ? "occupied" : "unavailable", submitted: false };
       }
       writes++;
