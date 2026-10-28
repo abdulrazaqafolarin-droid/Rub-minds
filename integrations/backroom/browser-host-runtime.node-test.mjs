@@ -223,6 +223,25 @@ test("target is invalidated when the SPA changes its query or hash conversation 
  await runtime.stop();
 });
 
+test("selection cancellation is group-scoped and clears the overlay state",async()=>{
+ const p=fakePage(),runtime=factory(fakeContext([p]));await runtime.start();
+ const [page]=await runtime.listPages();
+ await runtime.startSelection(page.pageId,"room-1");
+ const attemptId=p.activeSelectionAttempt();
+ p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]'});
+ assert.equal((await runtime.getSelection(page.pageId)).state,"selected");
+ assert.equal(await runtime.cancelSelection(page.pageId,"room-2"),false);
+ assert.equal((await runtime.getSelection(page.pageId)).state,"selected");
+ assert.equal(await runtime.cancelSelection(page.pageId,"room-1"),true);
+ assert.equal(p.selectionState(),null);
+ assert.equal(p.selectedElementNodeId(),null);
+ assert.equal(p.activeSelectionAttempt(),null);
+ assert.equal((await runtime.getSelection(page.pageId)).state,"unavailable");
+ await assert.rejects(()=>runtime.registerSelectedTarget(page.pageId,"room-1"),/Selection belongs to another group/);
+ assert.ok(attemptId);
+ await runtime.stop();
+});
+
 test("selection attempt nonce prevents stale selected-element reuse after a new attempt",async()=>{
  const p=fakePage(),runtime=factory(fakeContext([p]));await runtime.start();
  const [page]=await runtime.listPages();
