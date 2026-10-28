@@ -1,0 +1,75 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {NativeAccessibilityDraftAdapter} from "./native-accessibility-adapter.mjs";
+function fixture(surface="android_app",opts={}) {
+ let content=opts.initial||"",writes=0;
+ const bound={surface,appId:"com.example.ai",sessionId:"thread-7",
+   identityFingerprint:"window-7",locatorValue:"compose",connected:true,focused:true,editable:true};
+ const driver={inspect:async()=>({...bound,text:content,...opts.state}),
+   writeTextIfEmpty:async({text,expectedText})=>{if(content!==expectedText)return {state:"occupied"};writes++;content=opts.corrupt?"unexpected":text;return {state:opts.corrupt?"unverified":"written",submitted:false}}};
+ const adapter=new NativeAccessibilityDraftAdapter({driver,surface,...bound});
+ const target={...bound,locatorKind:"accessibility"};
+ return {adapter,target,writes:()=>writes,value:()=>content};
+}
+test("native Android, Windows and desktop accessibility drafting",async()=>{
+ for(const surface of ["android_app","windows_app","desktop_app"]){
+  const f=fixture(surface);
+  assert.equal((await f.adapter.probe({target:f.target,operation:"draft"})).connected,true);
+  assert.deepEqual((await f.adapter.execute({command:{operation:"draft",text:"Draft"},target:f.target})).result,{drafted:true,submitted:false});
+  assert.equal(f.writes(),1);
+ }
+});
+test("incorrect native app, lost focus or inaccessible node blocks input",async()=>{
+ for(const state of [{focused:false},{connected:false},{appId:"different"},{sessionId:"changed"},{editable:false},{locatorValue:"wrong"}]) {
+  const f=fixture("android_app",{state});
+  assert.equal((await f.adapter.probe({target:f.target,operation:"draft"})).connected,false);
+  await assert.rejects(()=>f.adapter.execute({command:{operation:"draft",text:"X"},target:f.target}));
+  assert.equal(f.writes(),0);
+ }
+});
+test("occupied native field remains unchanged",async()=>{
+ const f=fixture("desktop_app",{initial:"A human is typing"});
+ await assert.rejects(()=>f.adapter.execute({command:{operation:"draft",text:"Overwrite"},target:f.target}),/occupied/);
+ assert.equal(f.value(),"A human is typing");assert.equal(f.writes(),0);
+});
+test("unverified accessibility write requests review",async()=>{
+ const f=fixture("windows_app",{corrupt:true});
+ assert.equal((await f.adapter.execute({command:{operation:"draft",text:"text"},target:f.target})).state,"needs_review");
+});
+test("native adapter rejects automatic submit",async()=>{
+ const f=fixture();
+ await assert.rejects(()=>f.adapter.execute({command:{operation:"submit",text:"send"},target:f.target}),/binding/);
+ assert.equal(f.writes(),0);
+});
+
+test("native adapter does not claim draft-only success without explicit no-submit attestation",async()=>{
+ for (const writeResult of [
+  {state:"written"},
+  {state:"written",submitted:true},
+  {state:"unverified",submitted:false},
+ ]) {
+  let contentText="";
+  const driver={
+   inspect:async()=>({...{surface:"android_app",appId:"com.example.ai",sessionId:"thread-7",identityFingerprint:"window-7",locatorValue:"compose",connected:true,focused:true,editable:true},text:contentText}),
+   writeTextIfEmpty:async({text})=>{contentText=text;return writeResult},
+  };
+  const adapter=new NativeAccessibilityDraftAdapter({driver,surface:"android_app",appId:"com.example.ai",sessionId:"thread-7",identityFingerprint:"window-7",locatorValue:"compose"});
+  const target={surface:"android_app",locatorKind:"accessibility",locatorValue:"compose",appId:"com.example.ai",sessionId:"thread-7",identityFingerprint:"window-7"};
+  const result=await adapter.execute({command:{operation:"draft",text:"draft"},target});
+  assert.equal(result.state,"needs_review");
+  assert.equal(result.verified,false);
+ }
+});
+
+test("native driver must reject a text field that became occupied before write",async()=>{
+ let value="";
+ const driver={
+  inspect:async()=>({surface:"android_app",appId:"com.example.ai",sessionId:"thread-7",identityFingerprint:"window-7",locatorValue:"input-node",connected:true,focused:true,editable:true,text:value}),
+  writeTextIfEmpty:async({text,expectedText})=>{value="human raced";return {state:"occupied"}}
+ };
+ const adapter=new NativeAccessibilityDraftAdapter({driver,surface:"android_app",appId:"com.example.ai",sessionId:"thread-7",identityFingerprint:"window-7",locatorValue:"input-node"});
+ const target={surface:"android_app",locatorKind:"accessibility",locatorValue:"input-node",appId:"com.example.ai",sessionId:"thread-7",identityFingerprint:"window-7"};
+ const command={operation:"draft",text:"AI draft"};
+ await assert.rejects(()=>adapter.execute({command,target}),/became occupied/);
+ assert.equal(value,"human raced");
+});

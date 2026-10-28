@@ -8,8 +8,11 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
 jobs:
   mcp-migration:
+    # Draft PRs are not release candidates. Skip runner allocation until ready for review.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -283,6 +286,8 @@ jobs:
           $test$;
           SQL
   build:
+    # Draft PRs are not release candidates. Skip runner allocation until ready for review.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -302,6 +307,8 @@ jobs:
       - run: npm run build
       - run: npm run test
       - run: npm run test:runtime
+      - name: Test Backroom target registry, dispatcher and local host
+        run: npm run test:backroom
       - name: Set up Deno for Supabase Edge Functions
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
         with:
@@ -318,8 +325,12 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Run controlled browser proof of concept
         run: npm run test:browser
+      - name: Run Backroom managed-browser end-to-end tests
+        run: npm run test:backroom:browser
 
   local-supabase-stack:
+    # Draft PRs are not release candidates. Skip runner allocation until ready for review.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     # GitHub-hosted runners are isolated; serialize only superseded runs of the same PR.
     # A global non-cancelling group can leave one queued job blocking every future local-stack test.
