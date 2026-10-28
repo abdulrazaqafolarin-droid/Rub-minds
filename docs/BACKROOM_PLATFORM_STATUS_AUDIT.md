@@ -11,7 +11,7 @@
 
 This addendum supersedes older branch/preview references below where they differ. The checks were read-only; no deployment, merge, migration, function, Auth setting or database mutation was performed.
 
-- **Current PR head:** `147be4da5abf4c9256e52ce218fbe6aff449c1a8`. PR #47 is open, draft, unmerged, base `main`, and GitHub reports it mergeable. Keep it draft until release gates pass.
+- **Application-source snapshot inspected:** `147be4da5abf4c9256e52ce218fbe6aff449c1a8`. This audit was then committed as a documentation-only update; no application source or production resource changed during that update. PR #47 remains open, draft, unmerged, and based on `main`; keep it draft until release gates pass.
 - **Latest ready Vercel Preview:** `c811bfe7092ae62907b152ccc82ce97a063ec65d`, URL [open Preview](https://rub-minds-jotc0coad-abdulrazaqafolarin-droids-projects.vercel.app) · [deployment inspector](https://vercel.com/abdulrazaqafolarin-droids-projects/rub-minds/BUUEqbLzL4k2hoHzWP7SHcWJK2y7). This preview is behind the current PR head and does not validate the latest source.
 - **Current-head Vercel status:** GitHub's combined commit status for `147be4d` reports the Vercel check as failed with a link to the Vercel build-rate-limit page. That is deployment-quota evidence, not a compiler/test failure. No current-head build has been verified; do not trigger repeated builds while the quota block remains.
 - **GitHub Actions:** latest run [40757591722](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/40757591722) for `147be4d` is `skipped`. The workflow intentionally skips jobs for draft PRs; this is neither a pass nor a code failure. The current checked-in tests have not been executed in a native Node 22 checkout for this head.
