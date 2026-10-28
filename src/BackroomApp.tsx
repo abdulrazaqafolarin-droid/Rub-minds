@@ -114,6 +114,13 @@ export default function BackroomApp() {
   }, []);
   const room = rooms.find(r => r.id === roomId);
   useEffect(() => {
+    // Never carry a selected source message or target across Rub Minds groups.
+    setSelectedBrowserTarget('');
+    setSelectedGroupMessageId('');
+    setBrowserDraftText('@RMConnects: this is a local Backroom draft test. Please acknowledge without sending anything.');
+    setBrowserNotice('');
+  }, [room?.id]);
+  useEffect(() => {
     if (!room?.id) { setGroupMessages([]); setSelectedGroupMessageId(''); return; }
     let alive = true;
     const refreshMessages = async () => {
@@ -182,6 +189,9 @@ export default function BackroomApp() {
       if (!infoResponse.ok) throw new Error('Host paired, but its status could not be verified. Restart host and pair again.');
       const info = await infoResponse.json() as HostStatus;
       if (info.hostId !== credentials.hostId) throw new Error('Host identity changed during pairing.');
+      if (hostInfo?.hostId !== info.hostId) {
+        setBrowserPages([]); setBrowserTargets([]); setSelectedBrowserTarget('');
+      }
       setHostUrl(origin); setHostToken(credentials.sessionToken); setHostInfo(info);
       try {
         sessionStorage.setItem('rub-backroom-host-session-v1:' + user?.id, JSON.stringify({
@@ -206,6 +216,7 @@ export default function BackroomApp() {
       if (!response.ok) {
         try { sessionStorage.removeItem('rub-backroom-host-session-v1:' + user?.id); } catch {}
         setHostToken(''); setHostInfo(null);
+        setBrowserPages([]); setBrowserTargets([]); setSelectedBrowserTarget('');
         setHostMessage('Host session expired or was revoked. Restart the local host to generate a fresh pairing code.');
         return;
       }
@@ -227,7 +238,9 @@ export default function BackroomApp() {
       });
       if (!response.ok) throw new Error('Could not revoke the host session. Keep this tab open and retry.');
       try { sessionStorage.removeItem('rub-backroom-host-session-v1:' + user?.id); } catch {}
-      setHostToken(''); setHostInfo(null); setHostMessage('Host session revoked.');
+      setHostToken(''); setHostInfo(null);
+      setBrowserPages([]); setBrowserTargets([]); setSelectedBrowserTarget('');
+      setHostMessage('Host session revoked.');
       setHostModal(false);
     } catch (e) {
       setHostMessage(e instanceof Error ? e.message : 'Could not unpair host.');
@@ -243,10 +256,18 @@ export default function BackroomApp() {
     }
     const response = await fetchLocalHost(localHostOrigin(hostUrl) + path, init);
     const payload = await response.json().catch(() => ({})) as { error?: string; message?: string; hint?: string };
-    if (!response.ok) throw new Error(payload.hint || payload.message ||
-      (payload.error === 'host_session_invalid' ? 'Host pairing expired; restart the host and pair again.' :
-       payload.error === 'browser_runtime_unavailable' ? 'Playwright Chromium is not installed on this computer.' :
-       'Local host request failed (' + response.status + ').'));
+    if (!response.ok) {
+      if (payload.error === 'host_session_invalid') {
+        setHostToken('');
+        setHostInfo(null);
+        setBrowserPages([]); setBrowserTargets([]); setSelectedBrowserTarget('');
+        try { sessionStorage.removeItem('rub-backroom-host-session-v1:' + user?.id); } catch {}
+      }
+      throw new Error(payload.hint || payload.message ||
+        (payload.error === 'host_session_invalid' ? 'Host pairing expired; restart the host and pair again.' :
+         payload.error === 'browser_runtime_unavailable' ? 'Playwright Chromium is not installed on this computer.' :
+         'Local host request failed (' + response.status + ').'));
+    }
     return payload as T;
   }
   async function refreshBrowserInventory() {
