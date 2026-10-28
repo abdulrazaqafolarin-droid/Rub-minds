@@ -195,7 +195,7 @@ export function createBackroomHostServer({
               writeJson(response, 400, { error: "invalid_page_or_room_id" }, cors);
               return;
             }
-            writeJson(response, 200, await browser.startSelection(input.pageId), cors);
+            writeJson(response, 200, await browser.startSelection(input.pageId, input.roomId), cors);
             return;
           }
           if (url.pathname === "/v1/browser/targets") {

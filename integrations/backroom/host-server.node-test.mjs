@@ -75,7 +75,7 @@ test("health endpoint is no-store and query strings are rejected",async()=>{
 });
 
 function fakeBrowserRuntime() {
- let running=false, selected=null, targets=[];
+ let running=false, selected=null, selectionRoom=null, targets=[];
  const pageId="12345678-1234-4234-9234-123456789012";
  const targetId="12345678-1234-4234-9234-123456789013";
  const status=()=>({running,pages:running?1:0,capabilities:{browserDraft:running,desktopAccessibility:false,androidAccessibility:false,terminal:false}});
@@ -84,9 +84,9 @@ function fakeBrowserRuntime() {
   start:async()=>{running=true;return status()},
   stop:async()=>{running=false;targets=[];return status()},
   listPages:async()=>running?[{pageId,title:"Test chat",site:"chatgpt.com",canSelect:true}]:[],
-  startSelection:async id=>{if(id!==pageId)throw Error("page not found");selected={state:"pending"};return selected},
+  startSelection:async(id,roomId)=>{if(id!==pageId)throw Error("page not found");selectionRoom=roomId;selected={state:"pending"};return selected},
   getSelection:async()=>({state:selected?.state||"unavailable"}),
-  registerSelectedTarget:async(id,roomId)=>{if(id!==pageId||selected?.state!=="selected")throw Error("selection missing");const t={id:targetId,pageId,roomId,title:"Test chat",site:"chatgpt.com",surface:"browser_tab",operations:["draft"]};targets.push(t);return t},
+  registerSelectedTarget:async(id,roomId)=>{if(id!==pageId||selected?.state!=="selected"||roomId!==selectionRoom)throw Error("selection missing or wrong room");const t={id:targetId,pageId,roomId,title:"Test chat",site:"chatgpt.com",surface:"browser_tab",operations:["draft"]};targets.push(t);return t},
   listTargets:()=>targets,
   draft:async(id,text,{approved,roomId}={})=>{if(approved!==true)throw Error("approval required");if(!targets.some(t=>t.id===id&&t.roomId===roomId))throw Error("target scope mismatch");return {state:"completed",result:{drafted:true,submitted:false},submitted:false}},
   testSetSelected:()=>{selected={state:"selected"};},

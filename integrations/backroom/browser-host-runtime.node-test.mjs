@@ -40,6 +40,7 @@ test("only web pages are listed and page output hides conversation paths",async(
 test("selection registration requires one selected target and an empty composer",async()=>{
  const p=fakePage(),runtime=factory(fakeContext([p]));await runtime.start();
  const [page]=await runtime.listPages();
+ await runtime.startSelection(page.pageId, "room-1");
  await assert.rejects(()=>runtime.registerSelectedTarget(page.pageId, "room-1"),/Select one input/);
  p.setSelection({state:"selected",selector:"[role=textbox]",tagName:"textarea"});
  const target=await runtime.registerSelectedTarget(page.pageId, "room-1");assert.equal(target.operations[0],"draft");
@@ -47,7 +48,7 @@ test("selection registration requires one selected target and an empty composer"
 });
 test("draft requires explicit approval and never reports submitted",async()=>{
  const p=fakePage(),runtime=factory(fakeContext([p]));await runtime.start();
- const [page]=await runtime.listPages();p.setSelection({state:"selected",selector:"[role=textbox]",tagName:"textarea"});
+ const [page]=await runtime.listPages();await runtime.startSelection(page.pageId, "room-1");p.setSelection({state:"selected",selector:"[role=textbox]",tagName:"textarea"});
  const target=await runtime.registerSelectedTarget(page.pageId, "room-1");
  await assert.rejects(()=>runtime.draft(target.id,"hello",{roomId:"room-1"}),/approval/);
  const result=await runtime.draft(target.id,"hello",{approved:true,roomId:"room-1"});

@@ -159,6 +159,7 @@ export class BrowserHostRuntime {
   #pageIds = new WeakMap();
   #targets = new Map();
   #bindings = new Map();
+  #selectionRooms = new Map();
   #browserModule = null;
   constructor({ hostId, profileDir = join(homedir(), ".rub-minds", "backroom", "browser-profile"),
     chromiumProvider = async () => (await import("playwright")).chromium } = {}) {
@@ -196,6 +197,7 @@ export class BrowserHostRuntime {
             try { this.registry.unregister(binding.target.id, { roomId: binding.target.roomId, hostId: this.hostId }); } catch {}
           }
           this.#pages.clear();
+          this.#selectionRooms.clear();
           this.#targets.clear();
           this.#bindings.clear();
         }
@@ -213,6 +215,7 @@ export class BrowserHostRuntime {
       try { this.registry.unregister(binding.target.id, { roomId: binding.target.roomId, hostId: this.hostId }); } catch {}
     }
     this.#pages.clear();
+    this.#selectionRooms.clear();
     this.#targets.clear();
     this.#bindings.clear();
     if (context) await context.close();
@@ -226,6 +229,7 @@ export class BrowserHostRuntime {
       this.#pages.set(id, page);
       page.on("close", () => {
         this.#pages.delete(id);
+        this.#selectionRooms.delete(id);
         for (const [targetId, binding] of this.#bindings) {
           if (binding.pageId === id) {
             this.#bindings.delete(targetId);
@@ -263,9 +267,12 @@ export class BrowserHostRuntime {
     if (!safeUrl) throw new Error("unsupported_page_protocol");
     return { page, url: safeUrl };
   }
-  async startSelection(pageId) {
+  async startSelection(pageId, roomId) {
     const { page } = this.#page(pageId);
-    await page.evaluate(installSelectionOverlay);
+    if (typeof roomId !== "string" || !roomId.trim() || roomId.length > 120) throw new TypeError("group roomId required");
+    this.#selectionRooms.set(pageId, roomId);
+    try { await page.evaluate(installSelectionOverlay); }
+    catch (error) { this.#selectionRooms.delete(pageId); throw error; }
     return { state: "pending", pageId, instruction: "Switch to the managed browser and drag around exactly one editable input." };
   }
   async getSelection(pageId) {
@@ -284,6 +291,7 @@ export class BrowserHostRuntime {
   }
   async registerSelectedTarget(pageId, roomId) {
     if (typeof roomId !== "string" || !roomId.trim() || roomId.length > 120) throw new TypeError("group roomId required");
+    if (this.#selectionRooms.get(pageId) !== roomId) throw new Error("Selection belongs to another Rub Minds group; select the input again.");
     const { page, url } = this.#page(pageId);
     const selection = await page.evaluate(() => window.__RM_BACKROOM_SELECTION_V1__ ?? null);
     if (!selection || selection.state !== "selected" || typeof selection.selector !== "string" || selection.selector.length > 500) {
@@ -310,6 +318,7 @@ export class BrowserHostRuntime {
     this.#targets.set(target.id, { target, pageId, title, site: url.hostname });
     this.#bindings.set(target.id, { target, pageId, page, adapter, guard });
     await page.evaluate(() => { const state = window.__RM_BACKROOM_SELECTION_V1__; if (state) delete window.__RM_BACKROOM_SELECTION_V1__; });
+    this.#selectionRooms.delete(pageId);
     return { id: target.id, pageId, roomId: target.roomId, title, site: url.hostname, surface: "browser_tab", operations: ["draft"], submittedAutomatically: false };
   }
   listTargets() {
