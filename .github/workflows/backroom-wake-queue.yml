@@ -4,7 +4,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: backroom-wake-queue-\${{ github.event.pull_request.number || github.ref }}
+  group: backroom-wake-queue-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 on:
@@ -15,7 +15,7 @@ on:
 
 jobs:
   durable-queue-sql:
-    if: \${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:
