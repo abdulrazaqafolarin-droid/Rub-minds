@@ -16,7 +16,7 @@ import { LocalExecutionGuard } from "./host-runtime.mjs";
 import { BrowserDraftAdapter } from "./browser-draft-adapter.mjs";
 
 const html = `<!doctype html><html><head><meta charset="utf-8"><title>Controlled AI composer</title></head>
-<body><label for="prompt">Prompt</label><textarea id="prompt" data-composer></textarea>
+<body><label for="prompt">Prompt</label><textarea id="prompt" data-composer></textarea><label for="rich">Rich prompt</label><div id="rich" contenteditable="true" role="textbox" aria-label="Rich prompt" style="width:520px;min-height:80px;border:1px solid #ccc;margin-top:20px;padding:10px"></div>
 <button id="send">Send</button><output id="sent">0</output>
 <script>document.getElementById("send").onclick=()=>{document.getElementById("sent").textContent=String(Number(document.getElementById("sent").textContent)+1)}</script>
 </body></html>`;
@@ -66,7 +66,19 @@ test("controlled Chromium browser drafts an approved group prompt without sendin
     assert.equal(await page.locator("[data-composer]").inputValue(),"");
     assert.equal((await dispatcher.step("job",{approved:true})).state,"completed");
     assert.equal(await page.locator("[data-composer]").inputValue(),command.text);
-    assert.equal(await page.locator("#sent").textContent(),"0","must never press Send");
+    // Rich contenteditable AI composers must receive a browser editing event,
+    // not only a raw textContent mutation that leaves the editor framework stale.
+    const richTarget = { ...target, id:"rich-composer", locatorValue:"[contenteditable=true]" };
+    const richAdapter = new BrowserDraftAdapter({
+      page, origin, path:"/conversation/mock", selector:"[contenteditable=true]",
+      appId:"controlled-ai", sessionId:"mock", identityFingerprint:"controlled:mock",
+    });
+    const richProbe = await richAdapter.probe({target:richTarget,operation:"draft"});
+    assert.equal(richProbe.connected,true);
+    const rich = await richAdapter.execute({command:{operation:"draft",text:"Rich editor draft"},target:richTarget});
+    assert.equal(rich.state,"completed");
+    assert.equal(await page.locator("#rich").textContent(),"Rich editor draft");
+    assert.equal(await page.locator("#sent").textContent(),"0","rich editor drafting must never press Send");
     assert.equal((await dispatcher.step("job",{approved:true})).state,"completed");
     assert.equal(await page.locator("#sent").textContent(),"0");
     // A navigation makes the registered conversation stale.

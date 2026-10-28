@@ -51,12 +51,22 @@ export class BrowserDraftAdapter {
       } else if (element instanceof HTMLTextAreaElement) {
         Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(element, text);
       } else if (element.isContentEditable) {
-        element.textContent = text;
+        // execCommand runs the browser's editing pipeline synchronously and emits
+        // an input event; directly setting textContent often leaves rich-editor
+        // application state (e.g. React/ProseMirror/Lexical) out of sync.
+        const selection = window.getSelection();
+        if (!selection) return { state: "unavailable" };
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        if (!document.execCommand("insertText", false, text)) return { state: "unavailable" };
       } else {
         return { state: "unavailable" };
       }
-      element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
-      element.dispatchEvent(new Event("change", { bubbles: true }));
+      if (!(element instanceof HTMLElement) || !element.isConnected) return { state: "unverified" };
+      if (!(element.isContentEditable)) element.dispatchEvent(new Event("change", { bubbles: true }));
       return { state: readValue() === text ? "inserted" : "unverified" };
     }, command.text);
     if (insertion.state === "occupied" || insertion.state === "unavailable") {
