@@ -10,6 +10,11 @@ function fakePage({url="https://chatgpt.com/c/test",title="Research thread",sele
   evaluate:async(fn,arg)=>{
    const code=String(fn);
    if(code.includes("node === original"))return capturedNodeId===arg?.nodeId;
+   if(code.includes("setAttribute")&&code.includes("data-rm-backroom-binding")){
+    if(nodeId!==capturedNodeId)return {state:"unavailable",marker:""};
+    if(bindingMarker)return {state:"existing",marker:bindingMarker};
+    bindingMarker=arg;markerNodeId=capturedNodeId;return {state:"bound",marker:bindingMarker};
+   }
    if(code.includes("removeAttribute")&&code.includes("data-rm-backroom-binding")){
     if(nodeId===capturedNodeId&&markerNodeId===capturedNodeId&&bindingMarker===arg)bindingMarker=null;
     return true;
