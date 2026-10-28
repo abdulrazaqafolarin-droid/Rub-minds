@@ -1,6 +1,6 @@
 # Rub Minds platform readiness audit
 
-**Audit date:** 28 October 2026  
+**Audit date:** 28 October 2026, 19:26 Africa/Lagos (18:26 UTC)  
 **Scope:** read-only review of GitHub source and PR state, Vercel deployment metadata/build events, live Supabase migration/function metadata, RLS grants and advisor findings, and isolated JavaScript test-harness results. No production mutations were made.
 
 ## Overall finding
@@ -15,11 +15,11 @@
 | Database | Supabase project `zucaeevlbwhcvjwbhwmq` is `ACTIVE_HEALTHY`, region `eu-west-2`, PostgreSQL 17.11. | Confirms service metadata, not every API or RLS path. |
 | Migrations | Live history includes `hosted_mcp_sessions`, `group_memory_realtime`, `atomic_mcp_join_idempotency` and `public_invite_rate_limits`. | The live schema is beyond the 2026-10-21 observations in older release notes. |
 | Edge Functions | `agent-messages` v4, `redeem-ai-invite` v2, `ai-invite-discovery` v2, `session-memory` v2 and `rub-minds-mcp` v3 report `ACTIVE`. | Code is deployed; secret configuration and current official-client interoperability were not independently proven. |
-| Backroom Preview | Vercel Preview at `d3711aafd30a218f92dde69e1f3a57fcc8928196` is `READY`. Build events confirm `tsc -b && vite build`, 1,630 modules transformed, and deployment completed. | The static TS/Vite build passed. It did not execute Node/Vitest/Deno/MCP/Chromium acceptance suites. |
-| GitHub Actions | PR #47 remains draft. Current workflow skips build and integration jobs until the PR is ready. | Skipped is not a pass and is not a current-head code failure. |
+| Backroom Preview | Latest ready branch Preview is `7c3d9b127599daeb9135927c600ee7dfc6ba8bed` at [preview URL](https://rub-minds-p7hyd4mfr-abdulrazaqafolarin-droids-projects.vercel.app). Vercel build events confirm `tsc -b && vite build`, 1,630 modules transformed and deployment completed. | Current PR head `d25ff4e19768130e2434d5779d8999e137a13f16` is one commit ahead; the only change since that ready Preview is a test-file update. Vercel reports no deployment for the exact head because of the free daily deployment limit. Build passed on the prior, source-equivalent frontend; this is not a current-head test-suite pass. |
+| GitHub Actions | PR #47 remains draft. `mcp-migration`, `build` and `local-supabase-stack` are explicitly skipped while draft. | The jobs allocate no runner and execute no steps. Skipped is not a pass. Current HEAD's GitHub commit status is `failure` from Vercel with `api-deployments-free-per-day` / retry-in-24-hours; this is a deployment quota error, not test output. |
 | Visual smoke test | The page-rendering tool could not render the public website during this audit. | Requires a signed-in browser smoke test; the tool limitation is not evidence the site is down. |
 
-Links: [PR #47](https://github.com/abdulrazaqafolarin-droid/Rub-minds/pull/47) · [production inspector](https://vercel.com/abdulrazaqafolarin-droids-projects/rub-minds/GoZJtiMszDSXdhYaSZQVwefcH8DS) · [latest inspected Preview build](https://vercel.com/abdulrazaqafolarin-droids-projects/rub-minds/DXJgLHwZeSTQT6LXBENx6iLnWmPR).
+Links: [PR #47](https://github.com/abdulrazaqafolarin-droid/Rub-minds/pull/47) · [production inspector](https://vercel.com/abdulrazaqafolarin-droids-projects/rub-minds/GoZJtiMszDSXdhYaSZQVwefcH8DS) · [latest ready Preview inspector](https://vercel.com/abdulrazaqafolarin-droids-projects/rub-minds/9TUDVRNHF1s3YrfnsAgqApmnGcMN).
 
 ## Feature completeness
 
@@ -39,17 +39,17 @@ Links: [PR #47](https://github.com/abdulrazaqafolarin-droid/Rub-minds/pull/47) �
 - **Native drivers are not implemented/wired.** Actual Windows/desktop UI Automation or CUA, named terminal PTY, Android accessibility/overlay and ARTEMIS integration remain separate implementation work. The other UI surface previews are simulated and do not control native apps.
 - **No installable browser extension manifest appeared in the inspected feature tree.** The existing browser-loop source is a userscript, a separate mechanism from the local managed-browser host.
 - **No background wake-up guarantee.** If no authorized host and active provider session are running, Rub Minds cannot wake an idle original ChatGPT/Claude phone/desktop conversation. Imported transcripts do not equal live session connection.
-- **Native test gates have not been satisfied on current HEAD.** Isolated V8 harness tests are logic checks, not the native Node runner. The newest session-bridge harness run passed 8/8, but current-head `node --test`, full Vitest, Deno, local migration replay/MCP interop and real local Chromium E2E still need to pass.
+- **Current-head test gates remain unverified.** A prior isolated source tree reported `npm run build`, `npm test` (25 tests), `npm run test:backroom` (97/97), `npm run test:runtime` (197/197), `npm run test:backroom:browser` (8/8), Deno checks and an isolated PostgreSQL smoke as passing under Node 24. Those results were not from a native Node 22 run against the current final SHA. More code/tests were added afterward; current-head `node --test`, full Vitest, Deno, local migration replay/MCP interoperability and Chromium E2E have not been rerun. GitHub Actions jobs are skipped while this PR is draft.
 
-## Live security and performance findings
+## Live security and performance findings (rechecked 18:26 UTC)
 
-1. Four RLS-enabled backend-only tables have no policies: `agent_request_log`, `public_request_rate_limits`, `rub_minds_mcp_join_requests`, `rub_minds_mcp_sessions`. Read-only grants checks found neither `anon` nor `authenticated` has SELECT privilege on them. Do not add public policies simply to silence the advisor.
-2. Eight authenticated-callable SECURITY DEFINER functions were flagged. Read-only inspection found `auth.uid()` and ownership/membership predicates in the eight functions examined, with empty search paths. Keep a reviewed function-by-function security check; the advisory warrants review but does not by itself prove an exploit.
-3. Leaked-password protection is disabled. Enabling it is a separate Auth configuration change; it was not changed during this audit.
-4. Nine foreign-key index notices and two unused-index notices need a workload-aware performance review before changes.
+1. Four RLS-enabled backend-only tables have no policies: `agent_request_log`, `public_request_rate_limits`, `rub_minds_mcp_join_requests`, `rub_minds_mcp_sessions`. A live read-only grants check confirmed both `anon` and `authenticated` lack SELECT on all four. Do not add public policies simply to silence the advisor.
+2. Eight `SECURITY DEFINER` functions callable by `authenticated` were flagged. A live read-only query confirmed all eight have an empty `search_path`; the definitions examined include `auth.uid()` and owner/membership checks. This makes a blind revoke risky because invite creation/redemption and room RPC flows depend on these functions. The warning still deserves a documented, function-by-function review; it does not by itself establish an exploit.
+3. Supabase Auth reports leaked-password protection disabled. Enabling this changes Auth configuration and needs a separate decision; it was not changed during this audit.
+4. Performance advisors report nine foreign keys without covering indexes and two apparently unused indexes. Review workload/query plans before adding or dropping indexes.
 5. The MCP encryption key's presence/configuration remains unverified. Do not expose its value; test availability through a safe staging/runtime check and redacted failure behavior.
 
-A recent 24-hour aggregate query showed log activity across Edge, Postgres, PostgREST and Realtime. It was not an error-level review and is not an error-free certification.
+The last 24-hour unified-log summary returned 222 records across pgbouncer (76), edge (51), Postgres (31), PostgREST (28), Realtime (19), function (8), function-edge (5), auth audit (2) and auth (2). The schema query has no top-level `level` field; therefore this was only an activity count, not an error-level review or error-free certification.
 
 ## Remaining work in release-gate order
 
@@ -63,5 +63,6 @@ A recent 24-hour aggregate query showed log activity across Edge, Postgres, Post
 ## Changes during this audit
 
 - Changed the feature branch's session bridge to block AI-origin messages by default, unless explicitly enabled with bounded server-supplied turn depth.
-- Added targeted bridge tests; test bodies passed 8/8 in an isolated V8 harness only, **not** native Node test execution.
-- No Production DB/schema/policy/Auth setting, Edge Function, main branch or Production deployment was changed.
+- Added bounded session-bridge deduplication coverage. The latest commit `d25ff4e1` adds a test case only; the source comparison against the last ready Vercel Preview shows one file changed (`integrations/playwright/session-bridge.node-test.mjs`, +23/-1).
+- Fresh read-only live checks confirmed the production alias remains `READY` on `main` at `4e81797aa9113ca416ae96be003c95817a51b0d0`, Supabase is `ACTIVE_HEALTHY`, and the five listed Edge Functions remain `ACTIVE`. The current PR head has no exact-SHA deployment because Vercel's free daily deployment limit has been exceeded.
+- No Production DB/schema/policy/Auth setting, Edge Function, `main` branch or Production deployment was changed.
