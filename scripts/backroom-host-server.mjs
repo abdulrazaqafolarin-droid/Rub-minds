@@ -199,8 +199,8 @@ export function createBackroomHostServer({
             return;
           }
           if (url.pathname === "/v1/browser/targets") {
-            if (typeof input.pageId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.pageId)) {
-              writeJson(response, 400, { error: "invalid_page_id" }, cors);
+            if (typeof input.pageId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.pageId) || typeof input.roomId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.roomId)) {
+              writeJson(response, 400, { error: "invalid_page_or_room_id" }, cors);
               return;
             }
             writeJson(response, 201, await browser.registerSelectedTarget(input.pageId, input.roomId), cors);

@@ -48,7 +48,7 @@ test("selection registration requires one selected target and an empty composer"
 test("draft requires explicit approval and never reports submitted",async()=>{
  const p=fakePage(),runtime=factory(fakeContext([p]));await runtime.start();
  const [page]=await runtime.listPages();p.setSelection({state:"selected",selector:"[role=textbox]",tagName:"textarea"});
- const target=await runtime.registerSelectedTarget(page.pageId);
+ const target=await runtime.registerSelectedTarget(page.pageId, "room-1");
  await assert.rejects(()=>runtime.draft(target.id,"hello",{roomId:"room-1"}),/approval/);
  const result=await runtime.draft(target.id,"hello",{approved:true,roomId:"room-1"});
  assert.equal(result.state,"completed");assert.equal(result.submitted,false);assert.equal(p.value(),"hello");

@@ -86,7 +86,7 @@ function fakeBrowserRuntime() {
   listPages:async()=>running?[{pageId,title:"Test chat",site:"chatgpt.com",canSelect:true}]:[],
   startSelection:async id=>{if(id!==pageId)throw Error("page not found");selected={state:"pending"};return selected},
   getSelection:async()=>({state:selected?.state||"unavailable"}),
-  registerSelectedTarget:async id=>{if(id!==pageId||selected?.state!=="selected")throw Error("selection missing");const t={id:targetId,pageId,title:"Test chat",site:"chatgpt.com",surface:"browser_tab",operations:["draft"]};targets.push(t);return t},
+  registerSelectedTarget:async(id,roomId)=>{if(id!==pageId||selected?.state!=="selected")throw Error("selection missing");const t={id:targetId,pageId,roomId,title:"Test chat",site:"chatgpt.com",surface:"browser_tab",operations:["draft"]};targets.push(t);return t},
   listTargets:()=>targets,
   draft:async(id,text,{approved,roomId}={})=>{if(approved!==true)throw Error("approval required");if(!targets.some(t=>t.id===id&&t.roomId===roomId))throw Error("target scope mismatch");return {state:"completed",result:{drafted:true,submitted:false},submitted:false}},
   testSetSelected:()=>{selected={state:"selected"};},
@@ -103,7 +103,7 @@ test("browser control routes require host pairing and expose truthful capability
   assert.equal(hostStatus.capabilities.browserDraft,true);assert.equal(hostStatus.capabilities.androidAccessibility,false);
   const pages=await (await fetch(base+"/v1/browser/pages",{headers:auth})).json();
   assert.equal(pages.pages[0].site,"chatgpt.com");
-  assert.equal((await fetch(base+"/v1/browser/select",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId})})).status,200);
+  assert.equal((await fetch(base+"/v1/browser/select",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId:"12345678-1234-4234-9234-123456789014"})})).status,200);
   browserRuntime.testSetSelected();
   assert.equal((await fetch(base+"/v1/browser/targets",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId:"12345678-1234-4234-9234-123456789014"})})).status,201);
   const draft=await fetch(base+"/v1/browser/draft",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({targetId:browserRuntime.targetId,roomId:"12345678-1234-4234-9234-123456789014",text:"draft only",approved:true})});

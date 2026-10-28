@@ -10,7 +10,7 @@ type Space = { id: string; name: string; surface: Surface; app: string; createdA
 type Rect = { x: number; y: number; width: number; height: number };
 type HostStatus = { hostId: string; label: string; expiresAt: number; protocolVersion: string; connected: boolean; executionReady: boolean; capabilities: Record<string, boolean>; nextStep: string; browserPages?: number };
 type BrowserPageRow = { pageId: string; title: string; site: string; canSelect: boolean };
-type BrowserTargetRow = { id: string; pageId: string; title: string; site: string; surface: string; operations: string[] };
+type BrowserTargetRow = { id: string; pageId: string; roomId: string; title: string; site: string; surface: string; operations: string[] };
 const surfaces: { id: Surface; name: string; detail: string }[] = [
   { id: 'browser_tab', name: 'Browser session', detail: 'ChatGPT, Claude and other browser conversations' },
   { id: 'desktop_app', name: 'Desktop AI app', detail: 'Native Claude, ChatGPT or other desktop applications' },
@@ -128,6 +128,7 @@ export default function BackroomApp() {
     }
   }
   const current = spaces.find(s => s.id === active);
+  const roomBrowserTargets = browserTargets.filter(target => target.roomId === room?.id);
   function localHostOrigin(value: string) {
     const parsed = new URL(value);
     if (parsed.protocol !== 'http:' || !['127.0.0.1', 'localhost'].includes(parsed.hostname) ||
@@ -268,14 +269,15 @@ export default function BackroomApp() {
     finally { setBrowserBusy(false); }
   }
   async function registerBrowserInput(pageId: string) {
+    if (!room?.id) { setBrowserNotice('Select a Rub Minds group before registering a typing area.'); return; }
     setBrowserBusy(true); setBrowserNotice('Selection started. Switch to the managed browser and drag a rectangle around exactly one input field. Press Escape to cancel.');
     try {
-      await hostApi('/v1/browser/select', { method: 'POST', body: { pageId } });
+      await hostApi('/v1/browser/select', { method: 'POST', body: { pageId, roomId: room.id } });
       for (let attempt = 0; attempt < 120; attempt++) {
         await new Promise<void>(resolve => window.setTimeout(resolve, 500));
         const result = await hostApi<{ state: string; message?: string }>('/v1/browser/selection/' + encodeURIComponent(pageId));
         if (result.state === 'selected') {
-          const target = await hostApi<BrowserTargetRow>('/v1/browser/targets', { method: 'POST', body: { pageId } });
+          const target = await hostApi<BrowserTargetRow>('/v1/browser/targets', { method: 'POST', body: { pageId, roomId: room.id } });
           setBrowserTargets(previous => [target, ...previous.filter(existing => existing.id !== target.id)]);
           setSelectedBrowserTarget(target.id);
           setBrowserNotice('Input registered for draft-only use. The host will refuse to overwrite existing text and never presses Send.');
@@ -292,12 +294,12 @@ export default function BackroomApp() {
   }
   async function draftToBrowser() {
     if (!selectedBrowserTarget || !browserDraftText.trim()) return;
-    const target = browserTargets.find(t => t.id === selectedBrowserTarget);
+    const target = browserTargets.find(t => t.id === selectedBrowserTarget && t.roomId === room?.id);
     if (!target || !window.confirm('Insert this text into the selected empty composer on ' + target.site + '? It will NOT be sent.')) return;
     setBrowserBusy(true); setBrowserNotice('');
     try {
       const result = await hostApi<{ state: string; result?: { result?: { drafted?: boolean; submitted?: boolean } }; reason?: string }>(
-        '/v1/browser/draft', { method: 'POST', body: { targetId: target.id, text: browserDraftText, approved: true } },
+        '/v1/browser/draft', { method: 'POST', body: { targetId: target.id, roomId: room?.id, text: browserDraftText, approved: true } },
       );
       setBrowserNotice(result.state === 'completed'
         ? 'Draft inserted and verified. Send was not clicked.'
@@ -341,7 +343,7 @@ export default function BackroomApp() {
 <div className="br-browser-panel"><div className="br-browser-panel-head"><div><b>Managed browser</b><small>Visible Chromium · local profile only</small></div><button className="br-secondary" onClick={() => void refreshBrowserInventory()} disabled={browserBusy || !hostInfo.capabilities.browserDraft}><Activity size={14}/> Refresh tabs</button></div>
 {!hostInfo.capabilities.browserDraft ? <button className="br-primary br-browser-launch" onClick={() => void startManagedBrowser()} disabled={browserBusy}>{browserBusy ? 'Starting browser…' : 'Launch managed browser'} <ArrowRight size={15}/></button> : <>
 <div className="br-browser-pages">{browserPages.map(page => <div className="br-browser-page" key={page.pageId}><div className="br-browser-page-icon"><Monitor size={16}/></div><div className="br-browser-page-label"><b>{page.site}</b><small>{page.title || 'Untitled conversation tab'}</small></div><button className="br-secondary" onClick={() => void registerBrowserInput(page.pageId)} disabled={browserBusy}>Select input</button></div>)}{!browserPages.length && <p className="br-browser-empty">No supported browser tabs found. Open a conversation in the managed browser and refresh.</p>}</div>
-{browserTargets.length>0 && <><label className="br-browser-field-label" htmlFor="br-browser-target">Registered typing area</label><select id="br-browser-target" value={selectedBrowserTarget} onChange={e=>setSelectedBrowserTarget(e.target.value)}><option value="">Choose a typing target</option>{browserTargets.map(t=><option key={t.id} value={t.id}>{t.site} · {t.title}</option>)}</select><label className="br-browser-field-label" htmlFor="br-browser-draft">Text to draft (not sent)</label><textarea id="br-browser-draft" rows={3} maxLength={10000} value={browserDraftText} onChange={e=>setBrowserDraftText(e.target.value)} placeholder="Write the exact text to insert into the selected composer…"/><button className="br-primary br-browser-draft" onClick={() => void draftToBrowser()} disabled={browserBusy || !selectedBrowserTarget || !browserDraftText.trim()}>Insert draft — never send <ArrowRight size={15}/></button><p className="br-browser-caption">Target registration stores the selector locally. Text is inserted only after confirmation, only into an empty input, and is read back to verify success.</p></>}
+{roomBrowserTargets.length>0 && <><label className="br-browser-field-label" htmlFor="br-browser-target">Registered typing area</label><select id="br-browser-target" value={selectedBrowserTarget} onChange={e=>setSelectedBrowserTarget(e.target.value)}><option value="">Choose a typing target</option>{roomBrowserTargets.map(t=><option key={t.id} value={t.id}>{t.site} · {t.title}</option>)}</select><label className="br-browser-field-label" htmlFor="br-browser-draft">Text to draft (not sent)</label><textarea id="br-browser-draft" rows={3} maxLength={10000} value={browserDraftText} onChange={e=>setBrowserDraftText(e.target.value)} placeholder="Write the exact text to insert into the selected composer…"/><button className="br-primary br-browser-draft" onClick={() => void draftToBrowser()} disabled={browserBusy || !roomBrowserTargets.some(t => t.id === selectedBrowserTarget) || !browserDraftText.trim()}>Insert draft — never send <ArrowRight size={15}/></button><p className="br-browser-caption">Target registration stores the selector locally. Text is inserted only after confirmation, only into an empty input, and is read back to verify success.</p></>}
 <button className="br-secondary br-browser-stop" onClick={() => void stopManagedBrowser()} disabled={browserBusy}>Close managed browser</button></>}
 {browserNotice && <div className="br-host-message" role="status">{browserNotice}</div>}</div>
 <div className="br-modal-actions"><button className="br-secondary" onClick={() => void unpairLocalHost()} disabled={hostBusy || browserBusy}>Unpair</button><button className="br-primary" onClick={() => void checkLocalHost()} disabled={hostBusy || browserBusy}>{hostBusy ? 'Checking…' : 'Check connection'}</button></div></>}</div></div>}
