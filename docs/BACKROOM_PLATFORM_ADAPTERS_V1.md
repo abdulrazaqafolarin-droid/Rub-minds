@@ -8,7 +8,7 @@ Last reviewed: 2026-10-28. This document describes the current draft branch and 
 - A **draft-only** `NativeAccessibilityDraftAdapter` for Android, Windows and desktop applications. It accepts an injected OS-specific driver with `inspect({locator})` and `writeText({locator,text,appId,sessionId})`. It refuses stale app/window identity, missing focus, occupied text fields and implicit submit.
 - `mapDragToDisplay` calibrates a user drag rectangle into device-display coordinates when the host has measured dimensions and orientation. It never invents screen dimensions.
 - Node contract tests, mock integrated native-host tests and an optional actual Chromium browser smoke test against a controlled localhost page.
-- A responsive Backroom UI with explicitly simulated selection. Real host pairing, native overlays and phone/desktop drivers are **not** connected yet.
+- A responsive Backroom UI with explicitly simulated preview selection plus a separate real local-host pairing and managed-browser draft panel. Native overlays and phone/desktop/terminal drivers are **not** connected yet.
 
 ## Next platform bindings
 
