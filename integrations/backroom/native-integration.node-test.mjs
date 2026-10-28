@@ -15,7 +15,7 @@ function fixture(surface,options={}) {
   inspect:async()=>({surface,appId:options.appId||"chat-app",sessionId:"session-1",
     identityFingerprint:"focused-window",locatorValue:"input-node",
     connected:true,focused:options.focused!==false,editable:true,text:value}),
-  writeTextIfEmpty:async({text,expectedText})=>{if(value!==expectedText)return {state:"occupied"};writes++;value=text;return {state:"written"}},
+  writeTextIfEmpty:async({text,expectedText})=>{if(value!==expectedText)return {state:"occupied",submitted:false};writes++;value=text;return {state:"written",submitted:false}},
  };
  const adapter=new NativeAccessibilityDraftAdapter({driver,surface,
    appId:"chat-app",sessionId:"session-1",identityFingerprint:"focused-window",
