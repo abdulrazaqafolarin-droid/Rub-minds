@@ -19,6 +19,7 @@ export class PlaywrightSessionBridge {
     intervalMs = 5000,
     maxReplies = 20,
     maxMessagesPerStep = 1,
+    maxMessageChars = 12_000,
     allowAiHandoff = false,
     maxAiHandoffDepth = 2,
     maxSeenMessages = 5000,
@@ -41,6 +42,9 @@ export class PlaywrightSessionBridge {
     if (!Number.isInteger(maxMessagesPerStep) || maxMessagesPerStep < 1 || maxMessagesPerStep > 10) {
       throw new RangeError("maxMessagesPerStep must be between 1 and 10");
     }
+    if (!Number.isSafeInteger(maxMessageChars) || maxMessageChars < 1 || maxMessageChars > 50_000) {
+      throw new RangeError("maxMessageChars must be between 1 and 50000");
+    }
     if (typeof allowAiHandoff !== "boolean") {
       throw new TypeError("allowAiHandoff must be an explicit boolean");
     }
@@ -53,7 +57,7 @@ export class PlaywrightSessionBridge {
 
     Object.assign(this, {
       page, adapter, readMessages, sendMessage, participantId,
-      intervalMs, maxReplies, maxMessagesPerStep, allowAiHandoff, maxAiHandoffDepth, maxSeenMessages,
+      intervalMs, maxReplies, maxMessagesPerStep, maxMessageChars, allowAiHandoff, maxAiHandoffDepth, maxSeenMessages,
     });
     this.running = false;
     this.replies = 0;
@@ -80,7 +84,8 @@ export class PlaywrightSessionBridge {
     let processed = 0;
     for (const message of result.messages) {
       if (this.replies >= effectiveLimit || processed >= this.maxMessagesPerStep) break;
-      if (!message || typeof message.id !== "string" || typeof message.body !== "string") continue;
+      if (!message || typeof message.id !== "string" || message.id.length < 1 || message.id.length > 200 ||
+        typeof message.body !== "string" || !message.body.trim()) continue;
       if (this.seen.has(message.id)) continue;
 
       // Keep the per-session dedupe set bounded. On exhaustion, stop visibly
@@ -106,6 +111,14 @@ export class PlaywrightSessionBridge {
           message.turn_depth >= this.maxAiHandoffDepth) continue;
       } else {
         continue;
+      }
+
+      if (message.body.length > this.maxMessageChars) {
+        return {
+          status: "message_too_large", sent, processed,
+          messageId: message.id,
+          reason: "Message exceeded the configured size limit; review or split it before processing.",
+        };
       }
 
       processed++;
@@ -159,7 +172,7 @@ export class PlaywrightSessionBridge {
     try {
       while (this.running && !signal?.aborted && this.replies < this.maxReplies) {
         const outcome = await this.step({ approved, remainingReplies: this.maxReplies - this.replies });
-        if (outcome.status === "browser_closed" || outcome.status === "limit_reached" || outcome.status === "seen_budget_reached" || outcome.status === "send_outcome_ambiguous") break;
+        if (outcome.status === "browser_closed" || outcome.status === "limit_reached" || outcome.status === "seen_budget_reached" || outcome.status === "send_outcome_ambiguous" || outcome.status === "message_too_large") break;
         await new Promise(resolve => setTimeout(resolve, this.intervalMs));
       }
     } finally {
