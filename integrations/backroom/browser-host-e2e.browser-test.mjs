@@ -178,6 +178,54 @@ test("real local host -> Playwright browser overlay -> group-scoped target -> ve
   assert.equal(await racePage.locator("#prompt").inputValue(),"","stale conversation must remain untouched");
   await originalHandle.dispose();
 
+  // Focus itself can run site code. If that code changes the route, abort
+  // before writing rather than trusting the earlier adapter preflight.
+  const focusRoutePage=await realContext.newPage();
+  await focusRoutePage.goto(fixture.origin+"/chat");
+  await focusRoutePage.evaluate(()=>{
+   document.querySelector("#prompt").addEventListener("focus",()=>{
+    history.replaceState({}, "", "/focus-changed-conversation");
+   });
+  });
+  const focusRouteHandle=await focusRoutePage.locator("#prompt").elementHandle();
+  const focusRouteAdapter=new BrowserDraftAdapter({
+   page:focusRoutePage,origin:fixture.origin,path:"/chat",selector:"#prompt",
+   appId:fixture.origin,sessionId:"focus-route",identityFingerprint:"focus-route-conversation",
+   nodeHandle:focusRouteHandle,
+  });
+  await assert.rejects(()=>focusRouteAdapter.execute({
+   command:{operation:"draft",text:"must not cross a focus-triggered route"},target:{
+    surface:"browser_tab",locatorKind:"dom",locatorValue:"#prompt",appId:fixture.origin,
+    sessionId:"focus-route",identityFingerprint:"focus-route-conversation",
+   }
+  }),/conversation changed.*draft insertion/i);
+  assert.equal(await focusRoutePage.locator("#prompt").inputValue(),"","focus-triggered navigation must not receive text");
+  await focusRouteHandle.dispose();
+
+  // Focus handlers can also populate a field. The adapter must check emptiness
+  // again after focus so that newly appeared text is never overwritten.
+  const focusFillPage=await realContext.newPage();
+  await focusFillPage.goto(fixture.origin+"/chat");
+  await focusFillPage.evaluate(()=>{
+   document.querySelector("#prompt").addEventListener("focus",()=>{
+    document.querySelector("#prompt").value="site inserted text on focus";
+   });
+  });
+  const focusFillHandle=await focusFillPage.locator("#prompt").elementHandle();
+  const focusFillAdapter=new BrowserDraftAdapter({
+   page:focusFillPage,origin:fixture.origin,path:"/chat",selector:"#prompt",
+   appId:fixture.origin,sessionId:"focus-fill",identityFingerprint:"focus-fill-conversation",
+   nodeHandle:focusFillHandle,
+  });
+  await assert.rejects(()=>focusFillAdapter.execute({
+   command:{operation:"draft",text:"must not overwrite a value added on focus"},target:{
+    surface:"browser_tab",locatorKind:"dom",locatorValue:"#prompt",appId:fixture.origin,
+    sessionId:"focus-fill",identityFingerprint:"focus-fill-conversation",
+   }
+  }),/existing draft cannot be overwritten/i);
+  assert.equal(await focusFillPage.locator("#prompt").inputValue(),"site inserted text on focus");
+  await focusFillHandle.dispose();
+
   const unpaired=await requestJson(hostBase,fixture.origin,"/v1/unpair",{method:"POST",token});
   assert.equal(unpaired.response.status,200);
   const denied=await requestJson(hostBase,fixture.origin,"/v1/browser/pages",{token});
