@@ -15,7 +15,7 @@ const safeSiteUrl = value => {
   } catch {}
   return null;
 };
-export function installSelectionOverlay() {
+export function installSelectionOverlay(attemptId = null) {
 const isEditable = node => {
   if (!(node instanceof HTMLElement) || !node.isConnected) return false;
   if (node.closest('[aria-hidden="true"],[inert],[hidden]')) return false;
@@ -50,7 +50,8 @@ const isEditable = node => {
     if (typeof cleanupPrevious === "function") cleanupPrevious();
   } catch {}
   document.getElementById(OVERLAY_ID)?.remove();
-  window[KEY] = { state: "pending" };
+  window.__RM_BACKROOM_ACTIVE_SELECTION_ATTEMPT_V1__ = attemptId;
+  window[KEY] = { state: "pending", attemptId };
   window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = null;
   const root = document.createElement("div");
   root.id = OVERLAY_ID;
@@ -66,7 +67,7 @@ const isEditable = node => {
   let finished = false;
   let cleanupOverlay = null;
   const endState = state => {
-    window[KEY] = state;
+    window[KEY] = { ...state, attemptId };
     if (state.state !== "selected") window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = null;
     root.remove();
     window.removeEventListener("keydown", onKey, true);
@@ -124,7 +125,7 @@ const isEditable = node => {
   };
   const fail = message => {
     finished = true;
-    const failureState = { state: "failed", message };
+    const failureState = { state: "failed", message, attemptId };
     window[KEY] = failureState;
     window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = null;
     hint.textContent = message;
@@ -205,7 +206,7 @@ const isEditable = node => {
     window[KEY] = {
       state: "selected", selector, tagName: node.tagName.toLowerCase(),
       role: node.getAttribute("role") || "", ariaLabel: node.getAttribute("aria-label") || "",
-      selectionId, selectedAt: Date.now(),
+      selectionId, selectedAt: Date.now(), attemptId,
     };
     hint.textContent = "Input selected. Return to Rub Minds Backroom.";
     hint.style.background = "#153a32";
@@ -371,25 +372,54 @@ export class BrowserHostRuntime {
   async startSelection(pageId, roomId) {
     const { page, url } = this.#page(pageId);
     if (typeof roomId !== "string" || !roomId.trim() || roomId.length > 120) throw new TypeError("group roomId required");
-    this.#selectionRooms.set(pageId, {
-      roomId,
+    const binding = {
+      roomId, attemptId: randomUUID(),
       fingerprint: url.origin + url.pathname + url.search + url.hash + ":" + pageId,
-    });
-    try { await page.evaluate(installSelectionOverlay); }
-    catch (error) { this.#selectionRooms.delete(pageId); throw error; }
+    };
+    this.#selectionRooms.set(pageId, binding);
+    try { await page.evaluate(installSelectionOverlay, binding.attemptId); }
+    catch (error) {
+      if (this.#selectionRooms.get(pageId) === binding) this.#selectionRooms.delete(pageId);
+      throw error;
+    }
+    if (this.#selectionRooms.get(pageId) !== binding) {
+      await this.#clearSelectionAttempt(page, binding.attemptId);
+      throw new Error("A newer selection attempt replaced this one. Start selection again.");
+    }
     return { state: "pending", pageId, instruction: "Switch to the managed browser and drag around exactly one editable input." };
+  }
+  async #clearSelectionAttempt(page, attemptId) {
+    try {
+      return await page.evaluate(expectedAttemptId => {
+        const state = window.__RM_BACKROOM_SELECTION_V1__;
+        if (!state || state.attemptId !== expectedAttemptId) return false;
+        document.getElementById("__rm_backroom_target_overlay_v1")?.remove();
+        window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = null;
+        delete window.__RM_BACKROOM_SELECTION_V1__;
+        if (window.__RM_BACKROOM_ACTIVE_SELECTION_ATTEMPT_V1__ === expectedAttemptId) {
+          window.__RM_BACKROOM_ACTIVE_SELECTION_ATTEMPT_V1__ = null;
+        }
+        return true;
+      }, attemptId);
+    } catch { return false; }
   }
   async getSelection(pageId) {
     const { page, url } = this.#page(pageId);
     const pending = this.#selectionRooms.get(pageId);
+    if (!pending) return { state: "unavailable", message: "No active input selection. Start selection again." };
     const fingerprint = url.origin + url.pathname + url.search + url.hash + ":" + pageId;
-    if (pending && pending.fingerprint !== fingerprint) {
-      this.#selectionRooms.delete(pageId);
-      try { await page.evaluate(() => { document.getElementById("__rm_backroom_target_overlay_v1")?.remove(); }); } catch {}
+    if (pending.fingerprint !== fingerprint) {
+      if (this.#selectionRooms.get(pageId) === pending) this.#selectionRooms.delete(pageId);
+      await this.#clearSelectionAttempt(page, pending.attemptId);
       return { state: "cancelled", message: "The conversation changed. Start selection again in the current tab." };
     }
-    const selection = await page.evaluate(() => window.__RM_BACKROOM_SELECTION_V1__ ?? null);
-    if (!selection || typeof selection !== "object") return { state: "unavailable" };
+    const selection = await page.evaluate(expectedAttemptId => {
+      const current = window.__RM_BACKROOM_SELECTION_V1__ ?? null;
+      return current?.attemptId === expectedAttemptId ? current : null;
+    }, pending.attemptId);
+    if (!selection || typeof selection !== "object") {
+      return { state: "cancelled", message: "The selection expired or was replaced. Start selection again." };
+    }
     const output = { state: selection.state };
     if (selection.state === "selected") {
       output.tagName = String(selection.tagName || "").slice(0, 20);
@@ -425,24 +455,35 @@ export class BrowserHostRuntime {
     const selectionBinding = this.#selectionRooms.get(pageId);
     const currentFingerprint = url.origin + url.pathname + url.search + url.hash + ":" + pageId;
     if (!selectionBinding || selectionBinding.roomId !== roomId || selectionBinding.fingerprint !== currentFingerprint) {
-      this.#selectionRooms.delete(pageId);
+      if (selectionBinding && this.#selectionRooms.get(pageId) === selectionBinding) {
+        this.#selectionRooms.delete(pageId);
+        await this.#clearSelectionAttempt(page, selectionBinding.attemptId);
+      }
       throw new Error("Selection belongs to another group or conversation; select the input again.");
     }
-    const selection = await page.evaluate(() => window.__RM_BACKROOM_SELECTION_V1__ ?? null);
-    if (!selection || selection.state !== "selected" || typeof selection.selector !== "string" ||
-      selection.selector.length > 500 || !/^[a-f0-9-]{36}$/i.test(selection.selectionId)) {
+    const selection = await page.evaluate(expectedAttemptId => {
+      const current = window.__RM_BACKROOM_SELECTION_V1__ ?? null;
+      return current?.attemptId === expectedAttemptId ? current : null;
+    }, selectionBinding.attemptId);
+    if (!selection || selection.state !== "selected" || selection.attemptId !== selectionBinding.attemptId ||
+      typeof selection.selector !== "string" || selection.selector.length > 500 ||
+      !/^[a-f0-9-]{36}$/i.test(selection.selectionId)) {
       throw new Error("Select one input in the managed browser first.");
+    }
+    if (this.#selectionRooms.get(pageId) !== selectionBinding) {
+      await this.#clearSelectionAttempt(page, selectionBinding.attemptId);
+      throw new Error("Selection attempt changed while registering. Start selection again.");
     }
 
     // Keep the exact DOM element the drag gesture selected. A selector alone is
     // insufficient because React/SPA pages can replace an input between the
     // selection gesture and registration while reusing the same label/selector.
-    const selectedHandle = await page.evaluateHandle(expectedSelectionId => {
+    const selectedHandle = await page.evaluateHandle(expected => {
       const state = window.__RM_BACKROOM_SELECTION_V1__;
       const node = window.__RM_BACKROOM_SELECTED_ELEMENT_V1__;
-      return state?.state === "selected" && state.selectionId === expectedSelectionId && node instanceof HTMLElement
-        ? node : null;
-    }, selection.selectionId);
+      return state?.state === "selected" && state.attemptId === expected.attemptId &&
+        state.selectionId === expected.selectionId && node instanceof HTMLElement ? node : null;
+    }, { attemptId: selectionBinding.attemptId, selectionId: selection.selectionId });
     const selectedNodeHandle = selectedHandle.asElement();
     if (!selectedNodeHandle) {
       await selectedHandle.dispose();
@@ -474,9 +515,9 @@ export class BrowserHostRuntime {
             const state = window.__RM_BACKROOM_SELECTION_V1__;
             return node instanceof HTMLElement && node.isConnected &&
               node === window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ &&
-              state?.selectionId === expected.selectionId &&
+              state?.attemptId === expected.attemptId && state?.selectionId === expected.selectionId &&
               node.getAttribute("data-rm-backroom-binding") === expected.marker;
-          }, { selectionId: selection.selectionId, marker: candidate }).catch(() => false);
+          }, { attemptId: selectionBinding.attemptId, selectionId: selection.selectionId, marker: candidate }).catch(() => false);
           if (isSameNode) return true;
         }
         return false;
@@ -539,13 +580,23 @@ export class BrowserHostRuntime {
       const alreadyRegistered = [...this.#bindings.values()].find(binding =>
         binding.pageId === pageId && binding.marker === marker && binding.target.roomId === roomId);
       if (alreadyRegistered) {
-        await selectedNodeHandle.evaluate((node, expectedAt) => {
+        const clearedExistingSelection = await selectedNodeHandle.evaluate((node, expected) => {
           const state = window.__RM_BACKROOM_SELECTION_V1__;
-          if (node instanceof HTMLElement && state?.selectionId === expectedAt) {
+          if (node instanceof HTMLElement && state?.attemptId === expected.attemptId &&
+            state?.selectionId === expected.selectionId && window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ === node) {
             window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = null;
             delete window.__RM_BACKROOM_SELECTION_V1__;
+            if (window.__RM_BACKROOM_ACTIVE_SELECTION_ATTEMPT_V1__ === expected.attemptId) {
+              window.__RM_BACKROOM_ACTIVE_SELECTION_ATTEMPT_V1__ = null;
+            }
+            return true;
           }
-        }, selection.selectionId).catch(() => {});
+          return false;
+        }, { attemptId: selectionBinding.attemptId, selectionId: selection.selectionId });
+        if (!clearedExistingSelection || this.#selectionRooms.get(pageId) !== selectionBinding) {
+          throw new Error("Selection changed while reusing the existing target. Select the input again.");
+        }
+        this.#selectionRooms.delete(pageId);
         const existing = this.#targets.get(alreadyRegistered.target.id);
         return { id: alreadyRegistered.target.id, pageId, roomId, title: existing?.title ?? title,
           site: existing?.site ?? url.hostname, surface: "browser_tab", operations: ["draft"], submittedAutomatically: false };
@@ -582,17 +633,22 @@ export class BrowserHostRuntime {
       });
       const current = await adapter.probe({ target, operation: "draft" });
       if (!current.connected || !current.focused) throw new Error("Input must be visible, unique, and empty before registering the draft-only target.");
-      const clearedSelection = await selectedNodeHandle.evaluate((node, expectedSelectionId) => {
+      const clearedSelection = await selectedNodeHandle.evaluate((node, expected) => {
         const state = window.__RM_BACKROOM_SELECTION_V1__;
-        if (node instanceof HTMLElement && state?.selectionId === expectedSelectionId &&
-          window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ === node) {
+        if (node instanceof HTMLElement && state?.attemptId === expected.attemptId &&
+          state?.selectionId === expected.selectionId && window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ === node) {
           window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = null;
           delete window.__RM_BACKROOM_SELECTION_V1__;
+          if (window.__RM_BACKROOM_ACTIVE_SELECTION_ATTEMPT_V1__ === expected.attemptId) {
+            window.__RM_BACKROOM_ACTIVE_SELECTION_ATTEMPT_V1__ = null;
+          }
           return true;
         }
         return false;
-      }, selection.selectionId);
-      if (!clearedSelection) throw new Error("Selection changed while registering the target. Select the input again.");
+      }, { attemptId: selectionBinding.attemptId, selectionId: selection.selectionId });
+      if (!clearedSelection || this.#selectionRooms.get(pageId) !== selectionBinding) {
+        throw new Error("Selection changed while registering the target. Select the input again.");
+      }
       this.registry.register(target);
       this.#targets.set(target.id, { target, pageId, title, site: url.hostname });
       this.#bindings.set(target.id, { target, pageId, page, adapter, guard, marker, nodeHandle: selectedNodeHandle, baseSelector: selection.selector });
@@ -612,13 +668,16 @@ export class BrowserHostRuntime {
           } catch {}
         }
         try {
-          await selectedNodeHandle.evaluate(expectedAt => {
+          await selectedNodeHandle.evaluate(expected => {
             const state = window.__RM_BACKROOM_SELECTION_V1__;
-            if (state?.selectionId === expectedAt) {
+            if (state?.attemptId === expected.attemptId && state?.selectionId === expected.selectionId) {
               window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = null;
               delete window.__RM_BACKROOM_SELECTION_V1__;
+              if (window.__RM_BACKROOM_ACTIVE_SELECTION_ATTEMPT_V1__ === expected.attemptId) {
+                window.__RM_BACKROOM_ACTIVE_SELECTION_ATTEMPT_V1__ = null;
+              }
             }
-          }, selection.selectionId);
+          }, { attemptId: selectionBinding.attemptId, selectionId: selection.selectionId });
         } catch {}
         try { await selectedNodeHandle.dispose(); } catch {}
       }
