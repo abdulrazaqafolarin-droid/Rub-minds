@@ -2,18 +2,22 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { BrowserDraftAdapter } from "./browser-draft-adapter.mjs";
 function fixture(options={}) {
- let value=options.initial||"", fills=0;
+ let value=options.initial||"", fills=0, pageUrl=options.url||"https://example.test/conversation/123";
  const field={
   count:async()=>options.count??1,isVisible:async()=>options.visible??true,isEnabled:async()=>true,
   inputValue:async()=>value,
-  evaluate:async(_fn,text)=>{
+  evaluate:async(fn,request)=>{
+   if(options.insertionUrl)pageUrl=options.insertionUrl;
    if(options.raceValue)value=options.raceValue;
+   if(options.insertionUrl && String(fn).includes("current.origin !== request.origin")) {
+    return {state:"conversation_changed"};
+   }
    if(value!=="")return {state:"occupied"};
-   fills++;value=options.corrupt?"bad":text;
+   fills++;value=options.corrupt?"bad":request.text;
    return {state:options.corrupt?"unverified":"inserted"};
   }
  };
- const page={isClosed:()=>options.closed||false,url:()=>options.url||"https://example.test/conversation/123",locator:()=>field};
+ const page={isClosed:()=>options.closed||false,url:()=>pageUrl,locator:()=>field};
  const adapter=new BrowserDraftAdapter({page,origin:"https://example.test",path:"/conversation/123",selector:"[role=textbox]",appId:"ai",sessionId:"123",identityFingerprint:"app:123"});
  const target={surface:"browser_tab",locatorKind:"dom",locatorValue:"[role=textbox]",appId:"ai",sessionId:"123",identityFingerprint:"app:123"};
  return {adapter,target,filled:()=>fills,value:()=>value};
@@ -23,6 +27,16 @@ test("authorized draft is verified and not submitted",async()=>{
  assert.deepEqual((await f.adapter.execute({command:{operation:"draft",text:"hello"},target:f.target})).result,{drafted:true,submitted:false});
  assert.equal(f.value(),"hello");assert.equal(f.filled(),1);
 });
+test("conversation identity is rechecked atomically immediately before insertion",async()=>{
+ const f=fixture({insertionUrl:"https://example.test/conversation/456"});
+ await assert.rejects(
+  ()=>f.adapter.execute({command:{operation:"draft",text:"must not cross conversations"},target:f.target}),
+  /conversation changed immediately before draft insertion/i
+ );
+ assert.equal(f.value(),"");
+ assert.equal(f.filled(),0);
+});
+
 test("an exact selected element handle refuses a replacement composer before writing",async()=>{
  let writes=0;
  const originalHandle={nodeId:1,evaluate:async()=>{throw Error("detached target should not be evaluated for insertion");}};
@@ -51,7 +65,7 @@ test("a selected element handle is the actual write target, not the re-resolved 
    if(code.includes("node === original"))return true;
    if(code.includes("const readValue")){
     if(exactValue!=="")return {state:"occupied"};
-    handleWrites++;exactValue=arg;return {state:"inserted"};
+    handleWrites++;exactValue=arg.text;return {state:"inserted"};
    }
    if(code.includes("connected:")&&code.includes("value:"))return {connected:true,value:exactValue};
    if(code.includes("element instanceof HTMLInputElement")&&code.includes("element.value"))return exactValue;
