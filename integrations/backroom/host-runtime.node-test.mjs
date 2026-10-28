@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { LocalExecutionGuard, validateHostCapabilities } from "./host-runtime.mjs";
 const host = { hostId: "h", deviceLabel: "Local host", surfaces: ["android_app"], operations: ["draft"] };
 const target = { id: "t", hostId: "h", roomId: "r", spaceId: "s", sessionId: "session", appId: "ai.app", surface: "android_app", locatorKind: "accessibility", identityFingerprint: "fingerprint", revision: 1 };
-const command = { hostId: "h", targetId: "t", roomId: "r", spaceId: "s", sessionId: "session", targetRevision: 1, operation: "draft", text: "test" };
+const command = { hostId: "h", targetId: "t", roomId: "r", spaceId: "s", sessionId: "session", identityFingerprint: "fingerprint", targetRevision: 1, operation: "draft", text: "test" };
 const probe = { focused: true, connected: true, sessionId: "session", appId: "ai.app", surface: "android_app", locatorKinds: ["accessibility"], identityFingerprint: "fingerprint" };
 function configured(overrides = {}) {
   let calls = 0;
@@ -46,6 +46,15 @@ test("unverified outcome requires human review", async () => {
   const { guard } = configured({ outcome: { state: "completed", verified: false } });
   assert.equal((await guard.execute({ command, target })).state, "needs_review");
 });
+test("command fingerprint must match the registered target even for direct guard calls", async () => {
+  const { guard, calls } = configured();
+  await assert.rejects(
+    () => guard.execute({ command: { ...command, identityFingerprint: "another-conversation" }, target }),
+    /scope mismatch/,
+  );
+  assert.equal(calls(), 0);
+});
+
 test("wrong group, host and capability fail closed", async () => {
   const { guard } = configured();
   await assert.rejects(() => guard.execute({ command: { ...command, roomId: "wrong" }, target }), /scope/);

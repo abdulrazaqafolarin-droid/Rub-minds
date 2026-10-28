@@ -39,7 +39,8 @@ export class LocalExecutionGuard {
     if (!command || !target || target.hostId !== this.host.hostId ||
       command.hostId !== this.host.hostId || command.targetId !== target.id ||
       command.roomId !== target.roomId || command.spaceId !== target.spaceId ||
-      command.sessionId !== target.sessionId || command.targetRevision !== target.revision) {
+      command.sessionId !== target.sessionId || command.identityFingerprint !== target.identityFingerprint ||
+      command.targetRevision !== target.revision) {
       denyBeforeEffect("target scope mismatch");
     }
     if (!this.host.surfaces.includes(target.surface) || !this.host.operations.includes(command.operation)) {
