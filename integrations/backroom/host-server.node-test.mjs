@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { request as httpRequest } from "node:http";
 import {createBackroomHostServer} from "../../scripts/backroom-host-server.mjs";
 
 async function withHost(fn, options={}) {
@@ -46,10 +47,21 @@ test("loopback host-header validation blocks DNS-rebinding style requests",async
   const good=await fetch(base+"/health",{headers:{Origin:origin}});
   assert.equal(good.status,200);
   const port=new URL(base).port;
-  const rebinding=await fetch(base+"/health",{headers:{Origin:origin,Host:"attacker.example:"+port}});
+  // Node fetch/undici owns the Host header, so use node:http to verify that
+  // the server rejects a hostile Host value rather than silently normalizing it.
+  const requestWithHost = hostHeader => new Promise((resolve,reject) => {
+   const req=httpRequest(new URL("/health",base),{headers:{Origin:origin,Host:hostHeader}},response=>{
+    const chunks=[];
+    response.on("data",chunk=>chunks.push(chunk));
+    response.on("end",()=>resolve({status:response.statusCode,body:Buffer.concat(chunks).toString("utf8")}));
+   });
+   req.on("error",reject);
+   req.end();
+  });
+  const rebinding=await requestWithHost("attacker.example:"+port);
   assert.equal(rebinding.status,403);
-  assert.equal((await rebinding.json()).error,"invalid_host_header");
-  const wrongLoopback=await fetch(base+"/health",{headers:{Origin:origin,Host:"127.0.0.1:1"}});
+  assert.equal(JSON.parse(rebinding.body).error,"invalid_host_header");
+  const wrongLoopback=await requestWithHost("127.0.0.1:1");
   assert.equal(wrongLoopback.status,403);
  });
 });
@@ -184,7 +196,7 @@ test("selection cancellation requires the paired host and matching group",async(
   assert.equal(stale.status,400);
   const invalid=await fetch(base+"/v1/browser/select/cancel",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId:"bad",attemptId:selection.selectionAttemptId})});
   assert.equal(invalid.status,400);
- });
+ },{browserRuntime});
 });
 
 test("browser target registration rejects missing or malformed group IDs", async () => {
@@ -286,5 +298,5 @@ test("browser target removal is authenticated, room-scoped and idempotently deni
   const removed=await fetch(base+"/v1/browser/targets/unregister",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({targetId:browserRuntime.targetId,roomId:"12345678-1234-4234-9234-123456789014"})});
   assert.equal(removed.status,200);
   assert.equal((await removed.json()).removed,true);
- });
+ },{browserRuntime});
 });
