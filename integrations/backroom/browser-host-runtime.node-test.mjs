@@ -20,7 +20,7 @@ function fakePage({url="https://chatgpt.com/c/test",title="Research thread",sele
       bindingMarker=arg;return {state:"bound",marker:bindingMarker};
     }
     if(code.includes("removeAttribute")&&code.includes("data-rm-backroom-binding")){
-      if(isBound&&bindingMarker===expectedMarker)bindingMarker=null;
+      if(!isBound||bindingMarker===expectedMarker)bindingMarker=null;
       return true;
     }
     if(isBound&&bindingMarker!==expectedMarker)throw Error("stale target element");
@@ -39,6 +39,7 @@ function fakePage({url="https://chatgpt.com/c/test",title="Research thread",sele
    return null;
   },
   setSelection:v=>selection=v,value:()=>input,setUrl:v=>pageUrl=v,replaceNode:()=>{bindingMarker=null},
+  setBindingMarker:v=>{bindingMarker=v},bindingMarker:()=>bindingMarker,
   close:()=>{closed=true;handlers.close?.()},
  };
 }
@@ -170,5 +171,18 @@ test("unregister removes its DOM marker only after the last room binding is remo
  assert.equal((await runtime.listTargets()).length,1);
  assert.equal(await runtime.unregisterTarget(second.id,"room-2"),true);
  assert.equal((await runtime.listTargets()).length,0);
+ await runtime.stop();
+});
+
+test("site-owned marker attributes are cleared before host binding",async()=>{
+ const p=fakePage(),runtime=factory(fakeContext([p]));await runtime.start();
+ const foreign="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+ p.setBindingMarker(foreign);
+ const [page]=await runtime.listPages();
+ await runtime.startSelection(page.pageId,"room-1");
+ p.setSelection({state:"selected",selector:'textarea[aria-label="Prompt"]'});
+ const target=await runtime.registerSelectedTarget(page.pageId,"room-1");
+ assert.notEqual(p.bindingMarker(),foreign);
+ assert.equal((await runtime.listTargets()).length,1);
  await runtime.stop();
 });

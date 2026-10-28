@@ -88,3 +88,6 @@ The browser profile is a separate local Playwright profile and is not copied fro
 ### DOM node identity and target cleanup
 
 Each registered input receives a temporary `data-rm-backroom-binding` marker in the managed page. The saved locator requires both the original accessible selector and this marker, so if the application replaces its composer DOM node while keeping the same route and label, the old target fails closed instead of binding to the replacement. Target inventory revalidates the marker and route and prunes stale entries. Removing a target clears the marker only when no other room-bound target still references the same input; this leaves any text already in the application untouched.
+
+
+Marker ownership is verified at registration: a UUID-shaped `data-rm-backroom-binding` already present on the webpage is not trusted as a host registration. If the current host has no matching live target, it removes that namespaced marker conditionally and generates its own before binding.

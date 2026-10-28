@@ -360,6 +360,19 @@ export class BrowserHostRuntime {
     if (marker && !/^[a-f0-9-]{36}$/i.test(marker)) {
       throw new Error("Selected input has a conflicting binding attribute. Reload the tab and select again.");
     }
+    if (marker && ![...this.#bindings.values()].some(binding =>
+      binding.pageId === pageId && binding.marker === marker)) {
+      // A site may coincidentally use our data attribute. Only reuse a marker
+      // issued by this running host; clear an unowned UUID marker before rebinding.
+      const staleMarker = marker;
+      const cleared = await baseLocator.evaluate((node, expected) => {
+        if (!(node instanceof HTMLElement) || node.getAttribute("data-rm-backroom-binding") !== expected) return false;
+        node.removeAttribute("data-rm-backroom-binding");
+        return true;
+      }, staleMarker);
+      if (!cleared) throw new Error("Could not clear an unowned DOM marker. Reload the tab and select again.");
+      marker = null;
+    }
     if (!marker) {
       const requestedMarker = randomUUID();
       const attach = await baseLocator.evaluate((node, value) => {
