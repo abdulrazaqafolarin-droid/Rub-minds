@@ -255,9 +255,13 @@ export function createBackroomHostServer({
       actualPort = server.address().port;
       return Object.freeze({ host: "127.0.0.1", port: actualPort, hostId: authority.hostId });
     },
-    close() {
-      if (!server.listening) return Promise.resolve();
-      return new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    async close() {
+      let browserError = null;
+      try { await browser.stop(); } catch (error) { browserError = error; }
+      if (server.listening) {
+        await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      }
+      if (browserError) throw browserError;
     },
   };
 }

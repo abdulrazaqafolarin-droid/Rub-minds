@@ -73,3 +73,55 @@ test("health endpoint is no-store and query strings are rejected",async()=>{
   assert.equal((await fetch(base+"/health?token=oops",{headers:{Origin:origin}})).status,400);
  });
 });
+
+function fakeBrowserRuntime() {
+ let running=false, selected=null, targets=[];
+ const pageId="12345678-1234-4234-9234-123456789012";
+ const targetId="12345678-1234-4234-9234-123456789013";
+ const status=()=>({running,pages:running?1:0,capabilities:{browserDraft:running,desktopAccessibility:false,androidAccessibility:false,terminal:false}});
+ return {
+  status,
+  start:async()=>{running=true;return status()},
+  stop:async()=>{running=false;targets=[];return status()},
+  listPages:async()=>running?[{pageId,title:"Test chat",site:"chatgpt.com",canSelect:true}]:[],
+  startSelection:async id=>{if(id!==pageId)throw Error("page not found");selected={state:"pending"};return selected},
+  getSelection:async()=>({state:selected?.state||"unavailable"}),
+  registerSelectedTarget:async id=>{if(id!==pageId||selected?.state!=="selected")throw Error("selection missing");const t={id:targetId,pageId,title:"Test chat",site:"chatgpt.com",surface:"browser_tab",operations:["draft"]};targets.push(t);return t},
+  listTargets:()=>targets,
+  draft:async(id,text,{approved}={})=>{if(approved!==true)throw Error("approval required");if(!targets.some(t=>t.id===id))throw Error("target missing");return {state:"completed",result:{drafted:true,submitted:false},submitted:false}},
+  testSetSelected:()=>{selected={state:"selected"};},
+  pageId,targetId,
+ };
+}
+test("browser control routes require host pairing and expose truthful capability status",async()=>{
+ const browserRuntime=fakeBrowserRuntime();
+ await withHost(async({base,origin,host})=>{
+  const pairResult=await pair(base,origin);const credentials=await pairResult.json();const auth={Origin:origin,Authorization:"Bearer "+credentials.sessionToken};
+  assert.equal((await fetch(base+"/v1/browser/pages",{headers:{Origin:origin}})).status,401);
+  assert.equal((await fetch(base+"/v1/browser/start",{method:"POST",headers:auth})).status,200);
+  const hostStatus=await (await fetch(base+"/v1/host",{headers:auth})).json();
+  assert.equal(hostStatus.capabilities.browserDraft,true);assert.equal(hostStatus.capabilities.androidAccessibility,false);
+  const pages=await (await fetch(base+"/v1/browser/pages",{headers:auth})).json();
+  assert.equal(pages.pages[0].site,"chatgpt.com");
+  assert.equal((await fetch(base+"/v1/browser/select",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId})})).status,200);
+  browserRuntime.testSetSelected();
+  assert.equal((await fetch(base+"/v1/browser/targets",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId})})).status,201);
+  const draft=await fetch(base+"/v1/browser/draft",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({targetId:browserRuntime.targetId,text:"draft only",approved:true})});
+  assert.equal(draft.status,200);assert.equal((await draft.json()).submitted,false);
+  assert.equal((await fetch(base+"/v1/unpair",{method:"POST",headers:auth})).status,200);
+  assert.equal((await fetch(base+"/v1/browser/pages",{headers:auth})).status,401);
+ },{browserRuntime});
+});
+test("browser drafting endpoint requires explicit approval and JSON content type",async()=>{
+ const browserRuntime=fakeBrowserRuntime();
+ await withHost(async({base,origin})=>{
+  const creds=await (await pair(base,origin)).json();const auth={Origin:origin,Authorization:"Bearer "+creds.sessionToken};
+  await fetch(base+"/v1/browser/start",{method:"POST",headers:auth});
+  browserRuntime.testSetSelected();
+  await fetch(base+"/v1/browser/targets",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId})});
+  const noApproval=await fetch(base+"/v1/browser/draft",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({targetId:browserRuntime.targetId,text:"text",approved:false})});
+  assert.equal(noApproval.status,403);
+  const noJson=await fetch(base+"/v1/browser/select",{method:"POST",headers:auth,body:"{}"});
+  assert.equal(noJson.status,415);
+ },{browserRuntime});
+});
