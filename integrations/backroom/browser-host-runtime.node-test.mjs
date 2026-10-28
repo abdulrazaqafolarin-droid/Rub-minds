@@ -102,6 +102,25 @@ function fakeContext(pages=[]) {
 function factory(context) {
  return new BrowserHostRuntime({hostId:"host",profileDir:"/tmp/profile-test",chromiumProvider:async()=>({launchPersistentContext:async()=>context})});
 }
+test("Stop waits for an in-progress Chromium launch and closes the resulting context",async()=>{
+ let releaseLaunch, signalStarted;
+ const started=new Promise(resolve=>{signalStarted=resolve});
+ const gate=new Promise(resolve=>{releaseLaunch=resolve});
+ const page=fakePage();
+ const context=fakeContext([page]);
+ const runtime=new BrowserHostRuntime({
+  hostId:"host",profileDir:"/tmp/profile-stop-race",
+  chromiumProvider:async()=>{signalStarted();await gate;return {launchPersistentContext:async()=>context};}
+ });
+ const starting=runtime.start();
+ await started;
+ const stopping=runtime.stop();
+ releaseLaunch();
+ await Promise.all([starting,stopping]);
+ assert.equal(runtime.status().running,false);
+ assert.equal((await runtime.listPages()).length,0);
+});
+
 test("host starts a visible managed context and only advertises browser capability while running",async()=>{
  const p=fakePage({url:"https://claude.ai/chat/123"}),context=fakeContext([p]),runtime=factory(context);
  assert.equal(runtime.status().running,false);

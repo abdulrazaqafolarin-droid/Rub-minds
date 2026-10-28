@@ -166,6 +166,7 @@ const isEditable = node => {
 export class BrowserHostRuntime {
   #context = null;
   #starting = null;
+  #stopping = null;
   #pages = new Map();
   #pageIds = new WeakMap();
   #targets = new Map();
@@ -193,6 +194,9 @@ export class BrowserHostRuntime {
   }
   get running() { return Boolean(this.#context); }
   async start() {
+    // Serialize start/stop so a Stop issued during browser launch cannot leave
+    // a context running after the UI has reported it stopped.
+    if (this.#stopping) await this.#stopping;
     if (this.#context) return this.status();
     if (this.#starting) return this.#starting;
     this.#starting = (async () => {
@@ -223,18 +227,28 @@ export class BrowserHostRuntime {
     finally { this.#starting = null; }
   }
   async stop() {
-    const context = this.#context;
-    this.#context = null;
-    for (const binding of this.#bindings.values()) {
-      try { this.registry.unregister(binding.target.id, { roomId: binding.target.roomId, hostId: this.hostId }); } catch {}
-      try { await binding.nodeHandle?.dispose(); } catch {}
-    }
-    this.#pages.clear();
-    this.#selectionRooms.clear();
-    this.#targets.clear();
-    this.#bindings.clear();
-    if (context) await context.close();
-    return this.status();
+    if (this.#stopping) return this.#stopping;
+    this.#stopping = (async () => {
+      // If Chromium is still starting, wait for its result then close it below.
+      // A failed start is already stopped and should not prevent cleanup.
+      if (this.#starting) {
+        try { await this.#starting; } catch {}
+      }
+      const context = this.#context;
+      this.#context = null;
+      for (const binding of this.#bindings.values()) {
+        try { this.registry.unregister(binding.target.id, { roomId: binding.target.roomId, hostId: this.hostId }); } catch {}
+        try { await binding.nodeHandle?.dispose(); } catch {}
+      }
+      this.#pages.clear();
+      this.#selectionRooms.clear();
+      this.#targets.clear();
+      this.#bindings.clear();
+      if (context) await context.close();
+      return this.status();
+    })();
+    try { return await this.#stopping; }
+    finally { this.#stopping = null; }
   }
   #attachPage(page) {
     let id = this.#pageIds.get(page);
