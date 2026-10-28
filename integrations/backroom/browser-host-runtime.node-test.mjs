@@ -89,7 +89,7 @@ function fakePage({url="https://chatgpt.com/c/test",title="Research thread",sele
     if(activeAttemptId===arg)activeAttemptId=null;
     return true;
    }
-   if(code.includes("current?.attemptId === expectedAttemptId"))return selection?.attemptId===arg?selection:null;
+   if(code.includes("current?.attemptId === attemptId"))return selection?.attemptId===arg?selection:null;
    if(selection && code.includes("RM_BACKROOM_SELECTION_V1"))return selection;
    if(code.includes("RM_BACKROOM_SELECTION_V1"))return null;
    return null;
