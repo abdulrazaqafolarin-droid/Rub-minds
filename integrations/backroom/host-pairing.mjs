@@ -3,7 +3,6 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypt
 const CODE_RE = /^[a-f0-9]{32}$/i;
 const TOKEN_RE = /^[a-f0-9]{64}$/i;
 const sha256 = value => createHash("sha256").update(value, "utf8").digest();
-const sameDigest = (candidate, expected) => timingSafeEqual(sha256(candidate), expected);
 const validOrigin = origin => {
   if (typeof origin !== "string" || !origin || origin === "null") return false;
   try {
