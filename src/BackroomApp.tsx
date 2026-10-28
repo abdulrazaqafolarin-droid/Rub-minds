@@ -1,4 +1,4 @@
-import { useEffect, useState, type PointerEvent } from 'react';
+import { useEffect, useRef, useState, type PointerEvent } from 'react';
 import { Activity, ArrowLeft, ArrowRight, Bot, Check, ChevronDown, CircleHelp, Command, Cpu, ExternalLink, Laptop, Layers3, Monitor, MousePointer2, Plus, ShieldCheck, Smartphone, SquareTerminal, Trash2, WifiOff, X } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
@@ -11,6 +11,7 @@ type Rect = { x: number; y: number; width: number; height: number };
 type HostStatus = { hostId: string; label: string; expiresAt: number; protocolVersion: string; connected: boolean; executionReady: boolean; capabilities: Record<string, boolean>; nextStep: string; browserPages?: number };
 type BrowserPageRow = { pageId: string; title: string; site: string; canSelect: boolean };
 type BrowserTargetRow = { id: string; pageId: string; roomId: string; title: string; site: string; surface: string; operations: string[] };
+type PendingBrowserSelection = { pageId: string; roomId: string; generation: number };
 const surfaces: { id: Surface; name: string; detail: string }[] = [
   { id: 'browser_tab', name: 'Browser session', detail: 'ChatGPT, Claude and other browser conversations' },
   { id: 'desktop_app', name: 'Desktop AI app', detail: 'Native Claude, ChatGPT or other desktop applications' },
@@ -124,6 +125,8 @@ export default function BackroomApp() {
   const [browserUrl, setBrowserUrl] = useState('https://chatgpt.com/');
   const [browserNotice, setBrowserNotice] = useState('');
   const [browserBusy, setBrowserBusy] = useState(false);
+  const selectionGeneration = useRef(0);
+  const activeBrowserSelection = useRef<PendingBrowserSelection | null>(null);
   const [roomId, setRoomId] = useState(() => new URLSearchParams(location.search).get('room') || '');
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [active, setActive] = useState('');
@@ -175,11 +178,24 @@ export default function BackroomApp() {
   const room = rooms.find(r => r.id === roomId);
   useEffect(() => {
     // Never carry a selected source message or target across Rub Minds groups.
+    // Cancel a pending browser overlay server-side as well; otherwise a selection
+    // begun for the previous group could finish after the user changes rooms.
+    const pending = activeBrowserSelection.current;
+    if (pending && (pending.roomId !== room?.id || !hostToken)) {
+      activeBrowserSelection.current = null;
+      selectionGeneration.current += 1;
+      if (hostToken) {
+        void hostApi('/v1/browser/select/cancel', {
+          method: 'POST', body: { pageId: pending.pageId, roomId: pending.roomId },
+        }).catch(() => {});
+      }
+      setBrowserNotice('Input selection cancelled because the active group or host session changed.');
+    }
     setSelectedBrowserTarget('');
     setSelectedGroupMessageId('');
     setBrowserDraftText('@RMConnects: this is a local Backroom draft test. Please acknowledge without sending anything.');
     setBrowserNotice('');
-  }, [room?.id]);
+  }, [room?.id, hostToken]);
   useEffect(() => {
     if (!room?.id) { setGroupMessages([]); setSelectedGroupMessageId(''); return; }
     let alive = true;
@@ -441,28 +457,69 @@ export default function BackroomApp() {
     finally { setBrowserBusy(false); }
   }
   async function registerBrowserInput(pageId: string) {
-    if (!room?.id) { setBrowserNotice('Select a Rub Minds group before registering a typing area.'); return; }
-    setBrowserBusy(true); setBrowserNotice('Selection started. Switch to the managed browser and drag a rectangle around exactly one input field. Press Escape to cancel.');
+    const selectedRoomId = room?.id;
+    if (!selectedRoomId) { setBrowserNotice('Select a Rub Minds group before registering a typing area.'); return; }
+    const generation = ++selectionGeneration.current;
+    activeBrowserSelection.current = { pageId, roomId: selectedRoomId, generation };
+    const isCurrentSelection = () =>
+      selectionGeneration.current === generation &&
+      activeBrowserSelection.current?.generation === generation &&
+      activeBrowserSelection.current?.pageId === pageId &&
+      activeBrowserSelection.current?.roomId === selectedRoomId;
+    const cancelServerSelection = async () => {
+      try {
+        await hostApi('/v1/browser/select/cancel', {
+          method: 'POST', body: { pageId, roomId: selectedRoomId },
+        });
+      } catch { /* Host loss and group changes still cancel the local polling loop. */ }
+    };
+    setBrowserBusy(true); setBrowserNotice('Selection started. Switch to the managed browser and drag a rectangle around exactly one text input. Press Escape to cancel.');
     try {
-      await hostApi('/v1/browser/select', { method: 'POST', body: { pageId, roomId: room.id } });
+      await hostApi('/v1/browser/select', { method: 'POST', body: { pageId, roomId: selectedRoomId } });
+      if (!isCurrentSelection()) { await cancelServerSelection(); return; }
       for (let attempt = 0; attempt < 120; attempt++) {
         await new Promise<void>(resolve => window.setTimeout(resolve, 500));
+        if (!isCurrentSelection()) { await cancelServerSelection(); return; }
         const result = await hostApi<{ state: string; message?: string }>('/v1/browser/selection/' + encodeURIComponent(pageId));
+        if (!isCurrentSelection()) { await cancelServerSelection(); return; }
         if (result.state === 'selected') {
-          const target = await hostApi<BrowserTargetRow>('/v1/browser/targets', { method: 'POST', body: { pageId, roomId: room.id } });
+          if (!isCurrentSelection()) { await cancelServerSelection(); return; }
+          const target = await hostApi<BrowserTargetRow>('/v1/browser/targets', {
+            method: 'POST', body: { pageId, roomId: selectedRoomId },
+          });
+          if (!isCurrentSelection()) {
+            // A room switch may race with the target registration response.
+            // Revoke only this newly-created room-scoped target before returning.
+            try {
+              await hostApi('/v1/browser/targets/unregister', {
+                method: 'POST', body: { targetId: target.id, roomId: selectedRoomId },
+              });
+            } catch {}
+            await cancelServerSelection();
+            return;
+          }
           setBrowserTargets(previous => [target, ...previous.filter(existing => existing.id !== target.id)]);
           setSelectedBrowserTarget(target.id);
           setBrowserNotice('Input registered for draft-only use. The host will refuse to overwrite existing text and never presses Send.');
           return;
         }
         if (result.state === 'failed' || result.state === 'cancelled' || result.state === 'unavailable') {
-          setBrowserNotice(result.message || (result.state === 'cancelled' ? 'Selection cancelled.' : 'Selection failed or the tab changed.'));
+          await cancelServerSelection();
+          if (isCurrentSelection()) {
+            setBrowserNotice(result.message || (result.state === 'cancelled' ? 'Selection cancelled.' : 'Selection failed or the tab changed.'));
+          }
           return;
         }
       }
-      setBrowserNotice('Selection timed out. Return to the Backroom and start selection again.');
-    } catch (e) { setBrowserNotice(e instanceof Error ? e.message : 'Input selection failed.'); }
-    finally { setBrowserBusy(false); }
+      await cancelServerSelection();
+      if (isCurrentSelection()) setBrowserNotice('Selection timed out. The browser overlay was cancelled; start selection again.');
+    } catch (e) {
+      if (isCurrentSelection()) setBrowserNotice(e instanceof Error ? e.message : 'Input selection failed.');
+      await cancelServerSelection();
+    } finally {
+      if (activeBrowserSelection.current?.generation === generation) activeBrowserSelection.current = null;
+      setBrowserBusy(false);
+    }
   }
   async function removeBrowserTarget() {
     const target = roomBrowserTargets.find(t => t.id === selectedBrowserTarget);
