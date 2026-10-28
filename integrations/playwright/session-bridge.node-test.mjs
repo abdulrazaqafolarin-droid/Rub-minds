@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { PlaywrightSessionBridge } from "./session-bridge.mjs";
 
-function makeBridge({ messages = [], participantId = "self", maxReplies = 10, maxMessagesPerStep = 1 } = {}) {
+function makeBridge({ messages = [], participantId = "self", maxReplies = 10, maxMessagesPerStep = 1, allowAiHandoff = false, maxAiHandoffDepth = 2 } = {}) {
   const calls = [];
   const sent = [];
   const bridge = new PlaywrightSessionBridge({
@@ -10,6 +10,8 @@ function makeBridge({ messages = [], participantId = "self", maxReplies = 10, ma
     participantId,
     maxReplies,
     maxMessagesPerStep,
+    allowAiHandoff,
+    maxAiHandoffDepth,
     adapter: { ask: async (_page, body, meta) => { calls.push({ body, meta }); return "reply: " + body; } },
     readMessages: async () => ({ messages }),
     sendMessage: async (body, sourceMessageId) => { sent.push({ body, sourceMessageId }); return { ok: true }; },
@@ -23,22 +25,54 @@ test("requires explicit approval before reading group messages", async () => {
   assert.equal(calls.length, 0);
 });
 
-test("allows natural human and AI-to-AI conversation, excluding its own messages", async () => {
+test("defaults to human-origin messages and ignores its own and other AI messages", async () => {
   const { bridge, calls, sent } = makeBridge({
     messages: [
-      { id: "own", body: "my previous reply", sender_id: "self", sender_kind: "original_session" },
+      { id: "own", body: "my previous reply", sender_id: "self", sender_kind: "original_session", turn_depth: 0 },
       { id: "human-1", body: "We need a launch plan", sender_id: "human-1", sender_kind: "human" },
-      { id: "ai-1", body: "I suggest a staged rollout", sender_id: "ai-2", sender_kind: "external_agent", display_name: "Research AI" },
+      { id: "ai-1", body: "I suggest a staged rollout", sender_id: "ai-2", sender_kind: "external_agent", display_name: "Research AI", turn_depth: 1 },
     ],
     maxMessagesPerStep: 2,
   });
   const result = await bridge.step({ approved: true });
+  assert.equal(result.sent, 1);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].body, "We need a launch plan");
+  assert.equal(calls[0].meta.senderKind, "human");
+  assert.deepEqual(sent.map(item => item.sourceMessageId), ["human-1"]);
+});
+
+test("AI-to-AI handoff only runs when enabled and within an explicit server turn-depth cap", async () => {
+  const { bridge, calls, sent } = makeBridge({
+    allowAiHandoff: true,
+    maxAiHandoffDepth: 2,
+    maxMessagesPerStep: 5,
+    messages: [
+      { id: "ai-allowed", body: "bounded AI contribution", sender_id: "ai-2", sender_kind: "external_agent", turn_depth: 1 },
+      { id: "ai-at-cap", body: "too deep", sender_id: "ai-3", sender_kind: "model", turn_depth: 2 },
+      { id: "ai-without-depth", body: "missing depth", sender_id: "ai-4", sender_kind: "original_session" },
+      { id: "human", body: "fresh human task", sender_id: "human-1", sender_kind: "human" },
+      { id: "unknown", body: "system event", sender_id: "system", sender_kind: "system", turn_depth: 0 },
+    ],
+  });
+  const result = await bridge.step({ approved: true });
   assert.equal(result.sent, 2);
   assert.equal(calls.length, 2);
-  assert.equal(calls[0].body, "We need a launch plan");
-  assert.equal(calls[1].body, "I suggest a staged rollout");
-  assert.equal(calls[1].meta.senderName, "Research AI");
-  assert.deepEqual(sent.map(item => item.sourceMessageId), ["human-1", "ai-1"]);
+  assert.equal(calls[0].body, "bounded AI contribution");
+  assert.equal(calls[1].body, "fresh human task");
+  assert.deepEqual(sent.map(item => item.sourceMessageId), ["ai-allowed", "human"]);
+});
+
+test("constructor rejects unbounded or ill-typed AI handoff settings", async () => {
+  const base = {
+    page: { isClosed: () => false },
+    adapter: { ask: async () => "reply" },
+    readMessages: async () => ({ messages: [] }),
+    sendMessage: async () => {},
+  };
+  assert.throws(() => new PlaywrightSessionBridge({ ...base, allowAiHandoff: "yes" }), /allowAiHandoff/);
+  assert.throws(() => new PlaywrightSessionBridge({ ...base, maxAiHandoffDepth: 9 }), /maxAiHandoffDepth/);
+  assert.throws(() => new PlaywrightSessionBridge({ ...base, maxAiHandoffDepth: 0 }), /maxAiHandoffDepth/);
 });
 
 test("deduplicates previously seen message IDs across polling steps", async () => {
