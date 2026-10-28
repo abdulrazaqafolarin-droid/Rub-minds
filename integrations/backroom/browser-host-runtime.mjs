@@ -399,16 +399,16 @@ export class BrowserHostRuntime {
       }, selection.selector).catch(() => false);
       if (!sameNode) throw new Error("The selected input changed after the drag gesture. Select it again.");
 
-      const isMarkerOwnedBySelectedNode = async (candidate, expectedMarker = candidate) => {
+      const isMarkerOwnedBySelectedNode = async candidate => {
         for (const existingBinding of this.#bindings.values()) {
           if (existingBinding.pageId !== pageId || existingBinding.marker !== candidate) continue;
-          const isSameNode = await existingBinding.nodeHandle.evaluate((node, selectionId) => {
+          const isSameNode = await existingBinding.nodeHandle.evaluate((node, expected) => {
             const state = window.__RM_BACKROOM_SELECTION_V1__;
             return node instanceof HTMLElement && node.isConnected &&
               node === window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ &&
-              state?.selectionId === selectionId &&
-              node.getAttribute("data-rm-backroom-binding") === expectedMarker;
-          }, selection.selectionId).catch(() => false);
+              state?.selectionId === expected.selectionId &&
+              node.getAttribute("data-rm-backroom-binding") === expected.marker;
+          }, { selectionId: selection.selectionId, marker: candidate }).catch(() => false);
           if (isSameNode) return true;
         }
         return false;
