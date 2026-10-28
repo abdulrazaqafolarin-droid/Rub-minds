@@ -32,6 +32,11 @@ const isEditable = node => {
 };
   const KEY = "__RM_BACKROOM_SELECTION_V1__";
   const OVERLAY_ID = "__rm_backroom_target_overlay_v1";
+  const CLEANUP_KEY = "__RM_BACKROOM_SELECTION_CLEANUP_V1__";
+  try {
+    const cleanupPrevious = window[CLEANUP_KEY];
+    if (typeof cleanupPrevious === "function") cleanupPrevious();
+  } catch {}
   document.getElementById(OVERLAY_ID)?.remove();
   window[KEY] = { state: "pending" };
   window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = null;
@@ -47,13 +52,31 @@ const isEditable = node => {
   document.documentElement.append(root);
   let start = null;
   let finished = false;
-  const endState = state => { window[KEY] = state; if (state.state !== "selected") window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = null; root.remove(); window.removeEventListener("keydown", onKey, true); };
+  let cleanupOverlay = null;
+  const endState = state => {
+    window[KEY] = state;
+    if (state.state !== "selected") window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = null;
+    root.remove();
+    window.removeEventListener("keydown", onKey, true);
+    if (cleanupOverlay && window[CLEANUP_KEY] === cleanupOverlay) delete window[CLEANUP_KEY];
+  };
   const onKey = event => {
     if (event.key === "Escape" && !finished) {
       finished = true;
       endState({ state: "cancelled" });
     }
   };
+  cleanupOverlay = () => {
+    if (!finished) {
+      finished = true;
+      endState({ state: "cancelled", message: "Selection was replaced by a new selection." });
+      return;
+    }
+    root.remove();
+    window.removeEventListener("keydown", onKey, true);
+    if (window[CLEANUP_KEY] === cleanupOverlay) delete window[CLEANUP_KEY];
+  };
+  window[CLEANUP_KEY] = cleanupOverlay;
   const attrSelector = (node, attr) => {
     const value = node.getAttribute(attr);
     if (!value || value.length > 160 || /[\r\n]/.test(value)) return null;
@@ -89,11 +112,21 @@ const isEditable = node => {
   };
   const fail = message => {
     finished = true;
-    window[KEY] = { state: "failed", message };
+    const failureState = { state: "failed", message };
+    window[KEY] = failureState;
     window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = null;
     hint.textContent = message;
     hint.style.background = "#541d2b";
-    window.setTimeout(() => endState(window[KEY]), 1200);
+    window.setTimeout(() => {
+      if (window[KEY] === failureState) endState(failureState);
+      else {
+        // A new overlay may have replaced this failed selection while its
+        // feedback timer was pending. Clean only the old overlay/listener.
+        root.remove();
+        window.removeEventListener("keydown", onKey, true);
+        if (window[CLEANUP_KEY] === cleanupOverlay) delete window[CLEANUP_KEY];
+      }
+    }, 1200);
   };
   root.addEventListener("pointerdown", event => {
     if (finished || event.button !== 0) return;
@@ -115,6 +148,14 @@ const isEditable = node => {
     rectangle.style.top = top + "px";
     rectangle.style.width = Math.abs(event.clientX - start.x) + "px";
     rectangle.style.height = Math.abs(event.clientY - start.y) + "px";
+  });
+  root.addEventListener("pointercancel", event => {
+    if (!start || finished) return;
+    event.preventDefault();
+    start = null;
+    rectangle.style.display = "none";
+    finished = true;
+    endState({ state: "cancelled", message: "Selection gesture was interrupted. Try again." });
   });
   root.addEventListener("pointerup", event => {
     if (!start || finished) return;
@@ -158,6 +199,7 @@ const isEditable = node => {
     hint.style.background = "#153a32";
     window.setTimeout(() => root.remove(), 800);
     window.removeEventListener("keydown", onKey, true);
+    if (window[CLEANUP_KEY] === cleanupOverlay) delete window[CLEANUP_KEY];
   });
   window.addEventListener("keydown", onKey, true);
   return { state: "pending" };
