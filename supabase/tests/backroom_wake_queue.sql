@@ -80,7 +80,8 @@ begin
   select * into v_claim from public.claim_backroom_wake_jobs('host-test',v_session_digest,5,30) limit 1;
   if not found or v_claim.out_job_id::text <> (v_first->>'job_id')
     or v_claim.out_attempt_count <> 1 or v_claim.out_lease_token is null
-    or v_claim.out_target_identity_fingerprint <> 'fingerprint-1' then
+    or v_claim.out_target_identity_fingerprint <> 'fingerprint-1'
+    or v_claim.out_prompt_digest <> pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_claim.out_prompt,'UTF8')),'hex') then
     raise exception 'Claim must return the job and a one-shot lease token';
   end if;
   select count(*) into v_count from public.claim_backroom_wake_jobs('host-test',v_session_digest,5,30);
@@ -133,6 +134,9 @@ begin
   v_expire_job := public.enqueue_backroom_wake_job(
     repeat('4',64),v_owner,v_room,v_participant,'host-test','space-1','session-4',repeat('e',64),
     'binding-4','target-4','fingerprint-4',1,'event-4','@RMconnects'||chr(10)||'Event: event-4',3600);
+  update public.rub_minds_mcp_sessions set terminated_at=pg_catalog.clock_timestamp() where session_digest=repeat('e',64);
+  select count(*) into v_count from public.claim_backroom_wake_jobs('host-test',repeat('e',64),5,30);
+  if v_count <> 0 then raise exception 'Terminated MCP sessions must not claim queued wake jobs'; end if;
   update public.backroom_wake_jobs set expires_at=pg_catalog.clock_timestamp()-interval '1 second'
     where id=(v_expire_job->>'job_id')::uuid;
   if public.expire_backroom_wake_jobs() < 1 then raise exception 'Expiry function should expire overdue jobs'; end if;
