@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { PlaywrightSessionBridge } from "./session-bridge.mjs";
 
-function makeBridge({ messages = [], participantId = "self", maxReplies = 10, maxMessagesPerStep = 1, allowAiHandoff = false, maxAiHandoffDepth = 2, maxSeenMessages = 5000 } = {}) {
+function makeBridge({ messages = [], participantId = "self", maxReplies = 10, maxMessagesPerStep = 1, maxMessageChars = 12000, allowAiHandoff = false, maxAiHandoffDepth = 2, maxSeenMessages = 5000 } = {}) {
   const calls = [];
   const sent = [];
   const bridge = new PlaywrightSessionBridge({
@@ -10,6 +10,7 @@ function makeBridge({ messages = [], participantId = "self", maxReplies = 10, ma
     participantId,
     maxReplies,
     maxMessagesPerStep,
+    maxMessageChars,
     allowAiHandoff,
     maxAiHandoffDepth,
     maxSeenMessages,
@@ -76,6 +77,32 @@ test("constructor rejects unbounded or ill-typed AI handoff settings", async () 
   assert.throws(() => new PlaywrightSessionBridge({ ...base, maxAiHandoffDepth: 0 }), /maxAiHandoffDepth/);
   assert.throws(() => new PlaywrightSessionBridge({ ...base, maxSeenMessages: 0 }), /maxSeenMessages/);
   assert.throws(() => new PlaywrightSessionBridge({ ...base, maxSeenMessages: 100001 }), /maxSeenMessages/);
+});
+
+test("oversized group messages stop before provider access and require review", async () => {
+  const { bridge, calls } = makeBridge({
+    maxMessageChars: 12,
+    messages: [
+      { id: "too-large", body: "x".repeat(13), sender_kind: "human" },
+      { id: "next", body: "short", sender_kind: "human" },
+    ],
+  });
+  const result = await bridge.step({ approved: true });
+  assert.equal(result.status, "message_too_large");
+  assert.equal(result.messageId, "too-large");
+  assert.equal(calls.length, 0);
+  assert.equal(bridge.seen.has("too-large"), true, "oversized input should not be retried automatically");
+});
+
+test("constructor rejects unsafe message-size limits", () => {
+  const base = {
+    page: { isClosed: () => false },
+    adapter: { ask: async () => "reply" },
+    readMessages: async () => ({ messages: [] }),
+    sendMessage: async () => ({ ok: true }),
+  };
+  assert.throws(() => new PlaywrightSessionBridge({ ...base, maxMessageChars: 0 }), /maxMessageChars/);
+  assert.throws(() => new PlaywrightSessionBridge({ ...base, maxMessageChars: 50001 }), /maxMessageChars/);
 });
 
 test("seen-message budget stops safely instead of allowing unbounded dedupe growth", async () => {
