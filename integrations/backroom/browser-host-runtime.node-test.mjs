@@ -5,7 +5,7 @@ import { BrowserHostRuntime } from "./browser-host-runtime.mjs";
 function fakePage({url="https://chatgpt.com/c/test",title="Research thread",selection=null,closed=false}={}) {
  const handlers={}; let input="", pageUrl=url, bindingMarker=null;
  const locator = (selector="") => {
-  const markerMatch=/\\[data-rm-backroom-binding="([^"]+)"\\]$/.exec(selector);
+  const markerMatch=/\[data-rm-backroom-binding="([^"]+)"\]$/.exec(selector);
   const expectedMarker=markerMatch?.[1];
   const isBound=Boolean(expectedMarker);
   return {
