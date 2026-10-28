@@ -70,6 +70,10 @@ export function createBackroomHostServer({
   const authority = new HostPairingAuthority({ allowedOrigins, pairingCode, hostId, now });
   let actualPort = port;
   const server = createServer(async (request, response) => {
+    if (typeof request.url !== "string" || !request.url.startsWith("/") || request.url.startsWith("//")) {
+      writeJson(response, 400, { error: "invalid_request_target" });
+      return;
+    }
     const requestOrigin = request.headers.origin;
     const requestHost = request.headers.host ?? "";
     if (!validLoopbackHost(requestHost, actualPort)) {
@@ -145,6 +149,11 @@ export function createBackroomHostServer({
     }
     writeJson(response, 404, { error: "not_found" }, cors);
   });
+  server.headersTimeout = 8_000;
+  server.requestTimeout = 15_000;
+  server.keepAliveTimeout = 5_000;
+  server.maxHeadersCount = 50;
+  server.setTimeout(15_000, socket => socket.destroy());
   return {
     server,
     authority,
