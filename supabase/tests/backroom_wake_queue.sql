@@ -17,6 +17,14 @@ declare
   v_retry_state text;
   v_ok boolean;
 begin
+  insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,room_id,participant_id,expires_at,terminated_at)
+  values
+    (repeat('b',64),'ci-ciphertext-b',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
+    (repeat('c',64),'ci-ciphertext-c',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
+    (repeat('d',64),'ci-ciphertext-d',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
+    (repeat('e',64),'ci-ciphertext-e',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
+    (repeat('f',64),'ci-ciphertext-f',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',pg_catalog.clock_timestamp());
+
   if not (select relrowsecurity from pg_catalog.pg_class where oid='public.backroom_wake_jobs'::regclass) then
     raise exception 'Backroom wake jobs must have RLS enabled';
   end if;
@@ -36,6 +44,18 @@ begin
     or not has_function_privilege('service_role','public.claim_backroom_wake_jobs(text,text,integer,integer)','EXECUTE') then
     raise exception 'Claim RPC grants are unsafe';
   end if;
+
+  -- A format-valid digest is not sufficient: terminated MCP sessions cannot enqueue.
+  v_conflict := false;
+  begin
+    perform public.enqueue_backroom_wake_job(
+      repeat('5',64),v_owner,v_room,v_participant,'host-test','space-1','session-5',repeat('f',64),
+      'binding-5','target-5','fingerprint-5',1,'event-5','@RMconnects'||chr(10)||'Event: event-5',3600);
+  exception when others then
+    if sqlerrm <> 'Active MCP session does not authorize this group participant' then raise; end if;
+    v_conflict := true;
+  end;
+  if not v_conflict then raise exception 'Terminated MCP sessions must not enqueue wake jobs'; end if;
 
   v_first := public.enqueue_backroom_wake_job(
     repeat('1',64),v_owner,v_room,v_participant,'host-test','space-1','session-1',v_session_digest,
