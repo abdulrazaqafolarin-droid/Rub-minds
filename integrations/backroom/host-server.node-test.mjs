@@ -99,6 +99,7 @@ function fakeBrowserRuntime() {
   stop:async()=>{running=false;targets=[];return status()},
   listPages:async()=>running?[{pageId,title:"Test chat",site:"chatgpt.com",canSelect:true}]:[],
   startSelection:async(id,roomId)=>{if(id!==pageId)throw Error("page not found");selectionRoom=roomId;selected={state:"pending"};return selected},
+  cancelSelection:async(id,roomId)=>{if(id!==pageId||roomId!==selectionRoom||!selected)return false;selectionRoom=null;selected=null;return true},
   getSelection:async()=>({state:selected?.state||"unavailable"}),
   registerSelectedTarget:async(id,roomId)=>{if(id!==pageId||selected?.state!=="selected"||roomId!==selectionRoom)throw Error("selection missing or wrong room");const t={id:targetId,pageId,roomId,title:"Test chat",site:"chatgpt.com",surface:"browser_tab",operations:["draft"]};targets.push(t);return t},
   listTargets:async()=>targets,
@@ -145,6 +146,28 @@ test("browser drafting endpoint requires explicit approval and JSON content type
   const noJson=await fetch(base+"/v1/browser/select",{method:"POST",headers:auth,body:"{}"});
   assert.equal(noJson.status,415);
  },{browserRuntime});
+});
+
+test("selection cancellation requires the paired host and matching group",async()=>{
+ const browserRuntime=fakeBrowserRuntime();
+ await withHost(async({base,origin})=>{
+  const credentials=await (await pair(base,origin)).json();
+  const auth={Origin:origin,Authorization:"Bearer "+credentials.sessionToken};
+  const roomId="12345678-1234-4234-9234-123456789014";
+  await fetch(base+"/v1/browser/start",{method:"POST",headers:auth});
+  const select=await fetch(base+"/v1/browser/select",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId})});
+  assert.equal(select.status,200);
+  const wrongRoom=await fetch(base+"/v1/browser/select/cancel",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId:"22345678-1234-4234-9234-123456789014"})});
+  assert.equal(wrongRoom.status,200);
+  assert.equal((await wrongRoom.json()).cancelled,false);
+  const cancelled=await fetch(base+"/v1/browser/select/cancel",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId})});
+  assert.equal(cancelled.status,200);
+  assert.equal((await cancelled.json()).cancelled,true);
+  const stale=await fetch(base+"/v1/browser/targets",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId})});
+  assert.equal(stale.status,400);
+  const invalid=await fetch(base+"/v1/browser/select/cancel",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId:"bad"})});
+  assert.equal(invalid.status,400);
+ });
 });
 
 test("browser target registration rejects missing or malformed group IDs", async () => {
