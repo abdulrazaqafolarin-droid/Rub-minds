@@ -80,6 +80,14 @@ Browser targets now bind to the exact origin, path, query string and hash at reg
 
 Do not start this local host on a shared, public or production server. It is a per-user local process, not a hosted worker. A phone opening Backroom on the hosted website cannot control a laptop's `127.0.0.1`; the host and Backroom web page have to run on the same device. Native phone control is not implemented by this browser adapter.
 
+## Emergency stop and host restart
+
+The authenticated local endpoint `POST /v1/host/stop` is the Backroom host-wide kill switch. The paired browser can invoke it after explicit user confirmation. The host latches the stopped state before attempting to close the managed Playwright context, revokes all paired sessions, and then verifies whether the browser is closed. Once latched, host APIs and pairing return HTTP 423 until the local host process is restarted; the one-time pairing code is not reusable.
+
+On a fully successful stop, the endpoint returns HTTP 200 with `stopped`, `browserClosed`, `sessionsRevoked`, and `restartRequired`. If browser closure cannot be verified, it returns HTTP 503 but remains latched and paired sessions are still revoked. In that case, stop the host process with Ctrl+C and close any remaining managed-browser windows manually before restarting.
+
+This control closes only the Backroom-managed browser context. It cannot close unrelated browser profiles, native ChatGPT/Claude apps, operating-system windows or third-party sessions. It is not a guarantee that text already inserted before the stop request will be removed; the adapter is draft-only and does not click Send.
+
 ## Data boundary
 
 The browser profile is a separate local Playwright profile and is not copied from Chrome/Edge/Firefox or the ChatGPT/Claude native apps. Cookies and conversation state remain in that profile. Backroom lists only tab title and site for its browser inventory; it does not scrape conversation content. Text is supplied by the user or selected from group messages only when the user chooses it in the UI. The host stores target selector, route fingerprint, page ID, host ID and group ID in process memory only. The only local profile directory is `~/.rub-minds/backroom/browser-profile`.
