@@ -125,8 +125,16 @@ export class PlaywrightSessionBridge {
       if (typeof response !== "string" || !response.trim()) continue;
 
       try {
-        // The transport should use source message IDs as idempotency keys.
-        await this.sendMessage(response.trim(), message.id);
+        // The transport should use source message IDs as idempotency keys and
+        // explicitly acknowledge accepted delivery.
+        const delivery = await this.sendMessage(response.trim(), message.id);
+        if (!(delivery === true || delivery?.ok === true || delivery?.status === "sent")) {
+          return {
+            status: "send_outcome_ambiguous", sent, processed,
+            messageId: message.id,
+            reason: "The transport did not confirm delivery. Verify the group before retrying.",
+          };
+        }
       } catch {
         // A send rejection can be ambiguous: the server may have accepted the
         // response before the connection failed. Keep the message ID in the
