@@ -30,6 +30,7 @@ create table if not exists public.backroom_input_bindings (
   locator_value text not null check (char_length(btrim(locator_value)) between 1 and 2048),
   participation_mode text not null default 'mentions' check (participation_mode in ('mentions','smart','task')),
   wake_enabled boolean not null default false,
+  wake_grant_id uuid,
   wake_expires_at timestamptz,
   max_wakes_per_minute integer not null default 6 check (max_wakes_per_minute between 1 and 6),
   confirmed_at timestamptz,
