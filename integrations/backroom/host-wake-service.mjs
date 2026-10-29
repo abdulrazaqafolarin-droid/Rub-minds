@@ -26,8 +26,9 @@ export function createHostWakeService({identity,browserRuntime,journalDirectory,
   throw new TypeError('Trusted local host identity and browser runtime required');
  const trustedUrl=trustedGatewayUrl(gatewayUrl);
  const journal=new FileWakeExecutionJournal({directory:journalDirectory});
- let remote=null,poller=null,scope=null,activeGrantId=null;
+ let remote=null,poller=null,scope=null,activeGrantId=null,expiryTimer=null;
  async function stop(){
+  if(expiryTimer){clearTimeout(expiryTimer);expiryTimer=null;}
   await poller?.stop();
   if(!remote||!scope||!activeGrantId)return Object.freeze({stopped:true,remotelyDeactivated:null});
   try{
@@ -66,12 +67,20 @@ export function createHostWakeService({identity,browserRuntime,journalDirectory,
      grant.scope.bindingId!==input?.bindingId||grant.scope.groupId!==input?.roomId||
      grant.scope.participantId!==input?.participantId||grant.scope.sessionId!==input?.sessionId)
    throw new Error('Local consent grant does not authorize configured hosted binding');
+  const remainingMs=Number.isFinite(grant.expiresAt)?grant.expiresAt-Date.now():0;
+  // Reserve a safety margin for request latency so hosted consent never outlives
+  // the local user's actual one-shot grant.
+  const ttlSeconds=Math.min(300,Math.floor((remainingMs-5000)/1000));
+  if(ttlSeconds<60)throw new Error('Local wake grant has insufficient remaining lifetime');
   const accepted=await remote.activate({hostId:identity.hostId,
     bindingId:scope.bindingId,sessionDigest:scope.sessionDigest,
-    grantId:grant.grantId,ttlSeconds:300});
+    grantId:grant.grantId,ttlSeconds});
   if(accepted!==true)throw new Error('Hosted wake consent activation denied');
   activeGrantId=grant.grantId;
   await poller.start();
+  const localExpiryMs=Math.max(0,grant.expiresAt-Date.now());
+  expiryTimer=setTimeout(()=>{expiryTimer=null;void stop();},localExpiryMs);
+  expiryTimer.unref?.();
  }
  return Object.freeze({
   configure,activateAndStart,stop,
