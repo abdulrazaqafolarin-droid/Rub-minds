@@ -311,6 +311,24 @@ export class CuaSandboxTerminalWorkspace {
     const args=['--json','sb','exec','-i','--local','--timeout',String(Math.max(1,Math.ceil(this.timeoutMs/1000)))];if(cwd)args.push('--cwd',cwd);args.push(this.sandboxName,'--',...command);
     const r=await this.#run(args);return Object.freeze({state:r.code===0?'completed':'failed',exitCode:r.code,stdout:r.stdout.slice(0,this.outputLimitBytes),stderr:r.stderr.slice(0,4000),sandboxName:this.sandboxName});
   }
+  async diffProject({groupId,sessionId}={}){
+    if(!this.ready||this.closed)throw new Error('Dedicated terminal sandbox is not ready');
+    if(!this.projectSync)throw new Error('Sync an approved local project snapshot before reviewing terminal changes');
+    scopeIds(groupId,sessionId);
+    const approval=await this.approve(Object.freeze({
+      kind:'terminal_diff_export',sandboxName:this.sandboxName,groupId,sessionId,
+      destination:'Rub Minds Backroom browser · review only',
+      warning:'Return a bounded Git patch for inspection. This does not edit or apply changes to the host repository.'
+    }));
+    if(approval!==true)throw new Error('Local approval denied terminal diff export');
+    const staged=await this.#runGuest(['git','-C','/workspace/project','add','-N','--','.']);
+    const result=await this.#runGuest(['git','-C','/workspace/project','diff','--no-ext-diff','--no-textconv','--binary','--no-color','--no-renames','HEAD','--','.']);
+    const patch=result.stdout;
+    const bytes=Buffer.byteLength(patch,'utf8');
+    if(bytes>512*1024)throw new Error('Workspace diff exceeds the 512 KiB review limit; split it into smaller reviewed changes');
+    if(HIGH_CONFIDENCE_SECRET.test(patch))return Object.freeze({state:'needs_review',patch:'',bytes,sha256:createHash('sha256').update(patch).digest('hex'),reason:'Potential credential or private-key material detected. Patch was not returned to the browser.'});
+    return Object.freeze({state:'completed',patch,bytes,sha256:createHash('sha256').update(patch).digest('hex'),empty:patch.length===0,appliedToHost:false,destination:'Rub Minds Backroom browser review only'});
+  }
   async close(){if(this.closed)return;this.closed=true;if(this.ready){const r=await this.#run(['--json','sb','rm','--local',this.sandboxName],30000).catch(()=>null);this.ready=false;if(!r||r.code!==0)throw new Error('Dedicated sandbox removal could not be verified');}}
   get status(){return Object.freeze({configured:true,ready:this.ready,closed:this.closed,sandboxName:this.sandboxName,hostShellAvailable:false,projectConfigured:typeof this.projectSourcePath==='string'&&!!this.projectSourcePath.trim(),projectSynced:!!this.projectSync,projectFileCount:this.projectSync?.fileCount??0,projectSourceBytes:this.projectSync?.sourceBytes??0,projectSyncedAt:this.projectSync?.syncedAt??null});}
 }
@@ -328,6 +346,7 @@ export function createExternalWorkspaceService({desktop=null,android=null,termin
     async observeAndroid(input){if(stopped||!android)throw new Error('android_workspace_unavailable');return android.observe(input);},
     async execTerminal(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.exec(input);},
     async syncTerminalProject(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.syncProject(input);},
+    async diffTerminalProject(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.diffProject(input);},
     async stop(){if(stopped)return Object.freeze({stopped:true,closeFailures:0});stopped=true;const jobs=[desktop?.client?.close?.(),android?.client?.close?.(),terminal?.close?.()].filter(Boolean);const settled=await Promise.allSettled(jobs);return Object.freeze({stopped:true,closeFailures:settled.filter(x=>x.status==='rejected').length});}
   });
 }
