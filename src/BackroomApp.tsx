@@ -521,12 +521,20 @@ export default function BackroomApp() {
     if(!binding||!hostedWakeGrantId)return;
     setHostBusy(true);
     try{
-      await hostApi('/v1/browser/wake/grants/revoke',{method:'POST',body:{
+      const result=await hostApi<{
+        revoked:boolean;localPollingStopped:boolean;
+        remoteDeactivationConfirmed?:boolean;remoteDeactivationPending?:boolean
+      }>('/v1/browser/wake/grants/revoke',{method:'POST',body:{
         grantId:hostedWakeGrantId,targetId:binding.targetId,roomId:binding.roomId,bindingId:binding.bindingId
       }});
+      if(result.revoked!==true || result.localPollingStopped!==true)
+        throw new Error('The local wake grant could not be confirmed revoked.');
       setHostedWakeGrantId('');
       setHostedWakeBinding(previous=>previous?{...previous,wakeEnabled:false}:previous);
-      setHostMessage('Local wake grant revoked and polling stopped. No new automated sends are authorized.');
+      setHostMessage(result.remoteDeactivationConfirmed===true
+        ? 'Wake grant revoked; local polling stopped and hosted consent deactivation confirmed.'
+        : 'Wake grant revoked locally and polling stopped, but the server did not confirm remote deactivation. The old consent expires within 5 minutes. For immediate server-side cancellation, revoke this input binding.');
+
     }catch(error){
       setHostMessage(error instanceof Error?error.message:'Could not confirm wake revocation. Use Emergency Stop.');
     }finally{setHostBusy(false);}
