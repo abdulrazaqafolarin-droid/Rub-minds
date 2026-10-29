@@ -11,6 +11,13 @@ const LEASE=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const ERROR_CODES=new Set(['target_unavailable','approval_required','provider_busy','transport_error','result_unconfirmed','authorization_denied','other']);
 function requireMatch(value,re,name){if(typeof value!=='string'||!re.test(value))throw new TypeError('Invalid '+name);return value;}
 function requireLabel(value,name,max=256){if(typeof value!=='string'||value.trim()===''||value.length>max||/[\u0000-\u001f]/.test(value))throw new TypeError('Invalid '+name);return value;}
+function requirePrompt(value){
+ if(typeof value!=='string'||value.trim()===''||value.length>12000||
+    !value.startsWith('@RMconnects\n')||/[\u0000-\u0009\u000b-\u001f\u007f]/.test(value)){
+  throw new TypeError('Invalid prompt');
+ }
+ return value;
+}
 function requireInt(value,name,min,max){if(!Number.isSafeInteger(value)||value<min||value>max)throw new RangeError('Invalid '+name);return value;}
 function requireBoolean(value,name){if(typeof value!=='boolean')throw new TypeError('Invalid '+name);return value;}
 function rpcError(name,error){const code=typeof error?.code==='string'?error.code:'unknown';const e=new Error('Backroom queue RPC '+name+' failed ('+code+')');e.code='BACKROOM_QUEUE_RPC';throw e;}
@@ -44,7 +51,7 @@ export class SupabaseBackroomWakeStore{
    p_target_identity_fingerprint:requireLabel(target.identityFingerprint,'identityFingerprint',512),
    p_target_revision:requireInt(target.revision,'targetRevision',1,2147483647),
    p_event_id:requireLabel(p.eventId,'eventId',256),
-   p_prompt:requireLabel(p.prompt,'prompt',12000),
+   p_prompt:requirePrompt(p.prompt),
    p_ttl_seconds:input.ttlSeconds===undefined?3600:requireInt(input.ttlSeconds,'ttlSeconds',60,86400),
   };
   if(binding.groupId!==p.groupId||binding.participantId!==p.participantId||binding.sessionId!==p.sessionId||
