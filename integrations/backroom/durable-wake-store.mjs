@@ -74,7 +74,7 @@ export class SupabaseBackroomWakeStore{
       !Number.isSafeInteger(row.out_attempt_count)||row.out_attempt_count<1||row.out_attempt_count>5||
       typeof row.out_target_identity_fingerprint!=='string'||row.out_target_identity_fingerprint.trim()===''||row.out_target_identity_fingerprint.length>512||
       !Number.isSafeInteger(row.out_target_revision)||row.out_target_revision<1||
-      typeof row.out_prompt!=='string'||row.out_prompt.length>12000||!row.out_prompt.startsWith('@RMconnects\n')||
+      typeof row.out_prompt!=='string'||row.out_prompt.length>12000||!isCanonicalWakePrompt(row.out_prompt,row.out_event_id)||
       !HEX64.test(row.out_prompt_digest)||
       createHash('sha256').update(row.out_prompt,'utf8').digest('hex')!==row.out_prompt_digest||
       typeof row.out_event_id!=='string'||row.out_event_id.trim()===''||row.out_event_id.length>256||
