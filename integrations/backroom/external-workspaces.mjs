@@ -235,12 +235,25 @@ export class CuaSandboxTerminalWorkspace {
     const spawn=this.spawnImpl??(await import('node:child_process')).spawn;
     return new Promise((resolve,reject)=>{
       let child;try{child=spawn(this.command,args,{shell:false,windowsHide:true,stdio:['ignore','pipe','pipe']});}catch{reject(new Error('Could not launch CUA CLI'));return;}
-      let stdout='',stderr='',bytes=0,settled=false;
-      const append=(which,chunk)=>{bytes+=chunk.length;if(bytes>this.outputLimitBytes){try{child.kill('SIGTERM');}catch{}return;}if(which==='out')stdout+=chunk.toString('utf8');else stderr+=chunk.toString('utf8');};
+      let stdout='',stderr='',bytes=0,settled=false,overflow=false,killTimer=null;
+      const forceTerminate=()=>{
+        try{child.kill('SIGTERM');}catch{}
+        if(!killTimer){killTimer=setTimeout(()=>{try{if(child.exitCode===null)child.kill('SIGKILL');}catch{}},1000);killTimer.unref?.();}
+      };
+      const append=(which,chunk)=>{
+        bytes+=chunk.length;
+        if(bytes>this.outputLimitBytes){overflow=true;forceTerminate();return;}
+        if(which==='out')stdout+=chunk.toString('utf8');else stderr+=chunk.toString('utf8');
+      };
       child.stdout?.on('data',chunk=>append('out',chunk));child.stderr?.on('data',chunk=>append('err',chunk));
-      const timer=setTimeout(()=>{if(settled)return;settled=true;try{child.kill('SIGTERM');}catch{}reject(new Error('Sandbox command timed out'));},timeoutMs);timer.unref?.();
-      child.once('error',()=>{if(settled)return;settled=true;clearTimeout(timer);reject(new Error('CUA sandbox process failed'));});
-      child.once('close',(code,signal)=>{if(settled)return;settled=true;clearTimeout(timer);if(bytes>this.outputLimitBytes){reject(new Error('Sandbox output exceeded configured limit'));return;}resolve(Object.freeze({code:Number.isInteger(code)?code:1,signal:signal??null,stdout,stderr:stderr.slice(0,4000)}));});
+      const timer=setTimeout(()=>{if(settled)return;settled=true;forceTerminate();reject(new Error('Sandbox command timed out'));},timeoutMs);timer.unref?.();
+      child.once('error',()=>{if(settled)return;settled=true;clearTimeout(timer);if(killTimer)clearTimeout(killTimer);reject(new Error('CUA sandbox process failed'));});
+      child.once('close',(code,signal)=>{
+        clearTimeout(timer);if(killTimer)clearTimeout(killTimer);
+        if(settled)return;settled=true;
+        if(overflow){reject(new Error('Sandbox output exceeded configured limit'));return;}
+        resolve(Object.freeze({code:Number.isInteger(code)?code:1,signal:signal??null,stdout,stderr:stderr.slice(0,4000)}));
+      });
     });
   }
   async #runGuest(command,timeoutMs=this.timeoutMs){
