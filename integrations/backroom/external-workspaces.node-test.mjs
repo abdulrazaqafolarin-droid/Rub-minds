@@ -278,7 +278,7 @@ async function makeSyncedTerminalWithPatch(root,patch,authorize=async()=>true){
 test('terminal diff is bounded, credential-scanned and review-only',async()=>{
  const root=await projectFixture();
  try{
-  const {terminal,calls}=await makeSyncedTerminalWithPatch(root,'diff --git a/src/index.js b/src/index.js\n+export const safe=true;\n');
+  const {terminal,calls}=await makeSyncedTerminalWithPatch(root,'diff --git a/src/index.js b/src/index.js\n--- a/src/index.js\n+++ b/src/index.js\n@@ -1 +1 @@\n-export const safe=false;\n+export const safe=true;\n');
   const result=await terminal.diffProject({groupId:'group-1',sessionId:'session-1'});
   assert.equal(result.state,'completed');assert.equal(result.appliedToHost,false);assert.equal(result.destination,'Rub Minds Backroom browser review only');assert.match(result.sha256,/^[a-f0-9]{64}$/);assert.ok(result.patch.includes('safe=true'));
   assert.ok(calls.at(-1).args.includes('diff'));assert.ok(calls.at(-1).args.includes('--no-ext-diff'));assert.equal(calls.at(-1).options.shell,false);
@@ -352,6 +352,17 @@ test('terminal refuses path-traversing patch headers before issuing an apply tok
   await assert.rejects(d.diffProject({groupId:'g',sessionId:'s'}),/unsafe file path/);
   await assert.rejects(d.applyProjectDiff({exportKey:'a'.repeat(64),sha256:'b'.repeat(64),groupId:'g',sessionId:'s'}),/expired or outside/);
  }finally{await d.close().catch(()=>{});await rm(root,{recursive:true,force:true});}
+});
+
+test('terminal diff rejects headers that disagree with the diff destination before issuing an apply token',async()=>{
+ const root=await projectFixture();
+ const patch='diff --git a/src/index.js b/src/index.js\n--- a/src/index.js\n+++ b/../../outside.js\n@@ -1 +1 @@\n-old\n+new\n';
+ try{
+  const {terminal}=await makeSyncedTerminalWithPatch(root,patch);
+  await assert.rejects(terminal.diffProject({groupId:'group-1',sessionId:'session-1'}),/new-file header does not match its diff path/);
+  await assert.rejects(terminal.applyProjectDiff({exportKey:'a'.repeat(64),sha256:'b'.repeat(64),groupId:'group-1',sessionId:'session-1'}),/expired or outside/);
+  await terminal.close();
+ }finally{await rm(root,{recursive:true,force:true});}
 });
 
 test('terminal diff refuses case-variant Git metadata paths on case-insensitive hosts',async()=>{
