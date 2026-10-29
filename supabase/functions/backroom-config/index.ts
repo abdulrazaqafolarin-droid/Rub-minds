@@ -5,6 +5,7 @@
  */
 import {createClient} from 'npm:@supabase/supabase-js@2';
 import {validateHostEnrollment,validatePendingWakeBinding} from '../../../integrations/backroom/host-enrollment-policy.mjs';
+import {classifyExistingBinding} from '../../../integrations/backroom/binding-registration-policy.mjs';
 
 const url=Deno.env.get('SUPABASE_URL'),key=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 if(!url||!key)throw new Error('Backend configuration missing');
@@ -174,26 +175,17 @@ Deno.serve(async req=>{
   ]);
   if(existingSession.error||existingTarget.error)
    return json(503,{ok:false,reason:'service_unavailable'},origin);
-  if(existingSession.data&&existingTarget.data&&existingSession.data.id!==existingTarget.data.id)
-   return json(409,{ok:false,reason:'multiple_active_binding_conflict',requiresHostRevoke:true},origin);
-  const existing=existingSession.data??existingTarget.data;
-  if(existing){
-   const matches=existing.owner_id===ownerId&&existing.room_id===input.roomId&&
-    existing.participant_id===input.participantId&&existing.host_id===input.hostId&&
-    existing.session_digest===input.sessionDigest&&existing.space_id===input.spaceId&&
-    existing.session_id===input.sessionId&&existing.target_id===input.targetId&&
-    existing.target_identity_fingerprint===input.targetIdentityFingerprint&&
-    existing.target_revision===input.targetRevision&&existing.surface===input.surface&&
-    existing.locator_kind===input.locatorKind&&existing.locator_value===input.locatorValue&&
-    existing.participation_mode===input.participationMode&&
-    existing.max_wakes_per_minute===input.maxWakesPerMinute;
-   if(matches&&existing.wake_enabled!==true)
-    return json(200,{ok:true,bindingId:existing.id,wakeEnabled:false,
-      requiresLocalConsent:true,existing:true},origin);
-   return json(409,{ok:false,reason:existing.wake_enabled===true?
-     'existing_binding_active_revoke_first':'existing_binding_requires_revoke',
-     bindingId:existing.id,wakeEnabled:existing.wake_enabled},origin);
-  }
+  const bindingDecision=classifyExistingBinding({
+   ownerId,input,existingSession:existingSession.data,existingTarget:existingTarget.data
+  });
+  if(bindingDecision.action==='reuse')
+   return json(200,{ok:true,bindingId:bindingDecision.bindingId,wakeEnabled:false,
+     requiresLocalConsent:true,existing:true},origin);
+  if(bindingDecision.action==='conflict')
+   return json(409,{ok:false,reason:bindingDecision.reason,
+     ...(bindingDecision.bindingId?{bindingId:bindingDecision.bindingId}:{}),
+     ...(bindingDecision.wakeEnabled===undefined?{}:{wakeEnabled:bindingDecision.wakeEnabled}),
+     ...(bindingDecision.requiresHostRevoke?{requiresHostRevoke:true}:{})},origin);
   const {data,error}=await db.from('backroom_input_bindings').insert({
    owner_id:ownerId,room_id:input.roomId,participant_id:input.participantId,
    host_id:input.hostId,session_digest:input.sessionDigest,
