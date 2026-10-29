@@ -37,12 +37,12 @@ export async function handleWorkspaceHttpRequest({request,response,url,authority
   switch(url.pathname){
    case '/v1/workspaces/desktop/windows':result={windows:await workspaceRuntime.listDesktopWindows(input)};break;
    case '/v1/workspaces/desktop/observe':result=await workspaceRuntime.observeDesktop(input);break;
-   case '/v1/workspaces/desktop/draft':result=await workspaceRuntime.draftDesktop(input);status=result?.state==='completed'?200:409;break;
+   case '/v1/workspaces/desktop/draft':result=await workspaceRuntime.draftDesktop(input);status=200;break;
    case '/v1/workspaces/android/observe':result=await workspaceRuntime.observeAndroid(input);break;
    case '/v1/workspaces/android/tasks':result=await workspaceRuntime.runAndroidTask(input);status=201;break;
    case '/v1/workspaces/android/task-status':result=await workspaceRuntime.androidTaskStatus(input);break;
    case '/v1/workspaces/android/task-stop':result=await workspaceRuntime.stopAndroidTask(input);break;
-   case '/v1/workspaces/terminal/exec':result=await workspaceRuntime.execTerminal(input);status=result?.state==='completed'?200:409;break;
+   case '/v1/workspaces/terminal/exec':result=await workspaceRuntime.execTerminal(input);status=200;break;
    default:writeJson(response,404,{error:'not_found'},corsHeaders);return true;
   }
   writeJson(response,status,result,corsHeaders);
