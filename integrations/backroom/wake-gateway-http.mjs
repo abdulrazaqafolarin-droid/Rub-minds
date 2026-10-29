@@ -12,6 +12,9 @@ const routes=Object.freeze({
   '/functions/v1/backroom-wake/claim':'claim',
   '/functions/v1/backroom-wake/ack':'acknowledge',
   '/functions/v1/backroom-wake/retry':'retry',
+  '/backroom-wake/claim':'claim',
+  '/backroom-wake/ack':'acknowledge',
+  '/backroom-wake/retry':'retry',
 });
 const response=(status,body)=>new Response(JSON.stringify(body),{status,headers:{
   'Content-Type':'application/json; charset=utf-8',
