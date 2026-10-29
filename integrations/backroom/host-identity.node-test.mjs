@@ -4,7 +4,7 @@ import {mkdtemp,rm,mkdir,chmod,symlink,writeFile,readFile} from 'node:fs/promise
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
-import {loadOrCreateHostIdentity} from './host-identity.mjs';
+import {loadOrCreateHostIdentity,rotateHostIdentity} from './host-identity.mjs';
 test('stable private host ID and credential survive restart without rekeying',async()=>{
  const root=await mkdtemp(join(tmpdir(),'backroom-host-identity-'));
  try{
@@ -53,5 +53,19 @@ test('symlinked identity paths and directories are rejected',async()=>{
   await assert.rejects(()=>loadOrCreateHostIdentity({filePath:linkedFile}),/Unsafe Backroom host identity file/);
   const linkedDir=join(root,'linked-dir');await symlink(actual,linkedDir,'dir');
   await assert.rejects(()=>loadOrCreateHostIdentity({filePath:join(linkedDir,'host.json')}),/Unsafe Backroom host identity directory/);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('explicit local rotation creates a new unrelated host ID and credential',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'backroom-host-rotate-'));
+ try{
+  const filePath=join(root,'private','host.json');
+  const before=await loadOrCreateHostIdentity({filePath});
+  const after=await rotateHostIdentity({filePath});
+  assert.notEqual(after.hostId,before.hostId);
+  assert.notEqual(after.hostToken,before.hostToken);
+  assert.equal(after.credentialDigest,createHash('sha256').update(after.hostToken).digest('hex'));
+  assert.ok(!JSON.stringify(after).includes(before.hostToken));
+  assert.deepEqual(await loadOrCreateHostIdentity({filePath}),after);
  }finally{await rm(root,{recursive:true,force:true});}
 });
