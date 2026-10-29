@@ -6,7 +6,7 @@ const TERMINAL=new Set(['completed','failed','cancelled','needs_review']);
 const commandRecords=new WeakMap();
 function requireText(v,n){if(typeof v!=='string'||v.trim()==='')throw new TypeError(n+' is required');return v;}
 function requireId(v,n){if(!validId(v))throw new TypeError(n+' is invalid');return v;}
-function stableId(eventId,participantId){return 'wake_'+createHash('sha256').update(JSON.stringify([eventId,participantId]),'utf8').digest('hex');}
+function stableId(eventId,participantId,groupId){return 'wake_'+createHash('sha256').update(JSON.stringify([groupId,eventId,participantId]),'utf8').digest('hex');}
 function recordsFor(dispatcher){let r=commandRecords.get(dispatcher);if(!r){r=new Map();commandRecords.set(dispatcher,r);}return r;}
 export function createDispatcherCommand(input){
  const plan=input.plan,b=input.binding,p=input.participant,t=input.target;
@@ -21,7 +21,7 @@ export function createDispatcherCommand(input){
  for(const k of ['id','roomId','hostId','spaceId','sessionId','appId','identityFingerprint'])requireText(t[k],'target.'+k);
  if(t.id!==b.targetId||t.roomId!==b.groupId||t.sessionId!==b.sessionId)throw new Error('resolved target does not belong to selected group/session');
  if(!Number.isSafeInteger(t.revision)||t.revision<1)throw new Error('invalid target revision');
- return Object.freeze({id:stableId(j.eventId,j.participantId),participantId:j.participantId,bindingId:j.bindingId,eventId:j.eventId,
+ return Object.freeze({id:stableId(j.eventId,j.participantId,j.groupId),participantId:j.participantId,bindingId:j.bindingId,eventId:j.eventId,
   roomId:j.groupId,hostId:t.hostId,spaceId:t.spaceId,sessionId:t.sessionId,identityFingerprint:t.identityFingerprint,
   targetId:t.id,targetRevision:t.revision,operation:'draft',text:j.prompt});
 }
