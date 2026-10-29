@@ -68,10 +68,10 @@ async function queueAck(store,lease,outcome,reason){
 export async function dispatchClaimedWake(input){
  const lease=leaseInput(input?.lease);
  const store=input?.store,dispatcher=input?.dispatcher;
- if(input?.approval==null||typeof input.verifyApproval!=='function')return queueRetry(store,lease,'approval_required','wake-authorization-required');
- const wakeGrantId=input.approval?.grantId;
  if(!store||typeof store.retry!=='function'||typeof store.acknowledge!=='function')throw new TypeError('Durable wake store required');
  if(!dispatcher||typeof dispatcher.enqueue!=='function'||typeof dispatcher.status!=='function'||typeof dispatcher.step!=='function')throw new TypeError('BackroomDispatcher required');
+ if(input?.approval==null||typeof input.verifyApproval!=='function')return queueRetry(store,lease,'approval_required','wake-authorization-required');
+ const wakeGrantId=input.approval?.grantId;
  let mapped;
  try {
   mapped=commandFromClaimedWake({lease,targetRegistry:input.targetRegistry,hostId:input.hostId,
