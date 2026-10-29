@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { lstat, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
-import { basename, join, relative, resolve, sep } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 
 /**
  * Local-only workspace adapters for CUA Driver, ARTEMIS, and CUA sandbox.
@@ -240,6 +240,7 @@ export class CuaDesktopWorkspace {
       return Object.freeze({state:'completed',submitted:false,verified:true,result:{drafted:true,submitted:false,pid,windowId,elementToken:current.element_token}});
     }catch{return Object.freeze({state:'needs_review',submitted:false,reason:'Desktop typing outcome could not be independently read back'});}
   }
+}
 
 /** ARTEMIS is an asynchronous mobile task engine, so results are managed by trace ID. */
 export class ArtemisAndroidWorkspace {
@@ -372,7 +373,7 @@ export class CuaSandboxTerminalWorkspace {
       warning:'Return a bounded Git patch for inspection. This does not edit or apply changes to the host repository.'
     }));
     if(approval!==true)throw new Error('Local approval denied terminal diff export');
-    const staged=await this.#runGuest(['git','-C','/workspace/project','add','-N','--','.']);
+    await this.#runGuest(['git','-C','/workspace/project','add','-N','--','.']);
     const result=await this.#runGuest(['git','-C','/workspace/project','diff','--no-ext-diff','--no-textconv','--binary','--no-color','--no-renames','HEAD','--','.']);
     const patch=result.stdout;
     const bytes=Buffer.byteLength(patch,'utf8');
