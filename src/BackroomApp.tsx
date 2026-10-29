@@ -427,7 +427,7 @@ export default function BackroomApp() {
       });
       if(registrationError || registration?.ok!==true)
         throw new Error('Could not renew this signed-in owner host registration.');
-      const {data,error:bindingError}=await supabase.functions.invoke('backroom-config/binding',{
+      const {data:rawBindingData,error:bindingError}=await supabase.functions.invoke('backroom-config/binding',{
         body:{
           roomId:room.id,participantId:selectedSession.participantId,
           hostId:hostInfo.hostId,sessionDigest:selectedSession.sessionDigest,
@@ -438,6 +438,14 @@ export default function BackroomApp() {
           participationMode:'mentions',maxWakesPerMinute:6
         }
       });
+      let data=rawBindingData as {ok?:boolean;bindingId?:string;reason?:string;wakeEnabled?:boolean;requiresHostRevoke?:boolean}|null;
+      // Supabase's invoke helper exposes non-2xx JSON through FunctionsHttpError.context.
+      // Read that response so an existing-binding conflict can offer its explicit revoke path.
+      const responseContext=(bindingError as unknown as {context?:unknown}|null)?.context;
+      if(bindingError && responseContext instanceof Response){
+        const errorBody=await responseContext.clone().json().catch(()=>null);
+        if(errorBody&&typeof errorBody==='object')data=errorBody as typeof data;
+      }
       if(bindingError || data?.ok!==true || typeof data.bindingId!=='string'){
         if(typeof data?.bindingId==='string'&&
           ['existing_binding_active_revoke_first','existing_binding_requires_revoke'].includes(data.reason)){
