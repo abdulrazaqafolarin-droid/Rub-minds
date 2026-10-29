@@ -626,3 +626,34 @@ test("wake revoke reports local stop separately from uncertain remote deactivati
   });
  },{browserRuntime,wakeService});
 });
+
+test("backroom unconfigure accepts standard JSON content types and rejects non-JSON without touching wake service", async () => {
+ const bindingId="12345678-1234-4234-9234-123456789092";
+ const calls=[];
+ const wakeService={
+  stop:async()=>{},
+  unconfigure:async id=>{
+   calls.push(id);
+   return {removed:true,bindingId:id,remotelyDeactivated:true};
+  }
+ };
+ await withHost(async({base,origin})=>{
+  const token=(await (await pair(base,origin)).json()).sessionToken;
+  const body=JSON.stringify({bindingId});
+  const baseHeaders={Origin:origin,Authorization:"Bearer "+token};
+  const nonJson=await fetch(base+"/v1/backroom/unconfigure",{
+   method:"POST",headers:{...baseHeaders,"Content-Type":"text/plain"},body
+  });
+  assert.equal(nonJson.status,415);
+  assert.deepEqual(calls,[]);
+  const accepted=await fetch(base+"/v1/backroom/unconfigure",{
+   method:"POST",headers:{...baseHeaders,"Content-Type":"application/json; charset=utf-8"},body
+  });
+  assert.equal(accepted.status,200);
+  assert.deepEqual(await accepted.json(),{
+   removed:true,bindingId,remotelyDeactivated:true
+  });
+  assert.deepEqual(calls,[bindingId]);
+ },{wakeService});
+});
+
