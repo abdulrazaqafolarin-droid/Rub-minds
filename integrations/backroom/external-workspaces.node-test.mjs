@@ -126,6 +126,37 @@ test('CUA remaps snapshot-bound tokens by unique control identity and refuses cr
  assert.notEqual(click.args.element_token,observed.elements[0].elementToken);
  assert.equal(client.calls.find(call=>call.name==='type_text').args.target.window_id,99);
 });
+test('CUA accepts unverifiable browser typing only after exact fresh readback of the unsent draft',async()=>{
+ let snapshots=0,value='';
+ const client=new FakeMcp(['list_windows','get_window_state','click','type_text','press_key'],async(name,args)=>{
+  if(name==='list_windows')return {windows:[{pid:44,window_id:99,app_name:'Chrome',title:'ChatGPT'}]};
+  if(name==='get_window_state'){snapshots++;return {pid:44,window_id:99,app_name:'Chrome',title:'ChatGPT',snapshot_id:'browser-snap-'+snapshots,elements:[{element_token:'s'+String(snapshots).padStart(8,'0')+':1',role:'textbox',label:'Message input',depth:2,parent_index:1,frame:{x:4,y:8,w:320,h:40},value}]};}
+  if(name==='click')return {effect:'confirmed'};
+  if(name==='type_text'){value=args.text;return {effect:'unverifiable'};}
+  if(name==='press_key')throw new Error('Submission is forbidden in this adapter');
+  throw Error(name);
+ });
+ const d=new CuaDesktopWorkspace({client,authorizeLocalAction:async()=>true});
+ const observed=await d.observeWindow({pid:44,windowId:99,groupId:'g',sessionId:'s'});
+ const result=await d.draftText({pid:44,windowId:99,elementToken:observed.elements[0].elementToken,text:'unsent ChatGPT draft',expectedAppName:'Chrome',expectedTitle:'ChatGPT',groupId:'g',sessionId:'s'});
+ assert.equal(result.state,'completed');assert.equal(result.verified,true);assert.equal(result.submitted,false);assert.equal(result.deliveryEffect,'unverifiable');assert.equal(result.verification,'fresh_snapshot_value_readback');assert.equal(value,'unsent ChatGPT draft');
+ assert.equal(client.calls.some(call=>call.name==='press_key'),false);assert.equal(client.calls.filter(call=>call.name==='type_text').length,1);
+});
+test('CUA keeps browser typing in needs_review when unverifiable text cannot be read back exactly',async()=>{
+ let snapshots=0;
+ const client=new FakeMcp(['list_windows','get_window_state','click','type_text'],async(name,args)=>{
+  if(name==='list_windows')return {windows:[{pid:44,window_id:99,app_name:'Chrome',title:'ChatGPT'}]};
+  if(name==='get_window_state'){snapshots++;return {pid:44,window_id:99,app_name:'Chrome',title:'ChatGPT',snapshot_id:'browser-snap-'+snapshots,elements:[{element_token:'s'+String(snapshots).padStart(8,'0')+':1',role:'textbox',label:'Message input',depth:2,parent_index:1,frame:{x:4,y:8,w:320,h:40},value:''}]};}
+  if(name==='click')return {effect:'confirmed'};
+  if(name==='type_text')return {effect:'unverifiable'};
+  throw Error(name);
+ });
+ const d=new CuaDesktopWorkspace({client,authorizeLocalAction:async()=>true});
+ const observed=await d.observeWindow({pid:44,windowId:99,groupId:'g',sessionId:'s'});
+ const result=await d.draftText({pid:44,windowId:99,elementToken:observed.elements[0].elementToken,text:'unverified',expectedAppName:'Chrome',expectedTitle:'ChatGPT',groupId:'g',sessionId:'s'});
+ assert.equal(result.state,'needs_review');assert.equal(result.submitted,false);assert.match(result.reason,/readback mismatch/);assert.equal(client.calls.filter(call=>call.name==='type_text').length,1);
+});
+
 test('CUA refuses an ambiguous selector instead of typing into one of several identical controls',async()=>{
  const client=new FakeMcp(['list_windows','get_window_state','click','type_text'],async(name,args)=>{
   if(name==='list_windows')return {windows:[{pid:44,window_id:99,app_name:'Chrome',title:'ChatGPT'}]};

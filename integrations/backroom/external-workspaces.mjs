@@ -244,13 +244,16 @@ export class CuaDesktopWorkspace {
     let typed;
     try{typed=structured(await this.client.callTool('type_text',{text,target:{kind:'window',pid,window_id:windowId},session:this.session}));}
     catch{return Object.freeze({state:'needs_review',submitted:false,reason:'CUA type result was unavailable; inspect before retrying'});}
-    if(actionEffect(typed)!=='confirmed'||actionError(typed))return Object.freeze({state:'needs_review',submitted:false,reason:'CUA did not confirm text input'});
+    const deliveryEffect=actionEffect(typed);
+    // CUA explicitly labels web-content typing as `unverifiable`; do not treat that as success,
+    // but allow a fresh accessibility readback to prove the exact unsent draft independently.
+    if(actionError(typed)||!['confirmed','unverifiable'].includes(deliveryEffect))return Object.freeze({state:'needs_review',submitted:false,reason:'CUA did not confirm text input; inspect the field before retrying'});
     try{
       const after=await this.#snapshot({pid,windowId});
       if(after.window.appName!==expectedAppName||after.window.title!==expectedTitle)return Object.freeze({state:'needs_review',submitted:false,reason:'Desktop app/window changed after typing'});
       const written=this.#findUniqueElement(after.elements,original.descriptor);
       if(written.value!==text)return Object.freeze({state:'needs_review',submitted:false,reason:'Desktop text readback mismatch'});
-      return Object.freeze({state:'completed',submitted:false,verified:true,result:{drafted:true,submitted:false,pid,windowId,elementToken:current.element_token}});
+      return Object.freeze({state:'completed',submitted:false,verified:true,deliveryEffect,verification:'fresh_snapshot_value_readback',result:{drafted:true,submitted:false,pid,windowId,elementToken:current.element_token}});
     }catch{return Object.freeze({state:'needs_review',submitted:false,reason:'Desktop typing outcome could not be independently read back'});}
   }
 }
