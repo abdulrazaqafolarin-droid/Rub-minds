@@ -3,7 +3,7 @@ import { Activity, RefreshCw, ShieldAlert, Smartphone, SquareTerminal, Monitor, 
 
 type LocalHostApi = <T>(path:string, options?:{method?:string;body?:unknown})=>Promise<T>;
 type AiSession = {participantId:string;displayName:string;sessionDigest:string;expiresAt?:string};
-type RuntimeStatus = {stopped:boolean;capabilities:{desktop:boolean;android:boolean;terminal:boolean};desktop?:{available:boolean;tools?:string[]};android?:{available:boolean;trackedTasks?:number};terminal?:{available:boolean;ready?:boolean;closed?:boolean;sandboxName?:string;hostShellAvailable?:boolean}};
+type RuntimeStatus = {stopped:boolean;capabilities:{desktop:boolean;android:boolean;terminal:boolean};desktop?:{available:boolean;tools?:string[]};android?:{available:boolean;trackedTasks?:number};terminal?:{available:boolean;ready?:boolean;closed?:boolean;sandboxName?:string;hostShellAvailable?:boolean;projectConfigured?:boolean;projectSynced?:boolean;projectFileCount?:number;projectSourceBytes?:number;projectSyncedAt?:string|null}};
 type DesktopWindow = {pid:number;windowId:number;appName:string;title:string;zIndex:number|null};
 type DesktopElement = {elementToken:string;role:string;label:string;valueEmpty:boolean;typeable:boolean};
 type DesktopObservation = {pid:number;windowId:number;groupId:string;sessionId:string;appName:string;title:string;elementCount:number;degraded:boolean;snapshotId:string|null;elements:DesktopElement[];state:string};
@@ -13,7 +13,7 @@ type AndroidHierarchy = {deviceSerial:string;appPackage:string;groupId:string;se
 type TerminalResult = {state:string;exitCode:number;stdout:string;stderr:string;sandboxName:string};
 
 const emptyRuntime:RuntimeStatus={stopped:false,capabilities:{desktop:false,android:false,terminal:false},desktop:{available:false},android:{available:false,trackedTasks:0},terminal:{available:false,hostShellAvailable:false}};
-const runArgvDefault='["npm","run","test:external-workspaces"]';
+const runArgvDefault='["npm","ci"]';
 
 export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,sessions,selectedSessionDigest,onSelectSession,onFindSessions}:{hostToken:string;roomId:string;hostApi:LocalHostApi;sessions:AiSession[];selectedSessionDigest:string;onSelectSession:(digest:string)=>void;onFindSessions:()=>void}) {
   const [runtime,setRuntime]=useState<RuntimeStatus>(emptyRuntime);
@@ -31,7 +31,7 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
   const [androidResult,setAndroidResult]=useState<AndroidStatus|null>(null);
   const [androidHierarchy,setAndroidHierarchy]=useState('');
   const [terminalArgv,setTerminalArgv]=useState(runArgvDefault);
-  const [terminalCwd,setTerminalCwd]=useState('');
+  const [terminalCwd,setTerminalCwd]=useState('/workspace/project');
   const [terminalPurpose,setTerminalPurpose]=useState('Run the selected Backroom verification command in the local sandbox');
   const [terminalResult,setTerminalResult]=useState<TerminalResult|null>(null);
   const selectedSession=useMemo(()=>sessions.find(s=>s.sessionDigest===selectedSessionDigest)??null,[sessions,selectedSessionDigest]);
@@ -99,6 +99,13 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
     const result=await action(()=>hostApi<{traceId:string;stopped:boolean}>('/v1/workspaces/android/task-stop',{method:'POST',body:{traceId:androidJob.traceId,deviceSerial:androidJob.deviceSerial,groupId:androidJob.groupId,sessionId:androidJob.sessionId}}));
     if(result)setNotice(result.stopped?'ARTEMIS reported the task stopped.':'Stop was requested but cancellation was not independently confirmed.');
   }
+  async function syncTerminalProject(){
+    if(!scope){setNotice('First find and select a joined AI session for this group.');return;}
+    if(!runtime.capabilities.terminal){setNotice('The local terminal sandbox is not ready.');return;}
+    if(!window.confirm('Copy a filtered source snapshot from the local host into the isolated sandbox? Git history, node_modules, build output and common secret files are excluded. A previous sandbox project snapshot will be replaced; the source repository on your host is not modified.'))return;
+    const result=await action(()=>hostApi<{state:string;projectSynced:boolean;fileCount:number;sourceBytes:number;archiveBytes:number;sha256:string;omittedSensitive:number;omittedLarge:number;destination:string}>('/v1/workspaces/terminal/sync',{method:'POST',body:scope}));
+    if(result){await refreshRuntime(true);setNotice(result.projectSynced?'Local project snapshot synced: '+result.fileCount+' files ('+Math.ceil(result.sourceBytes/1024)+' KiB). Credentials, Git internals and dependencies were not copied. Install dependencies only through an explicitly approved sandbox command.':'Project snapshot was not confirmed. Inspect runtime status before retrying.');}
+  }
   async function runTerminal(){
     if(!scope){setNotice('First find and select a joined AI session for this group.');return;}
     let command:unknown;
@@ -119,7 +126,7 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
     <div className="br-workspace-runtime-status">
       <div><b>Desktop / native</b><span>{runtime.capabilities.desktop?'Available':'Not configured or unavailable'}</span></div>
       <div><b>Android · ARTEMIS</b><span>{runtime.capabilities.android?'Available':'Not configured or unavailable'}</span></div>
-      <div><b>Terminal sandbox</b><span>{runtime.capabilities.terminal?(runtime.terminal?.ready?'Ready':'Configured, not ready'):'Not configured or unavailable'}</span></div>
+      <div><b>Terminal sandbox</b><span>{runtime.capabilities.terminal?(runtime.terminal?.projectSynced?'Sandbox + source synced':runtime.terminal?.ready?'Sandbox ready · project not synced':'Configured, not ready'):'Not configured or unavailable'}</span></div>
     </div>
     <div className="br-external-scope">
       <label htmlFor="br-external-ai-session">Authorized joined AI session (this group)</label>
@@ -160,10 +167,12 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
         <h3 id="br-terminal-title"><SquareTerminal size={17}/> Isolated terminal</h3>
         <p>Commands run as argv inside a dedicated local gVisor container. The adapter denies shell interpreters, and the host asks for exact local approval. There is no host-shell fallback.</p>
         {!runtime.capabilities.terminal?<div className="br-subtle-status">Configure BACKROOM_ENABLE_CUA_TERMINAL=1 and install the CUA CLI/local gVisor runtime.</div>:<>
-          <label htmlFor="br-terminal-argv">Command argv as JSON (not a shell string)</label><textarea id="br-terminal-argv" rows={2} value={terminalArgv} onChange={e=>setTerminalArgv(e.target.value)} disabled={busy}/>
-          <label htmlFor="br-terminal-purpose">Purpose</label><input id="br-terminal-purpose" value={terminalPurpose} onChange={e=>setTerminalPurpose(e.target.value)} disabled={busy}/>
-          <label htmlFor="br-terminal-cwd">Sandbox working directory (optional)</label><input id="br-terminal-cwd" value={terminalCwd} onChange={e=>setTerminalCwd(e.target.value)} placeholder="/workspace/project" disabled={busy}/>
-          <button type="button" className="br-primary" disabled={busy||!scope} onClick={()=>void runTerminal()}><Play size={14}/> Run in local sandbox</button>
+          <div className="br-subtle-status">{runtime.terminal?.projectSynced?'Source snapshot ready · '+(runtime.terminal.projectFileCount??0)+' files':'Sandbox is separate from your repository. Sync a locally approved, filtered source snapshot before running project commands.'}</div>
+          <button type="button" className="br-secondary" disabled={busy||!scope||runtime.terminal?.projectConfigured===false} onClick={()=>void syncTerminalProject()}><RefreshCw size={14}/> Sync local project snapshot</button>
+          <label htmlFor="br-terminal-argv">Command argv as JSON (not a shell string)</label><textarea id="br-terminal-argv" rows={2} value={terminalArgv} onChange={e=>setTerminalArgv(e.target.value)} disabled={busy||!runtime.terminal?.projectSynced}/>
+          <label htmlFor="br-terminal-purpose">Purpose</label><input id="br-terminal-purpose" value={terminalPurpose} onChange={e=>setTerminalPurpose(e.target.value)} disabled={busy||!runtime.terminal?.projectSynced}/>
+          <label htmlFor="br-terminal-cwd">Sandbox working directory (optional)</label><input id="br-terminal-cwd" value={terminalCwd} onChange={e=>setTerminalCwd(e.target.value)} placeholder="/workspace/project" disabled={busy||!runtime.terminal?.projectSynced}/>
+          <button type="button" className="br-primary" disabled={busy||!scope||!runtime.terminal?.projectSynced} onClick={()=>void runTerminal()}><Play size={14}/> Run in local sandbox</button>
           {terminalResult&&<><div className="br-detail"><span>Exit code</span><b>{terminalResult.exitCode} · {terminalResult.state}</b></div><pre className="br-runtime-output">{terminalResult.stdout||terminalResult.stderr||'(no output)'}</pre></>}
         </>}
       </section>
