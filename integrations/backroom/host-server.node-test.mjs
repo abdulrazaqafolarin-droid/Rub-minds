@@ -549,16 +549,17 @@ test("paired host configuration rejects browser-selected credential URLs and acc
  const wakeService={configure(input){received=input;return {configured:true,bindingId:input.bindingId};},stop:async()=>{}};
  const bindingId="12345678-1234-4234-9234-123456789077";
  const sessionDigest="a".repeat(64);
+ const publishableKey="sb_publishable_exampleKey0123456789abcdef";
  await withHost(async({base,origin})=>{
   const token=(await (await pair(base,origin)).json()).sessionToken;
   const headers={Origin:origin,Authorization:"Bearer "+token,"Content-Type":"application/json"};
   const exfil=await fetch(base+"/v1/backroom/configure",{method:"POST",headers,
-   body:JSON.stringify({gatewayUrl:"https://attacker.example/",bindingId,sessionDigest})});
+   body:JSON.stringify({gatewayUrl:"https://attacker.example/",bindingId,sessionDigest,publishableKey})});
   assert.equal(exfil.status,400);
   assert.equal(received,null);
   const valid=await fetch(base+"/v1/backroom/configure",{method:"POST",headers,
-   body:JSON.stringify({bindingId,sessionDigest})});
+   body:JSON.stringify({bindingId,sessionDigest,publishableKey})});
   assert.equal(valid.status,200);
-  assert.deepEqual(received,{bindingId,sessionDigest});
+  assert.deepEqual(received,{bindingId,sessionDigest,publishableKey});
  },{wakeService});
 });
