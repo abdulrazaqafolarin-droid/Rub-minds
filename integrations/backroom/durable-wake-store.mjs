@@ -120,4 +120,11 @@ export class SupabaseBackroomWakeStore{
   if(!Number.isSafeInteger(count)||count<0)throw new Error('Queue returned invalid expiry count');
   return count;
  }
+ async purge({olderThanDays=14,limit=1000}={}){
+  requireInt(olderThanDays,'olderThanDays',1,90);
+  requireInt(limit,'limit',1,5000);
+  const count=await call(this.client,'purge_backroom_wake_jobs',{p_older_than_days:olderThanDays,p_limit:limit});
+  if(!Number.isSafeInteger(count)||count<0)throw new Error('Queue returned invalid purge count');
+  return count;
+ }
 }
