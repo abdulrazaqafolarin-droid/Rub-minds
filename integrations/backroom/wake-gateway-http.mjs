@@ -53,6 +53,12 @@ async function readSmallJson(request,maxBytes) {
  if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('Expected JSON object');
  return value;
 }
+/**
+ * @typedef {{ok:boolean,[key:string]:unknown}} WakeGatewayHttpResult
+ * @typedef {{activate:(input:any)=>Promise<WakeGatewayHttpResult>,deactivate:(input:any)=>Promise<WakeGatewayHttpResult>,claim:(input:any)=>Promise<WakeGatewayHttpResult>,acknowledge:(input:any)=>Promise<WakeGatewayHttpResult>,retry:(input:any)=>Promise<WakeGatewayHttpResult>}} WakeGatewayHttpContract
+ * @typedef {{gateway:WakeGatewayHttpContract,maxBodyBytes:number}} WakeGatewayHttpOptions
+ * @param {Partial<WakeGatewayHttpOptions>} [options]
+ */
 export function createWakeGatewayHttpHandler({gateway,maxBodyBytes=4096}={}) {
  if(!gateway||['activate','deactivate','claim','acknowledge','retry'].some(key=>typeof gateway[key]!=='function'))
   throw new TypeError('Authenticated wake gateway required');
