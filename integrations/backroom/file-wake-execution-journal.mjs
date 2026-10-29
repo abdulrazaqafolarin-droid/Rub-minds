@@ -25,7 +25,8 @@ export class FileWakeExecutionJournal {
     await mkdir(this.directory,{recursive:true,mode:0o700});
     // Refuse symlinked journal directories; do not trust a browser-selected path.
     const stat=await lstat(this.directory);
-    if(!stat.isDirectory()||stat.isSymbolicLink()||await realpath(this.directory)!==this.directory)
+    if(!stat.isDirectory()||stat.isSymbolicLink()||await realpath(this.directory)!==this.directory ||
+       (process.platform!=='win32' && (stat.mode & 0o077)!==0))
       throw new Error('Unsafe wake journal directory');
     const digest=createHash('sha256').update(JSON.stringify([
       job.jobKey,job.jobId,job.hostId,job.bindingId,job.sessionDigest,job.targetId
