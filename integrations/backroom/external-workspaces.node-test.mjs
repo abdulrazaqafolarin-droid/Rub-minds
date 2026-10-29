@@ -281,7 +281,7 @@ test('terminal applies only an exact one-use patch after digest, Git-root, check
   await assert.rejects(d.applyProjectDiff({exportKey:diff.exportKey,sha256:diff.sha256,groupId:'group-2',sessionId:'session-1'}),/outside the original group\/session scope/);
   const applied=await d.applyProjectDiff({exportKey:diff.exportKey,sha256:diff.sha256,groupId:'group-1',sessionId:'session-1'});
   assert.equal(applied.appliedToHost,true);assert.equal(applied.committed,false);assert.equal(applied.pushed,false);assert.deepEqual(applied.paths,['src/index.js']);
-  assert.deepEqual(gitCalls.map(call=>call.args[0]==='rev-parse'?'root':call.args[0]+' '+call.args[1]),['root','apply --check -','apply -']);
+  assert.deepEqual(gitCalls.map(call=>call.args[0]==='rev-parse'?'root':call.args[0]+' '+call.args[1]),['root','apply --check','apply -']);
   assert.equal(gitCalls[1].input,patch);assert.equal(gitCalls[2].input,patch);
   assert.equal(gitCalls.every(call=>call.options.shell===false),true);
   await assert.rejects(d.applyProjectDiff({exportKey:diff.exportKey,sha256:diff.sha256,groupId:'group-1',sessionId:'session-1'}),/expired or outside/);
