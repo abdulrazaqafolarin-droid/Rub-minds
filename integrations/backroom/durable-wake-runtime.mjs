@@ -51,7 +51,7 @@ export function commandFromClaimedWake({lease:raw,targetRegistry,hostId,binding,
 }
 async function queueRetry(store,lease,errorCode,reason){
  try {
-  const state=await store.retry({jobId:lease.jobId,hostId:lease.hostId,sessionDigest:lease.sessionDigest,
+  const state=await store.retry({jobId:lease.jobId,hostId:lease.hostId,sessionDigest:lease.sessionDigest,bindingId:lease.bindingId,
    leaseToken:lease.leaseToken,retryAfterSeconds:5,errorCode});
   return Object.freeze({state:state==='pending'?'deferred':'failed',reason:reason,queueState:state});
  } catch {
@@ -61,7 +61,7 @@ async function queueRetry(store,lease,errorCode,reason){
 async function queueAck(store,lease,outcome,reason){
  try {
   const acknowledged=await store.acknowledge({jobId:lease.jobId,hostId:lease.hostId,
-   sessionDigest:lease.sessionDigest,leaseToken:lease.leaseToken,outcome});
+   sessionDigest:lease.sessionDigest,bindingId:lease.bindingId,leaseToken:lease.leaseToken,outcome});
   return Object.freeze({state:acknowledged?(outcome==='acknowledged'?'completed':'ignored'):'lease-lost',
    reason:reason??null,acknowledged:acknowledged});
  } catch {
