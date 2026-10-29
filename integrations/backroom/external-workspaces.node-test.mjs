@@ -354,6 +354,15 @@ test('terminal refuses path-traversing patch headers before issuing an apply tok
  }finally{await d.close().catch(()=>{});await rm(root,{recursive:true,force:true});}
 });
 
+test('terminal diff refuses case-variant Git metadata paths on case-insensitive hosts',async()=>{
+ const root=await projectFixture(),calls=[];
+ const patch='diff --git a/.GIT/config b/.GIT/config\n--- a/.GIT/config\n+++ b/.GIT/config\n@@ -1 +1 @@\n-private\n+changed\n';
+ const results=[{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0,stdout:patch}];
+ const d=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-unit-1234',projectSourcePath:root,authorizeLocalAction:async()=>true,spawnImpl:fakeSpawn(results,calls)});
+ try{await d.start();await d.syncProject({groupId:'g',sessionId:'s'});await assert.rejects(d.diffProject({groupId:'g',sessionId:'s'}),/unsafe file path/);}
+ finally{await d.close().catch(()=>{});await rm(root,{recursive:true,force:true});}
+});
+
 test('terminal diff refuses binary change markers instead of exporting an unusable partial patch',async()=>{
  const root=await projectFixture(),calls=[];
  const binary='diff --git a/image.png b/image.png\nindex 1111111..2222222 100644\nBinary files a/image.png and b/image.png differ\n';
