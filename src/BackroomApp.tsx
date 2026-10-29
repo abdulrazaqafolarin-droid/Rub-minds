@@ -420,8 +420,11 @@ export default function BackroomApp() {
         throw new Error('Secure hosted binding registration failed. No wake operation was enabled.');
       // The host's pinned Supabase destination is local configuration. Never let
       // this browser choose where the private host credential is sent.
+      const publishableKey=import.meta.env.VITE_SUPABASE_ANON_KEY;
+      if(typeof publishableKey!=='string'||publishableKey.length<20)
+        throw new Error('Rub Minds public Supabase API key is missing from this web build.');
       await hostApi('/v1/backroom/configure',{method:'POST',body:{
-        sessionDigest:selectedSession.sessionDigest,bindingId:data.bindingId
+        sessionDigest:selectedSession.sessionDigest,bindingId:data.bindingId,publishableKey
       }});
       setHostedWakeBinding({
         bindingId:data.bindingId,roomId:room.id,
