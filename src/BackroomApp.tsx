@@ -407,7 +407,7 @@ export default function BackroomApp() {
         method:'POST',body:{
           targetId:binding.targetId,roomId:binding.roomId,
           participantId:binding.participantId,sessionId:binding.sessionId,
-          bindingId:binding.bindingId,confirmed:true,ttlMs:600000,maxPerMinute:6
+          bindingId:binding.bindingId,confirmed:true,ttlMs:300000,maxPerMinute:6
         }
       });
       if(typeof grant.grantId!=='string')throw new Error('Local wake grant was not confirmed.');
