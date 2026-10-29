@@ -21,7 +21,7 @@ function scopeIds(groupId,sessionId){if(typeof groupId!=='string'||!ID.test(grou
 
 const PROJECT_SKIP_DIRS=new Set(['.git','node_modules','.next','.nuxt','.vercel','.expo','.gradle','.idea','.obsidian','.cache','.turbo','.venv','venv','env','target','dist','build','coverage','test-results','playwright-report','artifacts','logs','tmp','temp','vendor','secrets','credentials','private','keys','certificates','__pycache__']);
 const PROJECT_SKIP_FILES=new Set(['.npmrc','.pypirc','.netrc','.git-credentials','credentials.json','service-account.json','id_rsa','id_ed25519','authorized_keys','known_hosts','.ds_store','*.pem','*.key','*.p12','*.pfx','*.jks','*.keystore','*.sqlite','*.db','*.dump','*.bak','*.log','*.zip','*.tar','*.gz','*.7z','*.rar']);
-const HIGH_CONFIDENCE_SECRET=/(?:-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|sb_secret_[A-Za-z0-9_-]{20,}|AKIA[A-Z0-9]{16}|xox[baprs]-[A-Za-z0-9-]{20,})/;
+const HIGH_CONFIDENCE_SECRET=/(?:-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|sb_secret_[A-Za-z0-9_-]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{32,}|AKIA[A-Z0-9]{16}|xox[baprs]-[A-Za-z0-9-]{20,}|(?:service_role|serviceRole|SUPABASE_SERVICE_ROLE_KEY)\s*[:=]\s*[\"']?eyJ[A-Za-z0-9_.-]{30,})/;
 function omitProjectPath(relPath,isDirectory){
   const normalized=relPath.split(sep).join('/'),parts=normalized.split('/'),leaf=parts.at(-1).toLowerCase();
   if(parts.some(p=>PROJECT_SKIP_DIRS.has(p.toLowerCase())))return true;
