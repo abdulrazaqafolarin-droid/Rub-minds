@@ -85,9 +85,18 @@ export function createMultiSurfaceExecutionService({hostId,permission,isConnecte
    const guard=new LocalExecutionGuard({
     host:{hostId,deviceLabel:'Backroom local runtime',
       surfaces:[target.surface],operations:['draft']},
-    adapter:entry.adapter,
+    adapter:{
+      probe:args=>entry.adapter.probe(args),
+      execute:async args=>{
+       if(stopped||drivers.get(target.id)!==entry)
+        throw Object.assign(new Error('Selected native target revoked'),{code:'BACKROOM_PREFLIGHT'});
+       return entry.adapter.execute(args);
+      }
+    },
     permission:async({command:c,target:t})=>
-      !stopped && (await permission({command:c,target:t}))===true,
+      !stopped && drivers.get(target.id)===entry &&
+      (await permission({command:c,target:t}))===true &&
+      !stopped && drivers.get(target.id)===entry,
     isConnected:async()=>!stopped && (await isConnected(hostId))===true
    });
    const result=await guard.execute({command,target});
