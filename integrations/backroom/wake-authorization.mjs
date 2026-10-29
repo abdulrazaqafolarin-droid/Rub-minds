@@ -53,6 +53,12 @@ export class WakeAuthorizationAuthority {
   return true;
  }
  revoke(grantId){return this.#grants.delete(grantId);}
+ revokeForTarget(targetId){
+  let count=0;
+  for(const [id,grant] of this.#grants)if(grant.targetId===targetId){this.#grants.delete(id);count++;}
+  return count;
+ }
+ revokeAll(){const count=this.#grants.size;this.#grants.clear();return count;}
  status(grantId){
   const g=this.#grants.get(grantId);
   if(!g)return Object.freeze({active:false,reason:'missing-or-revoked'});
