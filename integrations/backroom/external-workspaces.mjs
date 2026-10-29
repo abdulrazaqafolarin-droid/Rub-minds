@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
 import { lstat, mkdtemp, open, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
@@ -289,12 +289,35 @@ export class ArtemisAndroidWorkspace {
 
 /** Creates and destroys a dedicated local gVisor sandbox; never executes on host shell. */
 export class CuaSandboxTerminalWorkspace {
-  constructor({command='cua',sandboxName,authorizeLocalAction,spawnImpl,timeoutMs=120000,outputLimitBytes=1048576,projectSourcePath=process.env.BACKROOM_TERMINAL_PROJECT_PATH??process.cwd()}={}){
+  #pendingPatches;
+  #prunePendingPatches(){const now=Date.now();for(const [key,p] of this.#pendingPatches)if(now-p.createdAt>10*60*1000)this.#pendingPatches.delete(key);while(this.#pendingPatches.size>16)this.#pendingPatches.delete(this.#pendingPatches.keys().next().value);}
+  #safePatchPaths(patch){const lines=patch.split('\n').filter(line=>line.startsWith('diff --git '));if(patch&&!lines.length)throw new Error('Patch format is not reviewable');const paths=[];for(const line of lines){const m=/^diff --git a\/(.+) b\/(.+)$/.exec(line);if(!m)throw new Error('Patch contains a quoted or unsupported file path; review it manually');const a=m[1],b=m[2];if(a!==b||!a||a.startsWith('/')||a.includes('\\')||/[\u0000-\u001f\u007f-\u009f]/u.test(a)||a.split('/').some(p=>p==='.'||p==='..')||a.split('/').includes('.git'))throw new Error('Patch contains an unsafe file path');paths.push(a);}return [...new Set(paths)].sort();}
+  async #runLocalGit(args,input='',cwd){
+    if(typeof cwd!=='string'||!cwd)throw new TypeError('Local project root required');
+    if(Buffer.byteLength(input,'utf8')>512*1024)throw new RangeError('Local Git input exceeds the patch limit');
+    const spawn=this.localGitSpawnImpl??(await import('node:child_process')).spawn;
+    const env={GIT_TERMINAL_PROMPT:'0',GIT_CONFIG_NOSYSTEM:'1'};
+    for(const key of ['PATH','PATHEXT','COMSPEC','PROGRAMFILES','PROGRAMFILES(X86)','HOMEDRIVE','HOMEPATH','HOME','USERPROFILE','TMPDIR','TEMP','TMP','SYSTEMROOT','WINDIR','APPDATA','LOCALAPPDATA','LANG','LC_ALL'])if(typeof process.env[key]==='string')env[key]=process.env[key];
+    return new Promise((resolve,reject)=>{
+      let child;try{child=spawn(this.gitCommand,args,{cwd,env,shell:false,windowsHide:true,stdio:['pipe','pipe','pipe']});}catch{reject(new Error('Could not launch local Git'));return;}
+      if(!child?.stdin||!child?.stdout||!child?.stderr||typeof child.once!=='function'){reject(new Error('Local Git process must expose stdio pipes'));return;}
+      let stdout='',stderr='',bytes=0,settled=false,overflow=false,timedOut=false,killTimer=null;
+      const kill=()=>{try{child.kill('SIGTERM');}catch{}if(!killTimer){killTimer=setTimeout(()=>{try{if(child.exitCode===null)child.kill('SIGKILL');}catch{}},1000);killTimer.unref?.();}};
+      const append=(target,chunk)=>{bytes+=chunk.length;if(bytes>128*1024){overflow=true;kill();return;}if(target==='out')stdout+=chunk.toString('utf8');else stderr+=chunk.toString('utf8');};
+      child.stdout.on('data',chunk=>append('out',chunk));child.stderr.on('data',chunk=>append('err',chunk));
+      const timer=setTimeout(()=>{if(settled)return;timedOut=true;kill();},30000);timer.unref?.();
+      child.once('error',()=>{if(settled)return;settled=true;clearTimeout(timer);if(killTimer)clearTimeout(killTimer);reject(new Error('Local Git process failed'));});
+      child.once('close',(code,signal)=>{clearTimeout(timer);if(killTimer)clearTimeout(killTimer);if(settled)return;settled=true;if(timedOut){reject(new Error('Local Git operation timed out'));return;}if(overflow){reject(new Error('Local Git output exceeded its limit'));return;}resolve(Object.freeze({code:Number.isInteger(code)?code:1,signal:signal??null,stdout,stderr:stderr.slice(0,4000)}));});
+      try{child.stdin.end(input,'utf8');}catch{kill();reject(new Error('Local Git input failed'));}
+    });
+  }
+  constructor({command='cua',sandboxName,authorizeLocalAction,spawnImpl,localGitSpawnImpl,gitCommand='git',timeoutMs=120000,outputLimitBytes=1048576,projectSourcePath=process.env.BACKROOM_TERMINAL_PROJECT_PATH??process.cwd()}={}){
     if(typeof command!=='string'||!command.trim())throw new TypeError('CUA CLI executable required');
     if(typeof sandboxName!=='string'||!/^rm-backroom-[a-z0-9-]{4,48}$/.test(sandboxName))throw new TypeError('Dedicated rm-backroom-* sandbox required');
     needApproval(authorizeLocalAction,'Terminal execution');if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1000||timeoutMs>600000)throw new RangeError('Invalid terminal timeout');
     if(!Number.isSafeInteger(outputLimitBytes)||outputLimitBytes<1024||outputLimitBytes>4194304)throw new RangeError('Invalid terminal output bound');
-    Object.assign(this,{command,sandboxName,approve:authorizeLocalAction,spawnImpl,timeoutMs,outputLimitBytes,projectSourcePath,ready:false,closed:false,projectSync:null});
+    Object.assign(this,{command,sandboxName,approve:authorizeLocalAction,spawnImpl,localGitSpawnImpl,gitCommand,timeoutMs,outputLimitBytes,projectSourcePath,ready:false,closed:false,projectSync:null});
+    this.#pendingPatches=new Map();
   }
   async #run(args,timeoutMs=this.timeoutMs){
     const spawn=this.spawnImpl??(await import('node:child_process')).spawn;
@@ -331,6 +354,7 @@ export class CuaSandboxTerminalWorkspace {
   async syncProject({groupId,sessionId}={}){
     if(!this.ready||this.closed)throw new Error('Dedicated terminal sandbox is not ready');
     scopeIds(groupId,sessionId);
+    this.#pendingPatches.clear();
     const archive=await createSafeWorkspaceArchive(this.projectSourcePath);
     try{
       const approval=await this.approve(Object.freeze({
@@ -352,7 +376,7 @@ export class CuaSandboxTerminalWorkspace {
       await this.#runGuest(['git','init','-q','/workspace/project']);
       await this.#runGuest(['git','-C','/workspace/project','add','-A']);
       await this.#runGuest(['git','-c','user.name=Backroom Local','-c','user.email=backroom-local@localhost','-C','/workspace/project','commit','--quiet','--allow-empty','-m','Backroom source snapshot baseline']);
-      this.projectSync=Object.freeze({fileCount:archive.fileCount,sourceBytes:archive.sourceBytes,archiveBytes:archive.archiveBytes,sha256:archive.sha256,syncedAt:new Date().toISOString(),omittedSensitive:archive.omittedSensitive,omittedLarge:archive.omittedLarge});
+      this.projectSync=Object.freeze({sourceRoot:archive.sourceRoot,fileCount:archive.fileCount,sourceBytes:archive.sourceBytes,archiveBytes:archive.archiveBytes,sha256:archive.sha256,syncedAt:new Date().toISOString(),omittedSensitive:archive.omittedSensitive,omittedLarge:archive.omittedLarge});
       return Object.freeze({state:'completed',projectSynced:true,fileCount:archive.fileCount,sourceBytes:archive.sourceBytes,archiveBytes:archive.archiveBytes,sha256:archive.sha256,omittedSensitive:archive.omittedSensitive,omittedLarge:archive.omittedLarge,destination:'/workspace/project'});
     }catch(error){
       this.projectSync=null;
@@ -368,6 +392,7 @@ export class CuaSandboxTerminalWorkspace {
   async exec({command,cwd,purpose='Backroom terminal task',groupId,sessionId}={}){
     if(!this.ready||this.closed)throw new Error('Dedicated terminal sandbox is not ready');
     if(!this.projectSync)throw new Error('Sync an approved local project snapshot before running terminal commands');
+    this.#pendingPatches.clear();
     if(!Array.isArray(command)||command.length<1||command.length>128||command.some(v=>typeof v!=='string'||!v||v.includes('\0')||v.length>2000))throw new TypeError('Terminal command must be a bounded argv array');
     const exe=command[0].split(/[\\/]/).at(-1).toLowerCase();if(SHELLS.has(exe)||!TERMINAL_BINS.has(exe))throw new Error('Shell interpreters and non-allowlisted executables are denied');
     if(cwd!==undefined&&(typeof cwd!=='string'||!cwd.startsWith('/')||cwd.split('/').includes('..')))throw new TypeError('Sandbox cwd must be an absolute POSIX path without traversal');
@@ -391,10 +416,41 @@ export class CuaSandboxTerminalWorkspace {
     const patch=result.stdout;
     const bytes=Buffer.byteLength(patch,'utf8');
     if(bytes>512*1024)throw new Error('Workspace diff exceeds the 512 KiB review limit; split it into smaller reviewed changes');
-    if(HIGH_CONFIDENCE_SECRET.test(patch))return Object.freeze({state:'needs_review',patch:'',bytes,sha256:createHash('sha256').update(patch).digest('hex'),reason:'Potential credential or private-key material detected. Patch was not returned to the browser.'});
-    return Object.freeze({state:'completed',patch,bytes,sha256:createHash('sha256').update(patch).digest('hex'),empty:patch.length===0,appliedToHost:false,destination:'Rub Minds Backroom browser review only'});
+    const sha256=createHash('sha256').update(patch).digest('hex');
+    if(HIGH_CONFIDENCE_SECRET.test(patch))return Object.freeze({state:'needs_review',patch:'',bytes,sha256,reason:'Potential credential or private-key material detected. Patch was not returned to the browser.'});
+    const paths=this.#safePatchPaths(patch);
+    let exportKey=null;
+    if(patch.length>0){this.#prunePendingPatches();exportKey=randomBytes(32).toString('hex');this.#pendingPatches.set(exportKey,{patch,sha256,paths,groupId,sessionId,sourceRoot:this.projectSync.sourceRoot,createdAt:Date.now()});this.#prunePendingPatches();}
+    return Object.freeze({state:'completed',patch,bytes,sha256,empty:patch.length===0,paths,exportKey,applyAvailable:!!exportKey,appliedToHost:false,destination:'Rub Minds Backroom browser review only'});
   }
-  async close(){if(this.closed&&!this.ready)return;this.closed=true;if(this.ready){const r=await this.#run(['--json','sb','rm','--local',this.sandboxName],30000).catch(()=>null);if(!r||r.code!==0)throw new Error('Dedicated sandbox removal could not be verified');this.ready=false;this.projectSync=null;}}
+  async applyProjectDiff({exportKey,sha256,groupId,sessionId}={}){
+    if(!this.ready||this.closed)throw new Error('Dedicated terminal sandbox is not ready');
+    if(!this.projectSync)throw new Error('Sync an approved local project snapshot before applying a patch');
+    scopeIds(groupId,sessionId);
+    if(typeof exportKey!=='string'||!/^[a-f0-9]{64}$/.test(exportKey)||typeof sha256!=='string'||!/^[a-f0-9]{64}$/.test(sha256))throw new TypeError('Valid one-use patch reference and digest required');
+    this.#prunePendingPatches();
+    const pending=this.#pendingPatches.get(exportKey);
+    if(!pending||pending.groupId!==groupId||pending.sessionId!==sessionId||pending.sha256!==sha256)throw new Error('Patch is expired or outside the original group/session scope');
+    if(createHash('sha256').update(pending.patch).digest('hex')!==sha256)throw new Error('Patch digest validation failed');
+    this.#pendingPatches.delete(exportKey);
+    if(!pending.paths.length)throw new Error('Empty patches cannot be applied');
+    const root=await realpath(pending.sourceRoot);
+    if(root!==pending.sourceRoot||root!==this.projectSync.sourceRoot)throw new Error('Local project root changed since source sync');
+    const rootStat=await lstat(root);
+    if(!rootStat.isDirectory()||rootStat.isSymbolicLink())throw new Error('Local project root is no longer a real directory');
+    const top=await this.#runLocalGit(['rev-parse','--show-toplevel'],'',root);
+    if(top.code!==0)throw new Error('The selected local project is not a Git working tree');
+    const gitRoot=await realpath(top.stdout.trim()).catch(()=>null);
+    if(!gitRoot||gitRoot!==root)throw new Error('Git working-tree root does not match the approved project root');
+    const check=await this.#runLocalGit(['apply','--check','-'],pending.patch,root);
+    if(check.code!==0)throw new Error('Local project has changed or the reviewed patch does not apply cleanly; no files were modified');
+    const approval=await this.approve(Object.freeze({kind:'terminal_patch_apply',sandboxName:this.sandboxName,repositoryRoot:root,groupId,sessionId,patchSha256:sha256,patchBytes:Buffer.byteLength(pending.patch,'utf8'),files:pending.paths,commit:false,push:false,warning:'Apply this exact one-use patch to the local working tree only. It will not stage, commit or push changes.'}));
+    if(approval!==true)throw new Error('Local approval denied patch application');
+    const applied=await this.#runLocalGit(['apply','-'],pending.patch,root);
+    if(applied.code!==0)throw new Error('Git refused to apply the previously checked patch; inspect the local working tree before retrying');
+    return Object.freeze({state:'completed',appliedToHost:true,committed:false,pushed:false,sha256,paths:pending.paths,repositoryRoot:root});
+  }
+  async close(){if(this.closed&&!this.ready)return;this.closed=true;if(this.ready){const r=await this.#run(['--json','sb','rm','--local',this.sandboxName],30000).catch(()=>null);if(!r||r.code!==0)throw new Error('Dedicated sandbox removal could not be verified');this.ready=false;this.projectSync=null;this.#pendingPatches.clear();}}
   get status(){return Object.freeze({configured:true,ready:this.ready,closed:this.closed,sandboxName:this.sandboxName,hostShellAvailable:false,cleanupPending:this.closed&&this.ready,projectConfigured:typeof this.projectSourcePath==='string'&&!!this.projectSourcePath.trim(),projectSynced:!!this.projectSync,projectFileCount:this.projectSync?.fileCount??0,projectSourceBytes:this.projectSync?.sourceBytes??0,projectSyncedAt:this.projectSync?.syncedAt??null});}
 }
 
