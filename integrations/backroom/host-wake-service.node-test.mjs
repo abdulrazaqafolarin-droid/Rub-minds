@@ -160,3 +160,31 @@ test('multiple AI bindings poll independently and targeted revoke leaves sibling
   assert.ok(bodies.filter(body=>body.grantId).every(body=>[grant1,grant2].includes(body.grantId)));
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('a false remote deactivation response is never reported as confirmed',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'backroom-deactivate-false-'));
+ try{
+  const service=createHostWakeService({
+   identity:{hostId,hostToken},browserRuntime:runtime(),
+   journalDirectory:join(dir,'journal'),gatewayUrl:trustedUrl,
+   fetchImpl:async(url)=>new Response(JSON.stringify(url.endsWith('/activate')?
+    {ok:true,activated:true}:url.endsWith('/deactivate')?
+    {ok:true,deactivated:false}:{ok:true,leases:[]}),{status:200})
+  });
+  service.configure({sessionDigest,bindingId,publishableKey});
+  const grantId='40000000-0000-4000-8000-000000000078';
+  const groupId='40000000-0000-4000-8000-000000000044';
+  const participantId='40000000-0000-4000-8000-000000000055';
+  const sessionId='40000000-0000-4000-8000-000000000066';
+  await service.activateAndStart({grantId,expiresAt:Date.now()+300000,scope:{
+    hostId,bindingId,groupId,participantId,sessionId
+   }},{bindingId,roomId:groupId,participantId,sessionId});
+  const result=await service.stop(bindingId);
+  assert.equal(result.stopped,true);
+  assert.equal(result.remotelyDeactivated,false);
+  assert.equal(result.bindings[0].remotelyDeactivated,false);
+  const status=service.status.bindings.find(item=>item.bindingId===bindingId);
+  assert.equal(status.polling,false);
+  assert.equal(status.consentActive,false);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
