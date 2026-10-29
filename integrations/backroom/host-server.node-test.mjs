@@ -599,3 +599,30 @@ test("host configure route permits only scope plus public project key, never gat
   assert.deepEqual(received,{bindingId,sessionDigest,publishableKey});
  },{wakeService});
 });
+
+
+test("wake revoke reports local stop separately from uncertain remote deactivation",async()=>{
+ const targetId="12345678-1234-4234-9234-123456789088";
+ const roomId="12345678-1234-4234-9234-123456789089";
+ const bindingId="12345678-1234-4234-9234-123456789090";
+ const grantId="12345678-1234-4234-9234-123456789091";
+ let stoppedFor=null;
+ const browserRuntime={
+  status:()=>({running:true,pages:1,capabilities:{browserCanonicalWake:true}}),
+  stop:async()=>{},
+  enableContinuousWake:async()=>({grantId}),
+  revokeContinuousWake:()=>true
+ };
+ const wakeService={stop:async id=>{stoppedFor=id;return {stopped:true,remotelyDeactivated:false};}};
+ await withHost(async({base,origin})=>{
+  const token=(await (await pair(base,origin)).json()).sessionToken;
+  const auth={Origin:origin,Authorization:"Bearer "+token,"Content-Type":"application/json"};
+  const response=await fetch(base+"/v1/browser/wake/grants/revoke",{method:"POST",headers:auth,
+   body:JSON.stringify({grantId,targetId,roomId,bindingId})});
+  assert.equal(response.status,200);
+  assert.equal(stoppedFor,bindingId);
+  assert.deepEqual(await response.json(),{
+   revoked:true,localPollingStopped:true,remoteDeactivationConfirmed:false,remoteDeactivationPending:true
+  });
+ },{browserRuntime,wakeService});
+});
