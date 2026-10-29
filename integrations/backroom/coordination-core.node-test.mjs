@@ -21,8 +21,8 @@ test('canonical wake trigger requires explicit wake capability and has exact bou
  assert.equal(result.job.requestedAction,'wake');
  assert.equal(result.job.prompt,buildCanonicalWakePrompt(event.id));
  assert.equal(isCanonicalWakePrompt(result.job.prompt,event.id),true);
- assert.equal(isCanonicalWakePrompt(result.job.prompt+'\\nextra',event.id),false);
- assert.equal(isCanonicalWakePrompt('@RMconnects\\nEvent: another-event\\n'+result.job.prompt.split('\\n').slice(2).join('\\n'),event.id),false);
+ assert.equal(isCanonicalWakePrompt(result.job.prompt+'\nextra',event.id),false);
+ assert.equal(isCanonicalWakePrompt('@RMconnects\nEvent: another-event\n'+result.job.prompt.split('\n').slice(2).join('\\n'),event.id),false);
  assert.equal(planWakeTrigger({event,participant,binding}).reason,'wake-capability-not-authorized');
 });
 test('canonical wake dispatch needs an explicit matching grant, exact focus and wake capability',()=>{
@@ -31,7 +31,7 @@ test('canonical wake dispatch needs an explicit matching grant, exact focus and 
  const job=wakePlan.job;
  const input={job,binding:wakeBinding,participant,authorizationValid:true,composerEmpty:true,foregroundSessionId:participant.sessionId};
  assert.deepEqual(mayDispatchWake(input),{ok:true,action:'canonical-wake-only'});
- for(const change of [{authorizationValid:false},{composerEmpty:false},{foregroundSessionId:'other'},{binding:{...wakeBinding,capabilities:['draft']}},{job:{...job,prompt:job.prompt+'\\nforged'}},{job:{...job,requestedAction:'submit'}},{participant:{...participant,status:'paused'}}]){
+ for(const change of [{authorizationValid:false},{composerEmpty:false},{foregroundSessionId:'other'},{binding:{...wakeBinding,capabilities:['draft']}},{job:{...job,prompt:job.prompt+'\nforged'}},{job:{...job,requestedAction:'submit'}},{participant:{...participant,status:'paused'}}]){
   assert.equal(mayDispatchWake({...input,...change}).ok,false);
  }
 });
