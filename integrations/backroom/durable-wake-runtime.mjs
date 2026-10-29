@@ -7,7 +7,8 @@ function id(v,n){if(typeof v!=='string'||!ID.test(v))throw new TypeError('Invali
 function required(v,n){if(typeof v!=='string'||v.trim()==='')throw new TypeError(n+' required');return v;}
 function leaseInput(lease){
  if(!lease||typeof lease!=='object')throw new TypeError('Claimed wake lease required');
- for(const [key,value] of [['jobId',lease.jobId],['eventId',lease.eventId],['roomId',lease.roomId],['participantId',lease.participantId],['hostId',lease.hostId],['sessionId',lease.sessionId],['spaceId',lease.spaceId],['bindingId',lease.bindingId],['targetId',lease.targetId]])id(value,'lease.'+key);
+ for(const [key,value] of [['jobId',lease.jobId],['eventId',lease.eventId],['roomId',lease.roomId],['participantId',lease.participantId],['hostId',lease.hostId],['sessionId',lease.sessionId],['bindingId',lease.bindingId],['targetId',lease.targetId]])id(value,'lease.'+key);
+ required(lease.spaceId,'lease.spaceId');
  required(lease.targetIdentityFingerprint,'lease.targetIdentityFingerprint');
  required(lease.prompt,'lease.prompt');
  if(!isCanonicalWakePrompt(lease.prompt,lease.eventId)||lease.prompt.length>12000)throw new TypeError('Invalid canonical wake prompt');
