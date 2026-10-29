@@ -7,6 +7,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { HostPairingAuthority } from "../integrations/backroom/host-pairing.mjs";
 import { handleWorkspaceHttpRequest } from "../integrations/backroom/workspace-http-api.mjs";
+import { createSerializedLocalApproval } from "../integrations/backroom/local-approval-queue.mjs";
 
 const DEFAULT_ORIGINS = [
   "https://rub-minds.vercel.app",
@@ -582,7 +583,7 @@ export function createBackroomHostServer({
 }
 
 
-async function authorizeLocalWorkspaceAction(action) {
+const authorizeLocalWorkspaceAction = createSerializedLocalApproval(async action => {
   // A web page cannot manufacture this grant. Non-interactive hosts deny by default.
   if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) return false;
   const { createInterface } = await import("node:readline/promises");
@@ -596,7 +597,7 @@ async function authorizeLocalWorkspaceAction(action) {
   } finally {
     readline.close();
   }
-}
+});
 function csvAllowlist(name) {
   return (process.env[name] ?? "").split(",").map(value => value.trim()).filter(Boolean);
 }
