@@ -27,6 +27,17 @@ test('HTTPS-only authenticated claim uses bearer token, no caching or CORS',asyn
  assert.equal(calls[0][1].hostToken,token);
  assert.equal(calls[0][1].limit,2);
 });
+
+test('Supabase TLS-terminated internal HTTP request is accepted only with forwarded HTTPS',async()=>{
+ const {handler,calls}=fixture();
+ const trustedProxy=await handler(request('http://edge-runtime.supabase.com/backroom-wake/claim',{
+  headers:{'x-forwarded-proto':'https'}
+ }));
+ assert.equal(trustedProxy.status,200);
+ const untrusted=await handler(request('http://edge-runtime.supabase.com/backroom-wake/claim'));
+ assert.equal(untrusted.status,404);
+ assert.equal(calls.length,1);
+});
 test('invalid origins, cookies, methods, paths, queries and tokens never reach gateway',async()=>{
  const {handler,calls}=fixture();
  const attempts=[
