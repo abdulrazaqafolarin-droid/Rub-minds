@@ -34,7 +34,7 @@ export class SupabaseBackroomWakeStore{
  }
  async enqueue(input){
   const p=input?.plan?.job;
-  if(input?.plan?.action!=='queue'||!p)throw new TypeError('Eligible wake plan required');
+  if(input?.plan?.action!=='queue'||!p||p.requestedAction!=='wake')throw new TypeError('Eligible canonical wake plan required');
   const target=input.target,binding=input.binding;
   if(!target||!binding)throw new TypeError('Registered target and binding required');
   const args={
@@ -57,7 +57,7 @@ export class SupabaseBackroomWakeStore{
   if(binding.groupId!==p.groupId||binding.participantId!==p.participantId||binding.sessionId!==p.sessionId||
      binding.bindingId!==p.bindingId||binding.targetId!==p.targetId||target.id!==p.targetId||
      target.roomId!==p.groupId||target.sessionId!==p.sessionId)throw new Error('Wake target identity/scope mismatch');
-  if(!Array.isArray(binding.capabilities)||!binding.capabilities.includes('draft'))throw new Error('Draft capability required');
+  if(!Array.isArray(binding.capabilities)||!binding.capabilities.includes('wake'))throw new Error('Explicit wake capability required');
   const data=await call(this.client,'enqueue_backroom_wake_job',args);
   if(!data||typeof data!=='object'||!UUID.test(data.job_id)||typeof data.created!=='boolean'||
      !['pending','leased','acknowledged','ignored','failed','cancelled','expired'].includes(data.state))throw new Error('Queue returned malformed enqueue result');
