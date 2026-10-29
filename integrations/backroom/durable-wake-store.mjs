@@ -21,9 +21,14 @@ function requireInt(value,name,min,max){if(!Number.isSafeInteger(value)||value<m
 function requireBoolean(value,name){if(typeof value!=='boolean')throw new TypeError('Invalid '+name);return value;}
 function rpcError(name,error){const code=typeof error?.code==='string'?error.code:'unknown';const e=new Error('Backroom queue RPC '+name+' failed ('+code+')');e.code='BACKROOM_QUEUE_RPC';throw e;}
 async function call(client,name,args){const response=await client.rpc(name,args);if(!response||response.error)rpcError(name,response?.error);return response.data;}
-export function createWakeKey(eventId,participantId,groupId){
- requireLabel(eventId,'eventId');requireLabel(participantId,'participantId');requireLabel(groupId,'groupId');
- return createHash('sha256').update(JSON.stringify([groupId,eventId,participantId]),'utf8').digest('hex');
+export function createWakeKey(eventId,participantId,groupId,bindingId){
+ requireLabel(eventId,'eventId');requireLabel(participantId,'participantId');requireLabel(groupId,'groupId');requireLabel(bindingId,'bindingId');
+ // Match the SQL message-trigger key exactly: [room, event, participant, binding].
+ // PostgreSQL UUID casts canonicalize case, so normalize UUID-shaped values here too.
+ const canonical=value=>UUID.test(value)?value.toLowerCase():value;
+ return createHash('sha256').update(JSON.stringify([
+  canonical(groupId),eventId,canonical(participantId),canonical(bindingId)
+ ]),'utf8').digest('hex');
 }
 export class SupabaseBackroomWakeStore{
  constructor({client}={}){
@@ -37,7 +42,7 @@ export class SupabaseBackroomWakeStore{
   const target=input.target,binding=input.binding;
   if(!target||!binding)throw new TypeError('Registered target and binding required');
   const args={
-   p_job_key:requireMatch(input.jobKey??createWakeKey(p.eventId,p.participantId,p.groupId),HEX64,'jobKey'),
+   p_job_key:requireMatch(input.jobKey??createWakeKey(p.eventId,p.participantId,p.groupId,p.bindingId),HEX64,'jobKey'),
    p_owner_id:requireMatch(input.ownerId,UUID,'ownerId'),
    p_room_id:requireMatch(p.groupId,UUID,'groupId'),
    p_participant_id:requireMatch(p.participantId,UUID,'participantId'),
