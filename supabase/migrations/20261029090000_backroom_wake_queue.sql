@@ -359,6 +359,16 @@ begin
     from public.backroom_wake_jobs j
     where j.host_id = p_host_id and j.session_digest = p_session_digest and j.binding_id=p_binding_id
       and exists (
+        select 1 from public.backroom_input_bindings b
+        where b.id=p_binding_id and b.owner_id=j.owner_id and b.room_id=j.room_id
+          and b.participant_id=j.participant_id and b.host_id=j.host_id
+          and b.session_digest=j.session_digest and b.space_id=j.space_id and b.session_id=j.session_id
+          and b.target_id=j.target_id and b.target_identity_fingerprint=j.target_identity_fingerprint
+          and b.target_revision=j.target_revision and b.revoked_at is null
+          and b.wake_enabled=true and b.confirmed_at is not null
+          and b.wake_expires_at > pg_catalog.clock_timestamp()
+      )
+      and exists (
         select 1
         from public.rub_minds_mcp_sessions s
         join public.participants p on p.id = s.participant_id and p.room_id = s.room_id
@@ -437,6 +447,16 @@ begin
     and j.lease_token_hash = pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_lease_token, 'UTF8')), 'hex')
     and j.lease_expires_at > pg_catalog.clock_timestamp() and j.expires_at > pg_catalog.clock_timestamp()
     and exists (
+      select 1 from public.backroom_input_bindings b
+      where b.id=p_binding_id and b.owner_id=j.owner_id and b.room_id=j.room_id
+        and b.participant_id=j.participant_id and b.host_id=j.host_id
+        and b.session_digest=j.session_digest and b.space_id=j.space_id and b.session_id=j.session_id
+        and b.target_id=j.target_id and b.target_identity_fingerprint=j.target_identity_fingerprint
+        and b.target_revision=j.target_revision and b.revoked_at is null
+        and b.wake_enabled=true and b.confirmed_at is not null
+        and b.wake_expires_at > pg_catalog.clock_timestamp()
+    )
+    and exists (
       select 1
       from public.rub_minds_mcp_sessions s
       join public.participants p on p.id = s.participant_id and p.room_id = s.room_id
@@ -486,6 +506,16 @@ begin
     and j.state = 'leased' and j.lease_owner = p_host_id
     and j.lease_token_hash = pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_lease_token, 'UTF8')), 'hex')
     and j.lease_expires_at > pg_catalog.clock_timestamp() and j.expires_at > pg_catalog.clock_timestamp()
+    and exists (
+      select 1 from public.backroom_input_bindings b
+      where b.id=p_binding_id and b.owner_id=j.owner_id and b.room_id=j.room_id
+        and b.participant_id=j.participant_id and b.host_id=j.host_id
+        and b.session_digest=j.session_digest and b.space_id=j.space_id and b.session_id=j.session_id
+        and b.target_id=j.target_id and b.target_identity_fingerprint=j.target_identity_fingerprint
+        and b.target_revision=j.target_revision and b.revoked_at is null
+        and b.wake_enabled=true and b.confirmed_at is not null
+        and b.wake_expires_at > pg_catalog.clock_timestamp()
+    )
     and exists (
       select 1
       from public.rub_minds_mcp_sessions s
