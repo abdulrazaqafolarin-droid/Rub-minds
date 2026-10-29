@@ -4,16 +4,15 @@
  * The migration grants its RPCs to service_role only.
  */
 import {createHash} from 'node:crypto';
-import {validId} from './coordination-core.mjs';
+import {validId,isCanonicalWakePrompt} from './coordination-core.mjs';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HEX64=/^[0-9a-f]{64}$/;
 const LEASE=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const ERROR_CODES=new Set(['target_unavailable','approval_required','provider_busy','transport_error','result_unconfirmed','authorization_denied','other']);
 function requireMatch(value,re,name){if(typeof value!=='string'||!re.test(value))throw new TypeError('Invalid '+name);return value;}
 function requireLabel(value,name,max=256){if(typeof value!=='string'||value.trim()===''||value.length>max||/[\u0000-\u001f]/.test(value))throw new TypeError('Invalid '+name);return value;}
-function requirePrompt(value){
- if(typeof value!=='string'||value.trim()===''||value.length>12000||
-    !value.startsWith('@RMconnects\n')||/[\u0000-\u0009\u000b-\u001f\u007f]/.test(value)){
+function requirePrompt(value,eventId){
+ if(typeof value!=='string'||value.length>12000||!isCanonicalWakePrompt(value,eventId)||/[\u0000-\u0009\u000b-\u001f\u007f]/.test(value)){
   throw new TypeError('Invalid prompt');
  }
  return value;
@@ -51,7 +50,7 @@ export class SupabaseBackroomWakeStore{
    p_target_identity_fingerprint:requireLabel(target.identityFingerprint,'identityFingerprint',512),
    p_target_revision:requireInt(target.revision,'targetRevision',1,2147483647),
    p_event_id:requireLabel(p.eventId,'eventId',256),
-   p_prompt:requirePrompt(p.prompt),
+   p_prompt:requirePrompt(p.prompt,p.eventId),
    p_ttl_seconds:input.ttlSeconds===undefined?3600:requireInt(input.ttlSeconds,'ttlSeconds',60,86400),
   };
   if(binding.groupId!==p.groupId||binding.participantId!==p.participantId||binding.sessionId!==p.sessionId||
