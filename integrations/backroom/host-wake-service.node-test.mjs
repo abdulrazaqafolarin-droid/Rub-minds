@@ -113,3 +113,50 @@ test('lost activation response retries only the same consent grant and can then 
   assert.ok(urls.every(url=>url.startsWith(trustedUrl)));
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('multiple AI bindings poll independently and targeted revoke leaves sibling active',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'backroom-multi-binding-'));
+ try{
+  const urls=[],bodies=[],headers=[];
+  const service=createHostWakeService({
+   identity:{hostId,hostToken},browserRuntime:runtime(),
+   journalDirectory:join(dir,'journal'),gatewayUrl:trustedUrl,
+   fetchImpl:async(url,options)=>{
+    urls.push(url);bodies.push(JSON.parse(options.body));headers.push(options.headers);
+    const body=url.endsWith('/activate')?{ok:true,activated:true}:
+      url.endsWith('/deactivate')?{ok:true,deactivated:true}:{ok:true,leases:[]};
+    return new Response(JSON.stringify(body),{status:200});
+   }
+  });
+  const binding2='40000000-0000-4000-8000-000000000099';
+  const digest2='c'.repeat(64);
+  service.configure({sessionDigest,bindingId,publishableKey});
+  service.configure({sessionDigest:digest2,bindingId:binding2,publishableKey});
+  // Config retry is idempotent and must not create a duplicate poller.
+  assert.deepEqual(service.configure({sessionDigest,bindingId,publishableKey}),
+    {configured:true,bindingId,existing:true});
+  const grant1='40000000-0000-4000-8000-000000000071';
+  const grant2='40000000-0000-4000-8000-000000000072';
+  const scope1={hostId,bindingId,groupId:'40000000-0000-4000-8000-000000000081',
+   participantId:'40000000-0000-4000-8000-000000000091',sessionId:'40000000-0000-4000-8000-0000000000a1'};
+  const scope2={hostId,bindingId:binding2,groupId:'40000000-0000-4000-8000-000000000082',
+   participantId:'40000000-0000-4000-8000-000000000092',sessionId:'40000000-0000-4000-8000-0000000000a2'};
+  await service.activateAndStart({grantId:grant1,expiresAt:Date.now()+300000,scope:scope1},scope1);
+  await service.activateAndStart({grantId:grant2,expiresAt:Date.now()+300000,scope:scope2},scope2);
+  assert.equal(service.status.count,2);
+  assert.ok(service.status.bindings.every(x=>x.polling&&x.consentActive));
+  const stopped=await service.stop(bindingId);
+  assert.equal(stopped.bindings.length,1);
+  assert.equal(stopped.bindings[0].bindingId,bindingId);
+  const first=service.status.bindings.find(x=>x.bindingId===bindingId);
+  const second=service.status.bindings.find(x=>x.bindingId===binding2);
+  assert.equal(first.polling,false);assert.equal(first.consentActive,false);
+  assert.equal(second.polling,true);assert.equal(second.consentActive,true);
+  await service.stop();
+  assert.ok(service.status.bindings.every(x=>!x.polling&&!x.consentActive));
+  assert.ok(urls.includes(trustedUrl+'deactivate'));
+  assert.ok(urls.every(url=>url.startsWith(trustedUrl)));
+  assert.ok(headers.every(header=>header.apikey===publishableKey&&header.Authorization==='Bearer '+hostToken));
+  assert.ok(bodies.filter(body=>body.grantId).every(body=>[grant1,grant2].includes(body.grantId)));
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
