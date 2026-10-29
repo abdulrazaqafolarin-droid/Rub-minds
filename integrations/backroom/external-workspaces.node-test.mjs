@@ -29,9 +29,10 @@ test('MCP stdio client initializes and calls only advertised tools without shell
 test('MCP child rejects credential-looking ad-hoc environment values',()=>assert.throws(()=>new McpStdioClient({command:'artemis',env:{GOOGLE_API_KEY:'secret'}}),/Credential-like/));
 
 test('CUA desktop demands owner approval, fresh identity, empty text field and readback',async()=>{
- let current=snap(),approved=false;const client=new FakeMcp(['list_windows','get_window_state','type_text'],async(name,args)=>{
+ let current=snap(),approved=false;const client=new FakeMcp(['list_windows','get_window_state','click','type_text'],async(name,args)=>{
   if(name==='list_windows')return {windows:[{pid:44,window_id:99,app_name:current.app_name,title:current.title}]};
   if(name==='get_window_state')return current;
+  if(name==='click')return {effect:'confirmed'};
   if(name==='type_text'){current=snap({value:args.text});return {effect:'confirmed',verified:true};}
   throw Error('unknown tool');
  });
@@ -44,10 +45,10 @@ test('CUA desktop demands owner approval, fresh identity, empty text field and r
  current={...snap(),elements:[{element_token:'s00000001:1',role:'button',value:''}]};await assert.rejects(d.draftText({pid:44,windowId:99,elementToken:'s00000001:1',text:'Draft',expectedAppName:'Chrome',expectedTitle:'ChatGPT',groupId:'group-1',sessionId:'session-1'}),/text-entry/);
 });
 test('CUA types through a fresh snapshot token only and never sends',async()=>{
- let current=snap();const client=new FakeMcp(['list_windows','get_window_state','type_text'],async(n,a)=>{if(n==='list_windows')return {windows:[{pid:44,window_id:99,app_name:'Chrome',title:'ChatGPT'}]};if(n==='get_window_state')return current;if(n==='type_text'){current=snap({value:a.text});return {effect:'confirmed'};}throw Error(n);});
+ let current=snap();const client=new FakeMcp(['list_windows','get_window_state','click','type_text'],async(n,a)=>{if(n==='list_windows')return {windows:[{pid:44,window_id:99,app_name:'Chrome',title:'ChatGPT'}]};if(n==='get_window_state')return current;if(n==='click')return {effect:'confirmed'};if(n==='type_text'){current=snap({value:a.text});return {effect:'confirmed'};}throw Error(n);});
  const d=new CuaDesktopWorkspace({client,authorizeLocalAction:async a=>a.kind==='desktop_draft_inspect'||a.text==='draft only'});
  const result=await d.draftText({pid:44,windowId:99,elementToken:'s00000001:1',text:'draft only',expectedAppName:'Chrome',expectedTitle:'ChatGPT',groupId:'group-1',sessionId:'session-1'});
- assert.equal(result.state,'completed');assert.equal(result.submitted,false);assert.deepEqual(client.calls.find(c=>c.name==='type_text').args,{pid:44,text:'draft only',element_token:'s00000001:1',session:'rub-minds-backroom'});
+ assert.equal(result.state,'completed');assert.equal(result.submitted,false);assert.deepEqual(client.calls.find(c=>c.name==='click').args,{target:{kind:'window',pid:44,window_id:99},element_token:'s00000001:1',delivery_mode:'foreground',session:'rub-minds-backroom'});assert.deepEqual(client.calls.find(c=>c.name==='type_text').args,{text:'draft only',target:{kind:'window',pid:44,window_id:99},session:'rub-minds-backroom'});
 });
 
 test('ARTEMIS requires device/package allowlists, explicit approval and trace-bound lifecycle',async()=>{
@@ -75,7 +76,7 @@ test('CUA terminal uses a local isolated container, argv execution and per-comma
  const calls=[];const d=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-unit-1234',authorizeLocalAction:async a=>a.command[0]==='npm',spawnImpl:fakeSpawn([{code:0,stdout:'created'},{code:0,stdout:'367 tests passed'},{code:0,stdout:'removed'}],calls)});
  await d.start();const result=await d.exec({command:['npm','test','--','--run'],purpose:'Backroom tests',groupId:'group-1',sessionId:'session-1'});assert.equal(result.state,'completed');
  assert.equal(calls[0].options.shell,false);assert.deepEqual(calls[0].args,['--json','sb','create','linux','--on','local','--kind','container','--runtime','gvisor','--headless','--name','rm-backroom-unit-1234']);
- assert.deepEqual(calls[1].args,['--json','sb','exec','--local','--stdin','--timeout','120','rm-backroom-unit-1234','--','npm','test','--','--run']);
+ assert.deepEqual(calls[1].args,['--json','sb','exec','-i','--local','--timeout','120','rm-backroom-unit-1234','--','npm','test','--','--run']);
  await assert.rejects(d.exec({command:['bash','-lc','echo unsafe'],purpose:'unsafe',groupId:'g',sessionId:'s'}),/Shell interpreters/);await d.close();assert.deepEqual(calls[2].args,['--json','sb','rm','--local','rm-backroom-unit-1234']);
 });
 test('terminal refuses arbitrary sandbox names, missing approval and path traversal',async()=>{
