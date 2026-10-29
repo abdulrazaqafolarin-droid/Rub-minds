@@ -42,6 +42,22 @@ test('critical Backroom test suites remain registered in runtime and queue scrip
 });
 
 
+
+test('focused Backroom test commands cover multi-surface and hosted lifecycle contracts',()=>{
+ const multi=manifest.scripts?.['test:multi-surface'];
+ assert.equal(typeof multi,'string','Missing focused multi-surface test command');
+ for(const path of ['integrations/backroom/multi-surface-execution.node-test.mjs',
+  'integrations/backroom/native-accessibility-adapter.node-test.mjs',
+  'integrations/backroom/terminal-draft-adapter.node-test.mjs'])
+  assert.ok(multi.includes(path),'test:multi-surface must include '+path);
+ const lifecycle=manifest.scripts?.['test:host-lifecycle'];
+ assert.equal(typeof lifecycle,'string','Missing focused host lifecycle test command');
+ for(const path of ['integrations/backroom/host-identity.node-test.mjs',
+  'integrations/backroom/host-wake-service.node-test.mjs',
+  'integrations/backroom/remote-wake-store.node-test.mjs'])
+  assert.ok(lifecycle.includes(path),'test:host-lifecycle must include '+path);
+});
+
 test('host identity rotation is explicit and cannot be mistaken for server revocation',async()=>{
  const wrapper=await readFile(resolve(root,'scripts/backroom-host.mjs'),'utf8');
  const server=await readFile(resolve(root,'scripts/backroom-host-server.mjs'),'utf8');
