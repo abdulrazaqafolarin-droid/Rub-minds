@@ -235,6 +235,27 @@ export function createBackroomHostServer({
       }
       return;
     }
+    if(request.method==="POST" && url.pathname==="/v1/backroom/unconfigure"){
+      const authorized=authority.authorize({origin:requestOrigin,token:bearer(request)});
+      if(!authorized){writeJson(response,401,{error:"host_session_invalid"},cors);return;}
+      if(!wakeService||typeof wakeService.unconfigure!=="function"){
+        writeJson(response,503,{error:"remote_wake_unavailable"},cors);return;
+      }
+      if(!/^application\\/json(?:\\s*;|$)/i.test(request.headers["content-type"]??"")){
+        writeJson(response,415,{error:"application_json_required"},cors);return;
+      }
+      try{
+        const input=await readJson(request);
+        if(typeof input.bindingId!=="string"||!/^[a-f0-9-]{36}$/i.test(input.bindingId)||
+          Object.keys(input).some(key=>key!=="bindingId")){
+          writeJson(response,400,{error:"invalid_binding_scope"},cors);return;
+        }
+        writeJson(response,200,await wakeService.unconfigure(input.bindingId),cors);
+      }catch{
+        writeJson(response,400,{error:"invalid_binding_scope"},cors);
+      }
+      return;
+    }
     if(request.method==="POST" && url.pathname==="/v1/backroom/configure"){
       const authorized=authority.authorize({origin:requestOrigin,token:bearer(request)});
       if(!authorized){writeJson(response,401,{error:"host_session_invalid"},cors);return;}
@@ -388,6 +409,18 @@ export function createBackroomHostServer({
               return;
             }
             writeJson(response, 201, await browser.registerSelectedTarget(input.pageId, input.roomId, input.attemptId), cors);
+            return;
+          }
+          if(url.pathname==="/v1/browser/wake/bindings/revoke"){
+            const input=await readJson(request);
+            if(typeof input.bindingId!=="string"||!/^[a-f0-9-]{36}$/i.test(input.bindingId)||
+              Object.keys(input).some(key=>key!=="bindingId")){
+              writeJson(response,400,{error:"invalid_wake_binding_scope"},cors);return;
+            }
+            const grantRevoked=browser.revokeWakeBinding(input.bindingId);
+            const stopStatus=await wakeService?.stop?.(input.bindingId);
+            writeJson(response,200,{revoked:true,grantRevoked,
+              remoteDeactivationConfirmed:stopStatus?.remotelyDeactivated===true},cors);
             return;
           }
           if (url.pathname === "/v1/browser/wake/grants") {
