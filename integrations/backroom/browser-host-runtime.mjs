@@ -310,6 +310,7 @@ export class BrowserHostRuntime {
       if (this.#starting) {
         try { await this.#starting; } catch {}
       }
+      this.wakeAuthority.revokeAll();
       const context = this.#context;
       this.#context = null;
       for (const binding of this.#bindings.values()) {
@@ -774,6 +775,7 @@ export class BrowserHostRuntime {
         ? current.origin + current.pathname + current.search + current.hash + ":" + binding.pageId
         : "";
       if (fingerprint !== binding.target.identityFingerprint || selectorCount !== 1) {
+        this.wakeAuthority.revokeForTarget(targetId);
         this.wakeAuthority.revokeForTarget(targetId);
         this.#bindings.delete(targetId);
         this.#targets.delete(targetId);
