@@ -449,6 +449,7 @@ export function createBackroomHostServer({
         return;
       }
       await wakeService?.stop?.();
+      await multiSurfaceRuntime?.stop?.();
       writeJson(response, 200, { revoked: true }, cors);
       return;
     }
