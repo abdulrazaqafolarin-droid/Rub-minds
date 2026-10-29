@@ -8,7 +8,7 @@ import './backroom.css';
 type Surface = 'browser_tab' | 'desktop_app' | 'windows_app' | 'terminal' | 'android_app';
 type Space = { id: string; name: string; surface: Surface; app: string; createdAt: number };
 type Rect = { x: number; y: number; width: number; height: number };
-type HostStatus = { hostId: string; label: string; expiresAt: number; protocolVersion: string; connected: boolean; executionReady: boolean; capabilities: Record<string, boolean>; nextStep: string; browserPages?: number };
+type HostStatus = { hostId: string; label: string; expiresAt: number; protocolVersion: string; connected: boolean; executionReady: boolean; capabilities: Record<string, boolean>; nextStep: string; browserPages?: number; enrollmentDigest?: string };
 type BrowserPageRow = { pageId: string; title: string; site: string; canSelect: boolean };
 type BrowserTargetRow = { id: string; pageId: string; roomId: string; title: string; site: string; surface: string; operations: string[] };
 type PendingBrowserSelection = { pageId: string; roomId: string; generation: number; attemptId: string | null };
@@ -41,6 +41,10 @@ function parseHostStatus(value: unknown, expectedHostId?: string): HostStatus {
     typeof row.executionReady !== 'boolean' || typeof row.nextStep !== 'string') {
     throw new HostStatusValidationError('Local host returned an incomplete or unauthenticated status.');
   }
+  if (row.enrollmentDigest !== undefined &&
+    (typeof row.enrollmentDigest !== 'string' || !/^[a-f0-9]{64}$/.test(row.enrollmentDigest))) {
+    throw new HostStatusValidationError('Local host supplied an invalid enrollment digest.');
+  }
   if (row.browserPages !== undefined &&
     (typeof row.browserPages !== 'number' || !Number.isSafeInteger(row.browserPages) || row.browserPages < 0)) {
     throw new HostStatusValidationError('Local host returned an invalid browser-page count.');
@@ -67,6 +71,7 @@ function parseHostStatus(value: unknown, expectedHostId?: string): HostStatus {
     capabilities,
     nextStep: row.nextStep,
     ...(typeof row.browserPages === 'number' ? { browserPages: row.browserPages } : {}),
+    ...(typeof row.enrollmentDigest === 'string' ? { enrollmentDigest: row.enrollmentDigest } : {}),
   };
 }
 
@@ -302,6 +307,28 @@ export default function BackroomApp() {
       setHostMessage(message);
     } finally { setHostBusy(false); }
   }
+  async function registerHostedWakeHost() {
+    if (!supabase || !user || !hostInfo?.connected || !hostInfo.enrollmentDigest) {
+      setHostMessage('Pair a current Backroom host that exposes a valid enrollment digest first.');
+      return;
+    }
+    if (!window.confirm('Register this local Backroom host with your Rub Minds account? This does NOT enable AI wake or submit any prompts.')) return;
+    setHostBusy(true);
+    try {
+      const {data,error:registrationError}=await supabase.functions.invoke('backroom-config/host',{
+        body:{hostId:hostInfo.hostId,credentialDigest:hostInfo.enrollmentDigest,ttlSeconds:86400}
+      });
+      if(registrationError || data?.ok!==true)throw new Error(
+        data?.reason==='registration_conflict'
+          ? 'This host is already registered. Its existing registration remains unchanged.'
+          : 'Hosted host registration failed. No wake automation was activated.'
+      );
+      setHostMessage('Hosted Backroom host registered. Wake remains disabled until an AI input is bound and explicitly consented.');
+    }catch(error){
+      setHostMessage(error instanceof Error?error.message:'Hosted registration unavailable.');
+    }finally{setHostBusy(false);}
+  }
+
   async function checkLocalHost() {
     if (!hostToken) return;
     setHostBusy(true); setHostMessage('');
@@ -651,7 +678,7 @@ export default function BackroomApp() {
 <button className="br-secondary br-browser-stop" onClick={() => void stopManagedBrowser()} disabled={browserBusy}>Close managed browser</button></>}
 {browserNotice && <div className="br-host-message" role="status">{browserNotice}</div>}</div>
 <div className="br-emergency-stop-row"><div><b>Emergency stop</b><small>Close Chromium, revoke all paired sessions, and block reconnection until the host is restarted.</small></div><button className="br-danger-action" onClick={() => void emergencyStopLocalHost()} disabled={hostBusy || browserBusy || !hostToken}>Stop all</button></div>
-<div className="br-modal-actions"><button className="br-secondary" onClick={() => void unpairLocalHost()} disabled={hostBusy || browserBusy}>Unpair</button><button className="br-primary" onClick={() => void checkLocalHost()} disabled={hostBusy || browserBusy}>{hostBusy ? 'Checking…' : 'Check connection'}</button></div></>}</div></div>}
+{hostInfo.enrollmentDigest && <div className="br-modal-actions"><button className="br-secondary" onClick={() => void registerHostedWakeHost()} disabled={hostBusy || browserBusy}>Register hosted wake host (disabled by default)</button></div>}<div className="br-modal-actions"><button className="br-secondary" onClick={() => void unpairLocalHost()} disabled={hostBusy || browserBusy}>Unpair</button><button className="br-primary" onClick={() => void checkLocalHost()} disabled={hostBusy || browserBusy}>{hostBusy ? 'Checking…' : 'Check connection'}</button></div></>}</div></div>}
     {adding && <div className="br-modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setAdding(false); }}><div className="br-modal" role="dialog" aria-modal="true" aria-labelledby="br-modal-title"><div className="br-modal-top"><div className="br-modal-icon"><Plus size={22}/></div><button className="br-icon-button" onClick={() => setAdding(false)} aria-label="Close"><X size={20}/></button></div><h2 id="br-modal-title">Add a new space</h2><p>Choose the kind of interface this workspace will connect to.</p><label htmlFor="br-name">Space name</label><input id="br-name" maxLength={60} autoFocus placeholder="e.g. Claude research assistant" value={name} onChange={e => setName(e.target.value)}/><label htmlFor="br-app">App or session label <span>(optional)</span></label><input id="br-app" maxLength={100} placeholder="e.g. Claude Desktop · Research thread" value={app} onChange={e => setApp(e.target.value)}/><div className="br-modal-label">Interface type</div><div className="br-surface-options">{surfaces.map(s => { const Icon = iconFor(s.id); return <button key={s.id} className={'br-surface-option' + (surface === s.id ? ' chosen' : '')} onClick={() => setSurface(s.id)}><Icon size={20}/><span><b>{s.name}</b><small>{s.detail}</small></span>{surface === s.id && <Check size={17}/>}</button>; })}</div><div className="br-modal-actions"><button className="br-secondary" onClick={() => setAdding(false)}>Cancel</button><button className="br-primary" onClick={add} disabled={!name.trim()}>Create space <ArrowRight size={16}/></button></div></div></div>}
   </div>;
 }
