@@ -494,3 +494,47 @@ test("remote activation failure revokes local grant and never reports success",a
   assert.doesNotMatch(await response.text(),/secret network/);
  },{browserRuntime,wakeService});
 });
+
+
+test("multi-surface routes require pairing and never expose native registration",async()=>{
+ const calls=[];
+ const multiSurfaceRuntime={
+  list:()=>[{id:"selected-native",surface:"windows_app",roomId:"group-1",operations:["draft"]}],
+  draft:async input=>{calls.push(input);return {state:"completed",submitted:false,result:{drafted:true}}},
+  stop:()=>{calls.push("stopped")}
+ };
+ await withHost(async({base,origin})=>{
+  const unauth=await fetch(base+"/v1/surfaces/targets",{headers:{Origin:origin}});
+  assert.equal(unauth.status,401);
+  const session=(await (await pair(base,origin)).json()).sessionToken;
+  const headers={Origin:origin,Authorization:"Bearer "+session};
+  const list=await fetch(base+"/v1/surfaces/targets",{headers});
+  assert.equal(list.status,200);
+  assert.equal((await list.json()).targets[0].operations[0],"draft");
+  const unapproved=await fetch(base+"/v1/surfaces/draft",{
+   method:"POST",headers:{...headers,"Content-Type":"application/json"},
+   body:JSON.stringify({approved:false,command:{operation:"draft",text:"hello"}})});
+  assert.equal(unapproved.status,403);
+  assert.equal(calls.length,0);
+  const approved=await fetch(base+"/v1/surfaces/draft",{
+   method:"POST",headers:{...headers,"Content-Type":"application/json"},
+   body:JSON.stringify({approved:true,command:{operation:"draft",text:"hello"}})});
+  assert.equal(approved.status,200);
+  assert.equal((await approved.json()).submitted,false);
+  assert.equal(calls.length,1);
+  const registration=await fetch(base+"/v1/surfaces/register",{
+   method:"POST",headers:{...headers,"Content-Type":"application/json"},
+   body:JSON.stringify({surface:"android_app",driver:"pretend",approved:true})});
+  assert.equal(registration.status,404);
+ },{multiSurfaceRuntime});
+ assert.ok(calls.includes("stopped"));
+});
+test("native multi-surface routes remain unavailable when no OS driver runtime is installed",async()=>{
+ await withHost(async({base,origin})=>{
+  const session=(await (await pair(base,origin)).json()).sessionToken;
+  const status=await fetch(base+"/v1/surfaces/targets",{
+   headers:{Origin:origin,Authorization:"Bearer "+session}});
+  assert.equal(status.status,503);
+  assert.equal((await status.json()).error,"native_runtime_unavailable");
+ });
+});
