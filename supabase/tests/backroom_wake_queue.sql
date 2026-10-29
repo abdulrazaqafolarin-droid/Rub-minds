@@ -404,7 +404,8 @@ begin
   end if;
 
   v_first := public.enqueue_backroom_wake_job(
-    repeat('9',64),v_owner,v_room,v_participant,v_host_capacity,'space-capacity','session-capacity',
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('revoke-host-job','UTF8')),'hex'),
+    v_owner,v_room,v_participant,v_host_capacity,'space-capacity','session-capacity',
     repeat('7',64),v_binding_7,'target-capacity','fingerprint-capacity',1,'revoke-event',
     '@RMconnects'||chr(10)||'Event: revoke-event'||chr(10)||
     'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
