@@ -83,6 +83,7 @@ declare
   v_id uuid;
   v_existing public.backroom_wake_jobs%rowtype;
   v_prompt_digest text;
+  v_pending_count integer;
 begin
   if p_job_key is null or p_job_key !~ '^[0-9a-f]{64}$'
     or p_session_digest is null or p_session_digest !~ '^[0-9a-f]{64}$' then
@@ -109,6 +110,38 @@ begin
       and s.terminated_at is null and s.expires_at > pg_catalog.clock_timestamp()
   ) then
     raise exception 'Active MCP session does not authorize this group participant';
+  end if;
+
+  -- Serialize queue admission per MCP session so concurrent inserts cannot bypass backpressure.
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(p_session_digest, 0));
+
+  -- Existing idempotent requests must stay retryable even when the session queue is at capacity.
+  select * into v_existing from public.backroom_wake_jobs where job_key = p_job_key;
+  if found then
+    if v_existing.owner_id is distinct from p_owner_id
+      or v_existing.room_id is distinct from p_room_id
+      or v_existing.participant_id is distinct from p_participant_id
+      or v_existing.host_id is distinct from p_host_id
+      or v_existing.space_id is distinct from p_space_id
+      or v_existing.session_id is distinct from p_session_id
+      or v_existing.session_digest is distinct from p_session_digest
+      or v_existing.binding_id is distinct from p_binding_id
+      or v_existing.target_id is distinct from p_target_id
+      or v_existing.target_identity_fingerprint is distinct from p_target_identity_fingerprint
+      or v_existing.target_revision is distinct from p_target_revision
+      or v_existing.event_id is distinct from p_event_id
+      or v_existing.prompt_digest is distinct from pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_prompt, 'UTF8')), 'hex') then
+      raise exception 'Wake idempotency key conflicts with a different request';
+    end if;
+    return pg_catalog.jsonb_build_object('job_id', v_existing.id, 'created', false, 'state', v_existing.state);
+  end if;
+
+  select count(*) into v_pending_count
+  from public.backroom_wake_jobs j
+  where j.session_digest = p_session_digest and j.state in ('pending','leased')
+    and j.expires_at > pg_catalog.clock_timestamp();
+  if v_pending_count >= 100 then
+    raise exception 'Backroom wake queue is full for this session';
   end if;
 
   if p_ttl_seconds is null or p_ttl_seconds < 60 or p_ttl_seconds > 86400 then
@@ -358,6 +391,39 @@ set search_path = ''
 as $cancel$
 declare v_changed integer;
 begin
+-- Bounded cleanup for terminal jobs; pending and leased records are never removed.
+create or replace function public.purge_backroom_wake_jobs(
+  p_older_than_days integer default 14,
+  p_limit integer default 1000
+)
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $purge$
+declare v_deleted integer;
+begin
+  if p_older_than_days is null or p_older_than_days < 1 or p_older_than_days > 90
+    or p_limit is null or p_limit < 1 or p_limit > 5000 then
+    raise exception 'Invalid Backroom purge parameters';
+  end if;
+  with candidates as (
+    select j.id from public.backroom_wake_jobs j
+    where j.state in ('acknowledged','ignored','failed','cancelled','expired')
+      and j.created_at < pg_catalog.clock_timestamp() - pg_catalog.make_interval(days => p_older_than_days)
+    order by j.created_at, j.id
+    for update skip locked
+    limit p_limit
+  )
+  delete from public.backroom_wake_jobs j using candidates c where j.id=c.id;
+  get diagnostics v_deleted = row_count;
+  return v_deleted;
+end;
+$purge$;
+
+revoke all on function public.purge_backroom_wake_jobs(integer,integer) from public, anon, authenticated;
+grant execute on function public.purge_backroom_wake_jobs(integer,integer) to service_role;
+
   if p_job_id is null or p_owner_id is null then raise exception 'Job and owner are required'; end if;
   update public.backroom_wake_jobs j
   set state = 'cancelled', lease_owner = null, lease_token_hash = null, lease_expires_at = null,
@@ -391,6 +457,7 @@ revoke all on function public.ack_backroom_wake_job(uuid,text,text,text,text) fr
 revoke all on function public.retry_backroom_wake_job(uuid,text,text,text,integer,text) from public, anon, authenticated;
 revoke all on function public.cancel_backroom_wake_job(uuid,uuid) from public, anon, authenticated;
 revoke all on function public.expire_backroom_wake_jobs() from public, anon, authenticated;
+
 grant execute on function public.enqueue_backroom_wake_job(text,uuid,uuid,uuid,text,text,text,text,text,text,integer,text,text,integer) to service_role;
 grant execute on function public.claim_backroom_wake_jobs(text,text,integer,integer) to service_role;
 grant execute on function public.ack_backroom_wake_job(uuid,text,text,text,text) to service_role;
