@@ -6,6 +6,14 @@ const STATES = new Set(['ready','busy','paused','offline','stale','revoked']);
 const MODES = new Set(['mentions','smart','task']);
 const EVENTS = new Set(['message','mention','task_assigned','task_updated']);
 export const WAKE_PREFIX = '@RMconnects';
+const WAKE_INSTRUCTIONS = 'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.';
+export function buildCanonicalWakePrompt(eventId) {
+  needId(eventId, 'eventId');
+  return WAKE_PREFIX + '\nEvent: ' + eventId + '\n' + WAKE_INSTRUCTIONS;
+}
+export function isCanonicalWakePrompt(prompt, eventId) {
+  return validId(eventId) && typeof prompt === 'string' && prompt === buildCanonicalWakePrompt(eventId);
+}
 export function validId(value) { return typeof value === 'string' && ID.test(value); }
 function needId(value,name) { if (!validId(value)) throw new TypeError('Invalid ' + name); return value; }
 function needTime(value) { if (!Number.isSafeInteger(value) || value < 0) throw new TypeError('Invalid timestamp'); return value; }
@@ -59,6 +67,31 @@ export function planWake(input) {
     prompt:WAKE_PREFIX+'\nEvent: '+event.id+'\nRetrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.'
   });
   return {action:'queue',job:job};
+}
+/** A stricter durable trigger plan. It never carries arbitrary group-message text. */
+export function planWakeTrigger(input) {
+  const decision = planWake(input);
+  if (decision.action !== 'queue') return decision;
+  return {
+    ...decision,
+    job: Object.freeze({ ...decision.job, requestedAction: 'wake', prompt: buildCanonicalWakePrompt(decision.job.eventId) }),
+  };
+}
+export function mayDispatchWake(input) {
+  const job=input.job,b=input.binding,p=input.participant;
+  if (!job || !b || !p || !validId(job.eventId)) return {ok:false,reason:'missing-input'};
+  if (job.requiresApproval !== true || job.requestedAction !== 'wake' ||
+      !isCanonicalWakePrompt(job.prompt,job.eventId)) return {ok:false,reason:'invalid-wake-trigger'};
+  if (input.authorizationValid !== true) return {ok:false,reason:'wake-authorization-required'};
+  if (input.composerEmpty !== true) return {ok:false,reason:'composer-not-empty'};
+  if (p.status !== 'ready') return {ok:false,reason:'session-not-ready'};
+  if (job.groupId !== b.groupId || job.groupId !== p.groupId) return {ok:false,reason:'group-mismatch'};
+  if (job.participantId !== p.participantId || b.participantId !== job.participantId ||
+      job.sessionId !== p.sessionId || b.sessionId !== job.sessionId ||
+      input.foregroundSessionId !== job.sessionId) return {ok:false,reason:'session-mismatch'};
+  if (job.bindingId !== b.bindingId || job.targetId !== b.targetId ||
+      !Array.isArray(b.capabilities) || !b.capabilities.includes('wake')) return {ok:false,reason:'target-mismatch'};
+  return {ok:true,action:'canonical-wake-only'};
 }
 export function mayDispatch(input) {
   const job=input.job,b=input.binding,p=input.participant;
