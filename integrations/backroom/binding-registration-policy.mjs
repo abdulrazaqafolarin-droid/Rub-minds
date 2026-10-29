@@ -25,7 +25,7 @@ export function classifyExistingBinding({ownerId,input,existingSession=null,exis
  if(!existing)return Object.freeze({action:'insert'});
  const matches=FIELDS.every(([column,key])=>
    existing[column] === (key==='ownerId'?ownerId:input[key]));
- if(matches&&existing.wake_enabled!==true)
+ if(matches&&existing.wake_enabled===false)
   return Object.freeze({action:'reuse',bindingId:existing.id,wakeEnabled:false,
    existing:true,requiresLocalConsent:true});
  return Object.freeze({action:'conflict',
