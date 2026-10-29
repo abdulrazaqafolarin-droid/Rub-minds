@@ -1,6 +1,6 @@
 /** Bridges coordinator wake plans to BackroomDispatcher. Draft-only; no automatic Send. */
 import {createHash} from 'node:crypto';
-import {mayDispatch,validId} from './coordination-core.mjs';
+import {mayDispatch,validId,isCanonicalWakePrompt} from './coordination-core.mjs';
 const MAX_PENDING=256;
 const TERMINAL=new Set(['completed','failed','cancelled','needs_review']);
 const commandRecords=new WeakMap();
@@ -26,9 +26,10 @@ export function createDispatcherCommand(input){
   targetId:t.id,targetRevision:t.revision,operation:'draft',text:j.prompt});
 }
 export function approvalContext(c){
- if(!c||typeof c!=='object'||c.operation!=='draft'||typeof c.text!=='string')throw new TypeError('valid draft command required');
+ if(!c||typeof c!=='object'||!['draft','wake'].includes(c.operation)||typeof c.text!=='string')throw new TypeError('valid draft/wake command required');
+ if(c.operation==='wake'&&!isCanonicalWakePrompt(c.text,c.eventId))throw new TypeError('wake approval must bind the canonical @RMconnects prompt');
  if(!Number.isSafeInteger(c.targetRevision)||c.targetRevision<1)throw new TypeError('valid target revision required');
- return Object.freeze({purpose:'backroom.wake.draft.v1',commandId:requireId(c.id,'command.id'),eventId:requireId(c.eventId,'command.eventId'),
+ return Object.freeze({purpose:c.operation==='wake'?'backroom.wake.v1':'backroom.wake.draft.v1',commandId:requireId(c.id,'command.id'),eventId:requireId(c.eventId,'command.eventId'),
   groupId:requireId(c.roomId,'command.roomId'),hostId:requireId(c.hostId,'command.hostId'),spaceId:requireId(c.spaceId,'command.spaceId'),
   sessionId:requireId(c.sessionId,'command.sessionId'),targetId:requireId(c.targetId,'command.targetId'),
   participantId:requireId(c.participantId,'command.participantId'),bindingId:requireId(c.bindingId,'command.bindingId'),
