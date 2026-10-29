@@ -22,7 +22,7 @@ export class WakeAuthorizationAuthority {
   const scope={
    hostId:requiredId(input.hostId,'hostId'),groupId:requiredId(input.groupId,'groupId'),
    participantId:requiredId(input.participantId,'participantId'),sessionId:requiredId(input.sessionId,'sessionId'),
-   spaceId:requiredId(input.spaceId,'spaceId'),bindingId:requiredId(input.bindingId,'bindingId'),
+   spaceId:nonempty(input.spaceId,'spaceId',128),bindingId:requiredId(input.bindingId,'bindingId'),
    targetId:requiredId(input.targetId,'targetId'),
    identityFingerprint:nonempty(input.identityFingerprint,'identityFingerprint'),
    targetRevision:input.targetRevision,
