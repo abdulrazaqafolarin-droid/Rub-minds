@@ -316,7 +316,32 @@ export class CuaSandboxTerminalWorkspace {
   #startPromise=null;
   #startChild=null;
   #prunePendingPatches(){const now=Date.now();for(const [key,p] of this.#pendingPatches)if(now-p.createdAt>10*60*1000)this.#pendingPatches.delete(key);while(this.#pendingPatches.size>16)this.#pendingPatches.delete(this.#pendingPatches.keys().next().value);}
-  #safePatchPaths(patch){const lines=patch.split('\n').filter(line=>line.startsWith('diff --git '));if(patch&&!lines.length)throw new Error('Patch format is not reviewable');const paths=[];for(const line of lines){const m=/^diff --git a\/(.+) b\/(.+)$/.exec(line);if(!m)throw new Error('Patch contains a quoted or unsupported file path; review it manually');const a=m[1],b=m[2];if(a!==b||!a||a.startsWith('/')||a.includes('\\')||/[\u0000-\u001f\u007f-\u009f]/u.test(a)||a.split('/').some(p=>p==='.'||p==='..')||a.split('/').some(part=>part.toLowerCase()==='.git'))throw new Error('Patch contains an unsafe file path');paths.push(a);}return [...new Set(paths)].sort();}
+  #safePatchPaths(patch){
+    if(!patch)return [];
+    const lines=patch.split('\n'),starts=[];
+    for(let index=0;index<lines.length;index++)if(lines[index].startsWith('diff --git '))starts.push(index);
+    if(!starts.length)throw new Error('Patch format is not reviewable');
+    const paths=[];
+    const validate=(value)=>{
+      if(!value||value.startsWith('/')||value.includes('\\')||value.includes('"')||value.includes("'")||/[\u0000-\u001f\u007f-\u009f]/u.test(value)||value.split('/').some(part=>part==='.'||part==='..'||part.toLowerCase()==='.git'))throw new Error('Patch contains an unsafe file path');
+    };
+    for(let position=0;position<starts.length;position++){
+      const start=starts[position],end=starts[position+1]??lines.length,block=lines.slice(start,end);
+      const match=/^diff --git a\/(.+) b\/(.+)$/.exec(lines[start]);
+      if(!match)throw new Error('Patch contains a quoted or unsupported file path; review it manually');
+      const oldPath=match[1],newPath=match[2];
+      if(oldPath!==newPath)throw new Error('Patch renames are unsupported for automatic apply');
+      validate(oldPath);
+      const oldHeaders=block.filter(line=>line.startsWith('--- ')).map(line=>line.slice(4));
+      const newHeaders=block.filter(line=>line.startsWith('+++ ')).map(line=>line.slice(4));
+      if(oldHeaders.length!==1||newHeaders.length!==1)throw new Error('Patch file headers are missing or ambiguous');
+      if(oldHeaders[0]!=='/dev/null'&&oldHeaders[0]!=='a/'+oldPath)throw new Error('Patch old-file header does not match its diff path');
+      if(newHeaders[0]!=='/dev/null'&&newHeaders[0]!=='b/'+newPath)throw new Error('Patch new-file header does not match its diff path');
+      if(oldHeaders[0]==='/dev/null'&&newHeaders[0]==='/dev/null')throw new Error('Patch has no file target');
+      paths.push(oldPath);
+    }
+    return [...new Set(paths)].sort();
+  }
   async #runLocalGit(args,input='',cwd){
     if(typeof cwd!=='string'||!cwd)throw new TypeError('Local project root required');
     if(Buffer.byteLength(input,'utf8')>512*1024)throw new RangeError('Local Git input exceeds the patch limit');
