@@ -61,15 +61,15 @@ begin
   insert into public.backroom_input_bindings(
     id,owner_id,room_id,participant_id,host_id,session_digest,space_id,session_id,target_id,
     target_identity_fingerprint,target_revision,surface,locator_kind,locator_value,participation_mode,
-    wake_enabled,wake_expires_at,max_wakes_per_minute,confirmed_at,revoked_at
+    wake_enabled,wake_grant_id,wake_expires_at,max_wakes_per_minute,confirmed_at,revoked_at
   ) values
-    (v_binding_1,v_owner,v_room,v_participant,v_host_test,repeat('b',64),'space-1','session-1','target-1','fingerprint-1',1,'browser_tab','dom','composer-1','mentions',true,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null),
-    (v_binding_2,v_owner,v_room,v_participant,v_host_test,repeat('c',64),'space-1','session-2','target-2','fingerprint-2',2,'browser_tab','dom','composer-2','mentions',true,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null),
-    (v_binding_3,v_owner,v_room,v_participant,v_host_test,repeat('d',64),'space-1','session-3','target-3','fingerprint-3',1,'browser_tab','dom','composer-3','mentions',true,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null),
-    (v_binding_4,v_owner,v_room,v_participant,v_host_test,repeat('e',64),'space-1','session-4','target-4','fingerprint-4',1,'browser_tab','dom','composer-4','mentions',true,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null),
-    (v_binding_5,v_owner,v_room,v_participant,v_host_test,repeat('f',64),'space-1','session-5','target-5','fingerprint-5',1,'browser_tab','dom','composer-5','mentions',true,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null),
-    (v_binding_6,v_owner,v_room,v_participant,v_host_test,repeat('6',64),'space-1','session-6','target-6','fingerprint-6',1,'browser_tab','dom','composer-6','mentions',true,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null),
-    (v_binding_7,v_owner,v_room,v_participant,v_host_capacity,repeat('7',64),'space-capacity','session-capacity','target-capacity','fingerprint-capacity',1,'browser_tab','dom','composer-capacity','mentions',true,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null);
+    (v_binding_1,v_owner,v_room,v_participant,v_host_test,repeat('b',64),'space-1','session-1','target-1','fingerprint-1',1,'browser_tab','dom','composer-1','mentions',true,'70000000-0000-4000-8000-000000000001'::uuid,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null),
+    (v_binding_2,v_owner,v_room,v_participant,v_host_test,repeat('c',64),'space-1','session-2','target-2','fingerprint-2',2,'browser_tab','dom','composer-2','mentions',true,'70000000-0000-4000-8000-000000000002'::uuid,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null),
+    (v_binding_3,v_owner,v_room,v_participant,v_host_test,repeat('d',64),'space-1','session-3','target-3','fingerprint-3',1,'browser_tab','dom','composer-3','mentions',true,'70000000-0000-4000-8000-000000000003'::uuid,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null),
+    (v_binding_4,v_owner,v_room,v_participant,v_host_test,repeat('e',64),'space-1','session-4','target-4','fingerprint-4',1,'browser_tab','dom','composer-4','mentions',true,'70000000-0000-4000-8000-000000000004'::uuid,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null),
+    (v_binding_5,v_owner,v_room,v_participant,v_host_test,repeat('f',64),'space-1','session-5','target-5','fingerprint-5',1,'browser_tab','dom','composer-5','mentions',true,'70000000-0000-4000-8000-000000000005'::uuid,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null),
+    (v_binding_6,v_owner,v_room,v_participant,v_host_test,repeat('6',64),'space-1','session-6','target-6','fingerprint-6',1,'browser_tab','dom','composer-6','mentions',true,'70000000-0000-4000-8000-000000000006'::uuid,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null),
+    (v_binding_7,v_owner,v_room,v_participant,v_host_capacity,repeat('7',64),'space-capacity','session-capacity','target-capacity','fingerprint-capacity',1,'browser_tab','dom','composer-capacity','mentions',true,'70000000-0000-4000-8000-000000000007'::uuid,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null);
 
   if not (select relrowsecurity from pg_catalog.pg_class where oid='public.backroom_wake_jobs'::regclass) then
     raise exception 'Backroom wake jobs must have RLS enabled';
