@@ -296,7 +296,7 @@ export class CuaSandboxTerminalWorkspace {
     if(typeof cwd!=='string'||!cwd)throw new TypeError('Local project root required');
     if(Buffer.byteLength(input,'utf8')>512*1024)throw new RangeError('Local Git input exceeds the patch limit');
     const spawn=this.localGitSpawnImpl??(await import('node:child_process')).spawn;
-    const env={GIT_TERMINAL_PROMPT:'0',GIT_CONFIG_NOSYSTEM:'1'};
+    const env={GIT_TERMINAL_PROMPT:'0',GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:process.platform==='win32'?'NUL':'/dev/null'};
     for(const key of ['PATH','PATHEXT','COMSPEC','PROGRAMFILES','PROGRAMFILES(X86)','HOMEDRIVE','HOMEPATH','HOME','USERPROFILE','TMPDIR','TEMP','TMP','SYSTEMROOT','WINDIR','APPDATA','LOCALAPPDATA','LANG','LC_ALL'])if(typeof process.env[key]==='string')env[key]=process.env[key];
     return new Promise((resolve,reject)=>{
       let child;try{child=spawn(this.gitCommand,args,{cwd,env,shell:false,windowsHide:true,stdio:['pipe','pipe','pipe']});}catch{reject(new Error('Could not launch local Git'));return;}
@@ -417,6 +417,7 @@ export class CuaSandboxTerminalWorkspace {
     const bytes=Buffer.byteLength(patch,'utf8');
     if(bytes>512*1024)throw new Error('Workspace diff exceeds the 512 KiB review limit; split it into smaller reviewed changes');
     const sha256=createHash('sha256').update(patch).digest('hex');
+    if(/^(?:Binary files .+ differ|GIT binary patch)$/m.test(patch))throw new Error('Binary changes cannot be exported; exclude them before reviewing this patch');
     if(HIGH_CONFIDENCE_SECRET.test(patch))return Object.freeze({state:'needs_review',patch:'',bytes,sha256,reason:'Potential credential or private-key material detected. Patch was not returned to the browser.'});
     const paths=this.#safePatchPaths(patch);
     let exportKey=null;
@@ -463,6 +464,10 @@ export class CuaSandboxTerminalWorkspace {
     if(check.code!==0)throw new Error('Local project has changed or the reviewed patch does not apply cleanly; no files were modified');
     const approval=await this.approve(Object.freeze({kind:'terminal_patch_apply',sandboxName:this.sandboxName,repositoryRoot:root,groupId,sessionId,patchSha256:sha256,patchBytes:Buffer.byteLength(pending.patch,'utf8'),files:pending.paths,commit:false,push:false,warning:'Apply this exact one-use patch to the local working tree only. It will not stage, commit or push changes.'}));
     if(approval!==true)throw new Error('Local approval denied patch application');
+    // The approval prompt may remain open while the user edits the checkout. Recheck paths and patch after approval.
+    await this.#verifyPatchTargets(root,pending.paths);
+    const finalCheck=await this.#runLocalGit(['apply','--check','-'],pending.patch,root);
+    if(finalCheck.code!==0)throw new Error('Local project changed after approval or the patch no longer applies cleanly; no files were modified');
     const applied=await this.#runLocalGit(['apply','-'],pending.patch,root);
     if(applied.code!==0)throw new Error('Git refused to apply the previously checked patch; inspect the local working tree before retrying');
     return Object.freeze({state:'completed',appliedToHost:true,committed:false,pushed:false,sha256,paths:pending.paths,repositoryRoot:root});

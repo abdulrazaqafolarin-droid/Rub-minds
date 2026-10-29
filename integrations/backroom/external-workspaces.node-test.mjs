@@ -281,7 +281,7 @@ test('terminal applies only an exact one-use patch after digest, Git-root, check
   await assert.rejects(d.applyProjectDiff({exportKey:diff.exportKey,sha256:diff.sha256,groupId:'group-2',sessionId:'session-1'}),/outside the original group\/session scope/);
   const applied=await d.applyProjectDiff({exportKey:diff.exportKey,sha256:diff.sha256,groupId:'group-1',sessionId:'session-1'});
   assert.equal(applied.appliedToHost,true);assert.equal(applied.committed,false);assert.equal(applied.pushed,false);assert.deepEqual(applied.paths,['src/index.js']);
-  assert.deepEqual(gitCalls.map(call=>call.args[0]==='rev-parse'?'root':call.args[0]+' '+call.args[1]),['root','apply --check','apply -']);
+  assert.deepEqual(gitCalls.map(call=>call.args[0]==='rev-parse'?'root':call.args[0]+' '+call.args[1]),['root','apply --check','apply --check','apply -']);
   assert.equal(gitCalls[1].input,patch);assert.equal(gitCalls[2].input,patch);
   assert.equal(gitCalls.every(call=>call.options.shell===false),true);
   await assert.rejects(d.applyProjectDiff({exportKey:diff.exportKey,sha256:diff.sha256,groupId:'group-1',sessionId:'session-1'}),/expired or outside/);
@@ -299,6 +299,34 @@ test('terminal refuses path-traversing patch headers before issuing an apply tok
   await assert.rejects(d.diffProject({groupId:'g',sessionId:'s'}),/unsafe file path/);
   await assert.rejects(d.applyProjectDiff({exportKey:'a'.repeat(64),sha256:'b'.repeat(64),groupId:'g',sessionId:'s'}),/expired or outside/);
  }finally{await d.close().catch(()=>{});await rm(root,{recursive:true,force:true});}
+});
+
+test('terminal diff refuses binary change markers instead of exporting an unusable partial patch',async()=>{
+ const root=await projectFixture(),calls=[];
+ const binary='diff --git a/image.png b/image.png\nindex 1111111..2222222 100644\nBinary files a/image.png and b/image.png differ\n';
+ const results=[{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0,stdout:binary}];
+ const d=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-unit-1234',projectSourcePath:root,authorizeLocalAction:async()=>true,spawnImpl:fakeSpawn(results,calls)});
+ try{await d.start();await d.syncProject({groupId:'g',sessionId:'s'});await assert.rejects(d.diffProject({groupId:'g',sessionId:'s'}),/Binary changes cannot be exported/);}
+ finally{await d.close().catch(()=>{});await rm(root,{recursive:true,force:true});}
+});
+test('terminal apply revalidates symlink targets after the owner approval prompt',async()=>{
+ const root=await projectFixture(),outside=await mkdtemp(join(tmpdir(),'rm-workspace-outside-')),calls=[],gitCalls=[];
+ const patch='diff --git a/src/index.js b/src/index.js\n--- a/src/index.js\n+++ b/src/index.js\n@@ -1 +1 @@\n-export const safe=true;\n+export const safe=false;\n';
+ const results=[{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0,stdout:patch}];
+ const localGitSpawnImpl=(executable,args,options)=>{const child=new EventEmitter();let input='';child.stdout=new PassThrough();child.stderr=new PassThrough();child.exitCode=null;child.kill=()=>true;child.stdin=new Writable({write(chunk,enc,cb){input+=chunk.toString();cb();},final(cb){cb();queueMicrotask(()=>{gitCalls.push({args,input});child.stdout.end(args[0]==='rev-parse'?root+'\n':'');child.stderr.end('');child.exitCode=0;child.emit('close',0,null);});}});return child;};
+ const authorizeLocalAction=async action=>{
+  if(action.kind==='terminal_patch_apply'){
+   await rm(join(root,'src'),{recursive:true,force:true});
+   await symlink(outside,join(root,'src'));
+  }
+  return true;
+ };
+ const d=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-unit-1234',projectSourcePath:root,authorizeLocalAction,spawnImpl:fakeSpawn(results,calls),localGitSpawnImpl});
+ try{
+  await d.start();await d.syncProject({groupId:'g',sessionId:'s'});const diff=await d.diffProject({groupId:'g',sessionId:'s'});
+  await assert.rejects(d.applyProjectDiff({exportKey:diff.exportKey,sha256:diff.sha256,groupId:'g',sessionId:'s'}),/symbolic link/);
+  assert.equal(gitCalls.some(call=>call.args[0]==='apply'&&call.args[1]!=='--check'),false);
+ }finally{await d.close().catch(()=>{});await rm(root,{recursive:true,force:true});await rm(outside,{recursive:true,force:true});}
 });
 
 test('terminal patch apply consumes denied approvals without running git apply',async()=>{
