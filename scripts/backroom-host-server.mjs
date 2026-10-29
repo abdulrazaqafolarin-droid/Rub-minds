@@ -570,6 +570,75 @@ export function createBackroomHostServer({
   };
 }
 
+
+async function authorizeLocalWorkspaceAction(action) {
+  // A web page cannot manufacture this grant. Non-interactive hosts deny by default.
+  if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) return false;
+  const { createInterface } = await import("node:readline/promises");
+  const readline = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    process.stdout.write("\n\n[Rub Minds Backroom local approval]\n");
+    process.stdout.write("This request originated from a local workspace adapter. Review every field before approving:\n");
+    process.stdout.write(JSON.stringify(action, null, 2) + "\n");
+    const answer = await readline.question("Type APPROVE ONCE to permit only this operation (anything else denies): ");
+    return answer.trim() === "APPROVE ONCE";
+  } finally {
+    readline.close();
+  }
+}
+function csvAllowlist(name) {
+  return (process.env[name] ?? "").split(",").map(value => value.trim()).filter(Boolean);
+}
+async function configureExternalWorkspaceRuntime(hostId) {
+  const enableDesktop = process.env.BACKROOM_ENABLE_CUA_DRIVER === "1";
+  const enableAndroid = process.env.BACKROOM_ENABLE_ARTEMIS === "1";
+  const enableTerminal = process.env.BACKROOM_ENABLE_CUA_TERMINAL === "1";
+  if (!enableDesktop && !enableAndroid && !enableTerminal) return null;
+  const { McpStdioClient } = await import("../integrations/backroom/mcp-stdio-client.mjs");
+  const { ArtemisAndroidWorkspace, CuaDesktopWorkspace, CuaSandboxTerminalWorkspace, createExternalWorkspaceService } =
+    await import("../integrations/backroom/external-workspaces.mjs");
+  const clients = [];
+  let desktop = null, android = null, terminal = null;
+  try {
+    if (enableDesktop) {
+      const client = new McpStdioClient({ command: process.env.BACKROOM_CUA_DRIVER_BIN ?? "cua-driver", args: ["mcp"] });
+      clients.push(client);
+      await client.start();
+      desktop = new CuaDesktopWorkspace({ client, authorizeLocalAction: authorizeLocalWorkspaceAction });
+    }
+    if (enableAndroid) {
+      const python = process.env.BACKROOM_ARTEMIS_PYTHON;
+      const home = process.env.BACKROOM_ARTEMIS_HOME;
+      const devices = csvAllowlist("BACKROOM_ARTEMIS_ALLOWED_DEVICE_SERIALS");
+      const packages = csvAllowlist("BACKROOM_ARTEMIS_ALLOWED_PACKAGES");
+      if (typeof python !== "string" || !python.trim() || typeof home !== "string" || !home.trim())
+        throw new Error("ARTEMIS requires BACKROOM_ARTEMIS_PYTHON and BACKROOM_ARTEMIS_HOME");
+      if (!devices.length || !packages.length)
+        throw new Error("ARTEMIS needs nonempty host-local device serial and app package allowlists");
+      const client = new McpStdioClient({ command: python, args: ["-m", "mcp_server"], cwd: home,
+        env: { PYTHONUNBUFFERED: "1", PYTHONPATH: home } });
+      clients.push(client);
+      await client.start();
+      android = new ArtemisAndroidWorkspace({ client, allowedDevices: devices, allowedPackages: packages,
+        authorizeLocalAction: authorizeLocalWorkspaceAction });
+    }
+    if (enableTerminal) {
+      const sandboxName = "rm-backroom-" + hostId.replace(/-/g, "").slice(0, 8);
+      const approval = await authorizeLocalWorkspaceAction({ kind: "terminal_sandbox_create", sandboxName,
+        isolation: "local gVisor container", networkPolicy: "Review CUA local runtime defaults before enabling" });
+      if (approval !== true) throw new Error("Local approval denied creation of the dedicated CUA terminal sandbox");
+      terminal = new CuaSandboxTerminalWorkspace({ command: process.env.BACKROOM_CUA_CLI ?? "cua",
+        sandboxName, authorizeLocalAction: authorizeLocalWorkspaceAction });
+      await terminal.start();
+    }
+    return createExternalWorkspaceService({ desktop, android, terminal });
+  } catch (error) {
+    await Promise.allSettled([...clients.map(client => client.close()), ...(terminal ? [terminal.close()] : [])]);
+    const message = typeof error?.message === "string" ? error.message.slice(0, 180) : "external_workspace_start_failed";
+    throw new Error("External workspace startup failed closed: " + message);
+  }
+}
+
 export async function runBackroomHost() {
   const identityFilePath=join(homedir(), ".rub-minds", "backroom", "host-identity.json");
   const identity = await loadOrCreateHostIdentity({filePath:identityFilePath});
@@ -594,8 +663,9 @@ export async function runBackroomHost() {
   // The gateway origin is fixed in host-wake-service or trusted local process
   // configuration. The publishable key is public and cannot redirect the token.
   if(configured===3)wakeService.configure({sessionDigest,bindingId,publishableKey});
+  const externalWorkspaceRuntime = await configureExternalWorkspaceRuntime(hostId);
   const instance = createBackroomHostServer({
-    hostId,browserRuntime,enrollmentDigest:identity.credentialDigest,wakeService
+    hostId,browserRuntime,enrollmentDigest:identity.credentialDigest,wakeService,externalWorkspaceRuntime
   });
   const address = await instance.start();
   process.stdout.write([
@@ -614,7 +684,8 @@ export async function runBackroomHost() {
     `Allowed web origins: ${parseOrigins(process.env.BACKROOM_ALLOWED_ORIGINS).join(", ")}`,
     "Pairing code (one use, expires in 10 minutes):",
     instance.pairingCode,
-    "Browser automation is available after installing Playwright Chromium; native phone, desktop accessibility and terminal drivers are not installed.",
+    "External workspace runtimes are disabled by default. When enabled, desktop, Android and terminal actions require local TTY approval and host-local allowlists.",
+    "Configured external workspace status: " + JSON.stringify(externalWorkspaceRuntime?.status?.() ?? { capabilities: { desktop: false, android: false, terminal: false } }),
     "The Backroom Emergency Stop closes the managed browser, revokes paired sessions and latches the host until this process is restarted.",
     "Keep this terminal private. Stop host with Ctrl+C.",
     "",
