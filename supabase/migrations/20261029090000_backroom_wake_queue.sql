@@ -14,7 +14,7 @@ create table if not exists public.backroom_wake_jobs (
   target_identity_fingerprint text not null check (char_length(btrim(target_identity_fingerprint)) between 1 and 512),
   target_revision integer not null check (target_revision > 0),
   event_id text not null check (char_length(btrim(event_id)) between 1 and 256),
-  operation text not null default 'draft' check (operation = 'draft'),
+  operation text not null default 'wake' check (operation = 'wake'),
   prompt text not null check (
     char_length(prompt) between 13 and 12000
     and pg_catalog.left(prompt, 12) = '@RMconnects' || pg_catalog.chr(10)
