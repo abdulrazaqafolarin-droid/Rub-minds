@@ -351,7 +351,7 @@ export class BrowserHostRuntime {
   }
   status() {
     return Object.freeze({ running: this.running, pages: this.#pages.size,
-      capabilities: Object.freeze({ browserDraft: this.running, browserCanonicalWake: this.running, desktopAccessibility: false, androidAccessibility: false, terminal: false }) });
+      capabilities: Object.freeze({ browserDraft: this.running, browserCanonicalWake: this.running && [...this.#bindings.values()].some(binding => Boolean(binding.wakeAdapter)), desktopAccessibility: false, androidAccessibility: false, terminal: false }) });
   }
   async openUrl(value) {
     if (!this.#context) throw new Error("Start the managed browser first.");
@@ -775,7 +775,6 @@ export class BrowserHostRuntime {
         ? current.origin + current.pathname + current.search + current.hash + ":" + binding.pageId
         : "";
       if (fingerprint !== binding.target.identityFingerprint || selectorCount !== 1) {
-        this.wakeAuthority.revokeForTarget(targetId);
         this.wakeAuthority.revokeForTarget(targetId);
         this.#bindings.delete(targetId);
         this.#targets.delete(targetId);
