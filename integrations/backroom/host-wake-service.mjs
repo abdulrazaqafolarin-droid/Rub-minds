@@ -8,19 +8,36 @@ import {createBackroomWakePoller} from './host-wake-poller.mjs';
 import {FileWakeExecutionJournal} from './file-wake-execution-journal.mjs';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const HEX=/^[a-f0-9]{64}$/;
-export function createHostWakeService({identity,browserRuntime,journalDirectory,fetchImpl}={}){
+// Trust anchor: the paired website may choose a binding, never the credential destination.
+const DEFAULT_WAKE_GATEWAY_URL='https://zucaeevlbwhcvjwbhwmq.supabase.co/functions/v1/backroom-wake/';
+function trustedGatewayUrl(value){
+ let url;
+ try{url=new URL(value);}catch{throw new TypeError('Invalid trusted wake gateway URL');}
+ if(url.href!==DEFAULT_WAKE_GATEWAY_URL &&
+   !(process.env.BACKROOM_WAKE_GATEWAY_URL && value===process.env.BACKROOM_WAKE_GATEWAY_URL &&
+     url.protocol==='https:'&&!url.username&&!url.password&&!url.search&&!url.hash&&
+     url.pathname==='/functions/v1/backroom-wake/'))
+  throw new Error('Wake gateway is not the locally configured trusted Supabase endpoint');
+ return url.href;
+}
+export function createHostWakeService({identity,browserRuntime,journalDirectory,fetchImpl,gatewayUrl=process.env.BACKROOM_WAKE_GATEWAY_URL??DEFAULT_WAKE_GATEWAY_URL}={}){
  if(!identity||!UUID.test(identity.hostId??'')||!HEX.test(identity.hostToken??'')||
     !browserRuntime||identity.hostId!==browserRuntime.hostId)
   throw new TypeError('Trusted local host identity and browser runtime required');
+ const trustedUrl=trustedGatewayUrl(gatewayUrl);
  const journal=new FileWakeExecutionJournal({directory:journalDirectory});
  let remote=null,poller=null,scope=null;
  async function stop(){await poller?.stop();}
- function configure({gatewayUrl,sessionDigest,bindingId}={}){
+ function configure(input={}){
+  if(!input||typeof input!=='object'||Array.isArray(input)||
+    Object.keys(input).some(key=>!['sessionDigest','bindingId'].includes(key)))
+   throw new TypeError('Only binding ID and session digest may be supplied by the paired UI');
+  const {sessionDigest,bindingId}=input;
   if(poller?.running)throw new Error('Stop active wake polling before reconfiguration');
   if(!UUID.test(bindingId??'')||!HEX.test(sessionDigest??''))
    throw new TypeError('Valid hosted binding and MCP digest required');
   const store=createRemoteWakeStore({
-    baseUrl:gatewayUrl,hostToken:identity.hostToken,
+    baseUrl:trustedUrl,hostToken:identity.hostToken,
     ...(fetchImpl===undefined?{}:{fetchImpl}),
     verifyLocalGrant:grant=>browserRuntime.verifyRemoteWakeActivation(grant)
   });
