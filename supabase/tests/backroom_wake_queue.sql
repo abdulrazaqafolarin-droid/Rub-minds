@@ -150,6 +150,27 @@ begin
     raise exception 'New grant must be deactivatable';
   end if;
 
+  -- Recovery after a host crash: a stale, expired grant must not block fresh consent.
+  update public.backroom_input_bindings
+  set wake_enabled=true,wake_grant_id='70000000-0000-4000-8000-000000000009'::uuid,
+      wake_last_revoked_grant_id=null,
+      confirmed_at=pg_catalog.clock_timestamp()-interval '2 minutes',
+      wake_expires_at=pg_catalog.clock_timestamp()-interval '1 second'
+  where id=v_binding_6;
+  if not public.activate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
+      '70000000-0000-4000-8000-000000000010'::uuid,300) then
+    raise exception 'A new consent must replace an expired stale grant after host crash';
+  end if;
+  if not exists(select 1 from public.backroom_input_bindings where id=v_binding_6
+      and wake_enabled=true and wake_grant_id='70000000-0000-4000-8000-000000000010'::uuid
+      and wake_expires_at>pg_catalog.clock_timestamp()) then
+    raise exception 'Expired-grant recovery must install the new grant and fresh expiry';
+  end if;
+  if public.deactivate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
+      '70000000-0000-4000-8000-000000000009'::uuid) then
+    raise exception 'An expired previous grant must not deactivate its replacement';
+  end if;
+
   if not (select relrowsecurity from pg_catalog.pg_class where oid='public.backroom_wake_jobs'::regclass) then
     raise exception 'Backroom wake jobs must have RLS enabled';
   end if;
