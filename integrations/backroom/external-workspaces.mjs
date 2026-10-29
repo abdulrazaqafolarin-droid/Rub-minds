@@ -9,7 +9,8 @@ const SHELLS=new Set(['sh','bash','zsh','fish','cmd','cmd.exe','powershell','pws
 function needApproval(fn,what){if(typeof fn!=='function')throw new TypeError(what+' needs a trusted local approval callback');}
 function structured(value){if(typeof value==='string'){try{return JSON.parse(value);}catch{throw new Error('Runtime returned non-structured output');}}if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('Runtime returned no structured output');return value;}
 function elements(state){if(Array.isArray(state?.elements))return state.elements;if(Array.isArray(state?.structuredContent?.elements))return state.structuredContent.elements;throw new Error('CUA snapshot lacks accessibility elements');}
-function positiveInt(value,label){if(!Number.isSafeInteger(value)||value<1)throw new TypeError(label+' must be a positive integer');}\nfunction nonnegativeInt(value,label){if(!Number.isSafeInteger(value)||value<0)throw new TypeError(label+' must be a nonnegative integer');}
+function positiveInt(value,label){if(!Number.isSafeInteger(value)||value<1)throw new TypeError(label+' must be a positive integer');}
+function nonnegativeInt(value,label){if(!Number.isSafeInteger(value)||value<0)throw new TypeError(label+' must be a nonnegative integer');}
 function androidScope(deviceSerial,appPackage,devices,packages){if(typeof deviceSerial!=='string'||!devices.has(deviceSerial))throw new Error('Android device is not explicitly allowlisted');if(typeof appPackage!=='string'||!PACKAGE.test(appPackage)||!packages.has(appPackage))throw new Error('Android package is not explicitly allowlisted');return {deviceSerial,appPackage};}
 function scopeIds(groupId,sessionId){if(typeof groupId!=='string'||!ID.test(groupId)||typeof sessionId!=='string'||!ID.test(sessionId))throw new TypeError('Backroom group and session scope required');}
 
