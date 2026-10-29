@@ -3,7 +3,7 @@
  * in this trusted host process/private file, NEVER in web UI or console logs.
  */
 import {randomUUID,randomBytes,createHash} from 'node:crypto';
-import {mkdir,open,readFile,lstat,realpath} from 'node:fs/promises';
+import {mkdir,open,readFile,lstat,realpath,unlink} from 'node:fs/promises';
 import {dirname,resolve} from 'node:path';
 
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -48,4 +48,25 @@ export async function loadOrCreateHostIdentity({filePath}={}){
  try{record=JSON.parse(await readFile(path,'utf8'));}
  catch{throw new Error('Corrupt Backroom host identity: manual recovery required');}
  return normalizedIdentity(record);
+}
+
+/**
+ * Deliberate local rotation after remote host revocation or suspected compromise.
+ * Run only while the host process is stopped. Removing the old identity makes
+ * the next host startup generate a fresh host ID and unrelated 256-bit secret.
+ */
+export async function rotateHostIdentity({filePath}={}){
+ if(typeof filePath!=='string'||!filePath.trim())throw new TypeError('Private host identity path required');
+ const path=resolve(filePath);
+ await privateDirectory(dirname(path));
+ try{
+  const stat=await lstat(path);
+  if(!stat.isFile()||stat.isSymbolicLink()||
+    (process.platform!=='win32'&&(stat.mode&0o077)!==0))
+   throw new Error('Unsafe Backroom host identity file');
+  await unlink(path);
+ }catch(error){
+  if(error?.code!=='ENOENT')throw error;
+ }
+ return loadOrCreateHostIdentity({filePath:path});
 }
