@@ -511,6 +511,16 @@ set search_path = ''
 as $cancel$
 declare v_changed integer;
 begin
+  if p_job_id is null or p_owner_id is null then raise exception 'Job and owner are required'; end if;
+  update public.backroom_wake_jobs j
+  set state = 'cancelled', lease_owner = null, lease_token_hash = null, lease_expires_at = null,
+      updated_at = pg_catalog.clock_timestamp()
+  where j.id = p_job_id and j.owner_id = p_owner_id and j.state in ('pending','leased');
+  get diagnostics v_changed = row_count;
+  return v_changed = 1;
+end;
+$cancel$;
+
 -- Bounded cleanup for terminal jobs; pending and leased records are never removed.
 create or replace function public.purge_backroom_wake_jobs(
   p_older_than_days integer default 14,
@@ -543,16 +553,6 @@ $purge$;
 
 revoke all on function public.purge_backroom_wake_jobs(integer,integer) from public, anon, authenticated;
 grant execute on function public.purge_backroom_wake_jobs(integer,integer) to service_role;
-
-  if p_job_id is null or p_owner_id is null then raise exception 'Job and owner are required'; end if;
-  update public.backroom_wake_jobs j
-  set state = 'cancelled', lease_owner = null, lease_token_hash = null, lease_expires_at = null,
-      updated_at = pg_catalog.clock_timestamp()
-  where j.id = p_job_id and j.owner_id = p_owner_id and j.state in ('pending','leased');
-  get diagnostics v_changed = row_count;
-  return v_changed = 1;
-end;
-$cancel$;
 
 create or replace function public.expire_backroom_wake_jobs()
 returns integer
