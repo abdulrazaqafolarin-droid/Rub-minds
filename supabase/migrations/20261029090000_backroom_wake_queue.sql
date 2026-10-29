@@ -767,16 +767,16 @@ begin
   -- Idempotent for the same owner: if the first response is lost, a retry
   -- confirms the already-revoked record instead of reporting a false failure.
   update public.backroom_hosts
-  set revoked_at = pg_catalog.coalesce(revoked_at, v_now)
+  set revoked_at = coalesce(revoked_at, v_now)
   where host_id = p_host_id and owner_id = p_owner_id;
   get diagnostics v_changed = row_count;
   if v_changed <> 1 then return false; end if;
 
   update public.backroom_input_bindings
   set wake_enabled = false,
-      wake_last_revoked_grant_id = pg_catalog.coalesce(wake_grant_id, wake_last_revoked_grant_id),
+      wake_last_revoked_grant_id = coalesce(wake_grant_id, wake_last_revoked_grant_id),
       wake_grant_id = null, confirmed_at = null, wake_expires_at = null,
-      revoked_at = pg_catalog.coalesce(revoked_at, v_now), updated_at = v_now
+      revoked_at = coalesce(revoked_at, v_now), updated_at = v_now
   where host_id = p_host_id;
 
   update public.backroom_wake_jobs
@@ -815,9 +815,9 @@ begin
   -- Repeat revocation by the same owner is safe after a lost response.
   update public.backroom_input_bindings
   set wake_enabled = false,
-      wake_last_revoked_grant_id = pg_catalog.coalesce(wake_grant_id, wake_last_revoked_grant_id),
+      wake_last_revoked_grant_id = coalesce(wake_grant_id, wake_last_revoked_grant_id),
       wake_grant_id = null, confirmed_at = null, wake_expires_at = null,
-      revoked_at = pg_catalog.coalesce(revoked_at, v_now), updated_at = v_now
+      revoked_at = coalesce(revoked_at, v_now), updated_at = v_now
   where id = p_binding_id and owner_id = p_owner_id;
   get diagnostics v_changed = row_count;
   if v_changed <> 1 then return false; end if;
