@@ -116,6 +116,7 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
     if(!scope){setNotice('First find and select a joined AI session for this group.');return;}
     if(!runtime.capabilities.terminal){setNotice('The local terminal sandbox is not ready.');return;}
     if(!window.confirm('Copy a filtered source snapshot from the local host into the isolated sandbox? Git history, node_modules, build output and common secret files are excluded. A previous sandbox project snapshot will be replaced; the source repository on your host is not modified.'))return;
+    setTerminalDiff(null);setTerminalApplyResult(null);
     const result=await action(()=>hostApi<{state:string;projectSynced:boolean;fileCount:number;sourceBytes:number;archiveBytes:number;sha256:string;omittedSensitive:number;omittedLarge:number;destination:string}>('/v1/workspaces/terminal/sync',{method:'POST',body:scope}));
     if(result){await refreshRuntime(true);setNotice(result.projectSynced?'Local project snapshot synced: '+result.fileCount+' files ('+Math.ceil(result.sourceBytes/1024)+' KiB). Credentials, Git internals and dependencies were not copied. Install dependencies only through an explicitly approved sandbox command.':'Project snapshot was not confirmed. Inspect runtime status before retrying.');}
   }
@@ -126,6 +127,7 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
     if(!Array.isArray(command)||command.length===0||command.some(x=>typeof x!=='string'||!x.trim())){setNotice('Command must be a JSON array of non-empty strings. A shell command line is not accepted.');return;}
     if(!terminalPurpose.trim()){setNotice('Describe why this terminal command is needed.');return;}
     if(!window.confirm('Run this exact argv in the dedicated local gVisor sandbox? The local host will display another approval prompt; no command will run on the host shell.'))return;
+    setTerminalDiff(null);setTerminalApplyResult(null);
     const payload:{command:string[];purpose:string;groupId:string;sessionId:string;cwd?:string}={command:command as string[],purpose:terminalPurpose.trim(),...scope};
     if(terminalCwd.trim())payload.cwd=terminalCwd.trim();
     const result=await action(()=>hostApi<TerminalResult>('/v1/workspaces/terminal/exec',{method:'POST',body:payload}));
@@ -134,7 +136,7 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
 
   async function reviewTerminalDiff(){
     if(!scope||!runtime.terminal?.projectSynced){setNotice('Sync a local project snapshot before reviewing sandbox changes.');return;}
-    if(!window.confirm('Request the local host to return a bounded patch for review? The local terminal will ask for separate approval. The patch will not be applied to your host repository or posted to the group.'))return;
+    if(!window.confirm('Request a bounded sandbox patch for review? Nothing will be applied to the host unless you later choose Apply and approve the exact patch in the trusted local terminal. The patch is never posted to the group automatically.'))return;
     const result=await action(()=>hostApi<TerminalDiff>('/v1/workspaces/terminal/diff',{method:'POST',body:scope}));
     if(result){setTerminalDiff(result);setTerminalApplyResult(null);setNotice(result.state==='completed'?(result.empty?'No sandbox changes were detected.':result.applyAvailable?'Review the patch below. Applying it to your local working tree is a separate, locally approved action.':'Patch is available for review only.'):result.reason??'Patch was withheld or requires review.');}
   }
