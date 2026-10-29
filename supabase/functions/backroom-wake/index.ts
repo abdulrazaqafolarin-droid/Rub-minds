@@ -69,6 +69,18 @@ const store={
   });
  }
 };
-const gateway=createAuthenticatedWakeGateway({lookupHost,lookupBinding,store});
+async function activateBinding({hostId,sessionDigest,bindingId,ttlSeconds}:{
+ hostId:string;sessionDigest:string;bindingId:string;grantId:string;ttlSeconds:number
+}) {
+ const now=new Date();
+ const {data,error}=await db.from('backroom_input_bindings')
+  .update({wake_enabled:true,confirmed_at:now.toISOString(),
+    wake_expires_at:new Date(now.getTime()+ttlSeconds*1000).toISOString()})
+  .eq('id',bindingId).eq('host_id',hostId).eq('session_digest',sessionDigest)
+  .eq('wake_enabled',false).is('revoked_at',null).select('id').maybeSingle();
+ if(error)throw new Error('Backroom consent activation unavailable');
+ return Boolean(data?.id);
+}
+const gateway=createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,activateBinding});
 const handler=createWakeGatewayHttpHandler({gateway});
 Deno.serve(req=>handler(req));
