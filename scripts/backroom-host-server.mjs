@@ -207,6 +207,17 @@ export function createBackroomHostServer({
       }, cors);
       return;
     }
+    if(request.method==="POST" && url.pathname==="/v1/backroom/stop"){
+      const authorized=authority.authorize({origin:requestOrigin,token:bearer(request)});
+      if(!authorized){writeJson(response,401,{error:"host_session_invalid"},cors);return;}
+      try{
+        const status=await wakeService?.stop?.();
+        writeJson(response,200,{stopped:true,remoteDeactivationConfirmed:status?.remotelyDeactivated===true},cors);
+      }catch{
+        writeJson(response,503,{error:"wake_stop_failed"},cors);
+      }
+      return;
+    }
     if(request.method==="POST" && url.pathname==="/v1/backroom/configure"){
       const authorized=authority.authorize({origin:requestOrigin,token:bearer(request)});
       if(!authorized){writeJson(response,401,{error:"host_session_invalid"},cors);return;}
