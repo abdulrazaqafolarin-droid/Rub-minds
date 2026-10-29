@@ -398,6 +398,7 @@ create or replace function public.ack_backroom_wake_job(
   p_job_id uuid,
   p_host_id text,
   p_session_digest text,
+  p_binding_id uuid,
   p_lease_token text,
   p_outcome text
 )
@@ -409,7 +410,7 @@ as $ack$
 declare v_changed integer;
 begin
   if p_job_id is null or p_host_id is null or char_length(btrim(p_host_id)) not between 1 and 128
-    or p_session_digest is null or p_session_digest !~ '^[0-9a-f]{64}$'
+    or p_session_digest is null or p_session_digest !~ '^[0-9a-f]{64}$' or p_binding_id is null
     or p_lease_token is null or p_lease_token !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
     or p_outcome is null or p_outcome not in ('acknowledged','ignored') then
     raise exception 'Invalid Backroom acknowledgement';
@@ -418,7 +419,7 @@ begin
   set state = p_outcome, acknowledged_at = pg_catalog.clock_timestamp(),
       lease_owner = null, lease_token_hash = null, lease_expires_at = null,
       updated_at = pg_catalog.clock_timestamp()
-  where j.id = p_job_id and j.host_id = p_host_id and j.session_digest = p_session_digest
+  where j.id = p_job_id and j.host_id = p_host_id and j.session_digest = p_session_digest and j.binding_id=p_binding_id
     and j.state = 'leased' and j.lease_owner = p_host_id
     and j.lease_token_hash = pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_lease_token, 'UTF8')), 'hex')
     and j.lease_expires_at > pg_catalog.clock_timestamp() and j.expires_at > pg_catalog.clock_timestamp()
@@ -443,6 +444,7 @@ create or replace function public.retry_backroom_wake_job(
   p_job_id uuid,
   p_host_id text,
   p_session_digest text,
+  p_binding_id uuid,
   p_lease_token text,
   p_retry_after_seconds integer,
   p_error_code text default 'other'
@@ -455,7 +457,7 @@ as $retry$
 declare v_state text;
 begin
   if p_job_id is null or p_host_id is null or char_length(btrim(p_host_id)) not between 1 and 128
-    or p_session_digest is null or p_session_digest !~ '^[0-9a-f]{64}$'
+    or p_session_digest is null or p_session_digest !~ '^[0-9a-f]{64}$' or p_binding_id is null
     or p_lease_token is null or p_lease_token !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
     or p_retry_after_seconds is null or p_retry_after_seconds < 1 or p_retry_after_seconds > 300
     or p_error_code is null or p_error_code not in ('target_unavailable','approval_required','provider_busy','transport_error','result_unconfirmed','authorization_denied','other') then
@@ -467,7 +469,7 @@ begin
       lease_owner = null, lease_token_hash = null, lease_expires_at = null,
       last_error_code = case when j.attempt_count >= 5 then 'max_attempts' else p_error_code end,
       updated_at = pg_catalog.clock_timestamp()
-  where j.id = p_job_id and j.host_id = p_host_id and j.session_digest = p_session_digest
+  where j.id = p_job_id and j.host_id = p_host_id and j.session_digest = p_session_digest and j.binding_id=p_binding_id
     and j.state = 'leased' and j.lease_owner = p_host_id
     and j.lease_token_hash = pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_lease_token, 'UTF8')), 'hex')
     and j.lease_expires_at > pg_catalog.clock_timestamp() and j.expires_at > pg_catalog.clock_timestamp()
@@ -556,16 +558,16 @@ begin
 end;
 $expire$;
 
-revoke all on function public.enqueue_backroom_wake_job(text,uuid,uuid,uuid,text,text,text,text,text,text,text,integer,text,text,integer) from public, anon, authenticated;
-revoke all on function public.claim_backroom_wake_jobs(text,text,integer,integer) from public, anon, authenticated;
-revoke all on function public.ack_backroom_wake_job(uuid,text,text,text,text) from public, anon, authenticated;
-revoke all on function public.retry_backroom_wake_job(uuid,text,text,text,integer,text) from public, anon, authenticated;
+revoke all on function public.enqueue_backroom_wake_job(text,uuid,uuid,uuid,text,text,text,text,uuid,text,text,integer,text,text,integer) from public, anon, authenticated;
+revoke all on function public.claim_backroom_wake_jobs(text,text,uuid,integer,integer) from public, anon, authenticated;
+revoke all on function public.ack_backroom_wake_job(uuid,text,text,uuid,text,text) from public, anon, authenticated;
+revoke all on function public.retry_backroom_wake_job(uuid,text,text,uuid,text,integer,text) from public, anon, authenticated;
 revoke all on function public.cancel_backroom_wake_job(uuid,uuid) from public, anon, authenticated;
 revoke all on function public.expire_backroom_wake_jobs() from public, anon, authenticated;
 
-grant execute on function public.enqueue_backroom_wake_job(text,uuid,uuid,uuid,text,text,text,text,text,text,integer,text,text,integer) to service_role;
-grant execute on function public.claim_backroom_wake_jobs(text,text,integer,integer) to service_role;
-grant execute on function public.ack_backroom_wake_job(uuid,text,text,text,text) to service_role;
-grant execute on function public.retry_backroom_wake_job(uuid,text,text,text,integer,text) to service_role;
+grant execute on function public.enqueue_backroom_wake_job(text,uuid,uuid,uuid,text,text,text,text,uuid,text,text,integer,text,text,integer) to service_role;
+grant execute on function public.claim_backroom_wake_jobs(text,text,uuid,integer,integer) to service_role;
+grant execute on function public.ack_backroom_wake_job(uuid,text,text,uuid,text,text) to service_role;
+grant execute on function public.retry_backroom_wake_job(uuid,text,text,uuid,text,integer,text) to service_role;
 grant execute on function public.cancel_backroom_wake_job(uuid,uuid) to service_role;
 grant execute on function public.expire_backroom_wake_jobs() to service_role;
