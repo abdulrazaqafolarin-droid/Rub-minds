@@ -32,7 +32,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           persist-credentials: false
       - name: Install PostgreSQL client
@@ -45,6 +45,23 @@ jobs:
           create role anon nologin;
           create role authenticated nologin;
           create role service_role nologin;
+          create schema auth;
+          create table auth.users (id uuid primary key);
+          create table public.rooms (id uuid primary key, owner_id uuid not null references auth.users(id));
+          create table public.participants (
+            id uuid primary key,
+            room_id uuid not null references public.rooms(id),
+            kind text not null check (kind in ('human','original_session','model','external_agent'))
+          );
+          create table public.agent_connections (
+            id uuid primary key default gen_random_uuid(),
+            room_id uuid not null references public.rooms(id),
+            participant_id uuid not null references public.participants(id),
+            owner_id uuid not null references auth.users(id),
+            credential_digest text not null unique,
+            expires_at timestamptz not null,
+            revoked_at timestamptz
+          );
           create table public.rub_minds_mcp_sessions (
             session_digest text primary key,
             agent_credential_ciphertext text,
