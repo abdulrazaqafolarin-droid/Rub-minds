@@ -9,13 +9,14 @@ const DEFAULT_ALLOWED_ORIGINS=new Set([
 ]);
 const sha256=text=>createHash('sha256').update(text,'utf8').digest('hex');
 export class BrowserCanonicalWakeAdapter {
- constructor({page,origin,path,search='',hash='',selector,appId,sessionId,identityFingerprint,nodeHandle=null,allowedOrigins=[...DEFAULT_ALLOWED_ORIGINS]}={}){
+ constructor({page,origin,path,search='',hash='',selector,verificationSelector=selector,appId,sessionId,identityFingerprint,nodeHandle=null,allowedOrigins=[...DEFAULT_ALLOWED_ORIGINS]}={}){
   if(!page||typeof page.url!=='function'||typeof page.locator!=='function')throw new TypeError('Playwright page required');
   if([origin,path,selector,appId,sessionId,identityFingerprint].some(v=>typeof v!=='string'||!v))throw new TypeError('wake target binding incomplete');
   const parsed=new URL(origin);
   if(parsed.protocol!=='https:'||parsed.origin!==origin||!path.startsWith('/')||!Array.isArray(allowedOrigins)||!allowedOrigins.includes(origin))throw new TypeError('provider origin is not approved for canonical wake');
   if(nodeHandle!==null&&(!nodeHandle||typeof nodeHandle.evaluate!=='function'))throw new TypeError('exact DOM element handle required');
-  Object.assign(this,{page,origin,path,search,hash,selector,appId,sessionId,identityFingerprint,nodeHandle,allowedOrigins:new Set(allowedOrigins)});
+  if(typeof verificationSelector!=='string'||!verificationSelector)throw new TypeError('composer verification selector required');
+  Object.assign(this,{page,origin,path,search,hash,selector,verificationSelector,appId,sessionId,identityFingerprint,nodeHandle,allowedOrigins:new Set(allowedOrigins)});
  }
  async #field(){
   if(this.page.isClosed?.())throw new Error('page closed');
@@ -46,14 +47,14 @@ export class BrowserCanonicalWakeAdapter {
     if(!(node instanceof HTMLElement)||!node.isConnected)return false;
     const form=node instanceof HTMLInputElement||node instanceof HTMLTextAreaElement?node.form:node.closest('form');
     if(!form)return false;
-    const buttons=[...form.querySelectorAll('button[type="submit"],input[type="submit"]')].filter(button=>{
+    const candidates=[...form.querySelectorAll('button,[role="button"],input[type="submit"]')].filter(button=>{
       const style=getComputedStyle(button),rect=button.getBoundingClientRect();
-      return button.isConnected&&!button.disabled&&button.getAttribute('aria-disabled')!=='true'&&
-        style.display!=='none'&&style.visibility==='visible'&&Number(style.opacity)!==0&&rect.width>0&&rect.height>0;
+      if(!button.isConnected||button.disabled||button.getAttribute('aria-disabled')==='true'||
+        style.display==='none'||style.visibility!=='visible'||Number(style.opacity)===0||rect.width<=0||rect.height<=0)return false;
+      const label=[button.getAttribute('aria-label'),button.getAttribute('title'),button.getAttribute('data-testid'),button.textContent].filter(Boolean).join(' ').trim();
+      return /(^|[\s_-])(send|submit|reply)([\s_-]|$)/i.test(label);
     });
-    if(buttons.length!==1)return false;
-    const button=buttons[0],label=[button.getAttribute('aria-label'),button.getAttribute('title'),button.getAttribute('data-testid'),button.textContent].filter(Boolean).join(' ');
-    return /send|submit|message|reply/i.test(label);
+    return candidates.length===1;
    });
    return ready?{connected:true,focused:true,appId:this.appId,sessionId:this.sessionId,identityFingerprint:this.identityFingerprint,surface:'browser_tab',locatorKinds:['dom']}:{connected:false,focused:false,reason:'unique_send_control_unavailable'};
   }catch{return {connected:false,focused:false};}
@@ -90,11 +91,12 @@ export class BrowserCanonicalWakeAdapter {
    const form=element instanceof HTMLInputElement||element instanceof HTMLTextAreaElement?element.form:element.closest('form');
    if(!form)return {state:'submit_control_unavailable',submitted:false};
    const findButton=()=>{
-    const found=[...form.querySelectorAll('button[type="submit"],input[type="submit"]')].filter(button=>{
+    const found=[...form.querySelectorAll('button,[role="button"],input[type="submit"]')].filter(button=>{
      const style=getComputedStyle(button),rect=button.getBoundingClientRect();
-     return button.isConnected&&!button.disabled&&button.getAttribute('aria-disabled')!=='true'&&style.display!=='none'&&
-      style.visibility==='visible'&&Number(style.opacity)!==0&&rect.width>0&&rect.height>0&&
-      /send|submit|message|reply/i.test([button.getAttribute('aria-label'),button.getAttribute('title'),button.getAttribute('data-testid'),button.textContent].filter(Boolean).join(' '));
+     if(!button.isConnected||button.disabled||button.getAttribute('aria-disabled')==='true'||style.display==='none'||
+       style.visibility!=='visible'||Number(style.opacity)===0||rect.width<=0||rect.height<=0)return false;
+     const label=[button.getAttribute('aria-label'),button.getAttribute('title'),button.getAttribute('data-testid'),button.textContent].filter(Boolean).join(' ').trim();
+     return /(^|[\s_-])(send|submit|reply)([\s_-]|$)/i.test(label);
     });
     return found.length===1?found[0]:null;
    };
@@ -117,19 +119,35 @@ export class BrowserCanonicalWakeAdapter {
    if(identity()!=='valid'||read()!==expected.text||findButton()!==button||button.disabled)return {state:'insert_unverified',submitted:false};
    // A click is allowed only for this provider's unique submit control in the same form.
    button.click();
-   await Promise.resolve();
-   const after=identity();
-   if(after!=='valid')return {state:'send_unconfirmed',submitted:true};
-   if(read()==='')return {state:'submitted',submitted:true,composerEmpty:true};
-   return {state:'send_unconfirmed',submitted:true};
+   return {state:'submitted_pending_confirmation',submitted:true};
   };
   const outcome=await (this.nodeHandle??field).evaluate(performWake,request);
   if(outcome?.state==='conversation_changed'||outcome?.state==='composer_occupied'||outcome?.state==='composer_unavailable'||outcome?.state==='composer_replaced'||outcome?.state==='submit_control_unavailable'){
    const error=new Error('Canonical wake refused before send: '+outcome.state);error.code='BACKROOM_PREFLIGHT';throw error;
   }
-  if(outcome?.state!=='submitted'||outcome.submitted!==true||outcome.composerEmpty!==true){
+  if(outcome?.state!=='submitted_pending_confirmation'||outcome.submitted!==true){
    return {state:'needs_review',verified:false,result:{submitted:outcome?.submitted===true,reason:outcome?.state??'unknown'}};
   }
-  return {state:'completed',verified:true,result:{woke:true,submitted:true,triggerOnly:true,eventId:command.eventId,textSha256:sha256(command.text)}};
+  // Provider submit handlers are asynchronous; never infer acceptance from an immediate DOM read.
+  // Wait for the exact conversation's unique composer to clear, but do not re-send on timeout.
+  try {
+   await this.page.waitForFunction(expected=>{
+    const u=window.location;
+    if(u.origin!==expected.origin||u.pathname!==expected.path||u.search!==expected.search||u.hash!==expected.hash)return false;
+    try{
+     const fields=document.querySelectorAll(expected.selector);
+     if(fields.length!==1)return false;
+     const el=fields[0];
+     if(!(el instanceof HTMLElement)||!el.isConnected||el.closest('[aria-hidden="true"],[inert],[hidden]')||
+       ('disabled'in el&&el.disabled)||el.getAttribute('aria-disabled')==='true')return false;
+     const text=el instanceof HTMLInputElement||el instanceof HTMLTextAreaElement?el.value:
+       el.isContentEditable?(el.textContent??''):null;
+     return text==='';
+    }catch{return false;}
+   },{origin:this.origin,path:this.path,search:this.search,hash:this.hash,selector:this.verificationSelector},{timeout:8000});
+  } catch {
+   return {state:'needs_review',verified:false,result:{submitted:true,reason:'composer-clear-unconfirmed'}};
+  }
+  return {state:'completed',verified:true,result:{triggerSubmitted:true,submitted:true,confirmation:'composer-cleared',eventId:command.eventId,textSha256:sha256(command.text)}};
  }
 }
