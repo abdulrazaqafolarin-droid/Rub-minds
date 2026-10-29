@@ -12,6 +12,18 @@ const DIGEST=/^[0-9a-f]{64}$/;
 const TOKEN=/^[0-9a-f]{64}$/;
 const sha256 = v => createHash('sha256').update(v,'utf8').digest('hex');
 
+/**
+ * The factory intentionally accepts optional properties so malformed setup is
+ * rejected by the runtime guards below, while callers receive a real typed
+ * contract from Deno/TypeScript rather than an inferred `now`-only options
+ * shape (which silently hid required gateway dependencies).
+ *
+ * @typedef {{hostId:string,ownerId:string,credentialDigest:string,expiresAt:string,revokedAt?:string|null}} WakeHostRecord
+ * @typedef {{bindingId:string,hostId:string,ownerId:string,sessionDigest:string,revokedAt?:string|null,wakeEnabled?:boolean,confirmedAt?:string|null,wakeExpiresAt?:string|null}} WakeBindingRecord
+ * @typedef {{claim:(input:any)=>Promise<any>,acknowledge:(input:any)=>Promise<any>,retry:(input:any)=>Promise<any>}} WakeQueueStore
+ * @typedef {{lookupHost:(hostId:string)=>Promise<WakeHostRecord|null>,lookupBinding:(bindingId:string)=>Promise<WakeBindingRecord|null>,store:WakeQueueStore,activateBinding?:(input:any)=>Promise<any>,deactivateBinding?:(input:any)=>Promise<any>,now?:()=>number}} WakeGatewayFactoryOptions
+ * @param {Partial<WakeGatewayFactoryOptions>} [options]
+ */
 export function createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,activateBinding,deactivateBinding,now=()=>Date.now()}={}) {
   if(typeof lookupHost!=='function'||typeof lookupBinding!=='function')throw new TypeError('Trusted host and binding lookups required');
   if(!store||typeof store.claim!=='function'||typeof store.acknowledge!=='function'||typeof store.retry!=='function')throw new TypeError('Private durable store required');
