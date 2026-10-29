@@ -206,6 +206,24 @@ export function createBackroomHostServer({
       }, cors);
       return;
     }
+    if(request.method==="POST" && url.pathname==="/v1/backroom/configure"){
+      const authorized=authority.authorize({origin:requestOrigin,token:bearer(request)});
+      if(!authorized){writeJson(response,401,{error:"host_session_invalid"},cors);return;}
+      if(!wakeService || typeof wakeService.configure!=="function"){
+        writeJson(response,503,{error:"remote_wake_unavailable"},cors);return;
+      }
+      if(!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"]??"")){
+        writeJson(response,415,{error:"application_json_required"},cors);return;
+      }
+      try{
+        const input=await readJson(request);
+        const status=wakeService.configure(input);
+        writeJson(response,200,status,cors);
+      }catch{
+        writeJson(response,400,{error:"invalid_remote_wake_configuration"},cors);
+      }
+      return;
+    }
     if (url.pathname.startsWith("/v1/browser/")) {
       if (request.method !== "GET" && request.method !== "POST") {
         writeJson(response, 405, { error: "method_not_allowed" }, cors);
