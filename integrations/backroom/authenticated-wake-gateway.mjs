@@ -12,11 +12,11 @@ const DIGEST=/^[0-9a-f]{64}$/;
 const TOKEN=/^[0-9a-f]{64}$/;
 const sha256 = v => createHash('sha256').update(v,'utf8').digest('hex');
 
-export function createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,now=()=>Date.now()}={}) {
+export function createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,activateBinding,now=()=>Date.now()}={}) {
   if(typeof lookupHost!=='function'||typeof lookupBinding!=='function')throw new TypeError('Trusted host and binding lookups required');
   if(!store||typeof store.claim!=='function'||typeof store.acknowledge!=='function'||typeof store.retry!=='function')throw new TypeError('Private durable store required');
   if(typeof now!=='function')throw new TypeError('Clock required');
-  async function authorize({hostId,hostToken,sessionDigest,bindingId}) {
+  async function authorize({hostId,hostToken,sessionDigest,bindingId},requireConsent=true) {
     if(!UUID.test(hostId??'')||!TOKEN.test(hostToken??'')||!DIGEST.test(sessionDigest??'')||!UUID.test(bindingId??''))return null;
     const host=await lookupHost(hostId);
     // No host-controlled owner identity or binding metadata is trusted.
@@ -27,12 +27,22 @@ export function createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,n
     if(expected.length!==32||!timingSafeEqual(supplied,expected))return null;
     const binding=await lookupBinding(bindingId);
     if(!binding||binding.bindingId!==bindingId||binding.hostId!==hostId||binding.ownerId!==host.ownerId||
-       binding.sessionDigest!==sessionDigest||binding.revokedAt!=null||binding.wakeEnabled!==true||
-       binding.confirmedAt==null||!Number.isFinite(Date.parse(binding.wakeExpiresAt))||
-       Date.parse(binding.wakeExpiresAt)<=now())return null;
+       binding.sessionDigest!==sessionDigest||binding.revokedAt!=null)return null;
+    if(requireConsent&&(binding.wakeEnabled!==true||binding.confirmedAt==null||
+       !Number.isFinite(Date.parse(binding.wakeExpiresAt))||Date.parse(binding.wakeExpiresAt)<=now()))return null;
     return Object.freeze({hostId,sessionDigest,bindingId});
   }
   return Object.freeze({
+    // Only an authenticated *host*, never a user browser, may activate a
+    // previously registered inactive binding after checking a local wake grant.
+    async activate(input) {
+      if(typeof activateBinding!=='function')return Object.freeze({ok:false,reason:'unauthorized'});
+      const scope=await authorize(input??{},false);
+      if(!scope)return Object.freeze({ok:false,reason:'unauthorized'});
+      if(!UUID.test(input.grantId??'')||!Number.isSafeInteger(input.ttlSeconds)||
+         input.ttlSeconds<60||input.ttlSeconds>900)throw new TypeError('Invalid local consent grant');
+      return Object.freeze({ok:true,activated:await activateBinding({...scope,grantId:input.grantId,ttlSeconds:input.ttlSeconds})});
+    },
     // Returns an explicit denied status but never reveals whether a host, token or binding exists.
     async claim(input) {
       const scope=await authorize(input??{});
