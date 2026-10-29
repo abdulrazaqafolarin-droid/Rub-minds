@@ -444,7 +444,46 @@ export async function runBackroomHost() {
   const hostId = identity.hostId;
   const { BrowserHostRuntime } = await import("../integrations/backroom/browser-host-runtime.mjs");
   const browserRuntime = new BrowserHostRuntime({ hostId });
-  const instance = createBackroomHostServer({ hostId, browserRuntime, enrollmentDigest: identity.credentialDigest });
+  const gatewayUrl=process.env.BACKROOM_WAKE_GATEWAY_URL;
+  const sessionDigest=process.env.BACKROOM_WAKE_SESSION_DIGEST;
+  const bindingId=process.env.BACKROOM_WAKE_BINDING_ID;
+  const configured=[gatewayUrl,sessionDigest,bindingId].filter(Boolean).length;
+  if(configured!==0&&configured!==3)
+    throw new Error("Remote wake configuration requires gateway URL, session digest and binding ID together");
+  let wakeService;
+  if(configured===3){
+    const [{createRemoteWakeStore},{createBackroomWakePoller},{FileWakeExecutionJournal}]=await Promise.all([
+      import("../integrations/backroom/remote-wake-store.mjs"),
+      import("../integrations/backroom/host-wake-poller.mjs"),
+      import("../integrations/backroom/file-wake-execution-journal.mjs")
+    ]);
+    const remoteStore=createRemoteWakeStore({
+      baseUrl:gatewayUrl,hostToken:identity.hostToken,
+      verifyLocalGrant:input=>browserRuntime.verifyRemoteWakeActivation(input)
+    });
+    const journal=new FileWakeExecutionJournal({
+      directory:join(homedir(),".rub-minds","backroom","wake-execution-journal")
+    });
+    const poller=createBackroomWakePoller({store:remoteStore,browserRuntime,hostId,
+      sessionDigest,bindingId,executionJournal:journal});
+    wakeService={
+      async activateAndStart(grant,input){
+        if(input.bindingId!==bindingId||grant?.scope?.bindingId!==bindingId||
+           grant.scope.hostId!==hostId||grant.scope.sessionId!==input.sessionId||
+           grant.scope.groupId!==input.roomId||grant.scope.participantId!==input.participantId)
+          throw new Error("Remote wake binding is not the confirmed local target");
+        const activated=await remoteStore.activate({
+          hostId,sessionDigest,bindingId,grantId:grant.grantId,ttlSeconds:300
+        });
+        if(!activated)throw new Error("Remote wake consent was not activated");
+        await poller.start();
+      },
+      stop:()=>poller.stop()
+    };
+  }
+  const instance = createBackroomHostServer({
+    hostId,browserRuntime,enrollmentDigest:identity.credentialDigest,wakeService
+  });
   const address = await instance.start();
   process.stdout.write([
     "",
@@ -453,6 +492,7 @@ export async function runBackroomHost() {
     `Host ID: ${address.hostId}`,
     `Hosted enrollment digest: ${identity.credentialDigest}`,
     "Private host credential is stored only in the local host identity file (not printed).",
+    configured===3?"Remote wake: configured; starts only after explicit local grant and hosted activation.":"Remote wake: disabled (no host configuration).",
     `Allowed web origins: ${parseOrigins(process.env.BACKROOM_ALLOWED_ORIGINS).join(", ")}`,
     "Pairing code (one use, expires in 10 minutes):",
     instance.pairingCode,
