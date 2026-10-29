@@ -15,6 +15,41 @@ async function privateDirectory(directory){
    (process.platform!=='win32'&&(stat.mode&0o077)!==0))
   throw new Error('Unsafe Backroom host identity directory');
 }
+
+function rotationMarkerPath(path) { return path + ".rotation-pending"; }
+function safePrivateMarker(stat) {
+ return stat.isFile() && !stat.isSymbolicLink() &&
+  (process.platform === "win32" || (stat.mode & 0o077) === 0);
+}
+async function markHostIdentityRotated(path) {
+ const markerPath=rotationMarkerPath(path);
+ let marker;
+ try {
+  marker=await open(markerPath,"wx",0o600);
+  await marker.writeFile("Host identity rotated; inherited headless wake configuration is disabled.\n","utf8");
+  await marker.sync();
+ } catch(error) {
+  if(error?.code!=="EEXIST") throw error;
+  const stat=await lstat(markerPath);
+  if(!safePrivateMarker(stat)) throw new Error("Unsafe Backroom host rotation marker");
+ } finally {
+  await marker?.close();
+ }
+}
+/** Persistent marker prevents stale environment-bound bindings being reused after rotation. */
+export async function isHostIdentityRotationPending({filePath}={}) {
+ if(typeof filePath!=="string"||!filePath.trim()) throw new TypeError("Private host identity path required");
+ const markerPath=rotationMarkerPath(resolve(filePath));
+ try {
+  const stat=await lstat(markerPath);
+  if(!safePrivateMarker(stat)) throw new Error("Unsafe Backroom host rotation marker");
+  return true;
+ } catch(error) {
+  if(error?.code==="ENOENT") return false;
+  throw error;
+ }
+}
+
 function normalizedIdentity(record){
  if(!record||record.version!==1||!UUID.test(record.hostId??'')||!TOKEN.test(record.hostToken??''))
   throw new Error('Invalid Backroom host identity: manual recovery required');
@@ -59,6 +94,8 @@ export async function rotateHostIdentity({filePath}={}){
  if(typeof filePath!=='string'||!filePath.trim())throw new TypeError('Private host identity path required');
  const path=resolve(filePath);
  await privateDirectory(dirname(path));
+ // Mark before removing the old identity so crashes still fail closed on restart.
+ await markHostIdentityRotated(path);
  try{
   const stat=await lstat(path);
   if(!stat.isFile()||stat.isSymbolicLink()||
