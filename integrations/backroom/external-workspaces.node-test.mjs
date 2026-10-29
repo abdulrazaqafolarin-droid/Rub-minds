@@ -202,9 +202,9 @@ test('ARTEMIS diagnostics require local approval, scope and only call the diagno
 });
 
 test('ARTEMIS trace summary/search is locally approved, bounded and bound to an owned trace',async()=>{
- let approved=false;const client=new FakeMcp(['mobile_run_task','mobile_manage_task','mobile_inspect_trace'],async(name,args)=>{
+ let approved=false,mismatchDevice=false;const client=new FakeMcp(['mobile_run_task','mobile_manage_task','mobile_inspect_trace'],async(name,args)=>{
   if(name==='mobile_run_task')return {trace_id:'trace-inspect-1',status:'running'};
-  if(name==='mobile_inspect_trace')return {trace_id:args.trace_id,action:args.action,query:args.query??null,steps:[{step_number:1,status:'completed'}]};
+  if(name==='mobile_inspect_trace')return {trace_id:args.trace_id,device_serial:mismatchDevice?'wrong-device':'device-1',action:args.action,query:args.query??null,steps:[{step_number:1,status:'completed'}]};
   throw Error(name);
  });
  const d=new ArtemisAndroidWorkspace({client,allowedDevices:['device-1'],allowedPackages:['com.example.app'],authorizeLocalAction:async action=>action.kind!=='android_trace_inspect'||approved});
@@ -217,6 +217,8 @@ test('ARTEMIS trace summary/search is locally approved, bounded and bound to an 
  assert.deepEqual(call.args,{action:'view_summary',trace_id:'trace-inspect-1'});
  const search=await d.inspect({traceId:job.traceId,deviceSerial:job.deviceSerial,groupId:'group-1',sessionId:'session-1',action:'search',query:'send button'});
  assert.equal(search.action,'search');assert.equal(client.calls.filter(x=>x.name==='mobile_inspect_trace').at(-1).args.max_results,5);
+ mismatchDevice=true;
+ await assert.rejects(d.inspect({traceId:job.traceId,deviceSerial:job.deviceSerial,groupId:'group-1',sessionId:'session-1',action:'view_summary'}),/ARTEMIS device mismatch/);
  await assert.rejects(d.inspect({traceId:job.traceId,deviceSerial:job.deviceSerial,groupId:'group-2',sessionId:'session-1',action:'view_summary'}),/task scope mismatch/);
  await assert.rejects(d.inspect({traceId:job.traceId,deviceSerial:job.deviceSerial,groupId:'group-1',sessionId:'session-1',action:'view_step_details'}),/not allowlisted/);
 });

@@ -296,6 +296,11 @@ export class ArtemisAndroidWorkspace {
     await this.#require(['mobile_inspect_trace']);
     const args={action,trace_id:t.traceId,...(action==='search'?{query:query.trim(),max_results:5}:{})};
     const r=await this.client.callTool('mobile_inspect_trace',args);
+    if(r&&typeof r==='object'&&!Array.isArray(r)){
+      const returnedTrace=r.trace_id??r.traceId;
+      if(returnedTrace!==undefined&&returnedTrace!==t.traceId)throw new Error('ARTEMIS trace mismatch');
+      if(typeof r.device_serial==='string'&&r.device_serial!==t.deviceSerial)throw new Error('ARTEMIS device mismatch');
+    }
     const summary=typeof r==='string'?r:JSON.stringify(r);
     if(HIGH_CONFIDENCE_SECRET.test(summary))return Object.freeze({state:'needs_review',traceId:t.traceId,deviceSerial:t.deviceSerial,action,summary:'Potential credential material detected in the trace. Output was withheld from the Backroom panel.',truncated:false});
     return Object.freeze({state:'completed',traceId:t.traceId,deviceSerial:t.deviceSerial,action,summary:summary.slice(0,16000),truncated:summary.length>16000,sharedToGroup:false});
