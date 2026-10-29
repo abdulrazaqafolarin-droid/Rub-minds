@@ -22,12 +22,12 @@ function requireBoolean(value,name){if(typeof value!=='boolean')throw new TypeEr
 function rpcError(name,error){const code=typeof error?.code==='string'?error.code:'unknown';const e=new Error('Backroom queue RPC '+name+' failed ('+code+')');e.code='BACKROOM_QUEUE_RPC';throw e;}
 async function call(client,name,args){const response=await client.rpc(name,args);if(!response||response.error)rpcError(name,response?.error);return response.data;}
 export function createWakeKey(eventId,participantId,groupId,bindingId){
- requireLabel(eventId,'eventId');requireLabel(participantId,'participantId');requireLabel(groupId,'groupId');requireLabel(bindingId,'bindingId');
+ requireLabel(eventId,'eventId',128);requireLabel(participantId,'participantId');requireLabel(groupId,'groupId');requireLabel(bindingId,'bindingId');
  // Match the SQL message-trigger key exactly: [room, event, participant, binding].
  // PostgreSQL UUID casts canonicalize case, so normalize UUID-shaped values here too.
  const canonical=value=>UUID.test(value)?value.toLowerCase():value;
  return createHash('sha256').update(JSON.stringify([
-  canonical(groupId),eventId,canonical(participantId),canonical(bindingId)
+  canonical(groupId),canonical(eventId),canonical(participantId),canonical(bindingId)
  ]),'utf8').digest('hex');
 }
 export class SupabaseBackroomWakeStore{
