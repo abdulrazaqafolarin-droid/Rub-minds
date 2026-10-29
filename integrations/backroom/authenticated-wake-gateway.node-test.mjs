@@ -63,3 +63,25 @@ test('invalid claim limit rejected after authentication',async()=>{
  await assert.rejects(()=>gateway.claim({...scope,limit:21}),/limit/);
  assert.equal(calls.length,0);
 });
+
+test('inactive consent can only be activated by a correctly authenticated host for a short grant',async()=>{
+ const calls=[];
+ const bindingRecord={bindingId,hostId,ownerId,sessionDigest,wakeEnabled:false,
+  confirmedAt:null,wakeExpiresAt:null,revokedAt:null};
+ const gateway=createAuthenticatedWakeGateway({
+  lookupHost:async()=>({hostId,ownerId,credentialDigest,expiresAt,revokedAt:null}),
+  lookupBinding:async()=>bindingRecord,
+  store:{claim:async()=>[],acknowledge:async()=>false,retry:async()=>null},
+  activateBinding:async value=>{calls.push(value);return true;},
+  now:()=>Date.parse('2026-10-29T00:00:00Z'),
+ });
+ const grantId='40000000-0000-4000-8000-000000000066';
+ assert.deepEqual(await gateway.claim(scope),{ok:false,reason:'unauthorized'});
+ assert.deepEqual(await gateway.activate({...scope,grantId,ttlSeconds:300}),{ok:true,activated:true});
+ assert.equal(calls.length,1);
+ assert.equal(calls[0].hostToken,undefined);
+ assert.equal(calls[0].ttlSeconds,300);
+ assert.deepEqual(await gateway.activate({...scope,hostToken:'c'.repeat(64),grantId,ttlSeconds:300}),{ok:false,reason:'unauthorized'});
+ await assert.rejects(()=>gateway.activate({...scope,grantId,ttlSeconds:901}),/grant/);
+ assert.equal(calls.length,1);
+});
