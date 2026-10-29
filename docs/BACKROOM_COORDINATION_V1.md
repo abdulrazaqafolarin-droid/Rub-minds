@@ -119,7 +119,7 @@ The transport has a fake-fetch integration test across host client -> HTTP handl
   
 ## Validation record — 2026-10-29
 
-This record refers to source branch `feat/backroom-coordination-core-v1`, code commit `b9e73bd7015723eeff8c4f7b2129c793eadd0523`, and current PR head `5b50e274fadec85f8540ae3f1e37e7e50c907ceb` (documentation-only changes after the code commit). Checks ran in disposable Node 22.23.4 workspaces and are not a production release.
+This record refers to source branch `feat/backroom-coordination-core-v1`, including the nullable binding-conflict fix `b9e73bd7015723eeff8c4f7b2129c793eadd0523` and atomic browser route-race fix `20a794b229aa54423a7db7a2f4c0c8a2564f1e21`. The current PR head at the time of this update is `70d695f7fa58c21b462fac56b945a43133c8f2f3`; the latest commit records the validation evidence. Checks ran in disposable Node 22.23.4 workspaces and are not a production release.
 
 | Check | Evidence | Status |
 |---|---|---|
@@ -134,14 +134,14 @@ This record refers to source branch `feat/backroom-coordination-core-v1`, code c
 | Local host server contract | `node --test integrations/backroom/host-server.node-test.mjs`: 31 passed, 0 failed | Pass |
 | Host identity | `node --test integrations/backroom/host-identity.node-test.mjs`: 7 passed, 0 failed | Pass |
 | Draft SQL migration and acceptance file | Isolated PGlite PostgreSQL-compatible instance: clean fixture setup, migration application, and all statements in `supabase/tests/backroom_wake_queue.sql` completed without error | Pass, compatibility runtime only |
-| Native PostgreSQL 17 workflow | The Actions runs inspected for this validation cycle (`40869065891` queue SQL and `40869065975` validation) failed with empty step lists; job-log retrieval returned `BlobNotFound`. No SQL assertion or workflow command could be confirmed to have run. | Blocked before execution |
-| Real Chromium acceptance | `npm run test:backroom:browser` was attempted repeatedly. The Playwright browser initially lacked `libnspr4.so`; after extracting the bundled AL2023 compatibility library archive, the bundled Chromium build and Playwright's own browser still closed during launch/navigation. The sandbox could not resolve the Amazon Linux CDN to install native dependencies. The command reported 8 tests, 0 passing, with failures at launch/navigation rather than product assertions. | Environment-blocked; not passed |
+| Native PostgreSQL 17 workflow | Latest runs `40871918872` (queue SQL) and `40871919130` (validation) created failed jobs with empty step lists; job-log retrieval remains unavailable (`BlobNotFound`). No SQL assertion or workflow command can be confirmed to have run. | Blocked before execution |
+| Real Chromium acceptance | Three browser acceptance files ran against real Chromium in the disposable Node 22 sandbox after using the package's bundled AL2023 libraries and fonts (`LD_LIBRARY_PATH=/tmp/al2023/lib`, `FONTCONFIG_PATH=/tmp/fonts`) and a sandbox-only preload for the injected persistent-browser provider. **8 tests passed, 0 failed**, including the local-host/Playwright end-to-end path and no-send checks. | Pass (controlled browser only) |
 | ChatGPT / Claude session round trip | No direct provider session was authorized and verified end to end in this run | Not tested |
 | Production | No production deployment or production migration was run | Unchanged |
 
 The full Node suites and the build passed after fixing the content-type regex, invalid test expectations, persistent rotation-marker guard, and the TypeScript optional-reason narrowing error. The targeted SQL run found and corrected a mismatch where binding revocation was explicitly idempotent in SQL but its acceptance test expected a retry to return false.
 
-**Release decision:** keep PR #48 in draft. Do not deploy the migration or claim provider integration is live until the native PostgreSQL workflow startup issue is resolved, browser acceptance can run in a compatible Linux image, the Edge Functions are verified in Deno/Supabase staging, and real ChatGPT plus Claude tool/session round trips are observed separately.
+**Release decision:** keep PR #48 in draft. Do not deploy the migration or claim provider integration is live until native PostgreSQL 17 CI has a successful execution with real step logs, the Edge Functions are verified in Deno/Supabase staging, and real ChatGPT plus Claude tool/session round trips are observed separately. Controlled-browser acceptance passed, but it is not provider interoperability evidence.
 
 ## Browser acceptance follow-up — 2026-10-29
 
