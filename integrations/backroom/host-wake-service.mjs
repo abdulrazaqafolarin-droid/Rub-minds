@@ -80,6 +80,17 @@ export function createHostWakeService({
     results.every(result=>result.remotelyDeactivated!==false)});
  }
 
+ async function unconfigure(bindingId){
+  if(!UUID.test(bindingId??''))throw new TypeError('Invalid binding ID to remove');
+  const entry=bindings.get(bindingId);
+  if(!entry)return Object.freeze({removed:false,bindingId});
+  // Stop local consumption first. If server-side revocation preceded this call,
+  // remote deactivation can be denied; removing the stopped local poller remains safe.
+  const stopped=await stopOne(entry);
+  bindings.delete(bindingId);
+  return Object.freeze({removed:true,bindingId,remotelyDeactivated:stopped.remotelyDeactivated});
+ }
+
  function configure(rawInput={}){
   const config=validateConfig(rawInput);
   const current=bindings.get(config.bindingId);
@@ -148,7 +159,7 @@ export function createHostWakeService({
  }
 
  return Object.freeze({
-  configure,activateAndStart,stop,
+  configure,activateAndStart,stop,unconfigure,
   get status(){
    const list=[...bindings.values()].map(entry=>Object.freeze({
     bindingId:entry.scope.bindingId,polling:entry.poller.running===true,
