@@ -1,3 +1,8 @@
+import { createHash } from 'node:crypto';
+import { lstat, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
+import { basename, join, relative, resolve, sep } from 'node:path';
+
 /**
  * Local-only workspace adapters for CUA Driver, ARTEMIS, and CUA sandbox.
  * External provider binaries are configured only by the trusted host process.
@@ -13,6 +18,103 @@ function positiveInt(value,label){if(!Number.isSafeInteger(value)||value<1)throw
 function nonnegativeInt(value,label){if(!Number.isSafeInteger(value)||value<0)throw new TypeError(label+' must be a nonnegative integer');}
 function androidScope(deviceSerial,appPackage,devices,packages){if(typeof deviceSerial!=='string'||!devices.has(deviceSerial))throw new Error('Android device is not explicitly allowlisted');if(typeof appPackage!=='string'||!PACKAGE.test(appPackage)||!packages.has(appPackage))throw new Error('Android package is not explicitly allowlisted');return {deviceSerial,appPackage};}
 function scopeIds(groupId,sessionId){if(typeof groupId!=='string'||!ID.test(groupId)||typeof sessionId!=='string'||!ID.test(sessionId))throw new TypeError('Backroom group and session scope required');}
+
+const PROJECT_SKIP_DIRS=new Set(['.git','node_modules','.next','.nuxt','.vercel','.expo','.gradle','.idea','.obsidian','.cache','.turbo','.venv','venv','env','target','dist','build','coverage','test-results','playwright-report','artifacts','logs','tmp','temp','vendor','secrets','credentials','private','keys','certificates','__pycache__']);
+const PROJECT_SKIP_FILES=new Set(['.npmrc','.pypirc','.netrc','.git-credentials','credentials.json','service-account.json','id_rsa','id_ed25519','authorized_keys','known_hosts','.ds_store','*.pem','*.key','*.p12','*.pfx','*.jks','*.keystore','*.sqlite','*.db','*.dump','*.bak','*.log','*.zip','*.tar','*.gz','*.7z','*.rar']);
+const HIGH_CONFIDENCE_SECRET=/(?:-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|sb_secret_[A-Za-z0-9_-]{20,}|AKIA[A-Z0-9]{16}|xox[baprs]-[A-Za-z0-9-]{20,})/;
+function omitProjectPath(relPath,isDirectory){
+  const normalized=relPath.split(sep).join('/'),parts=normalized.split('/'),leaf=parts.at(-1).toLowerCase();
+  if(parts.some(p=>PROJECT_SKIP_DIRS.has(p.toLowerCase())))return true;
+  if(normalized.startsWith('supabase/.temp/')||normalized==='supabase/.temp')return true;
+  if(leaf==='.env'||leaf.startsWith('.env.')||leaf==='.envrc'||leaf==='.npmrc'||leaf==='.pypirc'||leaf==='.netrc')return true;
+  if(PROJECT_SKIP_FILES.has(leaf))return true;
+  if(/(?:private[_-]?key|service[_-]?account|credentials?|secrets?)[._-]/i.test(leaf))return true;
+  if(/\.(?:pem|key|p12|pfx|jks|keystore|sqlite|db|dump|bak|log|zip|tar|gz|7z|rar)$/i.test(leaf))return true;
+  return false;
+}
+function tarString(buffer,text,offset,length){
+  const bytes=Buffer.from(text,'utf8');
+  if(bytes.length>length)throw new RangeError('Project path cannot be represented safely in source archive');
+  bytes.copy(buffer,offset);
+}
+function tarOctal(buffer,value,offset,length){
+  const valueText=Math.trunc(value).toString(8);
+  if(valueText.length>length-1)throw new RangeError('Project archive numeric field overflow');
+  Buffer.from(valueText.padStart(length-1,'0')+'\0','ascii').copy(buffer,offset);
+}
+function tarFileHeader(relPath,size){
+  let leaf=relPath,prefix='';
+  if(Buffer.byteLength(leaf,'utf8')>100){
+    let found=false;
+    for(let i=relPath.lastIndexOf('/');i>0;i=relPath.lastIndexOf('/',i-1)){
+      const maybePrefix=relPath.slice(0,i),maybeLeaf=relPath.slice(i+1);
+      if(Buffer.byteLength(maybePrefix,'utf8')<=155&&Buffer.byteLength(maybeLeaf,'utf8')<=100){prefix=maybePrefix;leaf=maybeLeaf;found=true;break;}
+    }
+    if(!found)throw new RangeError('Project path is too long for safe POSIX tar format');
+  }
+  const h=Buffer.alloc(512);
+  tarString(h,leaf,0,100);tarOctal(h,0o644,100,8);tarOctal(h,0,108,8);tarOctal(h,0,116,8);
+  tarOctal(h,size,124,12);tarOctal(h,0,136,12);h.fill(0x20,148,156);h[156]=0x30;
+  tarString(h,'ustar\0',257,6);tarString(h,'00',263,2);tarString(h,'rub-minds',265,32);tarString(h,'backroom',297,32);tarString(h,prefix,345,155);
+  let checksum=0;for(const byte of h)checksum+=byte;
+  Buffer.from(checksum.toString(8).padStart(6,'0')+'\0 ','ascii').copy(h,148,0,8);
+  return h;
+}
+
+/**
+ * Packs a private repository snapshot for transfer into the isolated local
+ * sandbox. Symlinks, VCS internals, dependencies, common credentials and large
+ */generated artifacts are excluded; suspicious credential-bearing files are skipped.
+ */
+export async function createSafeWorkspaceArchive(projectSourcePath,{maxFiles=5000,maxBytes=32*1024*1024,maxSingleFileBytes=3*1024*1024}={}){
+  if(typeof projectSourcePath!=='string'||!projectSourcePath.trim())throw new TypeError('Trusted local project source path required');
+  for(const [value,label,min,max] of [[maxFiles,'maxFiles',1,20000],[maxBytes,'maxBytes',1024,256*1024*1024],[maxSingleFileBytes,'maxSingleFileBytes',1,32*1024*1024]])if(!Number.isSafeInteger(value)||value<min||value>max)throw new RangeError('Invalid '+label);
+  const requested=resolve(projectSourcePath),rootStat=await lstat(requested);
+  if(!rootStat.isDirectory()||rootStat.isSymbolicLink())throw new Error('Project source must be a real directory, not a symlink');
+  const root=await import('node:fs/promises').then(fs=>fs.realpath(requested));
+  const fsRoot=resolve(root, '..')===root;
+  if(fsRoot||root===resolve(homedir()))throw new Error('Filesystem root or home directory cannot be synchronized as a project');
+  const rootEntries=await readdir(root);
+  if(!rootEntries.includes('package.json')&&!rootEntries.includes('pyproject.toml')&&!rootEntries.includes('Cargo.toml')&&!rootEntries.includes('README.md')&&!rootEntries.includes('README')&&!rootEntries.includes('AndroidManifest.xml'))throw new Error('Choose a repository/project folder with a recognizable project marker');
+  const files=[];let totalBytes=0,omittedSensitive=0,omittedLarge=0;
+  async function walk(folder){
+    const entries=await readdir(folder,{withFileTypes:true});
+    entries.sort((a,b)=>a.name.localeCompare(b.name,'en'));
+    for(const entry of entries){
+      const full=join(folder,entry.name),rel=relative(root,full),normalized=rel.split(sep).join('/');
+      if(!rel||rel.startsWith('..'+sep)||rel==='..')throw new Error('Project archive path escaped its root');
+      if(omitProjectPath(rel,entry.isDirectory())){if(!entry.isDirectory())omittedSensitive++;continue;}
+      const stat=await lstat(full);
+      if(stat.isSymbolicLink())continue;
+      if(stat.isDirectory()){await walk(full);continue;}
+      if(!stat.isFile())continue;
+      if(stat.size>maxSingleFileBytes){omittedLarge++;continue;}
+      if(files.length>=maxFiles)throw new Error('Project has too many included files; lower scope before syncing');
+      if(totalBytes+stat.size>maxBytes)throw new Error('Project snapshot exceeds configured byte limit; narrow it before syncing');
+      const data=await readFile(full);
+      if(!data.includes(0)&&HIGH_CONFIDENCE_SECRET.test(data.toString('utf8'))){omittedSensitive++;continue;}
+      files.push({rel:normalized,data,mode:stat.mode&0o111?0o755:0o644});totalBytes+=data.length;
+    }
+  }
+  await walk(root);
+  if(!files.length)throw new Error('No safe project files were available to sync');
+  const chunks=[];
+  for(const file of files){
+    const header=tarFileHeader(file.rel,file.data.length);
+    chunks.push(header,file.data);
+    const padding=(512-(file.data.length%512))%512;
+    if(padding)chunks.push(Buffer.alloc(padding));
+  }
+  chunks.push(Buffer.alloc(1024));
+  const archive=Buffer.concat(chunks),sha256=createHash('sha256').update(archive).digest('hex');
+  const directory=await mkdtemp(join(tmpdir(),'rm-backroom-source-'));
+  const archivePath=join(directory,'workspace.tar');
+  try{
+    await writeFile(archivePath,archive,{flag:'wx',mode:0o600});
+  }catch(error){await rm(directory,{recursive:true,force:true});throw error;}
+  return Object.freeze({archivePath,tempDirectory:directory,sourceRoot:root,fileCount:files.length,sourceBytes:totalBytes,archiveBytes:archive.length,sha256,omittedSensitive,omittedLarge});
+}
+
 
 export class CuaDesktopWorkspace {
   constructor({client,session='rub-minds-backroom',authorizeLocalAction}={}) {
