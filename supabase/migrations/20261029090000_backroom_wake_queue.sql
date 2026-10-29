@@ -38,7 +38,8 @@ create table if not exists public.backroom_input_bindings (
   created_at timestamptz not null default pg_catalog.clock_timestamp(),
   updated_at timestamptz not null default pg_catalog.clock_timestamp(),
   constraint backroom_binding_wake_consent_check check (
-    (wake_enabled = false) or (confirmed_at is not null and wake_expires_at is not null)
+    (wake_enabled = false and wake_grant_id is null and wake_expires_at is null and confirmed_at is null)
+    or (wake_enabled = true and wake_grant_id is not null and confirmed_at is not null and wake_expires_at is not null)
   )
 );
 alter table public.backroom_input_bindings enable row level security;
