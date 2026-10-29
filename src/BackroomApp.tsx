@@ -420,6 +420,7 @@ export default function BackroomApp() {
       return;
     }
     setHostBusy(true);
+    let pendingNewBindingId: string | null = null;
     try {
       // Ensure registration exists or renew the same owner/credential before
       // creating a binding; registration itself never enables wake.
@@ -439,7 +440,7 @@ export default function BackroomApp() {
           participationMode:'mentions',maxWakesPerMinute:6
         }
       });
-      let data=rawBindingData as {ok?:boolean;bindingId?:string;reason?:string;wakeEnabled?:boolean;requiresHostRevoke?:boolean}|null;
+      let data=rawBindingData as {ok?:boolean;bindingId?:string;reason?:string;wakeEnabled?:boolean;requiresHostRevoke?:boolean;existing?:boolean}|null;
       // Supabase's invoke helper exposes non-2xx JSON through FunctionsHttpError.context.
       // Read that response so an existing-binding conflict can offer its explicit revoke path.
       const responseContext=(bindingError as unknown as {context?:unknown}|null)?.context;
@@ -464,6 +465,7 @@ export default function BackroomApp() {
           throw new Error('This host has conflicting active input bindings. Permanently revoke the host, rotate its identity, then register it again.');
         throw new Error('Secure hosted binding registration failed. No wake operation was enabled.');
       }
+      if(data.existing!==true) pendingNewBindingId=data.bindingId;
       // The host's pinned Supabase destination is local configuration. Never let
       // this browser choose where the private host credential is sent.
       const publishableKey=import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -472,6 +474,7 @@ export default function BackroomApp() {
       await hostApi('/v1/backroom/configure',{method:'POST',body:{
         sessionDigest:selectedSession.sessionDigest,bindingId:data.bindingId,publishableKey
       }});
+      pendingNewBindingId=null;
       setHostedWakeBinding({
         bindingId:data.bindingId,roomId:room.id,
         participantId:selectedSession.participantId,sessionId:target.sessionId,
@@ -481,7 +484,15 @@ export default function BackroomApp() {
       setHostedWakeGrantId('');
       setHostMessage('AI session bound to the exact selected composer. Wake remains OFF; activate only with your explicit confirmation.');
     }catch(error){
-      setHostMessage(error instanceof Error?error.message:'Could not configure wake binding.');
+      let cleanupWarning='';
+      if(pendingNewBindingId && supabase){
+        try{
+          const {data:cleanup,error:cleanupError}=await supabase.functions.invoke('backroom-config/revoke-binding',{body:{bindingId:pendingNewBindingId}});
+          if(cleanupError || cleanup?.ok!==true || cleanup?.revoked!==true)
+            cleanupWarning=' Server cleanup was not confirmed; revoke the orphaned input binding before retrying.';
+        }catch{cleanupWarning=' Server cleanup failed; revoke the orphaned input binding before retrying.';}
+      }
+      setHostMessage((error instanceof Error?error.message:'Could not configure wake binding.')+cleanupWarning);
     }finally{setHostBusy(false);}
   }
   async function enableHostedWake() {
