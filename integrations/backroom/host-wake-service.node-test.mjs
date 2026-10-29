@@ -56,7 +56,9 @@ test('local host credential is sent only to the trusted Supabase Edge Function',
    journalDirectory:join(dir,'journal'),gatewayUrl:trustedUrl,
    fetchImpl:async(url,options)=>{
     urls.push(url);headers.push(options.headers);
-    return new Response(JSON.stringify({ok:true,activated:true}),{status:200});
+    const data=url.endsWith('/activate')?{ok:true,activated:true}:
+      url.endsWith('/deactivate')?{ok:true,deactivated:true}:{ok:true,leases:[]};
+    return new Response(JSON.stringify(data),{status:200});
    }
   });
   service.configure({sessionDigest,bindingId});
@@ -65,8 +67,11 @@ test('local host credential is sent only to the trusted Supabase Edge Function',
     participantId:'40000000-0000-4000-8000-000000000055',sessionId:'40000000-0000-4000-8000-000000000066'}},
    {bindingId,roomId:'40000000-0000-4000-8000-000000000044',
     participantId:'40000000-0000-4000-8000-000000000055',sessionId:'40000000-0000-4000-8000-000000000066'});
-  assert.deepEqual(urls,[trustedUrl+'activate']);
+  assert.equal(urls[0],trustedUrl+'activate');
   assert.equal(headers[0].Authorization,'Bearer '+hostToken);
+  await new Promise(resolve=>setTimeout(resolve,0));
   await service.stop();
+  assert.ok(urls.includes(trustedUrl+'deactivate'));
+  assert.ok(urls.every(url=>url.startsWith(trustedUrl)));
  }finally{await rm(dir,{recursive:true,force:true});}
 });
