@@ -11,7 +11,7 @@ type AndroidTask = {traceId:string;deviceSerial:string;appPackage:string;groupId
 type AndroidStatus = {traceId:string;deviceSerial:string;status:string;elapsedSeconds:number|null;result:unknown;error:string|null;testSummary:unknown};
 type AndroidHierarchy = {deviceSerial:string;appPackage:string;groupId:string;sessionId:string;hierarchy:string};
 type TerminalResult = {state:string;exitCode:number;stdout:string;stderr:string;sandboxName:string};
-type TerminalDiff = {state:string;patch:string;bytes:number;sha256:string;empty:boolean;appliedToHost:false;destination:string;reason?:string};
+type TerminalDiff = {state:string;patch:string;bytes:number;sha256:string;empty?:boolean;appliedToHost?:false;destination?:string;reason?:string};
 
 const emptyRuntime:RuntimeStatus={stopped:false,capabilities:{desktop:false,android:false,terminal:false},desktop:{available:false},android:{available:false,trackedTasks:0},terminal:{available:false,hostShellAvailable:false}};
 const runArgvDefault='["npm","ci"]';

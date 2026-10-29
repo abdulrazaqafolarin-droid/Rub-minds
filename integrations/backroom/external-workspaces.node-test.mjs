@@ -34,6 +34,8 @@ async function projectFixture(){
  await mkdir(join(root,'.git'),{recursive:true});await writeFile(join(root,'.git','config'),'private git metadata');
  await mkdir(join(root,'node_modules','fixture'),{recursive:true});await writeFile(join(root,'node_modules','fixture','index.js'),'dependency file');
  await writeFile(join(root,'service-account.json'),'{"private_key":"never copied"}');
+ await writeFile(join(root,'src','demo-config.js'),"export const key = 'sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';\\n");
+ try{await symlink(join(root,'.env'),join(root,'src','env-link'));}catch{}
  return root;
 }
 function tarNames(archive){
@@ -51,8 +53,8 @@ function tarNames(archive){
 function fakeSpawn(results,seen){return (executable,args,options)=>{seen.push({executable,args,options});const child=new EventEmitter();child.stdout=new PassThrough();child.stderr=new PassThrough();child.exitCode=null;child.killed=false;child.kill=()=>{child.killed=true;return true;};queueMicrotask(()=>{const r=results.shift()??{code:0,stdout:'ok',stderr:''};if(r.stdout)child.stdout.write(r.stdout);if(r.stderr)child.stderr.write(r.stderr);child.exitCode=r.code;child.emit('close',r.code,null);});return child;};}
 
 test('MCP stdio client initializes and calls only advertised tools without shell or ambient credentials',async()=>{
- let seen;const client=new McpStdioClient({command:'/local/mcp',args:['mcp'],env:{LANG:'C'},sourceEnv:{PATH:'/bin',HOME:'/home/test',RUB_MINDS_TOKEN:'never-copy'},spawnImpl:(command,args,options)=>{seen={command,args,options};return new FakeChild();},timeoutMs:1000});
- const s=await client.start();assert.equal(s.connected,true);assert.deepEqual(s.tools,['fixture_tool']);assert.equal(seen.options.shell,false);assert.equal(seen.options.env.RUB_MINDS_TOKEN,undefined);assert.equal(seen.options.env.LANG,'C');
+ let seen;const client=new McpStdioClient({command:'/local/mcp',args:['mcp'],env:{LANG:'C'},sourceEnv:{PATH:'/bin',PATHEXT:'.EXE;.CMD',HOME:'/home/test',RUB_MINDS_TOKEN:'never-copy'},spawnImpl:(command,args,options)=>{seen={command,args,options};return new FakeChild();},timeoutMs:1000});
+ const s=await client.start();assert.equal(s.connected,true);assert.deepEqual(s.tools,['fixture_tool']);assert.equal(seen.options.shell,false);assert.equal(seen.options.env.RUB_MINDS_TOKEN,undefined);assert.equal(seen.options.env.LANG,'C');assert.equal(seen.options.env.PATHEXT,'.EXE;.CMD');
  assert.deepEqual(await client.callTool('fixture_tool',{x:2}),{echo:{x:2}});await assert.rejects(client.callTool('not-advertised',{}),/not advertised/);await client.close();assert.equal(client.status.state,'closed');
 });
 test('MCP child rejects credential-looking ad-hoc environment values',()=>assert.throws(()=>new McpStdioClient({command:'artemis',env:{GOOGLE_API_KEY:'secret'}}),/Credential-like/));
@@ -157,7 +159,8 @@ test('safe project archive excludes VCS data, dependencies, environment secrets 
   assert.ok(names.includes('package.json'));assert.ok(names.includes('src/index.js'));assert.ok(names.includes('README.md'));
   assert.equal(names.some(name=>name.startsWith('.git/')),false);assert.equal(names.some(name=>name.startsWith('node_modules/')),false);
   assert.equal(names.includes('.env'),false);assert.equal(names.includes('src/env-link'),false);assert.equal(names.includes('service-account.json'),false);
-  assert.ok(archive.omittedSensitive>=2);assert.ok(archive.sourceBytes>0);assert.match(archive.sha256,/^[a-f0-9]{64}$/);
+  assert.equal(names.includes('src/demo-config.js'),false);
+  assert.ok(archive.omittedSensitive>=3);assert.ok(archive.sourceBytes>0);assert.match(archive.sha256,/^[a-f0-9]{64}$/);
   await rm(archive.tempDirectory,{recursive:true,force:true});
  }finally{await rm(root,{recursive:true,force:true});}
 });
@@ -188,7 +191,11 @@ test('terminal refuses arbitrary sandbox names, unapproved commands and path tra
   await d.close();
  }finally{await rm(root,{recursive:true,force:true});}
 });
-test('external workspace service reports disabled adapters and safely closes clients',async()=>{
- const client=new FakeMcp([],async()=>null),s=createExternalWorkspaceService({desktop:{client,listWindows:async()=>[]}});
+test('external workspace health needs the complete advertised tool contract and closes clients',async()=>{
+ const incomplete=new FakeMcp(['list_windows'],async()=>null);
+ const partial=createExternalWorkspaceService({desktop:{client:incomplete,listWindows:async()=>[]}});
+ assert.deepEqual(partial.status().capabilities,{desktop:false,android:false,terminal:false});assert.deepEqual(partial.status().desktop.missingTools,['get_window_state','click','type_text']);await partial.stop();
+ const client=new FakeMcp(['list_windows','get_window_state','click','type_text'],async()=>null);
+ const s=createExternalWorkspaceService({desktop:{client,listWindows:async()=>[]}});
  assert.deepEqual(s.status().capabilities,{desktop:true,android:false,terminal:false});await s.stop();assert.equal(client.closed,true);await assert.rejects(s.listDesktopWindows(),/unavailable/);
 });
