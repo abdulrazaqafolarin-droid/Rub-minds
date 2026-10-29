@@ -1,4 +1,55 @@
 -- Durable, private Backroom wake queue. No provider cookies, credentials or raw conversation URLs.
+-- Backroom hosts and bindings are private server-managed records. Only host token digests persist.
+create table if not exists public.backroom_hosts (
+  host_id text primary key check (host_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  credential_digest text not null unique check (credential_digest ~ '^[0-9a-f]{64}$'),
+  expires_at timestamptz not null,
+  revoked_at timestamptz,
+  created_at timestamptz not null default pg_catalog.clock_timestamp(),
+  last_seen_at timestamptz
+);
+alter table public.backroom_hosts enable row level security;
+revoke all on table public.backroom_hosts from public, anon, authenticated;
+grant all on table public.backroom_hosts to service_role;
+
+create table if not exists public.backroom_input_bindings (
+  id uuid primary key default pg_catalog.gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  room_id uuid not null references public.rooms(id) on delete cascade,
+  participant_id uuid not null references public.participants(id) on delete cascade,
+  host_id text not null references public.backroom_hosts(host_id) on delete cascade,
+  session_digest text not null references public.rub_minds_mcp_sessions(session_digest) on delete cascade,
+  space_id text not null check (char_length(btrim(space_id)) between 1 and 128),
+  session_id text not null check (char_length(btrim(session_id)) between 1 and 256),
+  target_id text not null check (char_length(btrim(target_id)) between 1 and 128),
+  target_identity_fingerprint text not null check (char_length(btrim(target_identity_fingerprint)) between 1 and 512),
+  target_revision integer not null check (target_revision > 0),
+  surface text not null check (surface in ('browser_tab','desktop_app','windows_app','terminal','android_app')),
+  locator_kind text not null check (locator_kind in ('dom','accessibility','terminal_pty','screen_region')),
+  locator_value text not null check (char_length(btrim(locator_value)) between 1 and 2048),
+  participation_mode text not null default 'mentions' check (participation_mode in ('mentions','smart','task')),
+  wake_enabled boolean not null default false,
+  wake_expires_at timestamptz,
+  max_wakes_per_minute integer not null default 6 check (max_wakes_per_minute between 1 and 6),
+  confirmed_at timestamptz,
+  revoked_at timestamptz,
+  created_at timestamptz not null default pg_catalog.clock_timestamp(),
+  updated_at timestamptz not null default pg_catalog.clock_timestamp(),
+  constraint backroom_binding_wake_consent_check check (
+    (wake_enabled = false) or (confirmed_at is not null and wake_expires_at is not null)
+  )
+);
+alter table public.backroom_input_bindings enable row level security;
+revoke all on table public.backroom_input_bindings from public, anon, authenticated;
+grant all on table public.backroom_input_bindings to service_role;
+create unique index if not exists backroom_binding_active_target_idx
+  on public.backroom_input_bindings(host_id,target_id) where revoked_at is null;
+create unique index if not exists backroom_binding_active_participant_idx
+  on public.backroom_input_bindings(room_id,participant_id,session_digest) where revoked_at is null;
+create index if not exists backroom_binding_active_wake_idx
+  on public.backroom_input_bindings(host_id,room_id,wake_expires_at) where revoked_at is null and wake_enabled = true;
+
 create table if not exists public.backroom_wake_jobs (
   id uuid primary key default pg_catalog.gen_random_uuid(),
   job_key text not null unique check (job_key ~ '^[0-9a-f]{64}$'),
@@ -9,7 +60,7 @@ create table if not exists public.backroom_wake_jobs (
   space_id text not null check (char_length(btrim(space_id)) between 1 and 128),
   session_id text not null check (char_length(btrim(session_id)) between 1 and 256),
   session_digest text not null check (session_digest ~ '^[0-9a-f]{64}$'),
-  binding_id text not null check (char_length(btrim(binding_id)) between 1 and 128),
+  binding_id uuid not null references public.backroom_input_bindings(id) on delete cascade,
   target_id text not null check (char_length(btrim(target_id)) between 1 and 128),
   target_identity_fingerprint text not null check (char_length(btrim(target_identity_fingerprint)) between 1 and 512),
   target_revision integer not null check (target_revision > 0),
@@ -66,7 +117,7 @@ create or replace function public.enqueue_backroom_wake_job(
   p_space_id text,
   p_session_id text,
   p_session_digest text,
-  p_binding_id text,
+  p_binding_id uuid,
   p_target_id text,
   p_target_identity_fingerprint text,
   p_target_revision integer,
@@ -95,13 +146,36 @@ begin
   if p_host_id is null or char_length(btrim(p_host_id)) not between 1 and 128
     or p_space_id is null or char_length(btrim(p_space_id)) not between 1 and 128
     or p_session_id is null or char_length(btrim(p_session_id)) not between 1 and 256
-    or p_binding_id is null or char_length(btrim(p_binding_id)) not between 1 and 128
+    or p_binding_id is null
     or p_target_id is null or char_length(btrim(p_target_id)) not between 1 and 128
     or p_target_identity_fingerprint is null or char_length(btrim(p_target_identity_fingerprint)) not between 1 and 512
     or p_event_id is null or p_event_id !~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$'
     or p_target_revision is null or p_target_revision < 1 then
     raise exception 'Invalid Backroom target binding';
   end if;
+  if not exists (select 1 from public.rooms r where r.id=p_room_id and r.owner_id=p_owner_id) then
+    raise exception 'Active MCP session does not authorize this group participant';
+  end if;
+  if not exists (
+    select 1 from public.backroom_hosts h where h.host_id=p_host_id and h.owner_id=p_owner_id
+      and h.revoked_at is null and h.expires_at > pg_catalog.clock_timestamp()
+  ) then
+    raise exception 'Backroom host is missing, expired, revoked, or owned by another user';
+  end if;
+  if not exists (
+    select 1 from public.backroom_input_bindings b
+    where b.id=p_binding_id and b.owner_id=p_owner_id and b.room_id=p_room_id
+      and b.participant_id=p_participant_id and b.host_id=p_host_id
+      and b.space_id=p_space_id and b.session_id=p_session_id
+      and b.session_digest=p_session_digest and b.target_id=p_target_id
+      and b.target_identity_fingerprint=p_target_identity_fingerprint
+      and b.target_revision=p_target_revision and b.revoked_at is null
+      and b.wake_enabled=true and b.confirmed_at is not null
+      and b.wake_expires_at > pg_catalog.clock_timestamp()
+  ) then
+    raise exception 'Backroom input binding is not enabled for this wake';
+  end if;
+
   -- Only a live, joined hosted MCP session bound to this exact group participant may enqueue.
   if not exists (
     select 1
