@@ -19,7 +19,8 @@ function setup(surface='windows_app'){
    inputKind:surface==='terminal'?'assistant_composer':undefined,text:currentText};},
   async writeTextIfEmpty(x){
    writes++;
-   if(surface==='terminal')assert.equal(x.submit,false);\n   else assert.equal(x.submit,undefined);
+   if(surface==='terminal')assert.equal(x.submit,false);
+   else assert.equal(x.submit,undefined);
    if(currentText!=='')return {state:'occupied',submitted:false};
    currentText=x.text;
    return {state:'written',submitted:false};
@@ -53,7 +54,7 @@ for(const surface of ['desktop_app','windows_app','android_app','terminal']){
   const v=setup(surface);v.svc.register({target:v.target,driver:v.driver,consented:true});
   await assert.rejects(()=>v.svc.draft({command:{...v.cmd(),operation:'wake'},approved:true}),/Draft-only/);
   await assert.rejects(()=>v.svc.draft({command:{...v.cmd(),targetRevision:2},approved:true}),/scope mismatch/);
-  await assert.rejects(()=>v.svc.draft({command:{...v.cmd(),text:'Run\\nnext command'},approved:true}),/single-line/);
+  await assert.rejects(()=>v.svc.draft({command:{...v.cmd(),text:'Run\nnext command'},approved:true}),/single-line/);
   assert.equal(v.writes,0);
  });
 }
