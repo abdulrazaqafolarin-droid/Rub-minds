@@ -196,7 +196,7 @@ export function createHostWakeService({
   get status(){
    const list=[...bindings.values()].map(entry=>Object.freeze({
     bindingId:entry.scope.bindingId,polling:entry.poller.running===true,
-    consentActive:Boolean(entry.activeGrantId)
+    consentActive:Boolean(entry.activeGrantId),deactivationPending:Boolean(entry.pendingGrantId)
    }));
    return Object.freeze({configured:list.length>0,count:list.length,bindings:Object.freeze(list)});
   }
