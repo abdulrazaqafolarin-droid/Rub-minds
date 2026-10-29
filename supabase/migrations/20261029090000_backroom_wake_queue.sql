@@ -655,6 +655,12 @@ begin
       and b.participant_id <> new.sender_id
       and p.kind in ('original_session','model','external_agent')
       and b.participation_mode in ('mentions','smart')
+      -- Smart-mode AI-to-AI relaying would self-amplify across participants.
+      -- AI-originated messages can wake another AI only via an explicit @mention.
+      and (b.participation_mode <> 'smart' or exists (
+        select 1 from public.participants sender
+        where sender.id=new.sender_id and sender.room_id=new.room_id and sender.kind='human'
+      ))
       and b.wake_enabled=true and b.confirmed_at is not null
       and b.wake_expires_at > pg_catalog.clock_timestamp()
       and b.revoked_at is null
