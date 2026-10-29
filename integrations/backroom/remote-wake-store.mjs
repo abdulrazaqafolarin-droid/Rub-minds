@@ -30,7 +30,9 @@ export function createRemoteWakeStore({baseUrl,hostToken,apiKey,fetchImpl=fetch,
   });
   if(!response||response.status!==200||!response.ok){
    const error=new Error('Remote Backroom queue unavailable or unauthorized');
-   error.code='REMOTE_BACKROOM_QUEUE_FAILURE';
+   error.status=response?.status??0;
+   error.code=response?.status===401||response?.status===403?
+    'REMOTE_BACKROOM_UNAUTHORIZED':'REMOTE_BACKROOM_QUEUE_FAILURE';
    throw error;
   }
   const result=await response.json();
