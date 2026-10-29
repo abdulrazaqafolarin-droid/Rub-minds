@@ -49,22 +49,23 @@ export function createHostWakeService({
  async function stopOne(entry){
   if(entry.expiryTimer){clearTimeout(entry.expiryTimer);entry.expiryTimer=null;}
   try{await entry.poller.stop();}catch{}
-  if(!entry.activeGrantId)return Object.freeze({stopped:true,remotelyDeactivated:null,bindingId:entry.scope.bindingId});
+  const grantId=entry.activeGrantId??entry.pendingGrantId;
+  if(!grantId)return Object.freeze({stopped:true,remotelyDeactivated:null,bindingId:entry.scope.bindingId});
   const input={hostId:identity.hostId,bindingId:entry.scope.bindingId,
-    sessionDigest:entry.scope.sessionDigest,grantId:entry.activeGrantId};
+    sessionDigest:entry.scope.sessionDigest,grantId};
   try{
    const confirmed=await entry.remote.deactivate(input);
    // false means this exact grant is no longer the active server-side grant
    // (for example, the owner already revoked the binding). Do not misreport
    // that as a confirmed write; local polling is stopped regardless.
-   entry.activeGrantId=null;
+   entry.activeGrantId=null;entry.pendingGrantId=null;
    return Object.freeze({stopped:true,remotelyDeactivated:confirmed===true,bindingId:entry.scope.bindingId});
   }catch{
    // A response can be lost after the host's binding was already revoked. Repeat
    // the exact grant-bound request once. Polling is stopped before these retries.
    try{
     const confirmed=await entry.remote.deactivate(input);
-    entry.activeGrantId=null;
+    entry.activeGrantId=null;entry.pendingGrantId=null;
     return Object.freeze({stopped:true,remotelyDeactivated:confirmed===true,bindingId:entry.scope.bindingId});
    }catch{
     return Object.freeze({stopped:true,remotelyDeactivated:false,bindingId:entry.scope.bindingId});
@@ -126,7 +127,7 @@ export function createHostWakeService({
   const entry={
    remote,poller,publishableKey:config.publishableKey,
    scope:Object.freeze({bindingId:config.bindingId,sessionDigest:config.sessionDigest}),
-   activeGrantId:null,expiryTimer:null,activationPromise:null,activationGrantId:null
+   activeGrantId:null,pendingGrantId:null,expiryTimer:null,activationPromise:null,activationGrantId:null
   };
   bindings.set(config.bindingId,entry);
   return Object.freeze({configured:true,bindingId:config.bindingId,existing:false});
@@ -163,15 +164,22 @@ export function createHostWakeService({
   if(ttlSeconds<60)throw new Error('Local wake grant has insufficient remaining lifetime');
   const activateInput={hostId:identity.hostId,bindingId:entry.scope.bindingId,
     sessionDigest:entry.scope.sessionDigest,grantId:grant.grantId,ttlSeconds};
+  entry.pendingGrantId=grant.grantId;
   let accepted;
   try{accepted=await entry.remote.activate(activateInput);}
   catch{
    // Activation is idempotent for the exact grant ID. Retry only that same request
    // to recover a response lost after the server committed.
-   accepted=await entry.remote.activate(activateInput);
+   try{accepted=await entry.remote.activate(activateInput);}
+   catch(error){
+    // The server may have committed while both responses were lost. Attempt a
+    // grant-specific rollback before surfacing the unknown outcome.
+    await stopOne(entry);
+    throw error;
+   }
   }
-  if(accepted!==true)throw new Error('Hosted wake consent activation denied');
-  entry.activeGrantId=grant.grantId;
+  if(accepted!==true){await stopOne(entry);throw new Error('Hosted wake consent activation denied');}
+  entry.activeGrantId=grant.grantId;entry.pendingGrantId=null;
   try{await entry.poller.start();}
   catch(error){
    await stopOne(entry);
