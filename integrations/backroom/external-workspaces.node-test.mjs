@@ -289,6 +289,18 @@ test('terminal applies only an exact one-use patch after digest, Git-root, check
   await d.close();
  }finally{await rm(root,{recursive:true,force:true});}
 });
+test('terminal refuses path-traversing patch headers before issuing an apply token',async()=>{
+ const root=await projectFixture(),calls=[];
+ const patch='diff --git a/../../outside.txt b/../../outside.txt\n--- a/../../outside.txt\n+++ b/../../outside.txt\n@@ -0,0 +1 @@\n+not allowed\n';
+ const results=[{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0,stdout:patch}];
+ const d=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-path-test-1234',projectSourcePath:root,authorizeLocalAction:async()=>true,spawnImpl:fakeSpawn(results,calls)});
+ try{
+  await d.start();await d.syncProject({groupId:'g',sessionId:'s'});
+  await assert.rejects(d.diffProject({groupId:'g',sessionId:'s'}),/unsafe file path/);
+  await assert.rejects(d.applyProjectDiff({exportKey:'a'.repeat(64),sha256:'b'.repeat(64),groupId:'g',sessionId:'s'}),/expired or outside/);
+ }finally{await d.close().catch(()=>{});await rm(root,{recursive:true,force:true});}
+});
+
 test('terminal patch apply consumes denied approvals without running git apply',async()=>{
  const root=await projectFixture(),sandboxCalls=[],gitCalls=[];
  const patch='diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-Fixture project.\n+Changed project.\n';

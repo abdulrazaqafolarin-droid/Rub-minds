@@ -423,6 +423,22 @@ export class CuaSandboxTerminalWorkspace {
     if(patch.length>0){this.#prunePendingPatches();exportKey=randomBytes(32).toString('hex');this.#pendingPatches.set(exportKey,{patch,sha256,paths,groupId,sessionId,sourceRoot:this.projectSync.sourceRoot,createdAt:Date.now()});this.#prunePendingPatches();}
     return Object.freeze({state:'completed',patch,bytes,sha256,empty:patch.length===0,paths,exportKey,applyAvailable:!!exportKey,appliedToHost:false,destination:'Rub Minds Backroom browser review only'});
   }
+  async #verifyPatchTargets(root,paths){
+    const base=await realpath(root);
+    for(const rel of paths){
+      const parts=rel.split('/');
+      let current=base;
+      for(let index=0;index<parts.length;index++){
+        current=join(current,parts[index]);
+        let stat;
+        try{stat=await lstat(current);}catch(error){if(error?.code==='ENOENT')break;throw error;}
+        if(stat.isSymbolicLink())throw new Error('Patch target passes through a symbolic link; apply it manually after review');
+        if(index<parts.length-1&&!stat.isDirectory())throw new Error('Patch target parent is not a directory');
+        const actual=await realpath(current).catch(()=>null);
+        if(!actual||(actual!==base&&!actual.startsWith(base+sep)))throw new Error('Patch target resolves outside the approved repository root');
+      }
+    }
+  }
   async applyProjectDiff({exportKey,sha256,groupId,sessionId}={}){
     if(!this.ready||this.closed)throw new Error('Dedicated terminal sandbox is not ready');
     if(!this.projectSync)throw new Error('Sync an approved local project snapshot before applying a patch');
@@ -438,6 +454,7 @@ export class CuaSandboxTerminalWorkspace {
     if(root!==pending.sourceRoot||root!==this.projectSync.sourceRoot)throw new Error('Local project root changed since source sync');
     const rootStat=await lstat(root);
     if(!rootStat.isDirectory()||rootStat.isSymbolicLink())throw new Error('Local project root is no longer a real directory');
+    await this.#verifyPatchTargets(root,pending.paths);
     const top=await this.#runLocalGit(['rev-parse','--show-toplevel'],'',root);
     if(top.code!==0)throw new Error('The selected local project is not a Git working tree');
     const gitRoot=await realpath(top.stdout.trim()).catch(()=>null);
