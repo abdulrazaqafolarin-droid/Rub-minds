@@ -78,7 +78,7 @@ async function activateBinding({hostId,sessionDigest,bindingId,grantId,ttlSecond
   .update({wake_enabled:true,wake_grant_id:grantId,wake_last_revoked_grant_id:null,confirmed_at:now.toISOString(),wake_expires_at:expires})
   .eq('id',bindingId).eq('host_id',hostId).eq('session_digest',sessionDigest)
   .is('revoked_at',null)
-  .or('wake_enabled.eq.false,wake_grant_id.eq.'+grantId)
+  .or('wake_enabled.eq.false,wake_grant_id.eq.'+grantId+',wake_expires_at.lte.'+now.toISOString())
   .select('id').maybeSingle();
  if(error)throw new Error('Backroom consent activation unavailable');
  return Boolean(data?.id);
