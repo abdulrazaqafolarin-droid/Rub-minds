@@ -12,7 +12,6 @@ on:
 jobs:
   mcp-migration:
     # Draft PRs are not release candidates. Skip runner allocation until ready for review.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -287,7 +286,6 @@ jobs:
           SQL
   build:
     # Draft PRs are not release candidates. Skip runner allocation until ready for review.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -330,7 +328,6 @@ jobs:
 
   local-supabase-stack:
     # Draft PRs are not release candidates. Skip runner allocation until ready for review.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     # GitHub-hosted runners are isolated; serialize only superseded runs of the same PR.
     # A global non-cancelling group can leave one queued job blocking every future local-stack test.
