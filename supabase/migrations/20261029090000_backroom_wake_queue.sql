@@ -225,6 +225,13 @@ begin
     select j.id
     from public.backroom_wake_jobs j
     where j.host_id = p_host_id and j.session_digest = p_session_digest
+      and exists (
+        select 1 from public.rub_minds_mcp_sessions s
+        where s.session_digest = j.session_digest
+          and s.room_id = j.room_id and s.participant_id = j.participant_id
+          and s.agent_credential_ciphertext is not null
+          and s.terminated_at is null and s.expires_at > pg_catalog.clock_timestamp()
+      )
       and j.expires_at > pg_catalog.clock_timestamp()
       and j.attempt_count < 5
       and (
