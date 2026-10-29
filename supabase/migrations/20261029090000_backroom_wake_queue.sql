@@ -192,6 +192,7 @@ begin
       and s.participant_id = p_participant_id and s.agent_credential_ciphertext is not null
       and s.terminated_at is null and s.expires_at > pg_catalog.clock_timestamp()
       and p.kind in ('original_session','model','external_agent')
+      and p.status in ('connected','active','autonomous')
       and r.owner_id = p_owner_id
   ) then
     raise exception 'Active MCP session does not authorize this group participant';
@@ -354,6 +355,7 @@ begin
     where s.session_digest = p_session_digest and s.agent_credential_ciphertext is not null
       and s.terminated_at is null and s.expires_at > pg_catalog.clock_timestamp()
       and p.kind in ('original_session','model','external_agent')
+      and p.status in ('connected','active','autonomous')
   ) then
     return;
   end if;
@@ -398,6 +400,7 @@ begin
           and s.agent_credential_ciphertext is not null
           and s.terminated_at is null and s.expires_at > pg_catalog.clock_timestamp()
           and p.kind in ('original_session','model','external_agent')
+      and p.status in ('connected','active','autonomous')
       )
       and j.expires_at > pg_catalog.clock_timestamp()
       and j.attempt_count < 5
@@ -485,6 +488,7 @@ begin
         and s.participant_id = j.participant_id and s.agent_credential_ciphertext is not null
         and s.terminated_at is null and s.expires_at > pg_catalog.clock_timestamp()
         and p.kind in ('original_session','model','external_agent')
+      and p.status in ('connected','active','autonomous')
     );
   get diagnostics v_changed = row_count;
   return v_changed = 1;
@@ -545,6 +549,7 @@ begin
         and s.participant_id = j.participant_id and s.agent_credential_ciphertext is not null
         and s.terminated_at is null and s.expires_at > pg_catalog.clock_timestamp()
         and p.kind in ('original_session','model','external_agent')
+      and p.status in ('connected','active','autonomous')
     )
   returning j.state into v_state;
   return v_state;
@@ -656,6 +661,7 @@ begin
     where b.room_id=new.room_id
       and b.participant_id <> new.sender_id
       and p.kind in ('original_session','model','external_agent')
+      and p.status in ('connected','active','autonomous')
       and b.participation_mode in ('mentions','smart')
       -- Smart-mode AI-to-AI relaying would self-amplify across participants.
       -- AI-originated messages can wake another AI only via an explicit @mention.
