@@ -11,12 +11,12 @@ Last audited: 2026-10-29. Scope: draft PR #48, based on draft PR #47. **NOT APPR
 - Local process client: bounded HTTPS poll/ack/retry, exact Supabase Function path, scope checks and a network deadline.
 - Local wake worker: group/host/participant/session/input-target matching, explicit verified grant, selected target revalidation and guarded dispatcher.
 - Durable execution journal: atomically reserves a wake immediately before any UI effect, refuses duplicate reservation across restarts, rejects symlinked and nonprivate directories; no automatic resends on ambiguous outcomes.
-- Node regression suites registered in package scripts; mocks do not demonstrate real ChatGPT/Claude MCP conversations.
+- Stable private host identity: the host runner now reuses a 256-bit local credential and UUID across restarts, storing only its digest in enrollment output; secret persists under the user's private Backroom directory.\n- Node regression suites registered in package scripts; mocks do not demonstrate real ChatGPT/Claude MCP conversations.
 
 ## Evidence
 
 - Read-only live Supabase schema check confirmed `rooms`, `participants`, `messages`, `agent_connections`, `rub_minds_mcp_sessions` and key primary/unique constraints exist. The new Backroom queue schema was not present.
-- Locally reconstructed Node 22 tests of host authentication, journal, HTTP boundary and remote-transport integration: **16 passed / 0 failed**. This is a **mirror of the code**, not an original-branch checkout execution and not an Edge Function runtime execution.
+- Locally reconstructed Node 22 tests of host authentication, identity persistence, journal, HTTP boundary and remote-transport integration: **20 passed / 0 failed**. This is a **mirror of the code**, not an original-branch checkout execution and not an Edge Function runtime execution.
 - Draft GitHub Actions build job is skipped. The isolated Postgres Actions job repeatedly fails with `steps: null` before any test runs. This is **not** evidence that migration SQL compiled or passed.
 - No PostgreSQL 17 migration/trigger tests, live provider round trip, app build, independent security penetration test or real Windows/Android acceptance run has passed in this sprint.
 - No database migration, Edge Function or Vercel release was deployed to production.
