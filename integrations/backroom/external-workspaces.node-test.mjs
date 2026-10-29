@@ -150,6 +150,16 @@ test('ARTEMIS requires device/package allowlists, explicit approval and trace-bo
  assert.equal((await d.observe({deviceSerial:'emulator-5554',appPackage:'com.example.app',groupId:'group-1',sessionId:'session-1'})).hierarchy,'<hierarchy />');
  assert.equal((await d.stop({traceId:'trace:1',deviceSerial:'emulator-5554',groupId:'group-1',sessionId:'session-1'})).stopped,true);
 });
+test('ARTEMIS diagnostics require local approval, scope and only call the diagnostic tool',async()=>{
+ let approved=false;const client=new FakeMcp(['mobile_diagnose'],async(name,args)=>{assert.equal(name,'mobile_diagnose');assert.deepEqual(args,{});return {verdict:'ready',next_steps:[]};});
+ const d=new ArtemisAndroidWorkspace({client,allowedDevices:[],allowedPackages:[],authorizeLocalAction:async action=>approved&&action.kind==='android_diagnose'&&action.verifyCredentials===false&&action.probeDevice===false});
+ assert.equal(d.statusSummary.available,false);
+ await assert.rejects(d.diagnose({groupId:'group-1',sessionId:'session-1'}),/denied/);
+ approved=true;assert.deepEqual(await d.diagnose({groupId:'group-1',sessionId:'session-1'}),{verdict:'ready',next_steps:[]});
+ const service=createExternalWorkspaceService({android:d});
+ assert.equal(service.status().capabilities.android,false);assert.equal(service.status().android.diagnoseAvailable,true);
+});
+
 test('ARTEMIS cannot manage an unknown trace',async()=>{const d=new ArtemisAndroidWorkspace({client:new FakeMcp(['mobile_manage_task'],async()=>({status:'completed'})),allowedDevices:['device'],allowedPackages:['com.example.app'],authorizeLocalAction:async()=>true});await assert.rejects(d.status({traceId:'unknown',deviceSerial:'device',groupId:'g',sessionId:'s'}),/unknown trace/);});
 
 test('safe project archive excludes VCS data, dependencies, environment secrets and symlinks',async()=>{
