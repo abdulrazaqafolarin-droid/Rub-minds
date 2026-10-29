@@ -437,6 +437,21 @@ test('external workspace service exposes only sanitized per-adapter startup erro
  assert.deepEqual(s.status().startupErrors,{desktop:'binary not found',android:'ARTEMIS requires local config',terminal:'TTY approval is required'});
  await s.stop();assert.equal(s.status().stopped,true);
 });
+test('terminal start is explicit, backgrounded, and bound to the selected group/session',async()=>{
+ let seen=null,starting=false,closed=false;
+ const terminal={
+  get status(){return {configured:true,starting,ready:false,closed,cleanupPending:false,hostShellAvailable:false};},
+  startInBackground(input){seen=input;starting=true;return this.status;},
+  async close(){closed=true;starting=false;return {closeFailures:0};}
+ };
+ const service=createExternalWorkspaceService({terminal});
+ assert.deepEqual(service.status().capabilities,{desktop:false,android:false,terminal:false});
+ assert.equal(service.status().terminal.configured,true);assert.equal(service.status().terminal.starting,false);
+ const started=await service.startTerminal({groupId:'group-A',sessionId:'session-A'});
+ assert.deepEqual(seen,{groupId:'group-A',sessionId:'session-A'});assert.equal(started.starting,true);assert.equal(service.status().terminal.starting,true);
+ await service.stop();assert.equal(closed,true);
+});
+
 test('external workspace health needs the complete advertised tool contract and closes clients',async()=>{
  const incomplete=new FakeMcp(['list_windows'],async()=>null);
  const partial=createExternalWorkspaceService({desktop:{client:incomplete,listWindows:async()=>[]}});

@@ -30,6 +30,15 @@ test('forwards group/session with Android task and returns trace as accepted',as
  let seen;const x=f({body:{groupId:'group-1',sessionId:'session-1',deviceSerial:'device',appPackage:'com.example.app',task:'Read current page'},runtime:{runAndroidTask:async input=>{seen=input;return {traceId:'trace-1',status:'running'};}}});
  assert.equal(await handleWorkspaceHttpRequest({...x,url:new URL('http://127.0.0.1/v1/workspaces/android/tasks')}),true);assert.equal(x.response.status,201);assert.equal(seen.groupId,'group-1');assert.equal(seen.sessionId,'session-1');assert.equal(x.response.body.traceId,'trace-1');
 });
+test('terminal start route forwards only the selected group/session and returns accepted status',async()=>{
+ let seen;
+ const x=f({body:{groupId:'group-1',sessionId:'session-1'},runtime:{startTerminal:async input=>{seen=input;return {configured:true,starting:true,ready:false,sandboxName:'rm-backroom-12345678'};}}});
+ await handleWorkspaceHttpRequest({...x,url:new URL('http://127.0.0.1/v1/workspaces/terminal/start')});
+ assert.equal(x.response.status,202);assert.deepEqual(seen,{groupId:'group-1',sessionId:'session-1'});assert.equal(x.response.body.starting,true);
+ const bad=f({body:{groupId:'g',sessionId:'s',command:['npm','ci']},runtime:{startTerminal:async()=>{throw Error('must not execute');}}});
+ await handleWorkspaceHttpRequest({...bad,url:new URL('http://127.0.0.1/v1/workspaces/terminal/start')});assert.equal(bad.response.status,400);
+});
+
 test('maps local terminal denial to 403 with sanitized result',async()=>{
  const x=f({body:{groupId:'g',sessionId:'s',command:['npm','test'],purpose:'verify'},runtime:{execTerminal:async()=>{throw Error('Local terminal command denied');}}});
  await handleWorkspaceHttpRequest({...x,url:new URL('http://127.0.0.1/v1/workspaces/terminal/exec')});assert.equal(x.response.status,403);assert.deepEqual(x.response.body,{error:'local_approval_denied'});

@@ -655,14 +655,13 @@ async function configureExternalWorkspaceRuntime(hostId) {
     let instance = null;
     terminal = await isolateStartupFailure("terminal", async () => {
       const sandboxName = "rm-backroom-" + hostId.replace(/-/g, "").slice(0, 8);
-      const approval = await authorizeLocalWorkspaceAction({
-        kind: "terminal_sandbox_create", sandboxName, isolation: "local gVisor container",
-        networkPolicy: "Default outbound network is enabled for Node provisioning and package installs; approved commands can access external hosts.",
-        command: ["cua", "sb", "create", "linux", "--kind", "container", "--runtime", "gvisor", "--install", "node"],
+      // Do not create a sandbox during host bootstrap: creation requires a selected
+      // Backroom group/session and its own trusted local approval.
+      instance = new CuaSandboxTerminalWorkspace({
+        command: process.env.BACKROOM_CUA_CLI ?? "cua",
+        sandboxName,
+        authorizeLocalAction: authorizeLocalWorkspaceAction,
       });
-      if (approval !== true) throw new Error("Local approval denied creation of the dedicated CUA terminal sandbox");
-      instance = new CuaSandboxTerminalWorkspace({ command: process.env.BACKROOM_CUA_CLI ?? "cua", sandboxName, authorizeLocalAction: authorizeLocalWorkspaceAction });
-      await instance.start();
       return instance;
     }, async () => instance?.close());
   }

@@ -3,7 +3,7 @@ import { Activity, RefreshCw, ShieldAlert, Smartphone, SquareTerminal, Monitor, 
 
 type LocalHostApi = <T>(path:string, options?:{method?:string;body?:unknown})=>Promise<T>;
 type AiSession = {participantId:string;displayName:string;sessionDigest:string;expiresAt?:string};
-type RuntimeStatus = {stopped:boolean;capabilities:{desktop:boolean;android:boolean;terminal:boolean};startupErrors?:Record<string,string>;desktop?:{available:boolean;tools?:string[]};android?:{available:boolean;diagnoseAvailable?:boolean;trackedTasks?:number};terminal?:{available:boolean;ready?:boolean;closed?:boolean;cleanupPending?:boolean;sandboxName?:string;hostShellAvailable?:boolean;projectConfigured?:boolean;projectSynced?:boolean;projectFileCount?:number;projectSourceBytes?:number;projectSyncedAt?:string|null}};
+type RuntimeStatus = {stopped:boolean;capabilities:{desktop:boolean;android:boolean;terminal:boolean};startupErrors?:Record<string,string>;desktop?:{available:boolean;tools?:string[]};android?:{available:boolean;diagnoseAvailable?:boolean;trackedTasks?:number};terminal?:{available:boolean;configured?:boolean;starting?:boolean;startupError?:string|null;ready?:boolean;closed?:boolean;cleanupPending?:boolean;sandboxName?:string;hostShellAvailable?:boolean;projectConfigured?:boolean;projectSynced?:boolean;projectFileCount?:number;projectSourceBytes?:number;projectSyncedAt?:string|null}};
 type DesktopWindow = {pid:number;windowId:number;appName:string;title:string;zIndex:number|null};
 type DesktopElement = {elementToken:string;role:string;label:string;valueEmpty:boolean;typeable:boolean};
 type DesktopObservation = {pid:number;windowId:number;groupId:string;sessionId:string;appName:string;title:string;elementCount:number;degraded:boolean;snapshotId:string|null;elements:DesktopElement[];state:string};
@@ -45,6 +45,14 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
   const selectedSession=useMemo(()=>sessions.find(s=>s.sessionDigest===selectedSessionDigest)??null,[sessions,selectedSessionDigest]);
   const scope=useMemo(()=>selectedSession&&roomId?{groupId:roomId,sessionId:selectedSession.participantId}:null,[roomId,selectedSession]);
   useEffect(()=>{setTerminalDiff(null);setTerminalApplyResult(null);setAndroidTrace(null);setAndroidResult(null);},[roomId,selectedSessionDigest]);
+  useEffect(()=>{
+    if(!hostToken||!runtime.terminal?.starting)return;
+    let cancelled=false;
+    const timer=window.setInterval(async()=>{
+      try{const next=await hostApi<RuntimeStatus>('/v1/workspaces/status');if(!cancelled&&next&&typeof next==='object'&&next.capabilities)setRuntime(next);}catch{}
+    },1500);
+    return ()=>{cancelled=true;window.clearInterval(timer);};
+  },[hostToken,hostApi,runtime.terminal?.starting]);
   const selectedWindow=useMemo(()=>desktopWindows.find(w=>(String(w.pid)+':'+String(w.windowId))===selectedWindowKey)??null,[desktopWindows,selectedWindowKey]);
   const selectedElement=useMemo(()=>observation?.elements.find(e=>e.elementToken===selectedElementToken)??null,[observation,selectedElementToken]);
   const jobMatchesScope=!!(androidJob&&scope&&androidJob.groupId===scope.groupId&&androidJob.sessionId===scope.sessionId);
@@ -124,6 +132,15 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
     const result=await action(()=>hostApi<{traceId:string;stopped:boolean}>('/v1/workspaces/android/task-stop',{method:'POST',body:{traceId:androidJob.traceId,deviceSerial:androidJob.deviceSerial,groupId:androidJob.groupId,sessionId:androidJob.sessionId}}));
     if(result)setNotice(result.stopped?'ARTEMIS reported the task stopped.':'Stop was requested but cancellation was not independently confirmed.');
   }
+  async function startTerminal(){
+    if(!scope){setNotice('First find and select a joined AI session for this group.');return;}
+    if(runtime.terminal?.configured!==true){setNotice('Enable BACKROOM_ENABLE_CUA_TERMINAL=1 and configure the local CUA CLI first.');return;}
+    if(runtime.terminal?.cleanupPending){setNotice('Previous sandbox cleanup could not be verified. Stop the local host and inspect the remaining sandbox before retrying.');return;}
+    if(!window.confirm('Start a dedicated local gVisor sandbox for this group/session? The host will ask for a separate trusted-console approval. Node installation and approved package commands can use outbound network access; the sandbox is local and is never adopted from another session.'))return;
+    const result=await action(()=>hostApi<{configured:boolean;starting:boolean;ready:boolean;sandboxName:string;startupError?:string|null}>('/v1/workspaces/terminal/start',{method:'POST',body:scope}));
+    if(result){await refreshRuntime(true);setNotice(result.starting?'Sandbox startup started. Approve the local host prompt and keep this panel open; status will refresh while provisioning.':result.ready?'Dedicated local sandbox is ready. Sync a filtered project snapshot before running commands.':result.startupError??'Sandbox startup status was returned; inspect runtime status before retrying.');}
+  }
+
   async function syncTerminalProject(){
     if(!scope){setNotice('First find and select a joined AI session for this group.');return;}
     if(!runtime.capabilities.terminal){setNotice('The local terminal sandbox is not ready.');return;}
@@ -169,7 +186,7 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
     <div className="br-workspace-runtime-status">
       <div><b>Desktop / native</b><span>{runtime.stopped?'Stopped · restart host':runtime.capabilities.desktop?'Available':'Not configured or unavailable'}</span></div>
       <div><b>Android · ARTEMIS</b><span>{runtime.stopped?'Stopped · restart host':runtime.capabilities.android?'Available':'Not configured or unavailable'}</span></div>
-      <div><b>Terminal sandbox</b><span>{runtime.stopped?'Stopped · restart host':runtime.capabilities.terminal?(runtime.terminal?.projectSynced?'Sandbox + source synced':runtime.terminal?.ready?'Sandbox ready · project not synced':'Configured, not ready'):runtime.terminal?.cleanupPending?'Sandbox cleanup pending · restart required':'Not configured or unavailable'}</span></div>
+      <div><b>Terminal sandbox</b><span>{runtime.stopped?'Stopped · restart host':runtime.terminal?.cleanupPending?'Sandbox cleanup pending · inspect host':runtime.terminal?.starting?'Starting · awaiting local approval/runtime':runtime.capabilities.terminal?(runtime.terminal?.projectSynced?'Sandbox + source synced':'Sandbox ready · project not synced'):runtime.terminal?.configured?'Configured · start required':'Not configured or unavailable'}</span></div>
     </div>
     <div className="br-external-scope">
       <label htmlFor="br-external-ai-session">Authorized joined AI session (this group)</label>
@@ -212,7 +229,7 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
       <section className="br-external-surface" aria-labelledby="br-terminal-title">
         <h3 id="br-terminal-title"><SquareTerminal size={17}/> Isolated terminal</h3>
         <p>Commands run as argv inside a dedicated local gVisor container. The adapter denies shell interpreters, and the host asks for exact local approval. There is no host-shell fallback.</p>
-        {!runtime.capabilities.terminal?<div className="br-subtle-status">Configure BACKROOM_ENABLE_CUA_TERMINAL=1 and install the CUA CLI/local gVisor runtime.</div>:<>
+        {!runtime.terminal?.configured?<div className="br-subtle-status">Configure BACKROOM_ENABLE_CUA_TERMINAL=1 and install the CUA CLI/local gVisor runtime.</div>:runtime.terminal?.cleanupPending?<div className="br-warning"><ShieldAlert size={17}/><div><b>Sandbox cleanup needs attention</b><p>Stop the local Backroom host and inspect the dedicated sandbox before restarting. No new sandbox will be created while cleanup is uncertain.</p></div></div>:!runtime.capabilities.terminal?<><div className="br-subtle-status">{runtime.terminal?.starting?'Sandbox creation is in progress. Approve the local host prompt; this panel refreshes status automatically.':runtime.terminal?.startupError?'Last startup failed: '+runtime.terminal.startupError:'The terminal adapter is configured but no sandbox is running.'}</div><button type="button" className="br-primary" disabled={busy||!scope||runtime.terminal?.starting} onClick={()=>void startTerminal()}><Play size={14}/> Start isolated sandbox</button></>:<>
           <div className="br-subtle-status">{runtime.terminal?.projectSynced?'Source snapshot ready · '+(runtime.terminal.projectFileCount??0)+' files':'Sandbox is separate from your repository. Sync a locally approved, filtered source snapshot before running project commands.'}</div>
           <button type="button" className="br-secondary" disabled={busy||!scope||runtime.terminal?.projectConfigured===false} onClick={()=>void syncTerminalProject()}><RefreshCw size={14}/> Sync local project snapshot</button>
           <label htmlFor="br-terminal-argv">Command argv as JSON (not a shell string)</label><textarea id="br-terminal-argv" rows={2} value={terminalArgv} onChange={e=>setTerminalArgv(e.target.value)} disabled={busy||!runtime.terminal?.projectSynced}/>

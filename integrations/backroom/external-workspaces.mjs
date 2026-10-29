@@ -641,6 +641,7 @@ export function createExternalWorkspaceService({desktop=null,android=null,termin
     async observeAndroid(input){if(stopped||!android)throw new Error('android_workspace_unavailable');return android.observe(input);},
     async execTerminal(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.exec(input);},
     async startTerminal(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.startInBackground(input);},
+    async startTerminal(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.startInBackground(input);},
     async syncTerminalProject(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.syncProject(input);},
     async diffTerminalProject(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.diffProject(input);},
     async applyTerminalProjectDiff(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.applyProjectDiff(input);},
