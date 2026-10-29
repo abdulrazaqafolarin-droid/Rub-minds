@@ -16,14 +16,14 @@ Last audited: 2026-10-29. Scope: draft PR #48, based on draft PR #47. **NOT APPR
 ## Evidence
 
 - Read-only live Supabase schema check confirmed `rooms`, `participants`, `messages`, `agent_connections`, `rub_minds_mcp_sessions` and key primary/unique constraints exist. The new Backroom queue schema was not present.
-- Locally reconstructed Node 22 tests of host authentication, identity persistence, journal, HTTP boundary and remote-transport integration: **20 passed / 0 failed**. This is a **mirror of the code**, not an original-branch checkout execution and not an Edge Function runtime execution.
+- Locally reconstructed Node 22 tests of host authentication, identity persistence, journal, HTTP boundary and remote-transport integration: **24 passed / 0 failed**. This is a **mirror of the code**, not an original-branch checkout execution and not an Edge Function runtime execution.
 - Draft GitHub Actions build job is skipped. The isolated Postgres Actions job repeatedly fails with `steps: null` before any test runs. This is **not** evidence that migration SQL compiled or passed.
 - No PostgreSQL 17 migration/trigger tests, live provider round trip, app build, independent security penetration test or real Windows/Android acceptance run has passed in this sprint.
 - No database migration, Edge Function or Vercel release was deployed to production.
 
 ## Mandatory release gates (all must be green)
 
-- [ ] Finish authenticated owner-to-host enrollment, selected target/binding registration and consent activation without leaking host or Supabase credentials.
+- [ ] Validate and integrate new owner JWT-gated enrollment + inactive input binding endpoint (`backroom-config`) with the authenticated local browser UI and live backend. The host-only activation path is implemented but must be proven against real local grants, revocation and Deno runtime. Never send raw host credentials to the browser.
 - [ ] Integrate remote queue polling in the actual local Backroom host process; handle stop/unpair/revocation, offline recovery, renewal and restart.
 - [ ] Ensure the true dispatcher uses the persistent execution journal and only consumes a grant for the exact selected target.
 - [ ] Run fresh PostgreSQL 17 migration/trigger tests against an isolated instance with realistic fixtures and privilege checks.
@@ -36,3 +36,11 @@ Last audited: 2026-10-29. Scope: draft PR #48, based on draft PR #47. **NOT APPR
 ## Explicit no-go conditions
 
 Never ship merely because a composer cleared, a durable job was acknowledged, a browser-click simulation succeeded, or GitHub marked a draft branch mergeable. None of these independently proves that the original provider session read and responded to the group event. Avoid automatic retry after uncertain UI submission. Leave production unchanged until the above evidence exists.
+
+## Host registration and consent activation slice (draft)
+
+The host now retains a private UUID/256-bit credential across local runtime restarts. The origin-bound paired browser can read **only the host credential digest** from the authenticated `GET /v1/host` status response. New Supabase `backroom-config` Edge routes authenticate the signed-in **human owner JWT**, register a digest-only host and create a database input binding **inactive by default**. Registration rejects client-provided `wakeEnabled`, `confirmedAt`, unexpected fields and raw host tokens.
+
+The separate hosted `backroom-wake/activate` route requires the authenticated host bearer and is bounded to 60–900 seconds. `remote-wake-store.activate` refuses to call it without an injected local grant verifier that returns true for the exact host/session/binding/grant scope; the live browser dispatcher must still consume the actual scoped grant before UI execution. The gateway activation handler performs an authoritative database update and does not accept browser-origin calls. These endpoints have not been deployed, and the new Edge Function itself has not been Deno- or database-integration tested.
+
+Locally mirrored Node test suites for gateway/activation, transport, HTTP, enrollment validation, stable host identity and execution journal passed **24 of 24**. A separate new host-server test for the paired status digest is committed but **not yet independently executed**. Database SQL migration tests, full runtime CI and live ChatGPT/Claude acceptance remain red/unverified.
