@@ -569,15 +569,15 @@ export async function runBackroomHost({rotateIdentity=false}={}) {
     identity,browserRuntime,
     journalDirectory:join(homedir(),".rub-minds","backroom","wake-execution-journal")
   });
-  const gatewayUrl=process.env.BACKROOM_WAKE_GATEWAY_URL;
   const sessionDigest=process.env.BACKROOM_WAKE_SESSION_DIGEST;
   const bindingId=process.env.BACKROOM_WAKE_BINDING_ID;
-  const configured=[sessionDigest,bindingId].filter(Boolean).length;
-  if(configured!==0&&configured!==2)
-    throw new Error("Remote wake configuration requires session digest and binding ID together");
-  // The gateway origin is fixed by host-wake-service or trusted local process
-  // configuration, never supplied to configure() by the browser.
-  if(configured===2)wakeService.configure({sessionDigest,bindingId});
+  const publishableKey=process.env.BACKROOM_WAKE_PUBLISHABLE_KEY;
+  const configured=[sessionDigest,bindingId,publishableKey].filter(Boolean).length;
+  if(configured!==0&&configured!==3)
+    throw new Error("Headless wake configuration requires session digest, binding ID and public project API key together");
+  // The gateway origin is fixed in host-wake-service or trusted local process
+  // configuration. The publishable key is public and cannot redirect the token.
+  if(configured===3)wakeService.configure({sessionDigest,bindingId,publishableKey});
   const instance = createBackroomHostServer({
     hostId,browserRuntime,enrollmentDigest:identity.credentialDigest,wakeService
   });
