@@ -9,6 +9,7 @@ const hostId='40000000-0000-4000-8000-000000000011';
 const bindingId='40000000-0000-4000-8000-000000000022';
 const sessionDigest='a'.repeat(64);
 const hostToken='b'.repeat(64);
+const publishableKey='sb_publishable_exampleKey0123456789abcdef';
 const trustedUrl='https://zucaeevlbwhcvjwbhwmq.supabase.co/functions/v1/backroom-wake/';
 function runtime(){
  return {hostId,running:true,dispatcher:{enqueue(){},step(){},status(){}},
@@ -37,10 +38,10 @@ test('paired browser configuration cannot override the credential destination',a
    journalDirectory:join(dir,'journal'),gatewayUrl:trustedUrl,
    fetchImpl:async()=>{calls++;return new Response(JSON.stringify({ok:true,activated:true}),{status:200});}
   });
-  assert.throws(()=>service.configure({gatewayUrl:'https://attacker.example/',sessionDigest,bindingId}),/Only binding ID/);
-  assert.throws(()=>service.configure({url:'https://attacker.example/',sessionDigest,bindingId}),/Only binding ID/);
+  assert.throws(()=>service.configure({gatewayUrl:'https://attacker.example/',sessionDigest,bindingId}),/Unexpected host configuration fields/);
+  assert.throws(()=>service.configure({url:'https://attacker.example/',sessionDigest,bindingId}),/Unexpected host configuration fields/);
   assert.equal(calls,0);
-  const configured=service.configure({sessionDigest,bindingId});
+  const configured=service.configure({sessionDigest,bindingId,publishableKey});
   assert.deepEqual(configured,{configured:true,bindingId});
   assert.equal(service.status.configured,true);
   assert.equal(calls,0);
@@ -69,6 +70,7 @@ test('local host credential is sent only to the trusted Supabase Edge Function',
     participantId:'40000000-0000-4000-8000-000000000055',sessionId:'40000000-0000-4000-8000-000000000066'});
   assert.equal(urls[0],trustedUrl+'activate');
   assert.equal(headers[0].Authorization,'Bearer '+hostToken);
+  assert.equal(headers[0].apikey,publishableKey);
   await new Promise(resolve=>setTimeout(resolve,0));
   await service.stop();
   assert.ok(urls.includes(trustedUrl+'deactivate'));
