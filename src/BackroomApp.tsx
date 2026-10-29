@@ -342,7 +342,7 @@ export default function BackroomApp() {
     try{
       // Stop the local worker first where reachable. Server-side binding revoke
       // remains authoritative if the computer is offline or the browser lost its grant ID.
-      try{if(hostToken)await hostApi('/v1/backroom/stop',{method:'POST',body:{bindingId:binding.bindingId}});}catch{}
+      try{if(hostToken)await hostApi('/v1/browser/wake/bindings/revoke',{method:'POST',body:{bindingId:binding.bindingId}});}catch{}
       const {data,error:revokeError}=await supabase.functions.invoke('backroom-config/revoke-binding',{
         body:{bindingId:binding.bindingId}
       });
