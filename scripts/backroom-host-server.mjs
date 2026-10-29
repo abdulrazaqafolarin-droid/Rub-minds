@@ -79,9 +79,10 @@ function bearer(request) {
  */
 export function createBackroomHostServer({
   port = 43781, host = "127.0.0.1", allowedOrigins = parseOrigins(process.env.BACKROOM_ALLOWED_ORIGINS),
-  pairingCode, hostId = randomUUID(), now = () => Date.now(), pairingTtlMs, sessionTtlMs, maxPairAttempts, browserRuntime,
+  pairingCode, hostId = randomUUID(), enrollmentDigest = null, now = () => Date.now(), pairingTtlMs, sessionTtlMs, maxPairAttempts, browserRuntime,
 } = {}) {
   if (host !== "127.0.0.1") throw new TypeError("Backroom host must bind to IPv4 loopback only");
+  if (enrollmentDigest !== null && (typeof enrollmentDigest !== "string" || !/^[a-f0-9]{64}$/.test(enrollmentDigest))) throw new TypeError("Invalid enrollment digest");
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new RangeError("invalid port");
   const authority = new HostPairingAuthority({ allowedOrigins, pairingCode, hostId, now, pairingTtlMs, sessionTtlMs, maxPairAttempts });
   const browser = browserRuntime ?? disabledBrowserRuntime();
@@ -194,6 +195,7 @@ export function createBackroomHostServer({
       const executionReady = Object.values(runtimeStatus.capabilities).some(Boolean);
       writeJson(response, 200, {
         hostId: session.hostId, label: session.clientLabel, expiresAt: session.expiresAt,
+        ...(enrollmentDigest ? { enrollmentDigest } : {}),
         protocolVersion: PROTOCOL_VERSION, connected: true, executionReady,
         browserPages: runtimeStatus.pages,
         capabilities: runtimeStatus.capabilities,
@@ -426,7 +428,7 @@ export async function runBackroomHost() {
   const hostId = identity.hostId;
   const { BrowserHostRuntime } = await import("../integrations/backroom/browser-host-runtime.mjs");
   const browserRuntime = new BrowserHostRuntime({ hostId });
-  const instance = createBackroomHostServer({ hostId, browserRuntime });
+  const instance = createBackroomHostServer({ hostId, browserRuntime, enrollmentDigest: identity.credentialDigest });
   const address = await instance.start();
   process.stdout.write([
     "",
