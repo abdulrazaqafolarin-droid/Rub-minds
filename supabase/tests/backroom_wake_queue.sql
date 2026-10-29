@@ -85,6 +85,16 @@ begin
     or not has_function_privilege('service_role','public.claim_backroom_wake_jobs(text,text,uuid,integer,integer)','EXECUTE') then
     raise exception 'Claim RPC grants are unsafe';
   end if;
+  if has_function_privilege('anon','public.ack_backroom_wake_job(uuid,text,text,uuid,text,text)','EXECUTE')
+    or has_function_privilege('authenticated','public.ack_backroom_wake_job(uuid,text,text,uuid,text,text)','EXECUTE')
+    or not has_function_privilege('service_role','public.ack_backroom_wake_job(uuid,text,text,uuid,text,text)','EXECUTE') then
+    raise exception 'Acknowledge RPC grants are unsafe';
+  end if;
+  if has_function_privilege('anon','public.retry_backroom_wake_job(uuid,text,text,uuid,text,integer,text)','EXECUTE')
+    or has_function_privilege('authenticated','public.retry_backroom_wake_job(uuid,text,text,uuid,text,integer,text)','EXECUTE')
+    or not has_function_privilege('service_role','public.retry_backroom_wake_job(uuid,text,text,uuid,text,integer,text)','EXECUTE') then
+    raise exception 'Retry RPC grants are unsafe';
+  end if;
   if has_function_privilege('anon','public.purge_backroom_wake_jobs(integer,integer)','EXECUTE')
     or has_function_privilege('authenticated','public.purge_backroom_wake_jobs(integer,integer)','EXECUTE')
     or not has_function_privilege('service_role','public.purge_backroom_wake_jobs(integer,integer)','EXECUTE') then
@@ -129,8 +139,8 @@ begin
   end if;
   begin
     perform public.enqueue_backroom_wake_job(
-      repeat('1',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-1',v_session_digest,
-      v_binding_1,'target-1','fingerprint-1',2,'event-1','@RMconnects'||chr(10)||'Event: event-1'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
+      repeat('1',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-2',repeat('c',64),
+      v_binding_2,'target-2','fingerprint-2',2,'event-1','@RMconnects'||chr(10)||'Event: event-1'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   exception when others then
       if sqlerrm <> 'Wake idempotency key conflicts with a different request' then raise; end if;
       v_conflict := true;
@@ -164,7 +174,7 @@ begin
   v_retry_job := public.enqueue_backroom_wake_job(
     repeat('2',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-2',repeat('c',64),
     v_binding_2,'target-2','fingerprint-2',2,'event-2','@RMconnects'||chr(10)||'Event: event-2'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
-  select * into v_claim_retry from public.claim_backroom_wake_jobs(v_host_test,repeat('c',64),1,30) limit 1;
+  select * into v_claim_retry from public.claim_backroom_wake_jobs(v_host_test,repeat('c',64),v_binding_2,1,30) limit 1;
   if not found or v_claim_retry.out_job_id::text <> (v_retry_job->>'job_id') then
     raise exception 'Expected the second session job to be claimed';
   end if;
@@ -172,7 +182,7 @@ begin
     v_claim_retry.out_job_id,v_host_test,repeat('c',64),v_binding_2,v_claim_retry.out_lease_token,1,'transport_error');
   if v_retry_state <> 'pending' then raise exception 'A retryable failure should return to pending'; end if;
   update public.backroom_wake_jobs set available_at=pg_catalog.clock_timestamp()-interval '1 second' where id=v_claim_retry.out_job_id;
-  select * into v_claim_retry from public.claim_backroom_wake_jobs(v_host_test,repeat('c',64),1,30) limit 1;
+  select * into v_claim_retry from public.claim_backroom_wake_jobs(v_host_test,repeat('c',64),v_binding_2,1,30) limit 1;
   if not found or v_claim_retry.out_attempt_count <> 2 then raise exception 'Retry should be reclaimable and increment attempts'; end if;
   if not public.ack_backroom_wake_job(v_claim_retry.out_job_id,v_host_test,repeat('c',64),v_binding_2,v_claim_retry.out_lease_token,'ignored') then
     raise exception 'A valid ignored outcome should acknowledge the event cursor';
@@ -188,8 +198,8 @@ begin
   v_conflict := false;
   begin
     perform public.enqueue_backroom_wake_job(
-      repeat('9',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-9',repeat('6',64),
-      v_binding_6,'target-9','fingerprint-9',1,'event-9',
+      repeat('9',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-6',repeat('6',64),
+      v_binding_6,'target-6','fingerprint-6',1,'event-9',
       '@RMconnects'||chr(10)||'Event: event-9'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   exception when others then
     if sqlerrm <> 'Active MCP session does not authorize this group participant' then raise; end if;
