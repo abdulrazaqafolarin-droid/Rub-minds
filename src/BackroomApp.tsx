@@ -333,6 +333,105 @@ export default function BackroomApp() {
     }finally{setHostBusy(false);}
   }
 
+  async function discoverHostedAiSessions() {
+    if (!supabase || !room?.id || !user) return;
+    setHostBusy(true);
+    try {
+      const {data,error:discoveryError}=await supabase.functions.invoke('backroom-config/sessions',{
+        body:{roomId:room.id}
+      });
+      if(discoveryError || data?.ok!==true || !Array.isArray(data.sessions))
+        throw new Error('Could not list authorized joined AI sessions for this group.');
+      const sessions=data.sessions.filter((v:unknown)=>{
+        if(!v||typeof v!=='object'||Array.isArray(v))return false;
+        const x=v as Record<string,unknown>;
+        return typeof x.participantId==='string'&&typeof x.displayName==='string'&&
+          typeof x.sessionDigest==='string'&&/^[a-f0-9]{64}$/.test(x.sessionDigest);
+      }) as HostedAiSession[];
+      setHostedAiSessions(sessions);
+      setSelectedHostedSession(sessions[0]?.sessionDigest??'');
+      setHostMessage(sessions.length+' authorized live AI session(s) found. Select the intended original AI conversation.');
+    }catch(error){
+      setHostMessage(error instanceof Error?error.message:'AI session discovery failed.');
+    }finally{setHostBusy(false);}
+  }
+  async function bindHostedWakeInput() {
+    if (!supabase || !room?.id || !hostInfo?.connected || !hostToken) return;
+    const selectedSession=hostedAiSessions.find(s=>s.sessionDigest===selectedHostedSession);
+    const target=browserTargets.find(t=>t.id===selectedBrowserTarget);
+    if(!selectedSession||!target||target.roomId!==room.id||target.wakeAvailable!==true||
+       !target.spaceId||!target.sessionId||!target.identityFingerprint||
+       !target.revision||target.locatorKind!=='dom'||!target.locatorValue){
+      setHostMessage('Select one live joined AI session and a wake-capable browser composer in the same group.');
+      return;
+    }
+    setHostBusy(true);
+    try {
+      const {data,error:bindingError}=await supabase.functions.invoke('backroom-config/binding',{
+        body:{
+          roomId:room.id,participantId:selectedSession.participantId,
+          hostId:hostInfo.hostId,sessionDigest:selectedSession.sessionDigest,
+          spaceId:target.spaceId,sessionId:target.sessionId,
+          targetId:target.id,targetIdentityFingerprint:target.identityFingerprint,
+          targetRevision:target.revision,surface:'browser_tab',
+          locatorKind:target.locatorKind,locatorValue:target.locatorValue,
+          participationMode:'mentions',maxWakesPerMinute:6
+        }
+      });
+      if(bindingError || data?.ok!==true || typeof data.bindingId!=='string')
+        throw new Error('Secure hosted binding registration failed. No wake operation was enabled.');
+      const base=import.meta.env.VITE_SUPABASE_URL;
+      if(!base)throw new Error('Hosted Supabase URL is not configured.');
+      const gatewayUrl=new URL('/functions/v1/backroom-wake/',base).href;
+      await hostApi('/v1/backroom/configure',{method:'POST',body:{
+        gatewayUrl,sessionDigest:selectedSession.sessionDigest,bindingId:data.bindingId
+      }});
+      setHostedWakeBinding({
+        bindingId:data.bindingId,roomId:room.id,
+        participantId:selectedSession.participantId,sessionId:target.sessionId,
+        targetId:target.id,sessionDigest:selectedSession.sessionDigest
+      });
+      setHostedWakeGrantId('');
+      setHostMessage('AI session bound to the exact selected composer. Wake remains OFF; activate only with your explicit confirmation.');
+    }catch(error){
+      setHostMessage(error instanceof Error?error.message:'Could not configure wake binding.');
+    }finally{setHostBusy(false);}
+  }
+  async function enableHostedWake() {
+    const binding=hostedWakeBinding;
+    if(!binding||binding.roomId!==room?.id||binding.targetId!==selectedBrowserTarget||!hostInfo?.connected)return;
+    if(!window.confirm('Enable the selected original AI conversation to receive only canonical @RMconnects event triggers for up to 5 minutes? This may press Send in that selected AI chat.'))return;
+    setHostBusy(true);
+    try{
+      const grant=await hostApi<{grantId:string}>('/v1/browser/wake/grants',{
+        method:'POST',body:{
+          targetId:binding.targetId,roomId:binding.roomId,
+          participantId:binding.participantId,sessionId:binding.sessionId,
+          bindingId:binding.bindingId,confirmed:true,ttlMs:600000,maxPerMinute:6
+        }
+      });
+      if(typeof grant.grantId!=='string')throw new Error('Local wake grant was not confirmed.');
+      setHostedWakeGrantId(grant.grantId);
+      setHostMessage('Wake enabled for this one selected AI input. It expires automatically; use Revoke wake to stop earlier.');
+    }catch(error){
+      setHostMessage(error instanceof Error?error.message:'Wake activation failed and must be retried with consent.');
+    }finally{setHostBusy(false);}
+  }
+  async function revokeHostedWake() {
+    const binding=hostedWakeBinding;
+    if(!binding||!hostedWakeGrantId)return;
+    setHostBusy(true);
+    try{
+      await hostApi('/v1/browser/wake/grants/revoke',{method:'POST',body:{
+        grantId:hostedWakeGrantId,targetId:binding.targetId,roomId:binding.roomId
+      }});
+      setHostedWakeGrantId('');
+      setHostMessage('Local wake grant revoked and polling stopped. No new automated sends are authorized.');
+    }catch(error){
+      setHostMessage(error instanceof Error?error.message:'Could not confirm wake revocation. Use Emergency Stop.');
+    }finally{setHostBusy(false);}
+  }
+
   async function checkLocalHost() {
     if (!hostToken) return;
     setHostBusy(true); setHostMessage('');
