@@ -143,3 +143,10 @@ The full Node suites and the build passed after fixing the content-type regex, i
 
 **Release decision:** keep PR #48 in draft. Do not deploy the migration or claim provider integration is live until the native PostgreSQL workflow startup issue is resolved, browser acceptance can run in a compatible Linux image, the Edge Functions are verified in Deno/Supabase staging, and real ChatGPT plus Claude tool/session round trips are observed separately.
 
+## Browser acceptance follow-up — 2026-10-29
+
+- A real Chromium run of the three browser acceptance files passed **8/8 tests** after fixing the route-change rejection defect in `integrations/backroom/browser-draft-adapter.mjs` (commit `20a794b229aa54423a7db7a2f4c0c8a2564f1e21`). The defect returned a nested object instead of the expected `conversation_changed` state string, allowing the race guard to return a review result rather than rejecting the stale route.
+- Isolated Node 22 / Amazon Linux verification used `@sparticuz/chromium` with bundled `al2023` libraries, `LD_LIBRARY_PATH=/tmp/al2023/lib`, `FONTCONFIG_PATH=/tmp/fonts`, and `CHROMIUM_PATH=/tmp/chromium`. Because the end-to-end test's injected Playwright provider does not read `CHROMIUM_PATH`, the test-only sandbox preload supplied the compatible Chromium `executablePath` to `chromium.launchPersistentContext`; no repository product code or test assertions were changed for this environment compatibility step.
+- Browser-draft, selection-overlay, and local-host end-to-end tests passed in controlled local pages. These do **not** test real logged-in ChatGPT/Claude sessions, customer account permissions, production tool integration, or remote server grant revocation.
+- The earlier validation record's browser-environment blocker is superseded by this result. Native PostgreSQL CI, Deno/Edge staging validation, provider interoperability, and production authorization remain release blockers.
+
