@@ -38,19 +38,20 @@ Keep PR #48 in draft until the clean test suite, isolated SQL workflow, real pro
 
 ## Durable wake queue milestone
 
-The proposed Supabase migration `20261029090000_backroom_wake_queue.sql` adds a private, RLS-enabled wake-job table and service-role-only RPCs:
+The experimental Supabase migration `20261029090000_backroom_wake_queue.sql` adds a private, RLS-enabled wake-job table and service-role-only RPCs:
 - Idempotent enqueue that rejects reuse of a key for different content.
 - Jobs bound to owner, group, participant, host, runtime space, original session, target ID, target identity fingerprint and target revision.
 - A digest of the exact wake prompt and bounded expiry.
 - Atomic leases using `FOR UPDATE SKIP LOCKED`; plaintext lease tokens are returned only to the trusted backend while only SHA-256 digests are stored.
-- Token-bound acknowledgement, bounded retry, owner-scoped cancellation and expiry processing.
+- Per-session admission locking and a 100-job active backlog ceiling; duplicate/idempotent requests remain retryable at capacity.
+- Token-bound acknowledgement, bounded retry, owner-scoped cancellation, expiry processing, and bounded purge of terminal jobs older than the configured retention period.
 - Retry and claim limits intended to prevent infinite work.
 
-The server-only `durable-wake-store.mjs` adapter maps the store RPCs, validates the identity-bound lease metadata and exact prompt SHA-256, and rejects a missing/expired/replayed retry lease. `durable-coordinator.mjs` now routes only policy-eligible events into that durable queue after confirming the participant, group, selected target, session, target revision and draft capability. Its tests use a mocked Supabase RPC client and do not execute PostgreSQL.
+The server-only `durable-wake-store.mjs` adapter maps enqueue/claim/ack/retry/cancel/expire/purge RPCs, validates the identity-bound lease metadata and exact prompt SHA-256, rejects a missing/expired/replayed retry lease, and accepts only the canonical newline-delimited wake prompt while rejecting other control bytes. `durable-coordinator.mjs` now routes only policy-eligible events into that durable queue after confirming the participant, group, selected target, session, target revision and draft capability. Its tests use a mocked Supabase RPC client and do not execute PostgreSQL.
 
 ## Validation status / release discipline
 
-A Vercel preview for earlier commit `a8e6954` reported 135 runtime tests passing, and 22 focused coordinator/dispatcher integration tests passing; its frontend build succeeded. These logs predate the durable-wake-store changes and do not validate the migration or latest adapter revision. The free Vercel API daily deployment limit currently prevents a newer preview. GitHub Actions jobs were still being skipped when checked; the migration must be run against an isolated PostgreSQL 17 instance using `supabase/tests/backroom_wake_queue.sql`.
+A Vercel preview for earlier commit `a8e6954` reported 135 runtime tests passing, and 22 focused coordinator/dispatcher integration tests passing; its frontend build succeeded. Those remote logs predate the durable-wake-store changes and do not validate the SQL migration. A local Node 22 scratch harness assembled from the current branch sources ran 37 focused tests successfully, including the dispatcher/target-registry/local-guard interaction, but this is not a clean full-repository checkout. The free Vercel API daily deployment limit currently prevents a newer preview. GitHub Actions workflow jobs most recently failed before any steps were recorded (`steps: []`); reruns were requested, but there is no database-test result yet. The migration must be run against an isolated PostgreSQL 17 instance using `supabase/tests/backroom_wake_queue.sql`.
 
 Do **not** apply this migration to production until the isolated SQL workflow succeeds, a clean-checkout test suite passes, and the actual server integration is implemented and validated. The RPCs are service-role-only, so the service endpoint must derive `owner_id` from an authenticated caller and validate the group participant/session binding; never trust those IDs from a browser request.
 
