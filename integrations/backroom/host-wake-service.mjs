@@ -26,14 +26,27 @@ export function createHostWakeService({identity,browserRuntime,journalDirectory,
   throw new TypeError('Trusted local host identity and browser runtime required');
  const trustedUrl=trustedGatewayUrl(gatewayUrl);
  const journal=new FileWakeExecutionJournal({directory:journalDirectory});
- let remote=null,poller=null,scope=null;
- async function stop(){await poller?.stop();}
+ let remote=null,poller=null,scope=null,activeGrantId=null;
+ async function stop(){
+  await poller?.stop();
+  if(!remote||!scope||!activeGrantId)return Object.freeze({stopped:true,remotelyDeactivated:null});
+  try{
+   await remote.deactivate({hostId:identity.hostId,bindingId:scope.bindingId,
+    sessionDigest:scope.sessionDigest,grantId:activeGrantId});
+   activeGrantId=null;
+   return Object.freeze({stopped:true,remotelyDeactivated:true});
+  }catch{
+   // Local polling is already stopped. The hosted activation is short-lived;
+   // preserve the grant ID so a caller can retry best-effort deactivation.
+   return Object.freeze({stopped:true,remotelyDeactivated:false});
+  }
+ }
  function configure(input={}){
   if(!input||typeof input!=='object'||Array.isArray(input)||
     Object.keys(input).some(key=>!['sessionDigest','bindingId'].includes(key)))
    throw new TypeError('Only binding ID and session digest may be supplied by the paired UI');
   const {sessionDigest,bindingId}=input;
-  if(poller?.running)throw new Error('Stop active wake polling before reconfiguration');
+  if(poller?.running||activeGrantId)throw new Error('Deactivate the existing wake grant before reconfiguration');
   if(!UUID.test(bindingId??'')||!HEX.test(sessionDigest??''))
    throw new TypeError('Valid hosted binding and MCP digest required');
   const store=createRemoteWakeStore({
@@ -57,11 +70,13 @@ export function createHostWakeService({identity,browserRuntime,journalDirectory,
     bindingId:scope.bindingId,sessionDigest:scope.sessionDigest,
     grantId:grant.grantId,ttlSeconds:300});
   if(accepted!==true)throw new Error('Hosted wake consent activation denied');
+  activeGrantId=grant.grantId;
   await poller.start();
  }
  return Object.freeze({
   configure,activateAndStart,stop,
   get status(){return Object.freeze({configured:Boolean(remote),
-    polling:poller?.running===true,bindingId:scope?.bindingId??null});}
+    polling:poller?.running===true,bindingId:scope?.bindingId??null,
+    activationPendingDeactivation:Boolean(activeGrantId)});}
  });
 }
