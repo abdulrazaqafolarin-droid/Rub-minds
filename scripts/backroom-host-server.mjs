@@ -449,7 +449,7 @@ export function createBackroomHostServer({
                 // local approval, and only for this pre-enrolled binding.
                 await wakeService.activateAndStart(grant,input);
               } catch {
-                try { await wakeService.stop(); } catch {}
+                try { await wakeService.stop(input.bindingId); } catch {}
                 browser.revokeContinuousWake({grantId:grant.grantId,
                   targetId:input.targetId,roomId:input.roomId});
                 writeJson(response, 503, {error:"remote_wake_activation_failed"}, cors);
@@ -569,9 +569,10 @@ export async function runBackroomHost({rotateIdentity=false}={}) {
     identity,browserRuntime,
     journalDirectory:join(homedir(),".rub-minds","backroom","wake-execution-journal")
   });
-  const sessionDigest=process.env.BACKROOM_WAKE_SESSION_DIGEST;
-  const bindingId=process.env.BACKROOM_WAKE_BINDING_ID;
-  const publishableKey=process.env.BACKROOM_WAKE_PUBLISHABLE_KEY;
+  // A rotated host must never inherit the old identity's environment-bound input.
+  const sessionDigest=rotateIdentity===true?undefined:process.env.BACKROOM_WAKE_SESSION_DIGEST;
+  const bindingId=rotateIdentity===true?undefined:process.env.BACKROOM_WAKE_BINDING_ID;
+  const publishableKey=rotateIdentity===true?undefined:process.env.BACKROOM_WAKE_PUBLISHABLE_KEY;
   const configured=[sessionDigest,bindingId,publishableKey].filter(Boolean).length;
   if(configured!==0&&configured!==3)
     throw new Error("Headless wake configuration requires session digest, binding ID and public project API key together");
