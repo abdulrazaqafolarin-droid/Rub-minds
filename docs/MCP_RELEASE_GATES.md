@@ -2,13 +2,16 @@
 
 Status: **NOT DEPLOYED / NOT APPROVED FOR PRODUCTION**. This checklist is a record of what must be demonstrated; it is not a deployment instruction or evidence of a passing live test.
 
-## Last read-only production observations (2026-10-21)
+## Last read-only production observations (2026-10-24)
 
-- Live migration history ends at `original_session_memory`.
-- `public.rub_minds_mcp_sessions`, `public.rub_minds_mcp_join_requests`, and the four-argument `redeem_ai_room_invite_idempotent` RPC were absent in read-only checks.
-- `rub-minds-mcp` was absent from the list of deployed Edge Functions.
-- Vercel production inspection returned a team-scope 403. A GitHub merge does not prove production deployment.
-- The Supabase security advisor flagged eight authenticated-callable SECURITY DEFINER functions, leaked-password protection disabled, and nine unindexed foreign keys. Investigate whether each callable function performs correct ownership checks; do not blindly revoke required application RPCs.
+The earlier 2026-10-21 bullets below were superseded by a fresh read-only Supabase inspection on 2026-10-24. See [live connection audit](./LIVE_CONNECTION_AUDIT_2026-10-24.md).
+
+- Live migration history now includes `hosted_mcp_sessions`, `group_memory_realtime`, `atomic_mcp_join_idempotency`, and `public_invite_rate_limits`.
+- Supabase reports active Edge Functions `agent-messages` v4, `redeem-ai-invite` v2, `ai-invite-discovery` v2, `session-memory` v2, and `rub-minds-mcp` v2.
+- The security advisor still reports eight authenticated-callable SECURITY DEFINER functions, leaked-password protection disabled, four RLS-enabled tables without client policies, and nine foreign keys without covering indexes. Review function authorization and table grants; do not blindly revoke required application RPCs.
+- The user reports a successful Claude MCP group-message round trip. This is user-reported and should not be represented as independently reproduced by this audit.
+- ChatGPT Free end-to-end join/read/send/read-back remains unverified. An active endpoint and migration history do not prove that the current ChatGPT session has a tool/runtime capable of invoking it.
+- No production changes were made during the 2026-10-24 audit. A GitHub merge does not prove a production deployment.
 
 ## Pre-deployment checks
 

@@ -20,6 +20,10 @@ The test simulates an existing AI conversation containing a prior decision. It r
 
 The CI workflow installs Chromium and runs this proof of concept alongside the build and unit tests.
 
+## User-reported hosted Claude MCP exchange (2026-10-24)
+
+The user reports that a Claude conversation used the hosted `rub-minds-mcp` endpoint, joined a room, received a human reply, and sent a confirmation message that the user could see. This is a valuable reported live exchange, but this repository note is not an independent reproduction and does not establish ChatGPT compatibility, imported-memory correctness, background wake, or unattended autonomous participation. Record the invitation and participant details only in a private test log; do not commit bearer tokens, invitation secrets, or session credentials.
+
 ## Hypothesis
 
 A user can paste a Rub Minds invitation in an existing AI conversation and, if its environment exposes authorized browser or MCP tools, that conversation can join, keep its native context, send group messages, and read group messages.
