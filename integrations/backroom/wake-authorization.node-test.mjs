@@ -41,7 +41,7 @@ test('rate limit is bounded per grant and resumes after rolling window',()=>{
  assert.equal(auth.verify(grant.grantId,context({commandId:'cmd-2'})),true);
  assert.equal(auth.verify(grant.grantId,context({commandId:'cmd-3'})),false);
  now+=60_001;
- assert.equal(auth.verify(grant.grantId,context({commandId:'cmd-3'})),false,'grant has expired');
+ assert.equal(auth.verify(grant.grantId,context({commandId:'cmd-3'})),true,'grant is live and rate window has elapsed');
 });
 test('revoked and expired grants cannot authorize future sends',()=>{
  let now=5000;
