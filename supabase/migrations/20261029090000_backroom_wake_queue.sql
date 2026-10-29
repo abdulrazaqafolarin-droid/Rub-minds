@@ -2,9 +2,9 @@
 create table if not exists public.backroom_wake_jobs (
   id uuid primary key default pg_catalog.gen_random_uuid(),
   job_key text not null unique check (job_key ~ '^[0-9a-f]{64}$'),
-  owner_id uuid not null,
-  room_id uuid not null,
-  participant_id uuid not null,
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  room_id uuid not null references public.rooms(id) on delete cascade,
+  participant_id uuid not null references public.participants(id) on delete cascade,
   host_id text not null check (char_length(btrim(host_id)) between 1 and 128),
   space_id text not null check (char_length(btrim(space_id)) between 1 and 128),
   session_id text not null check (char_length(btrim(session_id)) between 1 and 256),
@@ -104,10 +104,17 @@ begin
   end if;
   -- Only a live, joined hosted MCP session bound to this exact group participant may enqueue.
   if not exists (
-    select 1 from public.rub_minds_mcp_sessions s
+    select 1
+    from public.rub_minds_mcp_sessions s
+    join public.participants p on p.id = s.participant_id and p.room_id = s.room_id
+    join public.rooms r on r.id = s.room_id
+    join public.agent_connections a on a.participant_id = p.id and a.room_id = r.id
+      and a.owner_id = r.owner_id and a.revoked_at is null and a.expires_at > pg_catalog.clock_timestamp()
     where s.session_digest = p_session_digest and s.room_id = p_room_id
       and s.participant_id = p_participant_id and s.agent_credential_ciphertext is not null
       and s.terminated_at is null and s.expires_at > pg_catalog.clock_timestamp()
+      and p.kind in ('original_session','model','external_agent')
+      and r.owner_id = p_owner_id
   ) then
     raise exception 'Active MCP session does not authorize this group participant';
   end if;
@@ -233,9 +240,15 @@ begin
   end if;
 
   if not exists (
-    select 1 from public.rub_minds_mcp_sessions s
+    select 1
+    from public.rub_minds_mcp_sessions s
+    join public.participants p on p.id = s.participant_id and p.room_id = s.room_id
+    join public.rooms r on r.id = s.room_id
+    join public.agent_connections a on a.participant_id = p.id and a.room_id = r.id
+      and a.owner_id = r.owner_id and a.revoked_at is null and a.expires_at > pg_catalog.clock_timestamp()
     where s.session_digest = p_session_digest and s.agent_credential_ciphertext is not null
       and s.terminated_at is null and s.expires_at > pg_catalog.clock_timestamp()
+      and p.kind in ('original_session','model','external_agent')
   ) then
     return;
   end if;
@@ -259,11 +272,17 @@ begin
     from public.backroom_wake_jobs j
     where j.host_id = p_host_id and j.session_digest = p_session_digest
       and exists (
-        select 1 from public.rub_minds_mcp_sessions s
+        select 1
+        from public.rub_minds_mcp_sessions s
+        join public.participants p on p.id = s.participant_id and p.room_id = s.room_id
+        join public.rooms r on r.id = s.room_id
+        join public.agent_connections a on a.participant_id = p.id and a.room_id = r.id
+          and a.owner_id = r.owner_id and a.revoked_at is null and a.expires_at > pg_catalog.clock_timestamp()
         where s.session_digest = j.session_digest
           and s.room_id = j.room_id and s.participant_id = j.participant_id
           and s.agent_credential_ciphertext is not null
           and s.terminated_at is null and s.expires_at > pg_catalog.clock_timestamp()
+          and p.kind in ('original_session','model','external_agent')
       )
       and j.expires_at > pg_catalog.clock_timestamp()
       and j.attempt_count < 5
@@ -330,10 +349,16 @@ begin
     and j.lease_token_hash = pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_lease_token, 'UTF8')), 'hex')
     and j.lease_expires_at > pg_catalog.clock_timestamp() and j.expires_at > pg_catalog.clock_timestamp()
     and exists (
-      select 1 from public.rub_minds_mcp_sessions s
+      select 1
+      from public.rub_minds_mcp_sessions s
+      join public.participants p on p.id = s.participant_id and p.room_id = s.room_id
+      join public.rooms r on r.id = s.room_id
+      join public.agent_connections a on a.participant_id = p.id and a.room_id = r.id
+        and a.owner_id = r.owner_id and a.revoked_at is null and a.expires_at > pg_catalog.clock_timestamp()
       where s.session_digest = p_session_digest and s.room_id = j.room_id
         and s.participant_id = j.participant_id and s.agent_credential_ciphertext is not null
         and s.terminated_at is null and s.expires_at > pg_catalog.clock_timestamp()
+        and p.kind in ('original_session','model','external_agent')
     );
   get diagnostics v_changed = row_count;
   return v_changed = 1;
@@ -373,10 +398,16 @@ begin
     and j.lease_token_hash = pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_lease_token, 'UTF8')), 'hex')
     and j.lease_expires_at > pg_catalog.clock_timestamp() and j.expires_at > pg_catalog.clock_timestamp()
     and exists (
-      select 1 from public.rub_minds_mcp_sessions s
+      select 1
+      from public.rub_minds_mcp_sessions s
+      join public.participants p on p.id = s.participant_id and p.room_id = s.room_id
+      join public.rooms r on r.id = s.room_id
+      join public.agent_connections a on a.participant_id = p.id and a.room_id = r.id
+        and a.owner_id = r.owner_id and a.revoked_at is null and a.expires_at > pg_catalog.clock_timestamp()
       where s.session_digest = p_session_digest and s.room_id = j.room_id
         and s.participant_id = j.participant_id and s.agent_credential_ciphertext is not null
         and s.terminated_at is null and s.expires_at > pg_catalog.clock_timestamp()
+        and p.kind in ('original_session','model','external_agent')
     )
   returning j.state into v_state;
   return v_state;
