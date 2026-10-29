@@ -9,7 +9,7 @@ const SHELLS=new Set(['sh','bash','zsh','fish','cmd','cmd.exe','powershell','pws
 function needApproval(fn,what){if(typeof fn!=='function')throw new TypeError(what+' needs a trusted local approval callback');}
 function structured(value){if(typeof value==='string'){try{return JSON.parse(value);}catch{throw new Error('Runtime returned non-structured output');}}if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('Runtime returned no structured output');return value;}
 function elements(state){if(Array.isArray(state?.elements))return state.elements;if(Array.isArray(state?.structuredContent?.elements))return state.structuredContent.elements;throw new Error('CUA snapshot lacks accessibility elements');}
-function positiveInt(value,label){if(!Number.isSafeInteger(value)||value<1)throw new TypeError(label+' must be a positive integer');}
+function positiveInt(value,label){if(!Number.isSafeInteger(value)||value<1)throw new TypeError(label+' must be a positive integer');}\nfunction nonnegativeInt(value,label){if(!Number.isSafeInteger(value)||value<0)throw new TypeError(label+' must be a nonnegative integer');}
 function androidScope(deviceSerial,appPackage,devices,packages){if(typeof deviceSerial!=='string'||!devices.has(deviceSerial))throw new Error('Android device is not explicitly allowlisted');if(typeof appPackage!=='string'||!PACKAGE.test(appPackage)||!packages.has(appPackage))throw new Error('Android package is not explicitly allowlisted');return {deviceSerial,appPackage};}
 function scopeIds(groupId,sessionId){if(typeof groupId!=='string'||!ID.test(groupId)||typeof sessionId!=='string'||!ID.test(sessionId))throw new TypeError('Backroom group and session scope required');}
 
@@ -31,19 +31,20 @@ export class CuaDesktopWorkspace {
       .map(w=>Object.freeze({pid:Number(w.pid),windowId:Number(w.window_id??w.windowId),appName:String(w.app_name??w.appName??''),title:String(w.title??''),zIndex:Number.isFinite(w.z_index)?w.z_index:null})));
   }
   async #snapshot({pid,windowId}){
-    positiveInt(pid,'pid');positiveInt(windowId,'windowId');await this.#require(['get_window_state','list_windows']);
-    const state=structured(await this.client.callTool('get_window_state',{pid,window_id:windowId,include_screenshot:false,session:this.session}));
+    positiveInt(pid,'pid');nonnegativeInt(windowId,'windowId');await this.#require(['get_window_state','list_windows']);
+    const state=structured(await this.client.callTool('get_window_state',{pid,window_id:windowId,tree_format:'elements',full_output:true,session:this.session}));
     if(Number(state.pid)!==pid||Number(state.window_id??state.windowId)!==windowId)throw new Error('CUA snapshot PID/window mismatch');
     const window=(await this.#listWindows()).find(w=>w.pid===pid&&w.windowId===windowId);
     if(!window)throw new Error('Selected desktop window disappeared');
     return {state,window,elements:elements(state)};
   }
   async observeWindow({pid,windowId,groupId,sessionId}={}){
-    scopeIds(groupId,sessionId);const {state,window,elements}=await this.#snapshot({pid,windowId});
+    scopeIds(groupId,sessionId);if(await this.approve(Object.freeze({kind:'desktop_observe',pid,windowId,groupId,sessionId}))!==true)throw new Error('Local desktop observation denied');const {state,window,elements}=await this.#snapshot({pid,windowId});
     return Object.freeze({pid,windowId,groupId,sessionId,appName:window.appName,title:window.title,elementCount:elements.length,degraded:state.degraded===true,snapshotId:typeof state.snapshot_id==='string'?state.snapshot_id:null,state:'observed'});
   }
   async draftText({pid,windowId,elementToken,text,expectedAppName,expectedTitle,groupId,sessionId}={}){
-    positiveInt(pid,'pid');positiveInt(windowId,'windowId');scopeIds(groupId,sessionId);
+    positiveInt(pid,'pid');nonnegativeInt(windowId,'windowId');scopeIds(groupId,sessionId);
+    if(await this.approve(Object.freeze({kind:'desktop_draft_inspect',pid,windowId,expectedAppName,expectedTitle,groupId,sessionId}))!==true)throw new Error('Local desktop observation denied');
     if(typeof elementToken!=='string'||!ID.test(elementToken))throw new TypeError('Snapshot-derived CUA element token required');
     if(typeof text!=='string'||!text.trim()||text.length>MAX_TEXT||CONTROL.test(text))throw new TypeError('Draft must be safe single-line text of at most 4000 characters');
     if(typeof expectedAppName!=='string'||!expectedAppName.trim()||typeof expectedTitle!=='string'||!expectedTitle.trim())throw new TypeError('Expected app/window identity required');
@@ -120,7 +121,7 @@ export class CuaSandboxTerminalWorkspace {
     });
   }
   async start(){if(this.closed)throw new Error('Sandbox lifecycle closed');if(this.ready)return this.status;
-    const r=await this.#run(['--json','sb','create','ubuntu','--on','local','--kind','gvisor','--headless','--name',this.sandboxName]);
+    const r=await this.#run(['--json','sb','create','linux','--on','local','--kind','container','--runtime','gvisor','--headless','--name',this.sandboxName]);
     if(r.code!==0)throw new Error('Local gVisor sandbox creation failed; existing sandboxes are never adopted');this.ready=true;return this.status;
   }
   async exec({command,cwd,purpose='Backroom terminal task',groupId,sessionId}={}){
