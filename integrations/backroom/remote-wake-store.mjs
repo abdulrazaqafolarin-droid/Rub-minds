@@ -10,7 +10,7 @@ function checkScope({hostId,sessionDigest,bindingId}={}){
   throw new TypeError('Invalid remote wake scope');
  return {hostId,sessionDigest,bindingId};
 }
-export function createRemoteWakeStore({baseUrl,hostToken,fetchImpl=fetch}={}){
+export function createRemoteWakeStore({baseUrl,hostToken,fetchImpl=fetch,verifyLocalGrant}={}){
  if(typeof baseUrl!=='string')throw new TypeError('Hosted wake gateway URL required');
  let url;
  try{url=new URL(baseUrl);}catch{throw new TypeError('Invalid hosted wake gateway URL');}
@@ -36,6 +36,18 @@ export function createRemoteWakeStore({baseUrl,hostToken,fetchImpl=fetch}={}){
   return result;
  }
  return Object.freeze({
+  async activate({hostId,sessionDigest,bindingId,grantId,ttlSeconds}={}){
+   const scope=checkScope({hostId,sessionDigest,bindingId});
+   if(!UUID.test(grantId??'')||!Number.isSafeInteger(ttlSeconds)||ttlSeconds<60||ttlSeconds>900)
+    throw new TypeError('Invalid short-lived local wake grant');
+   if(typeof verifyLocalGrant!=='function')throw new Error('Trusted local grant verifier required');
+   let verified=false;
+   try{verified=(await verifyLocalGrant(Object.freeze({...scope,grantId,ttlSeconds})))===true;}catch{verified=false;}
+   if(!verified)throw new Error('Local wake grant not verified');
+   const result=await post('activate',{...scope,grantId,ttlSeconds});
+   if(typeof result.activated!=='boolean')throw new Error('Invalid wake activation result');
+   return result.activated;
+  },
   async claim({hostId,sessionDigest,bindingId,limit=5}={}){
    const scope=checkScope({hostId,sessionDigest,bindingId});
    if(!Number.isSafeInteger(limit)||limit<1||limit>20)throw new RangeError('Invalid remote claim limit');
