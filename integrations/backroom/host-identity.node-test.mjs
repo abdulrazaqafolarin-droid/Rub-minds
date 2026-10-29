@@ -83,3 +83,22 @@ test('rotated host persistently suppresses stale environment-bound wake configur
  }finally{await rm(root,{recursive:true,force:true});}
 });
 
+test('rotation marker must be private and non-symlink',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'backroom-rotation-marker-integrity-'));
+ try{
+  const directory=join(root,'private');await mkdir(directory,{mode:0o700});
+  const filePath=join(directory,'host.json');
+  const markerPath=filePath+'.rotation-pending';
+  await writeFile(markerPath,'rotation pending',{mode:0o600});
+  if(process.platform!=='win32'){
+   await chmod(markerPath,0o644);
+   await assert.rejects(()=>isHostIdentityRotationPending({filePath}),/Unsafe Backroom host rotation marker/);
+   await chmod(markerPath,0o600);
+  }
+  await rm(markerPath);
+  const target=join(root,'outside-marker');await writeFile(target,'rotation pending',{mode:0o600});
+  await symlink(target,markerPath);
+  await assert.rejects(()=>isHostIdentityRotationPending({filePath}),/Unsafe Backroom host rotation marker/);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+
