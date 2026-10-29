@@ -218,6 +218,10 @@ export function createBackroomHostServer({
       }
       try{
         const input=await readJson(request);
+        if(!input||typeof input!=='object'||Array.isArray(input)||
+          Object.keys(input).some(key=>!['sessionDigest','bindingId'].includes(key))){
+          writeJson(response,400,{error:'invalid_remote_wake_configuration'},cors);return;
+        }
         const status=wakeService.configure(input);
         writeJson(response,200,status,cors);
       }catch{
