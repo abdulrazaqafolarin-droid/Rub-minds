@@ -836,3 +836,145 @@ $revoke_binding$;
 
 revoke all on function public.revoke_backroom_input_binding(uuid,uuid) from public, anon, authenticated;
 grant execute on function public.revoke_backroom_input_binding(uuid,uuid) to service_role;
+
+
+-- Atomic grant activation/deactivation. These are private backend RPCs; a host
+-- authenticates at the Edge boundary and must never call the database directly.
+create or replace function public.activate_backroom_wake_grant(
+  p_host_id text,
+  p_session_digest text,
+  p_binding_id uuid,
+  p_grant_id uuid,
+  p_ttl_seconds integer
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $activate_wake$
+declare
+  v_binding public.backroom_input_bindings%rowtype;
+  v_now timestamptz := pg_catalog.clock_timestamp();
+begin
+  if p_host_id is null or p_session_digest is null or p_binding_id is null
+    or p_grant_id is null or p_ttl_seconds is null
+    or p_ttl_seconds < 60 or p_ttl_seconds > 900 then
+    raise exception 'Invalid Backroom wake grant activation';
+  end if;
+
+  select * into v_binding
+  from public.backroom_input_bindings b
+  where b.id = p_binding_id and b.host_id = p_host_id
+    and b.session_digest = p_session_digest and b.revoked_at is null
+  for update;
+
+  if not found then return false; end if;
+
+  -- Retry of the currently active grant is idempotent and does not extend TTL.
+  if v_binding.wake_enabled
+    and v_binding.wake_grant_id = p_grant_id
+    and v_binding.wake_expires_at > v_now then
+    return true;
+  end if;
+
+  -- A different active grant must not be overwritten until it is expired or
+  -- explicitly deactivated. This prevents racing consent grants from stealing
+  -- a binding from each other.
+  if v_binding.wake_enabled and v_binding.wake_grant_id is distinct from p_grant_id
+    and v_binding.wake_expires_at > v_now then
+    return false;
+  end if;
+
+  if not exists (
+    select 1 from public.backroom_hosts h
+    where h.host_id = p_host_id and h.owner_id = v_binding.owner_id
+      and h.revoked_at is null and h.expires_at > v_now
+  ) then return false; end if;
+
+  if not exists (
+    select 1 from public.participants p
+    where p.id = v_binding.participant_id and p.room_id = v_binding.room_id
+      and p.status in ('connected','active','autonomous')
+  ) then return false; end if;
+
+  if not exists (
+    select 1 from public.agent_connections ac
+    where ac.room_id = v_binding.room_id
+      and ac.participant_id = v_binding.participant_id
+      and ac.owner_id = v_binding.owner_id
+      and ac.revoked_at is null and ac.expires_at > v_now
+  ) then return false; end if;
+
+  if not exists (
+    select 1 from public.rub_minds_mcp_sessions ms
+    where ms.session_digest = p_session_digest
+      and ms.room_id = v_binding.room_id
+      and ms.participant_id = v_binding.participant_id
+      and ms.terminated_at is null and ms.expires_at > v_now
+      and ms.agent_credential_ciphertext is not null
+  ) then return false; end if;
+
+  update public.backroom_input_bindings
+  set wake_enabled = true, wake_grant_id = p_grant_id,
+      wake_last_revoked_grant_id = null, confirmed_at = v_now,
+      wake_expires_at = v_now + pg_catalog.make_interval(secs => p_ttl_seconds),
+      updated_at = v_now
+  where id = p_binding_id;
+
+  return true;
+end;
+$activate_wake$;
+
+revoke all on function public.activate_backroom_wake_grant(text,text,uuid,uuid,integer) from public, anon, authenticated;
+grant execute on function public.activate_backroom_wake_grant(text,text,uuid,uuid,integer) to service_role;
+
+create or replace function public.deactivate_backroom_wake_grant(
+  p_host_id text,
+  p_session_digest text,
+  p_binding_id uuid,
+  p_grant_id uuid
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $deactivate_wake$
+declare
+  v_changed integer;
+  v_now timestamptz := pg_catalog.clock_timestamp();
+begin
+  if p_host_id is null or p_session_digest is null or p_binding_id is null or p_grant_id is null then
+    raise exception 'Invalid Backroom wake grant deactivation';
+  end if;
+
+  update public.backroom_input_bindings
+  set wake_enabled = false, wake_last_revoked_grant_id = p_grant_id,
+      wake_grant_id = null, confirmed_at = null, wake_expires_at = null,
+      updated_at = v_now
+  where id = p_binding_id and host_id = p_host_id and session_digest = p_session_digest
+    and wake_grant_id = p_grant_id and wake_enabled = true and revoked_at is null;
+  get diagnostics v_changed = row_count;
+
+  if v_changed = 1 then
+    update public.backroom_wake_jobs
+    set state = 'cancelled', lease_owner = null, lease_token_hash = null,
+        lease_expires_at = null, last_error_code = 'authorization_denied',
+        updated_at = v_now
+    where binding_id = p_binding_id and state in ('pending','leased');
+    return true;
+  end if;
+
+  -- Idempotent confirmation only for the same last-deactivated grant. A stale
+  -- grant cannot revoke a newer activation because activation clears this ID.
+  return exists (
+    select 1 from public.backroom_input_bindings b
+    where b.id = p_binding_id and b.host_id = p_host_id
+      and b.session_digest = p_session_digest and b.revoked_at is null
+      and b.wake_enabled = false and b.wake_grant_id is null
+      and b.wake_last_revoked_grant_id = p_grant_id
+  );
+end;
+$deactivate_wake$;
+
+revoke all on function public.deactivate_backroom_wake_grant(text,text,uuid,uuid) from public, anon, authenticated;
+grant execute on function public.deactivate_backroom_wake_grant(text,text,uuid,uuid) to service_role;
