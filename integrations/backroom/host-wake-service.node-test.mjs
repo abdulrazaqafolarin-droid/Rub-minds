@@ -255,3 +255,67 @@ test('different grants cannot race the same binding while activation is pending'
   await service.stop();
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('two lost activation responses trigger grant-scoped cleanup before returning unknown failure',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'backroom-activation-unknown-'));
+ try{
+  const urls=[],payloads=[];let activationCalls=0,deactivationCalls=0;
+  const service=createHostWakeService({
+   identity:{hostId,hostToken},browserRuntime:runtime(),
+   journalDirectory:join(dir,'journal'),gatewayUrl:trustedUrl,
+   fetchImpl:async(url,options)=>{
+    urls.push(url);payloads.push(JSON.parse(options.body));
+    if(url.endsWith('/activate')){activationCalls++;throw new Error('simulated lost activation response');}
+    if(url.endsWith('/deactivate')){deactivationCalls++;return new Response(JSON.stringify({ok:true,deactivated:true}),{status:200});}
+    return new Response(JSON.stringify({ok:true,leases:[]}),{status:200});
+   }
+  });
+  service.configure({sessionDigest,bindingId,publishableKey});
+  const grantId='40000000-0000-4000-8000-000000000081';
+  const groupId='40000000-0000-4000-8000-000000000044';
+  const participantId='40000000-0000-4000-8000-000000000055';
+  const sessionId='40000000-0000-4000-8000-000000000066';
+  await assert.rejects(()=>service.activateAndStart({
+   grantId,expiresAt:Date.now()+300000,
+   scope:{hostId,bindingId,groupId,participantId,sessionId}
+  },{bindingId,roomId:groupId,participantId,sessionId}),/simulated lost activation response/);
+  assert.equal(activationCalls,2);
+  assert.equal(deactivationCalls,1);
+  assert.ok(payloads.filter((_,i)=>urls[i].endsWith('/activate')).every(p=>p.grantId===grantId));
+  assert.ok(payloads.filter((_,i)=>urls[i].endsWith('/deactivate')).every(p=>p.grantId===grantId));
+  assert.equal(service.status.bindings[0].polling,false);
+  assert.equal(service.status.bindings[0].consentActive,false);
+  assert.equal(service.status.bindings[0].deactivationPending,false);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
+test('if both activation and deactivation are unreachable, service preserves a deactivation-pending marker',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'backroom-activation-cleanup-pending-'));
+ try{
+  let activationCalls=0,deactivationCalls=0;
+  const service=createHostWakeService({
+   identity:{hostId,hostToken},browserRuntime:runtime(),
+   journalDirectory:join(dir,'journal'),gatewayUrl:trustedUrl,
+   fetchImpl:async(url)=>{
+    if(url.endsWith('/activate')){activationCalls++;throw new Error('activation transport down');}
+    if(url.endsWith('/deactivate')){deactivationCalls++;throw new Error('deactivation transport down');}
+    return new Response(JSON.stringify({ok:true,leases:[]}),{status:200});
+   }
+  });
+  service.configure({sessionDigest,bindingId,publishableKey});
+  const grantId='40000000-0000-4000-8000-000000000082';
+  const groupId='40000000-0000-4000-8000-000000000044';
+  const participantId='40000000-0000-4000-8000-000000000055';
+  const sessionId='40000000-0000-4000-8000-000000000066';
+  await assert.rejects(()=>service.activateAndStart({
+   grantId,expiresAt:Date.now()+300000,scope:{hostId,bindingId,groupId,participantId,sessionId}
+  },{bindingId,roomId:groupId,participantId,sessionId}),/activation transport down/);
+  assert.equal(activationCalls,2);
+  assert.equal(deactivationCalls,2);
+  assert.equal(service.status.bindings[0].polling,false);
+  assert.equal(service.status.bindings[0].consentActive,false);
+  assert.equal(service.status.bindings[0].deactivationPending,true);
+  const stopped=await service.stop(bindingId);
+  assert.equal(stopped.remotelyDeactivated,false);
+  assert.equal(deactivationCalls,4);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
