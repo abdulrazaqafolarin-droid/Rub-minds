@@ -606,8 +606,27 @@ export async function runBackroomHost({rotateIdentity=false}={}) {
   return instance;
 }
 
+export async function rotateBackroomHostIdentity() {
+  const identity=await rotateHostIdentity({
+    filePath:join(homedir(),".rub-minds","backroom","host-identity.json")
+  });
+  process.stdout.write([
+    "Rub Minds Backroom host identity rotated.",
+    `New host ID: ${identity.hostId}`,
+    `Hosted enrollment digest: ${identity.credentialDigest}`,
+    "The private 256-bit host credential remains in the private local identity file.",
+    "Start the host with: npm run backroom:host",
+    "Register this new host from the signed-in Rub Minds UI. The prior revoked host stays revoked.",
+    ""
+  ].join("\\n"));
+  return Object.freeze({hostId:identity.hostId,credentialDigest:identity.credentialDigest});
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  runBackroomHost({rotateIdentity:process.argv.includes("--rotate-identity")}).catch(error => {
+  const rotateOnly=process.argv.includes("--rotate-identity-only");
+  const action=rotateOnly ? rotateBackroomHostIdentity() :
+    runBackroomHost({rotateIdentity:process.argv.includes("--rotate-identity")});
+  action.catch(error => {
     process.stderr.write(`Backroom host failed to start: ${error.message}\n`);
     process.exitCode = 1;
   });
