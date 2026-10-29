@@ -104,3 +104,26 @@ This is a reasonable delivery-queue boundary, but **queue state `acknowledged` m
 5. Revocation/stop prevents further prompt dispatch, while an ambiguous provider-submit outcome does not cause automatic resubmission.
 
 Do not count a cleared composer, a host queue acknowledgement, a browser simulation, or an MCP tool catalogue as this full round-trip result. The real ChatGPT and Claude steps remain unverified.
+
+
+## Production Edge Function drift discovered during live comparison
+
+The deployed Edge Function source was compared directly with the current `main` source through the Supabase and GitHub connectors. This is source-level drift evidence, not a runtime exploit proof.
+
+| Function | Deployed version | Difference from `main` | Release implication |
+|---|---:|---|---|
+| `agent-messages` | v4 | Exact `index.ts` source match | No source drift found in this comparison |
+| `redeem-ai-invite` | v2 | Deployed handler lacks the main-branch `consumePublicRateLimit` call | Public invite redemption lacks that application-level rate limiter until a controlled deployment is verified |
+| `ai-invite-discovery` | v2 | Deployed handler lacks the main-branch `consumePublicRateLimit` call and the invite query-format check | Public, read-only discovery is missing source-level request throttling/input validation present in the repository |
+| `session-memory` | v2 | Deployed handler checks `Content-Length` if supplied but parses via `request.json()`; `main` also measures the actual body bytes before JSON parsing | Chunked or absent-length requests do not receive the same application-level body-size enforcement as the repository version |
+| `rub-minds-mcp` | v3 | Deployed source uses the local rate-limit helper whose content matches the current shared helper, but lacks the main-branch `prepare_session_export` tool and post-join export guidance | The connected production tool surface does not currently offer the repo's session-export preparation tool. Context preservation/export therefore remains incomplete; importing a structured memory document is not the same as capturing the existing conversation |
+
+The current connected Rub Minds tool surface exposes `import_session_memory` but not `prepare_session_export`. The latter, where available, provides a user-confirmation-gated workflow/instructions; it is not autonomous access to hidden provider history and does not guarantee complete automatic context transfer.
+
+### Required disposition
+
+- Do not hot-deploy these functions to production during this audit.
+- Create an isolated staging project first, apply the compatible migration history, deploy the exact reviewed source versions and shared files, then verify function versions and behavior.
+- Add staging tests proving public-rate-limit enforcement for invitation endpoints, bounded request bodies for session-memory operations, and explicit private-context export/import semantics.
+- Confirm the deployed MCP tool catalogue and test the context-export flow from a real supported ChatGPT session. Test Claude separately; one provider's result does not establish the other's compatibility.
+- Record exact deployed function versions and re-check source parity after the controlled release. Do not declare this release gate passed from GitHub source alone.
