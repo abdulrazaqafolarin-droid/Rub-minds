@@ -112,6 +112,16 @@ begin
     raise exception 'Active MCP session does not authorize this group participant';
   end if;
 
+  if p_ttl_seconds is null or p_ttl_seconds < 60 or p_ttl_seconds > 86400 then
+    raise exception 'Wake TTL must be between 60 and 86400 seconds';
+  end if;
+  if p_prompt is null or char_length(p_prompt) not between 13 and 12000
+    or pg_catalog.left(p_prompt, 12) <> '@RMconnects' || pg_catalog.chr(10) then
+    raise exception 'Invalid Backroom wake prompt';
+  end if;
+
+  v_prompt_digest := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_prompt, 'UTF8')), 'hex');
+
   -- Serialize queue admission per MCP session so concurrent inserts cannot bypass backpressure.
   perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(p_session_digest, 0));
 
@@ -130,7 +140,7 @@ begin
       or v_existing.target_identity_fingerprint is distinct from p_target_identity_fingerprint
       or v_existing.target_revision is distinct from p_target_revision
       or v_existing.event_id is distinct from p_event_id
-      or v_existing.prompt_digest is distinct from pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_prompt, 'UTF8')), 'hex') then
+      or v_existing.prompt_digest is distinct from v_prompt_digest then
       raise exception 'Wake idempotency key conflicts with a different request';
     end if;
     return pg_catalog.jsonb_build_object('job_id', v_existing.id, 'created', false, 'state', v_existing.state);
@@ -143,16 +153,6 @@ begin
   if v_pending_count >= 100 then
     raise exception 'Backroom wake queue is full for this session';
   end if;
-
-  if p_ttl_seconds is null or p_ttl_seconds < 60 or p_ttl_seconds > 86400 then
-    raise exception 'Wake TTL must be between 60 and 86400 seconds';
-  end if;
-  if p_prompt is null or char_length(p_prompt) not between 13 and 12000
-    or pg_catalog.left(p_prompt, 12) <> '@RMconnects' || pg_catalog.chr(10) then
-    raise exception 'Invalid Backroom wake prompt';
-  end if;
-
-  v_prompt_digest := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_prompt, 'UTF8')), 'hex');
 
   insert into public.backroom_wake_jobs (
     job_key, owner_id, room_id, participant_id, host_id, space_id, session_id,
