@@ -27,13 +27,14 @@ function parseOrigins(value) {
 
 function disabledBrowserRuntime() {
   const status = () => ({ running: false, pages: 0, capabilities: {
-    browserDraft: false, desktopAccessibility: false, androidAccessibility: false, terminal: false,
+    browserDraft: false, browserCanonicalWake: false, desktopAccessibility: false, androidAccessibility: false, terminal: false,
   } });
   const unavailable = async () => { throw new Error("browser_runtime_unavailable"); };
   return {
     status, stop: async () => status(), start: unavailable, openUrl: unavailable, listPages: async () => [],
     listTargets: async () => [], startSelection: unavailable, cancelSelection: async () => false, getSelection: async () => ({ state: "unavailable" }),
     registerSelectedTarget: unavailable, unregisterTarget: async () => false, draft: unavailable,
+    enableContinuousWake: unavailable, revokeContinuousWake: async () => false, wake: unavailable,
   };
 }
 function writeJson(response, status, body, corsHeaders = {}) {
@@ -254,6 +255,7 @@ export function createBackroomHostServer({
         }
         if (request.method === "POST" && [
           "/v1/browser/select", "/v1/browser/select/cancel", "/v1/browser/targets", "/v1/browser/targets/unregister", "/v1/browser/draft",
+          "/v1/browser/wake/grants", "/v1/browser/wake/grants/revoke", "/v1/browser/wake",
         ].includes(url.pathname)) {
           if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
             writeJson(response, 415, { error: "application_json_required" }, cors);
@@ -298,6 +300,54 @@ export function createBackroomHostServer({
               return;
             }
             writeJson(response, 201, await browser.registerSelectedTarget(input.pageId, input.roomId, input.attemptId), cors);
+            return;
+          }
+          if (url.pathname === "/v1/browser/wake/grants") {
+            if (input.confirmed !== true) {
+              writeJson(response, 403, { error: "explicit_continuous_wake_confirmation_required" }, cors);
+              return;
+            }
+            const id = /^[a-f0-9-]{36}$/i;
+            if (typeof input.targetId !== "string" || !id.test(input.targetId) ||
+              typeof input.roomId !== "string" || !id.test(input.roomId) ||
+              typeof input.participantId !== "string" || !id.test(input.participantId) ||
+              typeof input.sessionId !== "string" || !id.test(input.sessionId) ||
+              typeof input.bindingId !== "string" || !id.test(input.bindingId)) {
+              writeJson(response, 400, { error: "invalid_wake_scope" }, cors);
+              return;
+            }
+            const grant = await browser.enableContinuousWake({
+              targetId: input.targetId, roomId: input.roomId, participantId: input.participantId,
+              sessionId: input.sessionId, bindingId: input.bindingId, confirmed: true,
+              ...(input.ttlMs === undefined ? {} : { ttlMs: input.ttlMs }),
+              ...(input.maxPerMinute === undefined ? {} : { maxPerMinute: input.maxPerMinute }),
+            });
+            writeJson(response, 201, grant, cors);
+            return;
+          }
+          if (url.pathname === "/v1/browser/wake/grants/revoke") {
+            const id = /^[a-f0-9-]{36}$/i;
+            if (typeof input.grantId !== "string" || !id.test(input.grantId) ||
+              typeof input.targetId !== "string" || !id.test(input.targetId) ||
+              typeof input.roomId !== "string" || !id.test(input.roomId)) {
+              writeJson(response, 400, { error: "invalid_wake_grant_scope" }, cors);
+              return;
+            }
+            const revoked = await browser.revokeContinuousWake({ grantId: input.grantId, targetId: input.targetId, roomId: input.roomId });
+            writeJson(response, revoked ? 200 : 404, { revoked }, cors);
+            return;
+          }
+          if (url.pathname === "/v1/browser/wake") {
+            const id = /^[a-f0-9-]{36}$/i;
+            if (typeof input.grantId !== "string" || !id.test(input.grantId) ||
+              typeof input.targetId !== "string" || !id.test(input.targetId) ||
+              typeof input.roomId !== "string" || !id.test(input.roomId) ||
+              typeof input.eventId !== "string" || !id.test(input.eventId)) {
+              writeJson(response, 400, { error: "invalid_wake_request" }, cors);
+              return;
+            }
+            const result = await browser.wake(input.targetId, input.eventId, input.grantId, { roomId: input.roomId });
+            writeJson(response, result.state === "completed" ? 200 : 409, result, cors);
             return;
           }
           if (input.approved !== true) {
