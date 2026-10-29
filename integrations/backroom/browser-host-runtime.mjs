@@ -891,6 +891,14 @@ export class BrowserHostRuntime {
     return this.wakeAuthority.verify(approval?.grantId,context,{consume:false});
   }
 
+  /** Revoke the host-local grant associated with one hosted binding without needing a target ID. */
+  revokeWakeBinding(bindingId) {
+    if(!validId(bindingId))throw new TypeError("Invalid wake binding ID.");
+    const grantId=this.#remoteWakeGrants.get(bindingId);
+    this.#remoteWakeGrants.delete(bindingId);
+    if(!grantId)return false;
+    return this.wakeAuthority.revoke(grantId);
+  }
   async wake(targetId,eventId,grantId,{roomId}={}) {
     if(!validId(eventId))throw new TypeError("Invalid group event ID.");
     await this.listTargets();
