@@ -42,7 +42,7 @@ export function createMultiSurfaceExecutionService({hostId,permission,isConnecte
  if(typeof hostId!=='string'||!hostId.trim()||
     typeof permission!=='function'||typeof isConnected!=='function')
   throw new TypeError('Host identity and explicit permission/connection checks required');
- const registry=new TargetRegistry(),drivers=new Map();
+ const registry=new TargetRegistry(),drivers=new Map(),inFlight=new Set();
  let stopped=false;
  function resolve(targetId,command){
   if(stopped)throw new Error('Host automation stopped');
@@ -78,6 +78,9 @@ export function createMultiSurfaceExecutionService({hostId,permission,isConnecte
    if(approved!==true)throw new Error('Explicit approval required for this draft');
    const target=resolve(command?.targetId,command);
    requireCommand(command,target);
+   if(inFlight.has(target.id))throw new Error('Native draft already in progress for selected input');
+   inFlight.add(target.id);
+   try {
    const entry=drivers.get(target.id);
    const guard=new LocalExecutionGuard({
     host:{hostId,deviceLabel:'Backroom local runtime',
@@ -90,6 +93,7 @@ export function createMultiSurfaceExecutionService({hostId,permission,isConnecte
    const result=await guard.execute({command,target});
    return Object.freeze({state:result.state,submitted:result.state==='completed'?false:null,
      result:result.result??null,requiresReview:result.state!=='completed'});
+   } finally {inFlight.delete(target.id);}
   },
   revoke({targetId,roomId}={}){
    if(stopped)return false;
