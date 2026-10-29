@@ -6,6 +6,12 @@ import { TargetRegistry } from "./target-registry.mjs";
 import { BackroomDispatcher } from "./dispatcher.mjs";
 import { LocalExecutionGuard } from "./host-runtime.mjs";
 import { BrowserDraftAdapter } from "./browser-draft-adapter.mjs";
+import { BrowserCanonicalWakeAdapter } from "./browser-wake-adapter.mjs";
+import { WakeAuthorizationAuthority } from "./wake-authorization.mjs";
+import { approvalContext } from "./coordination-dispatch-bridge.mjs";
+import { buildCanonicalWakePrompt, validId } from "./coordination-core.mjs";
+
+const WAKE_PROVIDER_ORIGINS = new Set(["https://claude.ai","https://claude.com","https://chatgpt.com","https://chat.openai.com"]);
 
 const safeSiteUrl = value => {
   try {
@@ -234,14 +240,19 @@ export class BrowserHostRuntime {
     this.hostId = hostId;
     this.profileDir = profileDir;
     this.registry = new TargetRegistry();
+    this.wakeAuthority = new WakeAuthorizationAuthority();
     this.dispatcher = new BackroomDispatcher({
       registry: this.registry,
       adapter: { execute: async ({ command, target }) => {
         const binding = this.#bindings.get(target.id);
         if (!binding) throw Object.assign(new Error("Target unavailable"), { code: "BACKROOM_PREFLIGHT" });
-        return binding.guard.execute({ command, target });
+        const guard = command.operation === "wake" ? binding.wakeGuard : binding.guard;
+        if (!guard) throw Object.assign(new Error("Operation unavailable for this selected target"), { code: "BACKROOM_PREFLIGHT" });
+        return guard.execute({ command, target });
       }},
-      authorize: async () => true,
+      authorize: async command => command.operation === "wake"
+        ? this.wakeAuthority.verify(command.wakeGrantId, approvalContext(command), { consume: true })
+        : true,
     });
     this.chromiumProvider = chromiumProvider;
     this.headless = headless === true;
@@ -273,7 +284,9 @@ export class BrowserHostRuntime {
       context.on("close", () => {
         if (this.#context === context) {
           this.#context = null;
+          this.wakeAuthority.revokeAll();
           for (const binding of this.#bindings.values()) {
+            this.wakeAuthority.revokeForTarget(binding.target.id);
             try { this.registry.unregister(binding.target.id, { roomId: binding.target.roomId, hostId: this.hostId }); } catch {}
             try { binding.nodeHandle?.dispose().catch(() => {}); } catch {}
           }
@@ -324,6 +337,7 @@ export class BrowserHostRuntime {
         this.#selectionRooms.delete(id);
         for (const [targetId, binding] of this.#bindings) {
           if (binding.pageId === id) {
+            this.wakeAuthority.revokeForTarget(targetId);
             this.#bindings.delete(targetId);
             this.#targets.delete(targetId);
             try { this.registry.unregister(targetId, { roomId: binding.target.roomId, hostId: this.hostId }); } catch {}
@@ -336,7 +350,7 @@ export class BrowserHostRuntime {
   }
   status() {
     return Object.freeze({ running: this.running, pages: this.#pages.size,
-      capabilities: Object.freeze({ browserDraft: this.running, desktopAccessibility: false, androidAccessibility: false, terminal: false }) });
+      capabilities: Object.freeze({ browserDraft: this.running, browserCanonicalWake: this.running, desktopAccessibility: false, androidAccessibility: false, terminal: false }) });
   }
   async openUrl(value) {
     if (!this.#context) throw new Error("Start the managed browser first.");
@@ -665,6 +679,19 @@ export class BrowserHostRuntime {
         host: { hostId: this.hostId, deviceLabel: "Backroom local browser", surfaces: ["browser_tab"], operations: ["draft"] },
         adapter, permission: async () => true, isConnected: async () => this.#context !== null && !page.isClosed(),
       });
+      let wakeAdapter = null, wakeGuard = null;
+      if (WAKE_PROVIDER_ORIGINS.has(url.origin)) {
+        wakeAdapter = new BrowserCanonicalWakeAdapter({
+          page, origin: url.origin, path: url.pathname, search: url.search, hash: url.hash,
+          selector: boundSelector, appId: target.appId, sessionId: pageId,
+          identityFingerprint: target.identityFingerprint, nodeHandle: selectedNodeHandle,
+        });
+        wakeGuard = new LocalExecutionGuard({
+          host: { hostId: this.hostId, deviceLabel: "Backroom local provider wake", surfaces: ["browser_tab"], operations: ["wake"] },
+          adapter: wakeAdapter, permission: async () => true,
+          isConnected: async () => this.#context !== null && !page.isClosed(),
+        });
+      }
       const current = await adapter.probe({ target, operation: "draft" });
       if (!current.connected || !current.focused) throw new Error("Input must be visible, unique, and empty before registering the draft-only target.");
       const clearedSelection = await selectedNodeHandle.evaluate((node, expected) => {
@@ -685,11 +712,13 @@ export class BrowserHostRuntime {
       }
       this.registry.register(target);
       this.#targets.set(target.id, { target, pageId, title, site: url.hostname });
-      this.#bindings.set(target.id, { target, pageId, page, adapter, guard, marker, nodeHandle: selectedNodeHandle, baseSelector: selection.selector });
+      this.#bindings.set(target.id, { target, pageId, page, adapter, guard, wakeAdapter, wakeGuard, marker, nodeHandle: selectedNodeHandle, baseSelector: selection.selector });
       this.#selectionRooms.delete(pageId);
       retainedNodeHandle = true;
+      const wakeProbe = wakeAdapter ? await wakeAdapter.probe({ target, operation: "wake" }) : { connected: false };
       return { id: target.id, pageId, roomId: target.roomId, title, site: url.hostname,
-        surface: "browser_tab", operations: ["draft"], submittedAutomatically: false };
+        surface: "browser_tab", operations: wakeProbe.connected ? ["draft", "wake"] : ["draft"],
+        wakeAvailable: wakeProbe.connected === true, wakeRequiresExplicitGrant: true, submittedAutomatically: false };
     } finally {
       if (!retainedNodeHandle) {
         if (createdBindingMarker && marker) {
@@ -751,19 +780,78 @@ export class BrowserHostRuntime {
         await this.#clearBindingMarker(binding);
       }
     }
-    return [...this.#targets.values()].map(({ target, pageId, title, site }) => ({
-      id: target.id, pageId, roomId: target.roomId, title, site, surface: target.surface, operations: ["draft"],
-    }));
+    const output = [];
+    for (const { target, pageId, title, site } of this.#targets.values()) {
+      const binding = this.#bindings.get(target.id);
+      const wakeProbe = binding?.wakeAdapter ? await binding.wakeAdapter.probe({ target, operation: "wake" }) : { connected: false };
+      output.push({ id: target.id, pageId, roomId: target.roomId, title, site, surface: target.surface,
+        operations: wakeProbe.connected ? ["draft", "wake"] : ["draft"], wakeAvailable: wakeProbe.connected === true,
+        wakeRequiresExplicitGrant: true });
+    }
+    return output;
   }
   async unregisterTarget(targetId, roomId) {
     const binding = this.#bindings.get(targetId);
     if (!binding || binding.target.roomId !== roomId) return false;
+    this.wakeAuthority.revokeForTarget(targetId);
     this.#bindings.delete(targetId);
     this.#targets.delete(targetId);
     try { this.registry.unregister(targetId, { roomId: binding.target.roomId, hostId: this.hostId }); } catch {}
     await this.#clearBindingMarker(binding);
     return true;
   }
+
+  async enableContinuousWake({targetId,roomId,participantId,sessionId,bindingId,confirmed=false,ttlMs,maxPerMinute}={}) {
+    if (confirmed !== true) throw new Error("Explicit user confirmation is required to enable continuous wake.");
+    await this.listTargets();
+    const binding=this.#bindings.get(targetId);
+    if(!binding||!binding.wakeAdapter||!binding.wakeGuard)throw Object.assign(new Error("Canonical wake is unsupported for this selected provider target."),{status:409});
+    const target=binding.target;
+    if(roomId!==target.roomId||sessionId!==target.sessionId)throw Object.assign(new Error("Wake grant group/session does not match the selected target."),{status:409});
+    if(!validId(participantId)||!validId(bindingId))throw new TypeError("Authenticated participant and input-binding IDs are required.");
+    const probe=await binding.wakeAdapter.probe({target,operation:"wake"});
+    if(!probe.connected)throw Object.assign(new Error("Selected composer must be empty and have one verifiable send control before wake is enabled."),{status:409});
+    const grant=this.wakeAuthority.createGrant({
+      confirmed:true,hostId:this.hostId,groupId:roomId,participantId,sessionId,
+      spaceId:target.spaceId,bindingId,targetId:target.id,identityFingerprint:target.identityFingerprint,
+      targetRevision:target.revision,...(ttlMs===undefined?{}:{ttlMs}),...(maxPerMinute===undefined?{}:{maxPerMinute}),
+    });
+    return Object.freeze({grantId:grant.grantId,createdAt:grant.createdAt,expiresAt:grant.expiresAt,
+      maxPerMinute:grant.maxPerMinute,scope:grant.scope,mode:"canonical-trigger-only"});
+  }
+  revokeContinuousWake({grantId,targetId,roomId}={}) {
+    const status=this.wakeAuthority.status(grantId);
+    if(!status.active||status.scope.targetId!==targetId||status.scope.groupId!==roomId)return false;
+    return this.wakeAuthority.revoke(grantId);
+  }
+  async wake(targetId,eventId,grantId,{roomId}={}) {
+    if(!validId(eventId))throw new TypeError("Invalid group event ID.");
+    await this.listTargets();
+    const binding=this.#bindings.get(targetId);
+    if(!binding||!binding.wakeGuard)throw Object.assign(new Error("Selected canonical wake target is unavailable."),{status:404});
+    const target=binding.target,grant=this.wakeAuthority.status(grantId);
+    if(!grant.active)throw Object.assign(new Error("Continuous wake grant is missing, revoked, or expired."),{status:403});
+    const scope=grant.scope;
+    if(roomId!==scope.groupId||target.roomId!==scope.groupId||scope.targetId!==target.id||
+      scope.hostId!==this.hostId||scope.spaceId!==target.spaceId||scope.sessionId!==target.sessionId||
+      scope.identityFingerprint!==target.identityFingerprint||scope.targetRevision!==target.revision||
+      !isCanonicalWakePrompt(buildCanonicalWakePrompt(eventId),eventId)) {
+      throw Object.assign(new Error("Wake event or target does not match the explicit grant scope."),{status:409});
+    }
+    const command={id:"wake_"+randomUUID().replaceAll("-",""),eventId,roomId:scope.groupId,hostId:this.hostId,
+      spaceId:target.spaceId,sessionId:target.sessionId,identityFingerprint:target.identityFingerprint,
+      targetId:target.id,targetRevision:target.revision,operation:"wake",wakeGrantId:grantId,
+      text:buildCanonicalWakePrompt(eventId)};
+    this.dispatcher.enqueue(command);
+    try{
+      const outcome=await this.dispatcher.step(command.id,{approved:true});
+      return Object.freeze({state:outcome.state,reason:outcome.reason??null,result:outcome.result??null,
+        submitted:outcome.state==="completed"&&outcome.result?.submitted===true,triggerOnly:true});
+    }finally{
+      this.dispatcher.forget(command.id);
+    }
+  }
+
   async draft(targetId, text, { approved = false, roomId } = {}) {
     if (approved !== true) throw new Error("explicit draft approval required");
     if (typeof text !== "string" || !text.trim() || text.length > 10_000) throw new TypeError("draft text must be 1-10000 characters");
