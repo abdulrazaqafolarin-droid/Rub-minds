@@ -561,11 +561,10 @@ export function createBackroomHostServer({
   };
 }
 
-export async function runBackroomHost({rotateIdentity=false}={}) {
-  const identityOptions={filePath:join(homedir(), ".rub-minds", "backroom", "host-identity.json")};
-  const identity = rotateIdentity===true
-    ? await rotateHostIdentity(identityOptions)
-    : await loadOrCreateHostIdentity(identityOptions);
+export async function runBackroomHost() {
+  const identity = await loadOrCreateHostIdentity({
+    filePath:join(homedir(), ".rub-minds", "backroom", "host-identity.json")
+  });
   const hostId = identity.hostId;
   const { BrowserHostRuntime } = await import("../integrations/backroom/browser-host-runtime.mjs");
   const browserRuntime = new BrowserHostRuntime({ hostId });
@@ -577,7 +576,7 @@ export async function runBackroomHost({rotateIdentity=false}={}) {
   // A rotated host must never inherit the old identity's environment-bound input.
   const sessionDigest=rotateIdentity===true?undefined:process.env.BACKROOM_WAKE_SESSION_DIGEST;
   const bindingId=rotateIdentity===true?undefined:process.env.BACKROOM_WAKE_BINDING_ID;
-  const publishableKey=rotateIdentity===true?undefined:process.env.BACKROOM_WAKE_PUBLISHABLE_KEY;
+  const publishableKey=process.env.BACKROOM_WAKE_PUBLISHABLE_KEY;
   const configured=[sessionDigest,bindingId,publishableKey].filter(Boolean).length;
   if(configured!==0&&configured!==3)
     throw new Error("Headless wake configuration requires session digest, binding ID and public project API key together");
@@ -595,7 +594,6 @@ export async function runBackroomHost({rotateIdentity=false}={}) {
     `Host ID: ${address.hostId}`,
     `Hosted enrollment digest: ${identity.credentialDigest}`,
     "Private host credential is stored only in the local host identity file (not printed).",
-    ...(rotateIdentity===true?["Host identity rotated. Re-register this new host from Backroom; all previous host credentials remain revoked."]:[]),
     configured===3?"Remote wake binding configured; awaiting explicit local grant.":"Remote wake: not configured. Pair the browser to configure a hosted binding without restarting.",
     `Allowed web origins: ${parseOrigins(process.env.BACKROOM_ALLOWED_ORIGINS).join(", ")}`,
     "Pairing code (one use, expires in 10 minutes):",
@@ -616,7 +614,9 @@ export async function rotateBackroomHostIdentity() {
     filePath:join(homedir(),".rub-minds","backroom","host-identity.json")
   });
   process.stdout.write([
-    "Rub Minds Backroom host identity rotated.",
+    "Rub Minds Backroom local host identity rotated.",
+    "This only rotates the local file; it does NOT revoke the previous server registration.",
+    "Before rotation, permanently revoke the previous host in the signed-in Rub Minds UI.",
     `New host ID: ${identity.hostId}`,
     `Hosted enrollment digest: ${identity.credentialDigest}`,
     "The private 256-bit host credential remains in the private local identity file.",
@@ -630,7 +630,9 @@ export async function rotateBackroomHostIdentity() {
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const rotateOnly=process.argv.includes("--rotate-identity-only");
   const action=rotateOnly ? rotateBackroomHostIdentity() :
-    runBackroomHost({rotateIdentity:process.argv.includes("--rotate-identity")});
+    (process.argv.includes("--rotate-identity")
+      ? Promise.reject(new Error("Use npm run backroom:rotate-host after revoking the previous host in Rub Minds."))
+      : runBackroomHost());
   action.catch(error => {
     process.stderr.write(`Backroom host failed to start: ${error.message}\n`);
     process.exitCode = 1;
