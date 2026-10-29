@@ -563,3 +563,39 @@ test("paired host configuration rejects browser-selected credential URLs and acc
   assert.deepEqual(received,{bindingId,sessionDigest,publishableKey});
  },{wakeService});
 });
+
+
+test("paired host stop route requires auth and calls the wake service stop hook",async()=>{
+ let stopped=0;
+ const wakeService={configure:()=>({configured:true}),stop:async()=>{stopped++;return {stopped:true,remotelyDeactivated:true}}};
+ await withHost(async({base,origin})=>{
+  const denied=await fetch(base+"/v1/backroom/stop",{method:"POST",headers:{Origin:origin}});
+  assert.equal(denied.status,401);
+  assert.equal(stopped,0);
+  const token=(await (await pair(base,origin)).json()).sessionToken;
+  const response=await fetch(base+"/v1/backroom/stop",{method:"POST",
+   headers:{Origin:origin,Authorization:"Bearer "+token}});
+  assert.equal(response.status,200);
+  assert.deepEqual(await response.json(),{stopped:true,remoteDeactivationConfirmed:true});
+  assert.equal(stopped,1);
+ },{wakeService});
+});
+test("host configure route permits only scope plus public project key, never gateway override",async()=>{
+ let received=null;
+ const wakeService={configure(input){received=input;return {configured:true,bindingId:input.bindingId}},stop:async()=>{}};
+ const bindingId="12345678-1234-4234-9234-123456789078";
+ const sessionDigest="c".repeat(64);
+ const publishableKey="sb_publishable_exampleKey0123456789abcdef";
+ await withHost(async({base,origin})=>{
+  const token=(await (await pair(base,origin)).json()).sessionToken;
+  const headers={Origin:origin,Authorization:"Bearer "+token,"Content-Type":"application/json"};
+  const bad=await fetch(base+"/v1/backroom/configure",{method:"POST",headers,
+   body:JSON.stringify({gatewayUrl:"https://attacker.example/",bindingId,sessionDigest,publishableKey})});
+  assert.equal(bad.status,400);
+  assert.equal(received,null);
+  const good=await fetch(base+"/v1/backroom/configure",{method:"POST",headers,
+   body:JSON.stringify({bindingId,sessionDigest,publishableKey})});
+  assert.equal(good.status,200);
+  assert.deepEqual(received,{bindingId,sessionDigest,publishableKey});
+ },{wakeService});
+});
