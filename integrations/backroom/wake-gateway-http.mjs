@@ -1,0 +1,76 @@
+/**
+ * Portable HTTPS request boundary for the trusted hosted Backroom wake gateway.
+ * Mount only in an authenticated server-side environment with authoritative
+ * database lookup functions and the private service-role durable store.
+ *
+ * Deliberately no CORS, cookie auth, GET endpoints, or tokens in URLs.
+ */
+const routes=Object.freeze({
+  '/v1/backroom/wake/claim':'claim',
+  '/v1/backroom/wake/ack':'acknowledge',
+  '/v1/backroom/wake/retry':'retry',
+});
+const response=(status,body)=>new Response(JSON.stringify(body),{status,headers:{
+  'Content-Type':'application/json; charset=utf-8',
+  'Cache-Control':'no-store, max-age=0',
+  'X-Content-Type-Options':'nosniff'
+}});
+const bad=()=>response(401,{ok:false,reason:'unauthorized'});
+async function readSmallJson(request,maxBytes) {
+ const reader=request.body?.getReader();
+ if(!reader)throw new Error('Missing body');
+ const chunks=[];let bytes=0;
+ try {
+  while(true){
+   const {done,value}=await reader.read();
+   if(done)break;
+   bytes+=value.byteLength;
+   if(bytes>maxBytes)throw new Error('Payload too large');
+   chunks.push(value);
+  }
+ }finally{reader.releaseLock();}
+ const buffer=new Uint8Array(bytes);
+ let offset=0;
+ for(const chunk of chunks){buffer.set(chunk,offset);offset+=chunk.byteLength;}
+ const value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(buffer));
+ if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('Expected JSON object');
+ return value;
+}
+export function createWakeGatewayHttpHandler({gateway,maxBodyBytes=4096}={}) {
+ if(!gateway||['claim','acknowledge','retry'].some(key=>typeof gateway[key]!=='function'))
+  throw new TypeError('Authenticated wake gateway required');
+ if(!Number.isSafeInteger(maxBodyBytes)||maxBodyBytes<512||maxBodyBytes>16384)
+  throw new RangeError('Invalid body bound');
+ return async function handleWakeGatewayRequest(request) {
+  if(!(request instanceof Request))return response(400,{ok:false,reason:'invalid_request'});
+  const url=new URL(request.url);
+  if(url.protocol!=='https:'||url.search||url.hash||request.method!=='POST'||
+     !Object.hasOwn(routes,url.pathname))return response(404,{ok:false,reason:'not_found'});
+  if(request.headers.has('origin')||request.headers.has('cookie')||
+     request.headers.get('content-type')?.toLowerCase()!=='application/json')return bad();
+  const header=request.headers.get('authorization')??'';
+  const match=/^Bearer ([0-9a-f]{64})$/i.exec(header);
+  if(!match)return bad();
+  const contentLength=request.headers.get('content-length');
+  if(contentLength && (!/^\d+$/.test(contentLength)||Number(contentLength)>maxBodyBytes))return response(413,{ok:false,reason:'payload_too_large'});
+  let body;
+  try {body=await readSmallJson(request,maxBodyBytes);}catch{return response(400,{ok:false,reason:'invalid_body'});}
+  const method=routes[url.pathname];
+  const permitted=method==='claim'?
+    ['hostId','sessionDigest','bindingId','limit']:
+    method==='acknowledge'?
+      ['hostId','sessionDigest','bindingId','jobId','leaseToken','outcome']:
+      ['hostId','sessionDigest','bindingId','jobId','leaseToken','retryAfterSeconds','errorCode'];
+  if(Object.keys(body).some(key=>!permitted.includes(key)))return response(400,{ok:false,reason:'invalid_body'});
+  const input={...body,hostToken:match[1]};
+  try {
+   const result=await gateway[method](input);
+   if(!result?.ok)return bad();
+   return response(200,result);
+  }catch {
+   // Do not leak privileged query errors, host identity, lease token details,
+   // or raw provider diagnostics to an untrusted remote caller.
+   return response(503,{ok:false,reason:'service_unavailable'});
+  }
+ };
+}
