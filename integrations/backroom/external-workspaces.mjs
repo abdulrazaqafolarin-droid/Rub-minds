@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { lstat, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, join, relative, resolve, sep } from 'node:path';
 
@@ -42,7 +42,7 @@ function tarOctal(buffer,value,offset,length){
   if(valueText.length>length-1)throw new RangeError('Project archive numeric field overflow');
   Buffer.from(valueText.padStart(length-1,'0')+'\0','ascii').copy(buffer,offset);
 }
-function tarFileHeader(relPath,size){
+function tarFileHeader(relPath,size,mode=0o644){
   let leaf=relPath,prefix='';
   if(Buffer.byteLength(leaf,'utf8')>100){
     let found=false;
@@ -53,7 +53,7 @@ function tarFileHeader(relPath,size){
     if(!found)throw new RangeError('Project path is too long for safe POSIX tar format');
   }
   const h=Buffer.alloc(512);
-  tarString(h,leaf,0,100);tarOctal(h,0o644,100,8);tarOctal(h,0,108,8);tarOctal(h,0,116,8);
+  tarString(h,leaf,0,100);tarOctal(h,mode,100,8);tarOctal(h,0,108,8);tarOctal(h,0,116,8);
   tarOctal(h,size,124,12);tarOctal(h,0,136,12);h.fill(0x20,148,156);h[156]=0x30;
   tarString(h,'ustar\0',257,6);tarString(h,'00',263,2);tarString(h,'rub-minds',265,32);tarString(h,'backroom',297,32);tarString(h,prefix,345,155);
   let checksum=0;for(const byte of h)checksum+=byte;
@@ -71,7 +71,7 @@ export async function createSafeWorkspaceArchive(projectSourcePath,{maxFiles=500
   for(const [value,label,min,max] of [[maxFiles,'maxFiles',1,20000],[maxBytes,'maxBytes',1024,256*1024*1024],[maxSingleFileBytes,'maxSingleFileBytes',1,32*1024*1024]])if(!Number.isSafeInteger(value)||value<min||value>max)throw new RangeError('Invalid '+label);
   const requested=resolve(projectSourcePath),rootStat=await lstat(requested);
   if(!rootStat.isDirectory()||rootStat.isSymbolicLink())throw new Error('Project source must be a real directory, not a symlink');
-  const root=await import('node:fs/promises').then(fs=>fs.realpath(requested));
+  const root=await realpath(requested);
   const fsRoot=resolve(root, '..')===root;
   if(fsRoot||root===resolve(homedir()))throw new Error('Filesystem root or home directory cannot be synchronized as a project');
   const rootEntries=await readdir(root);
@@ -100,7 +100,7 @@ export async function createSafeWorkspaceArchive(projectSourcePath,{maxFiles=500
   if(!files.length)throw new Error('No safe project files were available to sync');
   const chunks=[];
   for(const file of files){
-    const header=tarFileHeader(file.rel,file.data.length);
+    const header=tarFileHeader(file.rel,file.data.length,file.mode);
     chunks.push(header,file.data);
     const padding=(512-(file.data.length%512))%512;
     if(padding)chunks.push(Buffer.alloc(padding));
