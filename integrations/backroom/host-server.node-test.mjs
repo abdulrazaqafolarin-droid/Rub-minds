@@ -403,11 +403,11 @@ test("canonical wake HTTP routes require pairing, explicit opt-in, exact scope a
   const grantResponse=await fetch(base+"/v1/browser/wake/grants",{method:"POST",headers:auth,body:JSON.stringify(request)});
   assert.equal(grantResponse.status,201);
   const grant=await grantResponse.json();assert.equal(grant.mode,"canonical-trigger-only");assert.equal(grant.scope.targetId,targetId);
-  const revokeWrong=await fetch(base+"/v1/browser/wake/grants/revoke",{method:"POST",headers:auth,body:JSON.stringify({grantId:grant.grantId,targetId,roomId:"22345678-1234-4234-9234-123456789014"})});
+  const revokeWrong=await fetch(base+"/v1/browser/wake/grants/revoke",{method:"POST",headers:auth,body:JSON.stringify({grantId:grant.grantId,targetId,roomId:"22345678-1234-4234-9234-123456789014",bindingId:request.bindingId})});
   assert.equal(revokeWrong.status,404);
   const wake=await fetch(base+"/v1/browser/wake",{method:"POST",headers:auth,body:JSON.stringify({grantId:grant.grantId,targetId,roomId,eventId:"42345678-1234-4234-9234-123456789010"})});
   assert.equal(wake.status,200);assert.equal((await wake.json()).triggerOnly,true);
-  const revoke=await fetch(base+"/v1/browser/wake/grants/revoke",{method:"POST",headers:auth,body:JSON.stringify({grantId:grant.grantId,targetId,roomId})});
+  const revoke=await fetch(base+"/v1/browser/wake/grants/revoke",{method:"POST",headers:auth,body:JSON.stringify({grantId:grant.grantId,targetId,roomId,bindingId:request.bindingId})});
   assert.equal(revoke.status,200);assert.equal((await revoke.json()).revoked,true);
  },{browserRuntime});
 });
@@ -448,7 +448,7 @@ test("local approval activates hosted wake, and unpair/revoke stop remote worker
  };
  const wakeService={
   activateAndStart:async()=>{calls.push("remote-activate");},
-  stop:async()=>{calls.push("poller-stop");}
+  stop:async binding=>{calls.push("poller-stop:"+String(binding??"all"));}
  };
  await withHost(async({base,origin})=>{
   const pairResponse=await pair(base,origin);
@@ -459,9 +459,9 @@ test("local approval activates hosted wake, and unpair/revoke stop remote worker
   assert.equal(response.status,201);
   assert.deepEqual(calls.slice(0,2),["local-grant","remote-activate"]);
   const revoke=await fetch(base+"/v1/browser/wake/grants/revoke",{method:"POST",headers:auth,
-   body:JSON.stringify({grantId,targetId,roomId})});
+   body:JSON.stringify({grantId,targetId,roomId,bindingId})});
   assert.equal(revoke.status,200);
-  assert.ok(calls.includes("poller-stop"));
+  assert.ok(calls.includes("poller-stop:"+bindingId));
   const unpair=await fetch(base+"/v1/unpair",{method:"POST",headers:auth});
   assert.equal(unpair.status,200);
   assert.ok(calls.filter(x=>x==="poller-stop").length>=2);
