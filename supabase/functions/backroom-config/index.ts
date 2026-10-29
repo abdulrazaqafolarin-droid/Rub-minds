@@ -162,6 +162,38 @@ Deno.serve(async req=>{
   ]);
   if([host,room,participant,connection,session].some(x=>x.error||!x.data))
    return json(403,{ok:false,reason:'binding_not_authorized'},origin);
+  const [existingSession,existingTarget]=await Promise.all([
+   db.from('backroom_input_bindings')
+    .select('id,owner_id,room_id,participant_id,host_id,session_digest,space_id,session_id,target_id,target_identity_fingerprint,target_revision,surface,locator_kind,locator_value,participation_mode,max_wakes_per_minute,wake_enabled')
+    .eq('room_id',input.roomId).eq('participant_id',input.participantId)
+    .eq('session_digest',input.sessionDigest).is('revoked_at',null).maybeSingle(),
+   db.from('backroom_input_bindings')
+    .select('id,owner_id,room_id,participant_id,host_id,session_digest,space_id,session_id,target_id,target_identity_fingerprint,target_revision,surface,locator_kind,locator_value,participation_mode,max_wakes_per_minute,wake_enabled')
+    .eq('host_id',input.hostId).eq('target_id',input.targetId)
+    .is('revoked_at',null).maybeSingle()
+  ]);
+  if(existingSession.error||existingTarget.error)
+   return json(503,{ok:false,reason:'service_unavailable'},origin);
+  if(existingSession.data&&existingTarget.data&&existingSession.data.id!==existingTarget.data.id)
+   return json(409,{ok:false,reason:'multiple_active_binding_conflict',requiresHostRevoke:true},origin);
+  const existing=existingSession.data??existingTarget.data;
+  if(existing){
+   const matches=existing.owner_id===ownerId&&existing.room_id===input.roomId&&
+    existing.participant_id===input.participantId&&existing.host_id===input.hostId&&
+    existing.session_digest===input.sessionDigest&&existing.space_id===input.spaceId&&
+    existing.session_id===input.sessionId&&existing.target_id===input.targetId&&
+    existing.target_identity_fingerprint===input.targetIdentityFingerprint&&
+    existing.target_revision===input.targetRevision&&existing.surface===input.surface&&
+    existing.locator_kind===input.locatorKind&&existing.locator_value===input.locatorValue&&
+    existing.participation_mode===input.participationMode&&
+    existing.max_wakes_per_minute===input.maxWakesPerMinute;
+   if(matches&&existing.wake_enabled!==true)
+    return json(200,{ok:true,bindingId:existing.id,wakeEnabled:false,
+      requiresLocalConsent:true,existing:true},origin);
+   return json(409,{ok:false,reason:existing.wake_enabled===true?
+     'existing_binding_active_revoke_first':'existing_binding_requires_revoke',
+     bindingId:existing.id,wakeEnabled:existing.wake_enabled},origin);
+  }
   const {data,error}=await db.from('backroom_input_bindings').insert({
    owner_id:ownerId,room_id:input.roomId,participant_id:input.participantId,
    host_id:input.hostId,session_digest:input.sessionDigest,
