@@ -317,11 +317,12 @@ begin
   insert into public.backroom_input_bindings(
     id,owner_id,room_id,participant_id,host_id,session_digest,space_id,session_id,target_id,
     target_identity_fingerprint,target_revision,surface,locator_kind,locator_value,participation_mode,
-    wake_enabled,wake_expires_at,max_wakes_per_minute,confirmed_at,revoked_at
+    wake_enabled,wake_grant_id,wake_expires_at,max_wakes_per_minute,confirmed_at,revoked_at
   ) values (
     v_trigger_binding,v_owner,v_trigger_room,v_trigger_ai,v_host_test,repeat('8',64),
     'space-trigger','session-trigger','target-trigger','fingerprint-trigger',1,'browser_tab','dom',
-    'composer-trigger','mentions',true,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null
+    'composer-trigger','mentions',true,'70000000-0000-4000-8000-000000000008'::uuid,
+    pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null
   );
 
   insert into public.messages(room_id,sender_id,body)
