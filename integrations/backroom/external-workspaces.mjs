@@ -52,7 +52,7 @@ export class CuaDesktopWorkspace {
       return [Object.freeze({
         elementToken, role, label,
         valueEmpty: typeof element.value === 'string' && element.value === '',
-        typeable: /(text|edit|input|document|textarea|combobox)/i.test(role) && typeof element.value === 'string' && element.value === '',
+        typeable: /(text[_ -]?(field|input|entry|area|editor|box)|textbox|textarea|editable[_ -]?text)/i.test(role) && typeof element.value === 'string' && element.value === '',
       })];
     });
     return Object.freeze({pid,windowId,groupId,sessionId,appName:window.appName,title:window.title,elementCount:elements.length,degraded:state.degraded===true,snapshotId:typeof state.snapshot_id==='string'?state.snapshot_id:null,elements:Object.freeze(elementOptions),state:'observed'});
