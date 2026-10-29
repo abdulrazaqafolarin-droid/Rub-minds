@@ -358,7 +358,7 @@ export default function BackroomApp() {
       setBrowserPages([]);setBrowserTargets([]);setSelectedBrowserTarget('');
       setHostedAiSessions([]);setSelectedHostedSession('');
       setHostedWakeBinding(null);setHostedWakeGrantId('');
-      setHostMessage('Remote host, all input bindings and queued wakes have been revoked. To use this computer again, rotate its local Backroom identity before registering a new host.');
+      setHostMessage('Remote host, all input bindings and queued wakes have been revoked. To reuse this computer, stop the Backroom host with Ctrl+C, run `npm run backroom:rotate-host`, then restart and pair the new host ID.');
     } catch(error) {
       setHostMessage(error instanceof Error?error.message:'Remote host revocation failed.');
     } finally {setHostBusy(false);}
