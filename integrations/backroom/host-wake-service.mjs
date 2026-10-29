@@ -53,16 +53,19 @@ export function createHostWakeService({
   const input={hostId:identity.hostId,bindingId:entry.scope.bindingId,
     sessionDigest:entry.scope.sessionDigest,grantId:entry.activeGrantId};
   try{
-   await entry.remote.deactivate(input);
+   const confirmed=await entry.remote.deactivate(input);
+   // false means this exact grant is no longer the active server-side grant
+   // (for example, the owner already revoked the binding). Do not misreport
+   // that as a confirmed write; local polling is stopped regardless.
    entry.activeGrantId=null;
-   return Object.freeze({stopped:true,remotelyDeactivated:true,bindingId:entry.scope.bindingId});
+   return Object.freeze({stopped:true,remotelyDeactivated:confirmed===true,bindingId:entry.scope.bindingId});
   }catch{
    // A response can be lost after the host's binding was already revoked. Repeat
    // the exact grant-bound request once. Polling is stopped before these retries.
    try{
-    await entry.remote.deactivate(input);
+    const confirmed=await entry.remote.deactivate(input);
     entry.activeGrantId=null;
-    return Object.freeze({stopped:true,remotelyDeactivated:true,bindingId:entry.scope.bindingId});
+    return Object.freeze({stopped:true,remotelyDeactivated:confirmed===true,bindingId:entry.scope.bindingId});
    }catch{
     return Object.freeze({stopped:true,remotelyDeactivated:false,bindingId:entry.scope.bindingId});
    }
