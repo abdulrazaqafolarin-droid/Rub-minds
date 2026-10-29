@@ -7,6 +7,6 @@ const operation = rotateOnly
   : runBackroomHost({ rotateIdentity: process.argv.includes("--rotate-identity") });
 
 operation.catch(error => {
-  process.stderr.write(`Backroom host failed to start: ${error.message}\\n`);
+  process.stderr.write(`Backroom host failed to start: ${error.message}\n`);
   process.exitCode = 1;
 });
