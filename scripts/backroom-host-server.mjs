@@ -572,10 +572,12 @@ export async function runBackroomHost({rotateIdentity=false}={}) {
   const gatewayUrl=process.env.BACKROOM_WAKE_GATEWAY_URL;
   const sessionDigest=process.env.BACKROOM_WAKE_SESSION_DIGEST;
   const bindingId=process.env.BACKROOM_WAKE_BINDING_ID;
-  const configured=[gatewayUrl,sessionDigest,bindingId].filter(Boolean).length;
-  if(configured!==0&&configured!==3)
-    throw new Error("Remote wake configuration requires gateway URL, session digest and binding ID together");
-  if(configured===3)wakeService.configure({gatewayUrl,sessionDigest,bindingId});
+  const configured=[sessionDigest,bindingId].filter(Boolean).length;
+  if(configured!==0&&configured!==2)
+    throw new Error("Remote wake configuration requires session digest and binding ID together");
+  // The gateway origin is fixed by host-wake-service or trusted local process
+  // configuration, never supplied to configure() by the browser.
+  if(configured===2)wakeService.configure({sessionDigest,bindingId});
   const instance = createBackroomHostServer({
     hostId,browserRuntime,enrollmentDigest:identity.credentialDigest,wakeService
   });
