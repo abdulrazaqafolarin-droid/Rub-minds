@@ -43,10 +43,12 @@ The queue migration now includes a **PostgreSQL AFTER INSERT trigger on `public.
 - Prove a real Claude/ChatGPT MCP round trip and real Windows/Android/PTY acceptance. Simulated driver tests do not establish provider compatibility or native mobile app embedding.
 
 ## Focused Node tests
-- \`npm run test:coordination\`
-- \`npm run test:durable-queue\`
-- \`npm run test:runtime\`
-- \`npm run test:backroom\`
+- `npm run test:multi-surface` — native/terminal draft-only safety contracts.
+- `npm run test:host-lifecycle` — host identity, consent lifecycle, remote transport and binding policy.
+- `npm run test:coordination`
+- `npm run test:durable-queue`
+- `npm run test:runtime`
+- `npm run test:backroom`
 
 ## Release gate
 Keep PR #48 in draft until the clean test suite, isolated SQL workflow, real provider round-trip, host authentication, target revalidation, offline recovery and device-level acceptance have passed. Only the explicitly opted-in canonical wake can submit; generic drafting remains draft-only. No production migration or production deployment is enabled by this PR.
