@@ -7,14 +7,17 @@
  */
 const routes=Object.freeze({
   '/v1/backroom/wake/activate':'activate',
+  '/v1/backroom/wake/deactivate':'deactivate',
   '/v1/backroom/wake/claim':'claim',
   '/v1/backroom/wake/ack':'acknowledge',
   '/v1/backroom/wake/retry':'retry',
   '/functions/v1/backroom-wake/activate':'activate',
+  '/functions/v1/backroom-wake/deactivate':'deactivate',
   '/functions/v1/backroom-wake/claim':'claim',
   '/functions/v1/backroom-wake/ack':'acknowledge',
   '/functions/v1/backroom-wake/retry':'retry',
   '/backroom-wake/activate':'activate',
+  '/backroom-wake/deactivate':'deactivate',
   '/backroom-wake/claim':'claim',
   '/backroom-wake/ack':'acknowledge',
   '/backroom-wake/retry':'retry',
