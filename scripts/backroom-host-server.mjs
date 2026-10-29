@@ -399,6 +399,7 @@ export function createBackroomHostServer({
         writeJson(response, 401, { error: "host_session_invalid" }, cors);
         return;
       }
+      await wakeService?.stop?.();
       writeJson(response, 200, { revoked: true }, cors);
       return;
     }
