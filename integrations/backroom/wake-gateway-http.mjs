@@ -6,6 +6,11 @@
  * Deliberately no CORS, cookie auth, GET endpoints, or tokens in URLs.
  */
 const routes=Object.freeze({
+  '/activate':'activate',
+  '/deactivate':'deactivate',
+  '/claim':'claim',
+  '/ack':'acknowledge',
+  '/retry':'retry',
   '/v1/backroom/wake/activate':'activate',
   '/v1/backroom/wake/deactivate':'deactivate',
   '/v1/backroom/wake/claim':'claim',
