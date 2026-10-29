@@ -10,7 +10,9 @@ const request=(url=path,{body=valid,authorization='Bearer '+token,headers={},met
 });
 function fixture() {
  const calls=[];
- const gateway={claim:async input=>{calls.push(['claim',input]);return {ok:true,leases:[]};},
+ const gateway={activate:async input=>{calls.push(['activate',input]);return {ok:true,activated:true};},
+  deactivate:async input=>{calls.push(['deactivate',input]);return {ok:true,deactivated:true};},
+  claim:async input=>{calls.push(['claim',input]);return {ok:true,leases:[]};},
   acknowledge:async input=>{calls.push(['ack',input]);return {ok:true,accepted:true};},
   retry:async input=>{calls.push(['retry',input]);return {ok:true,state:'pending'};}
  };
@@ -72,4 +74,22 @@ test('proxied function path aliases are exact and do not expose wildcard routes'
  const lookalike=await handler(request('https://example.test/backroom-wake/claim/extra'));
  assert.equal(lookalike.status,404);
  assert.equal(calls.length,1);
+});
+
+test('activation and deactivation routes accept only exact scoped grant operations',async()=>{
+ const {handler,calls}=fixture();
+ const grantId='40000000-0000-4000-8000-000000000066';
+ const activation=await handler(request('https://example.test/functions/v1/backroom-wake/activate',{body:{
+  hostId:valid.hostId,bindingId:valid.bindingId,sessionDigest:valid.sessionDigest,
+  grantId,ttlSeconds:300}}));
+ assert.equal(activation.status,200);
+ const revoked=await handler(request('https://example.test/functions/v1/backroom-wake/deactivate',{body:{
+  hostId:valid.hostId,bindingId:valid.bindingId,sessionDigest:valid.sessionDigest,grantId}}));
+ assert.equal(revoked.status,200);
+ assert.deepEqual(calls.map(x=>x[0]),['activate','deactivate']);
+ const extra=await handler(request('https://example.test/functions/v1/backroom-wake/deactivate',{body:{
+  hostId:valid.hostId,bindingId:valid.bindingId,sessionDigest:valid.sessionDigest,grantId,
+  gatewayUrl:'https://attacker.example'}}));
+ assert.equal(extra.status,400);
+ assert.equal(calls.length,2);
 });
