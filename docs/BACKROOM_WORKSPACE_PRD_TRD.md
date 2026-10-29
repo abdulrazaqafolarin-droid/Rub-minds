@@ -69,7 +69,7 @@ Once the project is synced, commands run only inside the dedicated local gVisor 
 1. npm run test:runtime, npm run test:backroom, npm run test:external-workspaces, npm run test:multi-surface and npm run build.
 2. Real CUA Driver session: list/select/observe exact window; approve text locally; type using a current snapshot token; verify value and no submission.
 3. Real CUA local sandbox: create with local gVisor runtime; approve exact argv; run smoke test without host shell; remove sandbox and verify no orphan.
-4. Real ARTEMIS device: diagnose; confirm serial; run allowlisted app task; inspect output/logs/trace; status and authorized stop; test disconnect.
+4. Real ARTEMIS device: run local readiness diagnostics (credential verification and device probing remain opt-in); confirm serial; run allowlisted app task; inspect output/logs/trace; status and authorized stop; test disconnect.
 5. Full Rub Minds flow: invite, AI join, message, event, approved local action, verified result, same-group summary, memory/reconnect; negative tests for revoked invite, duplicate event, stale target, offline runtime and cross-scope leakage.
 6. Human UX/auth recovery and native PostgreSQL 17 staging migration parity.
 7. Only after staging acceptance and explicit owner approval may a production deployment be considered.

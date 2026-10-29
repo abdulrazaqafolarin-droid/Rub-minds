@@ -18,6 +18,14 @@ test('rejects unknown request fields before runtime call',async()=>{
  let called=false;const x=f({body:{groupId:'g',sessionId:'s',deviceSerial:'device',appPackage:'com.example.app',task:'inspect',hostToken:'forbidden'},runtime:{runAndroidTask:async()=>{called=true;return {};}}});
  await handleWorkspaceHttpRequest({...x,url:new URL('http://127.0.0.1/v1/workspaces/android/tasks')});assert.equal(x.response.status,400);assert.equal(called,false);
 });
+
+test('ARTEMIS diagnostics route is authenticated, scoped, and carries no live credential-verification request',async()=>{
+ let seen;
+ const x=f({body:{groupId:'group-1',sessionId:'session-1'},runtime:{diagnoseAndroid:async input=>{seen=input;return {verdict:'ready',next_steps:[]};}}});
+ await handleWorkspaceHttpRequest({...x,url:new URL('http://127.0.0.1/v1/workspaces/android/diagnose')});
+ assert.equal(x.response.status,200);assert.equal(seen.groupId,'group-1');assert.equal(seen.sessionId,'session-1');assert.deepEqual(x.response.body,{verdict:'ready',next_steps:[]});
+});
+
 test('forwards group/session with Android task and returns trace as accepted',async()=>{
  let seen;const x=f({body:{groupId:'group-1',sessionId:'session-1',deviceSerial:'device',appPackage:'com.example.app',task:'Read current page'},runtime:{runAndroidTask:async input=>{seen=input;return {traceId:'trace-1',status:'running'};}}});
  assert.equal(await handleWorkspaceHttpRequest({...x,url:new URL('http://127.0.0.1/v1/workspaces/android/tasks')}),true);assert.equal(x.response.status,201);assert.equal(seen.groupId,'group-1');assert.equal(seen.sessionId,'session-1');assert.equal(x.response.body.traceId,'trace-1');

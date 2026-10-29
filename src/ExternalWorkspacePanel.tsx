@@ -31,6 +31,7 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
   const [androidJob,setAndroidJob]=useState<AndroidTask|null>(null);
   const [androidResult,setAndroidResult]=useState<AndroidStatus|null>(null);
   const [androidHierarchy,setAndroidHierarchy]=useState('');
+  const [androidDiagnosis,setAndroidDiagnosis]=useState<unknown>(null);
   const [terminalArgv,setTerminalArgv]=useState(runArgvDefault);
   const [terminalCwd,setTerminalCwd]=useState('/workspace/project');
   const [terminalPurpose,setTerminalPurpose]=useState('Run the selected Backroom verification command in the local sandbox');
@@ -51,7 +52,7 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
       if(!silent)setNotice(next.stopped?'External workspaces are stopped. Restart and pair the local host to use them.':'Workspace capabilities refreshed from the paired local host.');
     }catch(error){setRuntime(emptyRuntime);if(!silent)setNotice(error instanceof Error?error.message:'Could not read local runtime status.');}
   }
-  useEffect(()=>{setRuntime(emptyRuntime);setDesktopWindows([]);setSelectedWindowKey('');setObservation(null);setSelectedElementToken('');setAndroidHierarchy('');setTerminalResult(null);setTerminalDiff(null);void refreshRuntime(true);},[hostToken,roomId]);
+  useEffect(()=>{setRuntime(emptyRuntime);setDesktopWindows([]);setSelectedWindowKey('');setObservation(null);setSelectedElementToken('');setAndroidHierarchy('');setAndroidDiagnosis(null);setTerminalResult(null);setTerminalDiff(null);void refreshRuntime(true);},[hostToken,roomId]);
 
   async function action<T>(fn:()=>Promise<T>,success?:string):Promise<T|null>{
     setBusy(true);setNotice('');
@@ -79,6 +80,13 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
         ?'Draft outcome is uncertain. Inspect the actual application before any retry; no automatic retry was performed.'
         :'Draft result: '+result.state+'. Check the live app before retrying.');
   }
+  async function diagnoseAndroid(){
+    if(!scope){setNotice('First find and select a joined AI session for this group.');return;}
+    if(!window.confirm('Run ARTEMIS local environment/readiness diagnostics? This does not request live API-key verification or intentionally capture a screenshot. The host will also ask for local approval.'))return;
+    const result=await action(()=>hostApi<unknown>('/v1/workspaces/android/diagnose',{method:'POST',body:scope}));
+    if(result!==null){setAndroidDiagnosis(result);const verdict=typeof result==='object'&&result!==null&&'verdict' in result?String((result as {verdict?:unknown}).verdict):'returned';setNotice('ARTEMIS diagnostics '+verdict+'. Review the local readiness report before running a device task.');}
+  }
+
   async function inspectAndroid(){
     if(!scope||!deviceSerial.trim()||!appPackage.trim()){setNotice('Choose a joined AI session, device serial and app package; both Android identifiers must be allowlisted on the host.');return;}
     const result=await action(()=>hostApi<AndroidHierarchy>('/v1/workspaces/android/observe',{method:'POST',body:{...scope,deviceSerial:deviceSerial.trim(),appPackage:appPackage.trim()}}),'Android hierarchy received locally. It has not been written to group memory.');
@@ -166,9 +174,10 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
           <label htmlFor="br-android-device">Device serial (allowlisted)</label><input id="br-android-device" value={deviceSerial} onChange={e=>setDeviceSerial(e.target.value)} placeholder="Exact adb serial" autoCapitalize="none" disabled={busy}/>
           <label htmlFor="br-android-package">App package (allowlisted)</label><input id="br-android-package" value={appPackage} onChange={e=>setAppPackage(e.target.value)} placeholder="com.example.app" autoCapitalize="none" disabled={busy}/>
           <label htmlFor="br-android-task">Task instruction</label><textarea id="br-android-task" rows={3} maxLength={3500} value={androidTask} onChange={e=>setAndroidTask(e.target.value)} disabled={busy}/>
-          <div className="br-external-actions"><button type="button" className="br-secondary" disabled={busy||!scope||!deviceSerial.trim()||!appPackage.trim()} onClick={()=>void inspectAndroid()}><Eye size={14}/> Inspect hierarchy</button><button type="button" className="br-primary" disabled={busy||!scope} onClick={()=>void runAndroid()}><Play size={14}/> Start ARTEMIS task</button></div>
+          <div className="br-external-actions"><button type="button" className="br-secondary" disabled={busy||!scope} onClick={()=>void diagnoseAndroid()}><Activity size={14}/> Diagnose ARTEMIS</button><button type="button" className="br-secondary" disabled={busy||!scope||!deviceSerial.trim()||!appPackage.trim()} onClick={()=>void inspectAndroid()}><Eye size={14}/> Inspect hierarchy</button><button type="button" className="br-primary" disabled={busy||!scope} onClick={()=>void runAndroid()}><Play size={14}/> Start ARTEMIS task</button></div>
           {androidJob&&<div className="br-task-result"><b>Trace: {androidJob.traceId}</b><span>{jobMatchesScope?'Bound to current group/session':'Belongs to the group/session selected at launch'}</span><div className="br-external-actions"><button className="br-secondary" disabled={busy||!jobMatchesScope} onClick={()=>void androidStatus()}>Check status</button><button className="br-danger-action" disabled={busy||!jobMatchesScope} onClick={()=>void stopAndroid()}><Square size={13}/> Request stop</button></div></div>}
           {androidResult&&<pre className="br-runtime-output">{JSON.stringify(androidResult,null,2)}</pre>}
+          {androidDiagnosis!==null&&<><label>Local ARTEMIS readiness report</label><pre className="br-runtime-output">{JSON.stringify(androidDiagnosis,null,2)}</pre></>}
           {androidHierarchy&&<><label>Local-only UI hierarchy</label><pre className="br-runtime-output">{androidHierarchy}</pre></>}
         </>}
       </section>

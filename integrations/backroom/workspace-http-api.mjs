@@ -3,6 +3,7 @@ const ALLOWED={
  '/v1/workspaces/desktop/windows':['groupId','sessionId'],
  '/v1/workspaces/desktop/observe':['pid','windowId','groupId','sessionId'],
  '/v1/workspaces/desktop/draft':['pid','windowId','elementToken','text','expectedAppName','expectedTitle','groupId','sessionId'],
+ '/v1/workspaces/android/diagnose':['groupId','sessionId'],
  '/v1/workspaces/android/observe':['deviceSerial','appPackage','groupId','sessionId'],
  '/v1/workspaces/android/tasks':['deviceSerial','appPackage','task','groupId','sessionId'],
  '/v1/workspaces/android/task-status':['traceId','deviceSerial','groupId','sessionId'],
@@ -40,6 +41,7 @@ export async function handleWorkspaceHttpRequest({request,response,url,authority
    case '/v1/workspaces/desktop/windows':result={windows:await workspaceRuntime.listDesktopWindows(input)};break;
    case '/v1/workspaces/desktop/observe':result=await workspaceRuntime.observeDesktop(input);break;
    case '/v1/workspaces/desktop/draft':result=await workspaceRuntime.draftDesktop(input);status=200;break;
+   case '/v1/workspaces/android/diagnose':result=await workspaceRuntime.diagnoseAndroid(input);break;
    case '/v1/workspaces/android/observe':result=await workspaceRuntime.observeAndroid(input);break;
    case '/v1/workspaces/android/tasks':result=await workspaceRuntime.runAndroidTask(input);status=201;break;
    case '/v1/workspaces/android/task-status':result=await workspaceRuntime.androidTaskStatus(input);break;
