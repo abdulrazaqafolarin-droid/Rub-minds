@@ -48,6 +48,13 @@ export function createRemoteWakeStore({baseUrl,hostToken,fetchImpl=fetch,verifyL
    if(typeof result.activated!=='boolean')throw new Error('Invalid wake activation result');
    return result.activated;
   },
+  async deactivate({hostId,sessionDigest,bindingId,grantId}={}){
+   const scope=checkScope({hostId,sessionDigest,bindingId});
+   if(!UUID.test(grantId??''))throw new TypeError('Invalid remote wake grant ID');
+   const result=await post('deactivate',{...scope,grantId});
+   if(typeof result.deactivated!=='boolean')throw new Error('Invalid remote wake deactivation result');
+   return result.deactivated;
+  },
   async claim({hostId,sessionDigest,bindingId,limit=5}={}){
    const scope=checkScope({hostId,sessionDigest,bindingId});
    if(!Number.isSafeInteger(limit)||limit<1||limit>20)throw new RangeError('Invalid remote claim limit');
