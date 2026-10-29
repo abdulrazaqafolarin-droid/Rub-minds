@@ -35,8 +35,8 @@ test('wrong scope, non-canonical prompt digest, wrong operation and invalid IDs 
 });
 test('rate limit is bounded per grant and resumes after rolling window',()=>{
  let now=1_000_000;
- const auth=new WakeAuthorizationAuthority({now:()=>now,maxPerMinute:2,maxGrantMs:60_000});
- const grant=auth.createGrant({...scope,confirmed:true,ttlMs:60_000});
+ const auth=new WakeAuthorizationAuthority({now:()=>now,maxPerMinute:2,maxGrantMs:300_000});
+ const grant=auth.createGrant({...scope,confirmed:true,ttlMs:300_000});
  assert.equal(auth.verify(grant.grantId,context({commandId:'cmd-1'})),true);
  assert.equal(auth.verify(grant.grantId,context({commandId:'cmd-2'})),true);
  assert.equal(auth.verify(grant.grantId,context({commandId:'cmd-3'})),false);
