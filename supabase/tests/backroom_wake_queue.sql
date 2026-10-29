@@ -329,21 +329,31 @@ begin
   select count(*) into v_count from public.backroom_wake_jobs where room_id=v_trigger_room and participant_id=v_trigger_ai;
   if v_count <> 1 then raise exception 'AI messages must never wake the same participant'; end if;
 
+  -- Whole-token mention validation must reject email fragments but continue to later valid mentions.
+  insert into public.messages(room_id,sender_id,body)
+  values (v_trigger_room,v_trigger_human,'email@TestAI must not match a mention');
+  select count(*) into v_count from public.backroom_wake_jobs where room_id=v_trigger_room and participant_id=v_trigger_ai;
+  if v_count <> 1 then raise exception 'A mention embedded in an email fragment must be ignored'; end if;
+  insert into public.messages(room_id,sender_id,body)
+  values (v_trigger_room,v_trigger_human,'email@TestAI followed by a valid @TestAI mention');
+  select count(*) into v_count from public.backroom_wake_jobs where room_id=v_trigger_room and participant_id=v_trigger_ai;
+  if v_count <> 2 then raise exception 'A later whole-name mention must be found after an invalid occurrence'; end if;
+
   update public.backroom_input_bindings set participation_mode='smart' where id=v_trigger_binding;
   insert into public.messages(room_id,sender_id,body)
   values (v_trigger_room,v_trigger_human,'A regular smart-mode update');
   select count(*) into v_count from public.backroom_wake_jobs where room_id=v_trigger_room and participant_id=v_trigger_ai;
-  if v_count <> 2 then raise exception 'Smart mode must enqueue unmentioned human messages'; end if;
+  if v_count <> 3 then raise exception 'Smart mode must enqueue unmentioned human messages'; end if;
 
   update public.backroom_input_bindings set participation_mode='task' where id=v_trigger_binding;
   insert into public.messages(room_id,sender_id,body)
   values (v_trigger_room,v_trigger_human,'Task mode must wait for task events');
   select count(*) into v_count from public.backroom_wake_jobs where room_id=v_trigger_room and participant_id=v_trigger_ai;
-  if v_count <> 2 then raise exception 'Task mode must not react to ordinary message inserts'; end if;
+  if v_count <> 3 then raise exception 'Task mode must not react to ordinary message inserts'; end if;
 
   -- The per-binding limiter caps six wakes/minute, while a seventh message still commits.
   update public.backroom_input_bindings set participation_mode='mentions' where id=v_trigger_binding;
-  for i in 1..4 loop
+  for i in 1..3 loop
     insert into public.messages(room_id,sender_id,body)
     values (v_trigger_room,v_trigger_human,'@TestAI additional wake '||i::text);
   end loop;
