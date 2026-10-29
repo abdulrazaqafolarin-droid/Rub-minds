@@ -50,7 +50,7 @@ Deno.serve(async req=>{
   }});
  }
  const parsed=new URL(req.url);
- if(req.method!=='POST'||parsed.search||parsed.hash||!['/functions/v1/backroom-config/host','/functions/v1/backroom-config/binding','/functions/v1/backroom-config/sessions','/functions/v1/backroom-config/revoke-host','/functions/v1/backroom-config/revoke-binding','/backroom-config/host','/backroom-config/binding','/backroom-config/sessions','/backroom-config/revoke-host','/backroom-config/revoke-binding'].includes(parsed.pathname))
+ if(req.method!=='POST'||parsed.search||parsed.hash||!['/functions/v1/backroom-config/host','/functions/v1/backroom-config/binding','/functions/v1/backroom-config/sessions','/functions/v1/backroom-config/revoke-host','/functions/v1/backroom-config/revoke-binding','/backroom-config/host','/backroom-config/binding','/backroom-config/sessions','/backroom-config/revoke-host','/backroom-config/revoke-binding','/host','/binding','/sessions','/revoke-host','/revoke-binding'].includes(parsed.pathname))
   return json(404,{ok:false,reason:'not_found'},origin);
  if(req.headers.get('content-type')?.toLowerCase()!=='application/json')
   return json(415,{ok:false,reason:'unsupported_type'},origin);
