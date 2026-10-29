@@ -13,11 +13,11 @@ create table if not exists public.backroom_wake_jobs (
   target_id text not null check (char_length(btrim(target_id)) between 1 and 128),
   target_identity_fingerprint text not null check (char_length(btrim(target_identity_fingerprint)) between 1 and 512),
   target_revision integer not null check (target_revision > 0),
-  event_id text not null check (char_length(btrim(event_id)) between 1 and 256),
+  event_id text not null check (event_id ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$'),
   operation text not null default 'wake' check (operation = 'wake'),
   prompt text not null check (
     char_length(prompt) between 13 and 12000
-    and pg_catalog.left(prompt, 12) = '@RMconnects' || pg_catalog.chr(10)
+    and prompt = '@RMconnects' || pg_catalog.chr(10) || 'Event: ' || event_id || pg_catalog.chr(10) || 'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.'
   ),
   prompt_digest text not null check (prompt_digest ~ '^[0-9a-f]{64}$'),
   state text not null default 'pending' check (
@@ -98,7 +98,7 @@ begin
     or p_binding_id is null or char_length(btrim(p_binding_id)) not between 1 and 128
     or p_target_id is null or char_length(btrim(p_target_id)) not between 1 and 128
     or p_target_identity_fingerprint is null or char_length(btrim(p_target_identity_fingerprint)) not between 1 and 512
-    or p_event_id is null or char_length(btrim(p_event_id)) not between 1 and 256
+    or p_event_id is null or p_event_id !~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$'
     or p_target_revision is null or p_target_revision < 1 then
     raise exception 'Invalid Backroom target binding';
   end if;
@@ -116,7 +116,7 @@ begin
     raise exception 'Wake TTL must be between 60 and 86400 seconds';
   end if;
   if p_prompt is null or char_length(p_prompt) not between 13 and 12000
-    or pg_catalog.left(p_prompt, 12) <> '@RMconnects' || pg_catalog.chr(10) then
+    or p_prompt <> '@RMconnects' || pg_catalog.chr(10) || 'Event: ' || p_event_id || pg_catalog.chr(10) || 'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.' then
     raise exception 'Invalid Backroom wake prompt';
   end if;
 
