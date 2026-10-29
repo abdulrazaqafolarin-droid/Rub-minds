@@ -2,6 +2,11 @@
 do $test$
 declare
   v_owner uuid := '20000000-0000-0000-0000-000000000099';
+  v_trigger_room uuid := '10000000-0000-4000-8000-000000000098';
+  v_trigger_ai uuid := '30000000-0000-4000-8000-000000000098';
+  v_trigger_human uuid := '30000000-0000-4000-8000-000000000097';
+  v_trigger_binding uuid := '60000000-0000-4000-8000-000000000008';
+  v_trigger_message uuid;
   v_room uuid := '10000000-0000-0000-0000-000000000099';
   v_participant uuid := '30000000-0000-0000-0000-000000000099';
   v_session_digest text := repeat('b',64);
@@ -275,5 +280,60 @@ begin
   if v_purge_count < 100 then raise exception 'Terminal retention purge should delete at least 100 old jobs'; end if;
   select count(*) into v_count from public.backroom_wake_jobs where session_digest=repeat('7',64);
   if v_count <> 0 then raise exception 'Purge must remove old terminal queue records'; end if;
+  -- Real message inserts create one canonical wake only for a matching, consented binding.
+  insert into public.rooms(id,owner_id,title)
+  values (v_trigger_room,v_owner,'Wake trigger integration room');
+  insert into public.participants(id,room_id,user_id,display_name,kind,status)
+  values
+    (v_trigger_ai,v_trigger_room,null,'TestAI','external_agent','connected'),
+    (v_trigger_human,v_trigger_room,v_owner,'TestHuman','human','connected');
+  insert into public.agent_connections(room_id,participant_id,owner_id,credential_digest,expires_at,revoked_at)
+  values (v_trigger_room,v_trigger_ai,v_owner,repeat('8',64),pg_catalog.clock_timestamp()+interval '1 hour',null);
+  insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,room_id,participant_id,expires_at,terminated_at)
+  values (repeat('8',64),'ci-ciphertext-trigger',v_trigger_room,v_trigger_ai,pg_catalog.clock_timestamp()+interval '1 hour',null);
+  insert into public.backroom_input_bindings(
+    id,owner_id,room_id,participant_id,host_id,session_digest,space_id,session_id,target_id,
+    target_identity_fingerprint,target_revision,surface,locator_kind,locator_value,participation_mode,
+    wake_enabled,wake_expires_at,max_wakes_per_minute,confirmed_at,revoked_at
+  ) values (
+    v_trigger_binding,v_owner,v_trigger_room,v_trigger_ai,v_host_test,repeat('8',64),
+    'space-trigger','session-trigger','target-trigger','fingerprint-trigger',1,'browser_tab','dom',
+    'composer-trigger','mentions',true,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null
+  );
+
+  insert into public.messages(room_id,sender_id,body)
+  values (v_trigger_room,v_trigger_human,'Hey @TestAI, can you help?')
+  returning id into v_trigger_message;
+  select count(*) into v_count from public.backroom_wake_jobs
+    where room_id=v_trigger_room and participant_id=v_trigger_ai and event_id=v_trigger_message::text;
+  if v_count <> 1 then raise exception 'A matching @mention must enqueue exactly one wake'; end if;
+  if (select prompt from public.backroom_wake_jobs where room_id=v_trigger_room and event_id=v_trigger_message::text)
+    <> '@RMconnects'||pg_catalog.chr(10)||'Event: '||v_trigger_message::text||pg_catalog.chr(10)||
+       'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.' then
+    raise exception 'Message trigger must enqueue only the canonical prompt, not message body';
+  end if;
+
+  insert into public.messages(room_id,sender_id,body)
+  values (v_trigger_room,v_trigger_human,'A regular unmentioned update');
+  select count(*) into v_count from public.backroom_wake_jobs where room_id=v_trigger_room and participant_id=v_trigger_ai;
+  if v_count <> 1 then raise exception 'Mentions mode must ignore unaddressed messages'; end if;
+
+  insert into public.messages(room_id,sender_id,body)
+  values (v_trigger_room,v_trigger_ai,'@TestAI this is my own response');
+  select count(*) into v_count from public.backroom_wake_jobs where room_id=v_trigger_room and participant_id=v_trigger_ai;
+  if v_count <> 1 then raise exception 'AI messages must never wake the same participant'; end if;
+
+  update public.backroom_input_bindings set participation_mode='smart' where id=v_trigger_binding;
+  insert into public.messages(room_id,sender_id,body)
+  values (v_trigger_room,v_trigger_human,'A regular smart-mode update');
+  select count(*) into v_count from public.backroom_wake_jobs where room_id=v_trigger_room and participant_id=v_trigger_ai;
+  if v_count <> 2 then raise exception 'Smart mode must enqueue unmentioned human messages'; end if;
+
+  update public.backroom_input_bindings set participation_mode='task' where id=v_trigger_binding;
+  insert into public.messages(room_id,sender_id,body)
+  values (v_trigger_room,v_trigger_human,'Task mode must wait for task events');
+  select count(*) into v_count from public.backroom_wake_jobs where room_id=v_trigger_room and participant_id=v_trigger_ai;
+  if v_count <> 2 then raise exception 'Task mode must not react to ordinary message inserts'; end if;
+
 end;
 $test$;
