@@ -684,7 +684,7 @@ export class BrowserHostRuntime {
       if (WAKE_PROVIDER_ORIGINS.has(url.origin)) {
         wakeAdapter = new BrowserCanonicalWakeAdapter({
           page, origin: url.origin, path: url.pathname, search: url.search, hash: url.hash,
-          selector: boundSelector, appId: target.appId, sessionId: pageId,
+          selector: boundSelector, verificationSelector: selection.selector, appId: target.appId, sessionId: pageId,
           identityFingerprint: target.identityFingerprint, nodeHandle: selectedNodeHandle,
         });
         wakeGuard = new LocalExecutionGuard({
