@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
 import { McpStdioClient } from './mcp-stdio-client.mjs';
-import { ArtemisAndroidWorkspace, CuaDesktopWorkspace, CuaSandboxTerminalWorkspace, createExternalWorkspaceService } from './external-workspaces.mjs';
+import { ArtemisAndroidWorkspace, CuaDesktopWorkspace, CuaSandboxTerminalWorkspace, createExternalWorkspaceService, createSafeWorkspaceArchive } from './external-workspaces.mjs';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const names = values => values.map(name => ({ name }));
 class FakeMcp {
@@ -19,6 +22,31 @@ class FakeChild extends EventEmitter {
   }
   kill(){this.killed=true;this.exitCode=0;queueMicrotask(()=>this.emit('exit',0,null));return true;}
 }
+
+async function projectFixture(){
+ const root=await mkdtemp(join(tmpdir(),'rm-workspace-fixture-'));
+ await mkdir(join(root,'src'),{recursive:true});
+ await writeFile(join(root,'package.json'),'{"name":"backroom-fixture","version":"1.0.0"}\n');
+ await writeFile(join(root,'README.md'),'Fixture project.\n');
+ await writeFile(join(root,'src','index.js'),'export const safe=true;\n');
+ await writeFile(join(root,'.env'),'OPENAI_API_KEY=sk-proj-abcdef0123456789abcdef0123456789abcdef0123456789\n');
+ await mkdir(join(root,'.git'),{recursive:true});await writeFile(join(root,'.git','config'),'private git metadata');
+ await mkdir(join(root,'node_modules','fixture'),{recursive:true});await writeFile(join(root,'node_modules','fixture','index.js'),'dependency file');
+ await writeFile(join(root,'service-account.json'),'{"private_key":"never copied"}');
+ return root;
+}
+function tarNames(archive){
+ const names=[];let offset=0;
+ while(offset+512<=archive.length){
+  const h=archive.subarray(offset,offset+512);if(h.every(byte=>byte===0))break;
+  const readField=(start,end)=>h.subarray(start,end).toString('utf8').replace(/\0.*$/s,'');
+  const name=readField(0,100),prefix=readField(345,500),sizeText=readField(124,136).trim();
+  const full=prefix?prefix+'/'+name:name;names.push(full);
+  const size=sizeText?parseInt(sizeText,8):0;offset+=512+Math.ceil(size/512)*512;
+ }
+ return names;
+}
+
 function fakeSpawn(results,seen){return (executable,args,options)=>{seen.push({executable,args,options});const child=new EventEmitter();child.stdout=new PassThrough();child.stderr=new PassThrough();child.exitCode=null;child.killed=false;child.kill=()=>{child.killed=true;return true;};queueMicrotask(()=>{const r=results.shift()??{code:0,stdout:'ok',stderr:''};if(r.stdout)child.stdout.write(r.stdout);if(r.stderr)child.stderr.write(r.stderr);child.exitCode=r.code;child.emit('close',r.code,null);});return child;};}
 
 test('MCP stdio client initializes and calls only advertised tools without shell or ambient credentials',async()=>{
@@ -80,17 +108,43 @@ test('ARTEMIS requires device/package allowlists, explicit approval and trace-bo
 });
 test('ARTEMIS cannot manage an unknown trace',async()=>{const d=new ArtemisAndroidWorkspace({client:new FakeMcp(['mobile_manage_task'],async()=>({status:'completed'})),allowedDevices:['device'],allowedPackages:['com.example.app'],authorizeLocalAction:async()=>true});await assert.rejects(d.status({traceId:'unknown',deviceSerial:'device',groupId:'g',sessionId:'s'}),/unknown trace/);});
 
-test('CUA terminal uses a local isolated container, argv execution and per-command approval',async()=>{
- const calls=[];const d=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-unit-1234',authorizeLocalAction:async a=>a.command[0]==='npm',spawnImpl:fakeSpawn([{code:0,stdout:'created'},{code:0,stdout:'367 tests passed'},{code:0,stdout:'removed'}],calls)});
- await d.start();const result=await d.exec({command:['npm','test','--','--run'],purpose:'Backroom tests',groupId:'group-1',sessionId:'session-1'});assert.equal(result.state,'completed');
- assert.equal(calls[0].options.shell,false);assert.deepEqual(calls[0].args,['--json','sb','create','linux','--on','local','--kind','container','--runtime','gvisor','--headless','--name','rm-backroom-unit-1234']);
- assert.deepEqual(calls[1].args,['--json','sb','exec','-i','--local','--timeout','120','rm-backroom-unit-1234','--','npm','test','--','--run']);
- await assert.rejects(d.exec({command:['bash','-lc','echo unsafe'],purpose:'unsafe',groupId:'g',sessionId:'s'}),/Shell interpreters/);await d.close();assert.deepEqual(calls[2].args,['--json','sb','rm','--local','rm-backroom-unit-1234']);
+test('safe project archive excludes VCS data, dependencies, environment secrets and symlinks',async()=>{
+ const root=await projectFixture();
+ try{
+  const archive=await createSafeWorkspaceArchive(root),bytes=await readFile(archive.archivePath),names=tarNames(bytes);
+  assert.ok(names.includes('package.json'));assert.ok(names.includes('src/index.js'));assert.ok(names.includes('README.md'));
+  assert.equal(names.some(name=>name.startsWith('.git/')),false);assert.equal(names.some(name=>name.startsWith('node_modules/')),false);
+  assert.equal(names.includes('.env'),false);assert.equal(names.includes('service-account.json'),false);
+  assert.ok(archive.omittedSensitive>=2);assert.ok(archive.sourceBytes>0);assert.match(archive.sha256,/^[a-f0-9]{64}$/);
+  await rm(archive.tempDirectory,{recursive:true,force:true});
+ }finally{await rm(root,{recursive:true,force:true});}
 });
-test('terminal refuses arbitrary sandbox names, missing approval and path traversal',async()=>{
+test('CUA terminal syncs a filtered local project before approved argv execution',async()=>{
+ const root=await projectFixture(),calls=[];
+ try{
+  const d=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-unit-1234',projectSourcePath:root,authorizeLocalAction:async a=>a.kind==='terminal_project_sync'||a.command?.[0]==='npm',spawnImpl:fakeSpawn([{code:0,stdout:'created'}],calls)});
+  await d.start();
+  const sync=await d.syncProject({groupId:'group-1',sessionId:'session-1'});
+  assert.equal(sync.projectSynced,true);assert.ok(sync.fileCount>=3);assert.equal(d.status.projectSynced,true);
+  const copy=calls.find(c=>c.args.includes('cp')&&c.args.some(x=>String(x).includes('/tmp/rub-backroom-source.tar')));
+  assert.ok(copy);assert.ok(copy.args.includes('local:rm-backroom-unit-1234:/tmp/rub-backroom-source.tar'));assert.equal(copy.options.shell,false);
+  const result=await d.exec({command:['npm','test','--','--run'],purpose:'Backroom tests',groupId:'group-1',sessionId:'session-1'});assert.equal(result.state,'completed');
+  const cliExec=calls.find(c=>c.args.includes('exec')&&c.args.includes('npm'));
+  assert.deepEqual(cliExec.args,['--json','sb','exec','-i','--local','--timeout','120','rm-backroom-unit-1234','--','npm','test','--','--run']);
+  await assert.rejects(d.exec({command:['bash','-lc','echo unsafe'],purpose:'unsafe',groupId:'g',sessionId:'s'}),/Shell interpreters/);
+  await d.close();assert.deepEqual(calls.at(-1).args,['--json','sb','rm','--local','rm-backroom-unit-1234']);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+test('terminal refuses arbitrary sandbox names, unapproved commands and path traversal',async()=>{
  assert.throws(()=>new CuaSandboxTerminalWorkspace({sandboxName:'dev',authorizeLocalAction:async()=>true}),/dedicated rm-backroom/);
- const d=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-test-0001',authorizeLocalAction:async()=>false,spawnImpl:fakeSpawn([{code:0},{code:0}],[])});
- await d.start();await assert.rejects(d.exec({command:['npm','test'],purpose:'test',groupId:'g',sessionId:'s'}),/denied/);await assert.rejects(d.exec({command:['npm','test'],purpose:'test',groupId:'g',sessionId:'s',cwd:'../escape'}),/cwd/);await d.close();
+ const root=await projectFixture(),calls=[];
+ try{
+  const d=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-test-0001',projectSourcePath:root,authorizeLocalAction:async a=>a.kind==='terminal_project_sync',spawnImpl:fakeSpawn([{code:0}],calls)});
+  await d.start();await d.syncProject({groupId:'g',sessionId:'s'});
+  await assert.rejects(d.exec({command:['npm','test'],purpose:'test',groupId:'g',sessionId:'s'}),/denied/);
+  await assert.rejects(d.exec({command:['npm','test'],purpose:'test',groupId:'g',sessionId:'s',cwd:'../escape'}),/cwd/);
+  await d.close();
+ }finally{await rm(root,{recursive:true,force:true});}
 });
 test('external workspace service reports disabled adapters and safely closes clients',async()=>{
  const client=new FakeMcp([],async()=>null),s=createExternalWorkspaceService({desktop:{client,listWindows:async()=>[]}});
