@@ -490,6 +490,7 @@ export function createExternalWorkspaceService({desktop=null,android=null,termin
     async execTerminal(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.exec(input);},
     async syncTerminalProject(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.syncProject(input);},
     async diffTerminalProject(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.diffProject(input);},
+    async applyTerminalProjectDiff(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.applyProjectDiff(input);},
     async stop(){
       stopped=true;
       const jobs=[desktop?.client?.close?.(),android?.client?.close?.(),terminal?.close?.()].filter(Boolean);
