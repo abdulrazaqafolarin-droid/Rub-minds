@@ -741,3 +741,48 @@ grant execute on function public.ack_backroom_wake_job(uuid,text,text,uuid,text,
 grant execute on function public.retry_backroom_wake_job(uuid,text,text,uuid,text,integer,text) to service_role;
 grant execute on function public.cancel_backroom_wake_job(uuid,uuid) to service_role;
 grant execute on function public.expire_backroom_wake_jobs() to service_role;
+
+
+-- Owner-authorized remote host revocation is atomic: stop future claims, revoke
+-- all target consents, and cancel pending/leased jobs in one transaction.
+create or replace function public.revoke_backroom_host(
+  p_host_id text,
+  p_owner_id uuid
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $revoke_host$
+declare
+  v_changed integer;
+  v_now timestamptz := pg_catalog.clock_timestamp();
+begin
+  if p_host_id is null or p_host_id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+    or p_owner_id is null then
+    raise exception 'Invalid Backroom host revocation';
+  end if;
+
+  update public.backroom_hosts
+  set revoked_at = v_now
+  where host_id = p_host_id and owner_id = p_owner_id and revoked_at is null;
+  get diagnostics v_changed = row_count;
+  if v_changed <> 1 then return false; end if;
+
+  update public.backroom_input_bindings
+  set wake_enabled = false, wake_grant_id = null, confirmed_at = null,
+      wake_expires_at = null, revoked_at = v_now, updated_at = v_now
+  where host_id = p_host_id and revoked_at is null;
+
+  update public.backroom_wake_jobs
+  set state = 'cancelled', lease_owner = null, lease_token_hash = null,
+      lease_expires_at = null, last_error_code = 'authorization_denied',
+      updated_at = v_now
+  where host_id = p_host_id and state in ('pending','leased');
+
+  return true;
+end;
+$revoke_host$;
+
+revoke all on function public.revoke_backroom_host(text,uuid) from public, anon, authenticated;
+grant execute on function public.revoke_backroom_host(text,uuid) to service_role;
