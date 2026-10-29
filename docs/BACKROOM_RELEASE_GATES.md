@@ -17,9 +17,14 @@ Last audited: 2026-10-29. Scope: draft PR #48, based on draft PR #47. **NOT APPR
 
 - Read-only live Supabase schema check confirmed `rooms`, `participants`, `messages`, `agent_connections`, `rub_minds_mcp_sessions` and key primary/unique constraints exist. The new Backroom queue schema was not present.
 - Locally reconstructed Node 22 tests of host authentication, identity persistence, journal, HTTP boundary and remote-transport integration: **24 passed / 0 failed**. This is a **mirror of the code**, not an original-branch checkout execution and not an Edge Function runtime execution.
-- Draft GitHub Actions build job is skipped. The isolated Postgres Actions job repeatedly fails with `steps: null` before any test runs. This is **not** evidence that migration SQL compiled or passed.
+- Latest GitHub Actions runs (`Validate Rub Minds` and `Backroom durable wake queue SQL`) report failures with empty `steps` arrays and no downloadable logs (`BlobNotFound` from the log endpoint). Build, local Supabase and SQL jobs therefore provide **no test result**; this is not evidence that the code or migration passed or failed within a command.
 - No PostgreSQL 17 migration/trigger tests, live provider round trip, app build, independent security penetration test or real Windows/Android acceptance run has passed in this sprint.
 - No database migration, Edge Function or Vercel release was deployed to production.
+
+- Latest host wake service regression suite: **10/10 passed** in a custom isolated JavaScript harness using the actual branch `host-wake-service.mjs` and `remote-wake-store.mjs`; poller, filesystem, timer and response/network dependencies were controlled mocks. This validates host-service control-flow and request contracts, not a real Node runner, TLS, Supabase, Deno or PostgreSQL.
+- Added PostgreSQL integration assertions for expired-grant recovery: a fresh local grant must be able to replace an expired persisted grant after a host crash, while a stale grant must not revoke the replacement. This SQL test remains **unexecuted** because the GitHub job has no steps/logs.
+- Added a host-server regression proving the API reports local stop and uncertain remote deactivation separately; this new committed test has not yet run on a clean Node checkout.
+
 - The local-to-hosted credential route was explicitly reviewed and hardened: browser-controlled HTTPS origins are rejected; default destination is the known Rub Minds Supabase function; the hosted grant ID is persisted and used for idempotent activation/deactivation. These safeguards have source tests committed, but Deno/PostgreSQL runtime evidence remains pending.
 
 ## Mandatory release gates (all must be green)
@@ -44,7 +49,7 @@ The host now retains a private UUID/256-bit credential across local runtime rest
 
 The separate hosted `backroom-wake/activate` route requires the authenticated host bearer and is bounded to 60–900 seconds. `remote-wake-store.activate` refuses to call it without an injected local grant verifier that returns true for the exact host/session/binding/grant scope; the live browser dispatcher must still consume the actual scoped grant before UI execution. The gateway activation handler performs an authoritative database update and does not accept browser-origin calls. These endpoints have not been deployed, and the new Edge Function itself has not been Deno- or database-integration tested.
 
-Locally mirrored Node test suites for gateway/activation, transport, HTTP, enrollment validation, stable host identity and execution journal passed **24 of 24**. A separate new host-server test for the paired status digest is committed but **not yet independently executed**. Database SQL migration tests, full runtime CI and live ChatGPT/Claude acceptance remain red/unverified.
+Locally mirrored Node test suites for gateway/activation, transport, HTTP, enrollment validation, stable host identity and execution journal previously passed **24 of 24**. A separate new host-server test for the paired status digest is committed but **not yet independently executed**. Database SQL migration tests, full runtime CI and live ChatGPT/Claude acceptance remain red/unverified.
 
 ## Multi-surface execution foundation
 
