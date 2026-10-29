@@ -469,8 +469,13 @@ export function createBackroomHostServer({
               return;
             }
             const revoked = await browser.revokeContinuousWake({ grantId: input.grantId, targetId: input.targetId, roomId: input.roomId });
-            if(revoked)await wakeService?.stop?.(input.bindingId);
-            writeJson(response, revoked ? 200 : 404, { revoked }, cors);
+            const stopStatus=revoked?await wakeService?.stop?.(input.bindingId):null;
+            writeJson(response, revoked ? 200 : 404, {
+              revoked,
+              localPollingStopped:revoked,
+              remoteDeactivationConfirmed:stopStatus?.remotelyDeactivated===true,
+              remoteDeactivationPending:stopStatus?.remotelyDeactivated===false
+            }, cors);
             return;
           }
           if (url.pathname === "/v1/browser/wake") {
