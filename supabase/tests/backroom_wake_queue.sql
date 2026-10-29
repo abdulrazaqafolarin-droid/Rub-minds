@@ -460,8 +460,8 @@ begin
   if not public.revoke_backroom_host(v_host_capacity,v_owner) then
     raise exception 'Owner must be able to revoke their active host';
   end if;
-  if public.revoke_backroom_host(v_host_capacity,v_owner) then
-    raise exception 'Repeated host revocation must not masquerade as a new revoke';
+  if not public.revoke_backroom_host(v_host_capacity,v_owner) then
+    raise exception 'Repeated same-owner host revocation must be idempotently confirmed';
   end if;
   if exists(select 1 from public.backroom_hosts where host_id=v_host_capacity and revoked_at is null) then
     raise exception 'Revoked host must not claim more jobs';
