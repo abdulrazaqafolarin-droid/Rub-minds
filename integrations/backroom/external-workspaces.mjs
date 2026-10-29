@@ -64,7 +64,7 @@ function tarFileHeader(relPath,size,mode=0o644){
 /**
  * Packs a private repository snapshot for transfer into the isolated local
  * sandbox. Symlinks, VCS internals, dependencies, common credentials and large
- */generated artifacts are excluded; suspicious credential-bearing files are skipped.
+ * generated artifacts are excluded; suspicious credential-bearing files are skipped.
  */
 export async function createSafeWorkspaceArchive(projectSourcePath,{maxFiles=5000,maxBytes=32*1024*1024,maxSingleFileBytes=3*1024*1024}={}){
   if(typeof projectSourcePath!=='string'||!projectSourcePath.trim())throw new TypeError('Trusted local project source path required');
