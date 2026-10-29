@@ -343,13 +343,13 @@ begin
   update public.backroom_wake_jobs j
   set state = 'expired', lease_owner = null, lease_token_hash = null, lease_expires_at = null,
       updated_at = pg_catalog.clock_timestamp()
-  where j.host_id = p_host_id and j.session_digest = p_session_digest
+  where j.host_id = p_host_id and j.session_digest = p_session_digest and j.binding_id=p_binding_id
     and j.state in ('pending','leased') and j.expires_at <= pg_catalog.clock_timestamp();
 
   update public.backroom_wake_jobs j
   set state = 'failed', lease_owner = null, lease_token_hash = null, lease_expires_at = null,
       last_error_code = 'max_attempts', updated_at = pg_catalog.clock_timestamp()
-  where j.host_id = p_host_id and j.session_digest = p_session_digest
+  where j.host_id = p_host_id and j.session_digest = p_session_digest and j.binding_id=p_binding_id
     and j.state = 'leased' and j.lease_expires_at <= pg_catalog.clock_timestamp()
     and j.attempt_count >= 5;
 
@@ -357,7 +357,7 @@ begin
   with candidates as (
     select j.id
     from public.backroom_wake_jobs j
-    where j.host_id = p_host_id and j.session_digest = p_session_digest
+    where j.host_id = p_host_id and j.session_digest = p_session_digest and j.binding_id=p_binding_id
       and exists (
         select 1
         from public.rub_minds_mcp_sessions s
