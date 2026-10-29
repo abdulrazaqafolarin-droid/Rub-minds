@@ -11,7 +11,7 @@ const token='b'.repeat(64);
 const credentialDigest=createHash('sha256').update(token).digest('hex');
 const expiresAt='2030-01-01T00:00:00.000Z';
 const scope={hostId,hostToken:token,bindingId,sessionDigest};
-function setup({host={},binding={},now=()=>Date.parse('2026-10-29T00:00:00Z')}={}) {
+function setup({host={},binding={},now=()=>Date.parse('2026-10-29T00:00:00Z'),activateBinding=async()=>true,deactivateBinding=async()=>true}={}) {
  const calls=[];
  const hostRecord={hostId,ownerId,credentialDigest,expiresAt,revokedAt:null,...host};
  const bindingRecord={bindingId,hostId,ownerId,sessionDigest,wakeEnabled:true,confirmedAt:'2026-10-28T00:00:00Z',wakeExpiresAt:expiresAt,revokedAt:null,...binding};
@@ -22,7 +22,7 @@ function setup({host={},binding={},now=()=>Date.parse('2026-10-29T00:00:00Z')}={
  };
  return {calls,gateway:createAuthenticatedWakeGateway({
    lookupHost:async id=>id===hostId?hostRecord:null,
-   lookupBinding:async id=>id===bindingId?bindingRecord:null,store,now
+   lookupBinding:async id=>id===bindingId?bindingRecord:null,store,activateBinding,deactivateBinding,now
  })};
 }
 test('authenticated claims, acknowledgements, retries are scoped to DB-authoritative identities',async()=>{
@@ -84,4 +84,22 @@ test('inactive consent can only be activated by a correctly authenticated host f
  assert.deepEqual(await gateway.activate({...scope,hostToken:'c'.repeat(64),grantId,ttlSeconds:300}),{ok:false,reason:'unauthorized'});
  await assert.rejects(()=>gateway.activate({...scope,grantId,ttlSeconds:901}),/grant/);
  assert.equal(calls.length,1);
+});
+
+test('deactivation is bound to the authenticated host and exact one-time grant',async()=>{
+ const calls=[];
+ const grantId='40000000-0000-4000-8000-000000000066';
+ const {gateway}=setup({deactivateBinding:async input=>{
+  calls.push(input);
+  return input.grantId===grantId;
+ }});
+ assert.deepEqual(await gateway.deactivate({...scope,grantId}),{ok:true,deactivated:true});
+ assert.equal(calls.length,1);
+ assert.equal(calls[0].hostToken,undefined);
+ assert.deepEqual(await gateway.deactivate({...scope,grantId:'40000000-0000-4000-8000-000000000067'}),{ok:true,deactivated:false});
+ assert.equal(calls.length,2);
+ assert.deepEqual(await gateway.deactivate({...scope,hostToken:'c'.repeat(64),grantId}),{ok:false,reason:'unauthorized'});
+ assert.equal(calls.length,2);
+ await assert.rejects(()=>gateway.deactivate({...scope,grantId:'not-a-uuid'}),/grant ID/);
+ assert.equal(calls.length,2);
 });
