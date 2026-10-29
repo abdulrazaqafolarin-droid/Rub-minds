@@ -104,7 +104,7 @@ Tests: `file-wake-execution-journal.node-test.mjs` covers persistence, concurren
 
 The branch now includes `remote-wake-store.mjs`, an **unprivileged local host HTTPS client** that performs scoped claim, acknowledgement and bounded retry with a 15-second request deadline; it refuses HTTP origins, URL credentials, query tokens and cross-scope leases. The matching `supabase/functions/backroom-wake/index.ts` Edge Function uses its **server-held** Supabase service-role key for the restricted private queue RPCs, while `authenticated-wake-gateway.mjs` verifies an already registered host token against its digest and confirms current host/binding ownership, expiry and opt-in wake consent. `wake-gateway-http.mjs` provides bounded, non-CORS, no-cache HTTP request handling. `supabase/config.toml` sets `verify_jwt=false` for **this function only**, because the incoming bearer is an independent randomly generated host credential, **not** a Supabase Auth JWT; the handler must authenticate it itself. Supabase documents this custom-auth pattern for Edge Functions.
 
-The transport has a fake-fetch integration test across host client -> HTTP handler -> host/binding gateway -> mocked private queue RPC, including denied credentials and exact Supabase Function URLs. A local Node 22 mirror of the new transport/gateway/journal/handler suite passed 15/15 test cases after correcting one malformed denial-test fixture. This **does not** mean the Edge Function has been deployed or run in the Deno runtime, nor that the SQL migration has passed PostgreSQL integration tests. GitHub Actions continues failing its PostgreSQL job before any steps, while the current main validation workflow also fails before any steps are recorded.
+The transport has a fake-fetch integration test across host client -> HTTP handler -> host/binding gateway -> mocked private queue RPC, including denied credentials and exact Supabase Function URLs. A local Node 22 mirror of the new transport/gateway/journal/handler suite passed 15/15 test cases after correcting one malformed denial-test fixture. This **does not** mean the Edge Function has been deployed or run in the Deno runtime, nor that native PostgreSQL 17 CI has passed. A later isolated PGlite run successfully applied the draft wake-queue migration and executed the full SQL acceptance file; that is useful SQL integration evidence, but it is not a substitute for the repository's PostgreSQL 17 GitHub Actions job. The current GitHub Actions reruns still report failed jobs with no recorded steps, and the job-log endpoint returns `BlobNotFound`, so the CI startup failure itself remains undiagnosed.
 
 **Owner setup code exists, but live setup is unverified:** the signed-in UI can register/renew a host, create an inactive selected-input binding, configure the local host with the public Supabase project key, and permanently revoke a host or binding. Remote revocation clears consent and cancels queued/leased jobs; rotate a revoked local identity with `npm run backroom:rotate-host` before re-registering. The host token remains private to the local host process; the public project key does not authorize a host by itself. Test against an isolated nonproduction Supabase project and real ChatGPT/Claude sessions before changing production.
 
@@ -115,4 +115,30 @@ The transport has a fake-fetch integration test across host client -> HTTP handl
 - Rotating the local host identity creates a private `host-identity.json.rotation-pending` marker before replacing the old identity. On subsequent starts, the host suppresses inherited `BACKROOM_WAKE_SESSION_DIGEST`, `BACKROOM_WAKE_BINDING_ID`, and `BACKROOM_WAKE_PUBLISHABLE_KEY` values while that marker exists; an old binding cannot be silently reattached to the rotated identity.
 - After rotation, re-register the new host and create/select a fresh authorized binding through the signed-in Rub Minds UI. The marker is intentionally persistent. Remove it only after reviewing and replacing all headless values with a fresh, authorized binding; do not remove it to make an old binding work again.
 - The marker is a local safety guard, not proof that the previous remote host was revoked. Revoke the old host through the authenticated server endpoint before rotating. Remote revocation and SQL queue behavior still require isolated-database acceptance testing before release.
+
+  
+## Validation record — 2026-10-29
+
+This record refers to source branch `feat/backroom-coordination-core-v1`, code commit `95a13cb08d18ed3171f0249f49be13e21e040da3`, and an isolated Node 22.23.4 test workspace. These are source-level and sandbox checks, not a production release.
+
+| Check | Evidence | Status |
+|---|---|---|
+| Clean dependency install | `npm ci --no-audit --no-fund` completed successfully | Pass |
+| Runtime Node suite | `npm run test:runtime`: 367 tests, 367 passed, 0 failed | Pass |
+| Backroom Node suite | `npm run test:backroom`: 254 tests, 254 passed, 0 failed | Pass |
+| TypeScript + production bundle | `npm run build` ran the prebuild suites, `tsc -b`, and Vite; 1,630 modules transformed and bundle emitted | Pass |
+| Host lifecycle subset | `npm run test:host-lifecycle`: 32 passed, 0 failed | Pass |
+| Coordination subset | `npm run test:coordination`: 25 passed, 0 failed | Pass |
+| Multi-surface subset | `npm run test:multi-surface`: 31 passed, 0 failed | Pass |
+| Local host server contract | `node --test integrations/backroom/host-server.node-test.mjs`: 31 passed, 0 failed | Pass |
+| Host identity | `node --test integrations/backroom/host-identity.node-test.mjs`: 7 passed, 0 failed | Pass |
+| Draft SQL migration and acceptance file | Isolated PGlite PostgreSQL-compatible instance: clean fixture setup, migration application, and all statements in `supabase/tests/backroom_wake_queue.sql` completed without error | Pass, compatibility runtime only |
+| Native PostgreSQL 17 workflow | GitHub Actions rerun still shows failed job(s), each with an empty steps array; log retrieval returned `BlobNotFound` | Blocked / not verified |
+| Real Chromium acceptance | `npm run test:backroom:browser` was attempted. Chromium could not launch because the sandbox image lacks `libnspr4.so`; package-manager access to the Amazon Linux repository could not resolve its CDN hostname | Environment-blocked |
+| ChatGPT / Claude session round trip | No direct provider session was authorized and verified end to end in this run | Not tested |
+| Production | No production deployment or production migration was run | Unchanged |
+
+The full Node suites and the build passed after fixing the content-type regex, invalid test expectations, persistent rotation-marker guard, and the TypeScript optional-reason narrowing error. The targeted SQL run found and corrected a mismatch where binding revocation was explicitly idempotent in SQL but its acceptance test expected a retry to return false.
+
+**Release decision:** keep PR #48 in draft. Do not deploy the migration or claim provider integration is live until the native PostgreSQL workflow startup issue is resolved, browser acceptance can run in a compatible Linux image, the Edge Functions are verified in Deno/Supabase staging, and real ChatGPT plus Claude tool/session round trips are observed separately.
 
