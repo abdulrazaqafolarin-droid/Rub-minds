@@ -69,18 +69,31 @@ const store={
   });
  }
 };
-async function activateBinding({hostId,sessionDigest,bindingId,ttlSeconds}:{
+async function activateBinding({hostId,sessionDigest,bindingId,grantId,ttlSeconds}:{
  hostId:string;sessionDigest:string;bindingId:string;grantId:string;ttlSeconds:number
 }) {
  const now=new Date();
+ const expires=new Date(now.getTime()+ttlSeconds*1000).toISOString();
  const {data,error}=await db.from('backroom_input_bindings')
-  .update({wake_enabled:true,confirmed_at:now.toISOString(),
-    wake_expires_at:new Date(now.getTime()+ttlSeconds*1000).toISOString()})
+  .update({wake_enabled:true,wake_grant_id:grantId,confirmed_at:now.toISOString(),wake_expires_at:expires})
   .eq('id',bindingId).eq('host_id',hostId).eq('session_digest',sessionDigest)
-  .eq('wake_enabled',false).is('revoked_at',null).select('id').maybeSingle();
+  .is('revoked_at',null)
+  .or('wake_enabled.eq.false,wake_grant_id.eq.'+grantId)
+  .select('id').maybeSingle();
  if(error)throw new Error('Backroom consent activation unavailable');
  return Boolean(data?.id);
 }
-const gateway=createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,activateBinding});
+async function deactivateBinding({hostId,sessionDigest,bindingId,grantId}:{
+ hostId:string;sessionDigest:string;bindingId:string;grantId:string
+}) {
+ const {data,error}=await db.from('backroom_input_bindings')
+  .update({wake_enabled:false,wake_grant_id:null,confirmed_at:null,wake_expires_at:null})
+  .eq('id',bindingId).eq('host_id',hostId).eq('session_digest',sessionDigest)
+  .eq('wake_grant_id',grantId).eq('wake_enabled',true).is('revoked_at',null)
+  .select('id').maybeSingle();
+ if(error)throw new Error('Backroom consent deactivation unavailable');
+ return Boolean(data?.id);
+}
+const gateway=createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,activateBinding,deactivateBinding});
 const handler=createWakeGatewayHttpHandler({gateway});
 Deno.serve(req=>handler(req));
