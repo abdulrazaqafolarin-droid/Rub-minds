@@ -70,8 +70,9 @@ Deno.serve(async req=>{
    if(roomError||!ownedRoom)return json(403,{ok:false,reason:'not_room_owner'},origin);
    const now=new Date().toISOString();
    const [participants,connections,sessions]=await Promise.all([
-    db.from('participants').select('id,display_name,kind').eq('room_id',value.roomId)
-      .in('kind',['original_session','model','external_agent']).limit(100),
+    db.from('participants').select('id,display_name,kind,status').eq('room_id',value.roomId)
+      .in('kind',['original_session','model','external_agent'])
+      .in('status',['connected','active','autonomous']).limit(100),
     db.from('agent_connections').select('participant_id').eq('room_id',value.roomId)
       .eq('owner_id',ownerId).is('revoked_at',null).gt('expires_at',now).limit(100),
     db.from('rub_minds_mcp_sessions').select('session_digest,participant_id,expires_at')
@@ -111,7 +112,8 @@ Deno.serve(async req=>{
     .is('revoked_at',null).gt('expires_at',now).maybeSingle(),
    db.from('rooms').select('id').eq('id',input.roomId).eq('owner_id',ownerId).maybeSingle(),
    db.from('participants').select('id').eq('id',input.participantId).eq('room_id',input.roomId)
-    .in('kind',['original_session','model','external_agent']).maybeSingle(),
+    .in('kind',['original_session','model','external_agent'])
+    .in('status',['connected','active','autonomous']).maybeSingle(),
    db.from('agent_connections').select('id').eq('room_id',input.roomId).eq('participant_id',input.participantId)
     .eq('owner_id',ownerId).is('revoked_at',null).gt('expires_at',now).maybeSingle(),
    db.from('rub_minds_mcp_sessions').select('session_digest').eq('session_digest',input.sessionDigest)
