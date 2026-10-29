@@ -88,7 +88,8 @@ export function createMultiSurfaceExecutionService({hostId,permission,isConnecte
     isConnected:async()=>!stopped && (await isConnected(hostId))===true
    });
    const result=await guard.execute({command,target});
-   return Object.freeze({state:result.state,submitted:false,result:result.result??null});
+   return Object.freeze({state:result.state,submitted:result.state==='completed'?false:null,
+     result:result.result??null,requiresReview:result.state!=='completed'});
   },
   revoke({targetId,roomId}={}){
    if(stopped)return false;
