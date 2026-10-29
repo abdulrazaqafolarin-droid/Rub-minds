@@ -49,7 +49,7 @@ Deno.serve(async req=>{
   }});
  }
  const parsed=new URL(req.url);
- if(req.method!=='POST'||parsed.search||parsed.hash||!['/functions/v1/backroom-config/host','/functions/v1/backroom-config/binding','/functions/v1/backroom-config/sessions','/functions/v1/backroom-config/revoke-host','/backroom-config/host','/backroom-config/binding','/backroom-config/sessions','/backroom-config/revoke-host'].includes(parsed.pathname))
+ if(req.method!=='POST'||parsed.search||parsed.hash||!['/functions/v1/backroom-config/host','/functions/v1/backroom-config/binding','/functions/v1/backroom-config/sessions','/functions/v1/backroom-config/revoke-host','/functions/v1/backroom-config/revoke-binding','/backroom-config/host','/backroom-config/binding','/backroom-config/sessions','/backroom-config/revoke-host','/backroom-config/revoke-binding'].includes(parsed.pathname))
   return json(404,{ok:false,reason:'not_found'},origin);
  if(req.headers.get('content-type')?.toLowerCase()!=='application/json')
   return json(415,{ok:false,reason:'unsupported_type'},origin);
@@ -99,6 +99,17 @@ Deno.serve(async req=>{
    if(error)return json(503,{ok:false,reason:'service_unavailable'},origin);
    if(data!==true)return json(404,{ok:false,revoked:false,reason:'host_not_found'},origin);
    return json(200,{ok:true,revoked:true,hostId:value.hostId},origin);
+  }
+  if(parsed.pathname.endsWith('/revoke-binding')){
+   if(!value||typeof value.bindingId!=='string'||!/^[a-f0-9-]{36}$/i.test(value.bindingId)||
+      Object.keys(value).some(k=>k!=='bindingId'))
+    return json(400,{ok:false,reason:'invalid_binding'},origin);
+   const {data,error}=await db.rpc('revoke_backroom_input_binding',{
+    p_binding_id:value.bindingId,p_owner_id:ownerId
+   });
+   if(error)return json(503,{ok:false,reason:'service_unavailable'},origin);
+   if(data!==true)return json(404,{ok:false,revoked:false,reason:'binding_not_found'},origin);
+   return json(200,{ok:true,revoked:true,bindingId:value.bindingId},origin);
   }
   if(parsed.pathname.endsWith('/host')){
    let input;
