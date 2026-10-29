@@ -77,11 +77,11 @@ export class CuaDesktopWorkspace {
     // CUA type_text accepts an exact window target, not an element_token. Focus the
     // freshly verified text control first, then type only into that exact window.
     const focused=structured(await this.client.callTool('click',{target:{kind:'window',pid,window_id:windowId},element_token:elementToken,delivery_mode:'foreground',session:this.session}));
-    if(focused.effect==='unverifiable'||focused.effect==='suspected_noop'||focused.error)return Object.freeze({state:'needs_review',submitted:false,reason:'CUA could not verify text-field focus'});
+    if(focused.effect!=='confirmed'||focused.error)return Object.freeze({state:'needs_review',submitted:false,reason:'CUA could not confirm text-field focus'});
     const postFocus=await this.#snapshot({pid,windowId}),focusWindow=postFocus.window,focusField=postFocus.elements.find(e=>e?.element_token===elementToken);
     if(focusWindow.appName!==expectedAppName||focusWindow.title!==expectedTitle||!focusField||focusField.value!==''||!/(text[_ -]?(field|input|entry|area|editor|box)|textbox|textarea|editable[_ -]?text)/i.test(String(focusField.role??focusField.type??'')))return Object.freeze({state:'needs_review',submitted:false,reason:'Selected control changed after focus'});
     const result=structured(await this.client.callTool('type_text',{text,target:{kind:'window',pid,window_id:windowId},session:this.session}));
-    if(result.effect==='unverifiable'||result.effect==='suspected_noop'||result.error)return Object.freeze({state:'needs_review',submitted:false,reason:'CUA did not confirm text input'});
+    if(result.effect!=='confirmed'||result.error)return Object.freeze({state:'needs_review',submitted:false,reason:'CUA did not confirm text input'});
     const after=await this.#snapshot({pid,windowId}),written=after.elements.find(e=>e?.element_token===elementToken);
     if(!written||written.value!==text||after.window.appName!==expectedAppName||after.window.title!==expectedTitle)return Object.freeze({state:'needs_review',submitted:false,reason:'Desktop readback mismatch'});
     return Object.freeze({state:'completed',submitted:false,verified:true,result:{drafted:true,submitted:false,pid,windowId,elementToken}});
