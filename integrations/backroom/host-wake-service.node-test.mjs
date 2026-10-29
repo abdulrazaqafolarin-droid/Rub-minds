@@ -63,7 +63,7 @@ test('local host credential is sent only to the trusted Supabase Edge Function',
   });
   service.configure({sessionDigest,bindingId});
   const grantId='40000000-0000-4000-8000-000000000033';
-  await service.activateAndStart({grantId,scope:{hostId,bindingId,groupId:'40000000-0000-4000-8000-000000000044',
+  await service.activateAndStart({grantId,expiresAt:Date.now()+300000,scope:{hostId,bindingId,groupId:'40000000-0000-4000-8000-000000000044',
     participantId:'40000000-0000-4000-8000-000000000055',sessionId:'40000000-0000-4000-8000-000000000066'}},
    {bindingId,roomId:'40000000-0000-4000-8000-000000000044',
     participantId:'40000000-0000-4000-8000-000000000055',sessionId:'40000000-0000-4000-8000-000000000066'});
