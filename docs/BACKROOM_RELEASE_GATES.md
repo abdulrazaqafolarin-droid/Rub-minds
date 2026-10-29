@@ -4,9 +4,9 @@ Last audited: 2026-10-29. Scope: draft PR #48, based on draft PR #47. **NOT APPR
 
 ## Implemented on feature branch
 
-- Database migration adds private host records, opt-in target bindings, bounded durable queue, scoped lease RPCs, and a message-insert wake trigger.
+- Database migration adds private host records, opt-in target bindings, a persisted wake-grant ID with consistent consent-state constraints, bounded durable queue, scoped lease RPCs, and a message-insert wake trigger. Enqueue/claim/ack now require an actively connected AI participant as well as a live MCP session and agent connection.
 - Hosted server entrypoint: `supabase/functions/backroom-wake/index.ts`. The service-role key stays on the server. It does not accept browser cookies or browser Origin credentials.
-- Host authentication: credential digest compared with a constant-time check, active host/owner/binding/MCP session scope, expiry and consent checked before claims, retries and acknowledgements.
+- Host authentication: credential digest compared with a constant-time check, active host/owner/binding/MCP session scope, expiry and consent checked before claims, retries and acknowledgements. The local host pins the private-token destination to the Rub Minds Supabase Edge URL; the paired browser may submit only binding ID and session digest.
 - HTTP transport: HTTPS-only, no credential-bearing URL, no redirects, bounded request body, no CORS, no-cache and generic failure response.
 - Local process client: bounded HTTPS poll/ack/retry, exact Supabase Function path, scope checks and a network deadline.
 - Local wake worker: group/host/participant/session/input-target matching, explicit verified grant, selected target revalidation and guarded dispatcher.
@@ -20,6 +20,7 @@ Last audited: 2026-10-29. Scope: draft PR #48, based on draft PR #47. **NOT APPR
 - Draft GitHub Actions build job is skipped. The isolated Postgres Actions job repeatedly fails with `steps: null` before any test runs. This is **not** evidence that migration SQL compiled or passed.
 - No PostgreSQL 17 migration/trigger tests, live provider round trip, app build, independent security penetration test or real Windows/Android acceptance run has passed in this sprint.
 - No database migration, Edge Function or Vercel release was deployed to production.
+- The local-to-hosted credential route was explicitly reviewed and hardened: browser-controlled HTTPS origins are rejected; default destination is the known Rub Minds Supabase function; the hosted grant ID is persisted and used for idempotent activation/deactivation. These safeguards have source tests committed, but Deno/PostgreSQL runtime evidence remains pending.
 
 ## Mandatory release gates (all must be green)
 
