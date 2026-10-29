@@ -504,6 +504,7 @@ export default function BackroomApp() {
         grantId:hostedWakeGrantId,targetId:binding.targetId,roomId:binding.roomId
       }});
       setHostedWakeGrantId('');
+      setHostedWakeBinding(previous=>previous?{...previous,wakeEnabled:false}:previous);
       setHostMessage('Local wake grant revoked and polling stopped. No new automated sends are authorized.');
     }catch(error){
       setHostMessage(error instanceof Error?error.message:'Could not confirm wake revocation. Use Emergency Stop.');
@@ -868,11 +869,15 @@ export default function BackroomApp() {
     <div className="br-modal-actions"><button className="br-secondary" onClick={() => void bindHostedWakeInput()} disabled={hostBusy || browserBusy || !selectedBrowserTarget}>Register inactive AI input binding</button></div>
   </>}
   {hostedWakeBinding && hostedWakeBinding.roomId===room.id && <>
-    <div className="br-detail"><span>Wake status</span><b>{hostedWakeGrantId?'Locally consented · time-limited':'Off · binding registered'}</b></div>
+    <div className="br-detail"><span>Wake status</span><b>{hostedWakeBinding.requiresRevoke?'Existing binding · revoke before rebind':hostedWakeGrantId?'Locally consented · time-limited':'Off · binding registered'}</b></div>
     <div className="br-modal-actions">
-      {!hostedWakeGrantId?<button className="br-primary" disabled={hostBusy || browserBusy || hostedWakeBinding.targetId!==selectedBrowserTarget} onClick={() => void enableHostedWake()}>Enable wake for 5 minutes</button>:
-       <button className="br-danger-action" disabled={hostBusy || browserBusy} onClick={() => void revokeHostedWake()}>Revoke wake</button>}
+      {hostedWakeBinding.requiresRevoke
+        ? <button className="br-danger-action" disabled={hostBusy || browserBusy} onClick={() => void revokeHostedWakeBinding()}>Revoke existing binding and rebind</button>
+        : !hostedWakeGrantId
+          ? <button className="br-primary" disabled={hostBusy || browserBusy || hostedWakeBinding.targetId!==selectedBrowserTarget} onClick={() => void enableHostedWake()}>Enable wake for 5 minutes</button>
+          : <button className="br-danger-action" disabled={hostBusy || browserBusy} onClick={() => void revokeHostedWake()}>Revoke wake</button>}
     </div>
+    {!hostedWakeBinding.requiresRevoke && <div className="br-modal-actions"><button className="br-secondary" disabled={hostBusy || browserBusy} onClick={() => void revokeHostedWakeBinding()}>Permanently unbind this AI input</button></div>}
   </>}
 </div>}
 <div className="br-emergency-stop-row"><div><b>Emergency stop</b><small>Close Chromium, revoke all paired sessions, and block reconnection until the host is restarted.</small></div><button className="br-danger-action" onClick={() => void emergencyStopLocalHost()} disabled={hostBusy || browserBusy || !hostToken}>Stop all</button></div>
