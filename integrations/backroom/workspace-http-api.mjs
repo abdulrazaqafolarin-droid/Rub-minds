@@ -8,7 +8,8 @@ const ALLOWED={
  '/v1/workspaces/android/task-status':['traceId','deviceSerial','groupId','sessionId'],
  '/v1/workspaces/android/task-stop':['traceId','deviceSerial','groupId','sessionId'],
  '/v1/workspaces/terminal/exec':['command','cwd','purpose','groupId','sessionId'],
- '/v1/workspaces/terminal/sync':['groupId','sessionId']
+ '/v1/workspaces/terminal/sync':['groupId','sessionId'],
+ '/v1/workspaces/terminal/diff':['groupId','sessionId']
 };
 function bearer(request){const m=/^Bearer ([a-f0-9]{64})$/i.exec(request.headers.authorization??'');return m?.[1]??null;}
 function onlyKeys(input,allowed){return !!input&&typeof input==='object'&&!Array.isArray(input)&&Object.keys(input).every(k=>allowed.includes(k));}
@@ -45,6 +46,7 @@ export async function handleWorkspaceHttpRequest({request,response,url,authority
    case '/v1/workspaces/android/task-stop':result=await workspaceRuntime.stopAndroidTask(input);break;
    case '/v1/workspaces/terminal/exec':result=await workspaceRuntime.execTerminal(input);status=200;break;
    case '/v1/workspaces/terminal/sync':result=await workspaceRuntime.syncTerminalProject(input);status=200;break;
+   case '/v1/workspaces/terminal/diff':result=await workspaceRuntime.diffTerminalProject(input);status=200;break;
    default:writeJson(response,404,{error:'not_found'},corsHeaders);return true;
   }
   writeJson(response,status,result,corsHeaders);
