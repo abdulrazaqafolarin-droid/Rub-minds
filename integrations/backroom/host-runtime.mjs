@@ -4,7 +4,7 @@
  * A separately installed local host must attest device/session focus on EVERY call.
  */
 const KINDS = new Set(["browser_tab","desktop_app","windows_app","terminal","android_app"]);
-const OPS = new Set(["draft","submit","read_result"]);
+const OPS = new Set(["draft","wake","submit","read_result"]);
 const isText = value => typeof value === "string" && value.length > 0;
 import {isCanonicalWakePrompt} from "./coordination-core.mjs";
 function denyBeforeEffect(message) {
