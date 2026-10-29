@@ -96,3 +96,28 @@ test('same target cannot be registered twice and a different room cannot draft i
  await assert.rejects(()=>v.svc.draft({command:{...v.cmd(),roomId:'another-room'},approved:true}),/scope mismatch/);
  assert.equal(v.writes,0);
 });
+
+test('concurrent writes to one native target are serialized before device effect',async()=>{
+ const v=setup('desktop_app');
+ let completeWrite;
+ const barrier=new Promise(resolve=>{completeWrite=resolve});
+ let entered=0;
+ const driver={
+  inspect:v.driver.inspect,
+  async writeTextIfEmpty(request){
+   entered++;
+   await barrier;
+   return {state:'written',submitted:false};
+  }
+ };
+ v.svc.register({target:v.target,driver,consented:true});
+ const first=v.svc.draft({command:v.cmd(),approved:true});
+ // First request awaits inspect() before reaching the device write.
+ await Promise.resolve();
+ await Promise.resolve();
+ await assert.rejects(()=>v.svc.draft({command:v.cmd(),approved:true}),/already in progress/);
+ completeWrite();
+ const result=await first;
+ assert.equal(result.state,'needs_review');
+ assert.equal(entered,1);
+});
