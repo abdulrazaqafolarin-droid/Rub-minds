@@ -52,3 +52,26 @@ test('client blocks insecure URLs, malformed scopes and spoofed response leases'
   fetchImpl:async()=>new Response(JSON.stringify({ok:true,leases:[{hostId:ownerId,bindingId,sessionDigest}]}),{status:200})});
  await assert.rejects(()=>forged.claim(scope),/Cross-scope/);
 });
+
+test('official Supabase Edge Function URL retains bearer and exact scoped route',async()=>{
+ const {store,calls}=setup();
+ const actual=[];
+ const alternate=createRemoteWakeStore({
+  baseUrl:'https://project-ref.supabase.co/functions/v1/backroom-wake/',
+  hostToken,
+  fetchImpl:async(url,options)=>{
+   actual.push(url);
+   const gateway=createAuthenticatedWakeGateway({
+    lookupHost:async()=>({hostId,ownerId,credentialDigest:createHash('sha256').update(hostToken).digest('hex'),expiresAt:'2030-01-01T00:00:00Z',revokedAt:null}),
+    lookupBinding:async()=>({bindingId,hostId,ownerId,sessionDigest,revokedAt:null,wakeEnabled:true,confirmedAt:'2026-10-29T00:00:00Z',wakeExpiresAt:'2030-01-01T00:00:00Z'}),
+    store:{claim:async x=>[{...x,jobId,leaseToken}],acknowledge:async()=>true,retry:async()=> 'pending'},
+    now:()=>Date.parse('2026-10-29T12:00:00Z')
+   });
+   return createWakeGatewayHttpHandler({gateway})(new Request(url,options));
+  }
+ });
+ const leases=await alternate.claim(scope);
+ assert.equal(leases.length,1);
+ assert.equal(actual[0],'https://project-ref.supabase.co/functions/v1/backroom-wake/claim');
+ assert.equal(calls.length,0);
+});
