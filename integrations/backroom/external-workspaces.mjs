@@ -26,7 +26,7 @@ export class CuaDesktopWorkspace {
   }
   async #listWindows(){
     await this.#require(['list_windows']);
-    const r=structured(await this.client.callTool('list_windows',{session:this.session}));
+    const r=structured(await this.client.callTool('list_windows',{on_screen_only:true}));
     const list=r.windows??r.structuredContent?.windows;if(!Array.isArray(list))throw new Error('CUA list_windows did not return windows');
     return Object.freeze(list.filter(w=>w&&Number.isSafeInteger(Number(w.pid))&&Number(w.pid)>0&&Number.isSafeInteger(Number(w.window_id??w.windowId)))
       .map(w=>Object.freeze({pid:Number(w.pid),windowId:Number(w.window_id??w.windowId),appName:String(w.app_name??w.appName??''),title:String(w.title??''),zIndex:Number.isFinite(w.z_index)?w.z_index:null})));
@@ -146,7 +146,7 @@ export class CuaSandboxTerminalWorkspace {
     if(cwd!==undefined&&(typeof cwd!=='string'||!cwd.startsWith('/')||cwd.split('/').includes('..')))throw new TypeError('Sandbox cwd must be an absolute POSIX path without traversal');
     scopeIds(groupId,sessionId);if(typeof purpose!=='string'||!purpose.trim()||purpose.length>300)throw new TypeError('Terminal purpose required');
     if(await this.approve(Object.freeze({kind:'terminal_exec',sandboxName:this.sandboxName,command:Object.freeze([...command]),cwd:cwd??null,purpose,groupId,sessionId}))!==true)throw new Error('Local terminal command denied');
-    const args=['--json','sb','exec','--local','--stdin','--timeout',String(Math.max(1,Math.ceil(this.timeoutMs/1000)))];if(cwd)args.push('--cwd',cwd);args.push(this.sandboxName,'--',...command);
+    const args=['--json','sb','exec','-i','--local','--timeout',String(Math.max(1,Math.ceil(this.timeoutMs/1000)))];if(cwd)args.push('--cwd',cwd);args.push(this.sandboxName,'--',...command);
     const r=await this.#run(args);return Object.freeze({state:r.code===0?'completed':'failed',exitCode:r.code,stdout:r.stdout.slice(0,this.outputLimitBytes),stderr:r.stderr.slice(0,4000),sandboxName:this.sandboxName});
   }
   async close(){if(this.closed)return;this.closed=true;if(this.ready){const r=await this.#run(['--json','sb','rm','--local',this.sandboxName],30000).catch(()=>null);this.ready=false;if(!r||r.code!==0)throw new Error('Dedicated sandbox removal could not be verified');}}
