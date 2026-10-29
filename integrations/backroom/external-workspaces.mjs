@@ -44,10 +44,10 @@ export class CuaDesktopWorkspace {
   }
   async draftText({pid,windowId,elementToken,text,expectedAppName,expectedTitle,groupId,sessionId}={}){
     positiveInt(pid,'pid');nonnegativeInt(windowId,'windowId');scopeIds(groupId,sessionId);
-    if(await this.approve(Object.freeze({kind:'desktop_draft_inspect',pid,windowId,expectedAppName,expectedTitle,groupId,sessionId}))!==true)throw new Error('Local desktop observation denied');
     if(typeof elementToken!=='string'||!ID.test(elementToken))throw new TypeError('Snapshot-derived CUA element token required');
     if(typeof text!=='string'||!text.trim()||text.length>MAX_TEXT||CONTROL.test(text))throw new TypeError('Draft must be safe single-line text of at most 4000 characters');
     if(typeof expectedAppName!=='string'||!expectedAppName.trim()||typeof expectedTitle!=='string'||!expectedTitle.trim())throw new TypeError('Expected app/window identity required');
+    if(await this.approve(Object.freeze({kind:'desktop_draft_inspect',pid,windowId,expectedAppName,expectedTitle,groupId,sessionId}))!==true)throw new Error('Local desktop observation denied');
     const before=await this.#snapshot({pid,windowId});
     if(before.window.appName!==expectedAppName||before.window.title!==expectedTitle)throw new Error('Desktop app/window identity changed');
     const field=before.elements.find(e=>e?.element_token===elementToken);
