@@ -464,7 +464,8 @@ test("local approval activates hosted wake, and unpair/revoke stop remote worker
   assert.ok(calls.includes("poller-stop:"+bindingId));
   const unpair=await fetch(base+"/v1/unpair",{method:"POST",headers:auth});
   assert.equal(unpair.status,200);
-  assert.ok(calls.filter(x=>x==="poller-stop").length>=2);
+  assert.ok(calls.filter(x=>x.startsWith("poller-stop:")).length>=2);
+  assert.ok(calls.includes("poller-stop:all"));;
  },{browserRuntime,wakeService});
 });
 test("remote activation failure revokes local grant and never reports success",async()=>{
