@@ -64,3 +64,10 @@ test('invalid policy inputs fail closed',()=>{
  assert.throws(()=>classifyExistingBinding({input}),/owner/);
  assert.throws(()=>classifyExistingBinding({ownerId,input:null}),/binding/);
 });
+
+test('unknown consent state is treated as a conflict rather than inactive',()=>{
+ const incomplete={...existing};delete incomplete.wake_enabled;
+ const result=classifyExistingBinding({ownerId,input,existingSession:incomplete});
+ assert.equal(result.action,'conflict');
+ assert.equal(result.reason,'existing_binding_requires_revoke');
+});
