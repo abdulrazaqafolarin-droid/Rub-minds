@@ -380,11 +380,10 @@ export default function BackroomApp() {
       });
       if(bindingError || data?.ok!==true || typeof data.bindingId!=='string')
         throw new Error('Secure hosted binding registration failed. No wake operation was enabled.');
-      const base=import.meta.env.VITE_SUPABASE_URL;
-      if(!base)throw new Error('Hosted Supabase URL is not configured.');
-      const gatewayUrl=new URL('/functions/v1/backroom-wake/',base).href;
+      // The host's pinned Supabase destination is local configuration. Never let
+      // this browser choose where the private host credential is sent.
       await hostApi('/v1/backroom/configure',{method:'POST',body:{
-        gatewayUrl,sessionDigest:selectedSession.sessionDigest,bindingId:data.bindingId
+        sessionDigest:selectedSession.sessionDigest,bindingId:data.bindingId
       }});
       setHostedWakeBinding({
         bindingId:data.bindingId,roomId:room.id,
