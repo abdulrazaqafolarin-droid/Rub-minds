@@ -21,6 +21,12 @@ declare
   v_purge_count integer;
   i integer;
 begin
+  insert into auth.users(id) values (v_owner);
+  insert into public.rooms(id,owner_id) values (v_room,v_owner);
+  insert into public.participants(id,room_id,kind) values (v_participant,v_room,'external_agent');
+  insert into public.agent_connections(room_id,participant_id,owner_id,credential_digest,expires_at,revoked_at)
+  values (v_room,v_participant,v_owner,repeat('a',64),pg_catalog.clock_timestamp()+interval '1 hour',null);
+
   insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,room_id,participant_id,expires_at,terminated_at)
   values
     (repeat('b',64),'ci-ciphertext-b',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
