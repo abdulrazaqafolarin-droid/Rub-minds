@@ -251,7 +251,7 @@ test('CUA terminal syncs a filtered local project before approved argv execution
   const cliExec=calls.find(c=>c.args.includes('exec')&&c.args.includes('npm'));
   assert.deepEqual(cliExec.args,['--json','sb','exec','-i','--local','--timeout','120','rm-backroom-unit-1234','--','npm','test','--','--run']);
   await assert.rejects(d.exec({command:['bash','-lc','echo unsafe'],purpose:'unsafe',groupId:'g',sessionId:'s'}),/Shell interpreters/);
-  await d.close();assert.deepEqual(calls.at(-1).args,['--json','sb','rm','--local','rm-backroom-unit-1234']);
+  await d.close();assert.deepEqual(calls.filter(call=>call.args[call.args.indexOf('sb')+1]==='rm').at(-1).args,['--json','sb','rm','--force','--local','rm-backroom-unit-1234']);
  }finally{await rm(root,{recursive:true,force:true});}
 });
 
