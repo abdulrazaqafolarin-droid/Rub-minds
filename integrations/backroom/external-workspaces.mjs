@@ -313,6 +313,8 @@ export class ArtemisAndroidWorkspace {
 /** Creates and destroys a dedicated local gVisor sandbox; never executes on host shell. */
 export class CuaSandboxTerminalWorkspace {
   #pendingPatches;
+  #startPromise=null;
+  #startChild=null;
   #prunePendingPatches(){const now=Date.now();for(const [key,p] of this.#pendingPatches)if(now-p.createdAt>10*60*1000)this.#pendingPatches.delete(key);while(this.#pendingPatches.size>16)this.#pendingPatches.delete(this.#pendingPatches.keys().next().value);}
   #safePatchPaths(patch){const lines=patch.split('\n').filter(line=>line.startsWith('diff --git '));if(patch&&!lines.length)throw new Error('Patch format is not reviewable');const paths=[];for(const line of lines){const m=/^diff --git a\/(.+) b\/(.+)$/.exec(line);if(!m)throw new Error('Patch contains a quoted or unsupported file path; review it manually');const a=m[1],b=m[2];if(a!==b||!a||a.startsWith('/')||a.includes('\\')||/[\u0000-\u001f\u007f-\u009f]/u.test(a)||a.split('/').some(p=>p==='.'||p==='..')||a.split('/').some(part=>part.toLowerCase()==='.git'))throw new Error('Patch contains an unsafe file path');paths.push(a);}return [...new Set(paths)].sort();}
   async #runLocalGit(args,input='',cwd){
@@ -334,18 +336,20 @@ export class CuaSandboxTerminalWorkspace {
       try{child.stdin.end(input,'utf8');}catch{kill();reject(new Error('Local Git input failed'));}
     });
   }
-  constructor({command='cua',sandboxName,authorizeLocalAction,spawnImpl,localGitSpawnImpl,gitCommand='git',timeoutMs=120000,outputLimitBytes=1048576,projectSourcePath=process.env.BACKROOM_TERMINAL_PROJECT_PATH??process.cwd()}={}){
+  constructor({command='cua',sandboxName,authorizeLocalAction,spawnImpl,localGitSpawnImpl,gitCommand='git',timeoutMs=120000,startupTimeoutMs=900000,outputLimitBytes=1048576,projectSourcePath=process.env.BACKROOM_TERMINAL_PROJECT_PATH??process.cwd()}={}){
     if(typeof command!=='string'||!command.trim())throw new TypeError('CUA CLI executable required');
     if(typeof sandboxName!=='string'||!/^rm-backroom-[a-z0-9-]{4,48}$/.test(sandboxName))throw new TypeError('Dedicated rm-backroom-* sandbox required');
     needApproval(authorizeLocalAction,'Terminal execution');if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1000||timeoutMs>600000)throw new RangeError('Invalid terminal timeout');
+    if(!Number.isSafeInteger(startupTimeoutMs)||startupTimeoutMs<1000||startupTimeoutMs>900000)throw new RangeError('Invalid sandbox startup timeout');
     if(!Number.isSafeInteger(outputLimitBytes)||outputLimitBytes<1024||outputLimitBytes>4194304)throw new RangeError('Invalid terminal output bound');
-    Object.assign(this,{command,sandboxName,approve:authorizeLocalAction,spawnImpl,localGitSpawnImpl,gitCommand,timeoutMs,outputLimitBytes,projectSourcePath,ready:false,closed:false,projectSync:null});
+    Object.assign(this,{command,sandboxName,approve:authorizeLocalAction,spawnImpl,localGitSpawnImpl,gitCommand,timeoutMs,startupTimeoutMs,outputLimitBytes,projectSourcePath,ready:false,starting:false,startupError:null,cleanupPending:false,owned:false,creationAttempted:false,closed:false,projectSync:null});
     this.#pendingPatches=new Map();
   }
-  async #run(args,timeoutMs=this.timeoutMs){
+  async #run(args,timeoutMs=this.timeoutMs,{trackStart=false}={}){
     const spawn=this.spawnImpl??(await import('node:child_process')).spawn;
     return new Promise((resolve,reject)=>{
       let child;try{child=spawn(this.command,args,{shell:false,windowsHide:true,stdio:['ignore','pipe','pipe']});}catch{reject(new Error('Could not launch CUA CLI'));return;}
+      if(trackStart)this.#startChild=child;
       let stdout='',stderr='',bytes=0,settled=false,overflow=false,killTimer=null;
       const forceTerminate=()=>{
         try{child.kill('SIGTERM');}catch{}
@@ -358,8 +362,9 @@ export class CuaSandboxTerminalWorkspace {
       };
       child.stdout?.on('data',chunk=>append('out',chunk));child.stderr?.on('data',chunk=>append('err',chunk));
       const timer=setTimeout(()=>{if(settled)return;settled=true;forceTerminate();reject(new Error('Sandbox command timed out'));},timeoutMs);timer.unref?.();
-      child.once('error',()=>{if(settled)return;settled=true;clearTimeout(timer);if(killTimer)clearTimeout(killTimer);reject(new Error('CUA sandbox process failed'));});
+      child.once('error',()=>{if(trackStart&&this.#startChild===child)this.#startChild=null;if(settled)return;settled=true;clearTimeout(timer);if(killTimer)clearTimeout(killTimer);reject(new Error('CUA sandbox process failed'));});
       child.once('close',(code,signal)=>{
+        if(trackStart&&this.#startChild===child)this.#startChild=null;
         clearTimeout(timer);if(killTimer)clearTimeout(killTimer);
         if(settled)return;settled=true;
         if(overflow){reject(new Error('Sandbox output exceeded configured limit'));return;}
@@ -408,9 +413,75 @@ export class CuaSandboxTerminalWorkspace {
       throw error;
     }finally{await rm(archive.tempDirectory,{recursive:true,force:true}).catch(()=>{});}
   }
-  async start(){if(this.closed)throw new Error('Sandbox lifecycle closed');if(this.ready)return this.status;
-    const r=await this.#run(['--json','sb','create','linux','--on','local','--kind','container','--runtime','gvisor','--headless','--install','node','--name',this.sandboxName]);
-    if(r.code!==0)throw new Error('Local gVisor sandbox creation failed; existing sandboxes are never adopted');this.ready=true;return this.status;
+  async #listLocalSandboxes(){
+    const result=await this.#run(['--json','sb','ls','--local'],30000);
+    if(result.code!==0)throw new Error('Could not verify the local CUA sandbox inventory');
+    let rows;
+    try{rows=JSON.parse(result.stdout);}catch{throw new Error('CUA returned an invalid local sandbox inventory');}
+    if(!Array.isArray(rows)||rows.some(row=>!row||typeof row!=='object'||typeof row.name!=='string'))throw new Error('CUA returned an unexpected local sandbox inventory');
+    return rows;
+  }
+  async #removeOwnedSandbox(){
+    const rows=await this.#listLocalSandboxes();
+    if(!rows.some(row=>row.name===this.sandboxName)){
+      this.owned=false;this.creationAttempted=false;this.ready=false;this.cleanupPending=false;this.projectSync=null;this.#pendingPatches.clear();
+      return true;
+    }
+    if(!this.owned&&!this.creationAttempted)throw new Error('Refusing to remove a sandbox this host did not create');
+    const result=await this.#run(['--json','sb','rm','--force','--local',this.sandboxName],30000);
+    if(result.code!==0)throw new Error('Dedicated sandbox removal command failed');
+    const after=await this.#listLocalSandboxes();
+    if(after.some(row=>row.name===this.sandboxName))throw new Error('Dedicated sandbox removal could not be verified');
+    this.owned=false;this.creationAttempted=false;this.ready=false;this.cleanupPending=false;this.projectSync=null;this.#pendingPatches.clear();
+    return true;
+  }
+  async #createSandbox({groupId,sessionId}={}){
+    if(this.closed)throw new Error('Sandbox lifecycle closed');
+    scopeIds(groupId,sessionId);
+    const approval=await this.approve(Object.freeze({
+      kind:'terminal_sandbox_create',sandboxName:this.sandboxName,groupId,sessionId,
+      isolation:'local gVisor container',
+      networkPolicy:'Default outbound network is enabled for Node provisioning and package installs; approved commands can access external hosts.',
+      command:Object.freeze(['cua','sb','create','linux','--on','local','--kind','container','--runtime','gvisor','--headless','--install','node','--name',this.sandboxName])
+    }));
+    if(approval!==true)throw new Error('Local approval denied creation of the dedicated CUA terminal sandbox');
+    if(this.closed)throw new Error('Host session was revoked while sandbox approval was pending');
+    const rows=await this.#listLocalSandboxes();
+    if(rows.some(row=>row.name===this.sandboxName))throw new Error('A local sandbox with this name already exists; refusing to adopt or delete it');
+    this.creationAttempted=true;
+    const result=await this.#run(['--json','sb','create','linux','--on','local','--kind','container','--runtime','gvisor','--headless','--install','node','--name',this.sandboxName],this.startupTimeoutMs,{trackStart:true});
+    if(result.code!==0)throw new Error('Local gVisor sandbox creation failed; existing sandboxes are never adopted');
+    this.owned=true;this.creationAttempted=false;this.ready=true;this.cleanupPending=false;this.startupError=null;
+    if(this.closed){await this.#removeOwnedSandbox();throw new Error('Host session was revoked during sandbox creation');}
+    return this.status;
+  }
+  #beginStart(input={}){
+    if(this.closed)throw new Error('Sandbox lifecycle closed');
+    if(this.ready)return Promise.resolve(this.status);
+    if(this.starting&&this.#startPromise)return this.#startPromise;
+    scopeIds(input.groupId,input.sessionId);
+    this.starting=true;this.startupError=null;this.cleanupPending=false;
+    this.#startPromise=(async()=>{
+      try{await this.#createSandbox(input);}
+      catch(error){
+        const message=typeof error?.message==='string'?error.message.replace(/[\u0000-\u001f\u007f-\u009f]/g,' ').slice(0,180):'Local sandbox startup failed';
+        this.ready=false;this.startupError=message;
+        if(this.creationAttempted||this.owned){
+          try{await this.#removeOwnedSandbox();}
+          catch{this.cleanupPending=true;this.startupError=message+'; sandbox cleanup could not be verified';}
+        }else if(this.closed){this.cleanupPending=false;}
+      }finally{this.starting=false;this.#startChild=null;}
+    })();
+    return this.#startPromise;
+  }
+  startInBackground(input={}){
+    this.#beginStart(input);
+    return this.status;
+  }
+  async start(input={}){
+    await this.#beginStart(input);
+    if(this.startupError)throw new Error(this.startupError);
+    return this.status;
   }
   async exec({command,cwd,purpose='Backroom terminal task',groupId,sessionId}={}){
     if(!this.ready||this.closed)throw new Error('Dedicated terminal sandbox is not ready');
@@ -495,8 +566,18 @@ export class CuaSandboxTerminalWorkspace {
     if(applied.code!==0)throw new Error('Git refused to apply the previously checked patch; inspect the local working tree before retrying');
     return Object.freeze({state:'completed',appliedToHost:true,committed:false,pushed:false,sha256,paths:pending.paths,repositoryRoot:root});
   }
-  async close(){if(this.closed&&!this.ready)return;this.closed=true;if(this.ready){const r=await this.#run(['--json','sb','rm','--local',this.sandboxName],30000).catch(()=>null);if(!r||r.code!==0)throw new Error('Dedicated sandbox removal could not be verified');this.ready=false;this.projectSync=null;this.#pendingPatches.clear();}}
-  get status(){return Object.freeze({configured:true,ready:this.ready,closed:this.closed,sandboxName:this.sandboxName,hostShellAvailable:false,cleanupPending:this.closed&&this.ready,projectConfigured:typeof this.projectSourcePath==='string'&&!!this.projectSourcePath.trim(),projectSynced:!!this.projectSync,projectFileCount:this.projectSync?.fileCount??0,projectSourceBytes:this.projectSync?.sourceBytes??0,projectSyncedAt:this.projectSync?.syncedAt??null});}
+  async close(){
+    if(this.closed&&!this.ready&&!this.starting&&!this.cleanupPending)return Object.freeze({stopped:true,closeFailures:0,cleanupPending:false});
+    this.closed=true;this.#pendingPatches.clear();
+    if(this.#startChild){try{this.#startChild.kill('SIGTERM');}catch{} }
+    if(this.starting){this.cleanupPending=true;return Object.freeze({stopped:true,closeFailures:0,cleanupPending:true});}
+    if(this.owned||this.creationAttempted){
+      try{await this.#removeOwnedSandbox();}
+      catch{this.cleanupPending=true;throw new Error('Dedicated sandbox removal could not be verified');}
+    }else{this.ready=false;this.projectSync=null;this.cleanupPending=false;}
+    return Object.freeze({stopped:true,closeFailures:0,cleanupPending:false});
+  }
+  get status(){return Object.freeze({configured:true,ready:this.ready,starting:this.starting,startupError:this.startupError,closed:this.closed,sandboxName:this.sandboxName,hostShellAvailable:false,cleanupPending:this.cleanupPending||(this.closed&&(this.starting||this.ready||this.owned||this.creationAttempted)),projectConfigured:typeof this.projectSourcePath==='string'&&!!this.projectSourcePath.trim(),projectSynced:!!this.projectSync,projectFileCount:this.projectSync?.fileCount??0,projectSourceBytes:this.projectSync?.sourceBytes??0,projectSyncedAt:this.projectSync?.syncedAt??null});}
 }
 
 export function createExternalWorkspaceService({desktop=null,android=null,terminal=null,startupErrors={}}={}){
@@ -534,6 +615,7 @@ export function createExternalWorkspaceService({desktop=null,android=null,termin
     async stopAndroidTask(input){if(stopped||!android)throw new Error('android_workspace_unavailable');return android.stop(input);},
     async observeAndroid(input){if(stopped||!android)throw new Error('android_workspace_unavailable');return android.observe(input);},
     async execTerminal(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.exec(input);},
+    async startTerminal(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.startInBackground(input);},
     async syncTerminalProject(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.syncProject(input);},
     async diffTerminalProject(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.diffProject(input);},
     async applyTerminalProjectDiff(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.applyProjectDiff(input);},
@@ -541,7 +623,7 @@ export function createExternalWorkspaceService({desktop=null,android=null,termin
       stopped=true;
       const jobs=[desktop?.client?.close?.(),android?.client?.close?.(),terminal?.close?.()].filter(Boolean);
       const settled=await Promise.allSettled(jobs);
-      return Object.freeze({stopped:true,closeFailures:settled.filter(x=>x.status==='rejected').length});
+      return Object.freeze({stopped:true,closeFailures:settled.filter(x=>x.status==='rejected').length,cleanupPending:terminal?.status?.cleanupPending?1:0});
     }
   });
 }
