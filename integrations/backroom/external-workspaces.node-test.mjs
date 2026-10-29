@@ -241,8 +241,8 @@ test('safe project archive excludes VCS data, dependencies, environment secrets 
 test('CUA terminal syncs a filtered local project before approved argv execution',async()=>{
  const root=await projectFixture(),calls=[];
  try{
-  const d=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-unit-1234',projectSourcePath:root,authorizeLocalAction:async a=>a.kind==='terminal_project_sync'||a.command?.[0]==='npm',spawnImpl:fakeSpawn([{code:0,stdout:'created'}],calls)});
-  await d.start();
+  const d=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-unit-1234',projectSourcePath:root,authorizeLocalAction:async a=>a.kind==='terminal_sandbox_create'||a.kind==='terminal_project_sync'||a.command?.[0]==='npm',spawnImpl:fakeSpawn([{code:0,stdout:'created'}],calls)});
+  await d.start({groupId:'group-1',sessionId:'session-1'});
   const sync=await d.syncProject({groupId:'group-1',sessionId:'session-1'});
   assert.equal(sync.projectSynced,true);assert.ok(sync.fileCount>=3);assert.equal(d.status.projectSynced,true);
   const copy=calls.find(c=>c.args.includes('cp')&&c.args.some(x=>String(x).includes('/tmp/rub-backroom-source.tar')));
@@ -271,7 +271,7 @@ async function makeSyncedTerminalWithPatch(root,patch,authorize=async()=>true){
   sandboxName:'rm-backroom-unit-1234',projectSourcePath:root,
   authorizeLocalAction:authorize,spawnImpl:fakeSpawn(results,calls)
  });
- await terminal.start();
+ await terminal.start({groupId:'group-1',sessionId:'session-1'});
  await terminal.syncProject({groupId:'group-1',sessionId:'session-1'});
  return {terminal,calls};
 }
@@ -306,7 +306,7 @@ test('terminal diff rejects oversized patches before returning bytes to the brow
 test('failed local sandbox deletion remains visible and can be retried',async()=>{
  const calls=[],results=[{code:0,stdout:'created'},{code:1,stdout:'denied'},{code:0,stdout:'removed'}];
  const terminal=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-unit-1234',authorizeLocalAction:async()=>true,spawnImpl:fakeSpawn(results,calls)});
- await terminal.start();
+ await terminal.start({groupId:'group-1',sessionId:'session-1'});
  const service=createExternalWorkspaceService({terminal});
  const first=await service.stop();assert.equal(first.closeFailures,1);assert.equal(service.status().terminal.cleanupPending,true);assert.equal(terminal.status.ready,true);
  const second=await service.stop();assert.equal(second.closeFailures,0);assert.equal(service.status().terminal.cleanupPending,false);assert.equal(terminal.status.ready,false);
@@ -325,9 +325,9 @@ test('terminal applies only an exact one-use patch after digest, Git-root, check
  };
  const sandboxSpawn=fakeSpawn(results,sandboxCalls);
  const approved=[];
- const d=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-unit-1234',projectSourcePath:root,authorizeLocalAction:async a=>{approved.push(a);return ['terminal_project_sync','terminal_diff_export','terminal_patch_apply'].includes(a.kind);},spawnImpl:sandboxSpawn,localGitSpawnImpl});
+ const d=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-unit-1234',projectSourcePath:root,authorizeLocalAction:async a=>{approved.push(a);return ['terminal_sandbox_create','terminal_project_sync','terminal_diff_export','terminal_patch_apply'].includes(a.kind);},spawnImpl:sandboxSpawn,localGitSpawnImpl});
  try{
-  await d.start();await d.syncProject({groupId:'group-1',sessionId:'session-1'});
+  await d.start({groupId:'group-1',sessionId:'session-1'});await d.syncProject({groupId:'group-1',sessionId:'session-1'});
   const diff=await d.diffProject({groupId:'group-1',sessionId:'session-1'});
   assert.equal(diff.applyAvailable,true);assert.equal(diff.patch,patch);assert.deepEqual(diff.paths,['src/index.js']);assert.match(diff.exportKey,/^[a-f0-9]{64}$/);
   assert.equal(diff.sha256,createHash('sha256').update(patch).digest('hex'));
@@ -348,7 +348,7 @@ test('terminal refuses path-traversing patch headers before issuing an apply tok
  const results=[{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0,stdout:patch}];
  const d=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-path-test-1234',projectSourcePath:root,authorizeLocalAction:async()=>true,spawnImpl:fakeSpawn(results,calls)});
  try{
-  await d.start();await d.syncProject({groupId:'g',sessionId:'s'});
+  await d.start({groupId:'group-1',sessionId:'session-1'});await d.syncProject({groupId:'g',sessionId:'s'});
   await assert.rejects(d.diffProject({groupId:'g',sessionId:'s'}),/unsafe file path/);
   await assert.rejects(d.applyProjectDiff({exportKey:'a'.repeat(64),sha256:'b'.repeat(64),groupId:'g',sessionId:'s'}),/expired or outside/);
  }finally{await d.close().catch(()=>{});await rm(root,{recursive:true,force:true});}
@@ -359,7 +359,7 @@ test('terminal diff refuses case-variant Git metadata paths on case-insensitive 
  const patch='diff --git a/.GIT/config b/.GIT/config\n--- a/.GIT/config\n+++ b/.GIT/config\n@@ -1 +1 @@\n-private\n+changed\n';
  const results=[{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0,stdout:patch}];
  const d=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-unit-1234',projectSourcePath:root,authorizeLocalAction:async()=>true,spawnImpl:fakeSpawn(results,calls)});
- try{await d.start();await d.syncProject({groupId:'g',sessionId:'s'});await assert.rejects(d.diffProject({groupId:'g',sessionId:'s'}),/unsafe file path/);}
+ try{await d.start({groupId:'group-1',sessionId:'session-1'});await d.syncProject({groupId:'g',sessionId:'s'});await assert.rejects(d.diffProject({groupId:'g',sessionId:'s'}),/unsafe file path/);}
  finally{await d.close().catch(()=>{});await rm(root,{recursive:true,force:true});}
 });
 
@@ -368,7 +368,7 @@ test('terminal diff refuses binary change markers instead of exporting an unusab
  const binary='diff --git a/image.png b/image.png\nindex 1111111..2222222 100644\nBinary files a/image.png and b/image.png differ\n';
  const results=[{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0,stdout:binary}];
  const d=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-unit-1234',projectSourcePath:root,authorizeLocalAction:async()=>true,spawnImpl:fakeSpawn(results,calls)});
- try{await d.start();await d.syncProject({groupId:'g',sessionId:'s'});await assert.rejects(d.diffProject({groupId:'g',sessionId:'s'}),/Binary changes cannot be exported/);}
+ try{await d.start({groupId:'group-1',sessionId:'session-1'});await d.syncProject({groupId:'g',sessionId:'s'});await assert.rejects(d.diffProject({groupId:'g',sessionId:'s'}),/Binary changes cannot be exported/);}
  finally{await d.close().catch(()=>{});await rm(root,{recursive:true,force:true});}
 });
 test('terminal apply revalidates symlink targets after the owner approval prompt',async()=>{
@@ -385,7 +385,7 @@ test('terminal apply revalidates symlink targets after the owner approval prompt
  };
  const d=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-unit-1234',projectSourcePath:root,authorizeLocalAction,spawnImpl:fakeSpawn(results,calls),localGitSpawnImpl});
  try{
-  await d.start();await d.syncProject({groupId:'g',sessionId:'s'});const diff=await d.diffProject({groupId:'g',sessionId:'s'});
+  await d.start({groupId:'group-1',sessionId:'session-1'});await d.syncProject({groupId:'g',sessionId:'s'});const diff=await d.diffProject({groupId:'g',sessionId:'s'});
   await assert.rejects(d.applyProjectDiff({exportKey:diff.exportKey,sha256:diff.sha256,groupId:'g',sessionId:'s'}),/symbolic link/);
   assert.equal(gitCalls.some(call=>call.args[0]==='apply'&&call.args[1]!=='--check'),false);
  }finally{await d.close().catch(()=>{});await rm(root,{recursive:true,force:true});await rm(outside,{recursive:true,force:true});}
@@ -402,7 +402,7 @@ test('terminal patch apply consumes denied approvals without running git apply',
  };
  const d=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-unit-1234',projectSourcePath:root,authorizeLocalAction:async a=>a.kind!=='terminal_patch_apply',spawnImpl:fakeSpawn(results,sandboxCalls),localGitSpawnImpl});
  try{
-  await d.start();await d.syncProject({groupId:'g',sessionId:'s'});const diff=await d.diffProject({groupId:'g',sessionId:'s'});
+  await d.start({groupId:'group-1',sessionId:'session-1'});await d.syncProject({groupId:'g',sessionId:'s'});const diff=await d.diffProject({groupId:'g',sessionId:'s'});
   await assert.rejects(d.applyProjectDiff({exportKey:diff.exportKey,sha256:diff.sha256,groupId:'g',sessionId:'s'}),/denied/);
   assert.equal(gitCalls.some(call=>call.args[0]==='apply'&&call.args[1]!=='--check'),false);
   await assert.rejects(d.applyProjectDiff({exportKey:diff.exportKey,sha256:diff.sha256,groupId:'g',sessionId:'s'}),/expired or outside/);
@@ -414,7 +414,7 @@ test('terminal refuses arbitrary sandbox names, unapproved commands and path tra
  const root=await projectFixture(),calls=[];
  try{
   const d=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-test-0001',projectSourcePath:root,authorizeLocalAction:async a=>a.kind==='terminal_project_sync',spawnImpl:fakeSpawn([{code:0}],calls)});
-  await d.start();await d.syncProject({groupId:'g',sessionId:'s'});
+  await d.start({groupId:'group-1',sessionId:'session-1'});await d.syncProject({groupId:'g',sessionId:'s'});
   await assert.rejects(d.exec({command:['npm','test'],purpose:'test',groupId:'g',sessionId:'s'}),/denied/);
   await assert.rejects(d.exec({command:['npm','test'],purpose:'test',groupId:'g',sessionId:'s',cwd:'../escape'}),/cwd/);
   await d.close();
