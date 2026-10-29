@@ -4,13 +4,14 @@ import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
 import { McpStdioClient } from './mcp-stdio-client.mjs';
 import { ArtemisAndroidWorkspace, CuaDesktopWorkspace, CuaSandboxTerminalWorkspace, createExternalWorkspaceService, createSafeWorkspaceArchive } from './external-workspaces.mjs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const names = values => values.map(name => ({ name }));
 class FakeMcp {
   constructor(values, handler) { this.tools=names(values); this.handler=handler; this.calls=[]; this.closed=false; }
+  get status(){return Object.freeze({state:this.closed?'closed':'ready',connected:!this.closed,tools:this.tools.map(t=>t.name)});}
   async listTools(){return this.tools;}
   async callTool(name,args){this.calls.push({name,args});return this.handler(name,args);}
   async close(){this.closed=true;}
@@ -114,7 +115,7 @@ test('safe project archive excludes VCS data, dependencies, environment secrets 
   const archive=await createSafeWorkspaceArchive(root),bytes=await readFile(archive.archivePath),names=tarNames(bytes);
   assert.ok(names.includes('package.json'));assert.ok(names.includes('src/index.js'));assert.ok(names.includes('README.md'));
   assert.equal(names.some(name=>name.startsWith('.git/')),false);assert.equal(names.some(name=>name.startsWith('node_modules/')),false);
-  assert.equal(names.includes('.env'),false);assert.equal(names.includes('service-account.json'),false);
+  assert.equal(names.includes('.env'),false);assert.equal(names.includes('src/env-link'),false);assert.equal(names.includes('service-account.json'),false);
   assert.ok(archive.omittedSensitive>=2);assert.ok(archive.sourceBytes>0);assert.match(archive.sha256,/^[a-f0-9]{64}$/);
   await rm(archive.tempDirectory,{recursive:true,force:true});
  }finally{await rm(root,{recursive:true,force:true});}
