@@ -39,7 +39,7 @@ declare
 begin
   insert into auth.users(id) values (v_owner);
   insert into public.rooms(id,owner_id) values (v_room,v_owner);
-  insert into public.participants(id,room_id,kind) values (v_participant,v_room,'external_agent');
+  insert into public.participants(id,room_id,kind,status) values (v_participant,v_room,'external_agent','active');
   insert into public.agent_connections(room_id,participant_id,owner_id,credential_digest,expires_at,revoked_at)
   values (v_room,v_participant,v_owner,repeat('a',64),pg_catalog.clock_timestamp()+interval '1 hour',null);
 
