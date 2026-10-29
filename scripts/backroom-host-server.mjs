@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { loadOrCreateHostIdentity } from "../integrations/backroom/host-identity.mjs";
+import { loadOrCreateHostIdentity, rotateHostIdentity } from "../integrations/backroom/host-identity.mjs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { HostPairingAuthority } from "../integrations/backroom/host-pairing.mjs";
@@ -494,10 +494,11 @@ export function createBackroomHostServer({
   };
 }
 
-export async function runBackroomHost() {
-  const identity = await loadOrCreateHostIdentity({
-    filePath: join(homedir(), ".rub-minds", "backroom", "host-identity.json"),
-  });
+export async function runBackroomHost({rotateIdentity=false}={}) {
+  const identityOptions={filePath:join(homedir(), ".rub-minds", "backroom", "host-identity.json")};
+  const identity = rotateIdentity===true
+    ? await rotateHostIdentity(identityOptions)
+    : await loadOrCreateHostIdentity(identityOptions);
   const hostId = identity.hostId;
   const { BrowserHostRuntime } = await import("../integrations/backroom/browser-host-runtime.mjs");
   const browserRuntime = new BrowserHostRuntime({ hostId });
@@ -524,6 +525,7 @@ export async function runBackroomHost() {
     `Host ID: ${address.hostId}`,
     `Hosted enrollment digest: ${identity.credentialDigest}`,
     "Private host credential is stored only in the local host identity file (not printed).",
+    ...(rotateIdentity===true?["Host identity rotated. Re-register this new host from Backroom; all previous host credentials remain revoked."]:[]),
     configured===3?"Remote wake binding configured; awaiting explicit local grant.":"Remote wake: not configured. Pair the browser to configure a hosted binding without restarting.",
     `Allowed web origins: ${parseOrigins(process.env.BACKROOM_ALLOWED_ORIGINS).join(", ")}`,
     "Pairing code (one use, expires in 10 minutes):",
@@ -540,7 +542,7 @@ export async function runBackroomHost() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  runBackroomHost().catch(error => {
+  runBackroomHost({rotateIdentity:process.argv.includes("--rotate-identity")}).catch(error => {
     process.stderr.write(`Backroom host failed to start: ${error.message}\n`);
     process.exitCode = 1;
   });
