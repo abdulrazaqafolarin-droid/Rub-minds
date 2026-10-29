@@ -49,7 +49,7 @@ Deno.serve(async req=>{
   }});
  }
  const parsed=new URL(req.url);
- if(req.method!=='POST'||parsed.search||parsed.hash||!['/functions/v1/backroom-config/host','/functions/v1/backroom-config/binding','/backroom-config/host','/backroom-config/binding'].includes(parsed.pathname))
+ if(req.method!=='POST'||parsed.search||parsed.hash||!['/functions/v1/backroom-config/host','/functions/v1/backroom-config/binding','/functions/v1/backroom-config/sessions','/backroom-config/host','/backroom-config/binding','/backroom-config/sessions'].includes(parsed.pathname))
   return json(404,{ok:false,reason:'not_found'},origin);
  if(req.headers.get('content-type')?.toLowerCase()!=='application/json')
   return json(415,{ok:false,reason:'unsupported_type'},origin);
@@ -61,6 +61,33 @@ Deno.serve(async req=>{
   if(!ownerId)return json(401,{ok:false,reason:'unauthorized'},origin);
   let value;
   try{value=await bodyJson(req);}catch{return json(400,{ok:false,reason:'invalid_body'},origin);}
+  if(parsed.pathname.endsWith('/sessions')){
+   if(!value||typeof value.roomId!=='string'||!/^[a-f0-9-]{36}$/i.test(value.roomId)||
+      Object.keys(value).some(k=>k!=='roomId'))
+    return json(400,{ok:false,reason:'invalid_room'},origin);
+   const {data:ownedRoom,error:roomError}=await db.from('rooms').select('id')
+    .eq('id',value.roomId).eq('owner_id',ownerId).maybeSingle();
+   if(roomError||!ownedRoom)return json(403,{ok:false,reason:'not_room_owner'},origin);
+   const now=new Date().toISOString();
+   const [participants,connections,sessions]=await Promise.all([
+    db.from('participants').select('id,display_name,kind').eq('room_id',value.roomId)
+      .in('kind',['original_session','model','external_agent']).limit(100),
+    db.from('agent_connections').select('participant_id').eq('room_id',value.roomId)
+      .eq('owner_id',ownerId).is('revoked_at',null).gt('expires_at',now).limit(100),
+    db.from('rub_minds_mcp_sessions').select('session_digest,participant_id,expires_at')
+      .eq('room_id',value.roomId).is('terminated_at',null)
+      .not('agent_credential_ciphertext','is',null).gt('expires_at',now).limit(100)
+   ]);
+   if(participants.error||connections.error||sessions.error)
+    return json(503,{ok:false,reason:'service_unavailable'},origin);
+   const names=new Map((participants.data??[]).map(p=>[p.id,p.display_name]));
+   const joined=new Set((connections.data??[]).map(c=>c.participant_id));
+   return json(200,{ok:true,sessions:(sessions.data??[])
+    .filter(s=>names.has(s.participant_id)&&joined.has(s.participant_id))
+    .slice(0,30).map(s=>({participantId:s.participant_id,
+      displayName:names.get(s.participant_id),
+      sessionDigest:s.session_digest,expiresAt:s.expires_at}))},origin);
+  }
   if(parsed.pathname.endsWith('/host')){
    let input;
    try{input=validateHostEnrollment(value);}catch{return json(400,{ok:false,reason:'invalid_host_registration'},origin);}
