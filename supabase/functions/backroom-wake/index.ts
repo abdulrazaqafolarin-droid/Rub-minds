@@ -72,36 +72,21 @@ const store={
 async function activateBinding({hostId,sessionDigest,bindingId,grantId,ttlSeconds}:{
  hostId:string;sessionDigest:string;bindingId:string;grantId:string;ttlSeconds:number
 }) {
- const now=new Date();
- const expires=new Date(now.getTime()+ttlSeconds*1000).toISOString();
- const {data,error}=await db.from('backroom_input_bindings')
-  .update({wake_enabled:true,wake_grant_id:grantId,wake_last_revoked_grant_id:null,confirmed_at:now.toISOString(),wake_expires_at:expires})
-  .eq('id',bindingId).eq('host_id',hostId).eq('session_digest',sessionDigest)
-  .is('revoked_at',null)
-  .or('wake_enabled.eq.false,wake_grant_id.eq.'+grantId+',wake_expires_at.lte.'+now.toISOString())
-  .select('id').maybeSingle();
+ const {data,error}=await db.rpc('activate_backroom_wake_grant',{
+  p_host_id:hostId,p_session_digest:sessionDigest,p_binding_id:bindingId,
+  p_grant_id:grantId,p_ttl_seconds:ttlSeconds
+ });
  if(error)throw new Error('Backroom consent activation unavailable');
- return Boolean(data?.id);
+ return data===true;
 }
 async function deactivateBinding({hostId,sessionDigest,bindingId,grantId}:{
  hostId:string;sessionDigest:string;bindingId:string;grantId:string
 }) {
- const {data,error}=await db.from('backroom_input_bindings')
-  .update({wake_enabled:false,wake_last_revoked_grant_id:grantId,
-    wake_grant_id:null,confirmed_at:null,wake_expires_at:null})
-  .eq('id',bindingId).eq('host_id',hostId).eq('session_digest',sessionDigest)
-  .eq('wake_grant_id',grantId).eq('wake_enabled',true).is('revoked_at',null)
-  .select('id').maybeSingle();
+ const {data,error}=await db.rpc('deactivate_backroom_wake_grant',{
+  p_host_id:hostId,p_session_digest:sessionDigest,p_binding_id:bindingId,p_grant_id:grantId
+ });
  if(error)throw new Error('Backroom consent deactivation unavailable');
- if(data?.id)return true;
- // Idempotent confirmation after a lost success response, but never accept a
- // different grant or a currently active replacement grant.
- const {data:existing,error:readError}=await db.from('backroom_input_bindings')
-  .select('wake_enabled,wake_grant_id,wake_last_revoked_grant_id,revoked_at')
-  .eq('id',bindingId).eq('host_id',hostId).eq('session_digest',sessionDigest).maybeSingle();
- if(readError)throw new Error('Backroom consent deactivation unavailable');
- return Boolean(existing&&existing.revoked_at===null&&existing.wake_enabled===false&&
-  existing.wake_grant_id===null&&existing.wake_last_revoked_grant_id===grantId);
+ return data===true;
 }
 const gateway=createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,activateBinding,deactivateBinding});
 const handler=createWakeGatewayHttpHandler({gateway});
