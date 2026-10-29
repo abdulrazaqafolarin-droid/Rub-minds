@@ -41,11 +41,11 @@ export class SupabaseBackroomWakeStore{
    p_owner_id:requireMatch(input.ownerId,UUID,'ownerId'),
    p_room_id:requireMatch(p.groupId,UUID,'groupId'),
    p_participant_id:requireMatch(p.participantId,UUID,'participantId'),
-   p_host_id:requireLabel(target.hostId,'hostId',128),
+   p_host_id:requireMatch(target.hostId,UUID,'hostId'),
    p_space_id:requireLabel(target.spaceId,'spaceId',128),
    p_session_id:requireLabel(p.sessionId,'sessionId',256),
    p_session_digest:requireMatch(input.sessionDigest,HEX64,'sessionDigest'),
-   p_binding_id:requireLabel(p.bindingId,'bindingId',128),
+   p_binding_id:requireMatch(p.bindingId,UUID,'bindingId'),
    p_target_id:requireLabel(p.targetId,'targetId',128),
    p_target_identity_fingerprint:requireLabel(target.identityFingerprint,'identityFingerprint',512),
    p_target_revision:requireInt(target.revision,'targetRevision',1,2147483647),
@@ -62,9 +62,9 @@ export class SupabaseBackroomWakeStore{
      !['pending','leased','acknowledged','ignored','failed','cancelled','expired'].includes(data.state))throw new Error('Queue returned malformed enqueue result');
   return Object.freeze({jobId:data.job_id,created:data.created,state:data.state,jobKey:args.p_job_key});
  }
- async claim({hostId,sessionDigest,limit=5,leaseSeconds=30}={}){
+ async claim({hostId,sessionDigest,bindingId,limit=5,leaseSeconds=30}={}){
   const data=await call(this.client,'claim_backroom_wake_jobs',{
-   p_host_id:requireLabel(hostId,'hostId',128),p_session_digest:requireMatch(sessionDigest,HEX64,'sessionDigest'),
+   p_host_id:requireMatch(hostId,UUID,'hostId'),p_session_digest:requireMatch(sessionDigest,HEX64,'sessionDigest'),p_binding_id:requireMatch(bindingId,UUID,'bindingId'),
    p_limit:requireInt(limit,'limit',1,20),p_lease_seconds:requireInt(leaseSeconds,'leaseSeconds',10,120),
   });
   if(!Array.isArray(data))throw new Error('Queue returned malformed claim result');
@@ -80,7 +80,7 @@ export class SupabaseBackroomWakeStore{
       typeof row.out_event_id!=='string'||row.out_event_id.trim()===''||row.out_event_id.length>256||
       typeof row.out_space_id!=='string'||row.out_space_id.trim()===''||row.out_space_id.length>128||
       typeof row.out_session_id!=='string'||row.out_session_id.trim()===''||row.out_session_id.length>256||
-      typeof row.out_binding_id!=='string'||row.out_binding_id.trim()===''||row.out_binding_id.length>128||
+      !UUID.test(row.out_binding_id)||
       typeof row.out_target_id!=='string'||row.out_target_id.trim()===''||row.out_target_id.length>128||
       !Number.isFinite(Date.parse(row.out_expires_at)))throw new Error('Queue returned malformed lease');
    return Object.freeze({jobId:row.out_job_id,jobKey:row.out_job_key,eventId:row.out_event_id,hostId,sessionDigest,
@@ -91,20 +91,20 @@ export class SupabaseBackroomWakeStore{
     attemptCount:row.out_attempt_count,expiresAt:row.out_expires_at,leaseToken:row.out_lease_token});
   });
  }
- async acknowledge({jobId,hostId,sessionDigest,leaseToken,outcome='acknowledged'}={}){
-  requireMatch(jobId,UUID,'jobId');requireLabel(hostId,'hostId',128);requireMatch(sessionDigest,HEX64,'sessionDigest');
+ async acknowledge({jobId,hostId,sessionDigest,bindingId,leaseToken,outcome='acknowledged'}={}){
+  requireMatch(jobId,UUID,'jobId');requireMatch(hostId,UUID,'hostId');requireMatch(sessionDigest,HEX64,'sessionDigest');requireMatch(bindingId,UUID,'bindingId');
   requireMatch(leaseToken,LEASE,'leaseToken');
   if(!['acknowledged','ignored'].includes(outcome))throw new TypeError('Invalid acknowledgement outcome');
   return requireBoolean(await call(this.client,'ack_backroom_wake_job',{
-   p_job_id:jobId,p_host_id:hostId,p_session_digest:sessionDigest,p_lease_token:leaseToken,p_outcome:outcome,
+   p_job_id:jobId,p_host_id:hostId,p_session_digest:sessionDigest,p_binding_id:bindingId,p_lease_token:leaseToken,p_outcome:outcome,
   }),'acknowledgement result');
  }
- async retry({jobId,hostId,sessionDigest,leaseToken,retryAfterSeconds=5,errorCode='other'}={}){
-  requireMatch(jobId,UUID,'jobId');requireLabel(hostId,'hostId',128);requireMatch(sessionDigest,HEX64,'sessionDigest');
+ async retry({jobId,hostId,sessionDigest,bindingId,leaseToken,retryAfterSeconds=5,errorCode='other'}={}){
+  requireMatch(jobId,UUID,'jobId');requireMatch(hostId,UUID,'hostId');requireMatch(sessionDigest,HEX64,'sessionDigest');requireMatch(bindingId,UUID,'bindingId');
   requireMatch(leaseToken,LEASE,'leaseToken');requireInt(retryAfterSeconds,'retryAfterSeconds',1,300);
   if(!ERROR_CODES.has(errorCode))throw new TypeError('Invalid errorCode');
   const data=await call(this.client,'retry_backroom_wake_job',{
-   p_job_id:jobId,p_host_id:hostId,p_session_digest:sessionDigest,p_lease_token:leaseToken,
+   p_job_id:jobId,p_host_id:hostId,p_session_digest:sessionDigest,p_binding_id:bindingId,p_lease_token:leaseToken,
    p_retry_after_seconds:retryAfterSeconds,p_error_code:errorCode,
   });
   if(!['pending','failed'].includes(data))throw new Error('Retry rejected: lease is invalid, expired, replayed, or job is no longer retryable');
