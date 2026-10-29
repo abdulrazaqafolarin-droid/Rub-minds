@@ -11,7 +11,8 @@ type AndroidTask = {traceId:string;deviceSerial:string;appPackage:string;groupId
 type AndroidStatus = {traceId:string;deviceSerial:string;status:string;elapsedSeconds:number|null;result:unknown;error:string|null;testSummary:unknown};
 type AndroidHierarchy = {deviceSerial:string;appPackage:string;groupId:string;sessionId:string;hierarchy:string};
 type TerminalResult = {state:string;exitCode:number;stdout:string;stderr:string;sandboxName:string};
-type TerminalDiff = {state:string;patch:string;bytes:number;sha256:string;empty?:boolean;appliedToHost?:false;destination?:string;reason?:string};
+type TerminalDiff = {state:string;patch:string;bytes:number;sha256:string;empty?:boolean;paths?:string[];exportKey?:string|null;applyAvailable?:boolean;appliedToHost?:false;destination?:string;reason?:string};
+type TerminalApplyResult = {state:string;appliedToHost:boolean;committed:false;pushed:false;sha256:string;paths:string[];repositoryRoot:string};
 
 const emptyRuntime:RuntimeStatus={stopped:false,capabilities:{desktop:false,android:false,terminal:false},desktop:{available:false},android:{available:false,trackedTasks:0},terminal:{available:false,hostShellAvailable:false}};
 const runArgvDefault='["npm","ci","--ignore-scripts"]';
@@ -37,6 +38,7 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
   const [terminalPurpose,setTerminalPurpose]=useState('Run the selected Backroom verification command in the local sandbox');
   const [terminalResult,setTerminalResult]=useState<TerminalResult|null>(null);
   const [terminalDiff,setTerminalDiff]=useState<TerminalDiff|null>(null);
+  const [terminalApplyResult,setTerminalApplyResult]=useState<TerminalApplyResult|null>(null);
   const selectedSession=useMemo(()=>sessions.find(s=>s.sessionDigest===selectedSessionDigest)??null,[sessions,selectedSessionDigest]);
   const scope=useMemo(()=>selectedSession&&roomId?{groupId:roomId,sessionId:selectedSession.participantId}:null,[roomId,selectedSession]);
   const selectedWindow=useMemo(()=>desktopWindows.find(w=>(String(w.pid)+':'+String(w.windowId))===selectedWindowKey)??null,[desktopWindows,selectedWindowKey]);
@@ -52,7 +54,7 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
       if(!silent)setNotice(next.stopped?'External workspaces are stopped. Restart and pair the local host to use them.':'Workspace capabilities refreshed from the paired local host.');
     }catch(error){setRuntime(emptyRuntime);if(!silent)setNotice(error instanceof Error?error.message:'Could not read local runtime status.');}
   }
-  useEffect(()=>{setRuntime(emptyRuntime);setDesktopWindows([]);setSelectedWindowKey('');setObservation(null);setSelectedElementToken('');setAndroidHierarchy('');setAndroidDiagnosis(null);setTerminalResult(null);setTerminalDiff(null);void refreshRuntime(true);},[hostToken,roomId]);
+  useEffect(()=>{setRuntime(emptyRuntime);setDesktopWindows([]);setSelectedWindowKey('');setObservation(null);setSelectedElementToken('');setAndroidHierarchy('');setAndroidDiagnosis(null);setTerminalResult(null);setTerminalDiff(null);setTerminalApplyResult(null);void refreshRuntime(true);},[hostToken,roomId]);
 
   async function action<T>(fn:()=>Promise<T>,success?:string):Promise<T|null>{
     setBusy(true);setNotice('');
@@ -133,7 +135,15 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
     if(!scope||!runtime.terminal?.projectSynced){setNotice('Sync a local project snapshot before reviewing sandbox changes.');return;}
     if(!window.confirm('Request the local host to return a bounded patch for review? The local terminal will ask for separate approval. The patch will not be applied to your host repository or posted to the group.'))return;
     const result=await action(()=>hostApi<TerminalDiff>('/v1/workspaces/terminal/diff',{method:'POST',body:scope}));
-    if(result){setTerminalDiff(result);setNotice(result.state==='completed'?'Sandbox patch is available for inspection only. It was not applied to the host or shared with the group.':result.reason??'Patch was withheld or requires review.');}
+    if(result){setTerminalDiff(result);setTerminalApplyResult(null);setNotice(result.state==='completed'?(result.empty?'No sandbox changes were detected.':result.applyAvailable?'Review the patch below. Applying it to your local working tree is a separate, locally approved action.':'Patch is available for review only.'):result.reason??'Patch was withheld or requires review.');}
+  }
+
+  async function applyTerminalDiff(){
+    if(!scope||!terminalDiff?.exportKey||!terminalDiff.sha256||!terminalDiff.paths?.length){setNotice('Review a non-empty patch from the current terminal session first.');return;}
+    const files=terminalDiff.paths.join('\n');
+    if(!window.confirm('Apply this exact reviewed patch to the local working tree?\n\n'+files+'\n\nSHA-256: '+terminalDiff.sha256+'\n\nA second approval will be shown in the trusted local Backroom terminal. This does not stage, commit or push changes.'))return;
+    const result=await action(()=>hostApi<TerminalApplyResult>('/v1/workspaces/terminal/apply',{method:'POST',body:{...scope,exportKey:terminalDiff.exportKey,sha256:terminalDiff.sha256}}));
+    if(result){setTerminalApplyResult(result);setTerminalDiff(null);setNotice('Patch applied to '+result.paths.length+' local working-tree file(s). Nothing was staged, committed or pushed. Run checks and inspect the changed files before proceeding.');}
   }
 
   return <section className="br-panel br-external-workspaces" aria-labelledby="br-external-workspaces-title">
@@ -195,7 +205,8 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
           <button type="button" className="br-primary" disabled={busy||!scope||!runtime.terminal?.projectSynced} onClick={()=>void runTerminal()}><Play size={14}/> Run in local sandbox</button>
           <button type="button" className="br-secondary" disabled={busy||!scope||!runtime.terminal?.projectSynced} onClick={()=>void reviewTerminalDiff()}><Eye size={14}/> Review sandbox changes</button>
           {terminalResult&&<><div className="br-detail"><span>Exit code</span><b>{terminalResult.exitCode} · {terminalResult.state}</b></div><pre className="br-runtime-output">{terminalResult.stdout||terminalResult.stderr||'(no output)'}</pre></>}
-          {terminalDiff&&<><div className="br-detail"><span>Sandbox patch · review only</span><b>{terminalDiff.state} · {terminalDiff.bytes} bytes · SHA-256 {terminalDiff.sha256.slice(0,12)}</b></div><pre className="br-runtime-output" aria-label="Unapplied sandbox patch">{terminalDiff.patch||terminalDiff.reason||'(no changes detected)'}</pre><p>Not applied to host. Review, verify, and copy or reimplement the desired changes separately.</p></>}
+          {terminalDiff&&<><div className="br-detail"><span>Sandbox patch · review first</span><b>{terminalDiff.state} · {terminalDiff.bytes} bytes · SHA-256 {terminalDiff.sha256.slice(0,12)}</b></div>{terminalDiff.paths?.length>0&&<p>Changed files: {terminalDiff.paths.join(', ')}</p>}<pre className="br-runtime-output" aria-label="Reviewed sandbox patch">{terminalDiff.patch||terminalDiff.reason||'(no changes detected)'}</pre>{terminalDiff.applyAvailable&&terminalDiff.exportKey&&<button type="button" className="br-primary" disabled={busy||!scope} onClick={()=>void applyTerminalDiff()}><CheckCircle2 size={14}/> Apply reviewed patch locally</button>}<p>Applying modifies only your local working tree after separate browser and local-console approval. It does not stage, commit or push.</p></>}
+          {terminalApplyResult&&<div className="br-task-result"><b>Local patch applied</b><span>{terminalApplyResult.paths.length} file(s) · not committed or pushed</span><pre className="br-runtime-output">{terminalApplyResult.paths.join('\n')}</pre></div>}
         </>}
       </section>
     </div>
