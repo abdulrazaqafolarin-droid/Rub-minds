@@ -30,7 +30,7 @@ export function approvalContext(c){
  if(c.operation==='wake'&&!isCanonicalWakePrompt(c.text,c.eventId))throw new TypeError('wake approval must bind the canonical @RMconnects prompt');
  if(!Number.isSafeInteger(c.targetRevision)||c.targetRevision<1)throw new TypeError('valid target revision required');
  return Object.freeze({purpose:c.operation==='wake'?'backroom.wake.v1':'backroom.wake.draft.v1',commandId:requireId(c.id,'command.id'),eventId:requireId(c.eventId,'command.eventId'),
-  groupId:requireId(c.roomId,'command.roomId'),hostId:requireId(c.hostId,'command.hostId'),spaceId:requireId(c.spaceId,'command.spaceId'),
+  groupId:requireId(c.roomId,'command.roomId'),hostId:requireId(c.hostId,'command.hostId'),spaceId:requireText(c.spaceId,'command.spaceId'),
   sessionId:requireId(c.sessionId,'command.sessionId'),targetId:requireId(c.targetId,'command.targetId'),
   participantId:requireId(c.participantId,'command.participantId'),bindingId:requireId(c.bindingId,'command.bindingId'),
   identityFingerprint:requireText(c.identityFingerprint,'command.identityFingerprint'),targetRevision:c.targetRevision,operation:c.operation,
