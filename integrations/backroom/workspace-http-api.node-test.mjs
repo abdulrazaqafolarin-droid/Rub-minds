@@ -43,6 +43,15 @@ test('terminal diff route carries scope and returns a review-only patch without 
  assert.equal(x.response.status,200);assert.equal(seen.groupId,'group-1');assert.equal(seen.sessionId,'session-1');assert.equal(x.response.body.patch,patch);assert.equal(x.response.body.appliedToHost,false);
 });
 
+test('terminal apply route accepts only the one-use digest and scope fields',async()=>{
+ let seen;
+ const x=f({body:{groupId:'group-1',sessionId:'session-1',exportKey:'a'.repeat(64),sha256:'b'.repeat(64)},runtime:{applyTerminalProjectDiff:async input=>{seen=input;return {state:'completed',appliedToHost:true,committed:false,pushed:false,sha256:input.sha256,paths:['src/index.js'],repositoryRoot:'/workspace/project'};}}});
+ await handleWorkspaceHttpRequest({...x,url:new URL('http://127.0.0.1/v1/workspaces/terminal/apply')});
+ assert.equal(x.response.status,200);assert.equal(seen.exportKey,'a'.repeat(64));assert.equal(seen.groupId,'group-1');assert.equal(x.response.body.committed,false);
+ const bad=f({body:{groupId:'g',sessionId:'s',exportKey:'a'.repeat(64),sha256:'b'.repeat(64),patch:'forged'},runtime:{applyTerminalProjectDiff:async()=>{throw Error('must not execute');}}});
+ await handleWorkspaceHttpRequest({...bad,url:new URL('http://127.0.0.1/v1/workspaces/terminal/apply')});assert.equal(bad.response.status,400);
+});
+
 test('requires JSON content type and avoids leaking error messages for unknown routes',async()=>{
  const a=f();a.request.headers['content-type']='text/plain';await handleWorkspaceHttpRequest({...a,url:new URL('http://127.0.0.1/v1/workspaces/android/tasks')});assert.equal(a.response.status,415);
  const b=f();await handleWorkspaceHttpRequest({...b,url:new URL('http://127.0.0.1/v1/workspaces/unknown')});assert.equal(b.response.status,404);assert.deepEqual(b.response.body,{error:'not_found'});
