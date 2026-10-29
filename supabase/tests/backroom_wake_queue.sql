@@ -250,6 +250,12 @@ begin
       v_binding_7,'target-capacity','fingerprint-capacity',1,'capacity-event-'||i::text,
       '@RMconnects'||chr(10)||'Event: capacity-event-'||i::text||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
     if i = 1 then v_capacity_first := v_cancel_job; end if;
+    if mod(i,6)=0 then
+      -- Age the rate-limit window but retain pending rows so this loop isolates backlog capacity.
+      update public.backroom_wake_jobs
+      set created_at=pg_catalog.clock_timestamp()-interval '2 minutes'
+      where binding_id=v_binding_7;
+    end if;
   end loop;
   v_key := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('capacity-key-1','UTF8')),'hex');
   v_repeat := public.enqueue_backroom_wake_job(
@@ -267,7 +273,7 @@ begin
       v_binding_7,'target-capacity','fingerprint-capacity',1,'capacity-event-101',
       '@RMconnects'||chr(10)||'Event: capacity-event-101'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   exception when others then
-    if sqlerrm <> 'Backroom wake queue is full for this session' then raise; end if;
+    if sqlerrm <> 'Backroom wake queue is full for this input binding' then raise; end if;
     v_conflict := true;
   end;
   if not v_conflict then raise exception 'Session queue capacity must reject a 101st active wake'; end if;
@@ -334,6 +340,25 @@ begin
   values (v_trigger_room,v_trigger_human,'Task mode must wait for task events');
   select count(*) into v_count from public.backroom_wake_jobs where room_id=v_trigger_room and participant_id=v_trigger_ai;
   if v_count <> 2 then raise exception 'Task mode must not react to ordinary message inserts'; end if;
+
+  -- The per-binding limiter caps six wakes/minute, while a seventh message still commits.
+  update public.backroom_input_bindings set participation_mode='mentions' where id=v_trigger_binding;
+  for i in 1..4 loop
+    insert into public.messages(room_id,sender_id,body)
+    values (v_trigger_room,v_trigger_human,'@TestAI additional wake '||i::text);
+  end loop;
+  select count(*) into v_count from public.backroom_wake_jobs
+    where room_id=v_trigger_room and participant_id=v_trigger_ai;
+  if v_count <> 6 then raise exception 'Expected six wakes within one minute'; end if;
+  insert into public.messages(room_id,sender_id,body)
+  values (v_trigger_room,v_trigger_human,'@TestAI beyond the wake rate limit')
+  returning id into v_trigger_message;
+  select count(*) into v_count from public.backroom_wake_jobs
+    where room_id=v_trigger_room and participant_id=v_trigger_ai;
+  if v_count <> 6 then raise exception 'Per-binding rate limit must refuse the seventh wake'; end if;
+  if not exists (select 1 from public.messages where id=v_trigger_message) then
+    raise exception 'Wake throttling must never roll back a human-authored message';
+  end if;
 
 end;
 $test$;
