@@ -1,7 +1,7 @@
 /** Routes an authoritative group event into the durable wake queue.
  * This module makes no device calls. The store must be a server-only service-role adapter.
  */
-import {planWake} from './coordination-core.mjs';
+import {planWakeTrigger} from './coordination-core.mjs';
 function nonempty(value,name,max=512){
  if(typeof value!=='string'||value.trim()===''||value.length>max||/[\u0000-\u001f]/.test(value))throw new TypeError('Invalid '+name);
  return value;
@@ -17,7 +17,7 @@ export async function routeGroupEventToDurableWake(input){
  const {store,event,participant,binding,target,ownerId,sessionDigest,alreadyQueued=false,ttlSeconds}=input;
  if(!store||typeof store.enqueue!=='function')throw new TypeError('Durable wake store required');
  if(ttlSeconds!==undefined&&(!Number.isSafeInteger(ttlSeconds)||ttlSeconds<60||ttlSeconds>86400))throw new RangeError('Invalid ttlSeconds');
- const decision=planWake({event,participant,binding,alreadyQueued});
+ const decision=planWakeTrigger({event,participant,binding,alreadyQueued});
  if(decision.action!=='queue')return Object.freeze({action:decision.action,reason:decision.reason??null});
  uuid(ownerId,'ownerId');uuid(participant.participantId,'participantId');uuid(participant.groupId,'groupId');
  nonempty(sessionDigest,'sessionDigest',64);
