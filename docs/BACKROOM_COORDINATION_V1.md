@@ -35,12 +35,12 @@ The queue migration now includes a **PostgreSQL AFTER INSERT trigger on `public.
 - This SQL migration has not been applied to production. Production must remain unchanged until isolated SQL CI passes and integration rollout is approved.
 
 ## Required next integration work
-- Implement the authenticated server-to-paired-host queue worker and bind each durable record to the current one-shot local host grant. The database now enqueues message events, but nothing claims and executes them automatically.
-- Authenticate the Backroom host and map its signed pairing identity to a server-managed host/session digest.
-- Implement the host-issued one-shot or scoped standing-consent approval service; the bridge deliberately accepts a trusted verifier callback instead of treating a boolean as proof.
-- Provide atomic lease renewal or execution-state transitions if adapter effects may outlive the lease.
-- Reconcile acknowledgements after host crashes and prevent duplicate inserts across host restarts.
-- Prove a real Claude/ChatGPT MCP round trip and real Windows/Android/PTY acceptance. Simulated driver tests do not establish provider compatibility or native mobile app embedding.
+
+- Obtain a clean, independently observable run of the committed Node suites and isolated PostgreSQL 17 migration contract. The latest GitHub Actions jobs fail before recording any steps, so no CI pass/fail conclusion about the code is available.
+- Deploy the migration and Edge Functions only to a separate nonproduction Supabase project; exercise registration, renewal, binding, consent activation, claim, acknowledgement, deactivation, and remote revocation over HTTPS.
+- Test local host restart recovery, one-time execution journal, target revalidation, concurrency, expiry, revocation races, and ambiguous provider effects.
+- Demonstrate a real ChatGPT and Claude MCP round trip: the invited session reads an authorized group event, responds to the group, and acknowledges it. Composer clearing or queue acknowledgement alone is insufficient evidence.
+- Complete device-level acceptance for Windows, desktop, Android, and terminal targets. The native and terminal adapters currently provide draft-only contracts, not installed OS drivers or proof of native app embedding.
 
 ## Focused Node tests
 - `npm run test:multi-surface` — native/terminal draft-only safety contracts.
