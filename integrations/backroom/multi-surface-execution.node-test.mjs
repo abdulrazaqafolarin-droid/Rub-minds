@@ -76,3 +76,23 @@ test('occupied native composer fails closed rather than replacing user text',asy
  await assert.rejects(()=>v.svc.draft({command:v.cmd(),approved:true}),/identity|mismatch|preflight|occupied/i);
  assert.equal(v.writes,0);
 });
+
+test('unknown native submit attestation is not mislabeled as definitely unsent',async()=>{
+ const v=setup('windows_app');
+ const uncertain={
+  inspect:v.driver.inspect,
+  async writeTextIfEmpty(){return {state:'written',submitted:true};}
+ };
+ v.svc.register({target:v.target,driver:uncertain,consented:true});
+ const output=await v.svc.draft({command:v.cmd(),approved:true});
+ assert.equal(output.state,'needs_review');
+ assert.equal(output.submitted,null);
+ assert.equal(output.requiresReview,true);
+});
+test('same target cannot be registered twice and a different room cannot draft it',async()=>{
+ const v=setup('android_app');
+ v.svc.register({target:v.target,driver:v.driver,consented:true});
+ assert.throws(()=>v.svc.register({target:v.target,driver:v.driver,consented:true}),/already registered/);
+ await assert.rejects(()=>v.svc.draft({command:{...v.cmd(),roomId:'another-room'},approved:true}),/scope mismatch/);
+ assert.equal(v.writes,0);
+});
