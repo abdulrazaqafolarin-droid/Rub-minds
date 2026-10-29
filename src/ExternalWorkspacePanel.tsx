@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Activity, RefreshCw, ShieldAlert, Smartphone, SquareTerminal, Monitor, Eye, Type, Play, Square } from 'lucide-react';
+import { Activity, RefreshCw, ShieldAlert, Smartphone, SquareTerminal, Monitor, Eye, Type, Play, Square, CheckCircle2 } from 'lucide-react';
 
 type LocalHostApi = <T>(path:string, options?:{method?:string;body?:unknown})=>Promise<T>;
 type AiSession = {participantId:string;displayName:string;sessionDigest:string;expiresAt?:string};
@@ -41,6 +41,7 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
   const [terminalApplyResult,setTerminalApplyResult]=useState<TerminalApplyResult|null>(null);
   const selectedSession=useMemo(()=>sessions.find(s=>s.sessionDigest===selectedSessionDigest)??null,[sessions,selectedSessionDigest]);
   const scope=useMemo(()=>selectedSession&&roomId?{groupId:roomId,sessionId:selectedSession.participantId}:null,[roomId,selectedSession]);
+  useEffect(()=>{setTerminalDiff(null);setTerminalApplyResult(null);},[roomId,selectedSessionDigest]);
   const selectedWindow=useMemo(()=>desktopWindows.find(w=>(String(w.pid)+':'+String(w.windowId))===selectedWindowKey)??null,[desktopWindows,selectedWindowKey]);
   const selectedElement=useMemo(()=>observation?.elements.find(e=>e.elementToken===selectedElementToken)??null,[observation,selectedElementToken]);
   const jobMatchesScope=!!(androidJob&&scope&&androidJob.groupId===scope.groupId&&androidJob.sessionId===scope.sessionId);
