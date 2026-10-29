@@ -1,5 +1,8 @@
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { loadOrCreateHostIdentity } from "../integrations/backroom/host-identity.mjs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { HostPairingAuthority } from "../integrations/backroom/host-pairing.mjs";
@@ -417,7 +420,10 @@ export function createBackroomHostServer({
 }
 
 export async function runBackroomHost() {
-  const hostId = randomUUID();
+  const identity = await loadOrCreateHostIdentity({
+    filePath: join(homedir(), ".rub-minds", "backroom", "host-identity.json"),
+  });
+  const hostId = identity.hostId;
   const { BrowserHostRuntime } = await import("../integrations/backroom/browser-host-runtime.mjs");
   const browserRuntime = new BrowserHostRuntime({ hostId });
   const instance = createBackroomHostServer({ hostId, browserRuntime });
@@ -427,6 +433,8 @@ export async function runBackroomHost() {
     "Rub Minds Backroom local host",
     `Address: http://${address.host}:${address.port}`,
     `Host ID: ${address.hostId}`,
+    `Hosted enrollment digest: ${identity.credentialDigest}`,
+    "Private host credential is stored only in the local host identity file (not printed).",
     `Allowed web origins: ${parseOrigins(process.env.BACKROOM_ALLOWED_ORIGINS).join(", ")}`,
     "Pairing code (one use, expires in 10 minutes):",
     instance.pairingCode,
