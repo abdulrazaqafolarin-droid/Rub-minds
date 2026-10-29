@@ -45,7 +45,7 @@ Deno.serve(async req=>{
   return new Response(null,{status:204,headers:{
    'Access-Control-Allow-Origin':origin,
    'Access-Control-Allow-Methods':'POST, OPTIONS',
-   'Access-Control-Allow-Headers':'Authorization, Content-Type, apikey',
+   'Access-Control-Allow-Headers':'authorization, x-client-info, apikey, content-type, x-retry-count, traceparent, tracestate, baggage',
    'Access-Control-Max-Age':'300','Vary':'Origin','Cache-Control':'no-store'
   }});
  }
