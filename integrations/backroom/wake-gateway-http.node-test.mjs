@@ -55,6 +55,7 @@ test('ack and retry preserve separate authorized operations',async()=>{
 });
 test('privileged store exceptions are redacted and unapproved requests are denied',async()=>{
  const handler=createWakeGatewayHttpHandler({gateway:{
+  activate:async()=>({ok:false}),deactivate:async()=>({ok:false}),
   claim:async()=>{throw new Error('sensitive backend SQL details');},
   acknowledge:async()=>({ok:false}),
   retry:async()=>({ok:false})
