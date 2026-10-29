@@ -93,16 +93,33 @@ Deno.serve(async req=>{
    let input;
    try{input=validateHostEnrollment(value);}catch{return json(400,{ok:false,reason:'invalid_host_registration'},origin);}
    const now=new Date().toISOString();
+   const expiresAt=new Date(Date.now()+input.ttlSeconds*1000).toISOString();
+   const existing=await db.from('backroom_hosts')
+    .select('host_id,owner_id,credential_digest,revoked_at')
+    .eq('host_id',input.hostId).maybeSingle();
+   if(existing.error)return json(503,{ok:false,reason:'service_unavailable'},origin);
+   if(existing.data){
+    // The stable host ID may renew only with the same owner and credential digest.
+    // An owner change, token rotation or explicit revoke must not be silently undone.
+    if(existing.data.owner_id!==ownerId||existing.data.credential_digest!==input.credentialDigest||
+       existing.data.revoked_at!==null)
+     return json(409,{ok:false,reason:'registration_conflict'},origin);
+    const {data,error}=await db.from('backroom_hosts').update({expires_at:expiresAt})
+     .eq('host_id',input.hostId).eq('owner_id',ownerId)
+     .eq('credential_digest',input.credentialDigest).is('revoked_at',null)
+     .select('host_id').maybeSingle();
+    if(error||!data)return json(409,{ok:false,reason:'registration_conflict'},origin);
+    return json(200,{ok:true,hostId:input.hostId,wakeEnabled:false,renewed:true},origin);
+   }
    const {count,error:countError}=await db.from('backroom_hosts').select('host_id',{count:'exact',head:true})
     .eq('owner_id',ownerId).is('revoked_at',null).gt('expires_at',now);
    if(countError)return json(503,{ok:false,reason:'service_unavailable'},origin);
    if((count??0)>=5)return json(429,{ok:false,reason:'host_limit_reached'},origin);
    const {error}=await db.from('backroom_hosts').insert({
-    host_id:input.hostId,owner_id:ownerId,credential_digest:input.credentialDigest,
-    expires_at:new Date(Date.now()+input.ttlSeconds*1000).toISOString()
+    host_id:input.hostId,owner_id:ownerId,credential_digest:input.credentialDigest,expires_at:expiresAt
    });
    if(error)return json(409,{ok:false,reason:'registration_conflict'},origin);
-   return json(201,{ok:true,hostId:input.hostId,wakeEnabled:false},origin);
+   return json(201,{ok:true,hostId:input.hostId,wakeEnabled:false,renewed:false},origin);
   }
   let input;
   try{input=validatePendingWakeBinding(value);}catch{return json(400,{ok:false,reason:'invalid_binding'},origin);}
