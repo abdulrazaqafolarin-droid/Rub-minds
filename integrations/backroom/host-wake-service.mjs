@@ -54,12 +54,14 @@ export function createHostWakeService({identity,browserRuntime,journalDirectory,
   if(!input||typeof input!=='object'||Array.isArray(input)||
     Object.keys(input).some(key=>!['sessionDigest','bindingId','publishableKey'].includes(key)))
    throw new TypeError('Unexpected host configuration fields');
-  const {sessionDigest,bindingId}=input;
+  const {sessionDigest,bindingId,publishableKey}=input;
+  if(typeof publishableKey!=='string'||publishableKey.length<20||publishableKey.length>4096||!/^[A-Za-z0-9._-]+$/.test(publishableKey))
+   throw new TypeError('Valid public project API key required');
   if(poller?.running||activeGrantId)throw new Error('Deactivate the existing wake grant before reconfiguration');
   if(!UUID.test(bindingId??'')||!HEX.test(sessionDigest??''))
    throw new TypeError('Valid hosted binding and MCP digest required');
   const store=createRemoteWakeStore({
-    baseUrl:trustedUrl,hostToken:identity.hostToken,
+    baseUrl:trustedUrl,hostToken:identity.hostToken,apiKey:publishableKey,
     ...(fetchImpl===undefined?{}:{fetchImpl}),
     verifyLocalGrant:grant=>browserRuntime.verifyRemoteWakeActivation(grant)
   });
