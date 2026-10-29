@@ -9,7 +9,7 @@ function fakeBrowser(){return {status:()=>({running:false,pages:0,capabilities:{
 
 test('unpair reports workspace shutdown failures and clearly requires restart when adapters are stopped',async()=>{
  let stops=0;
- const runtime={status:()=>({stopped:false,capabilities:{desktop:true,android:false,terminal:false}}),stop:async()=>{stops++;return {stopped:true,closeFailures:1};}};
+ const runtime={status:()=>({stopped:false,capabilities:{desktop:true,android:false,terminal:false}}),stop:async()=>{stops++;return {stopped:true,closeFailures:stops===1?1:0};}};
  const instance=createBackroomHostServer({hostId:randomUUID(),port:0,allowedOrigins:[origin],browserRuntime:fakeBrowser(),externalWorkspaceRuntime:runtime});
  const address=await instance.start();
  try{
