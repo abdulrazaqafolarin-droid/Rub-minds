@@ -75,3 +75,39 @@ test('local host credential is sent only to the trusted Supabase Edge Function',
   assert.ok(urls.every(url=>url.startsWith(trustedUrl)));
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('lost activation response retries only the same consent grant and can then be revoked',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'backroom-activation-retry-'));
+ try{
+  const urls=[],payloads=[];let activations=0;
+  const service=createHostWakeService({
+   identity:{hostId,hostToken},browserRuntime:runtime(),
+   journalDirectory:join(dir,'journal'),gatewayUrl:trustedUrl,
+   fetchImpl:async(url,options)=>{
+    urls.push(url);payloads.push(JSON.parse(options.body));
+    if(url.endsWith('/activate') && ++activations===1)throw new Error('simulate lost HTTP response');
+    const body=url.endsWith('/activate')?{ok:true,activated:true}:
+      url.endsWith('/deactivate')?{ok:true,deactivated:true}:{ok:true,leases:[]};
+    return new Response(JSON.stringify(body),{status:200});
+   }
+  });
+  service.configure({sessionDigest,bindingId});
+  const grantId='40000000-0000-4000-8000-000000000077';
+  const grant={grantId,expiresAt:Date.now()+300000,scope:{
+   hostId,bindingId,groupId:'40000000-0000-4000-8000-000000000044',
+   participantId:'40000000-0000-4000-8000-000000000055',
+   sessionId:'40000000-0000-4000-8000-000000000066'
+  }};
+  const input={bindingId,roomId:grant.scope.groupId,participantId:grant.scope.participantId,sessionId:grant.scope.sessionId};
+  await service.activateAndStart(grant,input);
+  assert.equal(activations,2);
+  assert.equal(payloads[0].grantId,grantId);
+  assert.equal(payloads[1].grantId,grantId);
+  assert.equal(payloads[0].ttlSeconds,payloads[1].ttlSeconds);
+  assert.ok(payloads[0].ttlSeconds>=60&&payloads[0].ttlSeconds<=295);
+  await new Promise(resolve=>setTimeout(resolve,0));
+  await service.stop();
+  assert.ok(urls.includes(trustedUrl+'deactivate'));
+  assert.ok(urls.every(url=>url.startsWith(trustedUrl)));
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
