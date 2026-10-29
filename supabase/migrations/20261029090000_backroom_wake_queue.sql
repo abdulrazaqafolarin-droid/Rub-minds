@@ -629,7 +629,11 @@ declare
   v_prompt text;
   v_job_key text;
   v_mention_position integer;
+  v_search_offset integer;
+  v_candidate_position integer;
+  v_before_mention text;
   v_after_mention text;
+  v_found_mention boolean;
 begin
   if new.id is null or new.room_id is null or new.sender_id is null or new.body is null then
     return new;
@@ -656,10 +660,28 @@ begin
       and b.revoked_at is null
   loop
     if v_binding.participation_mode='mentions' then
-      v_mention_position := position('@'||lower(v_binding.display_name) in lower(new.body));
-      if v_mention_position=0 then continue; end if;
-      v_after_mention := substring(lower(new.body) from v_mention_position+char_length(v_binding.display_name)+1 for 1);
-      if v_after_mention ~ '[[:alnum:]_]' then continue; end if;
+      -- Match any bounded @display_name mention, not e-mail fragments like name@TestAI,
+      -- and do not let an invalid first occurrence hide a later valid mention.
+      v_search_offset := 1;
+      v_found_mention := false;
+      loop
+        v_candidate_position := position(
+          '@'||lower(v_binding.display_name) in substring(lower(new.body) from v_search_offset)
+        );
+        if v_candidate_position=0 then exit; end if;
+        v_mention_position := v_search_offset + v_candidate_position - 1;
+        v_before_mention := case when v_mention_position>1
+          then substring(lower(new.body) from v_mention_position-1 for 1) else '' end;
+        v_after_mention := substring(lower(new.body)
+          from v_mention_position+char_length(v_binding.display_name)+1 for 1);
+        if (v_before_mention='' or v_before_mention !~ '[[:alnum:]_]')
+          and (v_after_mention='' or v_after_mention !~ '[[:alnum:]_]') then
+          v_found_mention := true;
+          exit;
+        end if;
+        v_search_offset := v_mention_position+1;
+      end loop;
+      if not v_found_mention then continue; end if;
     end if;
 
     v_prompt := '@RMconnects'||pg_catalog.chr(10)||'Event: '||new.id::text||pg_catalog.chr(10)||
