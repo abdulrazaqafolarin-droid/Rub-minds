@@ -75,3 +75,37 @@ test('official Supabase Edge Function URL retains bearer and exact scoped route'
  assert.equal(actual[0],'https://project-ref.supabase.co/functions/v1/backroom-wake/claim');
  assert.equal(calls.length,0);
 });
+
+test('remote activation requires a locally verified grant before contacting hosted API',async()=>{
+ const grantId='40000000-0000-4000-8000-000000000066';
+ let requests=0;
+ const denied=createRemoteWakeStore({baseUrl:'https://wake.example.test/',hostToken,
+  verifyLocalGrant:async()=>false,
+  fetchImpl:async()=>{requests++;throw new Error('No request expected');}
+ });
+ await assert.rejects(()=>denied.activate({...scope,grantId,ttlSeconds:300}),/not verified/);
+ const missing=createRemoteWakeStore({baseUrl:'https://wake.example.test/',hostToken,
+  fetchImpl:async()=>{requests++;throw new Error('No request expected');}
+ });
+ await assert.rejects(()=>missing.activate({...scope,grantId,ttlSeconds:300}),/verifier/);
+ assert.equal(requests,0);
+ const records=[];
+ const gateway=createAuthenticatedWakeGateway({
+  lookupHost:async()=>({hostId,ownerId,credentialDigest:createHash('sha256').update(hostToken).digest('hex'),
+   expiresAt:'2030-01-01T00:00:00Z',revokedAt:null}),
+  lookupBinding:async()=>({bindingId,hostId,ownerId,sessionDigest,wakeEnabled:false,confirmedAt:null,
+   wakeExpiresAt:null,revokedAt:null}),
+  store:{claim:async()=>[],acknowledge:async()=>false,retry:async()=>null},
+  activateBinding:async info=>{records.push(info);return true;},
+  now:()=>Date.parse('2026-10-29T00:00:00Z')
+ });
+ const handler=createWakeGatewayHttpHandler({gateway});
+ const accepted=createRemoteWakeStore({baseUrl:'https://wake.example.test/',hostToken,
+  verifyLocalGrant:async approval=>approval.grantId===grantId,
+  fetchImpl:async(url,options)=>handler(new Request(url,options))
+ });
+ assert.equal(await accepted.activate({...scope,grantId,ttlSeconds:300}),true);
+ assert.equal(records.length,1);
+ assert.equal(records[0].hostId,hostId);
+ await assert.rejects(()=>accepted.activate({...scope,grantId,ttlSeconds:901}),/grant/);
+});
