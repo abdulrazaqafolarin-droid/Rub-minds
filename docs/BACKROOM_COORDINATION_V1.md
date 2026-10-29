@@ -119,7 +119,7 @@ The transport has a fake-fetch integration test across host client -> HTTP handl
   
 ## Validation record — 2026-10-29
 
-This record refers to source branch `feat/backroom-coordination-core-v1`, code commit `95a13cb08d18ed3171f0249f49be13e21e040da3`, and an isolated Node 22.23.4 test workspace. These are source-level and sandbox checks, not a production release.
+This record refers to source branch `feat/backroom-coordination-core-v1`, code commit `b9e73bd7015723eeff8c4f7b2129c793eadd0523`, and current PR head `5b50e274fadec85f8540ae3f1e37e7e50c907ceb` (documentation-only changes after the code commit). Checks ran in disposable Node 22.23.4 workspaces and are not a production release.
 
 | Check | Evidence | Status |
 |---|---|---|
