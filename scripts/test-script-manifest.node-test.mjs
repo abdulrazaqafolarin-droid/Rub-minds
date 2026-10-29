@@ -40,3 +40,14 @@ test('critical Backroom test suites remain registered in runtime and queue scrip
   for(const path of paths)assert.ok(command.includes(path),name+' must include '+path);
  }
 });
+
+
+test('host identity rotation is explicit and cannot be mistaken for server revocation',async()=>{
+ const wrapper=await readFile(resolve(root,'scripts/backroom-host.mjs'),'utf8');
+ const server=await readFile(resolve(root,'scripts/backroom-host-server.mjs'),'utf8');
+ const rotateCommand=manifest.scripts?.['backroom:rotate-host'];
+ assert.equal(rotateCommand,'node scripts/backroom-host.mjs --rotate-identity-only');
+ assert.match(wrapper,/ambiguousRotate\s*=\s*process\.argv\.includes\("--rotate-identity"\)/);
+ assert.match(wrapper,/Local rotation does not revoke a server host/);
+ assert.match(server,/This only rotates the local file; it does NOT revoke the previous server registration/);
+});
