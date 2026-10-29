@@ -68,6 +68,8 @@ export function createHostWakeService({
     entry.activeGrantId=null;entry.pendingGrantId=null;
     return Object.freeze({stopped:true,remotelyDeactivated:confirmed===true,bindingId:entry.scope.bindingId});
    }catch{
+    // Preserve a retry marker: local polling stopped, but the remote grant may remain live.
+    entry.pendingGrantId=grantId;
     return Object.freeze({stopped:true,remotelyDeactivated:false,bindingId:entry.scope.bindingId});
    }
   }
@@ -99,8 +101,12 @@ export function createHostWakeService({
    try{await entry.activationPromise;}catch{}
   }
   const stopped=await stopOne(entry);
+  // Keep the non-polling entry as a retry handle if remote revocation is still uncertain.
+  // Never discard the only local record of a potentially live grant.
+  if(entry.activeGrantId||entry.pendingGrantId)
+   return Object.freeze({removed:false,bindingId,remotelyDeactivated:false,retryPending:true});
   bindings.delete(bindingId);
-  return Object.freeze({removed:true,bindingId,remotelyDeactivated:stopped.remotelyDeactivated});
+  return Object.freeze({removed:true,bindingId,remotelyDeactivated:stopped.remotelyDeactivated,retryPending:false});
  }
 
  function configure(rawInput={}){
