@@ -22,6 +22,7 @@ export function createRemoteWakeStore({baseUrl,hostToken,fetchImpl=fetch}={}){
  async function post(endpoint,body){
   const response=await fetchImpl(new URL('/v1/backroom/wake/'+endpoint,url).href,{
    method:'POST',redirect:'error',credentials:'omit',cache:'no-store',
+   signal:AbortSignal.timeout(15000),
    headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json'},
    body:JSON.stringify(body),
   });
