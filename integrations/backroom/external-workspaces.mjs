@@ -224,12 +224,12 @@ export class ArtemisAndroidWorkspace {
 
 /** Creates and destroys a dedicated local gVisor sandbox; never executes on host shell. */
 export class CuaSandboxTerminalWorkspace {
-  constructor({command='cua',sandboxName,authorizeLocalAction,spawnImpl,timeoutMs=120000,outputLimitBytes=1048576}={}){
+  constructor({command='cua',sandboxName,authorizeLocalAction,spawnImpl,timeoutMs=120000,outputLimitBytes=1048576,projectSourcePath=process.env.BACKROOM_TERMINAL_PROJECT_PATH??process.cwd()}={}){
     if(typeof command!=='string'||!command.trim())throw new TypeError('CUA CLI executable required');
     if(typeof sandboxName!=='string'||!/^rm-backroom-[a-z0-9-]{4,48}$/.test(sandboxName))throw new TypeError('Dedicated rm-backroom-* sandbox required');
     needApproval(authorizeLocalAction,'Terminal execution');if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1000||timeoutMs>600000)throw new RangeError('Invalid terminal timeout');
     if(!Number.isSafeInteger(outputLimitBytes)||outputLimitBytes<1024||outputLimitBytes>4194304)throw new RangeError('Invalid terminal output bound');
-    Object.assign(this,{command,sandboxName,approve:authorizeLocalAction,spawnImpl,timeoutMs,outputLimitBytes,ready:false,closed:false});
+    Object.assign(this,{command,sandboxName,approve:authorizeLocalAction,spawnImpl,timeoutMs,outputLimitBytes,projectSourcePath,ready:false,closed:false,projectSync:null});
   }
   async #run(args,timeoutMs=this.timeoutMs){
     const spawn=this.spawnImpl??(await import('node:child_process')).spawn;
@@ -243,12 +243,53 @@ export class CuaSandboxTerminalWorkspace {
       child.once('close',(code,signal)=>{if(settled)return;settled=true;clearTimeout(timer);if(bytes>this.outputLimitBytes){reject(new Error('Sandbox output exceeded configured limit'));return;}resolve(Object.freeze({code:Number.isInteger(code)?code:1,signal:signal??null,stdout,stderr:stderr.slice(0,4000)}));});
     });
   }
+  async #runGuest(command,timeoutMs=this.timeoutMs){
+    const args=['--json','sb','exec','-i','--local','--timeout',String(Math.max(1,Math.ceil(timeoutMs/1000)))];
+    args.push(this.sandboxName,'--',...command);
+    const result=await this.#run(args,timeoutMs);
+    if(result.code!==0)throw new Error('Sandbox workspace operation failed: '+command[0]);
+    return result;
+  }
+  async syncProject({groupId,sessionId}={}){
+    if(!this.ready||this.closed)throw new Error('Dedicated terminal sandbox is not ready');
+    scopeIds(groupId,sessionId);
+    const archive=await createSafeWorkspaceArchive(this.projectSourcePath);
+    try{
+      const approval=await this.approve(Object.freeze({
+        kind:'terminal_project_sync',sandboxName:this.sandboxName,projectRoot:archive.sourceRoot,
+        fileCount:archive.fileCount,sourceBytes:archive.sourceBytes,archiveBytes:archive.archiveBytes,
+        archiveSha256:archive.sha256,omittedSensitive:archive.omittedSensitive,omittedLarge:archive.omittedLarge,
+        destination:'/workspace/project',overwriteExistingProject:true,
+        warning:'The existing sandbox project folder will be replaced. Git internals, dependencies, common secrets and build output are not copied.'
+      }));
+      if(approval!==true)throw new Error('Local approval denied project source transfer');
+      // Exact local copy operation: no shell, no token, and an explicit local sandbox ref.
+      const cleaned=await this.#runGuest(['rm','-rf','/workspace/project','/tmp/rub-backroom-source.tar']);
+      const copied=await this.#run(['--json','sb','cp',archive.archivePath,'local:'+this.sandboxName+':/tmp/rub-backroom-source.tar'],180000);
+      if(copied.code!==0)throw new Error('Could not transfer approved project snapshot to the local sandbox');
+      await this.#runGuest(['mkdir','-p','/workspace/project']);
+      await this.#runGuest(['tar','-xf','/tmp/rub-backroom-source.tar','-C','/workspace/project'],180000);
+      await this.#runGuest(['rm','-f','/tmp/rub-backroom-source.tar']);
+      // Establish a local baseline so any future diff/export feature can compare to this snapshot.
+      await this.#runGuest(['git','init','-q','/workspace/project']);
+      await this.#runGuest(['git','-C','/workspace/project','add','-A']);
+      await this.#runGuest(['git','-c','user.name=Backroom Local','-c','user.email=backroom-local@localhost','-C','/workspace/project','commit','--quiet','--allow-empty','-m','Backroom source snapshot baseline']);
+      this.projectSync=Object.freeze({fileCount:archive.fileCount,sourceBytes:archive.sourceBytes,archiveBytes:archive.archiveBytes,sha256:archive.sha256,syncedAt:new Date().toISOString(),omittedSensitive:archive.omittedSensitive,omittedLarge:archive.omittedLarge});
+      return Object.freeze({state:'completed',projectSynced:true,fileCount:archive.fileCount,sourceBytes:archive.sourceBytes,archiveBytes:archive.archiveBytes,sha256:archive.sha256,omittedSensitive:archive.omittedSensitive,omittedLarge:archive.omittedLarge,destination:'/workspace/project'});
+    }catch(error){
+      this.projectSync=null;
+      // A partially unpacked snapshot is not a ready workspace; remove it if possible.
+      await this.#runGuest(['rm','-rf','/workspace/project','/tmp/rub-backroom-source.tar'],30000).catch(()=>null);
+      throw error;
+    }finally{await rm(archive.tempDirectory,{recursive:true,force:true}).catch(()=>{});}
+  }
   async start(){if(this.closed)throw new Error('Sandbox lifecycle closed');if(this.ready)return this.status;
     const r=await this.#run(['--json','sb','create','linux','--on','local','--kind','container','--runtime','gvisor','--headless','--name',this.sandboxName]);
     if(r.code!==0)throw new Error('Local gVisor sandbox creation failed; existing sandboxes are never adopted');this.ready=true;return this.status;
   }
   async exec({command,cwd,purpose='Backroom terminal task',groupId,sessionId}={}){
     if(!this.ready||this.closed)throw new Error('Dedicated terminal sandbox is not ready');
+    if(!this.projectSync)throw new Error('Sync an approved local project snapshot before running terminal commands');
     if(!Array.isArray(command)||command.length<1||command.length>128||command.some(v=>typeof v!=='string'||!v||v.includes('\0')||v.length>2000))throw new TypeError('Terminal command must be a bounded argv array');
     const exe=command[0].split(/[\\/]/).at(-1).toLowerCase();if(SHELLS.has(exe)||!TERMINAL_BINS.has(exe))throw new Error('Shell interpreters and non-allowlisted executables are denied');
     if(cwd!==undefined&&(typeof cwd!=='string'||!cwd.startsWith('/')||cwd.split('/').includes('..')))throw new TypeError('Sandbox cwd must be an absolute POSIX path without traversal');
@@ -258,7 +299,7 @@ export class CuaSandboxTerminalWorkspace {
     const r=await this.#run(args);return Object.freeze({state:r.code===0?'completed':'failed',exitCode:r.code,stdout:r.stdout.slice(0,this.outputLimitBytes),stderr:r.stderr.slice(0,4000),sandboxName:this.sandboxName});
   }
   async close(){if(this.closed)return;this.closed=true;if(this.ready){const r=await this.#run(['--json','sb','rm','--local',this.sandboxName],30000).catch(()=>null);this.ready=false;if(!r||r.code!==0)throw new Error('Dedicated sandbox removal could not be verified');}}
-  get status(){return Object.freeze({configured:true,ready:this.ready,closed:this.closed,sandboxName:this.sandboxName,hostShellAvailable:false});}
+  get status(){return Object.freeze({configured:true,ready:this.ready,closed:this.closed,sandboxName:this.sandboxName,hostShellAvailable:false,projectConfigured:typeof this.projectSourcePath==='string'&&!!this.projectSourcePath.trim(),projectSynced:!!this.projectSync,projectFileCount:this.projectSync?.fileCount??0,projectSourceBytes:this.projectSync?.sourceBytes??0,projectSyncedAt:this.projectSync?.syncedAt??null});}
 }
 
 export function createExternalWorkspaceService({desktop=null,android=null,terminal=null}={}){
