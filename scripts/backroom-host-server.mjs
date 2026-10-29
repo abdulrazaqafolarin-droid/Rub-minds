@@ -210,9 +210,26 @@ export function createBackroomHostServer({
     if(request.method==="POST" && url.pathname==="/v1/backroom/stop"){
       const authorized=authority.authorize({origin:requestOrigin,token:bearer(request)});
       if(!authorized){writeJson(response,401,{error:"host_session_invalid"},cors);return;}
+      let bindingId;
+      if(request.headers["content-type"]){
+        if(!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"])){
+          writeJson(response,415,{error:"application_json_required"},cors);return;
+        }
+        try{
+          const input=await readJson(request);
+          if(Object.keys(input).some(key=>key!=="bindingId")||
+             (input.bindingId!==undefined&&!/^[a-f0-9-]{36}$/i.test(input.bindingId))){
+            writeJson(response,400,{error:"invalid_binding_scope"},cors);return;
+          }
+          bindingId=input.bindingId;
+        }catch{
+          writeJson(response,400,{error:"invalid_json"},cors);return;
+        }
+      }
       try{
-        const status=await wakeService?.stop?.();
-        writeJson(response,200,{stopped:true,remoteDeactivationConfirmed:status?.remotelyDeactivated===true},cors);
+        const status=await wakeService?.stop?.(bindingId);
+        writeJson(response,200,{stopped:true,bindingId:bindingId??null,
+          remoteDeactivationConfirmed:status?.remotelyDeactivated===true},cors);
       }catch{
         writeJson(response,503,{error:"wake_stop_failed"},cors);
       }
@@ -413,12 +430,13 @@ export function createBackroomHostServer({
             const id = /^[a-f0-9-]{36}$/i;
             if (typeof input.grantId !== "string" || !id.test(input.grantId) ||
               typeof input.targetId !== "string" || !id.test(input.targetId) ||
-              typeof input.roomId !== "string" || !id.test(input.roomId)) {
+              typeof input.roomId !== "string" || !id.test(input.roomId) ||
+              typeof input.bindingId !== "string" || !id.test(input.bindingId)) {
               writeJson(response, 400, { error: "invalid_wake_grant_scope" }, cors);
               return;
             }
             const revoked = await browser.revokeContinuousWake({ grantId: input.grantId, targetId: input.targetId, roomId: input.roomId });
-            if(revoked)await wakeService?.stop?.();
+            if(revoked)await wakeService?.stop?.(input.bindingId);
             writeJson(response, revoked ? 200 : 404, { revoked }, cors);
             return;
           }
