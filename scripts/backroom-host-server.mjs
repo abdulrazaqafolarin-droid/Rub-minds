@@ -388,6 +388,7 @@ export function createBackroomHostServer({
                 // local approval, and only for this pre-enrolled binding.
                 await wakeService.activateAndStart(grant,input);
               } catch {
+                try { await wakeService.stop(); } catch {}
                 browser.revokeContinuousWake({grantId:grant.grantId,
                   targetId:input.targetId,roomId:input.roomId});
                 writeJson(response, 503, {error:"remote_wake_activation_failed"}, cors);
