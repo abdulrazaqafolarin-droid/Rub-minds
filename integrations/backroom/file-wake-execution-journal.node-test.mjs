@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm,readdir,readFile,symlink} from 'node:fs/promises';
+import {mkdtemp,rm,readdir,readFile,symlink,mkdir,chmod} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {FileWakeExecutionJournal} from './file-wake-execution-journal.mjs';
@@ -33,4 +33,15 @@ test('fails closed on missing identity or unsafe symlinked directory',async()=>{
   await symlink(dir,link,'dir');
   await assert.rejects(()=>new FileWakeExecutionJournal({directory:link}).reserve(job),/Unsafe wake journal/);
  }finally{await rm(dir,{recursive:true,force:true});}
+});
+
+test('rejects group/world accessible preexisting journal directory on POSIX',async()=>{
+ if(process.platform==='win32')return;
+ const root=await mkdtemp(join(tmpdir(),'backroom-mode-'));
+ try {
+  const directory=join(root,'unsafe');
+  await mkdir(directory,{mode:0o755});
+  await chmod(directory,0o755);
+  await assert.rejects(()=>new FileWakeExecutionJournal({directory}).reserve(job),/Unsafe wake journal/);
+ } finally {await rm(root,{recursive:true,force:true});}
 });
