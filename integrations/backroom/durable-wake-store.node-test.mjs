@@ -24,7 +24,7 @@ test('enqueue accepts the required newline protocol but rejects other control by
  const good=fixture({enqueue_backroom_wake_job:{data:{job_id:jobId,created:true,state:'pending'},error:null}});
  await good.store.enqueue({plan,binding,target,ownerId:owner,sessionDigest:digest});
  assert.equal(good.calls.length,1);
- for(const prompt of ['wrong prefix\\ntext','@RMconnects\\nunsafe\\u0001byte','@RMconnects\\nunsafe\\tbyte']){
+ for(const prompt of ['wrong prefix\ntext','@RMconnects\nunsafe\u0001byte','@RMconnects\nunsafe\tbyte']){
   const bad=fixture();
   await assert.rejects(()=>bad.store.enqueue({plan:{...plan,job:{...plan.job,prompt}},binding,target,ownerId:owner,sessionDigest:digest}),/Invalid prompt/);
   assert.equal(bad.calls.length,0);
