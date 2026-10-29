@@ -188,3 +188,70 @@ test('a false remote deactivation response is never reported as confirmed',async
   assert.equal(status.consentActive,false);
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('concurrent activation for one grant shares one server transaction',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'backroom-activation-race-'));
+ try{
+  let activationCalls=0,releaseActivation;
+  const activationGate=new Promise(resolve=>{releaseActivation=resolve;});
+  const service=createHostWakeService({
+   identity:{hostId,hostToken},browserRuntime:runtime(),
+   journalDirectory:join(dir,'journal'),gatewayUrl:trustedUrl,
+   fetchImpl:async(url,options)=>{
+    if(url.endsWith('/activate')){
+     activationCalls++;
+     await activationGate;
+     return new Response(JSON.stringify({ok:true,activated:true}),{status:200});
+    }
+    if(url.endsWith('/deactivate'))return new Response(JSON.stringify({ok:true,deactivated:true}),{status:200});
+    return new Response(JSON.stringify({ok:true,leases:[]}),{status:200});
+   }
+  });
+  service.configure({sessionDigest,bindingId,publishableKey});
+  const grantId='40000000-0000-4000-8000-000000000079';
+  const groupId='40000000-0000-4000-8000-000000000044';
+  const participantId='40000000-0000-4000-8000-000000000055';
+  const sessionId='40000000-0000-4000-8000-000000000066';
+  const grant={grantId,expiresAt:Date.now()+300000,scope:{hostId,bindingId,groupId,participantId,sessionId}};
+  const input={bindingId,roomId:groupId,participantId,sessionId};
+  const first=service.activateAndStart(grant,input);
+  const second=service.activateAndStart(grant,input);
+  await Promise.resolve();
+  assert.equal(activationCalls,1);
+  releaseActivation();
+  const results=await Promise.all([first,second]);
+  assert.equal(results.length,2);
+  assert.ok(results.every(result=>result.activated===true));
+  assert.equal(activationCalls,1);
+  await new Promise(resolve=>setTimeout(resolve,0));
+  await service.stop();
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
+test('different grants cannot race the same binding while activation is pending',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'backroom-different-grant-race-'));
+ try{
+  let releaseActivation,activationCalls=0;
+  const activationGate=new Promise(resolve=>{releaseActivation=resolve;});
+  const service=createHostWakeService({
+   identity:{hostId,hostToken},browserRuntime:runtime(),
+   journalDirectory:join(dir,'journal'),gatewayUrl:trustedUrl,
+   fetchImpl:async(url)=>{
+    if(url.endsWith('/activate')){activationCalls++;await activationGate;return new Response(JSON.stringify({ok:true,activated:true}),{status:200});}
+    if(url.endsWith('/deactivate'))return new Response(JSON.stringify({ok:true,deactivated:true}),{status:200});
+    return new Response(JSON.stringify({ok:true,leases:[]}),{status:200});
+   }
+  });
+  service.configure({sessionDigest,bindingId,publishableKey});
+  const groupId='40000000-0000-4000-8000-000000000044',participantId='40000000-0000-4000-8000-000000000055',sessionId='40000000-0000-4000-8000-000000000066';
+  const input={bindingId,roomId:groupId,participantId,sessionId};
+  const grant={grantId:'40000000-0000-4000-8000-000000000079',expiresAt:Date.now()+300000,scope:{hostId,bindingId,groupId,participantId,sessionId}};
+  const other={...grant,grantId:'40000000-0000-4000-8000-000000000080'};
+  const first=service.activateAndStart(grant,input);
+  await assert.rejects(()=>service.activateAndStart(other,input),/already in progress/);
+  assert.equal(activationCalls,1);
+  releaseActivation();
+  await first;
+  await new Promise(resolve=>setTimeout(resolve,0));
+  await service.stop();
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
