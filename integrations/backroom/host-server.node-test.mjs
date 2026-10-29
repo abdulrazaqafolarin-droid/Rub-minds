@@ -426,3 +426,71 @@ test("enrollment only exposes a digest to the locally paired owner browser",asyn
   assert.equal(Object.hasOwn(status,"hostToken"),false);
  },{enrollmentDigest:digest});
 });
+
+
+test("local approval activates hosted wake, and unpair/revoke stop remote worker",async()=>{
+ const roomId="12345678-1234-4234-9234-123456789014";
+ const participantId="12345678-1234-4234-9234-123456789015";
+ const bindingId="12345678-1234-4234-9234-123456789016";
+ const sessionId="12345678-1234-4234-9234-123456789017";
+ const targetId="12345678-1234-4234-9234-123456789018";
+ const grantId="12345678-1234-4234-9234-123456789019";
+ const calls=[];
+ const browserRuntime={
+  status:()=>({running:true,pages:1,capabilities:{browserDraft:true,browserCanonicalWake:true}}),
+  stop:async()=>{calls.push("browser-stop");},
+  enableContinuousWake:async input=>{
+   assert.equal(input.confirmed,true);
+   calls.push("local-grant");
+   return {grantId,scope:{hostId:"host-test",bindingId,groupId:roomId,participantId,sessionId,targetId}};
+  },
+  revokeContinuousWake:()=>{calls.push("revoke");return true;}
+ };
+ const wakeService={
+  activateAndStart:async()=>{calls.push("remote-activate");},
+  stop:async()=>{calls.push("poller-stop");}
+ };
+ await withHost(async({base,origin})=>{
+  const pairResponse=await pair(base,origin);
+  const token=(await pairResponse.json()).sessionToken;
+  const auth={Origin:origin,Authorization:"Bearer "+token,"Content-Type":"application/json"};
+  const body={targetId,roomId,participantId,sessionId,bindingId,confirmed:true};
+  const response=await fetch(base+"/v1/browser/wake/grants",{method:"POST",headers:auth,body:JSON.stringify(body)});
+  assert.equal(response.status,201);
+  assert.deepEqual(calls.slice(0,2),["local-grant","remote-activate"]);
+  const revoke=await fetch(base+"/v1/browser/wake/grants/revoke",{method:"POST",headers:auth,
+   body:JSON.stringify({grantId,targetId,roomId})});
+  assert.equal(revoke.status,200);
+  assert.ok(calls.includes("poller-stop"));
+  const unpair=await fetch(base+"/v1/unpair",{method:"POST",headers:auth});
+  assert.equal(unpair.status,200);
+  assert.ok(calls.filter(x=>x==="poller-stop").length>=2);
+ },{browserRuntime,wakeService});
+});
+test("remote activation failure revokes local grant and never reports success",async()=>{
+ const roomId="12345678-1234-4234-9234-123456789014";
+ const targetId="12345678-1234-4234-9234-123456789018";
+ const grantId="12345678-1234-4234-9234-123456789019";
+ let revoked=0;
+ const browserRuntime={
+  status:()=>({running:true,pages:1,capabilities:{browserCanonicalWake:true}}),
+  stop:async()=>{},
+  enableContinuousWake:async()=>({grantId}),
+  revokeContinuousWake:()=>{revoked++;return true;}
+ };
+ const wakeService={
+  activateAndStart:async()=>{throw new Error("secret network failure");},
+  stop:async()=>{}
+ };
+ await withHost(async({base,origin})=>{
+  const token=(await (await pair(base,origin)).json()).sessionToken;
+  const response=await fetch(base+"/v1/browser/wake/grants",{method:"POST",
+   headers:{Origin:origin,Authorization:"Bearer "+token,"Content-Type":"application/json"},
+   body:JSON.stringify({targetId,roomId,participantId:"12345678-1234-4234-9234-123456789015",
+    sessionId:"12345678-1234-4234-9234-123456789017",
+    bindingId:"12345678-1234-4234-9234-123456789016",confirmed:true})});
+  assert.equal(response.status,503);
+  assert.equal(revoked,1);
+  assert.doesNotMatch(await response.text(),/secret network/);
+ },{browserRuntime,wakeService});
+});
