@@ -3,7 +3,7 @@ import { Activity, RefreshCw, ShieldAlert, Smartphone, SquareTerminal, Monitor, 
 
 type LocalHostApi = <T>(path:string, options?:{method?:string;body?:unknown})=>Promise<T>;
 type AiSession = {participantId:string;displayName:string;sessionDigest:string;expiresAt?:string};
-type RuntimeStatus = {stopped:boolean;capabilities:{desktop:boolean;android:boolean;terminal:boolean};desktop?:{available:boolean;tools?:string[]};android?:{available:boolean;diagnoseAvailable?:boolean;trackedTasks?:number};terminal?:{available:boolean;ready?:boolean;closed?:boolean;sandboxName?:string;hostShellAvailable?:boolean;projectConfigured?:boolean;projectSynced?:boolean;projectFileCount?:number;projectSourceBytes?:number;projectSyncedAt?:string|null}};
+type RuntimeStatus = {stopped:boolean;capabilities:{desktop:boolean;android:boolean;terminal:boolean};desktop?:{available:boolean;tools?:string[]};android?:{available:boolean;diagnoseAvailable?:boolean;trackedTasks?:number};terminal?:{available:boolean;ready?:boolean;closed?:boolean;cleanupPending?:boolean;sandboxName?:string;hostShellAvailable?:boolean;projectConfigured?:boolean;projectSynced?:boolean;projectFileCount?:number;projectSourceBytes?:number;projectSyncedAt?:string|null}};
 type DesktopWindow = {pid:number;windowId:number;appName:string;title:string;zIndex:number|null};
 type DesktopElement = {elementToken:string;role:string;label:string;valueEmpty:boolean;typeable:boolean};
 type DesktopObservation = {pid:number;windowId:number;groupId:string;sessionId:string;appName:string;title:string;elementCount:number;degraded:boolean;snapshotId:string|null;elements:DesktopElement[];state:string};
@@ -141,9 +141,9 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
     {!hostToken?<div className="br-warning"><ShieldAlert size={19}/><div><b>Local host not paired</b><p>Pair a Backroom host in Host settings before using desktop, Android or terminal connections.</p></div></div>:null}
     {notice&&<div className="br-notice" role="status"><Activity size={15}/>{notice}</div>}
     <div className="br-workspace-runtime-status">
-      <div><b>Desktop / native</b><span>{runtime.capabilities.desktop?'Available':'Not configured or unavailable'}</span></div>
-      <div><b>Android · ARTEMIS</b><span>{runtime.capabilities.android?'Available':'Not configured or unavailable'}</span></div>
-      <div><b>Terminal sandbox</b><span>{runtime.capabilities.terminal?(runtime.terminal?.projectSynced?'Sandbox + source synced':runtime.terminal?.ready?'Sandbox ready · project not synced':'Configured, not ready'):'Not configured or unavailable'}</span></div>
+      <div><b>Desktop / native</b><span>{runtime.stopped?'Stopped · restart host':runtime.capabilities.desktop?'Available':'Not configured or unavailable'}</span></div>
+      <div><b>Android · ARTEMIS</b><span>{runtime.stopped?'Stopped · restart host':runtime.capabilities.android?'Available':'Not configured or unavailable'}</span></div>
+      <div><b>Terminal sandbox</b><span>{runtime.stopped?'Stopped · restart host':runtime.capabilities.terminal?(runtime.terminal?.projectSynced?'Sandbox + source synced':runtime.terminal?.ready?'Sandbox ready · project not synced':'Configured, not ready'):runtime.terminal?.cleanupPending?'Sandbox cleanup pending · restart required':'Not configured or unavailable'}</span></div>
     </div>
     <div className="br-external-scope">
       <label htmlFor="br-external-ai-session">Authorized joined AI session (this group)</label>

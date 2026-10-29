@@ -383,8 +383,8 @@ export class CuaSandboxTerminalWorkspace {
     if(HIGH_CONFIDENCE_SECRET.test(patch))return Object.freeze({state:'needs_review',patch:'',bytes,sha256:createHash('sha256').update(patch).digest('hex'),reason:'Potential credential or private-key material detected. Patch was not returned to the browser.'});
     return Object.freeze({state:'completed',patch,bytes,sha256:createHash('sha256').update(patch).digest('hex'),empty:patch.length===0,appliedToHost:false,destination:'Rub Minds Backroom browser review only'});
   }
-  async close(){if(this.closed)return;this.closed=true;if(this.ready){const r=await this.#run(['--json','sb','rm','--local',this.sandboxName],30000).catch(()=>null);this.ready=false;if(!r||r.code!==0)throw new Error('Dedicated sandbox removal could not be verified');}}
-  get status(){return Object.freeze({configured:true,ready:this.ready,closed:this.closed,sandboxName:this.sandboxName,hostShellAvailable:false,projectConfigured:typeof this.projectSourcePath==='string'&&!!this.projectSourcePath.trim(),projectSynced:!!this.projectSync,projectFileCount:this.projectSync?.fileCount??0,projectSourceBytes:this.projectSync?.sourceBytes??0,projectSyncedAt:this.projectSync?.syncedAt??null});}
+  async close(){if(this.closed&&!this.ready)return;this.closed=true;if(this.ready){const r=await this.#run(['--json','sb','rm','--local',this.sandboxName],30000).catch(()=>null);if(!r||r.code!==0)throw new Error('Dedicated sandbox removal could not be verified');this.ready=false;this.projectSync=null;}}
+  get status(){return Object.freeze({configured:true,ready:this.ready,closed:this.closed,sandboxName:this.sandboxName,hostShellAvailable:false,cleanupPending:this.closed&&this.ready,projectConfigured:typeof this.projectSourcePath==='string'&&!!this.projectSourcePath.trim(),projectSynced:!!this.projectSync,projectFileCount:this.projectSync?.fileCount??0,projectSourceBytes:this.projectSync?.sourceBytes??0,projectSyncedAt:this.projectSync?.syncedAt??null});}
 }
 
 export function createExternalWorkspaceService({desktop=null,android=null,terminal=null}={}){
@@ -402,6 +402,6 @@ export function createExternalWorkspaceService({desktop=null,android=null,termin
     async execTerminal(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.exec(input);},
     async syncTerminalProject(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.syncProject(input);},
     async diffTerminalProject(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.diffProject(input);},
-    async stop(){if(stopped)return Object.freeze({stopped:true,closeFailures:0});stopped=true;const jobs=[desktop?.client?.close?.(),android?.client?.close?.(),terminal?.close?.()].filter(Boolean);const settled=await Promise.allSettled(jobs);return Object.freeze({stopped:true,closeFailures:settled.filter(x=>x.status==='rejected').length});}
+    async stop(){stopped=true;const jobs=[desktop?.client?.close?.(),android?.client?.close?.(),terminal?.close?.()].filter(Boolean);const settled=await Promise.allSettled(jobs);return Object.freeze({stopped:true,closeFailures:settled.filter(x=>x.status==='rejected').length});}
   });
 }

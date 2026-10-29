@@ -620,11 +620,17 @@ export default function BackroomApp() {
       const response = await fetchLocalHost(localHostOrigin(hostUrl) + '/v1/unpair', {
         method: 'POST', headers: { Authorization: 'Bearer ' + hostToken }, cache: 'no-store',
       });
-      if (!response.ok) throw new Error('Could not revoke the host session. Keep this tab open and retry.');
+      const result=await response.json().catch(()=>({})) as {revoked?:boolean;runtimesStopped?:boolean;externalWorkspacesStopped?:boolean;restartRequired?:boolean;error?:string;hint?:string};
+      if (!response.ok && result.revoked!==true) throw new Error(result.hint || 'Could not revoke the host session. Keep this tab open and retry.');
+      if(result.revoked!==true)throw new Error('The host did not confirm session revocation. Keep this tab open and retry.');
       try { sessionStorage.removeItem('rub-backroom-host-session-v1:' + user?.id); } catch {}
       setHostToken(''); setHostInfo(null);
       setBrowserPages([]); setBrowserTargets([]); setSelectedBrowserTarget('');
-      setHostMessage('Host session revoked.');
+      setHostMessage(result.restartRequired
+        ? (result.runtimesStopped===false
+          ? 'Host session revoked, but local runtime cleanup could not be verified. Stop the Backroom host with Ctrl+C, inspect remaining sandbox processes, then restart it.'
+          : 'Host session revoked and local workspace adapters stopped. Restart the Backroom host process before using desktop, Android, or terminal adapters again.')
+        : 'Host session revoked.');
       setHostModal(false);
     } catch (e) {
       setHostMessage(e instanceof Error ? e.message : 'Could not unpair host.');

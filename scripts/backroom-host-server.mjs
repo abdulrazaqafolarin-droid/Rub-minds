@@ -522,10 +522,21 @@ export function createBackroomHostServer({
         writeJson(response, 401, { error: "host_session_invalid" }, cors);
         return;
       }
-      await wakeService?.stop?.();
-      await multiSurfaceRuntime?.stop?.();
-      await externalWorkspaceRuntime?.stop?.();
-      writeJson(response, 200, { revoked: true }, cors);
+      let shutdownFailed = false;
+      try { await wakeService?.stop?.(); } catch { shutdownFailed = true; }
+      try { await multiSurfaceRuntime?.stop?.(); } catch { shutdownFailed = true; }
+      let externalStop = null;
+      try { externalStop = await externalWorkspaceRuntime?.stop?.() ?? null; if (externalStop && externalStop.closeFailures > 0) shutdownFailed = true; } catch { shutdownFailed = true; }
+      const restartRequired = !!externalWorkspaceRuntime || shutdownFailed;
+      writeJson(response, shutdownFailed ? 503 : 200, {
+        revoked: true, runtimesStopped: !shutdownFailed,
+        ...(externalWorkspaceRuntime ? { externalWorkspacesStopped: true } : {}),
+        restartRequired,
+        ...(shutdownFailed ? { error: "runtime_shutdown_incomplete" } : {}),
+        ...(restartRequired ? { hint: shutdownFailed
+          ? "This host session is revoked, but local runtime cleanup could not be verified. Stop the Backroom host process and inspect any remaining local sandbox before restarting."
+          : "This host session is revoked. Local workspace adapters were stopped and cannot be reused until the Backroom host process is restarted." } : {}),
+      }, cors);
       return;
     }
     const workspaceHandled = await handleWorkspaceHttpRequest({
