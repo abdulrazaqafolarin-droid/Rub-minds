@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
@@ -257,6 +258,53 @@ test('failed local sandbox deletion remains visible and can be retried',async()=
  const first=await service.stop();assert.equal(first.closeFailures,1);assert.equal(service.status().terminal.cleanupPending,true);assert.equal(terminal.status.ready,true);
  const second=await service.stop();assert.equal(second.closeFailures,0);assert.equal(service.status().terminal.cleanupPending,false);assert.equal(terminal.status.ready,false);
  assert.equal(calls.filter(c=>c.args.includes('sb')&&c.args.includes('rm')).length,2);
+});
+
+
+test('terminal applies only an exact one-use patch after digest, Git-root, check and local approval',async()=>{
+ const root=await projectFixture(),sandboxCalls=[],gitCalls=[];
+ const patch='diff --git a/src/index.js b/src/index.js\n--- a/src/index.js\n+++ b/src/index.js\n@@ -1 +1 @@\n-export const safe=true;\n+export const safe=false;\n';
+ const results=[{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0,stdout:patch}];
+ const localGitSpawnImpl=(executable,args,options)=>{
+  const child=new EventEmitter();let input='';child.stdout=new PassThrough();child.stderr=new PassThrough();child.exitCode=null;child.killed=false;child.kill=()=>{child.killed=true;return true;};
+  child.stdin=new Writable({write(chunk,enc,cb){input+=chunk.toString();cb();},final(cb){cb();queueMicrotask(()=>{gitCalls.push({executable,args,options,input});child.stdout.end(args[0]==='rev-parse'?root+'\n':'');child.stderr.end('');child.exitCode=0;child.emit('close',0,null);});}});
+  return child;
+ };
+ const sandboxSpawn=fakeSpawn(results,sandboxCalls);
+ const approved=[];
+ const d=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-unit-1234',projectSourcePath:root,authorizeLocalAction:async a=>{approved.push(a);return ['terminal_project_sync','terminal_diff_export','terminal_patch_apply'].includes(a.kind);},spawnImpl:sandboxSpawn,localGitSpawnImpl});
+ try{
+  await d.start();await d.syncProject({groupId:'group-1',sessionId:'session-1'});
+  const diff=await d.diffProject({groupId:'group-1',sessionId:'session-1'});
+  assert.equal(diff.applyAvailable,true);assert.equal(diff.patch,patch);assert.deepEqual(diff.paths,['src/index.js']);assert.match(diff.exportKey,/^[a-f0-9]{64}$/);
+  assert.equal(diff.sha256,createHash('sha256').update(patch).digest('hex'));
+  await assert.rejects(d.applyProjectDiff({exportKey:diff.exportKey,sha256:diff.sha256,groupId:'group-2',sessionId:'session-1'}),/outside the original group\/session scope/);
+  const applied=await d.applyProjectDiff({exportKey:diff.exportKey,sha256:diff.sha256,groupId:'group-1',sessionId:'session-1'});
+  assert.equal(applied.appliedToHost,true);assert.equal(applied.committed,false);assert.equal(applied.pushed,false);assert.deepEqual(applied.paths,['src/index.js']);
+  assert.deepEqual(gitCalls.map(call=>call.args[0]==='rev-parse'?'root':call.args[0]+' '+call.args[1]),['root','apply --check','apply']);
+  assert.equal(gitCalls[1].input,patch);assert.equal(gitCalls[2].input,patch);
+  assert.equal(gitCalls.every(call=>call.options.shell===false),true);
+  await assert.rejects(d.applyProjectDiff({exportKey:diff.exportKey,sha256:diff.sha256,groupId:'group-1',sessionId:'session-1'}),/expired or outside/);
+  assert.equal(approved.some(a=>a.kind==='terminal_patch_apply'&&a.files[0]==='src/index.js'&&a.commit===false&&a.push===false),true);
+  await d.close();
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+test('terminal patch apply consumes denied approvals without running git apply',async()=>{
+ const root=await projectFixture(),sandboxCalls=[],gitCalls=[];
+ const patch='diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-Fixture project.\n+Changed project.\n';
+ const results=[{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0},{code:0,stdout:patch}];
+ const localGitSpawnImpl=(executable,args,options)=>{
+  const child=new EventEmitter();let input='';child.stdout=new PassThrough();child.stderr=new PassThrough();child.exitCode=null;child.kill=()=>true;
+  child.stdin=new Writable({write(chunk,enc,cb){input+=chunk.toString();cb();},final(cb){cb();queueMicrotask(()=>{gitCalls.push({args,input});child.stdout.end(args[0]==='rev-parse'?root+'\n':'');child.stderr.end('');child.exitCode=0;child.emit('close',0,null);});}});
+  return child;
+ };
+ const d=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-unit-1234',projectSourcePath:root,authorizeLocalAction:async a=>a.kind!=='terminal_patch_apply',spawnImpl:fakeSpawn(results,sandboxCalls),localGitSpawnImpl});
+ try{
+  await d.start();await d.syncProject({groupId:'g',sessionId:'s'});const diff=await d.diffProject({groupId:'g',sessionId:'s'});
+  await assert.rejects(d.applyProjectDiff({exportKey:diff.exportKey,sha256:diff.sha256,groupId:'g',sessionId:'s'}),/denied/);
+  assert.equal(gitCalls.some(call=>call.args[0]==='apply'),false);
+  await assert.rejects(d.applyProjectDiff({exportKey:diff.exportKey,sha256:diff.sha256,groupId:'g',sessionId:'s'}),/expired or outside/);
+ }finally{await d.close().catch(()=>{});await rm(root,{recursive:true,force:true});}
 });
 
 test('terminal refuses arbitrary sandbox names, unapproved commands and path traversal',async()=>{
