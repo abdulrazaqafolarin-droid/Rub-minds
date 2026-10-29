@@ -75,6 +75,20 @@ begin
   end;
   if not v_conflict then raise exception 'Terminated MCP sessions must not enqueue wake jobs'; end if;
 
+  -- Caller-supplied owner IDs are not trusted; room ownership must match the active session.
+  v_conflict := false;
+  begin
+    perform public.enqueue_backroom_wake_job(
+      repeat('8',64),'20000000-0000-0000-0000-000000000098',v_room,v_participant,
+      'host-test','space-1','session-8',v_session_digest,
+      'binding-8','target-8','fingerprint-8',1,'event-8',
+      '@RMconnects'||chr(10)||'Event: event-8'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
+  exception when others then
+    if sqlerrm <> 'Active MCP session does not authorize this group participant' then raise; end if;
+    v_conflict := true;
+  end;
+  if not v_conflict then raise exception 'A different room owner must not enqueue wakes for this session'; end if;
+
   v_first := public.enqueue_backroom_wake_job(
     repeat('1',64),v_owner,v_room,v_participant,'host-test','space-1','session-1',v_session_digest,
     'binding-1','target-1','fingerprint-1',1,'event-1','@RMconnects'||chr(10)||'Event: event-1'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
@@ -142,9 +156,22 @@ begin
     'binding-6','target-6','fingerprint-6',1,'event-6','@RMconnects'||chr(10)||'Event: event-6'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   select * into v_claim_retry from public.claim_backroom_wake_jobs('host-test',repeat('6',64),1,30) limit 1;
   if not found then raise exception 'Expected the revocation-test lease to be claimed'; end if;
-  update public.rub_minds_mcp_sessions set terminated_at=pg_catalog.clock_timestamp() where session_digest=repeat('6',64);
+  update public.agent_connections set revoked_at=pg_catalog.clock_timestamp() where participant_id=v_participant;
+  v_conflict := false;
+  begin
+    perform public.enqueue_backroom_wake_job(
+      repeat('9',64),v_owner,v_room,v_participant,'host-test','space-1','session-9',repeat('6',64),
+      'binding-9','target-9','fingerprint-9',1,'event-9',
+      '@RMconnects'||chr(10)||'Event: event-9'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
+  exception when others then
+    if sqlerrm <> 'Active MCP session does not authorize this group participant' then raise; end if;
+    v_conflict := true;
+  end;
+  if not v_conflict then raise exception 'Revoked agent connections must not enqueue wakes'; end if;
   v_ok := public.ack_backroom_wake_job(v_claim_retry.out_job_id,'host-test',repeat('6',64),v_claim_retry.out_lease_token,'acknowledged');
-  if v_ok then raise exception 'Revoked MCP sessions must not acknowledge outstanding leases'; end if;
+  if v_ok then raise exception 'Revoked agent connections must not acknowledge outstanding leases'; end if;
+  update public.agent_connections set revoked_at=null where participant_id=v_participant;
+  update public.rub_minds_mcp_sessions set terminated_at=pg_catalog.clock_timestamp() where session_digest=repeat('6',64);
 
   v_cancel_job := public.enqueue_backroom_wake_job(
     repeat('3',64),v_owner,v_room,v_participant,'host-test','space-1','session-3',repeat('d',64),
