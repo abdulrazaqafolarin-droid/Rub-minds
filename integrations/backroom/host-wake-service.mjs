@@ -52,8 +52,8 @@ export function createHostWakeService({identity,browserRuntime,journalDirectory,
  }
  function configure(input={}){
   if(!input||typeof input!=='object'||Array.isArray(input)||
-    Object.keys(input).some(key=>!['sessionDigest','bindingId'].includes(key)))
-   throw new TypeError('Only binding ID and session digest may be supplied by the paired UI');
+    Object.keys(input).some(key=>!['sessionDigest','bindingId','publishableKey'].includes(key)))
+   throw new TypeError('Unexpected host configuration fields');
   const {sessionDigest,bindingId}=input;
   if(poller?.running||activeGrantId)throw new Error('Deactivate the existing wake grant before reconfiguration');
   if(!UUID.test(bindingId??'')||!HEX.test(sessionDigest??''))
