@@ -847,7 +847,7 @@ export class BrowserHostRuntime {
     await this.listTargets();
     const grant=this.wakeAuthority.status(grantId);
     if(!grant.active||grant.scope.hostId!==this.hostId||grant.scope.bindingId!==bindingId||
-       grant.expiresAt-Date.now()<ttlSeconds*1000)return false;
+       grant.expiresAt-Date.now()+5000<ttlSeconds*1000)return false;
     const selected=this.#bindings.get(grant.scope.targetId);
     if(!selected||selected.target.id!==grant.scope.targetId||selected.target.roomId!==grant.scope.groupId||
        selected.target.sessionId!==grant.scope.sessionId||
