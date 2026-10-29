@@ -333,6 +333,37 @@ export default function BackroomApp() {
     }finally{setHostBusy(false);}
   }
 
+  async function revokeHostedWakeHost() {
+    if (!supabase || !user || !hostInfo?.hostId) return;
+    if (!window.confirm('Permanently revoke this host on the Rub Minds server? All its input bindings and queued wakes will be disabled. This host identity cannot be reused.')) return;
+    setHostBusy(true);
+    try {
+      const {data,error:revokeError}=await supabase.functions.invoke('backroom-config/revoke-host',{
+        body:{hostId:hostInfo.hostId}
+      });
+      if(revokeError || data?.ok!==true || data?.revoked!==true)
+        throw new Error('Remote host was not revoked. Verify that it was registered to this signed-in owner.');
+      // Best-effort local unpair: remote revocation already makes all future claims fail
+      // even if this device is offline, but a reachable host should stop polling now.
+      try {
+        if(hostToken) await fetchLocalHost(localHostOrigin(hostUrl)+'/v1/unpair',{
+          method:'POST',headers:{Authorization:'Bearer '+hostToken},cache:'no-store'
+        });
+      } catch {}
+      try {
+        sessionStorage.removeItem('rub-backroom-host-session-v1:'+user.id);
+        sessionStorage.removeItem('rub-backroom-host-stopped-v1:'+user.id);
+      } catch {}
+      setHostToken('');setHostInfo(null);
+      setBrowserPages([]);setBrowserTargets([]);setSelectedBrowserTarget('');
+      setHostedAiSessions([]);setSelectedHostedSession('');
+      setHostedWakeBinding(null);setHostedWakeGrantId('');
+      setHostMessage('Remote host, all input bindings and queued wakes have been revoked. To use this computer again, rotate its local Backroom identity before registering a new host.');
+    } catch(error) {
+      setHostMessage(error instanceof Error?error.message:'Remote host revocation failed.');
+    } finally {setHostBusy(false);}
+  }
+
   async function discoverHostedAiSessions() {
     if (!supabase || !room?.id || !user) return;
     setHostBusy(true);
@@ -367,6 +398,13 @@ export default function BackroomApp() {
     }
     setHostBusy(true);
     try {
+      // Ensure registration exists or renew the same owner/credential before
+      // creating a binding; registration itself never enables wake.
+      const {data:registration,error:registrationError}=await supabase.functions.invoke('backroom-config/host',{
+        body:{hostId:hostInfo.hostId,credentialDigest:hostInfo.enrollmentDigest,ttlSeconds:86400}
+      });
+      if(registrationError || registration?.ok!==true)
+        throw new Error('Could not renew this signed-in owner host registration.');
       const {data,error:bindingError}=await supabase.functions.invoke('backroom-config/binding',{
         body:{
           roomId:room.id,participantId:selectedSession.participantId,
@@ -797,7 +835,7 @@ export default function BackroomApp() {
   </>}
 </div>}
 <div className="br-emergency-stop-row"><div><b>Emergency stop</b><small>Close Chromium, revoke all paired sessions, and block reconnection until the host is restarted.</small></div><button className="br-danger-action" onClick={() => void emergencyStopLocalHost()} disabled={hostBusy || browserBusy || !hostToken}>Stop all</button></div>
-{hostInfo.enrollmentDigest && <div className="br-modal-actions"><button className="br-secondary" onClick={() => void registerHostedWakeHost()} disabled={hostBusy || browserBusy}>Register hosted wake host (disabled by default)</button></div>}<div className="br-modal-actions"><button className="br-secondary" onClick={() => void unpairLocalHost()} disabled={hostBusy || browserBusy}>Unpair</button><button className="br-primary" onClick={() => void checkLocalHost()} disabled={hostBusy || browserBusy}>{hostBusy ? 'Checking…' : 'Check connection'}</button></div></>}</div></div>}
+{hostInfo.enrollmentDigest && <><div className="br-modal-actions"><button className="br-secondary" onClick={() => void registerHostedWakeHost()} disabled={hostBusy || browserBusy}>Register or renew hosted wake host (wake stays off)</button></div><div className="br-modal-actions"><button className="br-danger-action" onClick={() => void revokeHostedWakeHost()} disabled={hostBusy || browserBusy}>Permanently revoke hosted host</button></div></>}<div className="br-modal-actions"><button className="br-secondary" onClick={() => void unpairLocalHost()} disabled={hostBusy || browserBusy}>Unpair</button><button className="br-primary" onClick={() => void checkLocalHost()} disabled={hostBusy || browserBusy}>{hostBusy ? 'Checking…' : 'Check connection'}</button></div></>}</div></div>}
     {adding && <div className="br-modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setAdding(false); }}><div className="br-modal" role="dialog" aria-modal="true" aria-labelledby="br-modal-title"><div className="br-modal-top"><div className="br-modal-icon"><Plus size={22}/></div><button className="br-icon-button" onClick={() => setAdding(false)} aria-label="Close"><X size={20}/></button></div><h2 id="br-modal-title">Add a new space</h2><p>Choose the kind of interface this workspace will connect to.</p><label htmlFor="br-name">Space name</label><input id="br-name" maxLength={60} autoFocus placeholder="e.g. Claude research assistant" value={name} onChange={e => setName(e.target.value)}/><label htmlFor="br-app">App or session label <span>(optional)</span></label><input id="br-app" maxLength={100} placeholder="e.g. Claude Desktop · Research thread" value={app} onChange={e => setApp(e.target.value)}/><div className="br-modal-label">Interface type</div><div className="br-surface-options">{surfaces.map(s => { const Icon = iconFor(s.id); return <button key={s.id} className={'br-surface-option' + (surface === s.id ? ' chosen' : '')} onClick={() => setSurface(s.id)}><Icon size={20}/><span><b>{s.name}</b><small>{s.detail}</small></span>{surface === s.id && <Check size={17}/>}</button>; })}</div><div className="br-modal-actions"><button className="br-secondary" onClick={() => setAdding(false)}>Cancel</button><button className="br-primary" onClick={add} disabled={!name.trim()}>Create space <ArrowRight size={16}/></button></div></div></div>}
   </div>;
 }
