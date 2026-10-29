@@ -608,16 +608,36 @@ async function configureExternalWorkspaceRuntime(hostId) {
   const { McpStdioClient } = await import("../integrations/backroom/mcp-stdio-client.mjs");
   const { ArtemisAndroidWorkspace, CuaDesktopWorkspace, CuaSandboxTerminalWorkspace, createExternalWorkspaceService } =
     await import("../integrations/backroom/external-workspaces.mjs");
-  const clients = [];
+  const startupErrors = {};
   let desktop = null, android = null, terminal = null;
-  try {
-    if (enableDesktop) {
-      const client = new McpStdioClient({ command: process.env.BACKROOM_CUA_DRIVER_BIN ?? "cua-driver", args: ["mcp"] });
-      clients.push(client);
-      await client.start();
-      desktop = new CuaDesktopWorkspace({ client, authorizeLocalAction: authorizeLocalWorkspaceAction });
+  if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) {
+    const message = "Interactive local TTY approval is unavailable; external workspace actions remain disabled.";
+    if (enableDesktop) startupErrors.desktop = message;
+    if (enableAndroid) startupErrors.android = message;
+    if (enableTerminal) startupErrors.terminal = message;
+    return createExternalWorkspaceService({ startupErrors });
+  }
+  async function isolateStartupFailure(name, operation, cleanup) {
+    try { return await operation(); }
+    catch (error) {
+      startupErrors[name] = typeof error?.message === "string"
+        ? error.message.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").slice(0, 180)
+        : name + "_startup_failed";
+      try { await cleanup?.(); } catch {}
+      return null;
     }
-    if (enableAndroid) {
+  }
+  if (enableDesktop) {
+    let client = null;
+    desktop = await isolateStartupFailure("desktop", async () => {
+      client = new McpStdioClient({ command: process.env.BACKROOM_CUA_DRIVER_BIN ?? "cua-driver", args: ["mcp"] });
+      await client.start();
+      return new CuaDesktopWorkspace({ client, authorizeLocalAction: authorizeLocalWorkspaceAction });
+    }, async () => client?.close());
+  }
+  if (enableAndroid) {
+    let client = null;
+    android = await isolateStartupFailure("android", async () => {
       const python = process.env.BACKROOM_ARTEMIS_PYTHON;
       const home = process.env.BACKROOM_ARTEMIS_HOME;
       const devices = csvAllowlist("BACKROOM_ARTEMIS_ALLOWED_DEVICE_SERIALS");
@@ -626,28 +646,27 @@ async function configureExternalWorkspaceRuntime(hostId) {
         throw new Error("ARTEMIS requires BACKROOM_ARTEMIS_PYTHON and BACKROOM_ARTEMIS_HOME");
       if (!devices.length || !packages.length)
         throw new Error("ARTEMIS needs nonempty host-local device serial and app package allowlists");
-      const client = new McpStdioClient({ command: python, args: ["-m", "mcp_server"], cwd: home,
-        env: { PYTHONUNBUFFERED: "1", PYTHONPATH: home } });
-      clients.push(client);
+      client = new McpStdioClient({ command: python, args: ["-m", "mcp_server"], cwd: home, env: { PYTHONUNBUFFERED: "1", PYTHONPATH: home } });
       await client.start();
-      android = new ArtemisAndroidWorkspace({ client, allowedDevices: devices, allowedPackages: packages,
-        authorizeLocalAction: authorizeLocalWorkspaceAction });
-    }
-    if (enableTerminal) {
-      const sandboxName = "rm-backroom-" + hostId.replace(/-/g, "").slice(0, 8);
-      const approval = await authorizeLocalWorkspaceAction({ kind: "terminal_sandbox_create", sandboxName,
-        isolation: "local gVisor container", networkPolicy: "Review CUA local runtime defaults before enabling" });
-      if (approval !== true) throw new Error("Local approval denied creation of the dedicated CUA terminal sandbox");
-      terminal = new CuaSandboxTerminalWorkspace({ command: process.env.BACKROOM_CUA_CLI ?? "cua",
-        sandboxName, authorizeLocalAction: authorizeLocalWorkspaceAction });
-      await terminal.start();
-    }
-    return createExternalWorkspaceService({ desktop, android, terminal });
-  } catch (error) {
-    await Promise.allSettled([...clients.map(client => client.close()), ...(terminal ? [terminal.close()] : [])]);
-    const message = typeof error?.message === "string" ? error.message.slice(0, 180) : "external_workspace_start_failed";
-    throw new Error("External workspace startup failed closed: " + message);
+      return new ArtemisAndroidWorkspace({ client, allowedDevices: devices, allowedPackages: packages, authorizeLocalAction: authorizeLocalWorkspaceAction });
+    }, async () => client?.close());
   }
+  if (enableTerminal) {
+    let instance = null;
+    terminal = await isolateStartupFailure("terminal", async () => {
+      const sandboxName = "rm-backroom-" + hostId.replace(/-/g, "").slice(0, 8);
+      const approval = await authorizeLocalWorkspaceAction({
+        kind: "terminal_sandbox_create", sandboxName, isolation: "local gVisor container",
+        networkPolicy: "Default outbound network is enabled for Node provisioning and package installs; approved commands can access external hosts.",
+        command: ["cua", "sb", "create", "linux", "--kind", "container", "--runtime", "gvisor", "--install", "node"],
+      });
+      if (approval !== true) throw new Error("Local approval denied creation of the dedicated CUA terminal sandbox");
+      instance = new CuaSandboxTerminalWorkspace({ command: process.env.BACKROOM_CUA_CLI ?? "cua", sandboxName, authorizeLocalAction: authorizeLocalWorkspaceAction });
+      await instance.start();
+      return instance;
+    }, async () => instance?.close());
+  }
+  return createExternalWorkspaceService({ desktop, android, terminal, startupErrors });
 }
 
 export async function runBackroomHost() {

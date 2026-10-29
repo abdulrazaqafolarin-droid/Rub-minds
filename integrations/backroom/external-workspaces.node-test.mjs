@@ -270,6 +270,12 @@ test('terminal refuses arbitrary sandbox names, unapproved commands and path tra
   await d.close();
  }finally{await rm(root,{recursive:true,force:true});}
 });
+test('external workspace service exposes only sanitized per-adapter startup errors',async()=>{
+ const s=createExternalWorkspaceService({startupErrors:{desktop:'binary not found',android:'ARTEMIS requires local config',terminal:'TTY approval is required',ignored:'do not expose'}});
+ assert.deepEqual(s.status().capabilities,{desktop:false,android:false,terminal:false});
+ assert.deepEqual(s.status().startupErrors,{desktop:'binary not found',android:'ARTEMIS requires local config',terminal:'TTY approval is required'});
+ await s.stop();assert.equal(s.status().stopped,true);
+});
 test('external workspace health needs the complete advertised tool contract and closes clients',async()=>{
  const incomplete=new FakeMcp(['list_windows'],async()=>null);
  const partial=createExternalWorkspaceService({desktop:{client:incomplete,listWindows:async()=>[]}});

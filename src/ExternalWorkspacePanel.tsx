@@ -3,7 +3,7 @@ import { Activity, RefreshCw, ShieldAlert, Smartphone, SquareTerminal, Monitor, 
 
 type LocalHostApi = <T>(path:string, options?:{method?:string;body?:unknown})=>Promise<T>;
 type AiSession = {participantId:string;displayName:string;sessionDigest:string;expiresAt?:string};
-type RuntimeStatus = {stopped:boolean;capabilities:{desktop:boolean;android:boolean;terminal:boolean};desktop?:{available:boolean;tools?:string[]};android?:{available:boolean;diagnoseAvailable?:boolean;trackedTasks?:number};terminal?:{available:boolean;ready?:boolean;closed?:boolean;cleanupPending?:boolean;sandboxName?:string;hostShellAvailable?:boolean;projectConfigured?:boolean;projectSynced?:boolean;projectFileCount?:number;projectSourceBytes?:number;projectSyncedAt?:string|null}};
+type RuntimeStatus = {stopped:boolean;capabilities:{desktop:boolean;android:boolean;terminal:boolean};startupErrors?:Record<string,string>;desktop?:{available:boolean;tools?:string[]};android?:{available:boolean;diagnoseAvailable?:boolean;trackedTasks?:number};terminal?:{available:boolean;ready?:boolean;closed?:boolean;cleanupPending?:boolean;sandboxName?:string;hostShellAvailable?:boolean;projectConfigured?:boolean;projectSynced?:boolean;projectFileCount?:number;projectSourceBytes?:number;projectSyncedAt?:string|null}};
 type DesktopWindow = {pid:number;windowId:number;appName:string;title:string;zIndex:number|null};
 type DesktopElement = {elementToken:string;role:string;label:string;valueEmpty:boolean;typeable:boolean};
 type DesktopObservation = {pid:number;windowId:number;groupId:string;sessionId:string;appName:string;title:string;elementCount:number;degraded:boolean;snapshotId:string|null;elements:DesktopElement[];state:string};
@@ -14,7 +14,7 @@ type TerminalResult = {state:string;exitCode:number;stdout:string;stderr:string;
 type TerminalDiff = {state:string;patch:string;bytes:number;sha256:string;empty?:boolean;appliedToHost?:false;destination?:string;reason?:string};
 
 const emptyRuntime:RuntimeStatus={stopped:false,capabilities:{desktop:false,android:false,terminal:false},desktop:{available:false},android:{available:false,trackedTasks:0},terminal:{available:false,hostShellAvailable:false}};
-const runArgvDefault='["npm","ci"]';
+const runArgvDefault='["npm","ci","--ignore-scripts"]';
 
 export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,sessions,selectedSessionDigest,onSelectSession,onFindSessions}:{hostToken:string;roomId:string;hostApi:LocalHostApi;sessions:AiSession[];selectedSessionDigest:string;onSelectSession:(digest:string)=>void;onFindSessions:()=>void}) {
   const [runtime,setRuntime]=useState<RuntimeStatus>(emptyRuntime);
@@ -140,6 +140,7 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
     <div className="br-panel-head"><div><span className="br-eyebrow">LOCAL RUNTIME · REAL DEVICE/APPS</span><h2 id="br-external-workspaces-title">Connected workspaces</h2><p>This panel uses the paired host and actual configured adapters—not the simulated space preview.</p></div><button type="button" className="br-secondary" onClick={()=>void refreshRuntime()} disabled={!hostToken||busy}><RefreshCw size={14}/> Refresh runtime</button></div>
     {!hostToken?<div className="br-warning"><ShieldAlert size={19}/><div><b>Local host not paired</b><p>Pair a Backroom host in Host settings before using desktop, Android or terminal connections.</p></div></div>:null}
     {notice&&<div className="br-notice" role="status"><Activity size={15}/>{notice}</div>}
+    {runtime.startupErrors&&Object.keys(runtime.startupErrors).length>0&&<div className="br-warning"><ShieldAlert size={19}/><div><b>Some optional runtimes did not start</b><p>{Object.entries(runtime.startupErrors).map(([surface,reason])=>surface+': '+reason).join(' · ')}</p><p>The Backroom host remains available; fix the listed local prerequisite and restart the host to retry that adapter.</p></div></div>}
     <div className="br-workspace-runtime-status">
       <div><b>Desktop / native</b><span>{runtime.stopped?'Stopped · restart host':runtime.capabilities.desktop?'Available':'Not configured or unavailable'}</span></div>
       <div><b>Android · ARTEMIS</b><span>{runtime.stopped?'Stopped · restart host':runtime.capabilities.android?'Available':'Not configured or unavailable'}</span></div>

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { lstat, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { lstat, mkdtemp, open, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join, relative, resolve, sep } from 'node:path';
 
@@ -111,7 +112,17 @@ export async function createSafeWorkspaceArchive(projectSourcePath,{maxFiles=500
       if(stat.isDirectory()){await walk(full);continue;}
       if(!stat.isFile())continue;
       if(stat.size>maxSingleFileBytes){omittedLarge++;continue;}
-      const data=await readFile(full);
+      let handle;
+      try{handle=await open(full,fsConstants.O_RDONLY|(fsConstants.O_NOFOLLOW??0));}
+      catch(error){if(error?.code==='ELOOP'||error?.code==='ENOENT'||error?.code==='EACCES'){omittedSensitive++;continue;}throw error;}
+      let data;
+      try{
+        const opened=await handle.stat();
+        if(!opened.isFile()||opened.dev!==stat.dev||opened.ino!==stat.ino){omittedSensitive++;continue;}
+        if(opened.size>maxSingleFileBytes){omittedLarge++;continue;}
+        data=await handle.readFile();
+      }finally{await handle.close();}
+      if(data.length>maxSingleFileBytes){omittedLarge++;continue;}
       if(!data.includes(0)&&HIGH_CONFIDENCE_SECRET.test(data.toString('utf8'))){omittedSensitive++;continue;}
       if(totalBytes+data.length>maxBytes)throw new Error('Project snapshot exceeds configured byte limit; narrow it before syncing');
       if(files.length>=maxFiles)throw new Error('Project has too many included files; lower scope before syncing');
@@ -376,7 +387,7 @@ export class CuaSandboxTerminalWorkspace {
     }));
     if(approval!==true)throw new Error('Local approval denied terminal diff export');
     await this.#runGuest(['git','-C','/workspace/project','add','-N','--','.']);
-    const result=await this.#runGuest(['git','-C','/workspace/project','diff','--no-ext-diff','--no-textconv','--binary','--no-color','--no-renames','HEAD','--','.']);
+    const result=await this.#runGuest(['git','-C','/workspace/project','diff','--no-ext-diff','--no-textconv','--no-color','--no-renames','HEAD','--','.']);
     const patch=result.stdout;
     const bytes=Buffer.byteLength(patch,'utf8');
     if(bytes>512*1024)throw new Error('Workspace diff exceeds the 512 KiB review limit; split it into smaller reviewed changes');
@@ -387,10 +398,31 @@ export class CuaSandboxTerminalWorkspace {
   get status(){return Object.freeze({configured:true,ready:this.ready,closed:this.closed,sandboxName:this.sandboxName,hostShellAvailable:false,cleanupPending:this.closed&&this.ready,projectConfigured:typeof this.projectSourcePath==='string'&&!!this.projectSourcePath.trim(),projectSynced:!!this.projectSync,projectFileCount:this.projectSync?.fileCount??0,projectSourceBytes:this.projectSync?.sourceBytes??0,projectSyncedAt:this.projectSync?.syncedAt??null});}
 }
 
-export function createExternalWorkspaceService({desktop=null,android=null,terminal=null}={}){
+export function createExternalWorkspaceService({desktop=null,android=null,terminal=null,startupErrors={}}={}){
   let stopped=false;
+  const safeStartupErrors=Object.freeze(Object.fromEntries(Object.entries(startupErrors).filter(([key,value])=>
+    ['desktop','android','terminal'].includes(key)&&typeof value==='string'&&value.trim()
+  ).map(([key,value])=>[key,value.replace(/[\u0000-\u001f\u007f-\u009f]/g,' ').slice(0,180)])));
   return Object.freeze({
-    status(){const desktopTools=desktop?.client?.status?.tools??[];const androidTools=android?.client?.status?.tools??[];const desktopRequired=['list_windows','get_window_state','click','type_text'];const androidRequired=['mobile_run_task','mobile_manage_task','mobile_get_device_state'];const androidDiagnoseReady=!!android&&android.client?.status?.connected===true&&androidTools.includes('mobile_diagnose');const desktopReady=!!desktop&&desktop.client?.status?.connected===true&&desktopRequired.every(name=>desktopTools.includes(name));const androidReady=!!android&&android.client?.status?.connected===true&&androidRequired.every(name=>androidTools.includes(name));const terminalState=terminal?terminal.status:{available:false,hostShellAvailable:false};const terminalReady=!!terminal&&terminalState.ready===true&&terminalState.closed!==true;return Object.freeze({stopped,capabilities:Object.freeze({desktop:!stopped&&desktopReady,android:!stopped&&androidReady,terminal:!stopped&&terminalReady}),desktop:{available:!stopped&&desktopReady,tools:desktopTools,missingTools:desktopRequired.filter(name=>!desktopTools.includes(name))},android:android?{...android.statusSummary,available:!stopped&&androidReady,diagnoseAvailable:!stopped&&androidDiagnoseReady,missingTools:androidRequired.filter(name=>!androidTools.includes(name))}:{available:false,diagnoseAvailable:false,trackedTasks:0,missingTools:androidRequired},terminal:terminal?{...terminalState,available:!stopped&&terminalReady}:{available:false,hostShellAvailable:false}});},
+    status(){
+      const desktopTools=desktop?.client?.status?.tools??[];
+      const androidTools=android?.client?.status?.tools??[];
+      const desktopRequired=['list_windows','get_window_state','click','type_text'];
+      const androidRequired=['mobile_run_task','mobile_manage_task','mobile_get_device_state'];
+      const androidDiagnoseReady=!!android&&android.client?.status?.connected===true&&androidTools.includes('mobile_diagnose');
+      const desktopReady=!!desktop&&desktop.client?.status?.connected===true&&desktopRequired.every(name=>desktopTools.includes(name));
+      const androidReady=!!android&&android.client?.status?.connected===true&&androidRequired.every(name=>androidTools.includes(name));
+      const terminalState=terminal?terminal.status:{available:false,hostShellAvailable:false};
+      const terminalReady=!!terminal&&terminalState.ready===true&&terminalState.closed!==true;
+      return Object.freeze({
+        stopped,
+        capabilities:Object.freeze({desktop:!stopped&&desktopReady,android:!stopped&&androidReady,terminal:!stopped&&terminalReady}),
+        startupErrors:safeStartupErrors,
+        desktop:{available:!stopped&&desktopReady,tools:desktopTools,missingTools:desktopRequired.filter(name=>!desktopTools.includes(name))},
+        android:android?{...android.statusSummary,available:!stopped&&androidReady,diagnoseAvailable:!stopped&&androidDiagnoseReady,missingTools:androidRequired.filter(name=>!androidTools.includes(name))}:{available:false,diagnoseAvailable:false,trackedTasks:0,missingTools:androidRequired},
+        terminal:terminal?{...terminalState,available:!stopped&&terminalReady}:{available:false,hostShellAvailable:false}
+      });
+    },
     async listDesktopWindows(input){if(stopped||!desktop)throw new Error('desktop_workspace_unavailable');return desktop.listWindows(input);},
     async observeDesktop(input){if(stopped||!desktop)throw new Error('desktop_workspace_unavailable');return desktop.observeWindow(input);},
     async draftDesktop(input){if(stopped||!desktop)throw new Error('desktop_workspace_unavailable');return desktop.draftText(input);},
@@ -402,6 +434,11 @@ export function createExternalWorkspaceService({desktop=null,android=null,termin
     async execTerminal(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.exec(input);},
     async syncTerminalProject(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.syncProject(input);},
     async diffTerminalProject(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.diffProject(input);},
-    async stop(){stopped=true;const jobs=[desktop?.client?.close?.(),android?.client?.close?.(),terminal?.close?.()].filter(Boolean);const settled=await Promise.allSettled(jobs);return Object.freeze({stopped:true,closeFailures:settled.filter(x=>x.status==='rejected').length});}
+    async stop(){
+      stopped=true;
+      const jobs=[desktop?.client?.close?.(),android?.client?.close?.(),terminal?.close?.()].filter(Boolean);
+      const settled=await Promise.allSettled(jobs);
+      return Object.freeze({stopped:true,closeFailures:settled.filter(x=>x.status==='rejected').length});
+    }
   });
 }
