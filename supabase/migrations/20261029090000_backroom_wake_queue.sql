@@ -279,6 +279,7 @@ $wake$;
 create or replace function public.claim_backroom_wake_jobs(
   p_host_id text,
   p_session_digest text,
+  p_binding_id uuid,
   p_limit integer default 5,
   p_lease_seconds integer default 30
 )
@@ -307,11 +308,23 @@ set search_path = ''
 as $claim$
 begin
   if p_host_id is null or char_length(btrim(p_host_id)) not between 1 and 128
-    or p_session_digest is null or p_session_digest !~ '^[0-9a-f]{64}$'
+    or p_session_digest is null or p_session_digest !~ '^[0-9a-f]{64}$' or p_binding_id is null
     or p_limit is null or p_limit < 1 or p_limit > 20
     or p_lease_seconds is null or p_lease_seconds < 10 or p_lease_seconds > 120 then
     raise exception 'Invalid Backroom claim parameters';
   end if;
+
+  if not exists (
+    select 1 from public.backroom_hosts h
+    where h.host_id=p_host_id and h.revoked_at is null
+      and h.expires_at > pg_catalog.clock_timestamp()
+  ) then return; end if;
+  if not exists (
+    select 1 from public.backroom_input_bindings b
+    where b.id=p_binding_id and b.host_id=p_host_id and b.session_digest=p_session_digest
+      and b.revoked_at is null and b.wake_enabled=true and b.confirmed_at is not null
+      and b.wake_expires_at > pg_catalog.clock_timestamp()
+  ) then return; end if;
 
   if not exists (
     select 1
@@ -387,7 +400,7 @@ begin
       j.prompt_digest, j.attempt_count, j.expires_at, m.token as lease_token
   )
   select leased.job_id, leased.job_key, leased.event_id, leased.owner_id, leased.room_id,
-    leased.participant_id, leased.space_id, leased.session_id, leased.binding_id, leased.target_id,
+    leased.participant_id, leased.space_id, leased.session_id, leased.binding_id::text, leased.target_id,
     leased.target_identity_fingerprint, leased.target_revision, leased.prompt, leased.prompt_digest,
     leased.attempt_count, leased.expires_at, leased.lease_token
   from leased;
