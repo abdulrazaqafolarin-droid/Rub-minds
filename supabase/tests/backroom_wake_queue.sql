@@ -88,6 +88,68 @@ begin
   end;
   if not v_conflict then raise exception 'An enabled wake binding must retain a grant ID'; end if;
 
+
+  -- Atomic grant lifecycle: only this binding's currently active grant may be
+  -- removed, deactivation cancels queued/leased events, and retries are idempotent.
+  if has_function_privilege('anon','public.activate_backroom_wake_grant(text,text,uuid,uuid,integer)','EXECUTE')
+    or has_function_privilege('authenticated','public.activate_backroom_wake_grant(text,text,uuid,uuid,integer)','EXECUTE')
+    or not has_function_privilege('service_role','public.activate_backroom_wake_grant(text,text,uuid,uuid,integer)','EXECUTE') then
+    raise exception 'Grant activation RPC privileges are unsafe';
+  end if;
+  if has_function_privilege('anon','public.deactivate_backroom_wake_grant(text,text,uuid,uuid)','EXECUTE')
+    or has_function_privilege('authenticated','public.deactivate_backroom_wake_grant(text,text,uuid,uuid)','EXECUTE')
+    or not has_function_privilege('service_role','public.deactivate_backroom_wake_grant(text,text,uuid,uuid)','EXECUTE') then
+    raise exception 'Grant deactivation RPC privileges are unsafe';
+  end if;
+
+  if not public.activate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
+      '70000000-0000-4000-8000-000000000006'::uuid,300) then
+    raise exception 'Retrying the same live grant must be idempotent';
+  end if;
+  if public.activate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
+      '70000000-0000-4000-8000-000000000008'::uuid,300) then
+    raise exception 'A different active consent grant must not replace the current grant';
+  end if;
+
+  v_first := public.enqueue_backroom_wake_job(
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('grant-deactivation-job','UTF8')),'hex'),
+    v_owner,v_room,v_participant,v_host_test,'space-1','session-6',repeat('6',64),
+    v_binding_6,'target-6','fingerprint-6',1,'grant-deactivation-event',
+    '@RMconnects'||chr(10)||'Event: grant-deactivation-event'||chr(10)||
+    'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
+  select * into v_claim from public.claim_backroom_wake_jobs(
+    v_host_test,repeat('6',64),v_binding_6,5,30) limit 1;
+  if not found then raise exception 'Grant-deactivation fixture must have a live lease'; end if;
+
+  if not public.deactivate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
+      '70000000-0000-4000-8000-000000000006'::uuid) then
+    raise exception 'Current grant must be deactivated';
+  end if;
+  if not public.deactivate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
+      '70000000-0000-4000-8000-000000000006'::uuid) then
+    raise exception 'Repeated same-grant deactivation must be idempotently confirmed';
+  end if;
+  if exists(select 1 from public.backroom_wake_jobs where binding_id=v_binding_6 and state in ('pending','leased')) then
+    raise exception 'Deactivation must cancel pending and leased wakes atomically';
+  end if;
+
+  if not public.activate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
+      '70000000-0000-4000-8000-000000000008'::uuid,300) then
+    raise exception 'A new grant may activate after the previous grant is deactivated';
+  end if;
+  if public.deactivate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
+      '70000000-0000-4000-8000-000000000006'::uuid) then
+    raise exception 'A stale grant must not revoke a new active grant';
+  end if;
+  if not exists(select 1 from public.backroom_input_bindings where id=v_binding_6
+      and wake_enabled=true and wake_grant_id='70000000-0000-4000-8000-000000000008'::uuid) then
+    raise exception 'Stale deactivation must preserve the new grant';
+  end if;
+  if not public.deactivate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
+      '70000000-0000-4000-8000-000000000008'::uuid) then
+    raise exception 'New grant must be deactivatable';
+  end if;
+
   if not (select relrowsecurity from pg_catalog.pg_class where oid='public.backroom_wake_jobs'::regclass) then
     raise exception 'Backroom wake jobs must have RLS enabled';
   end if;
