@@ -233,6 +233,7 @@ export class BrowserHostRuntime {
   #targets = new Map();
   #bindings = new Map();
   #selectionRooms = new Map();
+  #remoteWakeGrants = new Map();
   constructor({ hostId, profileDir = join(homedir(), ".rub-minds", "backroom", "browser-profile"),
     chromiumProvider = async () => (await import("playwright")).chromium,
     headless = false, launchOptions = {} } = {}) {
@@ -294,6 +295,8 @@ export class BrowserHostRuntime {
           this.#selectionRooms.clear();
           this.#targets.clear();
           this.#bindings.clear();
+      this.#remoteWakeGrants.clear();
+          this.#remoteWakeGrants.clear();
         }
       });
       for (const page of context.pages()) this.#attachPage(page);
@@ -818,14 +821,72 @@ export class BrowserHostRuntime {
       spaceId:target.spaceId,bindingId,targetId:target.id,identityFingerprint:target.identityFingerprint,
       targetRevision:target.revision,...(ttlMs===undefined?{}:{ttlMs}),...(maxPerMinute===undefined?{}:{maxPerMinute}),
     });
+    // Record only this host-issued user-confirmed grant, never a remote-supplied approval.
+    this.#remoteWakeGrants.set(bindingId,grant.grantId);
     return Object.freeze({grantId:grant.grantId,createdAt:grant.createdAt,expiresAt:grant.expiresAt,
       maxPerMinute:grant.maxPerMinute,scope:grant.scope,mode:"canonical-trigger-only"});
   }
   revokeContinuousWake({grantId,targetId,roomId}={}) {
     const status=this.wakeAuthority.status(grantId);
     if(!status.active||status.scope.targetId!==targetId||status.scope.groupId!==roomId)return false;
+    if(this.#remoteWakeGrants.get(status.scope.bindingId)===grantId)this.#remoteWakeGrants.delete(status.scope.bindingId);
     return this.wakeAuthority.revoke(grantId);
   }
+  /**
+   * Non-consuming proof for the hosted activation request. A remote host token
+   * is NOT sufficient: local user consent must have created the exact grant.
+   */
+  async verifyRemoteWakeActivation({hostId,sessionDigest,bindingId,grantId,ttlSeconds}={}) {
+    if(hostId!==this.hostId||typeof sessionDigest!=="string"||!/^[a-f0-9]{64}$/.test(sessionDigest)||
+       typeof bindingId!=="string"||!validId(bindingId)||this.#remoteWakeGrants.get(bindingId)!==grantId||
+       !Number.isSafeInteger(ttlSeconds)||ttlSeconds<60||ttlSeconds>900)return false;
+    await this.listTargets();
+    const grant=this.wakeAuthority.status(grantId);
+    if(!grant.active||grant.scope.hostId!==this.hostId||grant.scope.bindingId!==bindingId||
+       grant.expiresAt-Date.now()<ttlSeconds*1000)return false;
+    const selected=this.#bindings.get(grant.scope.targetId);
+    if(!selected||selected.target.id!==grant.scope.targetId||selected.target.roomId!==grant.scope.groupId||
+       selected.target.sessionId!==grant.scope.sessionId||
+       selected.target.identityFingerprint!==grant.scope.identityFingerprint||
+       selected.target.revision!==grant.scope.targetRevision)return false;
+    return (await selected.wakeAdapter?.probe({target:selected.target,operation:"wake"}))?.connected===true;
+  }
+  /**
+   * Resolve the queued lease against the *currently* user-selected composer.
+   * No fallback to a new tab, replacement DOM node, stale grant or other AI.
+   */
+  async resolveClaimedWakeContext({hostId,sessionDigest,bindingId,lease}={}) {
+    if(hostId!==this.hostId||lease?.hostId!==hostId||lease?.sessionDigest!==sessionDigest||
+       lease?.bindingId!==bindingId)return null;
+    await this.listTargets(); // Revalidates actual DOM element and route.
+    const grantId=this.#remoteWakeGrants.get(bindingId);
+    const grant=this.wakeAuthority.status(grantId);
+    if(!grant.active)return null;
+    const scope=grant.scope,target=this.registry.resolve(lease.targetId,{
+      roomId:lease.roomId,hostId,spaceId:lease.spaceId,sessionId:lease.sessionId,
+      identityFingerprint:lease.targetIdentityFingerprint,expectedRevision:lease.targetRevision
+    });
+    if(scope.hostId!==hostId||scope.groupId!==lease.roomId||scope.participantId!==lease.participantId||
+       scope.sessionId!==lease.sessionId||scope.spaceId!==lease.spaceId||scope.bindingId!==bindingId||
+       scope.targetId!==lease.targetId||scope.identityFingerprint!==lease.targetIdentityFingerprint||
+       scope.targetRevision!==lease.targetRevision)return null;
+    const selected=this.#bindings.get(target.id);
+    if(!selected?.wakeAdapter||!selected?.wakeGuard)return null;
+    const probe=await selected.wakeAdapter.probe({target,operation:"wake"});
+    if(probe.connected!==true)return null;
+    return Object.freeze({
+      approval:Object.freeze({grantId}),targetRegistry:this.registry,
+      binding:Object.freeze({groupId:lease.roomId,participantId:lease.participantId,
+        sessionId:lease.sessionId,bindingId,targetId:lease.targetId,capabilities:["wake"]}),
+      participant:Object.freeze({groupId:lease.roomId,participantId:lease.participantId,
+        sessionId:lease.sessionId,status:"ready"}),
+      composerEmpty:true,foregroundSessionId:lease.sessionId
+    });
+  }
+  verifyClaimedWakeGrant(approval,context) {
+    return this.wakeAuthority.verify(approval?.grantId,context,{consume:false});
+  }
+
   async wake(targetId,eventId,grantId,{roomId}={}) {
     if(!validId(eventId))throw new TypeError("Invalid group event ID.");
     await this.listTargets();
