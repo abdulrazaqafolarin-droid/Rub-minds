@@ -67,7 +67,13 @@ export function createWakeGatewayHttpHandler({gateway,maxBodyBytes=4096}={}) {
  return async function handleWakeGatewayRequest(request) {
   if(!(request instanceof Request))return response(400,{ok:false,reason:'invalid_request'});
   const url=new URL(request.url);
-  if(url.protocol!=='https:'||url.search||url.hash||request.method!=='POST'||
+  // Supabase terminates public TLS at its gateway; the internal Edge Runtime URL
+  // is HTTP even when the caller used HTTPS. Trust only the gateway's normalized
+  // x-forwarded-proto value for the external scheme, while preserving direct HTTPS
+  // behavior for local/hosted adapter tests.
+  const forwardedProto=(request.headers.get('x-forwarded-proto')??'').split(',')[0].trim().toLowerCase();
+  const externallyHttps=url.protocol==='https:'||(url.protocol==='http:'&&forwardedProto==='https');
+  if(!externallyHttps||url.search||url.hash||request.method!=='POST'||
      !Object.hasOwn(routes,url.pathname))return response(404,{ok:false,reason:'not_found'});
   if(request.headers.has('origin')||request.headers.has('cookie')||
      request.headers.get('content-type')?.toLowerCase()!=='application/json')return bad();
