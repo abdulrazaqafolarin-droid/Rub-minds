@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { loadOrCreateHostIdentity, rotateHostIdentity } from "../integrations/backroom/host-identity.mjs";
+import { loadOrCreateHostIdentity, rotateHostIdentity, isHostIdentityRotationPending } from "../integrations/backroom/host-identity.mjs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { HostPairingAuthority } from "../integrations/backroom/host-pairing.mjs";
@@ -562,9 +562,9 @@ export function createBackroomHostServer({
 }
 
 export async function runBackroomHost() {
-  const identity = await loadOrCreateHostIdentity({
-    filePath:join(homedir(), ".rub-minds", "backroom", "host-identity.json")
-  });
+  const identityFilePath=join(homedir(), ".rub-minds", "backroom", "host-identity.json");
+  const identity = await loadOrCreateHostIdentity({filePath:identityFilePath});
+  const identityRotationPending=await isHostIdentityRotationPending({filePath:identityFilePath});
   const hostId = identity.hostId;
   const { BrowserHostRuntime } = await import("../integrations/backroom/browser-host-runtime.mjs");
   const browserRuntime = new BrowserHostRuntime({ hostId });
@@ -574,9 +574,11 @@ export async function runBackroomHost() {
     journalDirectory:join(homedir(),".rub-minds","backroom","wake-execution-journal")
   });
   // A rotated host must never inherit the old identity's environment-bound input.
-  const sessionDigest=rotateIdentity===true?undefined:process.env.BACKROOM_WAKE_SESSION_DIGEST;
-  const bindingId=rotateIdentity===true?undefined:process.env.BACKROOM_WAKE_BINDING_ID;
-  const publishableKey=process.env.BACKROOM_WAKE_PUBLISHABLE_KEY;
+  // A local identity rotation must not inherit stale environment-bound input bindings.
+  // The persistent marker stays until an operator explicitly reviews any headless configuration.
+  const sessionDigest=identityRotationPending?undefined:process.env.BACKROOM_WAKE_SESSION_DIGEST;
+  const bindingId=identityRotationPending?undefined:process.env.BACKROOM_WAKE_BINDING_ID;
+  const publishableKey=identityRotationPending?undefined:process.env.BACKROOM_WAKE_PUBLISHABLE_KEY;
   const configured=[sessionDigest,bindingId,publishableKey].filter(Boolean).length;
   if(configured!==0&&configured!==3)
     throw new Error("Headless wake configuration requires session digest, binding ID and public project API key together");
@@ -594,7 +596,12 @@ export async function runBackroomHost() {
     `Host ID: ${address.hostId}`,
     `Hosted enrollment digest: ${identity.credentialDigest}`,
     "Private host credential is stored only in the local host identity file (not printed).",
-    configured===3?"Remote wake binding configured; awaiting explicit local grant.":"Remote wake: not configured. Pair the browser to configure a hosted binding without restarting.",
+    "A persistent rotation marker prevents inherited headless wake configuration from reviving an old binding.",
+    identityRotationPending
+      ?"Remote wake: stale environment configuration suppressed after identity rotation. Reconfigure the new host explicitly from Rub Minds."
+      :configured===3
+        ?"Remote wake binding configured; awaiting explicit local grant."
+        :"Remote wake: not configured. Pair the browser to configure a hosted binding without restarting.",
     `Allowed web origins: ${parseOrigins(process.env.BACKROOM_ALLOWED_ORIGINS).join(", ")}`,
     "Pairing code (one use, expires in 10 minutes):",
     instance.pairingCode,
