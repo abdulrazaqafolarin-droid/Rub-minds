@@ -11,6 +11,7 @@ type AndroidTask = {traceId:string;deviceSerial:string;appPackage:string;groupId
 type AndroidStatus = {traceId:string;deviceSerial:string;status:string;elapsedSeconds:number|null;result:unknown;error:string|null;testSummary:unknown};
 type AndroidHierarchy = {deviceSerial:string;appPackage:string;groupId:string;sessionId:string;hierarchy:string};
 type TerminalResult = {state:string;exitCode:number;stdout:string;stderr:string;sandboxName:string};
+type TerminalDiff = {state:string;patch:string;bytes:number;sha256:string;empty:boolean;appliedToHost:false;destination:string;reason?:string};
 
 const emptyRuntime:RuntimeStatus={stopped:false,capabilities:{desktop:false,android:false,terminal:false},desktop:{available:false},android:{available:false,trackedTasks:0},terminal:{available:false,hostShellAvailable:false}};
 const runArgvDefault='["npm","ci"]';
@@ -34,6 +35,7 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
   const [terminalCwd,setTerminalCwd]=useState('/workspace/project');
   const [terminalPurpose,setTerminalPurpose]=useState('Run the selected Backroom verification command in the local sandbox');
   const [terminalResult,setTerminalResult]=useState<TerminalResult|null>(null);
+  const [terminalDiff,setTerminalDiff]=useState<TerminalDiff|null>(null);
   const selectedSession=useMemo(()=>sessions.find(s=>s.sessionDigest===selectedSessionDigest)??null,[sessions,selectedSessionDigest]);
   const scope=useMemo(()=>selectedSession&&roomId?{groupId:roomId,sessionId:selectedSession.participantId}:null,[roomId,selectedSession]);
   const selectedWindow=useMemo(()=>desktopWindows.find(w=>(String(w.pid)+':'+String(w.windowId))===selectedWindowKey)??null,[desktopWindows,selectedWindowKey]);
@@ -49,7 +51,7 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
       if(!silent)setNotice(next.stopped?'External workspaces are stopped. Restart and pair the local host to use them.':'Workspace capabilities refreshed from the paired local host.');
     }catch(error){setRuntime(emptyRuntime);if(!silent)setNotice(error instanceof Error?error.message:'Could not read local runtime status.');}
   }
-  useEffect(()=>{setRuntime(emptyRuntime);setDesktopWindows([]);setSelectedWindowKey('');setObservation(null);setSelectedElementToken('');setAndroidHierarchy('');setTerminalResult(null);void refreshRuntime(true);},[hostToken,roomId]);
+  useEffect(()=>{setRuntime(emptyRuntime);setDesktopWindows([]);setSelectedWindowKey('');setObservation(null);setSelectedElementToken('');setAndroidHierarchy('');setTerminalResult(null);setTerminalDiff(null);void refreshRuntime(true);},[hostToken,roomId]);
 
   async function action<T>(fn:()=>Promise<T>,success?:string):Promise<T|null>{
     setBusy(true);setNotice('');
@@ -119,6 +121,13 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
     if(result){setTerminalResult(result);setNotice(result.state==='completed'?'Sandbox command completed. Review its output; it has not been posted to the group.':'Sandbox command ended in state '+result.state+'. Review output and environment before retrying.');}
   }
 
+  async function reviewTerminalDiff(){
+    if(!scope||!runtime.terminal?.projectSynced){setNotice('Sync a local project snapshot before reviewing sandbox changes.');return;}
+    if(!window.confirm('Request the local host to return a bounded patch for review? The local terminal will ask for separate approval. The patch will not be applied to your host repository or posted to the group.'))return;
+    const result=await action(()=>hostApi<TerminalDiff>('/v1/workspaces/terminal/diff',{method:'POST',body:scope}));
+    if(result){setTerminalDiff(result);setNotice(result.state==='completed'?'Sandbox patch is available for inspection only. It was not applied to the host or shared with the group.':result.reason??'Patch was withheld or requires review.');}
+  }
+
   return <section className="br-panel br-external-workspaces" aria-labelledby="br-external-workspaces-title">
     <div className="br-panel-head"><div><span className="br-eyebrow">LOCAL RUNTIME · REAL DEVICE/APPS</span><h2 id="br-external-workspaces-title">Connected workspaces</h2><p>This panel uses the paired host and actual configured adapters—not the simulated space preview.</p></div><button type="button" className="br-secondary" onClick={()=>void refreshRuntime()} disabled={!hostToken||busy}><RefreshCw size={14}/> Refresh runtime</button></div>
     {!hostToken?<div className="br-warning"><ShieldAlert size={19}/><div><b>Local host not paired</b><p>Pair a Backroom host in Host settings before using desktop, Android or terminal connections.</p></div></div>:null}
@@ -173,7 +182,9 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
           <label htmlFor="br-terminal-purpose">Purpose</label><input id="br-terminal-purpose" value={terminalPurpose} onChange={e=>setTerminalPurpose(e.target.value)} disabled={busy||!runtime.terminal?.projectSynced}/>
           <label htmlFor="br-terminal-cwd">Sandbox working directory (optional)</label><input id="br-terminal-cwd" value={terminalCwd} onChange={e=>setTerminalCwd(e.target.value)} placeholder="/workspace/project" disabled={busy||!runtime.terminal?.projectSynced}/>
           <button type="button" className="br-primary" disabled={busy||!scope||!runtime.terminal?.projectSynced} onClick={()=>void runTerminal()}><Play size={14}/> Run in local sandbox</button>
+          <button type="button" className="br-secondary" disabled={busy||!scope||!runtime.terminal?.projectSynced} onClick={()=>void reviewTerminalDiff()}><Eye size={14}/> Review sandbox changes</button>
           {terminalResult&&<><div className="br-detail"><span>Exit code</span><b>{terminalResult.exitCode} · {terminalResult.state}</b></div><pre className="br-runtime-output">{terminalResult.stdout||terminalResult.stderr||'(no output)'}</pre></>}
+          {terminalDiff&&<><div className="br-detail"><span>Sandbox patch · review only</span><b>{terminalDiff.state} · {terminalDiff.bytes} bytes · SHA-256 {terminalDiff.sha256.slice(0,12)}</b></div><pre className="br-runtime-output" aria-label="Unapplied sandbox patch">{terminalDiff.patch||terminalDiff.reason||'(no changes detected)'}</pre><p>Not applied to host. Review, verify, and copy or reimplement the desired changes separately.</p></>}
         </>}
       </section>
     </div>

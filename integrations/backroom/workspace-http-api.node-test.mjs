@@ -26,6 +26,15 @@ test('maps local terminal denial to 403 with sanitized result',async()=>{
  const x=f({body:{groupId:'g',sessionId:'s',command:['npm','test'],purpose:'verify'},runtime:{execTerminal:async()=>{throw Error('Local terminal command denied');}}});
  await handleWorkspaceHttpRequest({...x,url:new URL('http://127.0.0.1/v1/workspaces/terminal/exec')});assert.equal(x.response.status,403);assert.deepEqual(x.response.body,{error:'local_approval_denied'});
 });
+
+test('terminal diff route carries scope and returns a review-only patch without applying it',async()=>{
+ let seen;
+ const patch='diff --git a/src/index.js b/src/index.js\n+safe change\n';
+ const x=f({body:{groupId:'group-1',sessionId:'session-1'},runtime:{diffTerminalProject:async input=>{seen=input;return {state:'completed',patch,bytes:Buffer.byteLength(patch),sha256:'a'.repeat(64),appliedToHost:false};}}});
+ await handleWorkspaceHttpRequest({...x,url:new URL('http://127.0.0.1/v1/workspaces/terminal/diff')});
+ assert.equal(x.response.status,200);assert.equal(seen.groupId,'group-1');assert.equal(seen.sessionId,'session-1');assert.equal(x.response.body.patch,patch);assert.equal(x.response.body.appliedToHost,false);
+});
+
 test('requires JSON content type and avoids leaking error messages for unknown routes',async()=>{
  const a=f();a.request.headers['content-type']='text/plain';await handleWorkspaceHttpRequest({...a,url:new URL('http://127.0.0.1/v1/workspaces/android/tasks')});assert.equal(a.response.status,415);
  const b=f();await handleWorkspaceHttpRequest({...b,url:new URL('http://127.0.0.1/v1/workspaces/unknown')});assert.equal(b.response.status,404);assert.deepEqual(b.response.body,{error:'not_found'});

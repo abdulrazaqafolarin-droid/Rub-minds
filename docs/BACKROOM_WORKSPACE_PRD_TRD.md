@@ -54,12 +54,19 @@ Default: no external workspace process is started. Enable only in the trusted lo
 - BACKROOM_ENABLE_CUA_DRIVER=1 and optionally BACKROOM_CUA_DRIVER_BIN (default cua-driver).
 - BACKROOM_ENABLE_ARTEMIS=1, BACKROOM_ARTEMIS_PYTHON, BACKROOM_ARTEMIS_HOME, BACKROOM_ARTEMIS_ALLOWED_DEVICE_SERIALS and BACKROOM_ARTEMIS_ALLOWED_PACKAGES (comma-delimited allowlists).
 - BACKROOM_ENABLE_CUA_TERMINAL=1 and optionally BACKROOM_CUA_CLI (default cua).
+- BACKROOM_TERMINAL_PROJECT_PATH can select the local project root to sync; by default the host process working directory is used.
 
 The trusted local terminal must be interactive for approval. Headless/non-TTY approval fails closed. External runtimes require their native platform permissions and local prerequisites. This document contains no credentials; provider secrets stay in provider-owned secure local configuration, not the repository or group messages.
 
+## Terminal source transfer and return boundary
+
+The terminal sandbox does not receive a GitHub token or clone the private repository over the network. Instead, the local host creates a user-approved source snapshot and copies it directly to the explicitly named local CUA sandbox. Defaults cap the transfer at 5,000 files, 32 MiB total included content and 3 MiB per file. Git metadata, dependency/build/cache trees, common environment and credential filenames, symlinks, and detected high-confidence secrets are omitted. The host displays the source root, digest, included/omitted counts, destination and overwrite warning before approval. This is a best-effort redaction filter, not a guarantee that all sensitive content can be detected; inspect the source before approving.
+
+Once the project is synced, commands run only inside the dedicated local gVisor container and are subject to a separate host-terminal approval. The returned patch is limited to 512 KiB, scanned for high-confidence credential patterns, requires another local approval and is surfaced in the Backroom UI for review only. It is not applied automatically to the host checkout or posted to group memory. Ambiguous results are withheld and must be inspected before retrying. The sandbox is destroyed when the paired host shuts down or is unpaired; restart and re-pair to create a new isolated sandbox.
+
 ## Acceptance gates
 
-1. npm run test:external-workspaces, npm run test:multi-surface, npm run test:backroom and npm run build.
+1. npm run test:runtime, npm run test:backroom, npm run test:external-workspaces, npm run test:multi-surface and npm run build.
 2. Real CUA Driver session: list/select/observe exact window; approve text locally; type using a current snapshot token; verify value and no submission.
 3. Real CUA local sandbox: create with local gVisor runtime; approve exact argv; run smoke test without host shell; remove sandbox and verify no orphan.
 4. Real ARTEMIS device: diagnose; confirm serial; run allowlisted app task; inspect output/logs/trace; status and authorized stop; test disconnect.

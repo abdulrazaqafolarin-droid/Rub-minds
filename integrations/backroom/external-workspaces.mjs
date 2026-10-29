@@ -18,6 +18,25 @@ function positiveInt(value,label){if(!Number.isSafeInteger(value)||value<1)throw
 function nonnegativeInt(value,label){if(!Number.isSafeInteger(value)||value<0)throw new TypeError(label+' must be a nonnegative integer');}
 function androidScope(deviceSerial,appPackage,devices,packages){if(typeof deviceSerial!=='string'||!devices.has(deviceSerial))throw new Error('Android device is not explicitly allowlisted');if(typeof appPackage!=='string'||!PACKAGE.test(appPackage)||!packages.has(appPackage))throw new Error('Android package is not explicitly allowlisted');return {deviceSerial,appPackage};}
 function scopeIds(groupId,sessionId){if(typeof groupId!=='string'||!ID.test(groupId)||typeof sessionId!=='string'||!ID.test(sessionId))throw new TypeError('Backroom group and session scope required');}
+const TEXT_CONTROL_ROLE=/(text[_ -]?(field|input|entry|area|editor|box)|textbox|textarea|editable[_ -]?text)/i;
+function elementDescriptor(element){
+ const frame=element?.frame&&['x','y','w','h'].every(k=>Number.isFinite(element.frame[k]))
+  ?Object.freeze({x:element.frame.x,y:element.frame.y,w:element.frame.w,h:element.frame.h}):null;
+ return Object.freeze({
+  role:String(element?.role??element?.type??'').trim(),
+  label:typeof element?.label==='string'?element.label:'',
+  depth:Number.isSafeInteger(element?.depth)?element.depth:null,
+  parentIndex:Number.isSafeInteger(element?.parent_index)?element.parent_index:null,
+  frame
+ });
+}
+function sameElementDescriptor(a,b){
+ if(!a||!b||a.role!==b.role||a.label!==b.label||a.depth!==b.depth||a.parentIndex!==b.parentIndex)return false;
+ if(a.frame===null||b.frame===null)return a.frame===null&&b.frame===null;
+ return Math.abs(a.frame.x-b.frame.x)<=0.5&&Math.abs(a.frame.y-b.frame.y)<=0.5&&Math.abs(a.frame.w-b.frame.w)<=0.5&&Math.abs(a.frame.h-b.frame.h)<=0.5;
+}
+function actionEffect(result){return result?.effect??result?.action?.effect??result?.structuredContent?.effect??null;}
+function actionError(result){return result?.error??result?.action?.error??null;}
 
 const PROJECT_SKIP_DIRS=new Set(['.git','node_modules','.next','.nuxt','.vercel','.expo','.gradle','.idea','.obsidian','.cache','.turbo','.venv','venv','env','target','dist','build','coverage','test-results','playwright-report','artifacts','logs','tmp','temp','vendor','secrets','credentials','private','keys','certificates','__pycache__']);
 const PROJECT_SKIP_FILES=new Set(['.npmrc','.pypirc','.netrc','.git-credentials','credentials.json','service-account.json','id_rsa','id_ed25519','authorized_keys','known_hosts','.ds_store','*.pem','*.key','*.p12','*.pfx','*.jks','*.keystore','*.sqlite','*.db','*.dump','*.bak','*.log','*.zip','*.tar','*.gz','*.7z','*.rar']);
@@ -82,6 +101,7 @@ export async function createSafeWorkspaceArchive(projectSourcePath,{maxFiles=500
     entries.sort((a,b)=>a.name.localeCompare(b.name,'en'));
     for(const entry of entries){
       const full=join(folder,entry.name),rel=relative(root,full),normalized=rel.split(sep).join('/');
+      if(/[\u0000-\u001f\u007f-\u009f]/u.test(entry.name)||entry.name==='.'||entry.name==='..')continue;
       if(!rel||rel.startsWith('..'+sep)||rel==='..')throw new Error('Project archive path escaped its root');
       if(omitProjectPath(rel,entry.isDirectory())){if(!entry.isDirectory())omittedSensitive++;continue;}
       const stat=await lstat(full);
@@ -89,10 +109,10 @@ export async function createSafeWorkspaceArchive(projectSourcePath,{maxFiles=500
       if(stat.isDirectory()){await walk(full);continue;}
       if(!stat.isFile())continue;
       if(stat.size>maxSingleFileBytes){omittedLarge++;continue;}
-      if(files.length>=maxFiles)throw new Error('Project has too many included files; lower scope before syncing');
       if(totalBytes+stat.size>maxBytes)throw new Error('Project snapshot exceeds configured byte limit; narrow it before syncing');
       const data=await readFile(full);
       if(!data.includes(0)&&HIGH_CONFIDENCE_SECRET.test(data.toString('utf8'))){omittedSensitive++;continue;}
+      if(files.length>=maxFiles)throw new Error('Project has too many included files; lower scope before syncing');
       files.push({rel:normalized,data,mode:stat.mode&0o111?0o755:0o644});totalBytes+=data.length;
     }
   }
@@ -117,6 +137,9 @@ export async function createSafeWorkspaceArchive(projectSourcePath,{maxFiles=500
 
 
 export class CuaDesktopWorkspace {
+  #observations=new Map();
+  #observationTtlMs=5*60*1000;
+  #maxObservations=1024;
   constructor({client,session='rub-minds-backroom',authorizeLocalAction}={}) {
     if(!client||typeof client.callTool!=='function'||typeof client.listTools!=='function')throw new TypeError('Initialized CUA Driver MCP client required');
     needApproval(authorizeLocalAction,'Desktop actions');this.client=client;this.session=session;this.approve=authorizeLocalAction;
@@ -130,65 +153,93 @@ export class CuaDesktopWorkspace {
     await this.#require(['list_windows']);
     const r=structured(await this.client.callTool('list_windows',{on_screen_only:true}));
     const list=r.windows??r.structuredContent?.windows;if(!Array.isArray(list))throw new Error('CUA list_windows did not return windows');
-    return Object.freeze(list.filter(w=>w&&Number.isSafeInteger(Number(w.pid))&&Number(w.pid)>0&&Number.isSafeInteger(Number(w.window_id??w.windowId)))
+    return Object.freeze(list.filter(w=>w&&Number.isSafeInteger(Number(w.pid))&&Number(w.pid)>0&&Number.isSafeInteger(Number(w.window_id??w.windowId))&&Number(w.window_id??w.windowId)>0)
       .map(w=>Object.freeze({pid:Number(w.pid),windowId:Number(w.window_id??w.windowId),appName:String(w.app_name??w.appName??''),title:String(w.title??''),zIndex:Number.isFinite(w.z_index)?w.z_index:null})));
   }
   async #snapshot({pid,windowId}){
-    positiveInt(pid,'pid');nonnegativeInt(windowId,'windowId');await this.#require(['get_window_state','list_windows']);
+    positiveInt(pid,'pid');positiveInt(windowId,'windowId');await this.#require(['get_window_state','list_windows']);
     const state=structured(await this.client.callTool('get_window_state',{pid,window_id:windowId,tree_format:'elements',full_output:true,session:this.session}));
     if(Number(state.pid)!==pid||Number(state.window_id??state.windowId)!==windowId)throw new Error('CUA snapshot PID/window mismatch');
     const window=(await this.#listWindows()).find(w=>w.pid===pid&&w.windowId===windowId);
     if(!window)throw new Error('Selected desktop window disappeared');
     return {state,window,elements:elements(state)};
   }
+  #observationKey(groupId,sessionId,pid,windowId,elementToken){return JSON.stringify([groupId,sessionId,pid,windowId,elementToken]);}
+  #pruneObservations(){
+    const now=Date.now();
+    for(const [key,value] of this.#observations)if(now-value.observedAt>this.#observationTtlMs)this.#observations.delete(key);
+    while(this.#observations.size>this.#maxObservations)this.#observations.delete(this.#observations.keys().next().value);
+  }
+  #findUniqueElement(currentElements,descriptor){
+    const matches=currentElements.filter(element=>sameElementDescriptor(descriptor,elementDescriptor(element)));
+    if(matches.length!==1)throw new Error('Selected text field changed or is ambiguous; inspect the window again');
+    return matches[0];
+  }
   async observeWindow({pid,windowId,groupId,sessionId}={}){
-    scopeIds(groupId,sessionId);if(await this.approve(Object.freeze({kind:'desktop_observe',pid,windowId,groupId,sessionId}))!==true)throw new Error('Local desktop observation denied');const {state,window,elements}=await this.#snapshot({pid,windowId});
-    const elementOptions = elements.slice(0, 250).flatMap(element => {
-      const elementToken = typeof element?.element_token === 'string' ? element.element_token : null;
-      if (!elementToken) return [];
-      const role = String(element.role ?? element.type ?? '').slice(0, 80);
-      const label = Array.from(String(element.label ?? '')).map(character => {
-        const code = character.codePointAt(0);
-        return code <= 31 || (code >= 127 && code <= 159) || code === 0x2028 || code === 0x2029 ? ' ' : character;
-      }).join('').slice(0, 120);
+    positiveInt(pid,'pid');positiveInt(windowId,'windowId');scopeIds(groupId,sessionId);
+    if(await this.approve(Object.freeze({kind:'desktop_observe',pid,windowId,groupId,sessionId}))!==true)throw new Error('Local desktop observation denied');
+    const {state,window,elements}=await this.#snapshot({pid,windowId});
+    const now=Date.now();this.#pruneObservations();
+    const elementOptions=elements.slice(0,250).flatMap(element=>{
+      const elementToken=typeof element?.element_token==='string'?element.element_token:null;
+      if(!elementToken)return [];
+      const descriptor=elementDescriptor(element);
+      this.#observations.set(this.#observationKey(groupId,sessionId,pid,windowId,elementToken),{
+        descriptor,observedAt:now,appName:window.appName,title:window.title,snapshotId:typeof state.snapshot_id==='string'?state.snapshot_id:null
+      });
+      const label=Array.from(descriptor.label).map(character=>{
+        const code=character.codePointAt(0);
+        return code<=31||(code>=127&&code<=159)||code===0x2028||code===0x2029?' ':character;
+      }).join('').slice(0,120);
       return [Object.freeze({
-        elementToken, role, label,
-        valueEmpty: typeof element.value === 'string' && element.value === '',
-        typeable: /(text[_ -]?(field|input|entry|area|editor|box)|textbox|textarea|editable[_ -]?text)/i.test(role) && typeof element.value === 'string' && element.value === '',
+        elementToken,role:descriptor.role,label,
+        valueEmpty:typeof element.value==='string'&&element.value==='',
+        typeable:TEXT_CONTROL_ROLE.test(descriptor.role)&&typeof element.value==='string'&&element.value===''&&element.enabled!==false
       })];
     });
+    this.#pruneObservations();
     return Object.freeze({pid,windowId,groupId,sessionId,appName:window.appName,title:window.title,elementCount:elements.length,degraded:state.degraded===true,snapshotId:typeof state.snapshot_id==='string'?state.snapshot_id:null,elements:Object.freeze(elementOptions),state:'observed'});
   }
   async draftText({pid,windowId,elementToken,text,expectedAppName,expectedTitle,groupId,sessionId}={}){
-    positiveInt(pid,'pid');nonnegativeInt(windowId,'windowId');scopeIds(groupId,sessionId);
+    positiveInt(pid,'pid');positiveInt(windowId,'windowId');scopeIds(groupId,sessionId);
     if(typeof elementToken!=='string'||!ID.test(elementToken))throw new TypeError('Snapshot-derived CUA element token required');
     if(typeof text!=='string'||!text.trim()||text.length>MAX_TEXT||CONTROL.test(text))throw new TypeError('Draft must be safe single-line text of at most 4000 characters');
     if(typeof expectedAppName!=='string'||!expectedAppName.trim()||typeof expectedTitle!=='string'||!expectedTitle.trim())throw new TypeError('Expected app/window identity required');
-    if(await this.approve(Object.freeze({kind:'desktop_draft_inspect',pid,windowId,expectedAppName,expectedTitle,groupId,sessionId}))!==true)throw new Error('Local desktop observation denied');
+    this.#pruneObservations();
+    const original=this.#observations.get(this.#observationKey(groupId,sessionId,pid,windowId,elementToken));
+    if(!original)throw new Error('Fresh local CUA observation required for this group, session and window');
+    if(original.appName!==expectedAppName||original.title!==expectedTitle)throw new Error('Desktop identity does not match the original observed control');
+    if(!TEXT_CONTROL_ROLE.test(original.descriptor.role))throw new Error('Selected element is not a clearly editable text control');
+    if(await this.approve(Object.freeze({kind:'desktop_draft_inspect',pid,windowId,expectedAppName,expectedTitle,elementToken,elementRole:original.descriptor.role,elementLabel:original.descriptor.label,groupId,sessionId}))!==true)throw new Error('Local desktop observation denied');
     const before=await this.#snapshot({pid,windowId});
     if(before.window.appName!==expectedAppName||before.window.title!==expectedTitle)throw new Error('Desktop app/window identity changed');
-    const field=before.elements.find(e=>e?.element_token===elementToken);
-    if(!field)throw new Error('Element token is absent from fresh CUA snapshot');
-    if(!/(text[_ -]?(field|input|entry|area|editor|box)|textbox|textarea|editable[_ -]?text)/i.test(String(field.role??field.type??'')))throw new Error('Selected element is not a clearly editable text control');
-    if(typeof field.value!=='string'||field.value!=='')throw new Error('Selected text-entry control is not explicitly verified empty');
-    const approval=await this.approve(Object.freeze({kind:'desktop_draft',pid,windowId,appName:expectedAppName,title:expectedTitle,text,elementToken,groupId,sessionId}));
+    const field=this.#findUniqueElement(before.elements,original.descriptor);
+    if(typeof field.value!=='string'||field.value!==''||field.enabled===false)throw new Error('Selected text-entry control is not explicitly verified empty and enabled');
+    const approval=await this.approve(Object.freeze({kind:'desktop_draft',pid,windowId,appName:expectedAppName,title:expectedTitle,text,elementToken,elementRole:original.descriptor.role,elementLabel:original.descriptor.label,snapshotId:original.snapshotId,groupId,sessionId}));
     if(approval!==true)throw new Error('Local desktop action denied');
-    const fresh=await this.#snapshot({pid,windowId}),current=fresh.elements.find(e=>e?.element_token===elementToken);
-    if(fresh.window.appName!==expectedAppName||fresh.window.title!==expectedTitle||!current||current.value!=='')throw new Error('Desktop input changed after approval');
+    const fresh=await this.#snapshot({pid,windowId});
+    if(fresh.window.appName!==expectedAppName||fresh.window.title!==expectedTitle)throw new Error('Desktop app/window identity changed after approval');
+    const current=this.#findUniqueElement(fresh.elements,original.descriptor);
+    if(typeof current.value!=='string'||current.value!==''||current.enabled===false||typeof current.element_token!=='string')throw new Error('Selected text-entry control changed after approval');
     await this.#require(['click','type_text']);
-    // CUA type_text accepts an exact window target, not an element_token. Focus the
-    // freshly verified text control first, then type only into that exact window.
-    const focused=structured(await this.client.callTool('click',{target:{kind:'window',pid,window_id:windowId},element_token:elementToken,delivery_mode:'foreground',session:this.session}));
-    if(focused.effect!=='confirmed'||focused.error)return Object.freeze({state:'needs_review',submitted:false,reason:'CUA could not confirm text-field focus'});
-    const postFocus=await this.#snapshot({pid,windowId}),focusWindow=postFocus.window,focusField=postFocus.elements.find(e=>e?.element_token===elementToken);
-    if(focusWindow.appName!==expectedAppName||focusWindow.title!==expectedTitle||!focusField||focusField.value!==''||!/(text[_ -]?(field|input|entry|area|editor|box)|textbox|textarea|editable[_ -]?text)/i.test(String(focusField.role??focusField.type??'')))return Object.freeze({state:'needs_review',submitted:false,reason:'Selected control changed after focus'});
-    const result=structured(await this.client.callTool('type_text',{text,target:{kind:'window',pid,window_id:windowId},session:this.session}));
-    if(result.effect!=='confirmed'||result.error)return Object.freeze({state:'needs_review',submitted:false,reason:'CUA did not confirm text input'});
-    const after=await this.#snapshot({pid,windowId}),written=after.elements.find(e=>e?.element_token===elementToken);
-    if(!written||written.value!==text||after.window.appName!==expectedAppName||after.window.title!==expectedTitle)return Object.freeze({state:'needs_review',submitted:false,reason:'Desktop readback mismatch'});
-    return Object.freeze({state:'completed',submitted:false,verified:true,result:{drafted:true,submitted:false,pid,windowId,elementToken}});
+    // CUA tokens belong to one snapshot. Focus with the current token, then type
+    // immediately into the exact window without requesting another snapshot in between.
+    let focused;
+    try{focused=structured(await this.client.callTool('click',{target:{kind:'window',pid,window_id:windowId},element_token:current.element_token,delivery_mode:'foreground',session:this.session}));}
+    catch{return Object.freeze({state:'needs_review',submitted:false,reason:'CUA focus result was unavailable; inspect before retrying'});}
+    if(actionEffect(focused)!=='confirmed'||actionError(focused))return Object.freeze({state:'needs_review',submitted:false,reason:'CUA could not confirm text-field focus'});
+    let typed;
+    try{typed=structured(await this.client.callTool('type_text',{text,target:{kind:'window',pid,window_id:windowId},session:this.session}));}
+    catch{return Object.freeze({state:'needs_review',submitted:false,reason:'CUA type result was unavailable; inspect before retrying'});}
+    if(actionEffect(typed)!=='confirmed'||actionError(typed))return Object.freeze({state:'needs_review',submitted:false,reason:'CUA did not confirm text input'});
+    try{
+      const after=await this.#snapshot({pid,windowId});
+      if(after.window.appName!==expectedAppName||after.window.title!==expectedTitle)return Object.freeze({state:'needs_review',submitted:false,reason:'Desktop app/window changed after typing'});
+      const written=this.#findUniqueElement(after.elements,original.descriptor);
+      if(written.value!==text)return Object.freeze({state:'needs_review',submitted:false,reason:'Desktop text readback mismatch'});
+      return Object.freeze({state:'completed',submitted:false,verified:true,result:{drafted:true,submitted:false,pid,windowId,elementToken:current.element_token}});
+    }catch{return Object.freeze({state:'needs_review',submitted:false,reason:'Desktop typing outcome could not be independently read back'});}
   }
-}
 
 /** ARTEMIS is an asynchronous mobile task engine, so results are managed by trace ID. */
 export class ArtemisAndroidWorkspace {
