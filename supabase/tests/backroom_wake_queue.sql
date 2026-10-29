@@ -501,8 +501,8 @@ begin
   if not public.revoke_backroom_input_binding(v_binding_1,v_owner) then
     raise exception 'Owner must be able to revoke their input binding';
   end if;
-  if public.revoke_backroom_input_binding(v_binding_1,v_owner) then
-    raise exception 'Repeated input binding revocation must be refused';
+  if not public.revoke_backroom_input_binding(v_binding_1,v_owner) then
+    raise exception 'Repeated input binding revocation should be idempotently confirmed';
   end if;
   if exists(select 1 from public.backroom_input_bindings where id=v_binding_1 and
     (revoked_at is null or wake_enabled or wake_grant_id is not null or confirmed_at is not null or wake_expires_at is not null)) then
