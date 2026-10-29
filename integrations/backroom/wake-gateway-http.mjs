@@ -6,12 +6,15 @@
  * Deliberately no CORS, cookie auth, GET endpoints, or tokens in URLs.
  */
 const routes=Object.freeze({
+  '/v1/backroom/wake/activate':'activate',
   '/v1/backroom/wake/claim':'claim',
   '/v1/backroom/wake/ack':'acknowledge',
   '/v1/backroom/wake/retry':'retry',
+  '/functions/v1/backroom-wake/activate':'activate',
   '/functions/v1/backroom-wake/claim':'claim',
   '/functions/v1/backroom-wake/ack':'acknowledge',
   '/functions/v1/backroom-wake/retry':'retry',
+  '/backroom-wake/activate':'activate',
   '/backroom-wake/claim':'claim',
   '/backroom-wake/ack':'acknowledge',
   '/backroom-wake/retry':'retry',
@@ -62,7 +65,8 @@ export function createWakeGatewayHttpHandler({gateway,maxBodyBytes=4096}={}) {
   let body;
   try {body=await readSmallJson(request,maxBodyBytes);}catch{return response(400,{ok:false,reason:'invalid_body'});}
   const method=routes[url.pathname];
-  const permitted=method==='claim'?
+  const permitted=method==='activate'?['hostId','sessionDigest','bindingId','grantId','ttlSeconds']:
+    method==='claim'?
     ['hostId','sessionDigest','bindingId','limit']:
     method==='acknowledge'?
       ['hostId','sessionDigest','bindingId','jobId','leaseToken','outcome']:
