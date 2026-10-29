@@ -4,7 +4,7 @@ import {mkdtemp,rm,mkdir,chmod,symlink,writeFile,readFile} from 'node:fs/promise
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
-import {loadOrCreateHostIdentity,rotateHostIdentity} from './host-identity.mjs';
+import {loadOrCreateHostIdentity,rotateHostIdentity,isHostIdentityRotationPending} from './host-identity.mjs';
 test('stable private host ID and credential survive restart without rekeying',async()=>{
  const root=await mkdtemp(join(tmpdir(),'backroom-host-identity-'));
  try{
@@ -69,3 +69,17 @@ test('explicit local rotation creates a new unrelated host ID and credential',as
   assert.deepEqual(await loadOrCreateHostIdentity({filePath}),after);
  }finally{await rm(root,{recursive:true,force:true});}
 });
+
+test('rotated host persistently suppresses stale environment-bound wake configuration across restart',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'backroom-rotation-marker-'));
+ try{
+  const filePath=join(root,'private','host.json');
+  await loadOrCreateHostIdentity({filePath});
+  assert.equal(await isHostIdentityRotationPending({filePath}),false);
+  const rotated=await rotateHostIdentity({filePath});
+  assert.equal(await isHostIdentityRotationPending({filePath}),true);
+  assert.equal((await loadOrCreateHostIdentity({filePath})).hostId,rotated.hostId);
+  assert.equal(await isHostIdentityRotationPending({filePath}),true);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+
