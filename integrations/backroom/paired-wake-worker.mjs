@@ -8,7 +8,7 @@ import {dispatchClaimedWake} from './durable-wake-runtime.mjs';
 
 export async function pollPairedWakeJobs({
   store,hostId,sessionDigest,bindingId,limit=5,
-  resolveContext,dispatcher,verifyApproval
+  resolveContext,dispatcher,verifyApproval,executionJournal
 }={}) {
   if (!store || typeof store.claim!=='function' || typeof store.acknowledge!=='function' || typeof store.retry!=='function')
     throw new TypeError('Private durable wake store required');
@@ -16,6 +16,8 @@ export async function pollPairedWakeJobs({
   if (typeof verifyApproval!=='function') throw new TypeError('Non-consuming wake-grant verifier required');
   if (!dispatcher || typeof dispatcher.enqueue!=='function' || typeof dispatcher.step!=='function' || typeof dispatcher.status!=='function')
     throw new TypeError('Dispatcher required');
+  if (!executionJournal || typeof executionJournal.reserve!=='function')
+    throw new TypeError('Durable atomic wake execution journal required');
   if (!Number.isInteger(limit) || limit<1 || limit>20) throw new RangeError('Invalid poll limit');
   // Claims and acknowledgment remain scoped by host, hosted MCP session and binding.
   const leases=await store.claim({hostId,sessionDigest,bindingId,limit});
@@ -42,8 +44,23 @@ export async function pollPairedWakeJobs({
       results.push(Object.freeze({jobId:lease.jobId,...result}));
       continue;
     }
+    // Claim leases are at-least-once. Atomically seal the wake BEFORE any UI
+    // execution step. On lease expiry, a later claim must not send it twice.
+    // A rejected reservation intentionally enters manual reconciliation.
+    const guardedDispatcher={
+      enqueue:command=>dispatcher.enqueue(command),
+      status:id=>dispatcher.status(id),
+      async step(id,options){
+        const fresh=await executionJournal.reserve(Object.freeze({
+          jobKey:lease.jobKey,jobId:lease.jobId,hostId,bindingId,
+          sessionDigest,targetId:lease.targetId
+        }));
+        if(fresh!==true)throw new Error('wake-already-reserved-or-journal-unavailable');
+        return dispatcher.step(id,options);
+      }
+    };
     const result=await dispatchClaimedWake({
-      lease,store,dispatcher,verifyApproval,
+      lease,store,dispatcher:guardedDispatcher,verifyApproval,
       hostId,sessionDigest,approval:context.approval,
       targetRegistry:context.targetRegistry,binding:context.binding,
       participant:context.participant,composerEmpty:context.composerEmpty,
