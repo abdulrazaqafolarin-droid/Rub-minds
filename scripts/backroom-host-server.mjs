@@ -241,7 +241,7 @@ export function createBackroomHostServer({
       if(!wakeService||typeof wakeService.unconfigure!=="function"){
         writeJson(response,503,{error:"remote_wake_unavailable"},cors);return;
       }
-      if(!/^application\\/json(?:\\s*;|$)/i.test(request.headers["content-type"]??"")){
+      if(!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"]??"")){
         writeJson(response,415,{error:"application_json_required"},cors);return;
       }
       try{
