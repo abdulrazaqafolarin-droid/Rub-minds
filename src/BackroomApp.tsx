@@ -416,8 +416,10 @@ export default function BackroomApp() {
     if (!supabase || !room?.id || !hostInfo?.connected || !hostToken) return;
     const selectedSession=hostedAiSessions.find(s=>s.sessionDigest===selectedHostedSession);
     const target=browserTargets.find(t=>t.id===selectedBrowserTarget);
+    // Capture optional identity fields before any await so TypeScript and runtime share one stable value.
+    const targetSessionId=target?.sessionId;
     if(!selectedSession||!target||target.roomId!==room.id||target.wakeAvailable!==true||
-       !target.spaceId||!target.sessionId||!target.identityFingerprint||
+       !target.spaceId||!targetSessionId||!target.identityFingerprint||
        !target.revision||target.locatorKind!=='dom'||!target.locatorValue){
       setHostMessage('Select one live joined AI session and a wake-capable browser composer in the same group.');
       return;
@@ -436,7 +438,7 @@ export default function BackroomApp() {
         body:{
           roomId:room.id,participantId:selectedSession.participantId,
           hostId:hostInfo.hostId,sessionDigest:selectedSession.sessionDigest,
-          spaceId:target.spaceId,sessionId:target.sessionId,
+          spaceId:target.spaceId,sessionId:targetSessionId,
           targetId:target.id,targetIdentityFingerprint:target.identityFingerprint,
           targetRevision:target.revision,surface:'browser_tab',
           locatorKind:target.locatorKind,locatorValue:target.locatorValue,
@@ -456,7 +458,7 @@ export default function BackroomApp() {
           (data.reason==='existing_binding_active_revoke_first'||data.reason==='existing_binding_requires_revoke')){
           setHostedWakeBinding({
             bindingId:data.bindingId,roomId:room.id,
-            participantId:selectedSession.participantId,sessionId:target.sessionId,
+            participantId:selectedSession.participantId,sessionId:targetSessionId,
             targetId:target.id,sessionDigest:selectedSession.sessionDigest,
             wakeEnabled:data.wakeEnabled===true,requiresRevoke:true
           });
@@ -480,7 +482,7 @@ export default function BackroomApp() {
       pendingNewBindingId=null;
       setHostedWakeBinding({
         bindingId:data.bindingId,roomId:room.id,
-        participantId:selectedSession.participantId,sessionId:target.sessionId,
+        participantId:selectedSession.participantId,sessionId:targetSessionId,
         targetId:target.id,sessionDigest:selectedSession.sessionDigest,
         wakeEnabled:false,requiresRevoke:false
       });
