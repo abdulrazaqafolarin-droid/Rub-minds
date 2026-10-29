@@ -10,7 +10,7 @@ type Space = { id: string; name: string; surface: Surface; app: string; createdA
 type Rect = { x: number; y: number; width: number; height: number };
 type HostStatus = { hostId: string; label: string; expiresAt: number; protocolVersion: string; connected: boolean; executionReady: boolean; capabilities: Record<string, boolean>; nextStep: string; browserPages?: number; enrollmentDigest?: string };
 type BrowserPageRow = { pageId: string; title: string; site: string; canSelect: boolean };
-type BrowserTargetRow = { id: string; pageId: string; roomId: string; title: string; site: string; surface: string; operations: string[] };
+type BrowserTargetRow = { id: string; pageId: string; roomId: string; title: string; site: string; surface: string; operations: string[]; wakeAvailable?: boolean; spaceId?: string; sessionId?: string; identityFingerprint?: string; revision?: number; locatorKind?: string; locatorValue?: string };\ntype HostedAiSession = { participantId: string; displayName: string; sessionDigest: string; expiresAt: string };\ntype HostedWakeBinding = { bindingId: string; roomId: string; participantId: string; sessionId: string; targetId: string; sessionDigest: string };
 type PendingBrowserSelection = { pageId: string; roomId: string; generation: number; attemptId: string | null };
 const surfaces: { id: Surface; name: string; detail: string }[] = [
   { id: 'browser_tab', name: 'Browser session', detail: 'ChatGPT, Claude and other browser conversations' },
@@ -131,6 +131,10 @@ export default function BackroomApp() {
   const [browserUrl, setBrowserUrl] = useState('https://chatgpt.com/');
   const [browserNotice, setBrowserNotice] = useState('');
   const [browserBusy, setBrowserBusy] = useState(false);
+  const [hostedAiSessions,setHostedAiSessions] = useState<HostedAiSession[]>([]);
+  const [selectedHostedSession,setSelectedHostedSession] = useState('');
+  const [hostedWakeBinding,setHostedWakeBinding] = useState<HostedWakeBinding | null>(null);
+  const [hostedWakeGrantId,setHostedWakeGrantId] = useState('');
   const selectionGeneration = useRef(0);
   const activeBrowserSelection = useRef<PendingBrowserSelection | null>(null);
   const [roomId, setRoomId] = useState(() => new URLSearchParams(location.search).get('room') || '');
