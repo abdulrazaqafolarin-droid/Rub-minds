@@ -7,7 +7,14 @@
 4. Each durable job stores a target identity fingerprint as well as group, host, space, session, binding, target ID and revision. Claims return a short-lived random lease token; only its SHA-256 digest is persisted.
 5. \`commandFromClaimedWake\` resolves the exact registered target again and constructs a draft-only local command. \`dispatchClaimedWake\` checks the binding and participant, checks composer/foreground readiness, verifies an injected approval against the exact prompt digest, then uses the actual \`BackroomDispatcher\` and \`LocalExecutionGuard\`.
 6. Successful draft insertion acknowledges the durable lease; safely retryable preflight conditions release it with delay. Stale bindings and ambiguous outcomes are never silently retargeted or blindly replayed.
-7. The wake remains a prompt only. This bridge never submits or clicks Send. MCP event acknowledgement (the AI has read/responded to the group event) is a different lifecycle from queue acknowledgement (the host delivered/ignored the wake).
+7. The generic `draft` operation remains draft-only. The separate `wake` operation may submit only the exact canonical `@RMconnects` prompt, and only after an explicit scoped grant. `BrowserCanonicalWakeAdapter` is restricted by the managed host to the Claude/ChatGPT HTTPS origins, checks the exact selected composer and uniquely identified send control, and waits up to eight seconds for that conversation's composer to clear. An uncertain submit returns `needs_review` and is never retried automatically. This does not prove that the provider model completed a response. MCP event acknowledgement (the AI has read/responded to the group event) remains separate from queue acknowledgement (the host attempted the wake).
+
+## Local managed-browser wake operation
+
+- The loopback host exposes authenticated, origin-bound `POST /v1/browser/wake/grants`, `POST /v1/browser/wake/grants/revoke`, and `POST /v1/browser/wake` endpoints.
+- A grant requires explicit confirmation, binds one group/participant/session/binding/target revision/identity fingerprint, expires within 15 minutes by default, and is rate-limited (six wake attempts per minute by default). Grants are revoked when the target disappears, the browser closes, the host stops or the grant is explicitly revoked.
+- The wake adapter never accepts caller-authored text. It builds the fixed trigger from a validated event ID; no private group message body or arbitrary prompt is injected into the original AI conversation.
+- These endpoints currently support explicit local trigger operations. The Supabase message trigger/coordinator, host-pairing record, remote queue poller, automatic response capture and MCP round-trip are not wired end-to-end yet. A durable wake row by itself does not wake a local device.
 
 ## Database boundary
 - Migration: \`supabase/migrations/20261029090000_backroom_wake_queue.sql\`.
@@ -15,7 +22,7 @@
 - CI workflow: \`.github/workflows/backroom-wake-queue.yml\` applies the migration to an isolated PostgreSQL 17 service and runs the SQL lifecycle/privilege checks.
 - Queue table and RPCs have RLS enabled, direct access revoked from \`public\`, \`anon\`, and \`authenticated\`, and execute grants limited to \`service_role\`.
 - The table stores no provider cookies, tokens, raw conversation URLs, or plaintext lease token.
-- The RPCs are privileged server-side building blocks. A trusted API/Edge Function must authenticate the paired host and owner before invoking claims or cancellation. Never expose a service-role client to browser or local untrusted code.
+- The RPCs are privileged server-side building blocks. Enqueue verifies the room owner, active AI participant, live MCP session and non-revoked `agent_connections` record; claims/acknowledgements/retries also require that live authorization record. A trusted API/Edge Function must still authenticate the paired local host before invoking claims or cancellation. Never expose a service-role client to browser or local untrusted code.
 - The lease protocol is at-least-once, not exactly-once. The host must acknowledge promptly and keep its own idempotency record. UI effects that have an ambiguous outcome must be reconciled, not blindly replayed.
 - This SQL migration has not been applied to production. Production must remain unchanged until isolated SQL CI passes and integration rollout is approved.
 
@@ -34,7 +41,7 @@
 - \`npm run test:backroom\`
 
 ## Release gate
-Keep PR #48 in draft until the clean test suite, isolated SQL workflow, real provider round-trip, host authentication, target revalidation, offline recovery and device-level acceptance have passed. No automatic Send or production migration is enabled by this PR.
+Keep PR #48 in draft until the clean test suite, isolated SQL workflow, real provider round-trip, host authentication, target revalidation, offline recovery and device-level acceptance have passed. Only the explicitly opted-in canonical wake can submit; generic drafting remains draft-only. No production migration or production deployment is enabled by this PR.
 
 ## Durable wake queue milestone
 
@@ -51,8 +58,8 @@ The server-only `durable-wake-store.mjs` adapter maps enqueue/claim/ack/retry/ca
 
 ## Validation status / release discipline
 
-A Vercel preview for earlier commit `a8e6954` reported 135 runtime tests passing, and 22 focused coordinator/dispatcher integration tests passing; its frontend build succeeded. Those remote logs predate the durable-wake-store changes and do not validate the SQL migration. A local Node 22 scratch harness assembled from the current branch sources ran 37 focused tests successfully, including the dispatcher/target-registry/local-guard interaction, but this is not a clean full-repository checkout. The free Vercel API daily deployment limit currently prevents a newer preview. GitHub Actions workflow jobs most recently failed before any steps were recorded (`steps: []`); reruns were requested, but there is no database-test result yet. The migration must be run against an isolated PostgreSQL 17 instance using `supabase/tests/backroom_wake_queue.sql`.
+A Vercel preview for earlier commit `a8e6954` reported 135 runtime tests passing, and 22 focused coordinator/dispatcher integration tests passing; its frontend build succeeded. Those remote logs predate the canonical wake adapter, owner-scoped durable-queue hardening and latest tests. They do not validate current branch code or the SQL migration. The free Vercel API daily deployment limit currently prevents a newer preview. The latest PR-triggered GitHub Actions runs were **skipped because PR #48 remains a draft**; the isolated PostgreSQL 17 workflow result for the latest commit is not verified. The SQL contract is prepared in `supabase/tests/backroom_wake_queue.sql`, but must still pass a real isolated PostgreSQL run.
 
 Do **not** apply this migration to production until the isolated SQL workflow succeeds, a clean-checkout test suite passes, and the actual server integration is implemented and validated. The RPCs are service-role-only, so the service endpoint must derive `owner_id` from an authenticated caller and validate the group participant/session binding; never trust those IDs from a browser request.
 
-The current durable store and local dispatcher are still separate components: a durable claim/lease is not itself an approved local device action. Production orchestration must correlate both outcomes and handle expired leases, cancellation races, host disconnects and ambiguous UI effects before automatic draft insertion is enabled.
+The current durable store, local opt-in wake API and group-event trigger are still separate components: no edge-function bridge presently turns live message inserts into a durable job and delivers it to the paired local host. The production orchestrator must authenticate the host, map each binding to a live MCP session, poll/claim jobs, consume the one-shot wake grant, capture results and recover leases without duplicate sends before automated group-to-original-session participation is enabled.
