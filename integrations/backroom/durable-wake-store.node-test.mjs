@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import {buildCanonicalWakePrompt} from './coordination-core.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {SupabaseBackroomWakeStore,createWakeKey} from './durable-wake-store.mjs';
@@ -10,7 +11,7 @@ const leaseToken='50000000-0000-4000-8000-000000000001';
 const digest='a'.repeat(64);
 const binding={bindingId:'binding-1',groupId:room,participantId,sessionId:'session-1',targetId:'target-1',capabilities:['draft','wake']};
 const target={id:'target-1',roomId:room,hostId:'host-1',spaceId:'space-1',sessionId:'session-1',identityFingerprint:'window-fingerprint-1',revision:1};
-const plan={action:'queue',job:{eventId:'event-1',groupId:room,participantId,sessionId:'session-1',bindingId:'binding-1',targetId:'target-1',requiresApproval:true,requestedAction:'wake',prompt:'@RMconnects\nEvent: event-1'}};
+const plan={action:'queue',job:{eventId:'event-1',groupId:room,participantId,sessionId:'session-1',bindingId:'binding-1',targetId:'target-1',requiresApproval:true,requestedAction:'wake',prompt:buildCanonicalWakePrompt('event-1')}};
 function fixture(responses={}){
  const calls=[];
  const client={rpc:async(name,args)=>{calls.push({name,args});const value=responses[name];return typeof value==='function'?await value(args,calls):value??{data:null,error:null};}};
