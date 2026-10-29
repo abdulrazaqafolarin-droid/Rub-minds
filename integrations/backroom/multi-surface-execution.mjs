@@ -117,8 +117,16 @@ export function createMultiSurfaceExecutionService({hostId,permission,isConnecte
    for(const id of [...drivers.keys()])drivers.delete(id);
    return Object.freeze({stopped:true,remaining:0});
   },
-  get status(){return Object.freeze({running:!stopped,registered:drivers.size,
-    capabilities:Object.freeze({browserDraft:false,desktopAccessibility:false,
-      androidAccessibility:false,terminal:false})});}
+  get status(){
+   const surfaces=[...drivers.values()].map(entry=>entry.target.surface);
+   return Object.freeze({running:!stopped,registered:drivers.size,
+    capabilities:Object.freeze({
+      browserDraft:false,
+      desktopAccessibility:surfaces.includes('desktop_app'),
+      windowsAccessibility:surfaces.includes('windows_app'),
+      androidAccessibility:surfaces.includes('android_app'),
+      terminal:surfaces.includes('terminal')
+    })});
+  }
  });
 }
