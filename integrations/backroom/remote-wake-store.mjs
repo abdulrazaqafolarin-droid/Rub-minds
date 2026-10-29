@@ -10,20 +10,22 @@ function checkScope({hostId,sessionDigest,bindingId}={}){
   throw new TypeError('Invalid remote wake scope');
  return {hostId,sessionDigest,bindingId};
 }
-export function createRemoteWakeStore({baseUrl,hostToken,fetchImpl=fetch,verifyLocalGrant}={}){
+export function createRemoteWakeStore({baseUrl,hostToken,apiKey,fetchImpl=fetch,verifyLocalGrant}={}){
  if(typeof baseUrl!=='string')throw new TypeError('Hosted wake gateway URL required');
  let url;
  try{url=new URL(baseUrl);}catch{throw new TypeError('Invalid hosted wake gateway URL');}
  if(url.protocol!=='https:'||url.username||url.password||url.search||url.hash||
     !['/','/functions/v1/backroom-wake/'].includes(url.pathname)||!url.hostname)throw new TypeError('Exact HTTPS gateway origin required');
  if(typeof hostToken!=='string'||!HEX64.test(hostToken))throw new TypeError('Private 256-bit host token required');
+ if(apiKey!==undefined&&(typeof apiKey!=='string'||apiKey.length<20||apiKey.length>4096||!/^[A-Za-z0-9._-]+$/.test(apiKey)))
+  throw new TypeError('Invalid public Supabase project API key');
  if(typeof fetchImpl!=='function')throw new TypeError('Fetch transport required');
  const token=hostToken;
  async function post(endpoint,body){
   const response=await fetchImpl(new URL(url.pathname==='/'?'/v1/backroom/wake/'+endpoint:endpoint,url).href,{
    method:'POST',redirect:'error',credentials:'omit',cache:'no-store',
    signal:AbortSignal.timeout(15000),
-   headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json'},
+   headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json',...(apiKey?{'apikey':apiKey}:{})},
    body:JSON.stringify(body),
   });
   if(!response||response.status!==200||!response.ok){
