@@ -333,6 +333,28 @@ export default function BackroomApp() {
     }finally{setHostBusy(false);}
   }
 
+  async function revokeHostedWakeBinding() {
+    const binding=hostedWakeBinding;
+    if(!supabase||!user||!binding)return;
+    if(!window.confirm('Permanently revoke this AI input binding? Its pending and leased wake events will be cancelled. The host remains registered, but this input must be selected and bound again before wake can be enabled.'))return;
+    setHostBusy(true);
+    try{
+      // Stop the local worker first where reachable. Server-side binding revoke
+      // remains authoritative if the computer is offline or the browser lost its grant ID.
+      try{if(hostToken)await hostApi('/v1/backroom/stop',{method:'POST'});}catch{}
+      const {data,error:revokeError}=await supabase.functions.invoke('backroom-config/revoke-binding',{
+        body:{bindingId:binding.bindingId}
+      });
+      if(revokeError||data?.ok!==true||data?.revoked!==true)
+        throw new Error('Input binding was not revoked. Check ownership and retry.');
+      setHostedWakeBinding(null);
+      setHostedWakeGrantId('');
+      setHostMessage('AI input binding revoked on the server; its pending wakes were cancelled. Select the intended composer and bind it again.');
+    }catch(error){
+      setHostMessage(error instanceof Error?error.message:'Input binding revocation failed.');
+    }finally{setHostBusy(false);}
+  }
+
   async function revokeHostedWakeHost() {
     if (!supabase || !user || !hostInfo?.hostId) return;
     if (!window.confirm('Permanently revoke this host on the Rub Minds server? All its input bindings and queued wakes will be disabled. This host identity cannot be reused.')) return;
