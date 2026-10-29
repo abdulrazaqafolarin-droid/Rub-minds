@@ -31,15 +31,23 @@ export function createHostWakeService({identity,browserRuntime,journalDirectory,
   if(expiryTimer){clearTimeout(expiryTimer);expiryTimer=null;}
   await poller?.stop();
   if(!remote||!scope||!activeGrantId)return Object.freeze({stopped:true,remotelyDeactivated:null});
+  const revokeInput={hostId:identity.hostId,bindingId:scope.bindingId,
+   sessionDigest:scope.sessionDigest,grantId:activeGrantId};
   try{
-   await remote.deactivate({hostId:identity.hostId,bindingId:scope.bindingId,
-    sessionDigest:scope.sessionDigest,grantId:activeGrantId});
+   await remote.deactivate(revokeInput);
    activeGrantId=null;
    return Object.freeze({stopped:true,remotelyDeactivated:true});
   }catch{
-   // Local polling is already stopped. The hosted activation is short-lived;
-   // preserve the grant ID so a caller can retry best-effort deactivation.
-   return Object.freeze({stopped:true,remotelyDeactivated:false});
+   // A server may commit a deactivation but its response may be lost; repeat
+   // the exact grant-scoped idempotent request once before leaving it pending.
+   try{
+    await remote.deactivate(revokeInput);
+    activeGrantId=null;
+    return Object.freeze({stopped:true,remotelyDeactivated:true});
+   }catch{
+    // Local polling is already stopped and remote consent expires shortly.
+    return Object.freeze({stopped:true,remotelyDeactivated:false});
+   }
   }
  }
  function configure(input={}){
@@ -72,9 +80,15 @@ export function createHostWakeService({identity,browserRuntime,journalDirectory,
   // the local user's actual one-shot grant.
   const ttlSeconds=Math.min(300,Math.floor((remainingMs-5000)/1000));
   if(ttlSeconds<60)throw new Error('Local wake grant has insufficient remaining lifetime');
-  const accepted=await remote.activate({hostId:identity.hostId,
-    bindingId:scope.bindingId,sessionDigest:scope.sessionDigest,
-    grantId:grant.grantId,ttlSeconds});
+  const activateInput={hostId:identity.hostId,bindingId:scope.bindingId,
+    sessionDigest:scope.sessionDigest,grantId:grant.grantId,ttlSeconds};
+  let accepted;
+  try{accepted=await remote.activate(activateInput);}
+  catch{
+   // Same-grant activation is idempotent at the server. A single retry recovers
+   // the lost-response case without allowing a different consent grant.
+   accepted=await remote.activate(activateInput);
+  }
   if(accepted!==true)throw new Error('Hosted wake consent activation denied');
   activeGrantId=grant.grantId;
   await poller.start();
