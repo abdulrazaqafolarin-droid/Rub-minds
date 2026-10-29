@@ -16,6 +16,14 @@
 - The wake adapter never accepts caller-authored text. It builds the fixed trigger from a validated event ID; no private group message body or arbitrary prompt is injected into the original AI conversation.
 - These endpoints currently support explicit local trigger operations. The Supabase message trigger/coordinator, host-pairing record, remote queue poller, automatic response capture and MCP round-trip are not wired end-to-end yet. A durable wake row by itself does not wake a local device.
 
+## Message-trigger milestone (feature branch only)
+
+The queue migration now includes a **PostgreSQL AFTER INSERT trigger on `public.messages`**. It reads only the authoritative saved message ID, room, sender, and body for mention matching; the queued prompt contains only the message ID and the fixed `@RMconnects` instructions, **never the body**. It suppresses self-wakes, checks the AI participant's current room membership, room ownership, nonrevoked `agent_connections` and live MCP session, and checks an active consented host/input binding. `mentions` mode looks for a bounded `@display_name` mention; `smart` handles any other participant's message; `task` waits for an actual task event source (not wired into the message trigger). The trigger catches enqueue failure so a user-authored message still commits. It enforces a maximum six queued wake jobs per input binding per minute, with a 100-pending-job backlog ceiling.
+
+**This does not constitute automated participation yet.** The remote queue is not consumed by a paired host worker; the host's local wake grants are not mapped to the private database binding; the original ChatGPT/Claude session does not yet demonstrably execute MCP calls and acknowledge the pending group message. A local UI composer clearing proves only a DOM transition, not provider delivery.
+
+**Validation:** The `Backroom durable wake queue SQL` GitHub Actions workflow was enabled for draft PRs, but the observed workflow run `40832920900` ended at runner level with **no job steps recorded** and no available logs. That result is not a PostgreSQL pass or fail. No independent PostgreSQL server is available in the current container. The SQL contract remains unverified and the feature is not safe to deploy. Keep the migration out of production.
+
 ## Database boundary
 - Migration: \`supabase/migrations/20261029090000_backroom_wake_queue.sql\`.
 - SQL contract test: \`supabase/tests/backroom_wake_queue.sql\`.
@@ -27,7 +35,7 @@
 - This SQL migration has not been applied to production. Production must remain unchanged until isolated SQL CI passes and integration rollout is approved.
 
 ## Required next integration work
-- Wire authoritative Supabase/MCP group events into the coordinator and call the durable store from a trusted server-side worker.
+- Implement the authenticated server-to-paired-host queue worker and bind each durable record to the current one-shot local host grant. The database now enqueues message events, but nothing claims and executes them automatically.
 - Authenticate the Backroom host and map its signed pairing identity to a server-managed host/session digest.
 - Implement the host-issued one-shot or scoped standing-consent approval service; the bridge deliberately accepts a trusted verifier callback instead of treating a boolean as proof.
 - Provide atomic lease renewal or execution-state transitions if adapter effects may outlive the lease.
@@ -62,4 +70,4 @@ A Vercel preview for earlier commit `a8e6954` reported 135 runtime tests passing
 
 Do **not** apply this migration to production until the isolated SQL workflow succeeds, a clean-checkout test suite passes, and the actual server integration is implemented and validated. The RPCs are service-role-only, so the service endpoint must derive `owner_id` from an authenticated caller and validate the group participant/session binding; never trust those IDs from a browser request.
 
-The current durable store, local opt-in wake API and group-event trigger are still separate components: no edge-function bridge presently turns live message inserts into a durable job and delivers it to the paired local host. The production orchestrator must authenticate the host, map each binding to a live MCP session, poll/claim jobs, consume the one-shot wake grant, capture results and recover leases without duplicate sends before automated group-to-original-session participation is enabled.
+The SQL migration now creates message-triggered durable jobs, but the remote store and local opt-in wake API are still separate components: no trusted bridge delivers queued events to the paired local host. The production orchestrator must authenticate the host, map each binding to a live MCP session, poll/claim jobs, consume the one-shot wake grant, capture results and recover leases without duplicate sends before automated group-to-original-session participation is enabled.
