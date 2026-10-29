@@ -1,4 +1,6 @@
-/** Consume one durable wake lease through the existing local dispatcher. Draft-only. */
+/** Consume one durable wake lease through the existing local dispatcher. Trigger-only.
+ * verifyApproval is a non-consuming preflight; the dispatched host must atomically consume
+ * the exact grant before the adapter effect. Never pass a verifier that consumes here. */
 import {createHash} from 'node:crypto';
 import {isCanonicalWakePrompt,mayDispatchWake} from './coordination-core.mjs';
 import {approvalContext} from './coordination-dispatch-bridge.mjs';
@@ -39,7 +41,7 @@ export function commandFromClaimedWake({lease:raw,targetRegistry,hostId,binding,
  const command=Object.freeze({
   id:'wake_'+lease.jobId.replaceAll('-',''),eventId:lease.eventId,roomId:lease.roomId,hostId,
   spaceId:lease.spaceId,sessionId:lease.sessionId,identityFingerprint:lease.targetIdentityFingerprint,
-  targetId:lease.targetId,targetRevision:lease.targetRevision,operation:'wake',wakeGrantId,text:lease.prompt,
+  participantId:lease.participantId,bindingId:lease.bindingId,targetId:lease.targetId,targetRevision:lease.targetRevision,operation:'wake',wakeGrantId,text:lease.prompt,
  });
  return Object.freeze({command,target,job:Object.freeze({
   jobId:lease.jobId,eventId:lease.eventId,groupId:lease.roomId,participantId:lease.participantId,
