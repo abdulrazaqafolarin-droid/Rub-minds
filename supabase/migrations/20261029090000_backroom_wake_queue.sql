@@ -702,7 +702,9 @@ begin
     v_prompt := '@RMconnects'||pg_catalog.chr(10)||'Event: '||new.id::text||pg_catalog.chr(10)||
       'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.';
     v_job_key := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
-      pg_catalog.jsonb_build_array(new.room_id::text,new.id::text,v_binding.participant_id::text,v_binding.id::text)::text,
+      pg_catalog.replace(pg_catalog.jsonb_build_array(
+        new.room_id::text,new.id::text,v_binding.participant_id::text,v_binding.id::text
+      )::text, ', ', ','),
       'UTF8')),'hex');
 
     begin
