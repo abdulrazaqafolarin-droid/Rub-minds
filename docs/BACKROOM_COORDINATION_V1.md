@@ -126,14 +126,15 @@ This record refers to source branch `feat/backroom-coordination-core-v1`, code c
 | Clean dependency install | `npm ci --no-audit --no-fund` completed successfully | Pass |
 | Runtime Node suite | `npm run test:runtime`: 367 tests, 367 passed, 0 failed | Pass |
 | Backroom Node suite | `npm run test:backroom`: 254 tests, 254 passed, 0 failed | Pass |
-| TypeScript + production bundle | `npm run build` ran the prebuild suites, `tsc -b`, and Vite; 1,630 modules transformed and bundle emitted | Pass |
+| TypeScript + production bundle | After the final UI type fix, `tsc -b --pretty false` and `vite build` were run separately and both exited 0. The prereq runtime/Backroom suites passed separately; the `npm run build` lifecycle wrapper was not rerun as one command after that final edit. | Component gates pass |
 | Host lifecycle subset | `npm run test:host-lifecycle`: 32 passed, 0 failed | Pass |
-| Coordination subset | `npm run test:coordination`: 25 passed, 0 failed | Pass |
+| Coordination subset | `npm run test:coordination` on the current code: 35 passed, 0 failed | Pass |
+| Application unit tests | `npm test -- --reporter=dot`: 25 tests across 4 files, 0 failed | Pass |
 | Multi-surface subset | `npm run test:multi-surface`: 31 passed, 0 failed | Pass |
 | Local host server contract | `node --test integrations/backroom/host-server.node-test.mjs`: 31 passed, 0 failed | Pass |
 | Host identity | `node --test integrations/backroom/host-identity.node-test.mjs`: 7 passed, 0 failed | Pass |
 | Draft SQL migration and acceptance file | Isolated PGlite PostgreSQL-compatible instance: clean fixture setup, migration application, and all statements in `supabase/tests/backroom_wake_queue.sql` completed without error | Pass, compatibility runtime only |
-| Native PostgreSQL 17 workflow | GitHub Actions rerun still shows failed job(s), each with an empty steps array; log retrieval returned `BlobNotFound` | Blocked / not verified |
+| Native PostgreSQL 17 workflow | Latest Actions runs `40869065891` (queue SQL) and `40869065975` (validation) created failed jobs with `runner_id: 0`, no runner name, and zero steps; job-log retrieval returned `BlobNotFound`. No SQL assertion or workflow command ran. | Blocked before execution |
 | Real Chromium acceptance | `npm run test:backroom:browser` was attempted. Chromium could not launch because the sandbox image lacks `libnspr4.so`; package-manager access to the Amazon Linux repository could not resolve its CDN hostname | Environment-blocked |
 | ChatGPT / Claude session round trip | No direct provider session was authorized and verified end to end in this run | Not tested |
 | Production | No production deployment or production migration was run | Unchanged |
