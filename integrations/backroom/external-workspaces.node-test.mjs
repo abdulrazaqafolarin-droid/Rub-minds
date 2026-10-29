@@ -42,13 +42,21 @@ test('CUA desktop demands owner approval, fresh identity, empty text field and r
  approved=false;await assert.rejects(d.draftText({pid:44,windowId:99,elementToken:'s00000001:1',text:'Draft',expectedAppName:'Chrome',expectedTitle:'ChatGPT',groupId:'group-1',sessionId:'session-1'}),/observation denied/);
  approved=true;current=snap({title:'Wrong'});await assert.rejects(d.draftText({pid:44,windowId:99,elementToken:'s00000001:1',text:'Draft',expectedAppName:'Chrome',expectedTitle:'ChatGPT',groupId:'group-1',sessionId:'session-1'}),/identity changed/);
  current=snap({value:'already typed'});await assert.rejects(d.draftText({pid:44,windowId:99,elementToken:'s00000001:1',text:'Draft',expectedAppName:'Chrome',expectedTitle:'ChatGPT',groupId:'group-1',sessionId:'session-1'}),/verified empty/);
- current={...snap(),elements:[{element_token:'s00000001:1',role:'button',value:''}]};await assert.rejects(d.draftText({pid:44,windowId:99,elementToken:'s00000001:1',text:'Draft',expectedAppName:'Chrome',expectedTitle:'ChatGPT',groupId:'group-1',sessionId:'session-1'}),/text-entry/);
+ current={...snap(),elements:[{element_token:'s00000001:1',role:'button',value:''}]};await assert.rejects(d.draftText({pid:44,windowId:99,elementToken:'s00000001:1',text:'Draft',expectedAppName:'Chrome',expectedTitle:'ChatGPT',groupId:'group-1',sessionId:'session-1'}),/editable text control/);
 });
 test('CUA types through a fresh snapshot token only and never sends',async()=>{
  let current=snap();const client=new FakeMcp(['list_windows','get_window_state','click','type_text'],async(n,a)=>{if(n==='list_windows')return {windows:[{pid:44,window_id:99,app_name:'Chrome',title:'ChatGPT'}]};if(n==='get_window_state')return current;if(n==='click')return {effect:'confirmed'};if(n==='type_text'){current=snap({value:a.text});return {effect:'confirmed'};}throw Error(n);});
  const d=new CuaDesktopWorkspace({client,authorizeLocalAction:async a=>a.kind==='desktop_draft_inspect'||a.text==='draft only'});
  const result=await d.draftText({pid:44,windowId:99,elementToken:'s00000001:1',text:'draft only',expectedAppName:'Chrome',expectedTitle:'ChatGPT',groupId:'group-1',sessionId:'session-1'});
  assert.equal(result.state,'completed');assert.equal(result.submitted,false);assert.deepEqual(client.calls.find(c=>c.name==='click').args,{target:{kind:'window',pid:44,window_id:99},element_token:'s00000001:1',delivery_mode:'foreground',session:'rub-minds-backroom'});assert.deepEqual(client.calls.find(c=>c.name==='type_text').args,{text:'draft only',target:{kind:'window',pid:44,window_id:99},session:'rub-minds-backroom'});
+});
+
+
+test('CUA never types when the element-focus action is not confirmed',async()=>{
+ let current=snap();const client=new FakeMcp(['list_windows','get_window_state','click','type_text'],async(n,a)=>{if(n==='list_windows')return {windows:[{pid:44,window_id:99,app_name:'Chrome',title:'ChatGPT'}]};if(n==='get_window_state')return current;if(n==='click')return {effect:'refused',error:{code:'no_target'}};if(n==='type_text')return {effect:'confirmed'};throw Error(n);});
+ const d=new CuaDesktopWorkspace({client,authorizeLocalAction:async()=>true});
+ const result=await d.draftText({pid:44,windowId:99,elementToken:'s00000001:1',text:'draft only',expectedAppName:'Chrome',expectedTitle:'ChatGPT',groupId:'group-1',sessionId:'session-1'});
+ assert.equal(result.state,'needs_review');assert.equal(client.calls.some(c=>c.name==='type_text'),false);
 });
 
 test('ARTEMIS requires device/package allowlists, explicit approval and trace-bound lifecycle',async()=>{
