@@ -454,7 +454,7 @@ export default function BackroomApp() {
         if(errorBody&&typeof errorBody==='object')data=errorBody as typeof data;
       }
       if(bindingError || data?.ok!==true || typeof data.bindingId!=='string'){
-        if(typeof data?.bindingId==='string'&&
+        if(data && typeof data.bindingId==='string'&&
           (data.reason==='existing_binding_active_revoke_first'||data.reason==='existing_binding_requires_revoke')){
           setHostedWakeBinding({
             bindingId:data.bindingId,roomId:room.id,
