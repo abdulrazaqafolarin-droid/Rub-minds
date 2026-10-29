@@ -314,6 +314,7 @@ export function createExternalWorkspaceService({desktop=null,android=null,termin
     async stopAndroidTask(input){if(stopped||!android)throw new Error('android_workspace_unavailable');return android.stop(input);},
     async observeAndroid(input){if(stopped||!android)throw new Error('android_workspace_unavailable');return android.observe(input);},
     async execTerminal(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.exec(input);},
+    async syncTerminalProject(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.syncProject(input);},
     async stop(){if(stopped)return Object.freeze({stopped:true,closeFailures:0});stopped=true;const jobs=[desktop?.client?.close?.(),android?.client?.close?.(),terminal?.close?.()].filter(Boolean);const settled=await Promise.allSettled(jobs);return Object.freeze({stopped:true,closeFailures:settled.filter(x=>x.status==='rejected').length});}
   });
 }
