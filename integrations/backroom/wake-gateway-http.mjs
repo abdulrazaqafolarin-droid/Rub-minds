@@ -9,6 +9,9 @@ const routes=Object.freeze({
   '/v1/backroom/wake/claim':'claim',
   '/v1/backroom/wake/ack':'acknowledge',
   '/v1/backroom/wake/retry':'retry',
+  '/functions/v1/backroom-wake/claim':'claim',
+  '/functions/v1/backroom-wake/ack':'acknowledge',
+  '/functions/v1/backroom-wake/retry':'retry',
 });
 const response=(status,body)=>new Response(JSON.stringify(body),{status,headers:{
   'Content-Type':'application/json; charset=utf-8',
