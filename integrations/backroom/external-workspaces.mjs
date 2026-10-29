@@ -85,9 +85,9 @@ function tarFileHeader(relPath,size,mode=0o644){
  * sandbox. Symlinks, VCS internals, dependencies, common credentials and large
  * generated artifacts are excluded; suspicious credential-bearing files are skipped.
  */
-export async function createSafeWorkspaceArchive(projectSourcePath,{maxFiles=5000,maxBytes=32*1024*1024,maxSingleFileBytes=3*1024*1024}={}){
+export async function createSafeWorkspaceArchive(projectSourcePath,{maxFiles=5000,maxEntries=20000,maxBytes=32*1024*1024,maxSingleFileBytes=3*1024*1024}={}){
   if(typeof projectSourcePath!=='string'||!projectSourcePath.trim())throw new TypeError('Trusted local project source path required');
-  for(const [value,label,min,max] of [[maxFiles,'maxFiles',1,20000],[maxBytes,'maxBytes',1024,256*1024*1024],[maxSingleFileBytes,'maxSingleFileBytes',1,32*1024*1024]])if(!Number.isSafeInteger(value)||value<min||value>max)throw new RangeError('Invalid '+label);
+  for(const [value,label,min,max] of [[maxFiles,'maxFiles',1,20000],[maxEntries,'maxEntries',1,100000],[maxBytes,'maxBytes',1024,256*1024*1024],[maxSingleFileBytes,'maxSingleFileBytes',1,32*1024*1024]])if(!Number.isSafeInteger(value)||value<min||value>max)throw new RangeError('Invalid '+label);
   const requested=resolve(projectSourcePath),rootStat=await lstat(requested);
   if(!rootStat.isDirectory()||rootStat.isSymbolicLink())throw new Error('Project source must be a real directory, not a symlink');
   const root=await realpath(requested);
@@ -95,11 +95,13 @@ export async function createSafeWorkspaceArchive(projectSourcePath,{maxFiles=500
   if(fsRoot||root===resolve(homedir()))throw new Error('Filesystem root or home directory cannot be synchronized as a project');
   const rootEntries=await readdir(root);
   if(!rootEntries.includes('package.json')&&!rootEntries.includes('pyproject.toml')&&!rootEntries.includes('Cargo.toml')&&!rootEntries.includes('README.md')&&!rootEntries.includes('README')&&!rootEntries.includes('AndroidManifest.xml'))throw new Error('Choose a repository/project folder with a recognizable project marker');
-  const files=[];let totalBytes=0,omittedSensitive=0,omittedLarge=0;
+  const files=[];let totalBytes=0,omittedSensitive=0,omittedLarge=0,visitedEntries=0;
   async function walk(folder){
     const entries=await readdir(folder,{withFileTypes:true});
     entries.sort((a,b)=>a.name.localeCompare(b.name,'en'));
     for(const entry of entries){
+      visitedEntries++;
+      if(visitedEntries>maxEntries)throw new Error('Project has too many filesystem entries to inspect safely; narrow the source folder');
       const full=join(folder,entry.name),rel=relative(root,full),normalized=rel.split(sep).join('/');
       if(/[\u0000-\u001f\u007f-\u009f]/u.test(entry.name)||entry.name==='.'||entry.name==='..')continue;
       if(!rel||rel.startsWith('..'+sep)||rel==='..')throw new Error('Project archive path escaped its root');
@@ -132,7 +134,7 @@ export async function createSafeWorkspaceArchive(projectSourcePath,{maxFiles=500
   try{
     await writeFile(archivePath,archive,{flag:'wx',mode:0o600});
   }catch(error){await rm(directory,{recursive:true,force:true});throw error;}
-  return Object.freeze({archivePath,tempDirectory:directory,sourceRoot:root,fileCount:files.length,sourceBytes:totalBytes,archiveBytes:archive.length,sha256,omittedSensitive,omittedLarge});
+  return Object.freeze({archivePath,tempDirectory:directory,sourceRoot:root,fileCount:files.length,visitedEntries,sourceBytes:totalBytes,archiveBytes:archive.length,sha256,omittedSensitive,omittedLarge});
 }
 
 
@@ -349,7 +351,7 @@ export class CuaSandboxTerminalWorkspace {
     }finally{await rm(archive.tempDirectory,{recursive:true,force:true}).catch(()=>{});}
   }
   async start(){if(this.closed)throw new Error('Sandbox lifecycle closed');if(this.ready)return this.status;
-    const r=await this.#run(['--json','sb','create','linux','--on','local','--kind','container','--runtime','gvisor','--headless','--name',this.sandboxName]);
+    const r=await this.#run(['--json','sb','create','linux','--on','local','--kind','container','--runtime','gvisor','--headless','--install','node','--name',this.sandboxName]);
     if(r.code!==0)throw new Error('Local gVisor sandbox creation failed; existing sandboxes are never adopted');this.ready=true;return this.status;
   }
   async exec({command,cwd,purpose='Backroom terminal task',groupId,sessionId}={}){

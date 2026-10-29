@@ -161,6 +161,7 @@ test('safe project archive excludes VCS data, dependencies, environment secrets 
   assert.equal(names.includes('.env'),false);assert.equal(names.includes('src/env-link'),false);assert.equal(names.includes('service-account.json'),false);
   assert.equal(names.includes('src/demo-config.js'),false);
   assert.ok(archive.omittedSensitive>=3);assert.ok(archive.sourceBytes>0);assert.match(archive.sha256,/^[a-f0-9]{64}$/);
+  await assert.rejects(createSafeWorkspaceArchive(root,{maxEntries:1}),/too many filesystem entries/);
   await rm(archive.tempDirectory,{recursive:true,force:true});
  }finally{await rm(root,{recursive:true,force:true});}
 });
