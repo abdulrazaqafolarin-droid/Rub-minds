@@ -111,9 +111,9 @@ export async function createSafeWorkspaceArchive(projectSourcePath,{maxFiles=500
       if(stat.isDirectory()){await walk(full);continue;}
       if(!stat.isFile())continue;
       if(stat.size>maxSingleFileBytes){omittedLarge++;continue;}
-      if(totalBytes+stat.size>maxBytes)throw new Error('Project snapshot exceeds configured byte limit; narrow it before syncing');
       const data=await readFile(full);
       if(!data.includes(0)&&HIGH_CONFIDENCE_SECRET.test(data.toString('utf8'))){omittedSensitive++;continue;}
+      if(totalBytes+data.length>maxBytes)throw new Error('Project snapshot exceeds configured byte limit; narrow it before syncing');
       if(files.length>=maxFiles)throw new Error('Project has too many included files; lower scope before syncing');
       files.push({rel:normalized,data,mode:stat.mode&0o111?0o755:0o644});totalBytes+=data.length;
     }

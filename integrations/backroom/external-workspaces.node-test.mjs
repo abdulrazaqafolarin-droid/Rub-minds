@@ -200,6 +200,65 @@ test('CUA terminal syncs a filtered local project before approved argv execution
   await d.close();assert.deepEqual(calls.at(-1).args,['--json','sb','rm','--local','rm-backroom-unit-1234']);
  }finally{await rm(root,{recursive:true,force:true});}
 });
+
+test('source archive applies total-byte cap after filtering credential-bearing files',async()=>{
+ const root=await projectFixture();
+ try{
+  await writeFile(join(root,'src','oversized-secret.js'),"const key='sk-proj-"+'a'.repeat(40)+"';\n"+'x'.repeat(1400));
+  const archive=await createSafeWorkspaceArchive(root,{maxBytes:1024,maxSingleFileBytes:4096});
+  try{assert.ok(archive.sourceBytes<=1024);assert.ok(archive.omittedSensitive>=4);}
+  finally{await rm(archive.tempDirectory,{recursive:true,force:true});}
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+async function makeSyncedTerminalWithPatch(root,patch,authorize=async()=>true){
+ const calls=[],success={code:0,stdout:'ok',stderr:''};
+ const results=[...Array.from({length:10},()=>({...success})),{code:0,stdout:patch,stderr:''}];
+ const terminal=new CuaSandboxTerminalWorkspace({
+  sandboxName:'rm-backroom-unit-1234',projectSourcePath:root,
+  authorizeLocalAction:authorize,spawnImpl:fakeSpawn(results,calls)
+ });
+ await terminal.start();
+ await terminal.syncProject({groupId:'group-1',sessionId:'session-1'});
+ return {terminal,calls};
+}
+test('terminal diff is bounded, credential-scanned and review-only',async()=>{
+ const root=await projectFixture();
+ try{
+  const {terminal,calls}=await makeSyncedTerminalWithPatch(root,'diff --git a/src/index.js b/src/index.js\n+export const safe=true;\n');
+  const result=await terminal.diffProject({groupId:'group-1',sessionId:'session-1'});
+  assert.equal(result.state,'completed');assert.equal(result.appliedToHost,false);assert.equal(result.destination,'Rub Minds Backroom browser review only');assert.match(result.sha256,/^[a-f0-9]{64}$/);assert.ok(result.patch.includes('safe=true'));
+  assert.ok(calls.at(-1).args.includes('diff'));assert.ok(calls.at(-1).args.includes('--no-ext-diff'));assert.equal(calls.at(-1).options.shell,false);
+  await terminal.close();
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+test('terminal diff withholds patches containing high-confidence secrets',async()=>{
+ const root=await projectFixture();
+ try{
+  const secretPatch="diff --git a/src/config.js b/src/config.js\n+const token = 'sk-proj-"+'b'.repeat(40)+"';\n";
+  const {terminal}=await makeSyncedTerminalWithPatch(root,secretPatch);
+  const result=await terminal.diffProject({groupId:'group-1',sessionId:'session-1'});
+  assert.equal(result.state,'needs_review');assert.equal(result.patch,'');assert.match(result.reason,/credential|private-key/i);assert.equal(result.appliedToHost,undefined);
+  await terminal.close();
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+test('terminal diff rejects oversized patches before returning bytes to the browser',async()=>{
+ const root=await projectFixture();
+ try{
+  const {terminal}=await makeSyncedTerminalWithPatch(root,'x'.repeat(512*1024+1));
+  await assert.rejects(terminal.diffProject({groupId:'group-1',sessionId:'session-1'}),/512 KiB review limit/);
+  await terminal.close();
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+test('failed local sandbox deletion remains visible and can be retried',async()=>{
+ const calls=[],results=[{code:0,stdout:'created'},{code:1,stdout:'denied'},{code:0,stdout:'removed'}];
+ const terminal=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-unit-1234',authorizeLocalAction:async()=>true,spawnImpl:fakeSpawn(results,calls)});
+ await terminal.start();
+ const service=createExternalWorkspaceService({terminal});
+ const first=await service.stop();assert.equal(first.closeFailures,1);assert.equal(service.status().terminal.cleanupPending,true);assert.equal(terminal.status.ready,true);
+ const second=await service.stop();assert.equal(second.closeFailures,0);assert.equal(service.status().terminal.cleanupPending,false);assert.equal(terminal.status.ready,false);
+ assert.equal(calls.filter(c=>c.args.includes('sb')&&c.args.includes('rm')).length,2);
+});
+
 test('terminal refuses arbitrary sandbox names, unapproved commands and path traversal',async()=>{
  assert.throws(()=>new CuaSandboxTerminalWorkspace({sandboxName:'dev',authorizeLocalAction:async()=>true}),/Dedicated rm-backroom/);
  const root=await projectFixture(),calls=[];
