@@ -71,6 +71,23 @@ begin
     (v_binding_6,v_owner,v_room,v_participant,v_host_test,repeat('6',64),'space-1','session-6','target-6','fingerprint-6',1,'browser_tab','dom','composer-6','mentions',true,'70000000-0000-4000-8000-000000000006'::uuid,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null),
     (v_binding_7,v_owner,v_room,v_participant,v_host_capacity,repeat('7',64),'space-capacity','session-capacity','target-capacity','fingerprint-capacity',1,'browser_tab','dom','composer-capacity','mentions',true,'70000000-0000-4000-8000-000000000007'::uuid,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null);
 
+  -- A wake grant is a single, explicit persisted consent state; inconsistent deactivation is forbidden.
+  v_conflict := false;
+  begin
+    update public.backroom_input_bindings set wake_enabled=false where id=v_binding_1;
+  exception when check_violation then
+    v_conflict := true;
+  end;
+  if not v_conflict then raise exception 'Disabling wake must clear its grant ID, confirmation and expiry atomically'; end if;
+
+  v_conflict := false;
+  begin
+    update public.backroom_input_bindings set wake_grant_id=null where id=v_binding_1;
+  exception when check_violation then
+    v_conflict := true;
+  end;
+  if not v_conflict then raise exception 'An enabled wake binding must retain a grant ID'; end if;
+
   if not (select relrowsecurity from pg_catalog.pg_class where oid='public.backroom_wake_jobs'::regclass) then
     raise exception 'Backroom wake jobs must have RLS enabled';
   end if;
