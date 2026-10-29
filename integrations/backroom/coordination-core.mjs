@@ -72,6 +72,9 @@ export function planWake(input) {
 export function planWakeTrigger(input) {
   const decision = planWake(input);
   if (decision.action !== 'queue') return decision;
+  if (!Array.isArray(input.binding?.capabilities) || !input.binding.capabilities.includes('wake')) {
+    return { action:'defer', reason:'wake-capability-not-authorized' };
+  }
   return {
     ...decision,
     job: Object.freeze({ ...decision.job, requestedAction: 'wake', prompt: buildCanonicalWakePrompt(decision.job.eventId) }),
