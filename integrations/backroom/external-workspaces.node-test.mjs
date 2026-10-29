@@ -18,7 +18,7 @@ class FakeMcp {
 }
 const snap=({value='',title='ChatGPT',appName='Chrome'}={})=>({pid:44,window_id:99,title,app_name:appName,elements:[{element_token:'s00000001:1',role:'textbox',value}]});
 class FakeChild extends EventEmitter {
-  constructor(){super();this.stdout=new PassThrough();this.stderr=new PassThrough();this.killed=false;this.exitCode=null;
+  constructor({oversizedTools=false}={}){super();this.oversizedTools=oversizedTools;this.stdout=new PassThrough();this.stderr=new PassThrough();this.killed=false;this.exitCode=null;
     this.stdin=new Writable({write:(chunk,enc,cb)=>{try{const q=JSON.parse(chunk.toString().trim());if(q.id!==undefined){const result=q.method==='initialize'?{protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'fake',version:'1'}}:q.method==='tools/list'?{tools:[{name:'fixture_tool'}]}:{content:[{type:'text',text:JSON.stringify({echo:q.params.arguments})}]};queueMicrotask(()=>{if(this.oversizedTools&&q.method==='tools/list')this.stdout.write('x'.repeat(2*1024*1024+1));else this.stdout.write(JSON.stringify({jsonrpc:'2.0',id:q.id,result})+'\n');});}cb();}catch(e){cb(e);}}});
   }
   kill(){this.killed=true;this.exitCode=0;queueMicrotask(()=>this.emit('exit',0,null));return true;}
@@ -95,7 +95,8 @@ test('CUA types through a fresh snapshot token only and never sends',async()=>{
 test('CUA never types when the element-focus action is not confirmed',async()=>{
  let current=snap();const client=new FakeMcp(['list_windows','get_window_state','click','type_text'],async(n,a)=>{if(n==='list_windows')return {windows:[{pid:44,window_id:99,app_name:'Chrome',title:'ChatGPT'}]};if(n==='get_window_state')return current;if(n==='click')return {effect:'refused',error:{code:'no_target'}};if(n==='type_text')return {effect:'confirmed'};throw Error(n);});
  const d=new CuaDesktopWorkspace({client,authorizeLocalAction:async()=>true});
- const result=await d.draftText({pid:44,windowId:99,elementToken:'s00000001:1',text:'draft only',expectedAppName:'Chrome',expectedTitle:'ChatGPT',groupId:'group-1',sessionId:'session-1'});
+ const observed=await d.observeWindow({pid:44,windowId:99,groupId:'group-1',sessionId:'session-1'});
+ const result=await d.draftText({pid:44,windowId:99,elementToken:observed.elements[0].elementToken,text:'draft only',expectedAppName:'Chrome',expectedTitle:'ChatGPT',groupId:'group-1',sessionId:'session-1'});
  assert.equal(result.state,'needs_review');assert.equal(client.calls.some(c=>c.name==='type_text'),false);
 });
 
@@ -168,7 +169,7 @@ test('ARTEMIS diagnostics require local approval, scope and only call the diagno
  assert.equal(service.status().capabilities.android,false);assert.equal(service.status().android.diagnoseAvailable,true);
 });
 
-test('ARTEMIS cannot manage an unknown trace',async()=>{const d=new ArtemisAndroidWorkspace({client:new FakeMcp(['mobile_manage_task'],async()=>({status:'completed'})),allowedDevices:['device'],allowedPackages:['com.example.app'],authorizeLocalAction:async()=>true});await assert.rejects(d.status({traceId:'unknown',deviceSerial:'device',groupId:'g',sessionId:'s'}),/unknown trace/);});
+test('ARTEMIS cannot manage an unknown trace',async()=>{const d=new ArtemisAndroidWorkspace({client:new FakeMcp(['mobile_manage_task'],async()=>({status:'completed'})),allowedDevices:['device'],allowedPackages:['com.example.app'],authorizeLocalAction:async()=>true});await assert.rejects(d.status({traceId:'unknown',deviceSerial:'device',groupId:'g',sessionId:'s'}),/task scope mismatch/);});
 
 test('safe project archive excludes VCS data, dependencies, environment secrets and symlinks',async()=>{
  const root=await projectFixture();
