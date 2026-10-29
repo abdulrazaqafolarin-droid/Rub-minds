@@ -56,7 +56,7 @@ create table if not exists public.backroom_wake_jobs (
   owner_id uuid not null references auth.users(id) on delete cascade,
   room_id uuid not null references public.rooms(id) on delete cascade,
   participant_id uuid not null references public.participants(id) on delete cascade,
-  host_id text not null check (char_length(btrim(host_id)) between 1 and 128),
+  host_id text not null references public.backroom_hosts(host_id) on delete cascade,
   space_id text not null check (char_length(btrim(space_id)) between 1 and 128),
   session_id text not null check (char_length(btrim(session_id)) between 1 and 256),
   session_digest text not null check (session_digest ~ '^[0-9a-f]{64}$'),
