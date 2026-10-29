@@ -15,12 +15,12 @@ export function createRemoteWakeStore({baseUrl,hostToken,fetchImpl=fetch}={}){
  let url;
  try{url=new URL(baseUrl);}catch{throw new TypeError('Invalid hosted wake gateway URL');}
  if(url.protocol!=='https:'||url.username||url.password||url.search||url.hash||
-    url.pathname!=='/'||!url.hostname)throw new TypeError('Exact HTTPS gateway origin required');
+    !['/','/functions/v1/backroom-wake/'].includes(url.pathname)||!url.hostname)throw new TypeError('Exact HTTPS gateway origin required');
  if(typeof hostToken!=='string'||!HEX64.test(hostToken))throw new TypeError('Private 256-bit host token required');
  if(typeof fetchImpl!=='function')throw new TypeError('Fetch transport required');
  const token=hostToken;
  async function post(endpoint,body){
-  const response=await fetchImpl(new URL('/v1/backroom/wake/'+endpoint,url).href,{
+  const response=await fetchImpl(new URL(url.pathname==='/'?'/v1/backroom/wake/'+endpoint:endpoint,url).href,{
    method:'POST',redirect:'error',credentials:'omit',cache:'no-store',
    signal:AbortSignal.timeout(15000),
    headers:{'Authorization':'Bearer '+token,'Content-Type':'application/json'},
