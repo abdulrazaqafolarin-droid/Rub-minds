@@ -25,6 +25,12 @@ The supplied TwinSpace sample's cross-profile Auth.check() accepts an embedded k
 
 The supplied source describes Android managed profiles as isolated app data under a second Android user, using cross-profile activity intents. Device/OEM support varies; the attachment itself notes that some OEM builds block work-profile provisioning. The source is architecture evidence, not proof of a tested APK build or production-secure implementation.
 
+## TwinSpace / ARTEMIS profile boundary
+
+The uploaded TwinSpace source describes a separate Android managed/work profile and a second install of an app with separate data. ARTEMIS's current public `mobile_run_task` schema includes `device_serial` and `locked_app_package`, but no Android user/profile ID. Its `locked_app_package` builder is documented to ensure that package is launched before the agent loop starts. Therefore a package name alone cannot safely distinguish a personal-profile install from a work-profile clone.
+
+The current Backroom Android adapter supports locally allowlisted device/package automation, trace-bound status/stop/inspection and local approval. It does **not** promise work-profile-only targeting for a package installed in both profiles. Do not reuse the supplied TwinSpace HMAC bridge as privileged RPC: the attached implementation's first-contact key adoption and action/timestamp-only signature do not authenticate all parameters or prevent replay of all operations. Profile-specific automation requires a profile-aware launch contract, complete canonical operation authentication, nonce/expiry/replay checks, and physical-device acceptance.
+
 ## Desktop behavior
 
 Every operation is bound to a real app, PID, window ID, group and AI session. CUA element tokens are snapshot-scoped; fetch a fresh state before an action and refuse stale tokens. The adapter only types into a field whose accessibility role is text-like and value is explicitly empty. A second local confirmation covers exact draft text after target preflight. It reads back the value and returns needs_review for ambiguous results. Non-accessible fields remain denied rather than triggering a blind pixel fallback.

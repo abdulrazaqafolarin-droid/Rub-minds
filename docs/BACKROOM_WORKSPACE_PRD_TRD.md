@@ -64,6 +64,14 @@ The terminal sandbox provisions Node through the CUA installable (`node`) so the
 
 Once the project is synced, commands run only inside the dedicated local gVisor container and are subject to a separate host-terminal approval. Binary diffs are rejected rather than represented as a misleading partial text patch. Returned text patches are limited to 512 KiB, scanned for high-confidence credential patterns, and surfaced in the Backroom UI for review. If the user selects apply, a one-use group/session-bound digest token is validated; the local Git root, safe target paths and `git apply --check` are verified before and again after the trusted local-console approval. The exact patch is applied only to the working tree; it is never staged, committed, pushed or automatically posted to group memory. Ambiguous results are withheld and must be inspected before retrying. The sandbox is destroyed when the paired host shuts down or is unpaired; restart and re-pair to create a new isolated sandbox.
 
+## TwinSpace profile-awareness boundary
+
+TwinSpace's supplied source describes a managed Android work profile with a second app install and separate app data. That is useful data isolation, but it is not itself an ARTEMIS automation capability.
+
+The current upstream ARTEMIS `mobile_run_task` contract accepts a device serial and `locked_app_package`, but does not accept an Android user/profile ID. Its locked-package helper is documented to ensure that the requested package is launched in the foreground. Since one package may be installed in both the personal and work profiles, a package name alone cannot prove which copy will be launched.
+
+Therefore this increment does **not** claim safe, profile-specific automation of a TwinSpace clone. Do not treat a same-name package task as work-profile-targeted. A future profile-aware acceptance gate must add a supported, locally approved Android user/profile selector to the launch boundary, verify the resulting foreground package and Android user before task execution, bind the resulting task trace to that profile, and test on a real work-profile device. If the installed ARTEMIS version lacks that capability, Backroom must report profile-specific execution as unavailable rather than silently target the personal-profile copy.
+
 ## Acceptance gates
 
 1. npm run test:runtime, npm run test:backroom, npm run test:external-workspaces, npm run test:multi-surface and npm run build.
