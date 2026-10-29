@@ -42,7 +42,7 @@ test('paired browser configuration cannot override the credential destination',a
   assert.throws(()=>service.configure({url:'https://attacker.example/',sessionDigest,bindingId}),/Unexpected host configuration fields/);
   assert.equal(calls,0);
   const configured=service.configure({sessionDigest,bindingId,publishableKey});
-  assert.deepEqual(configured,{configured:true,bindingId});
+  assert.deepEqual(configured,{configured:true,bindingId,existing:false});
   assert.equal(service.status.configured,true);
   assert.equal(calls,0);
   await service.stop();
@@ -141,8 +141,8 @@ test('multiple AI bindings poll independently and targeted revoke leaves sibling
    participantId:'40000000-0000-4000-8000-000000000091',sessionId:'40000000-0000-4000-8000-0000000000a1'};
   const scope2={hostId,bindingId:binding2,groupId:'40000000-0000-4000-8000-000000000082',
    participantId:'40000000-0000-4000-8000-000000000092',sessionId:'40000000-0000-4000-8000-0000000000a2'};
-  await service.activateAndStart({grantId:grant1,expiresAt:Date.now()+300000,scope:scope1},scope1);
-  await service.activateAndStart({grantId:grant2,expiresAt:Date.now()+300000,scope:scope2},scope2);
+  await service.activateAndStart({grantId:grant1,expiresAt:Date.now()+300000,scope:scope1},{bindingId,roomId:scope1.groupId,participantId:scope1.participantId,sessionId:scope1.sessionId});
+  await service.activateAndStart({grantId:grant2,expiresAt:Date.now()+300000,scope:scope2},{bindingId:binding2,roomId:scope2.groupId,participantId:scope2.participantId,sessionId:scope2.sessionId});
   assert.equal(service.status.count,2);
   assert.ok(service.status.bindings.every(x=>x.polling&&x.consentActive));
   const stopped=await service.stop(bindingId);
