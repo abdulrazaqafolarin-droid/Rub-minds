@@ -189,6 +189,44 @@ test('a false remote deactivation response is never reported as confirmed',async
  }finally{await rm(dir,{recursive:true,force:true});}
 });
 
+test('unconfigure keeps a retry handle until remote deactivation is confirmed',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'backroom-unconfigure-pending-'));
+ try{
+  let deactivationCalls=0;
+  const service=createHostWakeService({
+   identity:{hostId,hostToken},browserRuntime:runtime(),
+   journalDirectory:join(dir,'journal'),gatewayUrl:trustedUrl,
+   fetchImpl:async(url)=>{
+    if(url.endsWith('/activate'))return new Response(JSON.stringify({ok:true,activated:true}),{status:200});
+    if(url.endsWith('/deactivate')){
+     deactivationCalls++;
+     if(deactivationCalls<=2)throw new Error('temporary remote outage');
+     return new Response(JSON.stringify({ok:true,deactivated:true}),{status:200});
+    }
+    return new Response(JSON.stringify({ok:true,leases:[]}),{status:200});
+   }
+  });
+  service.configure({sessionDigest,bindingId,publishableKey});
+  const grantId='40000000-0000-4000-8000-0000000000ab';
+  const groupId='40000000-0000-4000-8000-000000000044';
+  const participantId='40000000-0000-4000-8000-000000000055';
+  const sessionId='40000000-0000-4000-8000-000000000066';
+  await service.activateAndStart({grantId,expiresAt:Date.now()+300000,
+   scope:{hostId,bindingId,groupId,participantId,sessionId}},
+   {bindingId,roomId:groupId,participantId,sessionId});
+  const first=await service.unconfigure(bindingId);
+  assert.deepEqual(first,{removed:false,bindingId,remotelyDeactivated:false,retryPending:true});
+  assert.equal(deactivationCalls,2);
+  assert.deepEqual(service.status.bindings.find(item=>item.bindingId===bindingId),{
+   bindingId,polling:false,consentActive:true,deactivationPending:true
+  });
+  const second=await service.unconfigure(bindingId);
+  assert.deepEqual(second,{removed:true,bindingId,remotelyDeactivated:true,retryPending:false});
+  assert.equal(deactivationCalls,3);
+  assert.equal(service.status.configured,false);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
+
 test('concurrent activation for one grant shares one server transaction',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'backroom-activation-race-'));
  try{
