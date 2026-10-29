@@ -6,6 +6,7 @@ import { loadOrCreateHostIdentity, rotateHostIdentity, isHostIdentityRotationPen
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { HostPairingAuthority } from "../integrations/backroom/host-pairing.mjs";
+import { handleWorkspaceHttpRequest } from "../integrations/backroom/workspace-http-api.mjs";
 
 const DEFAULT_ORIGINS = [
   "https://rub-minds.vercel.app",
@@ -79,7 +80,7 @@ function bearer(request) {
  */
 export function createBackroomHostServer({
   port = 43781, host = "127.0.0.1", allowedOrigins = parseOrigins(process.env.BACKROOM_ALLOWED_ORIGINS),
-  pairingCode, hostId = randomUUID(), enrollmentDigest = null, now = () => Date.now(), pairingTtlMs, sessionTtlMs, maxPairAttempts, browserRuntime, wakeService, multiSurfaceRuntime,
+  pairingCode, hostId = randomUUID(), enrollmentDigest = null, now = () => Date.now(), pairingTtlMs, sessionTtlMs, maxPairAttempts, browserRuntime, wakeService, multiSurfaceRuntime, externalWorkspaceRuntime = null,
 } = {}) {
   if (host !== "127.0.0.1") throw new TypeError("Backroom host must bind to IPv4 loopback only");
   if (enrollmentDigest !== null && (typeof enrollmentDigest !== "string" || !/^[a-f0-9]{64}$/.test(enrollmentDigest))) throw new TypeError("Invalid enrollment digest");
@@ -150,6 +151,7 @@ export function createBackroomHostServer({
       let closeError = null;
       try { await wakeService?.stop?.(); } catch { closeError = true; }
       try { await multiSurfaceRuntime?.stop?.(); } catch { closeError = true; }
+      try { const result = await externalWorkspaceRuntime?.stop?.(); if (result && result.closeFailures > 0) closeError = true; } catch { closeError = true; }
       try { await browser.stop(); } catch { closeError = true; }
       const browserClosed = browser.status()?.running !== true;
       const stopped = sessionsRevoked && browserClosed && !closeError;
@@ -522,9 +524,15 @@ export function createBackroomHostServer({
       }
       await wakeService?.stop?.();
       await multiSurfaceRuntime?.stop?.();
+      await externalWorkspaceRuntime?.stop?.();
       writeJson(response, 200, { revoked: true }, cors);
       return;
     }
+    const workspaceHandled = await handleWorkspaceHttpRequest({
+      request, response, url, authority, workspaceRuntime: externalWorkspaceRuntime,
+      corsHeaders: cors, writeJson, readJson,
+    });
+    if (workspaceHandled) return;
     writeJson(response, 404, { error: "not_found" }, cors);
   });
   server.headersTimeout = 8_000;
@@ -552,6 +560,7 @@ export function createBackroomHostServer({
       let browserError = null;
       try { await wakeService?.stop?.(); } catch { browserError = new Error("wake_poller_stop_failed"); }
       try { await multiSurfaceRuntime?.stop?.(); } catch { browserError = new Error("native_runtime_stop_failed"); }
+      try { const result = await externalWorkspaceRuntime?.stop?.(); if (result && result.closeFailures > 0) browserError = new Error("external_workspace_stop_failed"); } catch { browserError = new Error("external_workspace_stop_failed"); }
       try { await browser.stop(); } catch (error) { browserError = error; }
       if (server.listening) {
         await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
