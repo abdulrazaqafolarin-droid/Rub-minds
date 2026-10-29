@@ -774,6 +774,7 @@ export class BrowserHostRuntime {
         ? current.origin + current.pathname + current.search + current.hash + ":" + binding.pageId
         : "";
       if (fingerprint !== binding.target.identityFingerprint || selectorCount !== 1) {
+        this.wakeAuthority.revokeForTarget(targetId);
         this.#bindings.delete(targetId);
         this.#targets.delete(targetId);
         try { this.registry.unregister(targetId, { roomId: binding.target.roomId, hostId: this.hostId }); } catch {}
