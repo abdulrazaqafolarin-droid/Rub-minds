@@ -790,6 +790,10 @@ export class BrowserHostRuntime {
       const binding = this.#bindings.get(target.id);
       const wakeProbe = binding?.wakeAdapter ? await binding.wakeAdapter.probe({ target, operation: "wake" }) : { connected: false };
       output.push({ id: target.id, pageId, roomId: target.roomId, title, site, surface: target.surface,
+        // Available only through the paired localhost API for owner-authorized input binding.
+        spaceId:target.spaceId,sessionId:target.sessionId,appId:target.appId,
+        identityFingerprint:target.identityFingerprint,revision:target.revision,
+        locatorKind:target.locatorKind,locatorValue:target.locatorValue,
         operations: wakeProbe.connected ? ["draft", "wake"] : ["draft"], wakeAvailable: wakeProbe.connected === true,
         wakeRequiresExplicitGrant: true });
     }
