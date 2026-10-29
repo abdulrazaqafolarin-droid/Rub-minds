@@ -20,7 +20,7 @@
     "backroom:host": "node scripts/backroom-host.mjs",
     "test:durable-queue": "node --test integrations/backroom/durable-wake-store.node-test.mjs integrations/backroom/durable-wake-runtime.node-test.mjs integrations/backroom/durable-coordinator.node-test.mjs integrations/backroom/paired-wake-worker.node-test.mjs integrations/backroom/authenticated-wake-gateway.node-test.mjs integrations/backroom/file-wake-execution-journal.node-test.mjs integrations/backroom/wake-gateway-http.node-test.mjs integrations/backroom/remote-wake-store.node-test.mjs integrations/backroom/host-identity.node-test.mjs integrations/backroom/host-enrollment-policy.node-test.mjs integrations/backroom/host-wake-service.node-test.mjs scripts/test-script-manifest.node-test.mjs",
     "test:durable-coordinator": "node --test integrations/backroom/coordination-core.node-test.mjs integrations/backroom/durable-wake-store.node-test.mjs integrations/backroom/durable-coordinator.node-test.mjs",
-    "backroom:rotate-host": "node scripts/backroom-host.mjs --rotate-identity"
+    "backroom:rotate-host": "node scripts/backroom-host.mjs --rotate-identity-only"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",
