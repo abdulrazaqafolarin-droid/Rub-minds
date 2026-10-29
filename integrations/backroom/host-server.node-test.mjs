@@ -526,6 +526,10 @@ test("multi-surface routes require pairing and never expose native registration"
    method:"POST",headers:{...headers,"Content-Type":"application/json"},
    body:JSON.stringify({surface:"android_app",driver:"pretend",approved:true})});
   assert.equal(registration.status,404);
+  const unpair=await fetch(base+"/v1/unpair",{
+   method:"POST",headers});
+  assert.equal(unpair.status,200);
+  assert.ok(calls.includes("stopped"));
  },{multiSurfaceRuntime});
  assert.ok(calls.includes("stopped"));
 });
