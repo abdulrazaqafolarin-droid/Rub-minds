@@ -411,3 +411,18 @@ test("canonical wake HTTP routes require pairing, explicit opt-in, exact scope a
   assert.equal(revoke.status,200);assert.equal((await revoke.json()).revoked,true);
  },{browserRuntime});
 });
+
+test("enrollment only exposes a digest to the locally paired owner browser",async()=>{
+ const digest="d".repeat(64);
+ assert.throws(()=>createBackroomHostServer({allowedOrigins:["https://rub-minds.vercel.app"],enrollmentDigest:"invalid"}),/enrollment digest/);
+ await withHost(async({base,origin})=>{
+  const unauthorized=await fetch(base+"/v1/host",{headers:{Origin:origin}});
+  assert.equal(unauthorized.status,401);
+  const credentials=await (await pair(base,origin)).json();
+  const authorized=await fetch(base+"/v1/host",{headers:{Origin:origin,Authorization:"Bearer "+credentials.sessionToken}});
+  assert.equal(authorized.status,200);
+  const status=await authorized.json();
+  assert.equal(status.enrollmentDigest,digest);
+  assert.equal(Object.hasOwn(status,"hostToken"),false);
+ },{enrollmentDigest:digest});
+});
