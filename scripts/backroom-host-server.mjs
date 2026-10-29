@@ -79,7 +79,7 @@ function bearer(request) {
  */
 export function createBackroomHostServer({
   port = 43781, host = "127.0.0.1", allowedOrigins = parseOrigins(process.env.BACKROOM_ALLOWED_ORIGINS),
-  pairingCode, hostId = randomUUID(), enrollmentDigest = null, now = () => Date.now(), pairingTtlMs, sessionTtlMs, maxPairAttempts, browserRuntime, wakeService,
+  pairingCode, hostId = randomUUID(), enrollmentDigest = null, now = () => Date.now(), pairingTtlMs, sessionTtlMs, maxPairAttempts, browserRuntime, wakeService, multiSurfaceRuntime,
 } = {}) {
   if (host !== "127.0.0.1") throw new TypeError("Backroom host must bind to IPv4 loopback only");
   if (enrollmentDigest !== null && (typeof enrollmentDigest !== "string" || !/^[a-f0-9]{64}$/.test(enrollmentDigest))) throw new TypeError("Invalid enrollment digest");
@@ -149,6 +149,7 @@ export function createBackroomHostServer({
       const sessionsRevoked = authority.revokeAll({ origin: requestOrigin, token });
       let closeError = null;
       try { await wakeService?.stop?.(); } catch { closeError = true; }
+      try { await multiSurfaceRuntime?.stop?.(); } catch { closeError = true; }
       try { await browser.stop(); } catch { closeError = true; }
       const browserClosed = browser.status()?.running !== true;
       const stopped = sessionsRevoked && browserClosed && !closeError;
@@ -223,6 +224,36 @@ export function createBackroomHostServer({
         writeJson(response,400,{error:"invalid_remote_wake_configuration"},cors);
       }
       return;
+    }
+    // Optional native/terminal service must be registered by trusted local code,
+    // not by remote JSON. No arbitrary shell, OS selector or driver installation.
+    if(url.pathname.startsWith("/v1/surfaces/")){
+      const session=authority.authorize({origin:requestOrigin,token:bearer(request)});
+      if(!session){writeJson(response,401,{error:"host_session_invalid"},cors);return;}
+      if(!multiSurfaceRuntime){
+        writeJson(response,503,{error:"native_runtime_unavailable"},cors);return;
+      }
+      if(request.method==="GET"&&url.pathname==="/v1/surfaces/targets"){
+        writeJson(response,200,{targets:multiSurfaceRuntime.list()},cors);return;
+      }
+      if(request.method==="POST"&&url.pathname==="/v1/surfaces/draft"){
+        if(!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"]??"")){
+          writeJson(response,415,{error:"application_json_required"},cors);return;
+        }
+        try{
+          const input=await readJson(request);
+          if(!input||input.approved!==true||!input.command||typeof input.command!=="object"||
+             Object.keys(input).some(key=>!["approved","command"].includes(key))){
+            writeJson(response,403,{error:"explicit_draft_approval_required"},cors);return;
+          }
+          const result=await multiSurfaceRuntime.draft({command:input.command,approved:true});
+          writeJson(response,result.state==="completed"?200:409,result,cors);
+        }catch{
+          writeJson(response,409,{error:"native_draft_unavailable_or_denied"},cors);
+        }
+        return;
+      }
+      writeJson(response,404,{error:"not_found"},cors);return;
     }
     if (url.pathname.startsWith("/v1/browser/")) {
       if (request.method !== "GET" && request.method !== "POST") {
@@ -447,6 +478,7 @@ export function createBackroomHostServer({
     async close() {
       let browserError = null;
       try { await wakeService?.stop?.(); } catch { browserError = new Error("wake_poller_stop_failed"); }
+      try { await multiSurfaceRuntime?.stop?.(); } catch { browserError = new Error("native_runtime_stop_failed"); }
       try { await browser.stop(); } catch (error) { browserError = error; }
       if (server.listening) {
         await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
