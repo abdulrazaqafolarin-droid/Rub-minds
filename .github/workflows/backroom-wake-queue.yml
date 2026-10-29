@@ -51,7 +51,10 @@ jobs:
           create table public.participants (
             id uuid primary key,
             room_id uuid not null references public.rooms(id),
-            kind text not null check (kind in ('human','original_session','model','external_agent'))
+            display_name text not null default 'CI participant',
+            user_id uuid references auth.users(id),
+            kind text not null check (kind in ('human','original_session','model','external_agent')),
+            status text not null default 'waiting'
           );
           create table public.agent_connections (
             id uuid primary key default gen_random_uuid(),
@@ -61,6 +64,14 @@ jobs:
             credential_digest text not null unique,
             expires_at timestamptz not null,
             revoked_at timestamptz
+          );
+          create table public.messages (
+            id uuid primary key default gen_random_uuid(),
+            room_id uuid not null references public.rooms(id),
+            sender_id uuid not null references public.participants(id),
+            body text not null check (char_length(body) between 1 and 10000),
+            source_message_id text,
+            created_at timestamptz not null default now()
           );
           create table public.rub_minds_mcp_sessions (
             session_digest text primary key,
