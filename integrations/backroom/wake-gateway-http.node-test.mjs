@@ -59,6 +59,8 @@ test('privileged store exceptions are redacted and unapproved requests are denie
  }});
  const failed=await handler(request());assert.equal(failed.status,503);
  assert.doesNotMatch(await failed.text(),/sensitive|SQL/);
- const denied=await handler(request('https://example.test/v1/backroom/wake/ack'));
+ const denied=await handler(request('https://example.test/v1/backroom/wake/ack',{body:{
+  hostId:valid.hostId,bindingId:valid.bindingId,sessionDigest:valid.sessionDigest,
+  jobId:'id',leaseToken:'lease',outcome:'ignored'}}));
  assert.equal(denied.status,401);
 });
