@@ -109,3 +109,21 @@ test('remote activation requires a locally verified grant before contacting host
  assert.equal(records[0].hostId,hostId);
  await assert.rejects(()=>accepted.activate({...scope,grantId,ttlSeconds:901}),/grant/);
 });
+
+test('Supabase publishable key is sent in apikey header while private host token stays in Authorization',async()=>{
+ const apiKey='sb_publishable_exampleKey0123456789abcdef';
+ const url='https://zucaeevlbwhcvjwbhwmq.supabase.co/functions/v1/backroom-wake/';
+ const seen=[];
+ const store=createRemoteWakeStore({baseUrl:url,hostToken,apiKey,
+  fetchImpl:async(href,options)=>{
+   seen.push({href,headers:options.headers,body:options.body});
+   return new Response(JSON.stringify({ok:true,leases:[]}),{status:200});
+  }});
+ assert.deepEqual(await store.claim(scope),[]);
+ assert.equal(seen[0].href,url+'claim');
+ assert.equal(seen[0].headers.apikey,apiKey);
+ assert.equal(seen[0].headers.Authorization,'Bearer '+hostToken);
+ assert.equal(seen[0].body.includes(hostToken),false);
+ assert.equal(seen[0].body.includes(apiKey),false);
+ assert.throws(()=>createRemoteWakeStore({baseUrl:url,hostToken,apiKey:'bad key'}),/public Supabase/);
+});
