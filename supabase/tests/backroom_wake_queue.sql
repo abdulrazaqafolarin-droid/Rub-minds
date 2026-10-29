@@ -20,6 +20,17 @@ declare
   v_capacity_first jsonb;
   v_purge_count integer;
   i integer;
+
+  v_host_test text := '40000000-0000-4000-8000-000000000099';
+  v_host_capacity text := '40000000-0000-4000-8000-000000000098';
+  v_host_wrong text := '40000000-0000-4000-8000-000000000097';
+  v_binding_1 uuid := '60000000-0000-4000-8000-000000000001';
+  v_binding_2 uuid := '60000000-0000-4000-8000-000000000002';
+  v_binding_3 uuid := '60000000-0000-4000-8000-000000000003';
+  v_binding_4 uuid := '60000000-0000-4000-8000-000000000004';
+  v_binding_5 uuid := '60000000-0000-4000-8000-000000000005';
+  v_binding_6 uuid := '60000000-0000-4000-8000-000000000006';
+  v_binding_7 uuid := '60000000-0000-4000-8000-000000000007';
 begin
   insert into auth.users(id) values (v_owner);
   insert into public.rooms(id,owner_id) values (v_room,v_owner);
@@ -38,6 +49,23 @@ begin
   insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,room_id,participant_id,expires_at,terminated_at)
     values (repeat('7',64),'ci-ciphertext-7',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
 
+  insert into public.backroom_hosts(host_id,owner_id,credential_digest,expires_at,revoked_at)
+  values (v_host_test,v_owner,repeat('1',64),pg_catalog.clock_timestamp()+interval '1 hour',null),
+         (v_host_capacity,v_owner,repeat('2',64),pg_catalog.clock_timestamp()+interval '1 hour',null);
+
+  insert into public.backroom_input_bindings(
+    id,owner_id,room_id,participant_id,host_id,session_digest,space_id,session_id,target_id,
+    target_identity_fingerprint,target_revision,surface,locator_kind,locator_value,participation_mode,
+    wake_enabled,wake_expires_at,max_wakes_per_minute,confirmed_at,revoked_at
+  ) values
+    (v_binding_1,v_owner,v_room,v_participant,v_host_test,repeat('b',64),'space-1','session-1','target-1','fingerprint-1',1,'browser_tab','dom','composer-1','mentions',true,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null),
+    (v_binding_2,v_owner,v_room,v_participant,v_host_test,repeat('c',64),'space-1','session-2','target-2','fingerprint-2',2,'browser_tab','dom','composer-2','mentions',true,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null),
+    (v_binding_3,v_owner,v_room,v_participant,v_host_test,repeat('d',64),'space-1','session-3','target-3','fingerprint-3',1,'browser_tab','dom','composer-3','mentions',true,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null),
+    (v_binding_4,v_owner,v_room,v_participant,v_host_test,repeat('e',64),'space-1','session-4','target-4','fingerprint-4',1,'browser_tab','dom','composer-4','mentions',true,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null),
+    (v_binding_5,v_owner,v_room,v_participant,v_host_test,repeat('f',64),'space-1','session-5','target-5','fingerprint-5',1,'browser_tab','dom','composer-5','mentions',true,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null),
+    (v_binding_6,v_owner,v_room,v_participant,v_host_test,repeat('6',64),'space-1','session-6','target-6','fingerprint-6',1,'browser_tab','dom','composer-6','mentions',true,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null),
+    (v_binding_7,v_owner,v_room,v_participant,v_host_capacity,repeat('7',64),'space-capacity','session-capacity','target-capacity','fingerprint-capacity',1,'browser_tab','dom','composer-capacity','mentions',true,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null);
+
   if not (select relrowsecurity from pg_catalog.pg_class where oid='public.backroom_wake_jobs'::regclass) then
     raise exception 'Backroom wake jobs must have RLS enabled';
   end if;
@@ -47,14 +75,14 @@ begin
     or has_table_privilege('authenticated','public.backroom_wake_jobs','INSERT') then
     raise exception 'Client roles must not access the durable wake queue directly';
   end if;
-  if has_function_privilege('anon','public.enqueue_backroom_wake_job(text,uuid,uuid,uuid,text,text,text,text,text,text,text,integer,text,text,integer)','EXECUTE')
-    or has_function_privilege('authenticated','public.enqueue_backroom_wake_job(text,uuid,uuid,uuid,text,text,text,text,text,text,integer,text,text,integer)','EXECUTE')
-    or not has_function_privilege('service_role','public.enqueue_backroom_wake_job(text,uuid,uuid,uuid,text,text,text,text,text,text,integer,text,text,integer)','EXECUTE') then
+  if has_function_privilege('anon','public.enqueue_backroom_wake_job(text,uuid,uuid,uuid,text,text,text,text,uuid,text,text,integer,text,text,integer)','EXECUTE')
+    or has_function_privilege('authenticated','public.enqueue_backroom_wake_job(text,uuid,uuid,uuid,text,text,text,text,uuid,text,text,integer,text,text,integer)','EXECUTE')
+    or not has_function_privilege('service_role','public.enqueue_backroom_wake_job(text,uuid,uuid,uuid,text,text,text,text,uuid,text,text,integer,text,text,integer)','EXECUTE') then
     raise exception 'Enqueue RPC grants are unsafe';
   end if;
-  if has_function_privilege('anon','public.claim_backroom_wake_jobs(text,text,integer,integer)','EXECUTE')
-    or has_function_privilege('authenticated','public.claim_backroom_wake_jobs(text,text,integer,integer)','EXECUTE')
-    or not has_function_privilege('service_role','public.claim_backroom_wake_jobs(text,text,integer,integer)','EXECUTE') then
+  if has_function_privilege('anon','public.claim_backroom_wake_jobs(text,text,uuid,integer,integer)','EXECUTE')
+    or has_function_privilege('authenticated','public.claim_backroom_wake_jobs(text,text,uuid,integer,integer)','EXECUTE')
+    or not has_function_privilege('service_role','public.claim_backroom_wake_jobs(text,text,uuid,integer,integer)','EXECUTE') then
     raise exception 'Claim RPC grants are unsafe';
   end if;
   if has_function_privilege('anon','public.purge_backroom_wake_jobs(integer,integer)','EXECUTE')
@@ -67,8 +95,8 @@ begin
   v_conflict := false;
   begin
     perform public.enqueue_backroom_wake_job(
-      repeat('5',64),v_owner,v_room,v_participant,'host-test','space-1','session-5',repeat('f',64),
-      'binding-5','target-5','fingerprint-5',1,'event-5','@RMconnects'||chr(10)||'Event: event-5'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
+      repeat('5',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-5',repeat('f',64),
+      v_binding_5,'target-5','fingerprint-5',1,'event-5','@RMconnects'||chr(10)||'Event: event-5'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   exception when others then
     if sqlerrm <> 'Active MCP session does not authorize this group participant' then raise; end if;
     v_conflict := true;
@@ -80,8 +108,8 @@ begin
   begin
     perform public.enqueue_backroom_wake_job(
       repeat('8',64),'20000000-0000-0000-0000-000000000098',v_room,v_participant,
-      'host-test','space-1','session-8',v_session_digest,
-      'binding-8','target-8','fingerprint-8',1,'event-8',
+      v_host_test,'space-1','session-8',v_session_digest,
+      v_binding_1,'target-8','fingerprint-8',1,'event-8',
       '@RMconnects'||chr(10)||'Event: event-8'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   exception when others then
     if sqlerrm <> 'Active MCP session does not authorize this group participant' then raise; end if;
@@ -90,92 +118,92 @@ begin
   if not v_conflict then raise exception 'A different room owner must not enqueue wakes for this session'; end if;
 
   v_first := public.enqueue_backroom_wake_job(
-    repeat('1',64),v_owner,v_room,v_participant,'host-test','space-1','session-1',v_session_digest,
-    'binding-1','target-1','fingerprint-1',1,'event-1','@RMconnects'||chr(10)||'Event: event-1'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
+    repeat('1',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-1',v_session_digest,
+    v_binding_1,'target-1','fingerprint-1',1,'event-1','@RMconnects'||chr(10)||'Event: event-1'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   v_repeat := public.enqueue_backroom_wake_job(
-    repeat('1',64),v_owner,v_room,v_participant,'host-test','space-1','session-1',v_session_digest,
-    'binding-1','target-1','fingerprint-1',1,'event-1','@RMconnects'||chr(10)||'Event: event-1'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
+    repeat('1',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-1',v_session_digest,
+    v_binding_1,'target-1','fingerprint-1',1,'event-1','@RMconnects'||chr(10)||'Event: event-1'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   if (v_first->>'created') <> 'true' or (v_repeat->>'created') <> 'false'
     or (v_first->>'job_id') <> (v_repeat->>'job_id') then
     raise exception 'Identical enqueue retries must return the same job idempotently';
   end if;
   begin
     perform public.enqueue_backroom_wake_job(
-      repeat('1',64),v_owner,v_room,v_participant,'host-test','space-1','session-1',v_session_digest,
-      'binding-1','target-1','fingerprint-1',2,'event-1','@RMconnects'||chr(10)||'Event: event-1'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
+      repeat('1',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-1',v_session_digest,
+      v_binding_1,'target-1','fingerprint-1',2,'event-1','@RMconnects'||chr(10)||'Event: event-1'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   exception when others then
       if sqlerrm <> 'Wake idempotency key conflicts with a different request' then raise; end if;
       v_conflict := true;
   end;
   if not v_conflict then raise exception 'Same idempotency key with a different prompt must fail'; end if;
 
-  select * into v_claim from public.claim_backroom_wake_jobs('host-test',v_session_digest,5,30) limit 1;
+  select * into v_claim from public.claim_backroom_wake_jobs(v_host_test,v_session_digest,v_binding_1,5,30) limit 1;
   if not found or v_claim.out_job_id::text <> (v_first->>'job_id')
     or v_claim.out_attempt_count <> 1 or v_claim.out_lease_token is null
     or v_claim.out_target_identity_fingerprint <> 'fingerprint-1'
     or v_claim.out_prompt_digest <> pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_claim.out_prompt,'UTF8')),'hex') then
     raise exception 'Claim must return the job and a one-shot lease token';
   end if;
-  select count(*) into v_count from public.claim_backroom_wake_jobs('host-test',v_session_digest,5,30);
+  select count(*) into v_count from public.claim_backroom_wake_jobs(v_host_test,v_session_digest,v_binding_1,5,30);
   if v_count <> 0 then raise exception 'An active lease must prevent duplicate concurrent claims'; end if;
-  select count(*) into v_count from public.claim_backroom_wake_jobs('wrong-host',v_session_digest,5,30);
+  select count(*) into v_count from public.claim_backroom_wake_jobs(v_host_wrong,v_session_digest,v_binding_1,5,30);
   if v_count <> 0 then raise exception 'A different host must not claim this job'; end if;
-  select count(*) into v_count from public.claim_backroom_wake_jobs('host-test',repeat('c',64),5,30);
+  select count(*) into v_count from public.claim_backroom_wake_jobs(v_host_test,repeat('c',64),v_binding_2,5,30);
   if v_count <> 0 then raise exception 'A different session digest must not claim this job'; end if;
 
-  if public.ack_backroom_wake_job(v_claim.out_job_id,'host-test',v_session_digest,'00000000-0000-0000-0000-000000000000','acknowledged') then
+  if public.ack_backroom_wake_job(v_claim.out_job_id,v_host_test,v_session_digest,v_binding_1,'00000000-0000-0000-0000-000000000000','acknowledged') then
     raise exception 'Incorrect lease token must not acknowledge a job';
   end if;
-  if not public.ack_backroom_wake_job(v_claim.out_job_id,'host-test',v_session_digest,v_claim.out_lease_token,'acknowledged') then
+  if not public.ack_backroom_wake_job(v_claim.out_job_id,v_host_test,v_session_digest,v_binding_1,v_claim.out_lease_token,'acknowledged') then
     raise exception 'Valid lease token should acknowledge the claimed job';
   end if;
-  if public.ack_backroom_wake_job(v_claim.out_job_id,'host-test',v_session_digest,v_claim.out_lease_token,'acknowledged') then
+  if public.ack_backroom_wake_job(v_claim.out_job_id,v_host_test,v_session_digest,v_binding_1,v_claim.out_lease_token,'acknowledged') then
     raise exception 'Acknowledgement replay must fail';
   end if;
 
   v_retry_job := public.enqueue_backroom_wake_job(
-    repeat('2',64),v_owner,v_room,v_participant,'host-test','space-1','session-2',repeat('c',64),
-    'binding-2','target-2','fingerprint-2',2,'event-2','@RMconnects'||chr(10)||'Event: event-2'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
-  select * into v_claim_retry from public.claim_backroom_wake_jobs('host-test',repeat('c',64),1,30) limit 1;
+    repeat('2',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-2',repeat('c',64),
+    v_binding_2,'target-2','fingerprint-2',2,'event-2','@RMconnects'||chr(10)||'Event: event-2'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
+  select * into v_claim_retry from public.claim_backroom_wake_jobs(v_host_test,repeat('c',64),1,30) limit 1;
   if not found or v_claim_retry.out_job_id::text <> (v_retry_job->>'job_id') then
     raise exception 'Expected the second session job to be claimed';
   end if;
   v_retry_state := public.retry_backroom_wake_job(
-    v_claim_retry.out_job_id,'host-test',repeat('c',64),v_claim_retry.out_lease_token,1,'transport_error');
+    v_claim_retry.out_job_id,v_host_test,repeat('c',64),v_binding_2,v_claim_retry.out_lease_token,1,'transport_error');
   if v_retry_state <> 'pending' then raise exception 'A retryable failure should return to pending'; end if;
   update public.backroom_wake_jobs set available_at=pg_catalog.clock_timestamp()-interval '1 second' where id=v_claim_retry.out_job_id;
-  select * into v_claim_retry from public.claim_backroom_wake_jobs('host-test',repeat('c',64),1,30) limit 1;
+  select * into v_claim_retry from public.claim_backroom_wake_jobs(v_host_test,repeat('c',64),1,30) limit 1;
   if not found or v_claim_retry.out_attempt_count <> 2 then raise exception 'Retry should be reclaimable and increment attempts'; end if;
-  if not public.ack_backroom_wake_job(v_claim_retry.out_job_id,'host-test',repeat('c',64),v_claim_retry.out_lease_token,'ignored') then
+  if not public.ack_backroom_wake_job(v_claim_retry.out_job_id,v_host_test,repeat('c',64),v_binding_2,v_claim_retry.out_lease_token,'ignored') then
     raise exception 'A valid ignored outcome should acknowledge the event cursor';
   end if;
 
   -- Revocation between claim and acknowledgement invalidates the outstanding lease.
   v_retry_job := public.enqueue_backroom_wake_job(
-    repeat('6',64),v_owner,v_room,v_participant,'host-test','space-1','session-6',repeat('6',64),
-    'binding-6','target-6','fingerprint-6',1,'event-6','@RMconnects'||chr(10)||'Event: event-6'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
-  select * into v_claim_retry from public.claim_backroom_wake_jobs('host-test',repeat('6',64),1,30) limit 1;
+    repeat('6',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-6',repeat('6',64),
+    v_binding_6,'target-6','fingerprint-6',1,'event-6','@RMconnects'||chr(10)||'Event: event-6'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
+  select * into v_claim_retry from public.claim_backroom_wake_jobs(v_host_test,repeat('6',64),v_binding_6,1,30) limit 1;
   if not found then raise exception 'Expected the revocation-test lease to be claimed'; end if;
   update public.agent_connections set revoked_at=pg_catalog.clock_timestamp() where participant_id=v_participant;
   v_conflict := false;
   begin
     perform public.enqueue_backroom_wake_job(
-      repeat('9',64),v_owner,v_room,v_participant,'host-test','space-1','session-9',repeat('6',64),
-      'binding-9','target-9','fingerprint-9',1,'event-9',
+      repeat('9',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-9',repeat('6',64),
+      v_binding_6,'target-9','fingerprint-9',1,'event-9',
       '@RMconnects'||chr(10)||'Event: event-9'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   exception when others then
     if sqlerrm <> 'Active MCP session does not authorize this group participant' then raise; end if;
     v_conflict := true;
   end;
   if not v_conflict then raise exception 'Revoked agent connections must not enqueue wakes'; end if;
-  v_ok := public.ack_backroom_wake_job(v_claim_retry.out_job_id,'host-test',repeat('6',64),v_claim_retry.out_lease_token,'acknowledged');
+  v_ok := public.ack_backroom_wake_job(v_claim_retry.out_job_id,v_host_test,repeat('6',64),v_binding_6,v_claim_retry.out_lease_token,'acknowledged');
   if v_ok then raise exception 'Revoked agent connections must not acknowledge outstanding leases'; end if;
   update public.agent_connections set revoked_at=null where participant_id=v_participant;
   update public.rub_minds_mcp_sessions set terminated_at=pg_catalog.clock_timestamp() where session_digest=repeat('6',64);
 
   v_cancel_job := public.enqueue_backroom_wake_job(
-    repeat('3',64),v_owner,v_room,v_participant,'host-test','space-1','session-3',repeat('d',64),
-    'binding-3','target-3','fingerprint-3',1,'event-3','@RMconnects'||chr(10)||'Event: event-3'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
+    repeat('3',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-3',repeat('d',64),
+    v_binding_3,'target-3','fingerprint-3',1,'event-3','@RMconnects'||chr(10)||'Event: event-3'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   if public.cancel_backroom_wake_job((v_cancel_job->>'job_id')::uuid,'20000000-0000-0000-0000-000000000098') then
     raise exception 'A different owner must not cancel a wake';
   end if;
@@ -187,10 +215,10 @@ begin
   end if;
 
   v_expire_job := public.enqueue_backroom_wake_job(
-    repeat('4',64),v_owner,v_room,v_participant,'host-test','space-1','session-4',repeat('e',64),
-    'binding-4','target-4','fingerprint-4',1,'event-4','@RMconnects'||chr(10)||'Event: event-4'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
+    repeat('4',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-4',repeat('e',64),
+    v_binding_4,'target-4','fingerprint-4',1,'event-4','@RMconnects'||chr(10)||'Event: event-4'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   update public.rub_minds_mcp_sessions set terminated_at=pg_catalog.clock_timestamp() where session_digest=repeat('e',64);
-  select count(*) into v_count from public.claim_backroom_wake_jobs('host-test',repeat('e',64),5,30);
+  select count(*) into v_count from public.claim_backroom_wake_jobs(v_host_test,repeat('e',64),v_binding_4,5,30);
   if v_count <> 0 then raise exception 'Terminated MCP sessions must not claim queued wake jobs'; end if;
   update public.backroom_wake_jobs set expires_at=pg_catalog.clock_timestamp()-interval '1 second'
     where id=(v_expire_job->>'job_id')::uuid;
@@ -203,15 +231,15 @@ begin
   for i in 1..100 loop
     v_key := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('capacity-key-'||i::text,'UTF8')),'hex');
     v_cancel_job := public.enqueue_backroom_wake_job(
-      v_key,v_owner,v_room,v_participant,'host-capacity','space-capacity','session-capacity',repeat('7',64),
-      'binding-capacity','target-capacity','fingerprint-capacity',1,'capacity-event-'||i::text,
+      v_key,v_owner,v_room,v_participant,v_host_capacity,'space-capacity','session-capacity',repeat('7',64),
+      v_binding_7,'target-capacity','fingerprint-capacity',1,'capacity-event-'||i::text,
       '@RMconnects'||chr(10)||'Event: capacity-event-'||i::text||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
     if i = 1 then v_capacity_first := v_cancel_job; end if;
   end loop;
   v_key := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('capacity-key-1','UTF8')),'hex');
   v_repeat := public.enqueue_backroom_wake_job(
-    v_key,v_owner,v_room,v_participant,'host-capacity','space-capacity','session-capacity',repeat('7',64),
-    'binding-capacity','target-capacity','fingerprint-capacity',1,'capacity-event-1',
+    v_key,v_owner,v_room,v_participant,v_host_capacity,'space-capacity','session-capacity',repeat('7',64),
+    v_binding_7,'target-capacity','fingerprint-capacity',1,'capacity-event-1',
     '@RMconnects'||chr(10)||'Event: capacity-event-1'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   if (v_repeat->>'created') <> 'false' or (v_repeat->>'job_id') <> (v_capacity_first->>'job_id') then
     raise exception 'Idempotent retry must work at queue capacity';
@@ -220,8 +248,8 @@ begin
   begin
     perform public.enqueue_backroom_wake_job(
       pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('capacity-key-101','UTF8')),'hex'),
-      v_owner,v_room,v_participant,'host-capacity','space-capacity','session-capacity',repeat('7',64),
-      'binding-capacity','target-capacity','fingerprint-capacity',1,'capacity-event-101',
+      v_owner,v_room,v_participant,v_host_capacity,'space-capacity','session-capacity',repeat('7',64),
+      v_binding_7,'target-capacity','fingerprint-capacity',1,'capacity-event-101',
       '@RMconnects'||chr(10)||'Event: capacity-event-101'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   exception when others then
     if sqlerrm <> 'Backroom wake queue is full for this session' then raise; end if;
