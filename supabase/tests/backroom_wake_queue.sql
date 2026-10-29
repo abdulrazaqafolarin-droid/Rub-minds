@@ -396,6 +396,51 @@ begin
   end if;
 
 
+  -- Input binding revocation is owner-scoped; the host and its other bindings remain usable.
+  if has_function_privilege('anon','public.revoke_backroom_input_binding(uuid,uuid)','EXECUTE')
+    or has_function_privilege('authenticated','public.revoke_backroom_input_binding(uuid,uuid)','EXECUTE')
+    or not has_function_privilege('service_role','public.revoke_backroom_input_binding(uuid,uuid)','EXECUTE') then
+    raise exception 'Input binding revocation RPC grants are unsafe';
+  end if;
+
+  v_first := public.enqueue_backroom_wake_job(
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('revoke-binding-job','UTF8')),'hex'),
+    v_owner,v_room,v_participant,v_host_test,'space-1','session-1',repeat('b',64),
+    v_binding_1,'target-1','fingerprint-1',1,'revoke-binding-event',
+    '@RMconnects'||chr(10)||'Event: revoke-binding-event'||chr(10)||
+    'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
+  select * into v_claim from public.claim_backroom_wake_jobs(
+    v_host_test,repeat('b',64),v_binding_1,5,30) limit 1;
+  if not found then raise exception 'Binding revoke fixture must have an active lease'; end if;
+  if public.revoke_backroom_input_binding(v_binding_1,'20000000-0000-0000-0000-000000000098') then
+    raise exception 'Different owner must not revoke an input binding';
+  end if;
+  if not public.revoke_backroom_input_binding(v_binding_1,v_owner) then
+    raise exception 'Owner must be able to revoke their input binding';
+  end if;
+  if public.revoke_backroom_input_binding(v_binding_1,v_owner) then
+    raise exception 'Repeated input binding revocation must be refused';
+  end if;
+  if exists(select 1 from public.backroom_input_bindings where id=v_binding_1 and
+    (revoked_at is null or wake_enabled or wake_grant_id is not null or confirmed_at is not null or wake_expires_at is not null)) then
+    raise exception 'Input revocation must clear consent and revoke only this binding';
+  end if;
+  if exists(select 1 from public.backroom_wake_jobs where binding_id=v_binding_1 and state in ('pending','leased')) then
+    raise exception 'Input revocation must cancel its pending and leased wakes';
+  end if;
+  if public.ack_backroom_wake_job(v_claim.out_job_id,v_host_test,repeat('b',64),v_binding_1,v_claim.out_lease_token,'acknowledged') then
+    raise exception 'Binding revocation must invalidate its outstanding lease';
+  end if;
+  select count(*) into v_count from public.claim_backroom_wake_jobs(
+    v_host_test,repeat('b',64),v_binding_1,5,30);
+  if v_count <> 0 then raise exception 'Revoked input binding must not claim further jobs'; end if;
+  if not exists(select 1 from public.backroom_hosts where host_id=v_host_test and revoked_at is null) then
+    raise exception 'Input binding revocation must not revoke the entire host';
+  end if;
+  if not exists(select 1 from public.backroom_input_bindings where id=v_binding_2 and revoked_at is null) then
+    raise exception 'Input binding revocation must not revoke sibling bindings';
+  end if;
+
   -- Host revocation is owner-scoped and atomically cancels a leased job and every active binding.
   if has_function_privilege('anon','public.revoke_backroom_host(text,uuid)','EXECUTE')
     or has_function_privilege('authenticated','public.revoke_backroom_host(text,uuid)','EXECUTE')
