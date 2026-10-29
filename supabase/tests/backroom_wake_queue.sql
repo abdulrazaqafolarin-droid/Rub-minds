@@ -16,6 +16,10 @@ declare
   v_conflict boolean := false;
   v_retry_state text;
   v_ok boolean;
+  v_key text;
+  v_capacity_first jsonb;
+  v_purge_count integer;
+  i integer;
 begin
   insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,room_id,participant_id,expires_at,terminated_at)
   values
@@ -25,6 +29,8 @@ begin
     (repeat('e',64),'ci-ciphertext-e',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
     (repeat('f',64),'ci-ciphertext-f',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',pg_catalog.clock_timestamp()),
     (repeat('6',64),'ci-ciphertext-6',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
+  insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,room_id,participant_id,expires_at,terminated_at)
+    values (repeat('7',64),'ci-ciphertext-7',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
 
   if not (select relrowsecurity from pg_catalog.pg_class where oid='public.backroom_wake_jobs'::regclass) then
     raise exception 'Backroom wake jobs must have RLS enabled';
@@ -44,6 +50,11 @@ begin
     or has_function_privilege('authenticated','public.claim_backroom_wake_jobs(text,text,integer,integer)','EXECUTE')
     or not has_function_privilege('service_role','public.claim_backroom_wake_jobs(text,text,integer,integer)','EXECUTE') then
     raise exception 'Claim RPC grants are unsafe';
+  end if;
+  if has_function_privilege('anon','public.purge_backroom_wake_jobs(integer,integer)','EXECUTE')
+    or has_function_privilege('authenticated','public.purge_backroom_wake_jobs(integer,integer)','EXECUTE')
+    or not has_function_privilege('service_role','public.purge_backroom_wake_jobs(integer,integer)','EXECUTE') then
+    raise exception 'Purge RPC grants are unsafe';
   end if;
 
   -- A format-valid digest is not sufficient: terminated MCP sessions cannot enqueue.
@@ -154,5 +165,44 @@ begin
   if (select state from public.backroom_wake_jobs where id=(v_expire_job->>'job_id')::uuid) <> 'expired' then
     raise exception 'Expired job must not remain dispatchable';
   end if;
+
+  -- Queue capacity is enforced per active MCP session but idempotent retries still work at capacity.
+  for i in 1..100 loop
+    v_key := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('capacity-key-'||i::text,'UTF8')),'hex');
+    v_cancel_job := public.enqueue_backroom_wake_job(
+      v_key,v_owner,v_room,v_participant,'host-capacity','space-capacity','session-capacity',repeat('7',64),
+      'binding-capacity','target-capacity','fingerprint-capacity',1,'capacity-event-'||i::text,
+      '@RMconnects'||chr(10)||'Event: capacity-event-'||i::text,3600);
+    if i = 1 then v_capacity_first := v_cancel_job; end if;
+  end loop;
+  v_key := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('capacity-key-1','UTF8')),'hex');
+  v_repeat := public.enqueue_backroom_wake_job(
+    v_key,v_owner,v_room,v_participant,'host-capacity','space-capacity','session-capacity',repeat('7',64),
+    'binding-capacity','target-capacity','fingerprint-capacity',1,'capacity-event-1',
+    '@RMconnects'||chr(10)||'Event: capacity-event-1',3600);
+  if (v_repeat->>'created') <> 'false' or (v_repeat->>'job_id') <> (v_capacity_first->>'job_id') then
+    raise exception 'Idempotent retry must work at queue capacity';
+  end if;
+  v_conflict := false;
+  begin
+    perform public.enqueue_backroom_wake_job(
+      pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('capacity-key-101','UTF8')),'hex'),
+      v_owner,v_room,v_participant,'host-capacity','space-capacity','session-capacity',repeat('7',64),
+      'binding-capacity','target-capacity','fingerprint-capacity',1,'capacity-event-101',
+      '@RMconnects'||chr(10)||'Event: capacity-event-101',3600);
+  exception when others then
+    if sqlerrm <> 'Backroom wake queue is full for this session' then raise; end if;
+    v_conflict := true;
+  end;
+  if not v_conflict then raise exception 'Session queue capacity must reject a 101st active wake'; end if;
+
+  update public.backroom_wake_jobs
+  set state='expired', created_at=pg_catalog.clock_timestamp()-interval '30 days',
+      expires_at=pg_catalog.clock_timestamp()-interval '1 day'
+  where session_digest=repeat('7',64);
+  v_purge_count := public.purge_backroom_wake_jobs(14,1000);
+  if v_purge_count < 100 then raise exception 'Terminal retention purge should delete at least 100 old jobs'; end if;
+  select count(*) into v_count from public.backroom_wake_jobs where session_digest=repeat('7',64);
+  if v_count <> 0 then raise exception 'Purge must remove old terminal queue records'; end if;
 end;
 $test$;
