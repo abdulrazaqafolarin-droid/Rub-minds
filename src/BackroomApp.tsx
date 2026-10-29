@@ -10,7 +10,7 @@ type Space = { id: string; name: string; surface: Surface; app: string; createdA
 type Rect = { x: number; y: number; width: number; height: number };
 type HostStatus = { hostId: string; label: string; expiresAt: number; protocolVersion: string; connected: boolean; executionReady: boolean; capabilities: Record<string, boolean>; nextStep: string; browserPages?: number; enrollmentDigest?: string };
 type BrowserPageRow = { pageId: string; title: string; site: string; canSelect: boolean };
-type BrowserTargetRow = { id: string; pageId: string; roomId: string; title: string; site: string; surface: string; operations: string[]; wakeAvailable?: boolean; spaceId?: string; sessionId?: string; identityFingerprint?: string; revision?: number; locatorKind?: string; locatorValue?: string };\ntype HostedAiSession = { participantId: string; displayName: string; sessionDigest: string; expiresAt: string };\ntype HostedWakeBinding = { bindingId: string; roomId: string; participantId: string; sessionId: string; targetId: string; sessionDigest: string };
+type BrowserTargetRow = { id: string; pageId: string; roomId: string; title: string; site: string; surface: string; operations: string[]; wakeAvailable?: boolean; spaceId?: string; sessionId?: string; identityFingerprint?: string; revision?: number; locatorKind?: string; locatorValue?: string };\ntype HostedAiSession = { participantId: string; displayName: string; sessionDigest: string; expiresAt: string };\ntype HostedWakeBinding = { bindingId: string; roomId: string; participantId: string; sessionId: string; targetId: string; sessionDigest: string; wakeEnabled?: boolean; requiresRevoke?: boolean };
 type PendingBrowserSelection = { pageId: string; roomId: string; generation: number; attemptId: string | null };
 const surfaces: { id: Surface; name: string; detail: string }[] = [
   { id: 'browser_tab', name: 'Browser session', detail: 'ChatGPT, Claude and other browser conversations' },
@@ -416,8 +416,23 @@ export default function BackroomApp() {
           participationMode:'mentions',maxWakesPerMinute:6
         }
       });
-      if(bindingError || data?.ok!==true || typeof data.bindingId!=='string')
+      if(bindingError || data?.ok!==true || typeof data.bindingId!=='string'){
+        if(typeof data?.bindingId==='string'&&
+          ['existing_binding_active_revoke_first','existing_binding_requires_revoke'].includes(data.reason)){
+          setHostedWakeBinding({
+            bindingId:data.bindingId,roomId:room.id,
+            participantId:selectedSession.participantId,sessionId:target.sessionId,
+            targetId:target.id,sessionDigest:selectedSession.sessionDigest,
+            wakeEnabled:data.wakeEnabled===true,requiresRevoke:true
+          });
+          setHostedWakeGrantId('');
+          setHostMessage('An existing hosted binding owns this AI session or composer. Revoke that binding explicitly before rebinding; the old queued wakes will be cancelled.');
+          return;
+        }
+        if(data?.requiresHostRevoke===true)
+          throw new Error('This host has conflicting active input bindings. Permanently revoke the host, rotate its identity, then register it again.');
         throw new Error('Secure hosted binding registration failed. No wake operation was enabled.');
+      }
       // The host's pinned Supabase destination is local configuration. Never let
       // this browser choose where the private host credential is sent.
       const publishableKey=import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -429,7 +444,8 @@ export default function BackroomApp() {
       setHostedWakeBinding({
         bindingId:data.bindingId,roomId:room.id,
         participantId:selectedSession.participantId,sessionId:target.sessionId,
-        targetId:target.id,sessionDigest:selectedSession.sessionDigest
+        targetId:target.id,sessionDigest:selectedSession.sessionDigest,
+        wakeEnabled:false,requiresRevoke:false
       });
       setHostedWakeGrantId('');
       setHostMessage('AI session bound to the exact selected composer. Wake remains OFF; activate only with your explicit confirmation.');
