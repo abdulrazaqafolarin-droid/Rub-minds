@@ -64,3 +64,12 @@ test('privileged store exceptions are redacted and unapproved requests are denie
   jobId:'id',leaseToken:'lease',outcome:'ignored'}}));
  assert.equal(denied.status,401);
 });
+
+test('proxied function path aliases are exact and do not expose wildcard routes',async()=>{
+ const {handler,calls}=fixture();
+ const alias=await handler(request('https://example.test/backroom-wake/claim'));
+ assert.equal(alias.status,200);
+ const lookalike=await handler(request('https://example.test/backroom-wake/claim/extra'));
+ assert.equal(lookalike.status,404);
+ assert.equal(calls.length,1);
+});
