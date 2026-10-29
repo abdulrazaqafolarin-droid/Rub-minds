@@ -45,3 +45,6 @@ enable_confirmations = false
 
 [functions.rub-minds-mcp]
 verify_jwt = false
+
+[functions.backroom-wake]
+verify_jwt = false
