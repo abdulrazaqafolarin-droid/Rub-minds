@@ -67,14 +67,20 @@ export class CuaDesktopWorkspace {
     if(before.window.appName!==expectedAppName||before.window.title!==expectedTitle)throw new Error('Desktop app/window identity changed');
     const field=before.elements.find(e=>e?.element_token===elementToken);
     if(!field)throw new Error('Element token is absent from fresh CUA snapshot');
-    if(!/(text|edit|input|document|textarea|combobox)/i.test(String(field.role??field.type??'')))throw new Error('Selected element is not a text-entry control');
+    if(!/(text ?field|text ?input|text ?entry|text ?area|text ?editor|textarea|editable ?text|document)/i.test(String(field.role??field.type??'')))throw new Error('Selected element is not a clearly editable text control');
     if(typeof field.value!=='string'||field.value!=='')throw new Error('Selected text-entry control is not explicitly verified empty');
     const approval=await this.approve(Object.freeze({kind:'desktop_draft',pid,windowId,appName:expectedAppName,title:expectedTitle,text,elementToken,groupId,sessionId}));
     if(approval!==true)throw new Error('Local desktop action denied');
     const fresh=await this.#snapshot({pid,windowId}),current=fresh.elements.find(e=>e?.element_token===elementToken);
     if(fresh.window.appName!==expectedAppName||fresh.window.title!==expectedTitle||!current||current.value!=='')throw new Error('Desktop input changed after approval');
-    await this.#require(['type_text']);
-    const result=structured(await this.client.callTool('type_text',{pid,text,element_token:elementToken,session:this.session}));
+    await this.#require(['click','type_text']);
+    // CUA type_text accepts an exact window target, not an element_token. Focus the
+    // freshly verified text control first, then type only into that exact window.
+    const focused=structured(await this.client.callTool('click',{target:{kind:'window',pid,window_id:windowId},element_token:elementToken,delivery_mode:'foreground',session:this.session}));
+    if(focused.effect==='unverifiable'||focused.effect==='suspected_noop'||focused.error)return Object.freeze({state:'needs_review',submitted:false,reason:'CUA could not verify text-field focus'});
+    const postFocus=await this.#snapshot({pid,windowId}),focusWindow=postFocus.window,focusField=postFocus.elements.find(e=>e?.element_token===elementToken);
+    if(focusWindow.appName!==expectedAppName||focusWindow.title!==expectedTitle||!focusField||focusField.value!==''||!/(text ?field|text ?input|text ?entry|text ?area|text ?editor|textarea|editable ?text|document)/i.test(String(focusField.role??focusField.type??'')))return Object.freeze({state:'needs_review',submitted:false,reason:'Selected control changed after focus'});
+    const result=structured(await this.client.callTool('type_text',{text,target:{kind:'window',pid,window_id:windowId},session:this.session}));
     if(result.effect==='unverifiable'||result.effect==='suspected_noop'||result.error)return Object.freeze({state:'needs_review',submitted:false,reason:'CUA did not confirm text input'});
     const after=await this.#snapshot({pid,windowId}),written=after.elements.find(e=>e?.element_token===elementToken);
     if(!written||written.value!==text||after.window.appName!==expectedAppName||after.window.title!==expectedTitle)return Object.freeze({state:'needs_review',submitted:false,reason:'Desktop readback mismatch'});
