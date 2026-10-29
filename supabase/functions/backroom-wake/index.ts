@@ -75,7 +75,7 @@ async function activateBinding({hostId,sessionDigest,bindingId,grantId,ttlSecond
  const now=new Date();
  const expires=new Date(now.getTime()+ttlSeconds*1000).toISOString();
  const {data,error}=await db.from('backroom_input_bindings')
-  .update({wake_enabled:true,wake_grant_id:grantId,confirmed_at:now.toISOString(),wake_expires_at:expires})
+  .update({wake_enabled:true,wake_grant_id:grantId,wake_last_revoked_grant_id:null,confirmed_at:now.toISOString(),wake_expires_at:expires})
   .eq('id',bindingId).eq('host_id',hostId).eq('session_digest',sessionDigest)
   .is('revoked_at',null)
   .or('wake_enabled.eq.false,wake_grant_id.eq.'+grantId)
@@ -87,12 +87,21 @@ async function deactivateBinding({hostId,sessionDigest,bindingId,grantId}:{
  hostId:string;sessionDigest:string;bindingId:string;grantId:string
 }) {
  const {data,error}=await db.from('backroom_input_bindings')
-  .update({wake_enabled:false,wake_grant_id:null,confirmed_at:null,wake_expires_at:null})
+  .update({wake_enabled:false,wake_last_revoked_grant_id:grantId,
+    wake_grant_id:null,confirmed_at:null,wake_expires_at:null})
   .eq('id',bindingId).eq('host_id',hostId).eq('session_digest',sessionDigest)
   .eq('wake_grant_id',grantId).eq('wake_enabled',true).is('revoked_at',null)
   .select('id').maybeSingle();
  if(error)throw new Error('Backroom consent deactivation unavailable');
- return Boolean(data?.id);
+ if(data?.id)return true;
+ // Idempotent confirmation after a lost success response, but never accept a
+ // different grant or a currently active replacement grant.
+ const {data:existing,error:readError}=await db.from('backroom_input_bindings')
+  .select('wake_enabled,wake_grant_id,wake_last_revoked_grant_id,revoked_at')
+  .eq('id',bindingId).eq('host_id',hostId).eq('session_digest',sessionDigest).maybeSingle();
+ if(readError)throw new Error('Backroom consent deactivation unavailable');
+ return Boolean(existing&&existing.revoked_at===null&&existing.wake_enabled===false&&
+  existing.wake_grant_id===null&&existing.wake_last_revoked_grant_id===grantId);
 }
 const gateway=createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,activateBinding,deactivateBinding});
 const handler=createWakeGatewayHttpHandler({gateway});
