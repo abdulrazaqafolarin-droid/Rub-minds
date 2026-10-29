@@ -49,7 +49,7 @@ async function readSmallJson(request,maxBytes) {
  return value;
 }
 export function createWakeGatewayHttpHandler({gateway,maxBodyBytes=4096}={}) {
- if(!gateway||['claim','acknowledge','retry'].some(key=>typeof gateway[key]!=='function'))
+ if(!gateway||['activate','deactivate','claim','acknowledge','retry'].some(key=>typeof gateway[key]!=='function'))
   throw new TypeError('Authenticated wake gateway required');
  if(!Number.isSafeInteger(maxBodyBytes)||maxBodyBytes<512||maxBodyBytes>16384)
   throw new RangeError('Invalid body bound');
@@ -69,6 +69,7 @@ export function createWakeGatewayHttpHandler({gateway,maxBodyBytes=4096}={}) {
   try {body=await readSmallJson(request,maxBodyBytes);}catch{return response(400,{ok:false,reason:'invalid_body'});}
   const method=routes[url.pathname];
   const permitted=method==='activate'?['hostId','sessionDigest','bindingId','grantId','ttlSeconds']:
+    method==='deactivate'?['hostId','sessionDigest','bindingId','grantId']:
     method==='claim'?
     ['hostId','sessionDigest','bindingId','limit']:
     method==='acknowledge'?
