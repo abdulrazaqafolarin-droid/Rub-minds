@@ -41,7 +41,20 @@ export class CuaDesktopWorkspace {
   }
   async observeWindow({pid,windowId,groupId,sessionId}={}){
     scopeIds(groupId,sessionId);if(await this.approve(Object.freeze({kind:'desktop_observe',pid,windowId,groupId,sessionId}))!==true)throw new Error('Local desktop observation denied');const {state,window,elements}=await this.#snapshot({pid,windowId});
-    const elementOptions=elements.slice(0,250).flatMap(e=>{const elementToken=typeof e?.element_token==='string'?e.element_token:null;if(!elementToken)return [];const role=String(e.role??e.type??'').slice(0,80);const label=String(e.label??'').replace(/[\\u0000-\\u001f\\u007f-\\u009f]/g,' ').slice(0,120);return [Object.freeze({elementToken,role,label,valueEmpty:typeof e.value==='string'&&e.value==='',typeable:/(text|edit|input|document|textarea|combobox)/i.test(role)&&typeof e.value==='string'&&e.value===''})];});
+    const elementOptions = elements.slice(0, 250).flatMap(element => {
+      const elementToken = typeof element?.element_token === 'string' ? element.element_token : null;
+      if (!elementToken) return [];
+      const role = String(element.role ?? element.type ?? '').slice(0, 80);
+      const label = Array.from(String(element.label ?? '')).map(character => {
+        const code = character.codePointAt(0);
+        return code <= 31 || (code >= 127 && code <= 159) || code === 0x2028 || code === 0x2029 ? ' ' : character;
+      }).join('').slice(0, 120);
+      return [Object.freeze({
+        elementToken, role, label,
+        valueEmpty: typeof element.value === 'string' && element.value === '',
+        typeable: /(text|edit|input|document|textarea|combobox)/i.test(role) && typeof element.value === 'string' && element.value === '',
+      })];
+    });
     return Object.freeze({pid,windowId,groupId,sessionId,appName:window.appName,title:window.title,elementCount:elements.length,degraded:state.degraded===true,snapshotId:typeof state.snapshot_id==='string'?state.snapshot_id:null,elements:Object.freeze(elementOptions),state:'observed'});
   }
   async draftText({pid,windowId,elementToken,text,expectedAppName,expectedTitle,groupId,sessionId}={}){
