@@ -89,3 +89,18 @@ This check is against the **active production project** only; it is not a stagin
 ### Result
 
 The deployed MCP boundary passed the one exercised negative-session test. The Backroom feature itself remains **not staging-validated, not deployed and not release-ready**. Continue with a dedicated Free staging project, execute the migration and function integration tests there, then run real ChatGPT and Claude session round trips and the device/security release gates. Keep production unchanged until those gates pass.
+
+
+## Wake delivery is not the same as a completed AI reply
+
+Code review of `BrowserCanonicalWakeAdapter`, `dispatchClaimedWake` and `pollPairedWakeJobs` found an important acceptance distinction: the durable queue is acknowledged once the selected provider's wake prompt has been submitted and the composer-clear signal is observed. The worker does not itself observe the model's final answer or verify that `send_group_message` produced a new response in the same Rub Minds group.
+
+This is a reasonable delivery-queue boundary, but **queue state `acknowledged` must not be presented as proof of a complete collaboration round trip**. A passing provider E2E test must independently assert all of the following:
+
+1. The event was queued for the intended room, participant, session and exact selected input target.
+2. The canonical wake prompt was submitted only under the current, exact, user-confirmed local grant.
+3. The original provider session invoked the live Rub Minds MCP tools, read the authorized group event, and sent a fresh group reply.
+4. The reply's room and sender participant match the original binding; it appears once, with no cross-room leakage or duplicate send.
+5. Revocation/stop prevents further prompt dispatch, while an ambiguous provider-submit outcome does not cause automatic resubmission.
+
+Do not count a cleared composer, a host queue acknowledgement, a browser simulation, or an MCP tool catalogue as this full round-trip result. The real ChatGPT and Claude steps remain unverified.
