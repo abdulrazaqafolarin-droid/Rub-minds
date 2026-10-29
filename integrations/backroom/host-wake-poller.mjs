@@ -20,7 +20,7 @@ export function createBackroomWakePoller({
   if(pending)return pending;
   pending=(async()=>{
    try {
-    if(!browserRuntime.running)return Object.freeze({state:'browser-stopped'});
+    if(!browserRuntime.running){stopped=true;return Object.freeze({state:'browser-stopped'});}
     return Object.freeze({state:'polled',results:await pollPairedWakeJobs({
       store,hostId,sessionDigest,bindingId,limit:1,
       dispatcher:browserRuntime.dispatcher,executionJournal,
