@@ -345,6 +345,13 @@ begin
   select count(*) into v_count from public.backroom_wake_jobs where room_id=v_trigger_room and participant_id=v_trigger_ai;
   if v_count <> 3 then raise exception 'Smart mode must enqueue unmentioned human messages'; end if;
 
+  -- An AI participant's ordinary smart-mode message cannot propagate a wake storm.
+  insert into public.messages(room_id,sender_id,body)
+  values (v_trigger_room,v_trigger_ai,'AI output that should not fan out in smart mode');
+  select count(*) into v_count from public.backroom_wake_jobs
+  where room_id=v_trigger_room and participant_id=v_trigger_ai;
+  if v_count <> 3 then raise exception 'Smart mode must not amplify an AI participant own output'; end if;
+
   update public.backroom_input_bindings set participation_mode='task' where id=v_trigger_binding;
   insert into public.messages(room_id,sender_id,body)
   values (v_trigger_room,v_trigger_human,'Task mode must wait for task events');
