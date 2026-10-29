@@ -48,3 +48,6 @@ verify_jwt = false
 
 [functions.backroom-wake]
 verify_jwt = false
+
+[functions.backroom-config]
+verify_jwt = true
