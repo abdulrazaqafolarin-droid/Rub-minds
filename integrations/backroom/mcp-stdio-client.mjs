@@ -1,6 +1,5 @@
 /** Bounded MCP-over-stdio client for trusted local Backroom runtimes. */
 import { spawn as nodeSpawn } from 'node:child_process';
-import { createInterface } from 'node:readline';
 
 const SAFE_ENV=['PATH','PATHEXT','COMSPEC','PROGRAMFILES','PROGRAMFILES(X86)','HOMEDRIVE','HOMEPATH','HOME','USERPROFILE','TMPDIR','TEMP','TMP','SYSTEMROOT','WINDIR','APPDATA','LOCALAPPDATA','XDG_CONFIG_HOME','XDG_CACHE_HOME','LANG','LC_ALL','VIRTUAL_ENV','UV_PROJECT_ENVIRONMENT'];
 const SECRET=/(?:TOKEN|SECRET|PASSWORD|PRIVATE|SERVICE_ROLE|API_KEY|ACCESS_KEY|CREDENTIAL)/i;
@@ -17,7 +16,7 @@ function makeEnv(source, extra) {
 }
 
 export class McpStdioClient {
-  #child=null; #reader=null; #pending=new Map(); #tools=new Map(); #id=1; #state='stopped'; #stderrSeen=false;
+  #child=null; #pending=new Map(); #tools=new Map(); #id=1; #state='stopped'; #stderrSeen=false; #lineChunks=[]; #lineBytes=0;
   constructor({command,args=[],cwd,env={},sourceEnv=process.env,timeoutMs=12000,spawnImpl=nodeSpawn}={}) {
     if(typeof command!=='string'||!command.trim()||command.includes('\0')) throw new TypeError('Local MCP executable required');
     if(!Array.isArray(args)||args.some(x=>typeof x!=='string'||x.includes('\0'))) throw new TypeError('MCP args must be strings');
@@ -35,8 +34,8 @@ export class McpStdioClient {
     try { child=this.spawnImpl(this.command,[...this.args],{cwd:this.cwd,env:{...this.env},shell:false,windowsHide:true,stdio:['pipe','pipe','pipe']}); }
     catch { this.#state='failed'; throw new Error('Could not launch configured local MCP process'); }
     if(!child?.stdin||!child?.stdout||!child?.stderr||typeof child.once!=='function'){this.#state='failed';throw new Error('MCP process must expose stdio pipes');}
-    this.#child=child; this.#reader=createInterface({input:child.stdout,crlfDelay:Infinity});
-    this.#reader.on('line',line=>this.#onLine(line)); child.stderr.on('data',()=>{this.#stderrSeen=true;});
+    this.#child=child; this.#lineChunks=[];this.#lineBytes=0;
+    child.stdout.on('data',chunk=>this.#onStdout(chunk));child.stdout.on('error',()=>this.#fail('MCP stdout stream failed'));child.stderr.on('data',()=>{this.#stderrSeen=true;});
     child.once('error',()=>this.#fail('MCP subprocess failed'));
     child.once('exit',()=>{if(this.#state!=='closed')this.#state='failed';this.#fail('MCP subprocess exited');});
     try {
@@ -61,6 +60,28 @@ export class McpStdioClient {
     return text.length?text:(result??null);
   }
   async close(){if(this.#state==='closed')return;this.#state='closed';await this.#terminate();}
+  #onStdout(chunk){
+    if(this.#state==='closed'||!Buffer.isBuffer(chunk))return;
+    let offset=0;
+    while(offset<chunk.length){
+      const newline=chunk.indexOf(0x0a,offset);
+      const end=newline<0?chunk.length:newline;
+      const part=chunk.subarray(offset,end);
+      if(this.#lineBytes+part.length>2*1024*1024){
+        this.#lineChunks=[];this.#lineBytes=0;
+        this.#fail('MCP message too large');
+        void this.#terminate();
+        return;
+      }
+      if(part.length){this.#lineChunks.push(part);this.#lineBytes+=part.length;}
+      if(newline<0)return;
+      let line=Buffer.concat(this.#lineChunks,this.#lineBytes).toString('utf8');
+      if(line.endsWith('\r'))line=line.slice(0,-1);
+      this.#lineChunks=[];this.#lineBytes=0;
+      this.#onLine(line);
+      offset=newline+1;
+    }
+  }
   #onLine(line){
     if(Buffer.byteLength(line,'utf8')>2*1024*1024){this.#fail('MCP message too large');void this.#terminate();return;}
     let m;try{m=JSON.parse(line);}catch{return;}
@@ -83,7 +104,7 @@ export class McpStdioClient {
   #notify(method,params){try{this.#child?.stdin?.write(JSON.stringify({jsonrpc:'2.0',method,params})+'\n');}catch{}}
   #fail(message){for(const p of this.#pending.values()){clearTimeout(p.timer);p.reject(new Error(message));}this.#pending.clear();}
   async #terminate(){
-    const child=this.#child;this.#reader?.close();this.#reader=null;this.#fail('MCP client stopped');this.#child=null;
+    const child=this.#child;this.#lineChunks=[];this.#lineBytes=0;this.#fail('MCP client stopped');this.#child=null;
     if(!child||child.exitCode!==null||child.killed)return;
     try{child.kill('SIGTERM');}catch{return;}
     await new Promise(resolve=>{const timer=setTimeout(()=>{try{child.kill('SIGKILL');}catch{}resolve();},1500);timer.unref?.();child.once('exit',()=>{clearTimeout(timer);resolve();});});

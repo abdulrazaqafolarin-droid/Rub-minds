@@ -19,7 +19,7 @@ class FakeMcp {
 const snap=({value='',title='ChatGPT',appName='Chrome'}={})=>({pid:44,window_id:99,title,app_name:appName,elements:[{element_token:'s00000001:1',role:'textbox',value}]});
 class FakeChild extends EventEmitter {
   constructor(){super();this.stdout=new PassThrough();this.stderr=new PassThrough();this.killed=false;this.exitCode=null;
-    this.stdin=new Writable({write:(chunk,enc,cb)=>{try{const q=JSON.parse(chunk.toString().trim());if(q.id!==undefined){const result=q.method==='initialize'?{protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'fake',version:'1'}}:q.method==='tools/list'?{tools:[{name:'fixture_tool'}]}:{content:[{type:'text',text:JSON.stringify({echo:q.params.arguments})}]};queueMicrotask(()=>this.stdout.write(JSON.stringify({jsonrpc:'2.0',id:q.id,result})+'\n'));}cb();}catch(e){cb(e);}}});
+    this.stdin=new Writable({write:(chunk,enc,cb)=>{try{const q=JSON.parse(chunk.toString().trim());if(q.id!==undefined){const result=q.method==='initialize'?{protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'fake',version:'1'}}:q.method==='tools/list'?{tools:[{name:'fixture_tool'}]}:{content:[{type:'text',text:JSON.stringify({echo:q.params.arguments})}]};queueMicrotask(()=>{if(this.oversizedTools&&q.method==='tools/list')this.stdout.write('x'.repeat(2*1024*1024+1));else this.stdout.write(JSON.stringify({jsonrpc:'2.0',id:q.id,result})+'\n');});}cb();}catch(e){cb(e);}}});
   }
   kill(){this.killed=true;this.exitCode=0;queueMicrotask(()=>this.emit('exit',0,null));return true;}
 }
@@ -58,6 +58,14 @@ test('MCP stdio client initializes and calls only advertised tools without shell
  assert.deepEqual(await client.callTool('fixture_tool',{x:2}),{echo:{x:2}});await assert.rejects(client.callTool('not-advertised',{}),/not advertised/);await client.close();assert.equal(client.status.state,'closed');
 });
 test('MCP child rejects credential-looking ad-hoc environment values',()=>assert.throws(()=>new McpStdioClient({command:'artemis',env:{GOOGLE_API_KEY:'secret'}}),/Credential-like/));
+
+test('MCP stdout enforces its line cap before newline framing can buffer an oversized message',async()=>{
+ let child;
+ const client=new McpStdioClient({command:'/local/mcp',spawnImpl:()=>{child=new FakeChild({oversizedTools:true});return child;},timeoutMs:2000});
+ await assert.rejects(client.start(),/did not complete initialization/);
+ assert.equal(child.killed,true);
+});
+
 
 test('CUA desktop demands owner approval, fresh identity, empty text field and readback',async()=>{
  let current=snap(),approved=false;const client=new FakeMcp(['list_windows','get_window_state','click','type_text'],async(name,args)=>{
