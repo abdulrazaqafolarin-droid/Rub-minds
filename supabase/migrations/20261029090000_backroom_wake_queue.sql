@@ -601,6 +601,81 @@ begin
 end;
 $expire$;
 
+-- Wake only enabled, consented AI bindings for new group messages. Message bodies never enter the prompt.
+create or replace function public.enqueue_backroom_wake_jobs_for_message()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $message_wake$
+declare
+  v_binding record;
+  v_prompt text;
+  v_job_key text;
+  v_mention_position integer;
+  v_after_mention text;
+begin
+  if new.id is null or new.room_id is null or new.sender_id is null or new.body is null then
+    return new;
+  end if;
+
+  for v_binding in
+    select b.*, p.display_name
+    from public.backroom_input_bindings b
+    join public.participants p on p.id=b.participant_id and p.room_id=b.room_id
+    join public.rooms r on r.id=b.room_id and r.owner_id=b.owner_id
+    join public.agent_connections a on a.room_id=r.id and a.participant_id=p.id
+      and a.owner_id=r.owner_id and a.revoked_at is null
+      and a.expires_at > pg_catalog.clock_timestamp()
+    join public.rub_minds_mcp_sessions s on s.session_digest=b.session_digest
+      and s.room_id=b.room_id and s.participant_id=p.id
+      and s.agent_credential_ciphertext is not null and s.terminated_at is null
+      and s.expires_at > pg_catalog.clock_timestamp()
+    where b.room_id=new.room_id
+      and b.participant_id <> new.sender_id
+      and p.kind in ('original_session','model','external_agent')
+      and b.participation_mode in ('mentions','smart')
+      and b.wake_enabled=true and b.confirmed_at is not null
+      and b.wake_expires_at > pg_catalog.clock_timestamp()
+      and b.revoked_at is null
+  loop
+    if v_binding.participation_mode='mentions' then
+      v_mention_position := position('@'||lower(v_binding.display_name) in lower(new.body));
+      if v_mention_position=0 then continue; end if;
+      v_after_mention := substring(lower(new.body) from v_mention_position+char_length(v_binding.display_name)+1 for 1);
+      if v_after_mention ~ '[[:alnum:]_]' then continue; end if;
+    end if;
+
+    v_prompt := '@RMconnects'||pg_catalog.chr(10)||'Event: '||new.id::text||pg_catalog.chr(10)||
+      'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.';
+    v_job_key := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+      pg_catalog.jsonb_build_array(new.room_id::text,new.id::text,v_binding.participant_id::text,v_binding.id::text)::text,
+      'UTF8')),'hex');
+
+    begin
+      perform public.enqueue_backroom_wake_job(
+        v_job_key,v_binding.owner_id,new.room_id,v_binding.participant_id,
+        v_binding.host_id,v_binding.space_id,v_binding.session_id,v_binding.session_digest,
+        v_binding.id,v_binding.target_id,v_binding.target_identity_fingerprint,v_binding.target_revision,
+        new.id::text,v_prompt,3600);
+    exception when others then
+      -- Queue overload/revocation must not roll back the user-authored message.
+      -- Do not log the message body or the raw exception text.
+      raise warning 'Backroom wake skipped: sqlstate %, message id %, binding id %', SQLSTATE, new.id, v_binding.id;
+    end;
+  end loop;
+
+  return new;
+end;
+$message_wake$;
+
+revoke all on function public.enqueue_backroom_wake_jobs_for_message() from public, anon, authenticated;
+grant execute on function public.enqueue_backroom_wake_jobs_for_message() to service_role;
+drop trigger if exists messages_enqueue_backroom_wake_jobs_after_insert on public.messages;
+create trigger messages_enqueue_backroom_wake_jobs_after_insert
+after insert on public.messages
+for each row execute function public.enqueue_backroom_wake_jobs_for_message();
+
 revoke all on function public.enqueue_backroom_wake_job(text,uuid,uuid,uuid,text,text,text,text,uuid,text,text,integer,text,text,integer) from public, anon, authenticated;
 revoke all on function public.claim_backroom_wake_jobs(text,text,uuid,integer,integer) from public, anon, authenticated;
 revoke all on function public.ack_backroom_wake_job(uuid,text,text,uuid,text,text) from public, anon, authenticated;
