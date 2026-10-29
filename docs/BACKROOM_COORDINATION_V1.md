@@ -150,3 +150,8 @@ The full Node suites and the build passed after fixing the content-type regex, i
 - Browser-draft, selection-overlay, and local-host end-to-end tests passed in controlled local pages. These do **not** test real logged-in ChatGPT/Claude sessions, customer account permissions, production tool integration, or remote server grant revocation.
 - The earlier browser-environment blocker is superseded by the passing controlled Chromium run recorded above. Native PostgreSQL CI, Deno/Edge staging validation, provider interoperability, and production authorization remain release blockers.
 
+## Chromium acceptance follow-up — 2026-10-29
+
+In a disposable Amazon Linux Node 22 sandbox, Chromium initially crashed because `libnspr4.so` was absent. A separate packaged Chromium binary plus its included `al2023.tar.br` libraries resolved this dependency. A subsequent browser failure was traced to missing Fontconfig configuration (`SkFontMgr_FontConfigInterface.cpp: Not implemented`); the packaged font archive supplied `/tmp/fonts/fonts.conf`.
+
+With environment variables `CHROMIUM_PATH=/tmp/chromium`, `LD_LIBRARY_PATH=/tmp/al2023/lib`, and `FONTCONFIG_PATH=/tmp/fonts`, the unmodified test command `node --test integrations/backroom/browser-draft.browser-test.mjs` completed **1 test, 1 passed, 0 failed**. It is a real controlled Chromium composer, **not** a real ChatGPT or Claude session. The overlay and host E2E browser cases have **not** been confirmed passing; the temporary sandbox stopped before those runs. The overall browser test gate therefore remains unpassed, despite the corrected draft subtest.
