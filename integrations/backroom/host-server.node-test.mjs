@@ -576,7 +576,7 @@ test("paired host stop route requires auth and calls the wake service stop hook"
   const response=await fetch(base+"/v1/backroom/stop",{method:"POST",
    headers:{Origin:origin,Authorization:"Bearer "+token}});
   assert.equal(response.status,200);
-  assert.deepEqual(await response.json(),{stopped:true,remoteDeactivationConfirmed:true});
+  assert.deepEqual(await response.json(),{stopped:true,bindingId:null,remoteDeactivationConfirmed:true});
   assert.equal(stopped,1);
  },{wakeService});
 });
