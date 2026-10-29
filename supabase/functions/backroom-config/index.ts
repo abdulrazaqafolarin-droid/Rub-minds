@@ -184,7 +184,7 @@ Deno.serve(async req=>{
   if(bindingDecision.action==='conflict')
    return json(409,{ok:false,reason:bindingDecision.reason,
      ...(bindingDecision.bindingId?{bindingId:bindingDecision.bindingId}:{}),
-     ...(bindingDecision.wakeEnabled===undefined?{}:{wakeEnabled:bindingDecision.wakeEnabled}),
+     ...('wakeEnabled' in bindingDecision?{wakeEnabled:bindingDecision.wakeEnabled}:{}),
      ...(bindingDecision.requiresHostRevoke?{requiresHostRevoke:true}:{})},origin);
   const {data,error}=await db.from('backroom_input_bindings').insert({
    owner_id:ownerId,room_id:input.roomId,participant_id:input.participantId,
