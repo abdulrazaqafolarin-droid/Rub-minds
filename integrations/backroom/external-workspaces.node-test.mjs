@@ -413,7 +413,7 @@ test('terminal refuses arbitrary sandbox names, unapproved commands and path tra
  assert.throws(()=>new CuaSandboxTerminalWorkspace({sandboxName:'dev',authorizeLocalAction:async()=>true}),/Dedicated rm-backroom/);
  const root=await projectFixture(),calls=[];
  try{
-  const d=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-test-0001',projectSourcePath:root,authorizeLocalAction:async a=>a.kind==='terminal_project_sync',spawnImpl:fakeSpawn([{code:0}],calls)});
+  const d=new CuaSandboxTerminalWorkspace({sandboxName:'rm-backroom-test-0001',projectSourcePath:root,authorizeLocalAction:async a=>a.kind==='terminal_sandbox_create'||a.kind==='terminal_project_sync',spawnImpl:fakeSpawn([{code:0}],calls)});
   await d.start({groupId:'group-1',sessionId:'session-1'});await d.syncProject({groupId:'g',sessionId:'s'});
   await assert.rejects(d.exec({command:['npm','test'],purpose:'test',groupId:'g',sessionId:'s'}),/denied/);
   await assert.rejects(d.exec({command:['npm','test'],purpose:'test',groupId:'g',sessionId:'s',cwd:'../escape'}),/cwd/);
