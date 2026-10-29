@@ -135,6 +135,8 @@ declare
   v_existing public.backroom_wake_jobs%rowtype;
   v_prompt_digest text;
   v_pending_count integer;
+  v_recent_count integer;
+  v_binding_rate_limit integer;
 begin
   if p_job_key is null or p_job_key !~ '^[0-9a-f]{64}$'
     or p_session_digest is null or p_session_digest !~ '^[0-9a-f]{64}$' then
@@ -227,12 +229,26 @@ begin
     return pg_catalog.jsonb_build_object('job_id', v_existing.id, 'created', false, 'state', v_existing.state);
   end if;
 
+  select b.max_wakes_per_minute into v_binding_rate_limit
+  from public.backroom_input_bindings b
+  where b.id=p_binding_id and b.revoked_at is null and b.wake_enabled=true;
+  if v_binding_rate_limit is null then
+    raise exception 'Backroom input binding is not enabled for this wake';
+  end if;
+  select count(*) into v_recent_count
+  from public.backroom_wake_jobs j
+  where j.binding_id=p_binding_id
+    and j.created_at >= pg_catalog.clock_timestamp()-interval '1 minute';
+  if v_recent_count >= v_binding_rate_limit then
+    raise exception 'Backroom wake rate limit reached for input binding';
+  end if;
+
   select count(*) into v_pending_count
   from public.backroom_wake_jobs j
-  where j.session_digest = p_session_digest and j.state in ('pending','leased')
+  where j.binding_id=p_binding_id and j.state in ('pending','leased')
     and j.expires_at > pg_catalog.clock_timestamp();
   if v_pending_count >= 100 then
-    raise exception 'Backroom wake queue is full for this session';
+    raise exception 'Backroom wake queue is full for this input binding';
   end if;
 
   insert into public.backroom_wake_jobs (
