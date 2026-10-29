@@ -27,7 +27,15 @@ export function createBackroomWakePoller({
       resolveContext:scope=>browserRuntime.resolveClaimedWakeContext(scope),
       verifyApproval:(approval,context)=>browserRuntime.verifyClaimedWakeGrant(approval,context)
     })});
-   }catch{return Object.freeze({state:'unavailable'});}
+   }catch(error){
+    if(error?.code==='REMOTE_BACKROOM_UNAUTHORIZED'){
+     // A server-side host/binding revoke is authoritative. Stop retrying instead
+     // of polling a permanently revoked credential every interval.
+     stopped=true;
+     return Object.freeze({state:'unauthorized'});
+    }
+    return Object.freeze({state:'unavailable'});
+   }
   })();
   try{return await pending;}
   finally{pending=null;}
