@@ -618,7 +618,7 @@ export async function rotateBackroomHostIdentity() {
     "Start the host with: npm run backroom:host",
     "Register this new host from the signed-in Rub Minds UI. The prior revoked host stays revoked.",
     ""
-  ].join("\\n"));
+  ].join("\n"));
   return Object.freeze({hostId:identity.hostId,credentialDigest:identity.credentialDigest});
 }
 
