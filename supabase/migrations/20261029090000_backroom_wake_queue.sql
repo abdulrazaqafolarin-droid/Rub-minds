@@ -786,3 +786,43 @@ $revoke_host$;
 
 revoke all on function public.revoke_backroom_host(text,uuid) from public, anon, authenticated;
 grant execute on function public.revoke_backroom_host(text,uuid) to service_role;
+
+
+-- Owner-scoped input revocation lets the owner rebind a changed composer without
+-- destroying the whole host. Consent and queued jobs are removed transactionally.
+create or replace function public.revoke_backroom_input_binding(
+  p_binding_id uuid,
+  p_owner_id uuid
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $revoke_binding$
+declare
+  v_changed integer;
+  v_now timestamptz := pg_catalog.clock_timestamp();
+begin
+  if p_binding_id is null or p_owner_id is null then
+    raise exception 'Invalid Backroom input revocation';
+  end if;
+
+  update public.backroom_input_bindings
+  set wake_enabled = false, wake_grant_id = null, confirmed_at = null,
+      wake_expires_at = null, revoked_at = v_now, updated_at = v_now
+  where id = p_binding_id and owner_id = p_owner_id and revoked_at is null;
+  get diagnostics v_changed = row_count;
+  if v_changed <> 1 then return false; end if;
+
+  update public.backroom_wake_jobs
+  set state = 'cancelled', lease_owner = null, lease_token_hash = null,
+      lease_expires_at = null, last_error_code = 'authorization_denied',
+      updated_at = v_now
+  where binding_id = p_binding_id and state in ('pending','leased');
+
+  return true;
+end;
+$revoke_binding$;
+
+revoke all on function public.revoke_backroom_input_binding(uuid,uuid) from public, anon, authenticated;
+grant execute on function public.revoke_backroom_input_binding(uuid,uuid) to service_role;
