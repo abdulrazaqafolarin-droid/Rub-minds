@@ -285,6 +285,21 @@ export class ArtemisAndroidWorkspace {
   }
   #task({traceId,deviceSerial,groupId,sessionId}={}){scopeIds(groupId,sessionId);if(typeof traceId!=='string'||!ID.test(traceId))throw new TypeError('Valid trace ID required');const t=this.tasks.get(traceId);if(!t||t.deviceSerial!==deviceSerial||t.groupId!==groupId||t.sessionId!==sessionId)throw new Error('ARTEMIS task scope mismatch');return t;}
   async status(input={}){const t=this.#task(input);await this.#require(['mobile_manage_task']);const r=await this.client.callTool('mobile_manage_task',{action:'status',trace_id:t.traceId});if((r?.trace_id??r?.traceId)!==t.traceId)throw new Error('ARTEMIS trace mismatch');if(r.device_serial&&r.device_serial!==t.deviceSerial)throw new Error('ARTEMIS device mismatch');return Object.freeze({traceId:t.traceId,deviceSerial:t.deviceSerial,status:String(r.status??'unknown'),elapsedSeconds:Number.isFinite(r.elapsed_seconds)?r.elapsed_seconds:null,result:r.result??null,error:r.status==='failed'?String(r.error??'task_failed').slice(0,500):null,testSummary:r.test_summary??null});}
+  async inspect(input={}){
+    const t=this.#task(input);
+    const action=input.action??'view_summary';
+    if(!['view_summary','search'].includes(action))throw new TypeError('ARTEMIS trace action is not allowlisted');
+    const query=input.query;
+    if(action==='search'&&(typeof query!=='string'||!query.trim()||query.length>200||CONTROL.test(query)))throw new TypeError('Trace search requires bounded safe query text');
+    if(action==='view_summary'&&query!==undefined)throw new TypeError('Trace summaries do not accept a search query');
+    if(await this.approve(Object.freeze({kind:'android_trace_inspect',traceId:t.traceId,deviceSerial:t.deviceSerial,appPackage:t.appPackage,groupId:t.groupId,sessionId:t.sessionId,action,query:query??null,sharedToGroup:false}))!==true)throw new Error('Local Android trace inspection denied');
+    await this.#require(['mobile_inspect_trace']);
+    const args={action,trace_id:t.traceId,...(action==='search'?{query:query.trim(),max_results:5}:{})};
+    const r=await this.client.callTool('mobile_inspect_trace',args);
+    const summary=typeof r==='string'?r:JSON.stringify(r);
+    if(HIGH_CONFIDENCE_SECRET.test(summary))return Object.freeze({state:'needs_review',traceId:t.traceId,deviceSerial:t.deviceSerial,action,summary:'Potential credential material detected in the trace. Output was withheld from the Backroom panel.',truncated:false});
+    return Object.freeze({state:'completed',traceId:t.traceId,deviceSerial:t.deviceSerial,action,summary:summary.slice(0,16000),truncated:summary.length>16000,sharedToGroup:false});
+  }
   async stop(input={}){const t=this.#task(input);if(await this.approve(Object.freeze({kind:'android_task_stop',traceId:t.traceId,deviceSerial:t.deviceSerial,appPackage:t.appPackage,groupId:t.groupId,sessionId:t.sessionId}))!==true)throw new Error('Local Android stop denied');await this.#require(['mobile_manage_task']);const r=await this.client.callTool('mobile_manage_task',{action:'stop',trace_id:t.traceId});return Object.freeze({traceId:t.traceId,stopped:r?.status==='cancelled'||r?.stopped===true||r?.success===true});}
   async observe({deviceSerial,appPackage,groupId,sessionId}={}){androidScope(deviceSerial,appPackage,this.devices,this.packages);scopeIds(groupId,sessionId);if(await this.approve(Object.freeze({kind:'android_observe',deviceSerial,appPackage,groupId,sessionId}))!==true)throw new Error('Local Android observation denied');await this.#require(['mobile_get_device_state']);const r=await this.client.callTool('mobile_get_device_state',{view_type:'hierarchy',device_serial:deviceSerial});const text=typeof r==='string'?r:JSON.stringify(r);if(/^Error:/i.test(text))throw new Error('ARTEMIS device inspection failed');return Object.freeze({deviceSerial,appPackage,groupId,sessionId,hierarchy:text.slice(0,16000)});}
   get statusSummary(){const tools=this.client?.status?.tools??[];const required=['mobile_run_task','mobile_manage_task','mobile_get_device_state'];return Object.freeze({available:required.every(name=>tools.includes(name)),trackedTasks:this.tasks.size,tools:Object.freeze([...tools])});}
@@ -510,6 +525,7 @@ export function createExternalWorkspaceService({desktop=null,android=null,termin
     async diagnoseAndroid(input){if(stopped||!android)throw new Error('android_workspace_unavailable');return android.diagnose(input);},
     async runAndroidTask(input){if(stopped||!android)throw new Error('android_workspace_unavailable');return android.runTask(input);},
     async androidTaskStatus(input){if(stopped||!android)throw new Error('android_workspace_unavailable');return android.status(input);},
+    async inspectAndroidTask(input){if(stopped||!android)throw new Error('android_workspace_unavailable');return android.inspect(input);},
     async stopAndroidTask(input){if(stopped||!android)throw new Error('android_workspace_unavailable');return android.stop(input);},
     async observeAndroid(input){if(stopped||!android)throw new Error('android_workspace_unavailable');return android.observe(input);},
     async execTerminal(input){if(stopped||!terminal)throw new Error('terminal_workspace_unavailable');return terminal.exec(input);},

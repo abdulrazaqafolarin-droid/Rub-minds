@@ -201,6 +201,26 @@ test('ARTEMIS diagnostics require local approval, scope and only call the diagno
  assert.equal(service.status().capabilities.android,false);assert.equal(service.status().android.diagnoseAvailable,true);
 });
 
+test('ARTEMIS trace summary/search is locally approved, bounded and bound to an owned trace',async()=>{
+ let approved=false;const client=new FakeMcp(['mobile_run_task','mobile_manage_task','mobile_inspect_trace'],async(name,args)=>{
+  if(name==='mobile_run_task')return {trace_id:'trace-inspect-1',status:'running'};
+  if(name==='mobile_inspect_trace')return {trace_id:args.trace_id,action:args.action,query:args.query??null,steps:[{step_number:1,status:'completed'}]};
+  throw Error(name);
+ });
+ const d=new ArtemisAndroidWorkspace({client,allowedDevices:['device-1'],allowedPackages:['com.example.app'],authorizeLocalAction:async action=>action.kind!=='android_trace_inspect'||approved});
+ const job=await d.runTask({deviceSerial:'device-1',appPackage:'com.example.app',task:'Inspect the currently visible app and stop',groupId:'group-1',sessionId:'session-1'});
+ await assert.rejects(d.inspect({traceId:job.traceId,deviceSerial:job.deviceSerial,groupId:'group-1',sessionId:'session-1',action:'view_summary'}),/denied/);
+ approved=true;
+ const result=await d.inspect({traceId:job.traceId,deviceSerial:job.deviceSerial,groupId:'group-1',sessionId:'session-1',action:'view_summary'});
+ assert.equal(result.state,'completed');assert.equal(result.sharedToGroup,false);assert.match(result.summary,/step_number/);
+ const call=client.calls.filter(x=>x.name==='mobile_inspect_trace').at(-1);
+ assert.deepEqual(call.args,{action:'view_summary',trace_id:'trace-inspect-1'});
+ const search=await d.inspect({traceId:job.traceId,deviceSerial:job.deviceSerial,groupId:'group-1',sessionId:'session-1',action:'search',query:'send button'});
+ assert.equal(search.action,'search');assert.equal(client.calls.filter(x=>x.name==='mobile_inspect_trace').at(-1).args.max_results,5);
+ await assert.rejects(d.inspect({traceId:job.traceId,deviceSerial:job.deviceSerial,groupId:'group-2',sessionId:'session-1',action:'view_summary'}),/task scope mismatch/);
+ await assert.rejects(d.inspect({traceId:job.traceId,deviceSerial:job.deviceSerial,groupId:'group-1',sessionId:'session-1',action:'view_step_details'}),/not allowlisted/);
+});
+
 test('ARTEMIS cannot manage an unknown trace',async()=>{const d=new ArtemisAndroidWorkspace({client:new FakeMcp(['mobile_manage_task'],async()=>({status:'completed'})),allowedDevices:['device'],allowedPackages:['com.example.app'],authorizeLocalAction:async()=>true});await assert.rejects(d.status({traceId:'unknown',deviceSerial:'device',groupId:'g',sessionId:'s'}),/task scope mismatch/);});
 
 test('safe project archive excludes VCS data, dependencies, environment secrets and symlinks',async()=>{

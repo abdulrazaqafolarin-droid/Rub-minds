@@ -6,7 +6,7 @@
 |---|---|---|
 | Desktop/native | CUA Driver MCP tools include list_windows, get_window_state and type_text; elements are snapshot-token addressed and actions return effect/verification signals. | Selected PID/window, fresh tree, exact element token, explicitly empty text control, owner-approved draft and readback. This first adapter does not press Enter or Send. |
 | Terminal | CUA sandbox CLI can create local sandboxes and run commands. Its --stdin path executes argv without joining arguments into a shell line. | Dedicated local gVisor container, approved command argv, timeout/output cap, no host shell fallback and verified sandbox removal. |
-| Android automation | ARTEMIS MCP provides mobile_run_task, mobile_manage_task, mobile_get_device_state, mobile_inspect_trace and mobile_diagnose. Its task runner is asynchronous and returns a trace ID. | Host-local device/package allowlists, explicit approval, package locking, trace-bound status/stop and inspected hierarchy. |
+| Android automation | ARTEMIS MCP provides mobile_run_task, mobile_manage_task, mobile_get_device_state, mobile_inspect_trace and mobile_diagnose. Its task runner is asynchronous and returns a trace ID. | Host-local device/package allowlists, explicit approval, package locking, trace-bound status/stop, local trace summary/search and inspected hierarchy. |
 | Android dual space | The uploaded CHATGPT_BUNDLE.md and README.md define TwinSpace as an Android managed/work-profile companion using public platform APIs. | Isolated app copy/data is a separate companion-app track. A clone-space manager is neither a UI automation engine nor a trusted host-agent identity. |
 
 ## Official references consulted
@@ -31,7 +31,7 @@ Every operation is bound to a real app, PID, window ID, group and AI session. CU
 
 ## Android behavior
 
-ARTEMIS is an asynchronous task engine, not a generic text-input driver. The host allowlists serials and package names locally and binds run/status/stop to the trace and original group/session. The adapter sets the package lock and strict verification profile. Inspect trace, result and logs before reporting completion. Never manage an arbitrary trace from an untrusted message. Physical-device acceptance remains required.
+ARTEMIS is an asynchronous task engine, not a generic text-input driver. The host allowlists serials and package names locally and binds run/status/stop/trace-inspection to the trace and original group/session. Trace output remains local and requires an additional owner approval. The adapter sets the package lock and strict verification profile. Inspect trace, result and logs before reporting completion. Never manage an arbitrary trace from an untrusted message. Physical-device acceptance remains required.
 
 ## Terminal behavior
 

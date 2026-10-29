@@ -10,6 +10,7 @@ type DesktopObservation = {pid:number;windowId:number;groupId:string;sessionId:s
 type AndroidTask = {traceId:string;deviceSerial:string;appPackage:string;groupId:string;sessionId:string;status:string;message?:string|null};
 type AndroidStatus = {traceId:string;deviceSerial:string;status:string;elapsedSeconds:number|null;result:unknown;error:string|null;testSummary:unknown};
 type AndroidHierarchy = {deviceSerial:string;appPackage:string;groupId:string;sessionId:string;hierarchy:string};
+type AndroidTrace = {state:string;traceId:string;deviceSerial:string;action:'view_summary'|'search';summary:string;truncated:boolean;sharedToGroup:false};
 type TerminalResult = {state:string;exitCode:number;stdout:string;stderr:string;sandboxName:string};
 type TerminalDiff = {state:string;patch:string;bytes:number;sha256:string;empty?:boolean;paths?:string[];exportKey?:string|null;applyAvailable?:boolean;appliedToHost?:false;destination?:string;reason?:string};
 type TerminalApplyResult = {state:string;appliedToHost:boolean;committed:false;pushed:false;sha256:string;paths:string[];repositoryRoot:string};
@@ -33,6 +34,8 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
   const [androidResult,setAndroidResult]=useState<AndroidStatus|null>(null);
   const [androidHierarchy,setAndroidHierarchy]=useState('');
   const [androidDiagnosis,setAndroidDiagnosis]=useState<unknown>(null);
+  const [androidTraceQuery,setAndroidTraceQuery]=useState('');
+  const [androidTrace,setAndroidTrace]=useState<AndroidTrace|null>(null);
   const [terminalArgv,setTerminalArgv]=useState(runArgvDefault);
   const [terminalCwd,setTerminalCwd]=useState('/workspace/project');
   const [terminalPurpose,setTerminalPurpose]=useState('Run the selected Backroom verification command in the local sandbox');
@@ -41,7 +44,7 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
   const [terminalApplyResult,setTerminalApplyResult]=useState<TerminalApplyResult|null>(null);
   const selectedSession=useMemo(()=>sessions.find(s=>s.sessionDigest===selectedSessionDigest)??null,[sessions,selectedSessionDigest]);
   const scope=useMemo(()=>selectedSession&&roomId?{groupId:roomId,sessionId:selectedSession.participantId}:null,[roomId,selectedSession]);
-  useEffect(()=>{setTerminalDiff(null);setTerminalApplyResult(null);},[roomId,selectedSessionDigest]);
+  useEffect(()=>{setTerminalDiff(null);setTerminalApplyResult(null);setAndroidTrace(null);setAndroidResult(null);},[roomId,selectedSessionDigest]);
   const selectedWindow=useMemo(()=>desktopWindows.find(w=>(String(w.pid)+':'+String(w.windowId))===selectedWindowKey)??null,[desktopWindows,selectedWindowKey]);
   const selectedElement=useMemo(()=>observation?.elements.find(e=>e.elementToken===selectedElementToken)??null,[observation,selectedElementToken]);
   const jobMatchesScope=!!(androidJob&&scope&&androidJob.groupId===scope.groupId&&androidJob.sessionId===scope.sessionId);
@@ -99,13 +102,22 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
     if(!scope||!deviceSerial.trim()||!appPackage.trim()||!androidTask.trim()){setNotice('Select a joined AI session and fill the host-allowlisted device, app package and task.');return;}
     if(!window.confirm('Request the local host to run this bounded task on the exact allowlisted device/app? ARTEMIS is asynchronous; status is tracked by its trace ID.'))return;
     const result=await action(()=>hostApi<AndroidTask>('/v1/workspaces/android/tasks',{method:'POST',body:{...scope,deviceSerial:deviceSerial.trim(),appPackage:appPackage.trim(),task:androidTask}}));
-    if(result){setAndroidJob(result);setAndroidResult(null);setAndroidHierarchy('');setNotice('ARTEMIS accepted task '+result.traceId+'. This means queued/running, not that the task succeeded.');}
+    if(result){setAndroidJob(result);setAndroidResult(null);setAndroidHierarchy('');setAndroidTrace(null);setNotice('ARTEMIS accepted task '+result.traceId+'. This means queued/running, not that the task succeeded.');}
   }
   async function androidStatus(){
     if(!androidJob||!jobMatchesScope){setNotice('This task belongs to a different group or AI session. Re-select its original scope to manage it.');return;}
     const result=await action(()=>hostApi<AndroidStatus>('/v1/workspaces/android/task-status',{method:'POST',body:{traceId:androidJob.traceId,deviceSerial:androidJob.deviceSerial,groupId:androidJob.groupId,sessionId:androidJob.sessionId}}));
     if(result){setAndroidResult(result);setNotice('ARTEMIS task status: '+result.status+'. Check verification details and the actual device before reporting success.');}
   }
+  async function inspectAndroidTrace(inspectAction:'view_summary'|'search'='view_summary'){
+    if(!androidJob||!jobMatchesScope){setNotice('Select the task original group/session before inspecting its trace.');return;}
+    const query=androidTraceQuery.trim();
+    if(inspectAction==='search'&&(!query||query.length>200)){setNotice('Enter a trace search query of at most 200 characters.');return;}
+    if(!window.confirm('Inspect the local ARTEMIS task trace? The host will ask for separate local approval. Trace output may contain private on-screen text and will remain in this local panel, not group memory.'))return;
+    const result=await action(()=>hostApi<AndroidTrace>('/v1/workspaces/android/task-inspect',{method:'POST',body:{traceId:androidJob.traceId,deviceSerial:androidJob.deviceSerial,groupId:androidJob.groupId,sessionId:androidJob.sessionId,action:inspectAction,...(inspectAction==='search'?{query}:{})}}));
+    if(result){setAndroidTrace(result);setNotice(result.state==='completed'?'ARTEMIS trace inspected locally. It has not been shared with the group.':result.summary);}
+  }
+
   async function stopAndroid(){
     if(!androidJob||!jobMatchesScope){setNotice('This task belongs to a different group or AI session.');return;}
     if(!window.confirm('Ask ARTEMIS to stop this task on the original device? The local host will request a separate approval.'))return;
@@ -190,9 +202,10 @@ export default function ExternalWorkspacePanel({hostToken,roomId,hostApi,session
           <label htmlFor="br-android-package">App package (allowlisted)</label><input id="br-android-package" value={appPackage} onChange={e=>setAppPackage(e.target.value)} placeholder="com.example.app" autoCapitalize="none" disabled={busy}/>
           <label htmlFor="br-android-task">Task instruction</label><textarea id="br-android-task" rows={3} maxLength={3500} value={androidTask} onChange={e=>setAndroidTask(e.target.value)} disabled={busy}/>
           <div className="br-external-actions"><button type="button" className="br-secondary" disabled={busy||!scope||!deviceSerial.trim()||!appPackage.trim()} onClick={()=>void inspectAndroid()}><Eye size={14}/> Inspect hierarchy</button><button type="button" className="br-primary" disabled={busy||!scope} onClick={()=>void runAndroid()}><Play size={14}/> Start ARTEMIS task</button></div>
-          {androidJob&&<div className="br-task-result"><b>Trace: {androidJob.traceId}</b><span>{jobMatchesScope?'Bound to current group/session':'Belongs to the group/session selected at launch'}</span><div className="br-external-actions"><button className="br-secondary" disabled={busy||!jobMatchesScope} onClick={()=>void androidStatus()}>Check status</button><button className="br-danger-action" disabled={busy||!jobMatchesScope} onClick={()=>void stopAndroid()}><Square size={13}/> Request stop</button></div></div>}
+          {androidJob&&<div className="br-task-result"><b>Trace: {androidJob.traceId}</b><span>{jobMatchesScope?'Bound to current group/session':'Belongs to the group/session selected at launch'}</span><div className="br-external-actions"><button className="br-secondary" disabled={busy||!jobMatchesScope} onClick={()=>void androidStatus()}>Check status</button><button className="br-secondary" disabled={busy||!jobMatchesScope} onClick={()=>void inspectAndroidTrace('view_summary')}><Eye size={13}/> Inspect trace</button><button className="br-danger-action" disabled={busy||!jobMatchesScope} onClick={()=>void stopAndroid()}><Square size={13}/> Request stop</button></div><div className="br-external-actions"><input aria-label="Trace search query" value={androidTraceQuery} onChange={e=>setAndroidTraceQuery(e.target.value)} placeholder="Search trace steps" maxLength={200} disabled={busy||!jobMatchesScope}/><button className="br-secondary" disabled={busy||!jobMatchesScope||!androidTraceQuery.trim()} onClick={()=>void inspectAndroidTrace('search')}>Search trace</button></div></div>}
           {androidResult&&<pre className="br-runtime-output">{JSON.stringify(androidResult,null,2)}</pre>}
           {androidDiagnosis!==null&&<><label>Local ARTEMIS readiness report</label><pre className="br-runtime-output">{JSON.stringify(androidDiagnosis,null,2)}</pre></>}
+          {androidTrace&&<><label>Local-only ARTEMIS trace · {androidTrace.action}</label><pre className="br-runtime-output">{androidTrace.summary}{androidTrace.truncated?'\n[Truncated to 16 KB]':''}</pre><p>This trace stays in the local panel and is not automatically shared with the group.</p></>}
           {androidHierarchy&&<><label>Local-only UI hierarchy</label><pre className="br-runtime-output">{androidHierarchy}</pre></>}
         </>}
       </section>

@@ -43,6 +43,15 @@ test('terminal diff route carries scope and returns a review-only patch without 
  assert.equal(x.response.status,200);assert.equal(seen.groupId,'group-1');assert.equal(seen.sessionId,'session-1');assert.equal(x.response.body.patch,patch);assert.equal(x.response.body.appliedToHost,false);
 });
 
+test('ARTEMIS task-inspect route forwards only bounded trace inspection fields',async()=>{
+ let seen;
+ const x=f({body:{traceId:'trace-1',deviceSerial:'device-1',action:'search',query:'visible text',groupId:'group-1',sessionId:'session-1'},runtime:{inspectAndroidTask:async input=>{seen=input;return {state:'completed',traceId:input.traceId,action:input.action,summary:'local trace only',sharedToGroup:false};}}});
+ await handleWorkspaceHttpRequest({...x,url:new URL('http://127.0.0.1/v1/workspaces/android/task-inspect')});
+ assert.equal(x.response.status,200);assert.equal(seen.traceId,'trace-1');assert.equal(seen.action,'search');assert.equal(x.response.body.sharedToGroup,false);
+ const bad=f({body:{traceId:'trace-1',deviceSerial:'device-1',action:'search',query:'q',groupId:'g',sessionId:'s',rawTrace:'forged'},runtime:{inspectAndroidTask:async()=>{throw Error('must not execute');}}});
+ await handleWorkspaceHttpRequest({...bad,url:new URL('http://127.0.0.1/v1/workspaces/android/task-inspect')});assert.equal(bad.response.status,400);
+});
+
 test('terminal apply route accepts only the one-use digest and scope fields',async()=>{
  let seen;
  const x=f({body:{groupId:'group-1',sessionId:'session-1',exportKey:'a'.repeat(64),sha256:'b'.repeat(64)},runtime:{applyTerminalProjectDiff:async input=>{seen=input;return {state:'completed',appliedToHost:true,committed:false,pushed:false,sha256:input.sha256,paths:['src/index.js'],repositoryRoot:'/workspace/project'};}}});

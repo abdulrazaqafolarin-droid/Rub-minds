@@ -8,6 +8,7 @@ const ALLOWED={
  '/v1/workspaces/android/tasks':['deviceSerial','appPackage','task','groupId','sessionId'],
  '/v1/workspaces/android/task-status':['traceId','deviceSerial','groupId','sessionId'],
  '/v1/workspaces/android/task-stop':['traceId','deviceSerial','groupId','sessionId'],
+ '/v1/workspaces/android/task-inspect':['traceId','deviceSerial','action','query','groupId','sessionId'],
  '/v1/workspaces/terminal/exec':['command','cwd','purpose','groupId','sessionId'],
  '/v1/workspaces/terminal/sync':['groupId','sessionId'],
  '/v1/workspaces/terminal/diff':['groupId','sessionId'],
@@ -47,6 +48,7 @@ export async function handleWorkspaceHttpRequest({request,response,url,authority
    case '/v1/workspaces/android/tasks':result=await workspaceRuntime.runAndroidTask(input);status=201;break;
    case '/v1/workspaces/android/task-status':result=await workspaceRuntime.androidTaskStatus(input);break;
    case '/v1/workspaces/android/task-stop':result=await workspaceRuntime.stopAndroidTask(input);break;
+   case '/v1/workspaces/android/task-inspect':result=await workspaceRuntime.inspectAndroidTask(input);break;
    case '/v1/workspaces/terminal/exec':result=await workspaceRuntime.execTerminal(input);status=200;break;
    case '/v1/workspaces/terminal/sync':result=await workspaceRuntime.syncTerminalProject(input);status=200;break;
    case '/v1/workspaces/terminal/diff':result=await workspaceRuntime.diffTerminalProject(input);status=200;break;
