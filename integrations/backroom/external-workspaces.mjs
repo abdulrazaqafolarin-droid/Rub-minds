@@ -277,7 +277,7 @@ export class CuaSandboxTerminalWorkspace {
       }));
       if(approval!==true)throw new Error('Local approval denied project source transfer');
       // Exact local copy operation: no shell, no token, and an explicit local sandbox ref.
-      const cleaned=await this.#runGuest(['rm','-rf','/workspace/project','/tmp/rub-backroom-source.tar']);
+      await this.#runGuest(['rm','-rf','/workspace/project','/tmp/rub-backroom-source.tar']);
       const copied=await this.#run(['--json','sb','cp',archive.archivePath,'local:'+this.sandboxName+':/tmp/rub-backroom-source.tar'],180000);
       if(copied.code!==0)throw new Error('Could not transfer approved project snapshot to the local sandbox');
       await this.#runGuest(['mkdir','-p','/workspace/project']);
@@ -318,7 +318,7 @@ export class CuaSandboxTerminalWorkspace {
 export function createExternalWorkspaceService({desktop=null,android=null,terminal=null}={}){
   let stopped=false;
   return Object.freeze({
-    status(){const desktopReady=!!desktop&&desktop.client?.status?.connected!==false;const androidReady=!!android&&android.client?.status?.connected!==false;const terminalState=terminal?terminal.status:{available:false,hostShellAvailable:false};const terminalReady=!!terminal&&terminalState.ready===true&&terminalState.closed!==true;return Object.freeze({stopped,capabilities:Object.freeze({desktop:!stopped&&desktopReady,android:!stopped&&androidReady,terminal:!stopped&&terminalReady}),desktop:{available:!stopped&&desktopReady,tools:desktop?.client?.status?.tools??[]},android:android?{...android.statusSummary,available:!stopped&&androidReady}:{available:false,trackedTasks:0},terminal:terminal?{...terminalState,available:!stopped&&terminalReady}:{available:false,hostShellAvailable:false}});},
+    status(){const desktopReady=!!desktop&&desktop.client?.status?.connected===true;const androidReady=!!android&&android.client?.status?.connected===true;const terminalState=terminal?terminal.status:{available:false,hostShellAvailable:false};const terminalReady=!!terminal&&terminalState.ready===true&&terminalState.closed!==true;return Object.freeze({stopped,capabilities:Object.freeze({desktop:!stopped&&desktopReady,android:!stopped&&androidReady,terminal:!stopped&&terminalReady}),desktop:{available:!stopped&&desktopReady,tools:desktop?.client?.status?.tools??[]},android:android?{...android.statusSummary,available:!stopped&&androidReady}:{available:false,trackedTasks:0},terminal:terminal?{...terminalState,available:!stopped&&terminalReady}:{available:false,hostShellAvailable:false}});},
     async listDesktopWindows(input){if(stopped||!desktop)throw new Error('desktop_workspace_unavailable');return desktop.listWindows(input);},
     async observeDesktop(input){if(stopped||!desktop)throw new Error('desktop_workspace_unavailable');return desktop.observeWindow(input);},
     async draftDesktop(input){if(stopped||!desktop)throw new Error('desktop_workspace_unavailable');return desktop.draftText(input);},
