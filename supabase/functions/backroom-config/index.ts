@@ -49,7 +49,7 @@ Deno.serve(async req=>{
   }});
  }
  const parsed=new URL(req.url);
- if(req.method!=='POST'||parsed.search||parsed.hash||!['/functions/v1/backroom-config/host','/functions/v1/backroom-config/binding','/functions/v1/backroom-config/sessions','/backroom-config/host','/backroom-config/binding','/backroom-config/sessions'].includes(parsed.pathname))
+ if(req.method!=='POST'||parsed.search||parsed.hash||!['/functions/v1/backroom-config/host','/functions/v1/backroom-config/binding','/functions/v1/backroom-config/sessions','/functions/v1/backroom-config/revoke-host','/backroom-config/host','/backroom-config/binding','/backroom-config/sessions','/backroom-config/revoke-host'].includes(parsed.pathname))
   return json(404,{ok:false,reason:'not_found'},origin);
  if(req.headers.get('content-type')?.toLowerCase()!=='application/json')
   return json(415,{ok:false,reason:'unsupported_type'},origin);
@@ -88,6 +88,17 @@ Deno.serve(async req=>{
     .slice(0,30).map(s=>({participantId:s.participant_id,
       displayName:names.get(s.participant_id),
       sessionDigest:s.session_digest,expiresAt:s.expires_at}))},origin);
+  }
+  if(parsed.pathname.endsWith('/revoke-host')){
+   if(!value||typeof value.hostId!=='string'||!/^[a-f0-9-]{36}$/i.test(value.hostId)||
+      Object.keys(value).some(k=>k!=='hostId'))
+    return json(400,{ok:false,reason:'invalid_host'},origin);
+   const {data,error}=await db.rpc('revoke_backroom_host',{
+    p_host_id:value.hostId,p_owner_id:ownerId
+   });
+   if(error)return json(503,{ok:false,reason:'service_unavailable'},origin);
+   if(data!==true)return json(404,{ok:false,revoked:false,reason:'host_not_found'},origin);
+   return json(200,{ok:true,revoked:true,hostId:value.hostId},origin);
   }
   if(parsed.pathname.endsWith('/host')){
    let input;
