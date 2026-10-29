@@ -8,9 +8,11 @@ import './backroom.css';
 type Surface = 'browser_tab' | 'desktop_app' | 'windows_app' | 'terminal' | 'android_app';
 type Space = { id: string; name: string; surface: Surface; app: string; createdAt: number };
 type Rect = { x: number; y: number; width: number; height: number };
-type HostStatus = { hostId: string; label: string; expiresAt: number; protocolVersion: string; connected: boolean; executionReady: boolean; capabilities: Record<string, boolean>; nextStep: string; browserPages?: number };
+type HostStatus = { hostId: string; label: string; expiresAt: number; protocolVersion: string; connected: boolean; executionReady: boolean; capabilities: Record<string, boolean>; nextStep: string; browserPages?: number; enrollmentDigest?: string };
 type BrowserPageRow = { pageId: string; title: string; site: string; canSelect: boolean };
-type BrowserTargetRow = { id: string; pageId: string; roomId: string; title: string; site: string; surface: string; operations: string[] };
+type BrowserTargetRow = { id: string; pageId: string; roomId: string; title: string; site: string; surface: string; operations: string[]; wakeAvailable?: boolean; spaceId?: string; sessionId?: string; identityFingerprint?: string; revision?: number; locatorKind?: string; locatorValue?: string };
+type HostedAiSession = { participantId: string; displayName: string; sessionDigest: string; expiresAt: string };
+type HostedWakeBinding = { bindingId: string; roomId: string; participantId: string; sessionId: string; targetId: string; sessionDigest: string; wakeEnabled?: boolean; requiresRevoke?: boolean };
 type PendingBrowserSelection = { pageId: string; roomId: string; generation: number; attemptId: string | null };
 const surfaces: { id: Surface; name: string; detail: string }[] = [
   { id: 'browser_tab', name: 'Browser session', detail: 'ChatGPT, Claude and other browser conversations' },
@@ -41,6 +43,10 @@ function parseHostStatus(value: unknown, expectedHostId?: string): HostStatus {
     typeof row.executionReady !== 'boolean' || typeof row.nextStep !== 'string') {
     throw new HostStatusValidationError('Local host returned an incomplete or unauthenticated status.');
   }
+  if (row.enrollmentDigest !== undefined &&
+    (typeof row.enrollmentDigest !== 'string' || !/^[a-f0-9]{64}$/.test(row.enrollmentDigest))) {
+    throw new HostStatusValidationError('Local host supplied an invalid enrollment digest.');
+  }
   if (row.browserPages !== undefined &&
     (typeof row.browserPages !== 'number' || !Number.isSafeInteger(row.browserPages) || row.browserPages < 0)) {
     throw new HostStatusValidationError('Local host returned an invalid browser-page count.');
@@ -67,6 +73,7 @@ function parseHostStatus(value: unknown, expectedHostId?: string): HostStatus {
     capabilities,
     nextStep: row.nextStep,
     ...(typeof row.browserPages === 'number' ? { browserPages: row.browserPages } : {}),
+    ...(typeof row.enrollmentDigest === 'string' ? { enrollmentDigest: row.enrollmentDigest } : {}),
   };
 }
 
@@ -126,6 +133,10 @@ export default function BackroomApp() {
   const [browserUrl, setBrowserUrl] = useState('https://chatgpt.com/');
   const [browserNotice, setBrowserNotice] = useState('');
   const [browserBusy, setBrowserBusy] = useState(false);
+  const [hostedAiSessions,setHostedAiSessions] = useState<HostedAiSession[]>([]);
+  const [selectedHostedSession,setSelectedHostedSession] = useState('');
+  const [hostedWakeBinding,setHostedWakeBinding] = useState<HostedWakeBinding | null>(null);
+  const [hostedWakeGrantId,setHostedWakeGrantId] = useState('');
   const selectionGeneration = useRef(0);
   const activeBrowserSelection = useRef<PendingBrowserSelection | null>(null);
   const [roomId, setRoomId] = useState(() => new URLSearchParams(location.search).get('room') || '');
@@ -302,6 +313,237 @@ export default function BackroomApp() {
       setHostMessage(message);
     } finally { setHostBusy(false); }
   }
+  async function registerHostedWakeHost() {
+    if (!supabase || !user || !hostInfo?.connected || !hostInfo.enrollmentDigest) {
+      setHostMessage('Pair a current Backroom host that exposes a valid enrollment digest first.');
+      return;
+    }
+    if (!window.confirm('Register this local Backroom host with your Rub Minds account? This does NOT enable AI wake or submit any prompts.')) return;
+    setHostBusy(true);
+    try {
+      const {data,error:registrationError}=await supabase.functions.invoke('backroom-config/host',{
+        body:{hostId:hostInfo.hostId,credentialDigest:hostInfo.enrollmentDigest,ttlSeconds:86400}
+      });
+      if(registrationError || data?.ok!==true)throw new Error(
+        data?.reason==='registration_conflict'
+          ? 'This host is already registered. Its existing registration remains unchanged.'
+          : 'Hosted host registration failed. No wake automation was activated.'
+      );
+      setHostMessage(data.renewed===true
+        ? 'Host registration renewed. Existing binding consent was not changed; any new binding still requires a separate explicit wake confirmation.'
+        : 'Hosted Backroom host registered. New input bindings remain disabled until you explicitly confirm wake.');
+    }catch(error){
+      setHostMessage(error instanceof Error?error.message:'Hosted registration unavailable.');
+    }finally{setHostBusy(false);}
+  }
+
+  async function revokeHostedWakeBinding() {
+    const binding=hostedWakeBinding;
+    if(!supabase||!user||!binding)return;
+    if(!window.confirm('Permanently revoke this AI input binding? Its pending and leased wake events will be cancelled. The host remains registered, but this input must be selected and bound again before wake can be enabled.'))return;
+    setHostBusy(true);
+    try{
+      // Stop the local worker first where reachable. Server-side binding revoke
+      // remains authoritative if the computer is offline or the browser lost its grant ID.
+      try{if(hostToken)await hostApi('/v1/browser/wake/bindings/revoke',{method:'POST',body:{bindingId:binding.bindingId}});}catch{}
+      const {data,error:revokeError}=await supabase.functions.invoke('backroom-config/revoke-binding',{
+        body:{bindingId:binding.bindingId}
+      });
+      if(revokeError||data?.ok!==true||data?.revoked!==true)
+        throw new Error('Input binding was not revoked. Check ownership and retry.');
+      setHostedWakeBinding(null);
+      setHostedWakeGrantId('');
+      setHostMessage('AI input binding revoked on the server; its pending wakes were cancelled. Select the intended composer and bind it again.');
+    }catch(error){
+      setHostMessage(error instanceof Error?error.message:'Input binding revocation failed.');
+    }finally{setHostBusy(false);}
+  }
+
+  async function revokeHostedWakeHost() {
+    if (!supabase || !user || !hostInfo?.hostId) return;
+    if (!window.confirm('Permanently revoke this host on the Rub Minds server? All its input bindings and queued wakes will be disabled. This host identity cannot be reused.')) return;
+    setHostBusy(true);
+    try {
+      const {data,error:revokeError}=await supabase.functions.invoke('backroom-config/revoke-host',{
+        body:{hostId:hostInfo.hostId}
+      });
+      if(revokeError || data?.ok!==true || data?.revoked!==true)
+        throw new Error('Remote host was not revoked. Verify that it was registered to this signed-in owner.');
+      // Best-effort local unpair: remote revocation already makes all future claims fail
+      // even if this device is offline, but a reachable host should stop polling now.
+      try {
+        if(hostToken) await fetchLocalHost(localHostOrigin(hostUrl)+'/v1/unpair',{
+          method:'POST',headers:{Authorization:'Bearer '+hostToken},cache:'no-store'
+        });
+      } catch {}
+      try {
+        sessionStorage.removeItem('rub-backroom-host-session-v1:'+user.id);
+        sessionStorage.removeItem('rub-backroom-host-stopped-v1:'+user.id);
+      } catch {}
+      setHostToken('');setHostInfo(null);
+      setBrowserPages([]);setBrowserTargets([]);setSelectedBrowserTarget('');
+      setHostedAiSessions([]);setSelectedHostedSession('');
+      setHostedWakeBinding(null);setHostedWakeGrantId('');
+      setHostMessage('Remote host, all input bindings and queued wakes have been revoked. To reuse this computer, stop the Backroom host with Ctrl+C, run `npm run backroom:rotate-host`, then restart and pair the new host ID.');
+    } catch(error) {
+      setHostMessage(error instanceof Error?error.message:'Remote host revocation failed.');
+    } finally {setHostBusy(false);}
+  }
+
+  async function discoverHostedAiSessions() {
+    if (!supabase || !room?.id || !user) return;
+    setHostBusy(true);
+    try {
+      const {data,error:discoveryError}=await supabase.functions.invoke('backroom-config/sessions',{
+        body:{roomId:room.id}
+      });
+      if(discoveryError || data?.ok!==true || !Array.isArray(data.sessions))
+        throw new Error('Could not list authorized joined AI sessions for this group.');
+      const sessions=data.sessions.filter((v:unknown)=>{
+        if(!v||typeof v!=='object'||Array.isArray(v))return false;
+        const x=v as Record<string,unknown>;
+        return typeof x.participantId==='string'&&typeof x.displayName==='string'&&
+          typeof x.sessionDigest==='string'&&/^[a-f0-9]{64}$/.test(x.sessionDigest);
+      }) as HostedAiSession[];
+      setHostedAiSessions(sessions);
+      setSelectedHostedSession(sessions[0]?.sessionDigest??'');
+      setHostMessage(sessions.length+' authorized live AI session(s) found. Select the intended original AI conversation.');
+    }catch(error){
+      setHostMessage(error instanceof Error?error.message:'AI session discovery failed.');
+    }finally{setHostBusy(false);}
+  }
+  async function bindHostedWakeInput() {
+    if (!supabase || !room?.id || !hostInfo?.connected || !hostToken) return;
+    const selectedSession=hostedAiSessions.find(s=>s.sessionDigest===selectedHostedSession);
+    const target=browserTargets.find(t=>t.id===selectedBrowserTarget);
+    // Capture optional identity fields before any await so TypeScript and runtime share one stable value.
+    const targetSessionId=target?.sessionId;
+    if(!selectedSession||!target||target.roomId!==room.id||target.wakeAvailable!==true||
+       !target.spaceId||!targetSessionId||!target.identityFingerprint||
+       !target.revision||target.locatorKind!=='dom'||!target.locatorValue){
+      setHostMessage('Select one live joined AI session and a wake-capable browser composer in the same group.');
+      return;
+    }
+    setHostBusy(true);
+    let pendingNewBindingId: string | null = null;
+    try {
+      // Ensure registration exists or renew the same owner/credential before
+      // creating a binding; registration itself never enables wake.
+      const {data:registration,error:registrationError}=await supabase.functions.invoke('backroom-config/host',{
+        body:{hostId:hostInfo.hostId,credentialDigest:hostInfo.enrollmentDigest,ttlSeconds:86400}
+      });
+      if(registrationError || registration?.ok!==true)
+        throw new Error('Could not renew this signed-in owner host registration.');
+      const {data:rawBindingData,error:bindingError}=await supabase.functions.invoke('backroom-config/binding',{
+        body:{
+          roomId:room.id,participantId:selectedSession.participantId,
+          hostId:hostInfo.hostId,sessionDigest:selectedSession.sessionDigest,
+          spaceId:target.spaceId,sessionId:targetSessionId,
+          targetId:target.id,targetIdentityFingerprint:target.identityFingerprint,
+          targetRevision:target.revision,surface:'browser_tab',
+          locatorKind:target.locatorKind,locatorValue:target.locatorValue,
+          participationMode:'mentions',maxWakesPerMinute:6
+        }
+      });
+      let data=rawBindingData as {ok?:boolean;bindingId?:string;reason?:string;wakeEnabled?:boolean;requiresHostRevoke?:boolean;existing?:boolean}|null;
+      // Supabase's invoke helper exposes non-2xx JSON through FunctionsHttpError.context.
+      // Read that response so an existing-binding conflict can offer its explicit revoke path.
+      const responseContext=(bindingError as unknown as {context?:unknown}|null)?.context;
+      if(bindingError && responseContext instanceof Response){
+        const errorBody=await responseContext.clone().json().catch(()=>null);
+        if(errorBody&&typeof errorBody==='object')data=errorBody as typeof data;
+      }
+      if(bindingError || data?.ok!==true || typeof data.bindingId!=='string'){
+        if(data && typeof data.bindingId==='string'&&
+          (data.reason==='existing_binding_active_revoke_first'||data.reason==='existing_binding_requires_revoke')){
+          setHostedWakeBinding({
+            bindingId:data.bindingId,roomId:room.id,
+            participantId:selectedSession.participantId,sessionId:targetSessionId,
+            targetId:target.id,sessionDigest:selectedSession.sessionDigest,
+            wakeEnabled:data.wakeEnabled===true,requiresRevoke:true
+          });
+          setHostedWakeGrantId('');
+          setHostMessage('An existing hosted binding owns this AI session or composer. Revoke that binding explicitly before rebinding; the old queued wakes will be cancelled.');
+          return;
+        }
+        if(data?.requiresHostRevoke===true)
+          throw new Error('This host has conflicting active input bindings. Permanently revoke the host, rotate its identity, then register it again.');
+        throw new Error('Secure hosted binding registration failed. No wake operation was enabled.');
+      }
+      if(data.existing!==true) pendingNewBindingId=data.bindingId;
+      // The host's pinned Supabase destination is local configuration. Never let
+      // this browser choose where the private host credential is sent.
+      const publishableKey=import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? import.meta.env.VITE_SUPABASE_ANON_KEY;
+      if(typeof publishableKey!=='string'||publishableKey.length<20)
+        throw new Error('Rub Minds public Supabase API key is missing from this web build.');
+      await hostApi('/v1/backroom/configure',{method:'POST',body:{
+        sessionDigest:selectedSession.sessionDigest,bindingId:data.bindingId,publishableKey
+      }});
+      pendingNewBindingId=null;
+      setHostedWakeBinding({
+        bindingId:data.bindingId,roomId:room.id,
+        participantId:selectedSession.participantId,sessionId:targetSessionId,
+        targetId:target.id,sessionDigest:selectedSession.sessionDigest,
+        wakeEnabled:false,requiresRevoke:false
+      });
+      setHostedWakeGrantId('');
+      setHostMessage('AI session bound to the exact selected composer. Wake remains OFF; activate only with your explicit confirmation.');
+    }catch(error){
+      let cleanupWarning='';
+      if(pendingNewBindingId && supabase){
+        try{
+          const {data:cleanup,error:cleanupError}=await supabase.functions.invoke('backroom-config/revoke-binding',{body:{bindingId:pendingNewBindingId}});
+          if(cleanupError || cleanup?.ok!==true || cleanup?.revoked!==true)
+            cleanupWarning=' Server cleanup was not confirmed; revoke the orphaned input binding before retrying.';
+        }catch{cleanupWarning=' Server cleanup failed; revoke the orphaned input binding before retrying.';}
+      }
+      setHostMessage((error instanceof Error?error.message:'Could not configure wake binding.')+cleanupWarning);
+    }finally{setHostBusy(false);}
+  }
+  async function enableHostedWake() {
+    const binding=hostedWakeBinding;
+    if(!binding||binding.roomId!==room?.id||binding.targetId!==selectedBrowserTarget||!hostInfo?.connected)return;
+    if(!window.confirm('Enable the selected original AI conversation to receive only canonical @RMconnects event triggers for up to 5 minutes? This may press Send in that selected AI chat.'))return;
+    setHostBusy(true);
+    try{
+      const grant=await hostApi<{grantId:string}>('/v1/browser/wake/grants',{
+        method:'POST',body:{
+          targetId:binding.targetId,roomId:binding.roomId,
+          participantId:binding.participantId,sessionId:binding.sessionId,
+          bindingId:binding.bindingId,confirmed:true,ttlMs:300000,maxPerMinute:6
+        }
+      });
+      if(typeof grant.grantId!=='string')throw new Error('Local wake grant was not confirmed.');
+      setHostedWakeGrantId(grant.grantId);
+      setHostMessage('Wake enabled for this one selected AI input. It expires automatically; use Revoke wake to stop earlier.');
+    }catch(error){
+      setHostMessage(error instanceof Error?error.message:'Wake activation failed and must be retried with consent.');
+    }finally{setHostBusy(false);}
+  }
+  async function revokeHostedWake() {
+    const binding=hostedWakeBinding;
+    if(!binding||!hostedWakeGrantId)return;
+    setHostBusy(true);
+    try{
+      const result=await hostApi<{
+        revoked:boolean;localPollingStopped:boolean;
+        remoteDeactivationConfirmed?:boolean;remoteDeactivationPending?:boolean
+      }>('/v1/browser/wake/grants/revoke',{method:'POST',body:{
+        grantId:hostedWakeGrantId,targetId:binding.targetId,roomId:binding.roomId,bindingId:binding.bindingId
+      }});
+      if(result.revoked!==true || result.localPollingStopped!==true)
+        throw new Error('The local wake grant could not be confirmed revoked.');
+      setHostedWakeGrantId('');
+      setHostedWakeBinding(previous=>previous?{...previous,wakeEnabled:false}:previous);
+      setHostMessage(result.remoteDeactivationConfirmed===true
+        ? 'Wake grant revoked; local polling stopped and hosted consent deactivation confirmed.'
+        : 'Wake grant revoked locally and polling stopped, but the server did not confirm remote deactivation. The old consent expires within 5 minutes. For immediate server-side cancellation, revoke this input binding.');
+
+    }catch(error){
+      setHostMessage(error instanceof Error?error.message:'Could not confirm wake revocation. Use Emergency Stop.');
+    }finally{setHostBusy(false);}
+  }
+
   async function checkLocalHost() {
     if (!hostToken) return;
     setHostBusy(true); setHostMessage('');
@@ -650,8 +892,29 @@ export default function BackroomApp() {
 {roomBrowserTargets.length>0 && <><label className="br-browser-field-label" htmlFor="br-browser-target">Registered typing area</label><select id="br-browser-target" value={selectedBrowserTarget} onChange={e=>setSelectedBrowserTarget(e.target.value)}><option value="">Choose a typing target</option>{roomBrowserTargets.map(t=><option key={t.id} value={t.id}>{t.site} · {t.title}</option>)}</select><div className="br-browser-target-actions"><button className="br-secondary" onClick={() => void removeBrowserTarget()} disabled={browserBusy || !roomBrowserTargets.some(t => t.id === selectedBrowserTarget)}>Remove selected target</button></div><label className="br-browser-field-label" htmlFor="br-group-message">Source group message (optional)</label><select id="br-group-message" value={selectedGroupMessageId} onChange={e => { const id = e.target.value; setSelectedGroupMessageId(id); const message = groupMessages.find(m => m.id === id); if (message) setBrowserDraftText(message.body); }}><option value="">Write a manual draft instead</option>{groupMessages.map(m => <option key={m.id} value={m.id}>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · {m.body.slice(0, 90).replace(/\s+/g, ' ')}</option>)}</select><label className="br-browser-field-label" htmlFor="br-browser-draft">Text to draft (not sent)</label><textarea id="br-browser-draft" rows={3} maxLength={10000} value={browserDraftText} onChange={e=>setBrowserDraftText(e.target.value)} placeholder="Write the exact text to insert into the selected composer…"/><button className="br-primary br-browser-draft" onClick={() => void draftToBrowser()} disabled={browserBusy || !roomBrowserTargets.some(t => t.id === selectedBrowserTarget) || !browserDraftText.trim()}>Insert draft — never send <ArrowRight size={15}/></button><p className="br-browser-caption">Target registration stores the selector locally. Text is inserted only after confirmation, only into an empty input, and is read back to verify success.</p></>}
 <button className="br-secondary br-browser-stop" onClick={() => void stopManagedBrowser()} disabled={browserBusy}>Close managed browser</button></>}
 {browserNotice && <div className="br-host-message" role="status">{browserNotice}</div>}</div>
+<div className="br-warning"><ShieldCheck size={19}/><div><b>Experimental hosted AI wake</b><p>Register the host first. Choose a live AI MCP session and a locally selected browser composer for this group. Registration never sends anything; an explicit five-minute wake grant is required.</p></div></div>
+{room?.id && hostInfo.enrollmentDigest && <div>
+  <div className="br-modal-actions"><button className="br-secondary" onClick={() => void discoverHostedAiSessions()} disabled={hostBusy || browserBusy}>Find joined AI sessions</button></div>
+  {hostedAiSessions.length>0 && <>
+    <label htmlFor="br-hosted-ai-session">Joined AI conversation</label>
+    <select id="br-hosted-ai-session" value={selectedHostedSession} onChange={e=>setSelectedHostedSession(e.target.value)}>{hostedAiSessions.map(s=><option key={s.sessionDigest} value={s.sessionDigest}>{s.displayName} · {s.participantId.slice(0,8)}</option>)}</select>
+    <p>Selected local input: {browserTargets.find(t=>t.id===selectedBrowserTarget)?.title || 'Select a managed browser target before binding.'}</p>
+    <div className="br-modal-actions"><button className="br-secondary" onClick={() => void bindHostedWakeInput()} disabled={hostBusy || browserBusy || !selectedBrowserTarget}>Register inactive AI input binding</button></div>
+  </>}
+  {hostedWakeBinding && hostedWakeBinding.roomId===room.id && <>
+    <div className="br-detail"><span>Wake status</span><b>{hostedWakeBinding.requiresRevoke?'Existing binding · revoke before rebind':hostedWakeGrantId?'Locally consented · time-limited':'Off · binding registered'}</b></div>
+    <div className="br-modal-actions">
+      {hostedWakeBinding.requiresRevoke
+        ? <button className="br-danger-action" disabled={hostBusy || browserBusy} onClick={() => void revokeHostedWakeBinding()}>Revoke existing binding and rebind</button>
+        : !hostedWakeGrantId
+          ? <button className="br-primary" disabled={hostBusy || browserBusy || hostedWakeBinding.targetId!==selectedBrowserTarget} onClick={() => void enableHostedWake()}>Enable wake for 5 minutes</button>
+          : <button className="br-danger-action" disabled={hostBusy || browserBusy} onClick={() => void revokeHostedWake()}>Revoke wake</button>}
+    </div>
+    {!hostedWakeBinding.requiresRevoke && <div className="br-modal-actions"><button className="br-secondary" disabled={hostBusy || browserBusy} onClick={() => void revokeHostedWakeBinding()}>Permanently unbind this AI input</button></div>}
+  </>}
+</div>}
 <div className="br-emergency-stop-row"><div><b>Emergency stop</b><small>Close Chromium, revoke all paired sessions, and block reconnection until the host is restarted.</small></div><button className="br-danger-action" onClick={() => void emergencyStopLocalHost()} disabled={hostBusy || browserBusy || !hostToken}>Stop all</button></div>
-<div className="br-modal-actions"><button className="br-secondary" onClick={() => void unpairLocalHost()} disabled={hostBusy || browserBusy}>Unpair</button><button className="br-primary" onClick={() => void checkLocalHost()} disabled={hostBusy || browserBusy}>{hostBusy ? 'Checking…' : 'Check connection'}</button></div></>}</div></div>}
+{hostInfo.enrollmentDigest && <><div className="br-modal-actions"><button className="br-secondary" onClick={() => void registerHostedWakeHost()} disabled={hostBusy || browserBusy}>Register or renew hosted wake host</button></div><div className="br-modal-actions"><button className="br-danger-action" onClick={() => void revokeHostedWakeHost()} disabled={hostBusy || browserBusy}>Permanently revoke hosted host</button></div></>}<div className="br-modal-actions"><button className="br-secondary" onClick={() => void unpairLocalHost()} disabled={hostBusy || browserBusy}>Unpair</button><button className="br-primary" onClick={() => void checkLocalHost()} disabled={hostBusy || browserBusy}>{hostBusy ? 'Checking…' : 'Check connection'}</button></div></>}</div></div>}
     {adding && <div className="br-modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setAdding(false); }}><div className="br-modal" role="dialog" aria-modal="true" aria-labelledby="br-modal-title"><div className="br-modal-top"><div className="br-modal-icon"><Plus size={22}/></div><button className="br-icon-button" onClick={() => setAdding(false)} aria-label="Close"><X size={20}/></button></div><h2 id="br-modal-title">Add a new space</h2><p>Choose the kind of interface this workspace will connect to.</p><label htmlFor="br-name">Space name</label><input id="br-name" maxLength={60} autoFocus placeholder="e.g. Claude research assistant" value={name} onChange={e => setName(e.target.value)}/><label htmlFor="br-app">App or session label <span>(optional)</span></label><input id="br-app" maxLength={100} placeholder="e.g. Claude Desktop · Research thread" value={app} onChange={e => setApp(e.target.value)}/><div className="br-modal-label">Interface type</div><div className="br-surface-options">{surfaces.map(s => { const Icon = iconFor(s.id); return <button key={s.id} className={'br-surface-option' + (surface === s.id ? ' chosen' : '')} onClick={() => setSurface(s.id)}><Icon size={20}/><span><b>{s.name}</b><small>{s.detail}</small></span>{surface === s.id && <Check size={17}/>}</button>; })}</div><div className="br-modal-actions"><button className="br-secondary" onClick={() => setAdding(false)}>Cancel</button><button className="br-primary" onClick={add} disabled={!name.trim()}>Create space <ArrowRight size={16}/></button></div></div></div>}
   </div>;
 }

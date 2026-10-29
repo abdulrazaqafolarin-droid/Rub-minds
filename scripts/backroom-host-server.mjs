@@ -1,5 +1,8 @@
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { loadOrCreateHostIdentity, rotateHostIdentity, isHostIdentityRotationPending } from "../integrations/backroom/host-identity.mjs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { HostPairingAuthority } from "../integrations/backroom/host-pairing.mjs";
@@ -27,13 +30,14 @@ function parseOrigins(value) {
 
 function disabledBrowserRuntime() {
   const status = () => ({ running: false, pages: 0, capabilities: {
-    browserDraft: false, desktopAccessibility: false, androidAccessibility: false, terminal: false,
+    browserDraft: false, browserCanonicalWake: false, desktopAccessibility: false, androidAccessibility: false, terminal: false,
   } });
   const unavailable = async () => { throw new Error("browser_runtime_unavailable"); };
   return {
     status, stop: async () => status(), start: unavailable, openUrl: unavailable, listPages: async () => [],
     listTargets: async () => [], startSelection: unavailable, cancelSelection: async () => false, getSelection: async () => ({ state: "unavailable" }),
     registerSelectedTarget: unavailable, unregisterTarget: async () => false, draft: unavailable,
+    enableContinuousWake: unavailable, revokeContinuousWake: async () => false, wake: unavailable,
   };
 }
 function writeJson(response, status, body, corsHeaders = {}) {
@@ -75,9 +79,10 @@ function bearer(request) {
  */
 export function createBackroomHostServer({
   port = 43781, host = "127.0.0.1", allowedOrigins = parseOrigins(process.env.BACKROOM_ALLOWED_ORIGINS),
-  pairingCode, hostId = randomUUID(), now = () => Date.now(), pairingTtlMs, sessionTtlMs, maxPairAttempts, browserRuntime,
+  pairingCode, hostId = randomUUID(), enrollmentDigest = null, now = () => Date.now(), pairingTtlMs, sessionTtlMs, maxPairAttempts, browserRuntime, wakeService, multiSurfaceRuntime,
 } = {}) {
   if (host !== "127.0.0.1") throw new TypeError("Backroom host must bind to IPv4 loopback only");
+  if (enrollmentDigest !== null && (typeof enrollmentDigest !== "string" || !/^[a-f0-9]{64}$/.test(enrollmentDigest))) throw new TypeError("Invalid enrollment digest");
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new RangeError("invalid port");
   const authority = new HostPairingAuthority({ allowedOrigins, pairingCode, hostId, now, pairingTtlMs, sessionTtlMs, maxPairAttempts });
   const browser = browserRuntime ?? disabledBrowserRuntime();
@@ -143,6 +148,8 @@ export function createBackroomHostServer({
       killSwitchTripped = true;
       const sessionsRevoked = authority.revokeAll({ origin: requestOrigin, token });
       let closeError = null;
+      try { await wakeService?.stop?.(); } catch { closeError = true; }
+      try { await multiSurfaceRuntime?.stop?.(); } catch { closeError = true; }
       try { await browser.stop(); } catch { closeError = true; }
       const browserClosed = browser.status()?.running !== true;
       const stopped = sessionsRevoked && browserClosed && !closeError;
@@ -190,6 +197,7 @@ export function createBackroomHostServer({
       const executionReady = Object.values(runtimeStatus.capabilities).some(Boolean);
       writeJson(response, 200, {
         hostId: session.hostId, label: session.clientLabel, expiresAt: session.expiresAt,
+        ...(enrollmentDigest ? { enrollmentDigest } : {}),
         protocolVersion: PROTOCOL_VERSION, connected: true, executionReady,
         browserPages: runtimeStatus.pages,
         capabilities: runtimeStatus.capabilities,
@@ -198,6 +206,107 @@ export function createBackroomHostServer({
           : "Launch the managed browser to register a browser input target.",
       }, cors);
       return;
+    }
+    if(request.method==="POST" && url.pathname==="/v1/backroom/stop"){
+      const authorized=authority.authorize({origin:requestOrigin,token:bearer(request)});
+      if(!authorized){writeJson(response,401,{error:"host_session_invalid"},cors);return;}
+      let bindingId;
+      if(request.headers["content-type"]){
+        if(!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"])){
+          writeJson(response,415,{error:"application_json_required"},cors);return;
+        }
+        try{
+          const input=await readJson(request);
+          if(Object.keys(input).some(key=>key!=="bindingId")||
+             (input.bindingId!==undefined&&!/^[a-f0-9-]{36}$/i.test(input.bindingId))){
+            writeJson(response,400,{error:"invalid_binding_scope"},cors);return;
+          }
+          bindingId=input.bindingId;
+        }catch{
+          writeJson(response,400,{error:"invalid_json"},cors);return;
+        }
+      }
+      try{
+        const status=await wakeService?.stop?.(bindingId);
+        writeJson(response,200,{stopped:true,bindingId:bindingId??null,
+          remoteDeactivationConfirmed:status?.remotelyDeactivated===true},cors);
+      }catch{
+        writeJson(response,503,{error:"wake_stop_failed"},cors);
+      }
+      return;
+    }
+    if(request.method==="POST" && url.pathname==="/v1/backroom/unconfigure"){
+      const authorized=authority.authorize({origin:requestOrigin,token:bearer(request)});
+      if(!authorized){writeJson(response,401,{error:"host_session_invalid"},cors);return;}
+      if(!wakeService||typeof wakeService.unconfigure!=="function"){
+        writeJson(response,503,{error:"remote_wake_unavailable"},cors);return;
+      }
+      if(!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"]??"")){
+        writeJson(response,415,{error:"application_json_required"},cors);return;
+      }
+      try{
+        const input=await readJson(request);
+        if(typeof input.bindingId!=="string"||!/^[a-f0-9-]{36}$/i.test(input.bindingId)||
+          Object.keys(input).some(key=>key!=="bindingId")){
+          writeJson(response,400,{error:"invalid_binding_scope"},cors);return;
+        }
+        writeJson(response,200,await wakeService.unconfigure(input.bindingId),cors);
+      }catch{
+        writeJson(response,400,{error:"invalid_binding_scope"},cors);
+      }
+      return;
+    }
+    if(request.method==="POST" && url.pathname==="/v1/backroom/configure"){
+      const authorized=authority.authorize({origin:requestOrigin,token:bearer(request)});
+      if(!authorized){writeJson(response,401,{error:"host_session_invalid"},cors);return;}
+      if(!wakeService || typeof wakeService.configure!=="function"){
+        writeJson(response,503,{error:"remote_wake_unavailable"},cors);return;
+      }
+      if(!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"]??"")){
+        writeJson(response,415,{error:"application_json_required"},cors);return;
+      }
+      try{
+        const input=await readJson(request);
+        if(!input||typeof input!=='object'||Array.isArray(input)||
+          Object.keys(input).some(key=>!['sessionDigest','bindingId','publishableKey'].includes(key))){
+          writeJson(response,400,{error:'invalid_remote_wake_configuration'},cors);return;
+        }
+        const status=wakeService.configure(input);
+        writeJson(response,200,status,cors);
+      }catch{
+        writeJson(response,400,{error:"invalid_remote_wake_configuration"},cors);
+      }
+      return;
+    }
+    // Optional native/terminal service must be registered by trusted local code,
+    // not by remote JSON. No arbitrary shell, OS selector or driver installation.
+    if(url.pathname.startsWith("/v1/surfaces/")){
+      const session=authority.authorize({origin:requestOrigin,token:bearer(request)});
+      if(!session){writeJson(response,401,{error:"host_session_invalid"},cors);return;}
+      if(!multiSurfaceRuntime){
+        writeJson(response,503,{error:"native_runtime_unavailable"},cors);return;
+      }
+      if(request.method==="GET"&&url.pathname==="/v1/surfaces/targets"){
+        writeJson(response,200,{targets:multiSurfaceRuntime.list()},cors);return;
+      }
+      if(request.method==="POST"&&url.pathname==="/v1/surfaces/draft"){
+        if(!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"]??"")){
+          writeJson(response,415,{error:"application_json_required"},cors);return;
+        }
+        try{
+          const input=await readJson(request);
+          if(!input||input.approved!==true||!input.command||typeof input.command!=="object"||
+             Object.keys(input).some(key=>!["approved","command"].includes(key))){
+            writeJson(response,403,{error:"explicit_draft_approval_required"},cors);return;
+          }
+          const result=await multiSurfaceRuntime.draft({command:input.command,approved:true});
+          writeJson(response,result.state==="completed"?200:409,result,cors);
+        }catch{
+          writeJson(response,409,{error:"native_draft_unavailable_or_denied"},cors);
+        }
+        return;
+      }
+      writeJson(response,404,{error:"not_found"},cors);return;
     }
     if (url.pathname.startsWith("/v1/browser/")) {
       if (request.method !== "GET" && request.method !== "POST") {
@@ -249,11 +358,13 @@ export function createBackroomHostServer({
           return;
         }
         if (request.method === "POST" && url.pathname === "/v1/browser/stop") {
+          await wakeService?.stop?.();
           writeJson(response, 200, await browser.stop(), cors);
           return;
         }
         if (request.method === "POST" && [
           "/v1/browser/select", "/v1/browser/select/cancel", "/v1/browser/targets", "/v1/browser/targets/unregister", "/v1/browser/draft",
+          "/v1/browser/wake/grants", "/v1/browser/wake/grants/revoke", "/v1/browser/wake",
         ].includes(url.pathname)) {
           if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
             writeJson(response, 415, { error: "application_json_required" }, cors);
@@ -300,6 +411,86 @@ export function createBackroomHostServer({
             writeJson(response, 201, await browser.registerSelectedTarget(input.pageId, input.roomId, input.attemptId), cors);
             return;
           }
+          if(url.pathname==="/v1/browser/wake/bindings/revoke"){
+            const input=await readJson(request);
+            if(typeof input.bindingId!=="string"||!/^[a-f0-9-]{36}$/i.test(input.bindingId)||
+              Object.keys(input).some(key=>key!=="bindingId")){
+              writeJson(response,400,{error:"invalid_wake_binding_scope"},cors);return;
+            }
+            const grantRevoked=browser.revokeWakeBinding(input.bindingId);
+            const stopStatus=await wakeService?.stop?.(input.bindingId);
+            writeJson(response,200,{revoked:true,grantRevoked,
+              remoteDeactivationConfirmed:stopStatus?.remotelyDeactivated===true},cors);
+            return;
+          }
+          if (url.pathname === "/v1/browser/wake/grants") {
+            if (input.confirmed !== true) {
+              writeJson(response, 403, { error: "explicit_continuous_wake_confirmation_required" }, cors);
+              return;
+            }
+            const id = /^[a-f0-9-]{36}$/i;
+            if (typeof input.targetId !== "string" || !id.test(input.targetId) ||
+              typeof input.roomId !== "string" || !id.test(input.roomId) ||
+              typeof input.participantId !== "string" || !id.test(input.participantId) ||
+              typeof input.sessionId !== "string" || !id.test(input.sessionId) ||
+              typeof input.bindingId !== "string" || !id.test(input.bindingId)) {
+              writeJson(response, 400, { error: "invalid_wake_scope" }, cors);
+              return;
+            }
+            const grant = await browser.enableContinuousWake({
+              targetId: input.targetId, roomId: input.roomId, participantId: input.participantId,
+              sessionId: input.sessionId, bindingId: input.bindingId, confirmed: true,
+              ...(input.ttlMs === undefined ? {} : { ttlMs: input.ttlMs }),
+              ...(input.maxPerMinute === undefined ? {} : { maxPerMinute: input.maxPerMinute }),
+            });
+            if(wakeService){
+              try {
+                // The remote queue is enabled only after explicit, origin-bound
+                // local approval, and only for this pre-enrolled binding.
+                await wakeService.activateAndStart(grant,input);
+              } catch {
+                try { await wakeService.stop(input.bindingId); } catch {}
+                browser.revokeContinuousWake({grantId:grant.grantId,
+                  targetId:input.targetId,roomId:input.roomId});
+                writeJson(response, 503, {error:"remote_wake_activation_failed"}, cors);
+                return;
+              }
+            }
+            writeJson(response, 201, grant, cors);
+            return;
+          }
+          if (url.pathname === "/v1/browser/wake/grants/revoke") {
+            const id = /^[a-f0-9-]{36}$/i;
+            if (typeof input.grantId !== "string" || !id.test(input.grantId) ||
+              typeof input.targetId !== "string" || !id.test(input.targetId) ||
+              typeof input.roomId !== "string" || !id.test(input.roomId) ||
+              typeof input.bindingId !== "string" || !id.test(input.bindingId)) {
+              writeJson(response, 400, { error: "invalid_wake_grant_scope" }, cors);
+              return;
+            }
+            const revoked = await browser.revokeContinuousWake({ grantId: input.grantId, targetId: input.targetId, roomId: input.roomId });
+            const stopStatus=revoked?await wakeService?.stop?.(input.bindingId):null;
+            writeJson(response, revoked ? 200 : 404, {
+              revoked,
+              localPollingStopped:revoked,
+              remoteDeactivationConfirmed:stopStatus?.remotelyDeactivated===true,
+              remoteDeactivationPending:stopStatus?.remotelyDeactivated===false
+            }, cors);
+            return;
+          }
+          if (url.pathname === "/v1/browser/wake") {
+            const id = /^[a-f0-9-]{36}$/i;
+            if (typeof input.grantId !== "string" || !id.test(input.grantId) ||
+              typeof input.targetId !== "string" || !id.test(input.targetId) ||
+              typeof input.roomId !== "string" || !id.test(input.roomId) ||
+              typeof input.eventId !== "string" || !id.test(input.eventId)) {
+              writeJson(response, 400, { error: "invalid_wake_request" }, cors);
+              return;
+            }
+            const result = await browser.wake(input.targetId, input.eventId, input.grantId, { roomId: input.roomId });
+            writeJson(response, result.state === "completed" ? 200 : 409, result, cors);
+            return;
+          }
           if (input.approved !== true) {
             writeJson(response, 403, { error: "explicit_user_approval_required" }, cors);
             return;
@@ -329,6 +520,8 @@ export function createBackroomHostServer({
         writeJson(response, 401, { error: "host_session_invalid" }, cors);
         return;
       }
+      await wakeService?.stop?.();
+      await multiSurfaceRuntime?.stop?.();
       writeJson(response, 200, { revoked: true }, cors);
       return;
     }
@@ -357,6 +550,8 @@ export function createBackroomHostServer({
     },
     async close() {
       let browserError = null;
+      try { await wakeService?.stop?.(); } catch { browserError = new Error("wake_poller_stop_failed"); }
+      try { await multiSurfaceRuntime?.stop?.(); } catch { browserError = new Error("native_runtime_stop_failed"); }
       try { await browser.stop(); } catch (error) { browserError = error; }
       if (server.listening) {
         await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
@@ -367,16 +562,46 @@ export function createBackroomHostServer({
 }
 
 export async function runBackroomHost() {
-  const hostId = randomUUID();
+  const identityFilePath=join(homedir(), ".rub-minds", "backroom", "host-identity.json");
+  const identity = await loadOrCreateHostIdentity({filePath:identityFilePath});
+  const identityRotationPending=await isHostIdentityRotationPending({filePath:identityFilePath});
+  const hostId = identity.hostId;
   const { BrowserHostRuntime } = await import("../integrations/backroom/browser-host-runtime.mjs");
   const browserRuntime = new BrowserHostRuntime({ hostId });
-  const instance = createBackroomHostServer({ hostId, browserRuntime });
+  const {createHostWakeService}=await import("../integrations/backroom/host-wake-service.mjs");
+  const wakeService=createHostWakeService({
+    identity,browserRuntime,
+    journalDirectory:join(homedir(),".rub-minds","backroom","wake-execution-journal")
+  });
+  // A rotated host must never inherit the old identity's environment-bound input.
+  // A local identity rotation must not inherit stale environment-bound input bindings.
+  // The persistent marker stays until an operator explicitly reviews any headless configuration.
+  const sessionDigest=identityRotationPending?undefined:process.env.BACKROOM_WAKE_SESSION_DIGEST;
+  const bindingId=identityRotationPending?undefined:process.env.BACKROOM_WAKE_BINDING_ID;
+  const publishableKey=identityRotationPending?undefined:process.env.BACKROOM_WAKE_PUBLISHABLE_KEY;
+  const configured=[sessionDigest,bindingId,publishableKey].filter(Boolean).length;
+  if(configured!==0&&configured!==3)
+    throw new Error("Headless wake configuration requires session digest, binding ID and public project API key together");
+  // The gateway origin is fixed in host-wake-service or trusted local process
+  // configuration. The publishable key is public and cannot redirect the token.
+  if(configured===3)wakeService.configure({sessionDigest,bindingId,publishableKey});
+  const instance = createBackroomHostServer({
+    hostId,browserRuntime,enrollmentDigest:identity.credentialDigest,wakeService
+  });
   const address = await instance.start();
   process.stdout.write([
     "",
     "Rub Minds Backroom local host",
     `Address: http://${address.host}:${address.port}`,
     `Host ID: ${address.hostId}`,
+    `Hosted enrollment digest: ${identity.credentialDigest}`,
+    "Private host credential is stored only in the local host identity file (not printed).",
+    "A persistent rotation marker prevents inherited headless wake configuration from reviving an old binding.",
+    identityRotationPending
+      ?"Remote wake: stale environment configuration suppressed after identity rotation. Reconfigure the new host explicitly from Rub Minds."
+      :configured===3
+        ?"Remote wake binding configured; awaiting explicit local grant."
+        :"Remote wake: not configured. Pair the browser to configure a hosted binding without restarting.",
     `Allowed web origins: ${parseOrigins(process.env.BACKROOM_ALLOWED_ORIGINS).join(", ")}`,
     "Pairing code (one use, expires in 10 minutes):",
     instance.pairingCode,
@@ -391,8 +616,31 @@ export async function runBackroomHost() {
   return instance;
 }
 
+export async function rotateBackroomHostIdentity() {
+  const identity=await rotateHostIdentity({
+    filePath:join(homedir(),".rub-minds","backroom","host-identity.json")
+  });
+  process.stdout.write([
+    "Rub Minds Backroom local host identity rotated.",
+    "This only rotates the local file; it does NOT revoke the previous server registration.",
+    "Before rotation, permanently revoke the previous host in the signed-in Rub Minds UI.",
+    `New host ID: ${identity.hostId}`,
+    `Hosted enrollment digest: ${identity.credentialDigest}`,
+    "The private 256-bit host credential remains in the private local identity file.",
+    "Start the host with: npm run backroom:host",
+    "Register this new host from the signed-in Rub Minds UI. The prior revoked host stays revoked.",
+    ""
+  ].join("\n"));
+  return Object.freeze({hostId:identity.hostId,credentialDigest:identity.credentialDigest});
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  runBackroomHost().catch(error => {
+  const rotateOnly=process.argv.includes("--rotate-identity-only");
+  const action=rotateOnly ? rotateBackroomHostIdentity() :
+    (process.argv.includes("--rotate-identity")
+      ? Promise.reject(new Error("Use npm run backroom:rotate-host after revoking the previous host in Rub Minds."))
+      : runBackroomHost());
+  action.catch(error => {
     process.stderr.write(`Backroom host failed to start: ${error.message}\n`);
     process.exitCode = 1;
   });

@@ -11,8 +11,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
 jobs:
   mcp-migration:
-    # Draft PRs are not release candidates. Skip runner allocation until ready for review.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    # Run validation on draft PRs as well; draft status does not imply a pass.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -286,8 +285,7 @@ jobs:
           $test$;
           SQL
   build:
-    # Draft PRs are not release candidates. Skip runner allocation until ready for review.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    # Run validation on draft PRs as well; draft status does not imply a pass.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -315,6 +313,8 @@ jobs:
           deno-version: v2.x
       - name: Test public rate-limit helper
         run: deno test supabase/functions/_shared/public-rate-limit.deno-test.ts
+      - name: Type-check Backroom coordination Edge Functions
+        run: deno check supabase/functions/backroom-config/index.ts supabase/functions/backroom-wake/index.ts
       - name: Type-check public invite Edge Functions
         run: deno check supabase/functions/redeem-ai-invite/index.ts supabase/functions/ai-invite-discovery/index.ts
       - name: Type-check session-memory Edge Function
@@ -329,8 +329,7 @@ jobs:
         run: npm run test:backroom:browser
 
   local-supabase-stack:
-    # Draft PRs are not release candidates. Skip runner allocation until ready for review.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+    # Run validation on draft PRs as well; draft status does not imply a pass.
     runs-on: ubuntu-latest
     # GitHub-hosted runners are isolated; serialize only superseded runs of the same PR.
     # A global non-cancelling group can leave one queued job blocking every future local-stack test.

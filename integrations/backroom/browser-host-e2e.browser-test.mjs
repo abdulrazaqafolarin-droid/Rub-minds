@@ -44,7 +44,7 @@ test("real local host -> Playwright browser overlay -> group-scoped target -> ve
  const browserRuntime=new BrowserHostRuntime({
   hostId:"e2e-backroom-host",profileDir,headless:true,
   chromiumProvider:async()=>({launchPersistentContext:async(dir,options)=>{
-   realContext=await chromium.launchPersistentContext(dir,options);
+   realContext=await chromium.launchPersistentContext(dir,{...options,...(process.env.CHROMIUM_PATH?{executablePath:process.env.CHROMIUM_PATH}:{} )});
    return realContext;
   }}),
  });

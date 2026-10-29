@@ -118,6 +118,9 @@ function fakeBrowserRuntime() {
   listTargets:async()=>targets,
   unregisterTarget:async(id,roomId)=>{const index=targets.findIndex(t=>t.id===id&&t.roomId===roomId);if(index<0)return false;targets.splice(index,1);return true},
   draft:async(id,text,{approved,roomId}={})=>{if(approved!==true)throw Error("approval required");if(!targets.some(t=>t.id===id&&t.roomId===roomId)){const error=Error("target scope mismatch");error.status=409;throw error}return {state:"completed",result:{drafted:true,submitted:false},submitted:false}},
+  enableContinuousWake:async input=>{if(input.confirmed!==true)throw Object.assign(Error("confirmation required"),{status:403});if(!targets.some(t=>t.id===input.targetId&&t.roomId===input.roomId))throw Object.assign(Error("target scope mismatch"),{status:409});return {grantId:"42345678-1234-4234-9234-123456789099",createdAt:1,expiresAt:900001,maxPerMinute:6,scope:{hostId:"host-test",groupId:input.roomId,participantId:input.participantId,sessionId:input.sessionId,bindingId:input.bindingId,targetId:input.targetId,identityFingerprint:"fake-window",targetRevision:1},mode:"canonical-trigger-only"}},
+  revokeContinuousWake:async input=>input.grantId==="42345678-1234-4234-9234-123456789099"&&input.targetId===targetId&&targets.some(t=>t.id===input.targetId&&t.roomId===input.roomId),
+  wake:async (targetId,eventId,grantId,{roomId}={})=>{if(grantId!=="42345678-1234-4234-9234-123456789099")throw Object.assign(Error("grant invalid"),{status:403});if(!targets.some(t=>t.id===targetId&&t.roomId===roomId))throw Object.assign(Error("target scope mismatch"),{status:409});return {state:"completed",reason:null,result:{triggerSubmitted:true,confirmation:"composer-cleared"},submitted:true,triggerOnly:true}},
   testSetSelected:()=>{selected={state:"selected",selectionAttemptId};},
   pageId,targetId,
  };
@@ -380,3 +383,278 @@ test("wrong-origin callers cannot trigger the emergency stop", async () => {
   assert.equal(browserRuntime.status().running,false);
  },{browserRuntime});
 });
+
+
+test("canonical wake HTTP routes require pairing, explicit opt-in, exact scope and grant",async()=>{
+ const browserRuntime=fakeBrowserRuntime();
+ await withHost(async({base,origin})=>{
+  const targetId=browserRuntime.targetId,roomId="12345678-1234-4234-9234-123456789014";
+  assert.equal((await fetch(base+"/v1/browser/wake/grants",{method:"POST",headers:{Origin:origin,"Content-Type":"application/json"},body:JSON.stringify({confirmed:true})})).status,401);
+  const credentials=await (await pair(base,origin)).json();
+  const auth={Origin:origin,Authorization:"Bearer "+credentials.sessionToken,"Content-Type":"application/json"};
+  assert.equal((await fetch(base+"/v1/browser/wake/grants",{method:"POST",headers:auth,body:JSON.stringify({confirmed:false})})).status,403);
+  const missing=await fetch(base+"/v1/browser/wake/grants",{method:"POST",headers:auth,body:JSON.stringify({confirmed:true,targetId,roomId})});
+  assert.equal(missing.status,400);
+  await fetch(base+"/v1/browser/start",{method:"POST",headers:auth});
+  const selection=await (await fetch(base+"/v1/browser/select",{method:"POST",headers:auth,body:JSON.stringify({pageId:browserRuntime.pageId,roomId})})).json();
+  browserRuntime.testSetSelected();
+  assert.equal((await fetch(base+"/v1/browser/targets",{method:"POST",headers:auth,body:JSON.stringify({pageId:browserRuntime.pageId,roomId,attemptId:selection.selectionAttemptId})})).status,201);
+  const request={confirmed:true,targetId,roomId,participantId:"32345678-1234-4234-9234-123456789011",sessionId:browserRuntime.pageId,bindingId:"32345678-1234-4234-9234-123456789012"};
+  const grantResponse=await fetch(base+"/v1/browser/wake/grants",{method:"POST",headers:auth,body:JSON.stringify(request)});
+  assert.equal(grantResponse.status,201);
+  const grant=await grantResponse.json();assert.equal(grant.mode,"canonical-trigger-only");assert.equal(grant.scope.targetId,targetId);
+  const revokeWrong=await fetch(base+"/v1/browser/wake/grants/revoke",{method:"POST",headers:auth,body:JSON.stringify({grantId:grant.grantId,targetId,roomId:"22345678-1234-4234-9234-123456789014",bindingId:request.bindingId})});
+  assert.equal(revokeWrong.status,404);
+  const wake=await fetch(base+"/v1/browser/wake",{method:"POST",headers:auth,body:JSON.stringify({grantId:grant.grantId,targetId,roomId,eventId:"42345678-1234-4234-9234-123456789010"})});
+  assert.equal(wake.status,200);assert.equal((await wake.json()).triggerOnly,true);
+  const revoke=await fetch(base+"/v1/browser/wake/grants/revoke",{method:"POST",headers:auth,body:JSON.stringify({grantId:grant.grantId,targetId,roomId,bindingId:request.bindingId})});
+  assert.equal(revoke.status,200);assert.equal((await revoke.json()).revoked,true);
+ },{browserRuntime});
+});
+
+test("enrollment only exposes a digest to the locally paired owner browser",async()=>{
+ const digest="d".repeat(64);
+ assert.throws(()=>createBackroomHostServer({allowedOrigins:["https://rub-minds.vercel.app"],enrollmentDigest:"invalid"}),/enrollment digest/);
+ await withHost(async({base,origin})=>{
+  const unauthorized=await fetch(base+"/v1/host",{headers:{Origin:origin}});
+  assert.equal(unauthorized.status,401);
+  const credentials=await (await pair(base,origin)).json();
+  const authorized=await fetch(base+"/v1/host",{headers:{Origin:origin,Authorization:"Bearer "+credentials.sessionToken}});
+  assert.equal(authorized.status,200);
+  const status=await authorized.json();
+  assert.equal(status.enrollmentDigest,digest);
+  assert.equal(Object.hasOwn(status,"hostToken"),false);
+ },{enrollmentDigest:digest});
+});
+
+
+test("local approval activates hosted wake, and unpair/revoke stop remote worker",async()=>{
+ const roomId="12345678-1234-4234-9234-123456789014";
+ const participantId="12345678-1234-4234-9234-123456789015";
+ const bindingId="12345678-1234-4234-9234-123456789016";
+ const sessionId="12345678-1234-4234-9234-123456789017";
+ const targetId="12345678-1234-4234-9234-123456789018";
+ const grantId="12345678-1234-4234-9234-123456789019";
+ const calls=[];
+ const browserRuntime={
+  status:()=>({running:true,pages:1,capabilities:{browserDraft:true,browserCanonicalWake:true}}),
+  stop:async()=>{calls.push("browser-stop");},
+  enableContinuousWake:async input=>{
+   assert.equal(input.confirmed,true);
+   calls.push("local-grant");
+   return {grantId,scope:{hostId:"host-test",bindingId,groupId:roomId,participantId,sessionId,targetId}};
+  },
+  revokeContinuousWake:()=>{calls.push("revoke");return true;}
+ };
+ const wakeService={
+  activateAndStart:async()=>{calls.push("remote-activate");},
+  stop:async binding=>{calls.push("poller-stop:"+String(binding??"all"));}
+ };
+ await withHost(async({base,origin})=>{
+  const pairResponse=await pair(base,origin);
+  const token=(await pairResponse.json()).sessionToken;
+  const auth={Origin:origin,Authorization:"Bearer "+token,"Content-Type":"application/json"};
+  const body={targetId,roomId,participantId,sessionId,bindingId,confirmed:true};
+  const response=await fetch(base+"/v1/browser/wake/grants",{method:"POST",headers:auth,body:JSON.stringify(body)});
+  assert.equal(response.status,201);
+  assert.deepEqual(calls.slice(0,2),["local-grant","remote-activate"]);
+  const revoke=await fetch(base+"/v1/browser/wake/grants/revoke",{method:"POST",headers:auth,
+   body:JSON.stringify({grantId,targetId,roomId,bindingId})});
+  assert.equal(revoke.status,200);
+  assert.ok(calls.includes("poller-stop:"+bindingId));
+  const unpair=await fetch(base+"/v1/unpair",{method:"POST",headers:auth});
+  assert.equal(unpair.status,200);
+  assert.ok(calls.filter(x=>x.startsWith("poller-stop:")).length>=2);
+  assert.ok(calls.includes("poller-stop:all"));;
+ },{browserRuntime,wakeService});
+});
+test("remote activation failure revokes local grant and never reports success",async()=>{
+ const roomId="12345678-1234-4234-9234-123456789014";
+ const targetId="12345678-1234-4234-9234-123456789018";
+ const grantId="12345678-1234-4234-9234-123456789019";
+ let revoked=0;
+ const browserRuntime={
+  status:()=>({running:true,pages:1,capabilities:{browserCanonicalWake:true}}),
+  stop:async()=>{},
+  enableContinuousWake:async()=>({grantId}),
+  revokeContinuousWake:()=>{revoked++;return true;}
+ };
+ const wakeService={
+  activateAndStart:async()=>{throw new Error("secret network failure");},
+  stop:async()=>{}
+ };
+ await withHost(async({base,origin})=>{
+  const token=(await (await pair(base,origin)).json()).sessionToken;
+  const response=await fetch(base+"/v1/browser/wake/grants",{method:"POST",
+   headers:{Origin:origin,Authorization:"Bearer "+token,"Content-Type":"application/json"},
+   body:JSON.stringify({targetId,roomId,participantId:"12345678-1234-4234-9234-123456789015",
+    sessionId:"12345678-1234-4234-9234-123456789017",
+    bindingId:"12345678-1234-4234-9234-123456789016",confirmed:true})});
+  assert.equal(response.status,503);
+  assert.equal(revoked,1);
+  assert.doesNotMatch(await response.text(),/secret network/);
+ },{browserRuntime,wakeService});
+});
+
+
+test("multi-surface routes require pairing and never expose native registration",async()=>{
+ const calls=[];
+ const multiSurfaceRuntime={
+  list:()=>[{id:"selected-native",surface:"windows_app",roomId:"group-1",operations:["draft"]}],
+  draft:async input=>{calls.push(input);return {state:"completed",submitted:false,result:{drafted:true}}},
+  stop:()=>{calls.push("stopped")}
+ };
+ await withHost(async({base,origin})=>{
+  const unauth=await fetch(base+"/v1/surfaces/targets",{headers:{Origin:origin}});
+  assert.equal(unauth.status,401);
+  const session=(await (await pair(base,origin)).json()).sessionToken;
+  const headers={Origin:origin,Authorization:"Bearer "+session};
+  const list=await fetch(base+"/v1/surfaces/targets",{headers});
+  assert.equal(list.status,200);
+  assert.equal((await list.json()).targets[0].operations[0],"draft");
+  const unapproved=await fetch(base+"/v1/surfaces/draft",{
+   method:"POST",headers:{...headers,"Content-Type":"application/json"},
+   body:JSON.stringify({approved:false,command:{operation:"draft",text:"hello"}})});
+  assert.equal(unapproved.status,403);
+  assert.equal(calls.length,0);
+  const approved=await fetch(base+"/v1/surfaces/draft",{
+   method:"POST",headers:{...headers,"Content-Type":"application/json"},
+   body:JSON.stringify({approved:true,command:{operation:"draft",text:"hello"}})});
+  assert.equal(approved.status,200);
+  assert.equal((await approved.json()).submitted,false);
+  assert.equal(calls.length,1);
+  const registration=await fetch(base+"/v1/surfaces/register",{
+   method:"POST",headers:{...headers,"Content-Type":"application/json"},
+   body:JSON.stringify({surface:"android_app",driver:"pretend",approved:true})});
+  assert.equal(registration.status,404);
+  const unpair=await fetch(base+"/v1/unpair",{
+   method:"POST",headers});
+  assert.equal(unpair.status,200);
+  assert.ok(calls.includes("stopped"));
+ },{multiSurfaceRuntime});
+ assert.ok(calls.includes("stopped"));
+});
+test("native multi-surface routes remain unavailable when no OS driver runtime is installed",async()=>{
+ await withHost(async({base,origin})=>{
+  const session=(await (await pair(base,origin)).json()).sessionToken;
+  const status=await fetch(base+"/v1/surfaces/targets",{
+   headers:{Origin:origin,Authorization:"Bearer "+session}});
+  assert.equal(status.status,503);
+  assert.equal((await status.json()).error,"native_runtime_unavailable");
+ });
+});
+
+
+test("paired host configuration rejects browser-selected credential URLs and accepts only scope",async()=>{
+ let received=null;
+ const wakeService={configure(input){received=input;return {configured:true,bindingId:input.bindingId};},stop:async()=>{}};
+ const bindingId="12345678-1234-4234-9234-123456789077";
+ const sessionDigest="a".repeat(64);
+ const publishableKey="sb_publishable_exampleKey0123456789abcdef";
+ await withHost(async({base,origin})=>{
+  const token=(await (await pair(base,origin)).json()).sessionToken;
+  const headers={Origin:origin,Authorization:"Bearer "+token,"Content-Type":"application/json"};
+  const exfil=await fetch(base+"/v1/backroom/configure",{method:"POST",headers,
+   body:JSON.stringify({gatewayUrl:"https://attacker.example/",bindingId,sessionDigest,publishableKey})});
+  assert.equal(exfil.status,400);
+  assert.equal(received,null);
+  const valid=await fetch(base+"/v1/backroom/configure",{method:"POST",headers,
+   body:JSON.stringify({bindingId,sessionDigest,publishableKey})});
+  assert.equal(valid.status,200);
+  assert.deepEqual(received,{bindingId,sessionDigest,publishableKey});
+ },{wakeService});
+});
+
+
+test("paired host stop route requires auth and calls the wake service stop hook",async()=>{
+ let stopped=0;
+ const wakeService={configure:()=>({configured:true}),stop:async()=>{stopped++;return {stopped:true,remotelyDeactivated:true}}};
+ await withHost(async({base,origin})=>{
+  const denied=await fetch(base+"/v1/backroom/stop",{method:"POST",headers:{Origin:origin}});
+  assert.equal(denied.status,401);
+  assert.equal(stopped,0);
+  const token=(await (await pair(base,origin)).json()).sessionToken;
+  const response=await fetch(base+"/v1/backroom/stop",{method:"POST",
+   headers:{Origin:origin,Authorization:"Bearer "+token}});
+  assert.equal(response.status,200);
+  assert.deepEqual(await response.json(),{stopped:true,bindingId:null,remoteDeactivationConfirmed:true});
+  assert.equal(stopped,1);
+ },{wakeService});
+});
+test("host configure route permits only scope plus public project key, never gateway override",async()=>{
+ let received=null;
+ const wakeService={configure(input){received=input;return {configured:true,bindingId:input.bindingId}},stop:async()=>{}};
+ const bindingId="12345678-1234-4234-9234-123456789078";
+ const sessionDigest="c".repeat(64);
+ const publishableKey="sb_publishable_exampleKey0123456789abcdef";
+ await withHost(async({base,origin})=>{
+  const token=(await (await pair(base,origin)).json()).sessionToken;
+  const headers={Origin:origin,Authorization:"Bearer "+token,"Content-Type":"application/json"};
+  const bad=await fetch(base+"/v1/backroom/configure",{method:"POST",headers,
+   body:JSON.stringify({gatewayUrl:"https://attacker.example/",bindingId,sessionDigest,publishableKey})});
+  assert.equal(bad.status,400);
+  assert.equal(received,null);
+  const good=await fetch(base+"/v1/backroom/configure",{method:"POST",headers,
+   body:JSON.stringify({bindingId,sessionDigest,publishableKey})});
+  assert.equal(good.status,200);
+  assert.deepEqual(received,{bindingId,sessionDigest,publishableKey});
+ },{wakeService});
+});
+
+
+test("wake revoke reports local stop separately from uncertain remote deactivation",async()=>{
+ const targetId="12345678-1234-4234-9234-123456789088";
+ const roomId="12345678-1234-4234-9234-123456789089";
+ const bindingId="12345678-1234-4234-9234-123456789090";
+ const grantId="12345678-1234-4234-9234-123456789091";
+ let stoppedFor=null;
+ const browserRuntime={
+  status:()=>({running:true,pages:1,capabilities:{browserCanonicalWake:true}}),
+  stop:async()=>{},
+  enableContinuousWake:async()=>({grantId}),
+  revokeContinuousWake:()=>true
+ };
+ const wakeService={stop:async id=>{stoppedFor=id;return {stopped:true,remotelyDeactivated:false};}};
+ await withHost(async({base,origin})=>{
+  const token=(await (await pair(base,origin)).json()).sessionToken;
+  const auth={Origin:origin,Authorization:"Bearer "+token,"Content-Type":"application/json"};
+  const response=await fetch(base+"/v1/browser/wake/grants/revoke",{method:"POST",headers:auth,
+   body:JSON.stringify({grantId,targetId,roomId,bindingId})});
+  assert.equal(response.status,200);
+  assert.equal(stoppedFor,bindingId);
+  assert.deepEqual(await response.json(),{
+   revoked:true,localPollingStopped:true,remoteDeactivationConfirmed:false,remoteDeactivationPending:true
+  });
+ },{browserRuntime,wakeService});
+});
+
+test("backroom unconfigure accepts standard JSON content types and rejects non-JSON without touching wake service", async () => {
+ const bindingId="12345678-1234-4234-9234-123456789092";
+ const calls=[];
+ const wakeService={
+  stop:async()=>{},
+  unconfigure:async id=>{
+   calls.push(id);
+   return {removed:true,bindingId:id,remotelyDeactivated:true};
+  }
+ };
+ await withHost(async({base,origin})=>{
+  const token=(await (await pair(base,origin)).json()).sessionToken;
+  const body=JSON.stringify({bindingId});
+  const baseHeaders={Origin:origin,Authorization:"Bearer "+token};
+  const nonJson=await fetch(base+"/v1/backroom/unconfigure",{
+   method:"POST",headers:{...baseHeaders,"Content-Type":"text/plain"},body
+  });
+  assert.equal(nonJson.status,415);
+  assert.deepEqual(calls,[]);
+  const accepted=await fetch(base+"/v1/backroom/unconfigure",{
+   method:"POST",headers:{...baseHeaders,"Content-Type":"application/json; charset=utf-8"},body
+  });
+  assert.equal(accepted.status,200);
+  assert.deepEqual(await accepted.json(),{
+   removed:true,bindingId,remotelyDeactivated:true
+  });
+  assert.deepEqual(calls,[bindingId]);
+ },{wakeService});
+});
+

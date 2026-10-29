@@ -4,8 +4,9 @@
  * A separately installed local host must attest device/session focus on EVERY call.
  */
 const KINDS = new Set(["browser_tab","desktop_app","windows_app","terminal","android_app"]);
-const OPS = new Set(["draft","submit","read_result"]);
+const OPS = new Set(["draft","wake","submit","read_result"]);
 const isText = value => typeof value === "string" && value.length > 0;
+import {isCanonicalWakePrompt} from "./coordination-core.mjs";
 function denyBeforeEffect(message) {
   const error = new Error(message);
   error.code = "BACKROOM_PREFLIGHT";
@@ -42,6 +43,9 @@ export class LocalExecutionGuard {
       command.sessionId !== target.sessionId || command.identityFingerprint !== target.identityFingerprint ||
       command.targetRevision !== target.revision) {
       denyBeforeEffect("target scope mismatch");
+    }
+    if (command.operation === "wake" && !isCanonicalWakePrompt(command.text, command.eventId)) {
+      denyBeforeEffect("wake operation accepts only the canonical event-bound @RMconnects prompt");
     }
     if (!this.host.surfaces.includes(target.surface) || !this.host.operations.includes(command.operation)) {
       denyBeforeEffect("host capability missing");

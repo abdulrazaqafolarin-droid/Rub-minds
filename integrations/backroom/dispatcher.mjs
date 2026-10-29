@@ -3,7 +3,7 @@
  * Real adapters must perform OS-level identity and permission checks before effects.
  */
 import { TargetRegistry } from "./target-registry.mjs";
-const OPERATIONS = new Set(["draft", "submit", "read_result"]);
+const OPERATIONS = new Set(["draft", "wake", "submit", "read_result"]);
 const STATES = new Set(["queued", "awaiting_approval", "running", "completed", "failed", "cancelled", "needs_review"]);
 const ok = (v) => typeof v === "string" && v.trim().length > 0;
 export function validateCommand(command) {
