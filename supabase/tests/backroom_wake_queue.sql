@@ -38,8 +38,8 @@ declare
   v_binding_7 uuid := '60000000-0000-4000-8000-000000000007';
 begin
   insert into auth.users(id) values (v_owner);
-  insert into public.rooms(id,owner_id) values (v_room,v_owner);
-  insert into public.participants(id,room_id,kind,status) values (v_participant,v_room,'external_agent','active');
+  insert into public.rooms(id,owner_id,title) values (v_room,v_owner,'Backroom wake queue test room');
+  insert into public.participants(id,room_id,display_name,kind,status) values (v_participant,v_room,'Test Backroom Agent','external_agent','active');
   insert into public.agent_connections(room_id,participant_id,owner_id,credential_digest,expires_at,revoked_at)
   values (v_room,v_participant,v_owner,repeat('a',64),pg_catalog.clock_timestamp()+interval '1 hour',null);
 
