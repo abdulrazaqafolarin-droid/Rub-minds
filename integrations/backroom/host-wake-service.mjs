@@ -126,7 +126,7 @@ export function createHostWakeService({
   const entry={
    remote,poller,publishableKey:config.publishableKey,
    scope:Object.freeze({bindingId:config.bindingId,sessionDigest:config.sessionDigest}),
-   activeGrantId:null,expiryTimer:null
+   activeGrantId:null,expiryTimer:null,activationPromise:null,activationGrantId:null
   };
   bindings.set(config.bindingId,entry);
   return Object.freeze({configured:true,bindingId:config.bindingId,existing:false});
@@ -136,6 +136,20 @@ export function createHostWakeService({
   const bindingId=input?.bindingId;
   const entry=bindings.get(bindingId);
   if(!entry)throw new Error('Configure this hosted input binding before local consent');
+  if(entry.activationPromise){
+   if(entry.activationGrantId===grant?.grantId)return entry.activationPromise;
+   throw new Error('Another wake activation is already in progress for this binding');
+  }
+  const promise=activateAndStartImpl(grant,input,entry);
+  entry.activationPromise=promise;
+  entry.activationGrantId=grant?.grantId??null;
+  try{return await promise;}
+  finally{
+   if(entry.activationPromise===promise){entry.activationPromise=null;entry.activationGrantId=null;}
+  }
+ }
+ async function activateAndStartImpl(grant,input,entry){
+  const bindingId=input?.bindingId;
   if(grant?.scope?.hostId!==identity.hostId||grant.scope.bindingId!==entry.scope.bindingId||
      grant.scope.bindingId!==input.bindingId||grant.scope.groupId!==input.roomId||
      grant.scope.participantId!==input.participantId||grant.scope.sessionId!==input.sessionId)
