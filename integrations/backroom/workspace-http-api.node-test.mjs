@@ -1,0 +1,32 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { handleWorkspaceHttpRequest } from './workspace-http-api.mjs';
+
+const token='a'.repeat(64);
+function f({runtime=null,authorized=true,body={}}={}){
+ const response={status:0,body:null,headers:null};
+ const request={method:'POST',headers:{origin:'https://rub-minds.vercel.app',authorization:'Bearer '+token,'content-type':'application/json'}};
+ const authority={authorize:({origin,token:got})=>authorized&&origin===request.headers.origin&&got===token?{hostId:'local-host'}:null};
+ return {request,response,authority,writeJson:(_r,status,payload,headers)=>Object.assign(response,{status,body:payload,headers}),readJson:async()=>body,workspaceRuntime:runtime};
+}
+test('ignores paths outside workspaces',async()=>assert.equal(await handleWorkspaceHttpRequest({...f(),url:new URL('http://127.0.0.1/health')}),false));
+test('authenticates paired session and reports disabled adapters truthfully',async()=>{
+ const x=f({authorized:false});await handleWorkspaceHttpRequest({...x,request:{...x.request,method:'GET'},url:new URL('http://127.0.0.1/v1/workspaces/status')});assert.equal(x.response.status,401);
+ const y=f();await handleWorkspaceHttpRequest({...y,request:{...y.request,method:'GET'},url:new URL('http://127.0.0.1/v1/workspaces/status')});assert.equal(y.response.status,200);assert.deepEqual(y.response.body.capabilities,{desktop:false,android:false,terminal:false});
+});
+test('rejects unknown request fields before runtime call',async()=>{
+ let called=false;const x=f({body:{groupId:'g',sessionId:'s',deviceSerial:'device',appPackage:'com.example.app',task:'inspect',hostToken:'forbidden'},runtime:{runAndroidTask:async()=>{called=true;return {};}}});
+ await handleWorkspaceHttpRequest({...x,url:new URL('http://127.0.0.1/v1/workspaces/android/tasks')});assert.equal(x.response.status,400);assert.equal(called,false);
+});
+test('forwards group/session with Android task and returns trace as accepted',async()=>{
+ let seen;const x=f({body:{groupId:'group-1',sessionId:'session-1',deviceSerial:'device',appPackage:'com.example.app',task:'Read current page'},runtime:{runAndroidTask:async input=>{seen=input;return {traceId:'trace-1',status:'running'};}}});
+ assert.equal(await handleWorkspaceHttpRequest({...x,url:new URL('http://127.0.0.1/v1/workspaces/android/tasks')}),true);assert.equal(x.response.status,201);assert.equal(seen.groupId,'group-1');assert.equal(seen.sessionId,'session-1');assert.equal(x.response.body.traceId,'trace-1');
+});
+test('maps local terminal denial to 403 with sanitized result',async()=>{
+ const x=f({body:{groupId:'g',sessionId:'s',command:['npm','test'],purpose:'verify'},runtime:{execTerminal:async()=>{throw Error('Local terminal command denied');}}});
+ await handleWorkspaceHttpRequest({...x,url:new URL('http://127.0.0.1/v1/workspaces/terminal/exec')});assert.equal(x.response.status,403);assert.deepEqual(x.response.body,{error:'local_approval_denied'});
+});
+test('requires JSON content type and avoids leaking error messages for unknown routes',async()=>{
+ const a=f();a.request.headers['content-type']='text/plain';await handleWorkspaceHttpRequest({...a,url:new URL('http://127.0.0.1/v1/workspaces/android/tasks')});assert.equal(a.response.status,415);
+ const b=f();await handleWorkspaceHttpRequest({...b,url:new URL('http://127.0.0.1/v1/workspaces/unknown')});assert.equal(b.response.status,404);assert.deepEqual(b.response.body,{error:'not_found'});
+});
