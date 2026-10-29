@@ -156,7 +156,7 @@ export class CuaSandboxTerminalWorkspace {
 export function createExternalWorkspaceService({desktop=null,android=null,terminal=null}={}){
   let stopped=false;
   return Object.freeze({
-    status(){return Object.freeze({stopped,capabilities:Object.freeze({desktop:!!desktop,android:!!android,terminal:!!terminal}),desktop:desktop?{available:true}:{available:false},android:android?android.statusSummary:{available:false},terminal:terminal?terminal.status:{available:false,hostShellAvailable:false}});},
+    status(){const desktopReady=!!desktop&&desktop.client?.status?.connected!==false;const androidReady=!!android&&android.client?.status?.connected!==false;const terminalState=terminal?terminal.status:{available:false,hostShellAvailable:false};const terminalReady=!!terminal&&terminalState.ready===true&&terminalState.closed!==true;return Object.freeze({stopped,capabilities:Object.freeze({desktop:!stopped&&desktopReady,android:!stopped&&androidReady,terminal:!stopped&&terminalReady}),desktop:{available:!stopped&&desktopReady,tools:desktop?.client?.status?.tools??[]},android:android?{...android.statusSummary,available:!stopped&&androidReady}:{available:false,trackedTasks:0},terminal:terminal?{...terminalState,available:!stopped&&terminalReady}:{available:false,hostShellAvailable:false}});},
     async listDesktopWindows(input){if(stopped||!desktop)throw new Error('desktop_workspace_unavailable');return desktop.listWindows(input);},
     async observeDesktop(input){if(stopped||!desktop)throw new Error('desktop_workspace_unavailable');return desktop.observeWindow(input);},
     async draftDesktop(input){if(stopped||!desktop)throw new Error('desktop_workspace_unavailable');return desktop.draftText(input);},
