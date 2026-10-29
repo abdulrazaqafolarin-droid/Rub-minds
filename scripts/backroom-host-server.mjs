@@ -79,7 +79,7 @@ function bearer(request) {
  */
 export function createBackroomHostServer({
   port = 43781, host = "127.0.0.1", allowedOrigins = parseOrigins(process.env.BACKROOM_ALLOWED_ORIGINS),
-  pairingCode, hostId = randomUUID(), enrollmentDigest = null, now = () => Date.now(), pairingTtlMs, sessionTtlMs, maxPairAttempts, browserRuntime,
+  pairingCode, hostId = randomUUID(), enrollmentDigest = null, now = () => Date.now(), pairingTtlMs, sessionTtlMs, maxPairAttempts, browserRuntime, wakeService,
 } = {}) {
   if (host !== "127.0.0.1") throw new TypeError("Backroom host must bind to IPv4 loopback only");
   if (enrollmentDigest !== null && (typeof enrollmentDigest !== "string" || !/^[a-f0-9]{64}$/.test(enrollmentDigest))) throw new TypeError("Invalid enrollment digest");
@@ -148,6 +148,7 @@ export function createBackroomHostServer({
       killSwitchTripped = true;
       const sessionsRevoked = authority.revokeAll({ origin: requestOrigin, token });
       let closeError = null;
+      try { await wakeService?.stop?.(); } catch { closeError = true; }
       try { await browser.stop(); } catch { closeError = true; }
       const browserClosed = browser.status()?.running !== true;
       const stopped = sessionsRevoked && browserClosed && !closeError;
@@ -255,6 +256,7 @@ export function createBackroomHostServer({
           return;
         }
         if (request.method === "POST" && url.pathname === "/v1/browser/stop") {
+          await wakeService?.stop?.();
           writeJson(response, 200, await browser.stop(), cors);
           return;
         }
@@ -327,6 +329,18 @@ export function createBackroomHostServer({
               ...(input.ttlMs === undefined ? {} : { ttlMs: input.ttlMs }),
               ...(input.maxPerMinute === undefined ? {} : { maxPerMinute: input.maxPerMinute }),
             });
+            if(wakeService){
+              try {
+                // The remote queue is enabled only after explicit, origin-bound
+                // local approval, and only for this pre-enrolled binding.
+                await wakeService.activateAndStart(grant,input);
+              } catch {
+                browser.revokeContinuousWake({grantId:grant.grantId,
+                  targetId:input.targetId,roomId:input.roomId});
+                writeJson(response, 503, {error:"remote_wake_activation_failed"}, cors);
+                return;
+              }
+            }
             writeJson(response, 201, grant, cors);
             return;
           }
@@ -339,6 +353,7 @@ export function createBackroomHostServer({
               return;
             }
             const revoked = await browser.revokeContinuousWake({ grantId: input.grantId, targetId: input.targetId, roomId: input.roomId });
+            if(revoked)await wakeService?.stop?.();
             writeJson(response, revoked ? 200 : 404, { revoked }, cors);
             return;
           }
@@ -412,6 +427,7 @@ export function createBackroomHostServer({
     },
     async close() {
       let browserError = null;
+      try { await wakeService?.stop?.(); } catch { browserError = new Error("wake_poller_stop_failed"); }
       try { await browser.stop(); } catch (error) { browserError = error; }
       if (server.listening) {
         await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
