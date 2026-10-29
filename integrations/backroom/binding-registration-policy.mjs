@@ -15,6 +15,11 @@ const FIELDS=Object.freeze([
  ['locator_kind','locatorKind'],['locator_value','locatorValue'],
  ['participation_mode','participationMode'],['max_wakes_per_minute','maxWakesPerMinute']
 ]);
+/**
+ * @typedef {Record<string, any> & {id:string,owner_id:string,wake_enabled:boolean}} ExistingBackroomBinding
+ * @typedef {{ownerId:string,input:Record<string,any>,existingSession?:ExistingBackroomBinding|null,existingTarget?:ExistingBackroomBinding|null}} BindingRegistrationOptions
+ * @param {Partial<BindingRegistrationOptions>} [options]
+ */
 export function classifyExistingBinding({ownerId,input,existingSession=null,existingTarget=null}={}){
  if(!ownerId||!input||typeof input!=='object'||Array.isArray(input))
   throw new TypeError('Authenticated owner and validated binding required');
