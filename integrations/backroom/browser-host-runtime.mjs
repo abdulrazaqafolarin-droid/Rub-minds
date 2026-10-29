@@ -842,7 +842,7 @@ export class BrowserHostRuntime {
       throw Object.assign(new Error("Wake event or target does not match the explicit grant scope."),{status:409});
     }
     const command={id:"wake_"+randomUUID().replaceAll("-",""),eventId,roomId:scope.groupId,hostId:this.hostId,
-      spaceId:target.spaceId,sessionId:target.sessionId,identityFingerprint:target.identityFingerprint,
+      participantId:scope.participantId,bindingId:scope.bindingId,spaceId:target.spaceId,sessionId:target.sessionId,identityFingerprint:target.identityFingerprint,
       targetId:target.id,targetRevision:target.revision,operation:"wake",wakeGrantId:grantId,
       text:buildCanonicalWakePrompt(eventId)};
     this.dispatcher.enqueue(command);
