@@ -62,7 +62,7 @@ test('local host credential is sent only to the trusted Supabase Edge Function',
     return new Response(JSON.stringify(data),{status:200});
    }
   });
-  service.configure({sessionDigest,bindingId});
+  service.configure({sessionDigest,bindingId,publishableKey});
   const grantId='40000000-0000-4000-8000-000000000033';
   await service.activateAndStart({grantId,expiresAt:Date.now()+300000,scope:{hostId,bindingId,groupId:'40000000-0000-4000-8000-000000000044',
     participantId:'40000000-0000-4000-8000-000000000055',sessionId:'40000000-0000-4000-8000-000000000066'}},
@@ -93,7 +93,7 @@ test('lost activation response retries only the same consent grant and can then 
     return new Response(JSON.stringify(body),{status:200});
    }
   });
-  service.configure({sessionDigest,bindingId});
+  service.configure({sessionDigest,bindingId,publishableKey});
   const grantId='40000000-0000-4000-8000-000000000077';
   const grant={grantId,expiresAt:Date.now()+300000,scope:{
    hostId,bindingId,groupId:'40000000-0000-4000-8000-000000000044',
