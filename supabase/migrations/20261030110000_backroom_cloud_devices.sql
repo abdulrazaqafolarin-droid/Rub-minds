@@ -148,7 +148,7 @@ as $function$
 declare
   v_count integer;
 begin
-  if p_device_id is null or jsonb_typeof(p_apps) <> 'array' or jsonb_array_length(p_apps) > 100 then
+  if p_device_id is null or coalesce(jsonb_typeof(p_apps), '') <> 'array' or jsonb_array_length(p_apps) > 100 then
     raise exception 'Invalid device app inventory';
   end if;
   if not exists(select 1 from public.backroom_devices where device_id=p_device_id and status='active') then
@@ -164,6 +164,24 @@ begin
   ) then
     raise exception 'Invalid selected app record';
   end if;
+  insert into public.backroom_device_events(room_id, device_id, actor_type, actor_id, event_type, package_name)
+    select binding.room_id, p_device_id, 'device', p_device_id::text, 'app_removed', current_app.package_name
+    from public.backroom_device_apps current_app
+    join public.backroom_device_room_bindings binding on binding.device_id=p_device_id and binding.revoked_at is null
+    where current_app.device_id=p_device_id
+      and not exists (
+        select 1 from jsonb_to_recordset(p_apps) as next_app(package_name text)
+        where next_app.package_name=current_app.package_name
+      );
+  insert into public.backroom_device_events(room_id, device_id, actor_type, actor_id, event_type, package_name)
+    select binding.room_id, p_device_id, 'device', p_device_id::text, 'app_added', next_app.package_name
+    from jsonb_to_recordset(p_apps) as next_app(package_name text)
+    cross join public.backroom_device_room_bindings binding
+    where binding.device_id=p_device_id and binding.revoked_at is null
+      and not exists (
+        select 1 from public.backroom_device_apps current_app
+        where current_app.device_id=p_device_id and current_app.package_name=next_app.package_name
+      );
   delete from public.backroom_device_apps where device_id=p_device_id;
   insert into public.backroom_device_apps(device_id, package_name, app_label, signing_certificate_sha256, version_name, draft_insertion_allowed)
     select p_device_id, app.package_name, app.app_label, app.signing_certificate_sha256, coalesce(app.version_name,''), app.draft_insertion_allowed

@@ -375,14 +375,14 @@ class MainActivity : Activity() {
         setBusy(true, "Checking approval before syncing app choices…")
         executor.execute {
             try {
-                val status = cloudApi.status(token)
+                val status = cloudClient().status(token)
                 if (status.optString("status") != "active") {
                     runOnUiThread {
                         setBusy(false, "App choices saved on phone. Group-owner approval is still required before sync.")
                     }
                     return@execute
                 }
-                val count = syncInventoryBlocking(token)
+                val count = syncInventoryBlocking(token, rows)
                 runOnUiThread { setBusy(false, "$count selected app(s) synced to Backroom.") }
             } catch (error: Exception) {
                 runOnUiThread { setBusy(false, error.message ?: "App inventory sync failed.") }
