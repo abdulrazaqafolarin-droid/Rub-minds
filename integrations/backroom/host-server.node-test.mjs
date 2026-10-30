@@ -690,3 +690,23 @@ test("default host allowlist supports the exact authenticated Backroom staging P
   else process.env.BACKROOM_ALLOWED_ORIGINS=previous;
  }
 });
+
+
+test("paired host status reports only the trusted wake gateway hostname",async()=>{
+ const gatewayHost="tzcuuynmviiuactafpld.supabase.co";
+ const wakeService={
+  get status(){return {configured:false,count:0,bindings:[],gatewayHost};},
+  stop:async()=>({stopped:true})
+ };
+ await withHost(async({base,origin})=>{
+  const credentials=await (await pair(base,origin)).json();
+  const response=await fetch(base+"/v1/host",{headers:{
+   Origin:origin,Authorization:"Bearer "+credentials.sessionToken
+  }});
+  assert.equal(response.status,200);
+  const value=await response.json();
+  assert.equal(value.wakeGatewayHost,gatewayHost);
+  assert.equal(value.gatewayUrl,undefined);
+  assert.equal(value.hostToken,undefined);
+ },{wakeService});
+});
