@@ -75,7 +75,7 @@ test('privileged store exceptions are redacted and unapproved requests are denie
  assert.doesNotMatch(await failed.text(),/sensitive|SQL/);
  const denied=await handler(request('https://example.test/v1/backroom/wake/ack',{body:{
   hostId:valid.hostId,bindingId:valid.bindingId,sessionDigest:valid.sessionDigest,
-  jobId:'id',leaseToken:'lease',outcome:'ignored'}}));
+  jobId:'40000000-0000-4000-8000-000000000033',leaseToken:'40000000-0000-4000-8000-000000000044',outcome:'ignored'}}));
  assert.equal(denied.status,401);
 });
 
@@ -125,4 +125,22 @@ test('malformed UUIDs, lease tokens and retry bounds return 400 before gateway a
   assert.deepEqual(await out.json(),{ok:false,reason:'invalid_body'});
  }
  assert.equal(calls.length,0);
+});
+
+
+test('authenticated gateway input validation maps malformed wake IDs to HTTP 400',async()=>{
+ const gateway={activate:async()=>({ok:true}),deactivate:async()=>({ok:true}),
+  claim:async()=>({ok:true,leases:[]}),
+  acknowledge:async()=>({ok:false,reason:'invalid_request'}),
+  retry:async()=>({ok:false,reason:'invalid_request'})};
+ const handler=createWakeGatewayHttpHandler({gateway});
+ const ack=await handler(request('https://example.test/v1/backroom/wake/ack',{body:{
+  hostId:valid.hostId,bindingId:valid.bindingId,sessionDigest:valid.sessionDigest,
+  jobId:'bad-id',leaseToken:'bad-token',outcome:'acknowledged'}}));
+ assert.equal(ack.status,400);
+ assert.deepEqual(await ack.json(),{ok:false,reason:'invalid_request'});
+ const retry=await handler(request('https://example.test/v1/backroom/wake/retry',{body:{
+  hostId:valid.hostId,bindingId:valid.bindingId,sessionDigest:valid.sessionDigest,
+  jobId:'bad-id',leaseToken:'bad-token',retryAfterSeconds:0,errorCode:'unsafe'}}));
+ assert.equal(retry.status,400);
 });
