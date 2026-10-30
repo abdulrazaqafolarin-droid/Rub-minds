@@ -46,6 +46,41 @@ export function classifyDeviceResponse(payload){
  if(typeof payload.pid==='number')return 'launch';
  return null;
 }
+
+export function validateDeviceSignal(payload,{deviceId,roomId,now=Date.now(),maxAgeMs=120_000}={}){
+ if(!payload||typeof payload!=='object'||Array.isArray(payload)||
+  !isUuid(deviceId)||!isUuid(roomId)||payload.deviceId!==deviceId||payload.roomId!==roomId||
+  !isUuid(payload.sessionId)||!Number.isSafeInteger(payload.issuedAt)||!Number.isSafeInteger(now)||
+  !Number.isSafeInteger(maxAgeMs)||maxAgeMs<1_000||maxAgeMs>300_000||
+  Math.abs(now-payload.issuedAt)>maxAgeMs)return null;
+ const allowed=['deviceId','roomId','sessionId','issuedAt','candidate','answer','canControl','stop','actorUserId','actorDisplayName'];
+ if(Object.keys(payload).some(key=>!allowed.includes(key)))return null;
+ const hasCandidate=Object.hasOwn(payload,'candidate');
+ const hasAnswer=Object.hasOwn(payload,'answer');
+ const isStop=payload.stop===true;
+ if(Number(hasCandidate)+Number(hasAnswer)+Number(isStop)!==1)return null;
+ if(hasCandidate){
+  const candidate=payload.candidate;
+  const keys=['candidate','sdpMid','sdpMLineIndex','usernameFragment'];
+  if(!candidate||typeof candidate!=='object'||Array.isArray(candidate)||
+    Object.keys(candidate).some(key=>!keys.includes(key))||
+    typeof candidate.candidate!=='string'||candidate.candidate.length>2048||
+    (candidate.sdpMid!==undefined&&candidate.sdpMid!==null&&(typeof candidate.sdpMid!=='string'||candidate.sdpMid.length>128))||
+    (candidate.sdpMLineIndex!==undefined&&candidate.sdpMLineIndex!==null&&
+      (!Number.isSafeInteger(candidate.sdpMLineIndex)||candidate.sdpMLineIndex<0||candidate.sdpMLineIndex>256))||
+    (candidate.usernameFragment!==undefined&&candidate.usernameFragment!==null&&
+      (typeof candidate.usernameFragment!=='string'||candidate.usernameFragment.length>256)))return null;
+ }
+ if(hasAnswer&&(!payload.answer||typeof payload.answer!=='object'||Array.isArray(payload.answer)||
+    payload.answer.type!=='answer'||typeof payload.answer.sdp!=='string'||
+    payload.answer.sdp.length<8||payload.answer.sdp.length>65_536||!payload.answer.sdp.startsWith('v=0')||
+    Object.keys(payload.answer).some(key=>!['type','sdp'].includes(key))))return null;
+ if(payload.canControl!==undefined&&typeof payload.canControl!=='boolean')return null;
+ if(payload.actorUserId!==undefined&&!isUuid(payload.actorUserId))return null;
+ if(payload.actorDisplayName!==undefined&&(typeof payload.actorDisplayName!=='string'||payload.actorDisplayName.length>80))return null;
+ return Object.freeze({...payload});
+}
+
 export function queueIceCandidate(queue,sessionId,candidate,{maxSessions=16,maxPerSession=64}={}){
  if(!isUuid(sessionId)||!candidate||typeof candidate!=='object'||Array.isArray(candidate))return false;
  const allowed=['candidate','sdpMid','sdpMLineIndex','usernameFragment'];
