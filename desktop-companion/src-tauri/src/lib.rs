@@ -599,6 +599,13 @@ fn check_input_rate(state: &AppState) -> Result<(), String> {
 #[tauri::command]
 fn grant_control(state: State<'_, AppState>, session_id: String, seconds: u64) -> Result<(), String> {
     if !valid_session_id(&session_id) { return Err("Invalid session".into()); }
+    let has_live_capture = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
+        .contains_key(&session_id);
+    let has_live_terminal = state.terminals.lock().map_err(|_| "Terminal state unavailable")?
+        .contains_key(&session_id);
+    if !has_live_capture && !has_live_terminal {
+        return Err("Control can only be granted to a live Backroom screen or terminal session".into());
+    }
     let ttl = seconds.clamp(30, 600);
     state.control_grants.lock().map_err(|_| "Control state unavailable")?
         .insert(session_id, Instant::now() + Duration::from_secs(ttl));
@@ -610,6 +617,7 @@ fn revoke_control(state: State<'_, AppState>, session_id: String) -> Result<(), 
     state.control_grants.lock().map_err(|_| "Control state unavailable")?.remove(&session_id);
     state.draft_grants.lock().map_err(|_| "Draft state unavailable")?.remove(&session_id);
     state.draft_targets.lock().map_err(|_| "Draft state unavailable")?.remove(&session_id);
+    state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?.remove(&session_id);
     let mut drafts = state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?;
     drafts.retain(|_, draft| draft.session_id != session_id);
     Ok(())
@@ -618,6 +626,9 @@ fn revoke_control(state: State<'_, AppState>, session_id: String) -> Result<(), 
 #[tauri::command]
 fn grant_draft_typing(state: State<'_, AppState>, session_id: String, seconds: u64) -> Result<(), String> {
     control_granted(&state, &session_id)?;
+    if !state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?.contains_key(&session_id) {
+        return Err("Draft typing is available only in an active screen session".into());
+    }
     let ttl = seconds.clamp(30, 120);
     state.draft_grants.lock().map_err(|_| "Draft state unavailable")?
         .insert(session_id, Instant::now() + Duration::from_secs(ttl));
