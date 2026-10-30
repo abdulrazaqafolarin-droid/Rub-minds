@@ -16,8 +16,14 @@ data class AppGrant(
 )
 
 object AppGrantPolicy {
+    private val packageNamePattern =
+        Regex("^[A-Za-z_][A-Za-z0-9_]*(?:\\\\.[A-Za-z_][A-Za-z0-9_]*)+$")
+
+    fun isValidPackageName(packageName: String): Boolean =
+        packageNamePattern.matches(packageName)
+
     fun canLaunch(grant: AppGrant?): Boolean =
-        grant != null && grant.packageName.isNotBlank() && grant.allowLaunch
+        grant != null && isValidPackageName(grant.packageName) && grant.allowLaunch
 
     fun isSensitiveInput(inputType: Int): Boolean {
         val inputClass = inputType and InputType.TYPE_MASK_CLASS
@@ -42,7 +48,7 @@ object AppGrantPolicy {
         inputType: Int
     ): Boolean =
         grant != null &&
-            grant.packageName.isNotBlank() &&
+            isValidPackageName(grant.packageName) &&
             grant.allowLaunch &&
             grant.allowDraftInsertion &&
             !foregroundPackage.isNullOrBlank() &&
