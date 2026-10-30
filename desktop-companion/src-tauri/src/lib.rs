@@ -764,8 +764,14 @@ fn stage_draft_request(state: State<'_, AppState>, session_id: String, text: Str
     let target = state.draft_targets.lock().map_err(|_| "Draft state unavailable")?
         .get(&session_id).cloned().ok_or("Drag-select a typing area in the live frame first")?;
     let request_id = Uuid::new_v4().to_string();
-    state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?.insert(request_id.clone(), PendingDraft {
-        session_id, text, target, expires_at: Instant::now() + Duration::from_secs(60),
+    let now = Instant::now();
+    let mut pending = state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?;
+    pending.retain(|_, draft| draft.expires_at > now);
+    if pending.len() >= 32 {
+        return Err("Too many unsent draft requests are waiting for local approval".into());
+    }
+    pending.insert(request_id.clone(), PendingDraft {
+        session_id, text, target, expires_at: now + Duration::from_secs(60),
     });
     Ok(request_id)
 }
