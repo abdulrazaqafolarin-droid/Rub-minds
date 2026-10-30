@@ -37,7 +37,7 @@ test("package visibility is declared only for launcher activities", async () => 
   assert.match(manifest, /<action android:name="android.intent.action.MAIN"\s*\/>/);
   assert.match(manifest, /<category android:name="android.intent.category.LAUNCHER"\s*\/>/);
   assert.match(manifest, /<\/queries>/);
-  assert.doesNotMatch(manifest, /<uses-permission\\b[^>]*android:name="android.permission\\.QUERY_ALL_PACKAGES"/);
+  assert.doesNotMatch(manifest, /<uses-permission\b[^>]*android:name="android.permission\.QUERY_ALL_PACKAGES"/);
 });
 
 test("draft insertion is gated by exact app, capability and field type", async () => {
