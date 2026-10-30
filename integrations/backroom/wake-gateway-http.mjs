@@ -110,7 +110,7 @@ export function createWakeGatewayHttpHandler({gateway,maxBodyBytes=4096}={}) {
   const input={...body,hostToken:match[1]};
   try {
    const result=await gateway[method](input);
-   if(!result?.ok)return bad();
+   if(!result?.ok)return result?.reason==='invalid_request'?response(400,{ok:false,reason:'invalid_request'}):bad();
    return response(200,result);
   }catch {
    // Do not leak privileged query errors, host identity, lease token details,
