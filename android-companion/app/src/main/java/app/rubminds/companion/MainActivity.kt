@@ -433,7 +433,17 @@ class MainActivity : Activity() {
         executor.execute {
             try {
                 val status = cloudClient().status(token)
-                if (status.optString("status") != "active") {
+                val state = status.optString("status")
+                if (state == "revoked") {
+                    vault.clear()
+                    consentPrefs.edit().putBoolean("selected_app_inventory", false).apply()
+                    runOnUiThread {
+                        pairConsent.isChecked = false
+                        setBusy(false, "Device access was revoked. Pair this phone again when invited.")
+                    }
+                    return@execute
+                }
+                if (state != "active") {
                     runOnUiThread {
                         setBusy(false, "App choices saved on phone. Group-owner approval is still required before sync.")
                     }
