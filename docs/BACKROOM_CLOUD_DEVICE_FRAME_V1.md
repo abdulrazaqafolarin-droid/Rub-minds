@@ -86,8 +86,13 @@ Until those gates pass, the web Device Frame must continue to label Android apps
 
 ## Primary Device Frame surface coverage
 
-The current authenticated Backroom route opens the cloud Device Frame with phone-app inventory, desktop and terminal placeholders. The managed Playwright browser implementation from the earlier simulator remains in source but is not mounted into this primary route yet. Browser therefore remains a follow-on integration surface; do not report the four-surface simulator as complete until the managed browser tab/session is exposed alongside Android, desktop and terminal in the same Device Frame.
+The authenticated Backroom route opens the cloud Device Frame by default and exposes a separate `Browser runtime` workspace for the existing managed Playwright/Chromium runtime. The Device Frame currently has phone-app inventory, desktop and terminal placeholders; browser remains a peer workspace rather than an in-canvas surface. The browser runtime still requires its paired local host on the same computer. Do not report a single unified four-surface simulator as complete until browser tabs, Android virtual apps, desktop windows and terminals are all rendered as surfaces in the same Device Frame.
 
 ## Revocation data handling
 
 The owner-revoke transaction marks the device and room binding revoked, appends the `device_revoked` audit event, and removes the live selected-app catalog. Historical group events remain available; raw screen contents, app-private data and credentials are never stored in this catalog.
+
+
+## Browser workspace access
+
+After sign-in, Backroom exposes two workspace routes. **Device Frame** is the default route and shows cloud-connected device inventory. **Browser runtime** mounts the existing managed Playwright/Chromium implementation from `src/BackroomSimulatorApp.tsx`. The browser route is selected by `?backroom=1&browser=1`; the group selector preserves this query route when the group changes. The browser host is still paired locally with the computer running Chromium, so this route does not turn that desktop runtime into a phone-hosted/cloud browser and must not be described as a cross-device control connection.
