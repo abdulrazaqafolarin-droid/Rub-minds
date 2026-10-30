@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Discover launchable apps only; deliberately no QUERY_ALL_PACKAGES. -->
+    <!-- Discover only apps Android exposes through the declared launcher-intent query. -->
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
