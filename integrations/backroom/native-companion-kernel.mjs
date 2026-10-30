@@ -5,6 +5,7 @@
  * remote JSON cannot set trustedLocalDecision.
  */
 import { spawn } from 'node:child_process';
+import path from 'node:path';
 import { createCompanionPermissionBroker } from './desktop-companion-permissions.mjs';
 
 const ID=/^[a-zA-Z0-9][a-zA-Z0-9_:-]{0,127}$/;
@@ -13,7 +14,7 @@ function assertIdentity(scope) {
     throw new Error('Verified scope required');
 }
 function safeProgram(spec) {
-  if (!spec || typeof spec.path!=='string' || !spec.path ||
+  if (!spec || typeof spec.path!=='string' || !path.isAbsolute(spec.path) ||
       !Array.isArray(spec.args) || spec.args.length>24 ||
       spec.args.some(v=>typeof v!=='string'||v.length>1000) ||
       typeof spec.fingerprint!=='string'||!ID.test(spec.fingerprint))
@@ -49,7 +50,7 @@ export function createNativeCompanionKernel({
     if(sessions.has(scope.spaceId))throw new Error('Space already running');
     if(scope.surface==='terminal'){
       if(typeof createPty!=='function')throw new Error('Native PTY backend not installed');
-      if(!row.terminal || typeof row.shell!=='string')throw new Error('Terminal executable not available');
+      if(!row.terminal || typeof row.shell!=='string' || !path.isAbsolute(row.shell))throw new Error('Verified absolute terminal path required');
       // createPty must implement a ConPTY backend on Windows, or PTY on macOS/Linux.
       const term=await createPty({shell:row.shell,args:row.args||[],cols:80,rows:24,
         onData:data=>{if(typeof data==='string')onOutput({spaceId:scope.spaceId,data:data.slice(0,32768)});}});
