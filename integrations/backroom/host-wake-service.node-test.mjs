@@ -357,3 +357,40 @@ test('if both activation and deactivation are unreachable, service preserves a d
   assert.equal(deactivationCalls,4);
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+
+test('local staging environment pins the paired host wake gateway to the staging project',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'backroom-staging-gateway-env-'));
+ const previous=process.env.BACKROOM_WAKE_GATEWAY_URL;
+ const stagingUrl='https://tzcuuynmviiuactafpld.supabase.co/functions/v1/backroom-wake/';
+ const urls=[];
+ try{
+  process.env.BACKROOM_WAKE_GATEWAY_URL=stagingUrl;
+  const service=createHostWakeService({
+   identity:{hostId,hostToken},browserRuntime:runtime(),
+   journalDirectory:join(dir,'journal'),
+   fetchImpl:async(url)=>{
+    urls.push(url);
+    const body=url.endsWith('/activate')?{ok:true,activated:true}:
+      url.endsWith('/deactivate')?{ok:true,deactivated:true}:{ok:true,leases:[]};
+    return new Response(JSON.stringify(body),{status:200});
+   }
+  });
+  service.configure({sessionDigest,bindingId,publishableKey});
+  const groupId='40000000-0000-4000-8000-000000000044';
+  const participantId='40000000-0000-4000-8000-000000000055';
+  const sessionId='40000000-0000-4000-8000-000000000066';
+  const grantId='40000000-0000-4000-8000-000000000077';
+  await service.activateAndStart({grantId,expiresAt:Date.now()+300000,
+   scope:{hostId,bindingId,groupId,participantId,sessionId}},
+   {bindingId,roomId:groupId,participantId,sessionId});
+  await service.stop();
+  assert.ok(urls.includes(stagingUrl+'activate'));
+  assert.ok(urls.includes(stagingUrl+'deactivate'));
+  assert.ok(urls.every(url=>url.startsWith(stagingUrl)));
+ }finally{
+  if(previous===undefined)delete process.env.BACKROOM_WAKE_GATEWAY_URL;
+  else process.env.BACKROOM_WAKE_GATEWAY_URL=previous;
+  await rm(dir,{recursive:true,force:true});
+ }
+});
