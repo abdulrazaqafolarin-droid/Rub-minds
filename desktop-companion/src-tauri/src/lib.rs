@@ -69,12 +69,20 @@ fn clear_device_credentials() -> Result<(), String> {
 // This confirmation is a native OS dialog, not HTML rendered in the companion
 // WebView. Sensitive Tauri commands enforce it themselves so an IPC caller
 // cannot bypass the local approval screen with a direct invoke() call.
-fn require_native_confirmation(title: &str, message: &str) -> Result<(), String> {
-    let handle = tauri::async_runtime::block_on(async { Ok::<_, String>(()) });
-    let _ = handle;
-    // The plugin's blocking dialog must not run on the UI thread. Tauri's
-    // documented pattern is to move the AppHandle into a worker thread.
-    Err("Native confirmation requires the application handle".into())
+fn require_native_confirmation(app: AppHandle, title: &str, message: &str) -> Result<(), String> {
+    let handle = app.clone();
+    let title = title.to_string();
+    let message = message.to_string();
+    // blocking_show must not run on the UI thread. Display the system dialog
+    // from a worker so the WebView remains responsive while the user decides.
+    let result = std::thread::spawn(move || {
+        handle.dialog()
+            .message(message)
+            .title(title)
+            .buttons(MessageDialogButtons::YesNo)
+            .blocking_show()
+    }).join().map_err(|_| "Native approval dialog failed".to_string())?;
+    if result { Ok(()) } else { Err("Action denied in the operating-system confirmation dialog".into()) }
 }
 
 fn random_identity() -> Result<(String, String), String> {
