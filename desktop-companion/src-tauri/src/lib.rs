@@ -734,8 +734,12 @@ fn screen_point(geometry: &CaptureGeometry, x: f64, y: f64) -> Result<(i32, i32)
     if !x.is_finite() || !y.is_finite() || !(0.0..=1.0).contains(&x) || !(0.0..=1.0).contains(&y) {
         return Err("Pointer coordinates are outside the shared monitor".into());
     }
-    let px = geometry.origin_x + (x * geometry.screen_width as f64).round() as i32;
-    let py = geometry.origin_y + (y * geometry.screen_height as f64).round() as i32;
+    // Normalized 1.0 represents the last visible pixel, not the first
+    // coordinate beyond the monitor bounds.
+    let max_x = geometry.screen_width.saturating_sub(1) as f64;
+    let max_y = geometry.screen_height.saturating_sub(1) as f64;
+    let px = geometry.origin_x + (x * max_x).round() as i32;
+    let py = geometry.origin_y + (y * max_y).round() as i32;
     Ok((px, py))
 }
 
@@ -1046,4 +1050,54 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Rub Minds Backroom Companion");
+}
+
+
+#[cfg(test)]
+mod native_input_tests {
+    use super::*;
+
+    fn geometry() -> CaptureGeometry {
+        CaptureGeometry {
+            frame_width: 1920,
+            frame_height: 1080,
+            screen_width: 1920,
+            screen_height: 1080,
+            origin_x: 0,
+            origin_y: 0,
+        }
+    }
+
+    #[test]
+    fn normalized_pointer_maps_to_visible_monitor_pixels() {
+        let g = geometry();
+        assert_eq!(screen_point(&g, 0.0, 0.0).unwrap(), (0, 0));
+        assert_eq!(screen_point(&g, 0.5, 0.5).unwrap(), (960, 540));
+        assert_eq!(screen_point(&g, 1.0, 1.0).unwrap(), (1919, 1079));
+    }
+
+    #[test]
+    fn pointer_coordinates_outside_frame_are_rejected() {
+        let g = geometry();
+        assert!(screen_point(&g, -0.001, 0.5).is_err());
+        assert!(screen_point(&g, 1.001, 0.5).is_err());
+        assert!(screen_point(&g, f64::NAN, 0.5).is_err());
+        assert!(screen_point(&g, 0.5, f64::INFINITY).is_err());
+    }
+
+    #[test]
+    fn input_rate_guard_caps_events_per_second() {
+        let state = AppState::default();
+        for _ in 0..MAX_INPUT_EVENTS_PER_SECOND {
+            assert!(check_input_rate(&state).is_ok());
+        }
+        assert!(check_input_rate(&state).is_err());
+    }
+
+    #[test]
+    fn invalid_session_identifiers_never_validate() {
+        assert!(valid_session_id(&Uuid::new_v4().to_string()));
+        assert!(!valid_session_id(""));
+        assert!(!valid_session_id("../other-session"));
+    }
 }
