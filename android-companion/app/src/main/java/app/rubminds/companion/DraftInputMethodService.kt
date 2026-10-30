@@ -29,6 +29,8 @@ class DraftInputMethodService : InputMethodService() {
     private val characterKeys = mutableListOf<Pair<Button, Char>>()
 
     override fun onCreateInputView(): View {
+        keyButtons.clear()
+        characterKeys.clear()
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(12), dp(8), dp(12), dp(8))
@@ -98,6 +100,8 @@ class DraftInputMethodService : InputMethodService() {
         activePackage = null
         activeInputType = InputType.TYPE_NULL
         draftText.clear()
+        shiftEnabled = false
+        refreshCharacterKeys()
         refreshPreview()
         updatePermissionState()
     }
@@ -107,6 +111,8 @@ class DraftInputMethodService : InputMethodService() {
         if (activePackage != nextPackage) {
             // Never carry a draft composed for one app into a different app.
             draftText.clear()
+            shiftEnabled = false
+            refreshCharacterKeys()
             refreshPreview()
         }
         activePackage = nextPackage
@@ -123,7 +129,6 @@ class DraftInputMethodService : InputMethodService() {
                 refreshCharacterKeys()
                 refreshPreview()
             }
-            keyButtons += key
             characterKeys += key to character
             row.addView(key, LinearLayout.LayoutParams(0, dp(44), 1f))
         }
@@ -144,6 +149,7 @@ class DraftInputMethodService : InputMethodService() {
             setOnClickListener {
                 if (isInsertAllowed()) action()
             }
+            keyButtons += this
         }
 
     private fun isInsertAllowed(): Boolean {
