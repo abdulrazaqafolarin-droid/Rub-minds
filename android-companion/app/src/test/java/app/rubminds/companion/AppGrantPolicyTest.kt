@@ -54,5 +54,8 @@ class AppGrantPolicyTest {
         assertFalse(AppGrantPolicy.canInsertDraft(selectedGrant, "", normalTextInput))
         assertFalse(AppGrantPolicy.canInsertDraft(selectedGrant, null, normalTextInput))
         assertFalse(AppGrantPolicy.canInsertDraft(selectedGrant, "com.example.chat", InputType.TYPE_NULL))
+        assertFalse(AppGrantPolicy.canInsertDraft(selectedGrant, "com.example.chat", InputType.TYPE_CLASS_DATETIME))
+        assertFalse(AppGrantPolicy.isSupportedInputType(InputType.TYPE_NULL))
+        assertFalse(AppGrantPolicy.isSupportedInputType(InputType.TYPE_CLASS_DATETIME))
     }
 }
