@@ -127,7 +127,7 @@ async function registerDevice(){
     const roomId=document.querySelector('#room').value;
     const label=document.querySelector('#device-label').value.trim();
     if(!roomId)throw new Error('Select a Rub Minds group you own.');
-    const identity=await invoke('device_identity');
+    const identity=await invoke('device_identity');state.deviceId=identity.deviceId;
     const {data:room,error:roomError}=await state.client.from('rooms').select('id').eq('id',roomId).eq('owner_id',state.user.id).maybeSingle();
     if(roomError||!room)throw new Error('This account does not own the selected group.');
     const result=await invoke('register_desktop_device',{args:{
@@ -136,7 +136,7 @@ async function registerDevice(){
     }});
     state.deviceId=result.deviceId;state.roomId=result.roomId;state.deviceTokenSaved=result.credentialSavedToOsStore;
     document.querySelector('#device-state').textContent='Connected · '+state.deviceId.slice(0,8);
-    await loadApps();await connectDeviceChannel();
+    await loadApps();if(state.apps.length)await syncApps();await connectDeviceChannel();
     notify('This computer is registered to the selected group. Device credential saved in the OS secure store.','success');
   }catch(error){notify(error?.message||'Could not register this computer.','error');}
 }
@@ -170,7 +170,8 @@ async function addApp(){
 }
 async function syncApps(){
   // The native command obtains the bearer token directly from the OS keyring.
-  await invoke('sync_desktop_app_inventory',{supabaseUrl:cfg.url,publishableKey:cfg.key,apps:state.apps});
+  const result=await invoke('sync_desktop_app_inventory',{supabaseUrl:cfg.url,publishableKey:cfg.key,apps:state.apps});
+  notify('Synced '+result+' selected desktop apps. Executable paths and app data remain on this computer.','success');
 }
 async function localLaunch(appItem){
   const card=await createApproval('launch',appItem.label+' will open on this computer. Approve only if you recognize this application.',async()=>{
@@ -218,9 +219,10 @@ async function publish(event,payload){
 }
 async function connectDeviceChannel(){
   if(state.channel){await state.client.removeChannel(state.channel);state.channel=null;}
-  const session=await currentSession();
+  await currentSession();
   const response=await invoke('desktop_device_status',{supabaseUrl:cfg.url,publishableKey:cfg.key});
   if(response.status!=='active'||response.deviceId!==state.deviceId)throw new Error('Device registration is not active.');
+  state.roomId=response.roomId;
   const topic='backroom-device:'+state.deviceId;
   const channel=state.client.channel(topic,{config:{private:true,broadcast:{ack:true,self:false}}});
   channel.on('broadcast',{event:'command'},message=>void handleCommand(message.payload||{}));
@@ -253,6 +255,7 @@ async function handleCommand(payload){
     createApproval('terminal_start','Start a real '+(navigator.platform.includes('Win')?'Windows PowerShell':'native')+' terminal session on this computer?',async()=>{
       const term=await invoke('start_terminal');
       state.terminals.set(term.sessionId,term);
+      const peer=state.peers.get(payload.sessionId);if(peer)peer.terminalId=term.sessionId;
       await publish('response',{requestId,ok:true,sessionId:term.sessionId,cols:term.cols,rows:term.rows,shellLabel:term.shellLabel});
     },{requestId});
     return;
@@ -301,7 +304,9 @@ async function startViewSession(payload){
     canControl=true;
   }catch(error){notify('The screen is visible, but desktop input is disabled: '+error.message,'error');}
   const pc=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun.cloudflare.com:3478']}]});
-  state.peers.set(sessionId,{pc,stream,channel:null,canControl});
+  state.peers.set(sessionId,{pc,stream,channel:null,canControl,terminalId:null});
+  for(const candidate of (state.pendingCandidates.get(sessionId)||[])){try{await pc.addIceCandidate(candidate);}catch{}}
+  state.pendingCandidates.delete(sessionId);
   for(const mediaTrack of stream.getTracks())pc.addTrack(mediaTrack,stream);
   pc.ondatachannel=event=>{
     const channel=event.channel;state.peers.get(sessionId).channel=channel;
@@ -334,7 +339,9 @@ async function handlePeerData(sessionId,raw){
   } else if(message.kind==='draft'){
     try{const id=await invoke('stage_draft_request',{sessionId,text:message.text});await refreshPending();notify('Draft request '+id+' is waiting for approval on this computer.');}catch(error){notify(error.message,'error');}
   } else if(message.kind==='terminal_input'){
-    try{await invoke('write_terminal',{sessionId,data:message.data});}catch(error){notify(error.message,'error');}
+    const terminalId=message.sessionId||peer.terminalId;
+    if(!terminalId)return;
+    try{await invoke('write_terminal',{sessionId:terminalId,data:message.data});}catch(error){notify(error.message,'error');}
   } else if(message.kind==='terminal_resize'){
     try{await invoke('resize_terminal',{sessionId,cols:message.cols,rows:message.rows});}catch(error){notify(error.message,'error');}
   } else if(message.kind==='terminal_start'){
@@ -356,7 +363,7 @@ async function refreshPending(){
 }
 async function stopPeer(sessionId){
   const peer=state.peers.get(sessionId);if(peer){peer.pc.close();peer.stream?.getTracks().forEach(track=>track.stop());}
-  state.peers.delete(sessionId);state.streams.delete(sessionId);
+  state.peers.delete(sessionId);state.streams.delete(sessionId);state.pendingCandidates.delete(sessionId);
   try{await invoke('revoke_control',{sessionId});}catch{}
 }
 async function startTerminalLocal(){
@@ -393,10 +400,11 @@ async function signOut(){
 async function setupTerminalEvents(){
   const off=await listen('backroom-terminal-output',event=>{
     const data=event.payload?.data||[];
+    const terminalId=event.payload?.sessionId;
     const text=new TextDecoder().decode(new Uint8Array(data));
     const pre=document.querySelector('#terminal-output');if(pre){pre.textContent=(pre.textContent+text).slice(-30000);pre.scrollTop=pre.scrollHeight;}
-    for(const [sessionId,peer] of state.peers){
-      if(peer.channel?.readyState==='open')peer.channel.send(JSON.stringify({kind:'terminal_output',sessionId,data:Array.from(data)}));
+    for(const [peerSessionId,peer] of state.peers){
+      if(peer.terminalId===terminalId&&peer.channel?.readyState==='open')peer.channel.send(JSON.stringify({kind:'terminal_output',sessionId:terminalId,data:Array.from(data)}));
     }
   });
   state.unlisten.push(off);
