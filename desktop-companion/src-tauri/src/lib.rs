@@ -219,6 +219,36 @@ async fn register_desktop_device(args: RegisterDeviceArgs) -> Result<Registratio
     })
 }
 
+#[tauri::command]
+async fn revoke_desktop_device(
+    supabase_url: String,
+    publishable_key: String,
+    access_token: String,
+    room_id: String,
+) -> Result<(), String> {
+    let token = vault_get("device-token")?.ok_or("This computer is not registered")?;
+    let base = validate_supabase_config(&supabase_url, &publishable_key, &access_token)?;
+    if Uuid::parse_str(&room_id).is_err() { return Err("Invalid group".into()); }
+    let response = Client::builder().timeout(Duration::from_secs(25)).build()
+        .map_err(|_| "Could not initialize secure network transport".to_string())?
+        .post(format!("{base}/functions/v1/backroom-device"))
+        .header("apikey", publishable_key.trim())
+        .bearer_auth(&access_token)
+        .json(&json!({"action":"owner/revoke-device-self","roomId":room_id,"deviceToken":token}))
+        .send().await.map_err(|_| "Could not reach Rub Minds to revoke this computer".to_string())?;
+    if !response.status().is_success() {
+        return Err("Rub Minds did not confirm computer revocation. The device credential remains stored.".into());
+    }
+    vault_delete("device-token")?;
+    emergency_stop_inner_unmanaged();
+    Ok(())
+}
+
+fn emergency_stop_inner_unmanaged() {
+    // The Tauri command also clears AppState. This helper only represents the
+    // credential removal path, so no in-memory permission state is touched here.
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DeviceStatus {
@@ -394,6 +424,7 @@ struct AppState {
     draft_targets: Mutex<HashMap<String, DraftTarget>>,
     pending_drafts: Mutex<HashMap<String, PendingDraft>>,
     terminals: Mutex<HashMap<String, Arc<TerminalSession>>>,
+    desktop_processes: Mutex<HashMap<u32, NativeChild>>,
     input_events: Mutex<VecDeque<Instant>>,
 }
 
@@ -516,7 +547,7 @@ fn set_capture_geometry(
        !(320..=16_384).contains(&frame_width) || !(200..=16_384).contains(&frame_height) ||
        !(320..=8_192).contains(&screen_width_css) || !(200..=8_192).contains(&screen_height_css) ||
        !device_scale_factor.is_finite() || !(0.5..=4.0).contains(&device_scale_factor) ||
-       origin_x_css.abs() > 16_384 || origin_y_css.abs() > 16_384 {
+       origin_x_css.unsigned_abs() > 16_384 || origin_y_css.unsigned_abs() > 16_384 {
         return Err("For safe input mapping, share an entire monitor instead of a single window".into());
     }
     let screen_width = (screen_width_css as f64 * device_scale_factor).round() as u32;
@@ -622,7 +653,7 @@ fn select_draft_target(state: State<'_, AppState>, session_id: String, target: D
        target.x + target.width > 1.0 || target.y + target.height > 1.0 {
         return Err("Select a visible text-entry area inside the frame".into());
     }
-    if target.width * geometry.frame_width as f64 < 8.0 || target.height * geometry.frame_height as f64 < 8.0 {
+    if target.width * (geometry.frame_width as f64) < 8.0 || target.height * (geometry.frame_height as f64) < 8.0 {
         return Err("Selected typing area is too small".into());
     }
     state.draft_targets.lock().map_err(|_| "Draft state unavailable")?.insert(session_id, target);
@@ -661,7 +692,7 @@ fn list_pending_drafts(state: State<'_, AppState>) -> Result<Vec<PendingDraftSum
     pending.retain(|_, draft| draft.expires_at > now);
     Ok(pending.iter().map(|(id, draft)| PendingDraftSummary {
         request_id: id.clone(), text: draft.text.clone(), session_id: draft.session_id.clone(),
-        expires_in_seconds: now.duration_since(draft.expires_at - Duration::from_secs(60)).as_secs().min(60),
+        expires_in_seconds: draft.expires_at.saturating_duration_since(now).as_secs().min(60),
     }).collect())
 }
 
@@ -826,7 +857,7 @@ pub fn run() {
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             secure_auth_get, secure_auth_set, secure_auth_delete,
-            device_identity, register_desktop_device, desktop_device_status,
+            device_identity, register_desktop_device, desktop_device_status, revoke_desktop_device,
             pick_and_register_app, list_registered_apps, launch_registered_app, stop_registered_app,
             grant_control, revoke_control, grant_draft_typing, set_capture_geometry,
             dispatch_input, select_draft_target, stage_draft_request, list_pending_drafts,
