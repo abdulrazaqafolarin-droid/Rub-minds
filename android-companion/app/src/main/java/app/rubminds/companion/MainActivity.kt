@@ -3,7 +3,6 @@ package app.rubminds.companion
 import android.app.Activity
 import android.content.Intent
 import android.content.ComponentName
-import android.content.pm.PackageManager
 import android.os.Bundle
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
@@ -143,7 +142,7 @@ class MainActivity : Activity() {
     private fun discoverApps() {
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         @Suppress("DEPRECATION")
-        val resolved = packageManager.queryIntentActivities(intent, PackageManager.MATCH_ALL)
+        val resolved = packageManager.queryIntentActivities(intent, 0)
         apps = resolved.mapNotNull { info ->
             val appPackage = info.activityInfo?.packageName ?: return@mapNotNull null
             if (appPackage == applicationContext.packageName) return@mapNotNull null
