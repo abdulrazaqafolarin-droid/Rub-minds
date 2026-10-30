@@ -968,6 +968,11 @@ async fn start_terminal(app: AppHandle, state: State<'_, AppState>, session_id: 
     if active_terminals.len() >= MAX_ACTIVE_TERMINALS {
         return Err("Backroom has reached the limit of four active terminal sessions. Stop a terminal or use Emergency Stop.".into());
     }
+    // Validate / reserve the identity before any shell process is spawned.
+    let session_id = resolve_terminal_session_id(session_id)?;
+    if active_terminals.contains_key(&session_id) {
+        return Err("This terminal session identity is already active".into());
+    }
     let system = native_pty_system();
     let pair = system.openpty(PtySize { rows: 30, cols: 100, pixel_width: 0, pixel_height: 0 })
         .map_err(|_| "Could not create the native terminal session".to_string())?;
@@ -985,10 +990,6 @@ async fn start_terminal(app: AppHandle, state: State<'_, AppState>, session_id: 
     let child = pair.slave.spawn_command(command).map_err(|_| "Could not launch the native terminal shell".to_string())?;
     let reader = pair.master.try_clone_reader().map_err(|_| "Could not attach terminal output".to_string())?;
     let writer = pair.master.take_writer().map_err(|_| "Could not attach terminal input".to_string())?;
-    let session_id = resolve_terminal_session_id(session_id)?;
-    if active_terminals.contains_key(&session_id) {
-        return Err("This terminal session identity is already active".into());
-    }
     let session = Arc::new(TerminalSession {
         master: Mutex::new(pair.master),
         writer: Mutex::new(writer),
