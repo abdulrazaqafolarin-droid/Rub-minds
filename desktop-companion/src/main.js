@@ -231,6 +231,7 @@ function renderPending(){
       finally{state.pending=state.pending.filter(x=>x!==item);renderPending();}
     });
     no.addEventListener('click',async()=>{
+      try{await item.onDeny?.();}catch(error){notify(error?.message||'Could not record the denial.','error');}
       if(item.extra?.remote) await publish('response',{requestId:item.requestId,ok:false,reason:'denied_on_device',capability:item.extra.capability});
       state.pending=state.pending.filter(x=>x!==item);renderPending();
     });
@@ -443,8 +444,16 @@ async function refreshPending(){
   const drafts=await invoke('list_pending_drafts');
   for(const draft of drafts){
     if(state.pending.some(item=>item.requestId===draft.requestId))continue;
-    state.pending.push({kind:'draft_text',description:'Insert this exact unsent draft into the region you selected?\n\n'+draft.text,
-      requestId:draft.requestId,extra:{sessionId:draft.sessionId},onApprove:async()=>{const result=await invoke('approve_draft_request',{requestId:draft.requestId});notify(result,'success');}});
+    const sendDraftResult=(ok,result)=>{
+      const peer=state.peers.get(draft.sessionId);
+      if(peer?.channel?.readyState==='open'){
+        try{peer.channel.send(JSON.stringify({kind:'draft_result',requestId:draft.requestId,ok,result}));}catch{}
+      }
+    };
+    state.pending.push({kind:'draft_text',description:'Insert this exact unsent draft into the region you selected?\\n\\n'+draft.text,
+      requestId:draft.requestId,extra:{sessionId:draft.sessionId},
+      onApprove:async()=>{const result=await invoke('approve_draft_request',{requestId:draft.requestId});sendDraftResult(true,result);notify(result,'success');},
+      onDeny:async()=>{await invoke('deny_draft_request',{requestId:draft.requestId});sendDraftResult(false,'Draft insertion was denied on this computer.');}});
   }
   renderPending();
 }
