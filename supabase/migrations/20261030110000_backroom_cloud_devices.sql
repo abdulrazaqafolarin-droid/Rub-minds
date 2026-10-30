@@ -120,6 +120,7 @@ begin
   if not exists(select 1 from public.rooms where id = v_pairing.room_id and owner_id = v_pairing.owner_id) then
     return;
   end if;
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(v_pairing.owner_id::text, 0));
   select count(*) into v_device_count from public.backroom_devices
     where owner_id=v_pairing.owner_id and status <> 'revoked';
   if v_device_count >= 5 then return; end if;
@@ -152,7 +153,10 @@ as $function$
 declare
   v_count integer;
 begin
-  if p_device_id is null or coalesce(jsonb_typeof(p_apps), '') <> 'array' or jsonb_array_length(p_apps) > 100 then
+  if p_device_id is null or coalesce(jsonb_typeof(p_apps), '') <> 'array' then
+    raise exception 'Invalid device app inventory';
+  end if;
+  if jsonb_array_length(p_apps) > 100 then
     raise exception 'Invalid device app inventory';
   end if;
   if not exists(select 1 from public.backroom_devices where device_id=p_device_id and status='active') then

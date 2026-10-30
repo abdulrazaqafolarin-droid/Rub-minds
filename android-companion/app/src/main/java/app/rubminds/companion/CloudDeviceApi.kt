@@ -29,7 +29,6 @@ class CloudDeviceApi {
         val connection = URL(endpoint).openConnection() as HttpsURLConnection
         try {
             connection.instanceFollowRedirects = false
-            connection.instanceFollowRedirects = false
             connection.requestMethod = "POST"
             connection.connectTimeout = 10_000
             connection.readTimeout = 15_000
