@@ -173,6 +173,25 @@ Deno.serve(async req => {
     }
 
 
+
+    if (action === 'desktop/session-close') {
+      const current = await device(req);
+      if (!current) return json(401, fail('device_not_approved'), origin);
+      if (!strictKeys(input, ['action','roomId','sessionId']) ||
+          typeof input.roomId !== 'string' || !UUID.test(input.roomId) ||
+          typeof input.sessionId !== 'string' || !UUID.test(input.sessionId)) {
+        return json(400, fail('invalid_desktop_session_close'), origin);
+      }
+      const binding = await verifyActiveDeviceRoomBinding(current.device_id, input.roomId);
+      if (!binding.ok) return json(binding.status, fail(binding.reason), origin);
+      const { error } = await db.from('backroom_desktop_sessions')
+        .update({ status: 'stopped', stopped_at: new Date().toISOString() })
+        .eq('session_id', input.sessionId).eq('device_id', current.device_id)
+        .eq('room_id', input.roomId).eq('status', 'active');
+      if (error) return json(503, fail('desktop_session_close_failed'), origin);
+      return json(200, { ok: true, sessionId: input.sessionId, status: 'stopped' }, origin);
+    }
+
     if (action === 'desktop/command') {
       const userId = await owner(req);
       if (!userId) return json(401, fail('owner_auth_required'), origin);
