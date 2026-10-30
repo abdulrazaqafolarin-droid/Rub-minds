@@ -53,7 +53,7 @@ test("device and app tables are isolated from direct client table access", async
 
 test("app inventory only accepts bounded selected metadata and logs add/remove atomically", async () => {
   const edge = await read("supabase/functions/backroom-device/index.ts");
-  const protocol = await read("integrations/backroom/cloud-device-protocol.mjs");
+  const protocol = await read("supabase/functions/backroom-device/cloud-device-protocol.mjs");
   const sql = await read("supabase/migrations/20261030110000_backroom_cloud_devices.sql");
   assert.match(edge, /validateSelectedApps\(input\.apps\)/);
   assert.match(edge, /sync_backroom_device_apps/);
@@ -130,4 +130,15 @@ test("device revocation removes live app metadata without deleting group action 
   assert.match(e2e, /app_added/);
   assert.match(e2e, /app_open_requested/);
   assert.match(e2e, /post-revoke group history/);
+});
+
+test("device Edge Function bundles all relative dependencies inside its function directory", async () => {
+  const edge = await read("supabase/functions/backroom-device/index.ts");
+  const ownerJwt = await read("supabase/functions/backroom-device/owner-jwt.mjs");
+  const protocol = await read("supabase/functions/backroom-device/cloud-device-protocol.mjs");
+  assert.match(edge, /from '\.\/owner-jwt\.mjs'/);
+  assert.match(edge, /from '\.\/cloud-device-protocol\.mjs'/);
+  assert.match(ownerJwt, /export async function resolveOwnerFromJwt/);
+  assert.match(protocol, /export function validatePairClaim/);
+  assert.match(protocol, /export function validateSelectedApps/);
 });
