@@ -1,45 +1,116 @@
-# Backroom desktop companion: device-owned execution (draft implementation)
+# Backroom desktop companion — current implementation and release gates
 
-## User interaction contract — no manual host URL or pairing code
+**Scope:** The user's own computer runs the installed desktop applications and native terminal. Backroom is the authenticated remote control surface. A cloud VM does not replace the computer.
 
-1. The desktop companion is installed once and opened on the user's actual computer.
-2. It authenticates to the **same Rub Minds account** through an external system browser using an OAuth PKCE flow. The native app must retain its own device-bound credential in the OS secure credential store, not copy the browser's session.
-3. The signed-in Backroom app shows the user's registered computer by name. Selecting an installed application or terminal creates a **request**, not an execution grant.
-4. The companion shows a trusted native approval prompt naming the group, exact executable and requested action. Only the device's trusted UI can call the broker's `confirm`; never accept an `approved: true` field over a network request.
-5. The companion launches the selected actual desktop application or native PTY after consuming a one-use `launch` approval.
-6. `view`, `control` and `draft` require separate device confirmation. A desktop frame is not implicitly interactive.
-7. Backroom displays the real app/PTY using an authenticated, revocable interactive stream. The overlay's drag rectangle is converted to the selected window's coordinate system, clamped to the frame, and maps to an exact verified text target before draft insertion.
-8. Stop/disconnect/revoke the device instantly closes the session and clears pending grants.
+**Enrollment UX:** Install and open the Rub Minds Desktop Companion, sign into the same Rub Minds account, choose a group the account owns, and confirm registration in the companion's native dialog. There is no user-entered localhost URL, inbound host port, or one-time pairing code. The companion currently has its own sign-in form; automatic deep-link SSO from an already-signed-in browser session is not implemented.
 
-## Current code in this branch
+## Implemented architecture
 
-- `desktop-companion-permissions.mjs`: strict room/space/executable/fingerprint/capability binding, expiration, one-use grants, revocation and emergency stop.
-- `native-companion-kernel.mjs`: launch boundary using native-discovered executable metadata, shell interpolation disabled for desktop processes, real PTY injection point and separately authorized terminal writes.
-- Node tests for rejection, scope isolation, expiration, process spawning and emergency stop.
+```text
+Backroom web client
+  └─ signed-in Supabase session
+      └─ backroom-device Edge Function (JWT verified with Supabase Auth)
+          ├─ validates active human group membership
+          ├─ validates active device + room binding
+          ├─ validates selected app / session scope
+          ├─ records screen / terminal session with expiry
+          └─ server-side private Realtime REST broadcast
+                └─ device-private Realtime topic
+                    └─ Tauri companion on the actual PC
+                        ├─ trusted local approval UI
+                        ├─ OS credential store
+                        ├─ Windows .exe allowlist + SHA-256 check
+                        ├─ native process launcher
+                        ├─ Windows PowerShell / macOS zsh / Linux bash PTY
+                        └─ monitor picker + WebRTC media / input channel
+```
 
-These are **security primitives**, not a shipping desktop application. In particular, a trusted native prompt, OAuth PKCE, device-credential storage, account-based RPC transport, platform PTY implementation, installed-app discovery, screen capture and mouse/keyboard drivers **are not implemented yet**. Do not enable the Backroom UI's live controls based solely on these files.
+### Account and device authentication
 
-## Integration architecture
+- The companion uses Supabase Auth and persists its own auth session with the operating-system credential store.
+- Registration requires a valid signed-in user JWT; the Edge Function resolves the user through Supabase Auth rather than trusting a caller-supplied user ID.
+- The registration RPC verifies room ownership, records a hash of the generated device bearer, stores the device identity, and binds it to the chosen room. The raw bearer is retained in the OS credential store.
+- The native Rust client restricts its Supabase URL to an HTTPS Supabase project origin. Non-Supabase endpoints, URL credentials, paths, query strings, and fragments are rejected; HTTP loopback is debug-build-only.
+- The companion's device bearer is never returned to the web page. Service-role credentials stay in the Edge Function and are not bundled into the app.
 
-Browser → Supabase authenticated request queue → registered companion outbound HTTPS/WebSocket connection → device-native approval window → native launcher / PTY / capture adapter → encrypted authorized frame response.
+### Command and Realtime authorization
 
-No inbound public port, user-typed localhost address, or one-time pairing code is part of this design. Account/device registration is still mandatory. Neither Supabase Edge Functions nor Vercel Functions should be used to host the desktop OS process itself.
+- Browser commands and ICE signals go through the authenticated `backroom-device` Edge Function. The browser does not write commands directly to the private device topic.
+- The Edge Function verifies the JWT, active human room membership (or room ownership), active device status, and an unrevoked device-room binding before dispatch.
+- Selected-app launch requests must reference an app already registered by the companion.
+- Screen and terminal sessions are server-recorded, bound to device + room, and expire after at most 12 hours. Control/draft requests must reference an active session; draft permission is restricted to screen sessions.
+- Edge commands are sent by the server through the private Realtime REST broadcast endpoint, without keeping a server WebSocket open.
+- The device-owner is the only authenticated role allowed to send directly to a device's private Realtime topic. Active human group members may receive responses/signals for the bound device.
+- Device revocation changes the server-side device/binding status, marks its active sessions revoked, and sends a private revocation event. The companion's status check is a fallback, not the primary command path.
+- Realtime loss, revocation, sign-out, disconnect, and Emergency Stop clear local grants and stop Backroom-managed PTYs / direct child processes.
 
-For the native UI use Tauri 2 or a comparable signed desktop application. On Windows use ConPTY; on Linux/macOS use a native PTY. For the desktop frame, use per-window capture when available and an interactive VNC/WebRTC-style transport that checks the device authorization before accepting pointer/keyboard events. Protected windows can refuse capture/input; report unavailable rather than fake controls. Explicit operating-system screen-recording/accessibility permissions must be requested as supported by each OS.
+### Local application and terminal execution
 
-## Security acceptance criteria before enabling it in production
+- Windows supports explicit EXE selection using the OS file picker, local SHA-256 allowlisting, path revalidation, shell-free process launch, and tracking of direct child processes launched by Backroom.
+- Windows PowerShell, macOS zsh, and Linux bash use a native PTY via `portable-pty`.
+- macOS/Linux installed-app discovery and launch are not implemented yet; current app launch is Windows-only.
+- The companion asks locally before launch. Screen view, desktop control, terminal control, and draft typing are separate permissions. A remote payload cannot self-approve a request.
+- Terminal input is separately authorized and bounded. The remote client cannot submit an arbitrary local terminal ID: the companion resolves the WebRTC peer to its own native PTY session.
+- Emergency Stop revokes local grants, clears draft state, stops PTYs, and kills direct child processes tracked as launched by Backroom. It cannot guarantee cleanup of all helper processes spawned by a desktop application.
 
-- Native account login via external browser; token stored in OS keychain. Server verifies device ownership and room authorization for every operation.
-- Network messages are only *requests*. Approval originates solely in a trusted native window and is not serializable from caller input.
-- Fingerprints bind exact executable path/signature; changed binaries require renewed approval.
-- One-time grants cannot be replayed, switched across groups/apps, or upgraded from view to control.
-- File access uses OS file-picker/scoped access independently of desktop control. File permission alone does not allow window/shell control.
-- Preview stream tokens expire, are scoped to room/device/window, and are never stored in a public group message.
-- Output is bounded; terminal writes are audited and require device authorization for each action or a transparently time-boxed control session.
-- Confirm capture input coordinates against the *actual* visible frame dimensions, refuse stale frames and secure text/password fields.
-- Disconnect, group removal, OS lock, sign-out and emergency stop revoke control.
-- Exercise real Windows ConPTY + app launch + interactive frame in integration tests; repeat macOS/Linux where supported.
+### Screen, input, and drag-select
 
-## Deployment status
+- Screen share uses the operating-system display picker and WebRTC. Window-only capture is view-only; the user must share the whole monitor for coordinate-based input mapping.
+- Control is separately approved after capture geometry is matched. Pointer/keyboard events are bounded and rate-limited in native code.
+- Drag-select sends a normalized rectangle to the companion. Draft insertion targets the selected region's center, types the exact approved single-line draft, reads the result where supported, and does not press Enter or Send.
+- **Important limitation:** the current overlay is coordinate-based; it does not prove that the rectangle encloses a specific accessible text-field element or detect all protected/password fields. A successful typing call is not a claim of semantic input-field verification.
+- Protected windows, OS privacy settings, display servers, security software, or corporate policies can reject capture/input. Backroom must report these failures rather than show a fake live frame.
 
-Draft only; not merged, not deployed, not verified against a real device. The existing local-pairing UI in `BackroomSimulatorApp.tsx` remains legacy and must be replaced before this UX meets the requested no-pairing experience. Android companion changes are separately pending.
+### Network and request budget
+
+- WebRTC offer/answer SDP is exchanged only after ICE gathering completes. Initial browser ICE candidates are embedded in the SDP rather than each triggering a separate Edge Function request.
+- The device sends its SDP answer over its authenticated private Realtime channel.
+- The current WebRTC configuration uses public STUN servers and has **no TURN relay**. Symmetric NAT, UDP-blocking networks, and restrictive firewalls can prevent media connectivity even when account/device presence is healthy.
+- The companion's device-status fallback check is hourly. Private Realtime revocation and connection failure are intended to stop sessions sooner. No five-second polling loop is used.
+
+## Repository map
+
+| Area | Key files |
+|---|---|
+| Desktop app shell and native commands | `desktop-companion/src-tauri/src/lib.rs`, `desktop-companion/src/main.js` |
+| Backroom remote control UI | `src/BackroomDesktopControl.tsx`, `src/backroomDesktopControl.css` |
+| Supabase authenticated device gateway | `supabase/functions/backroom-device/index.ts` |
+| Command and REST broadcast protocol | `desktop-command-protocol.mjs`, `realtime-broadcast.mjs` in that function directory |
+| Authorization and device/session schema | `supabase/migrations/20261030210225_backroom_desktop_server_signals.sql` plus earlier desktop companion migrations |
+| SDP gathering and signal validation | `integrations/backroom/ice-gathering.mjs`, `desktop-realtime-protocol.mjs` |
+
+## Tests and build gates
+
+From repository root:
+
+- `npm run test:companion` — approval, device, native-kernel, command, broadcast, ICE and terminal adapter tests.
+- `npm run test:external-workspaces` — native/external workspace regressions.
+- `npm run build:desktop-companion` — build the desktop companion WebView bundle.
+- `cargo test --manifest-path desktop-companion/src-tauri/Cargo.toml` — native Rust tests.
+- `cargo check --manifest-path desktop-companion/src-tauri/Cargo.toml` — native crate compile.
+- `node scripts/local-backroom-device-e2e.mjs` — destructive end-to-end test against a disposable local Supabase stack only. Never point it at staging or production.
+
+GitHub Actions includes a Windows native job to build the WebView, run Rust tests, and compile the Windows target. A run with jobs that start and finish without any runner steps is infrastructure/quota failure, not a passing build.
+
+## Staging status — 30 October 2026
+
+- The staging project has the desktop companion registration, app inventory, room-membership Realtime, topic authorization, and desktop-session migrations applied.
+- The staging `backroom-device` Edge Function is active at **version 4**, with the authenticated desktop command/signal routes and private server broadcast helper.
+- The staging session table is RLS-enabled; `anon` and `authenticated` have no table privileges, while the service role has the required read/insert/update privileges.
+- Staging Realtime policies were checked: the device owner can send to the private topic and active human room members can receive.
+- Production has not been migrated or deployed by this work.
+
+## General-release blockers
+
+Do not mark the companion production-ready until all of these are demonstrated:
+
+1. Successful Windows installer build and first-run launch on a real Windows PC.
+2. Same-account registration, restart/keyring persistence, re-authentication, server revoke, and re-enrollment.
+3. Launch a real approved EXE; verify hash mismatch blocks launch; verify the selected process can be stopped.
+4. Open a real PowerShell PTY; view output, resize it, type only after device approval, and prove stop/revoke closes it.
+5. Test whole-monitor share, view-only window share, OS permission denial, coordinate alignment on scaled/multi-monitor displays, and live drag-select draft insertion.
+6. Exercise disconnect, sleep/wake, network loss, ICE timeout, duplicate requests, room membership removal, and Emergency Stop.
+7. Add TURN relay for networks where STUN-only peer connectivity fails.
+8. Add macOS/Linux installed-app discovery/launch and validate their OS permission paths before claiming feature parity.
+
+The staging gateway and database changes are deployed. The desktop companion is **not yet release-certified**: automated tests are authored but could not be executed in this environment, and no real Windows hardware end-to-end run has been completed.
