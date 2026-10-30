@@ -497,6 +497,8 @@ async function refreshPending(){
 }
 async function stopPeer(sessionId){
   const peer=state.peers.get(sessionId);
+  // Remove ownership before close() emits state changes, making teardown idempotent.
+  state.peers.delete(sessionId);state.streams.delete(sessionId);state.pendingCandidates.delete(sessionId);
   if(peer){
     peer.pc.close();peer.stream?.getTracks().forEach(track=>track.stop());
     if(peer.terminalId){
@@ -505,12 +507,10 @@ async function stopPeer(sessionId){
       try{await invoke('revoke_control',{sessionId:peer.terminalId});}catch{}
     }
   }
-  state.peers.delete(sessionId);state.streams.delete(sessionId);state.pendingCandidates.delete(sessionId);
   try{await invoke('revoke_control',{sessionId});}catch{}
 }
 async function stopAllPeerSessions(){
-  for(const [peerSessionId,peer] of [...state.peers.entries()]){
-    if(peer?.terminalId){try{await invoke('stop_terminal',{sessionId:peer.terminalId});}catch{}}
+  for(const [peerSessionId] of [...state.peers.entries()]){
     await stopPeer(peerSessionId);
   }
   for(const stream of state.streams.values())for(const track of stream.getTracks())track.stop();
