@@ -452,7 +452,15 @@ async function refreshPending(){
     };
     state.pending.push({kind:'draft_text',description:'Insert this exact unsent draft into the region you selected?\\n\\n'+draft.text,
       requestId:draft.requestId,extra:{sessionId:draft.sessionId},
-      onApprove:async()=>{const result=await invoke('approve_draft_request',{requestId:draft.requestId});sendDraftResult(true,result);notify(result,'success');},
+      onApprove:async()=>{
+        try{
+          const result=await invoke('approve_draft_request',{requestId:draft.requestId});
+          sendDraftResult(true,result);notify(result,'success');
+        }catch(error){
+          sendDraftResult(false,error?.message||'Draft insertion was denied or failed on this computer.');
+          throw error;
+        }
+      },
       onDeny:async()=>{await invoke('deny_draft_request',{requestId:draft.requestId});sendDraftResult(false,'Draft insertion was denied on this computer.');}});
   }
   renderPending();
