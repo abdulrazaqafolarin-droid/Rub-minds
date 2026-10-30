@@ -9,9 +9,9 @@ import java.security.MessageDigest
 /**
  * Resolves the current installed APK signer identity for a visible package.
  *
- * A single-signer package uses the last entry in signing certificate history
- * (the current signer). A package with simultaneous signers fingerprints all
- * current APK signers and sorts them so their order is irrelevant.
+ * Fingerprints the certificates that signed the currently installed APK,
+ * not its historical rotation chain. For multiple simultaneous signers,
+ * fingerprints are sorted so their order is irrelevant.
  */
 object AppIdentity {
     @Suppress("DEPRECATION")
@@ -26,12 +26,11 @@ object AppIdentity {
             }
             val packageInfo = packageManager.getPackageInfo(packageName, flags)
             val signers: List<Signature> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                // apkContentsSigners reports actual signers for this APK. Using
+                // signingCertificateHistory would mix old and new trust identities
+                // across certificate rotation, depending on history ordering.
                 val signingInfo = packageInfo.signingInfo ?: return null
-                if (signingInfo.hasMultipleSigners()) {
-                    signingInfo.apkContentsSigners?.toList().orEmpty()
-                } else {
-                    listOfNotNull(signingInfo.signingCertificateHistory?.lastOrNull())
-                }
+                signingInfo.apkContentsSigners?.toList().orEmpty()
             } else {
                 packageInfo.signatures?.toList().orEmpty()
             }

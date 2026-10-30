@@ -70,8 +70,8 @@ test("per-app approvals are bound to the installed APK signing identity", async 
   const policy = await read(policyUrl);
   assert.match(identity, /GET_SIGNING_CERTIFICATES/);
   assert.match(identity, /GET_SIGNATURES/);
-  assert.match(identity, /signingCertificateHistory/);
-  assert.match(identity, /hasMultipleSigners/);
+  assert.match(identity, /signingInfo\.apkContentsSigners\?\.toList\(\)/);
+  assert.doesNotMatch(identity, /signingCertificateHistory\?\.lastOrNull\(\)/);
   assert.match(identity, /SHA-256/);
   assert.match(store, /app_grants_v2/);
   assert.match(store, /signingCertificateSha256/);
