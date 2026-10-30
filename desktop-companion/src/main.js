@@ -254,7 +254,7 @@ async function handleDeviceRevoked(payload){
   try{await invoke('desktop_device_status',{supabaseUrl:cfg.url,publishableKey:cfg.key});}
   catch{try{await invoke('emergency_stop');}catch{}}
   if(state.channel){const channel=state.channel;state.channel=null;try{await state.client.removeChannel(channel);}catch{}}
-  state.deviceTokenSaved=false;state.pending=[];state.terminals.clear();
+  state.deviceTokenSaved=false;state.deviceId=null;state.roomId=null;state.pending=[];state.terminals.clear();state.apps=[];renderApps();
   setConnected(false,'Computer authorization revoked');
   const stateNode=document.querySelector('#device-state');if(stateNode)stateNode.textContent='Revoked';
   document.querySelector('#revoke-device')?.classList.add('hidden');
@@ -531,12 +531,12 @@ function startHeartbeat(){
       state.heartbeatMisses++;
       if(state.heartbeatMisses>=3){
         stopHeartbeat();await stopAllPeerSessions();try{await invoke('emergency_stop');}catch{}
-        if(state.channel){await state.client.removeChannel(state.channel);state.channel=null;}
+        if(state.channel){const channel=state.channel;state.channel=null;await state.client.removeChannel(channel);}
         setConnected(false,'Device disconnected');
         notify('The authenticated device connection was lost. Active Backroom sessions were stopped locally. Reconnect after checking the internet connection.','error');
       }
     }
-  },15*60*1000);
+  },60*60*1000);
 }
 async function startTerminalLocal(){
   try{
@@ -565,7 +565,7 @@ async function disconnect(){
   stopHeartbeat();
   await stopAllPeerSessions();
   try{await invoke('emergency_stop');}catch{}
-  if(state.channel){await state.client.removeChannel(state.channel);state.channel=null;}
+  if(state.channel){const channel=state.channel;state.channel=null;try{await state.client.removeChannel(channel);}catch{}}
   setConnected(false,'Disconnected from device channel');
 }
 async function signOut(){
