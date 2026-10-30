@@ -10,7 +10,9 @@ export async function broadcastPrivateDeviceEvent({
    throw new TypeError('Invalid private device broadcast');
  const base=projectUrl.replace(/\/$/,'');
  const url=new URL(base);
- const local=(url.hostname==='127.0.0.1'||url.hostname==='localhost')&&url.protocol==='http:';
+ const localLoopback=(url.hostname==='127.0.0.1'||url.hostname==='localhost'||url.hostname==='[::1]')&&url.protocol==='http:';
+ const localGateway=url.hostname==='kong'&&url.port==='8000'&&url.protocol==='http:';
+ const local=localLoopback||localGateway;
  if(url.protocol!=='https:'&&!local)throw new TypeError('Private broadcast requires HTTPS');
  if(url.username||url.password||url.search||url.hash||url.pathname!=='/')
    throw new TypeError('Invalid Supabase project URL');
