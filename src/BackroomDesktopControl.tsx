@@ -33,6 +33,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const [terminalInput,setTerminalInput] = useState('');
   const channelRef=useRef<any>(null);
   const screenSessionRef=useRef('');
+  const terminalPeerRef=useRef('');
   const pendingActions=useRef(new Map<string,string>());
   const peerRef=useRef<RTCPeerConnection|null>(null);
   const dataRef=useRef<RTCDataChannel|null>(null);
@@ -77,7 +78,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     if(current){current.close();peerRef.current=null;}
     dataRef.current=null;
     if(videoRef.current)videoRef.current.srcObject=null;
-    setVideoReady(false);setScreenSession('');screenSessionRef.current='';setControlGranted(false);setDraftGranted(false);
+    setVideoReady(false);setScreenSession('');screenSessionRef.current='';terminalPeerRef.current='';setControlGranted(false);setDraftGranted(false);
     setCoordinateControl(false);setSelectMode(false);setSelection(null);
   },[]);
 
@@ -89,7 +90,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     channel.on('broadcast',{event:'signal'},async({payload}:any)=>{
       if(disposed||payload?.roomId!==roomId||payload?.deviceId!==deviceId)return;
       const pc=peerRef.current;
-      if(!pc||payload.sessionId!==screenSessionRef.current&&payload.sessionId!==terminalPeerId)return;
+      if(!pc||payload.sessionId!==screenSessionRef.current&&payload.sessionId!==terminalPeerRef.current)return;
       if(payload.answer){try{await pc.setRemoteDescription(payload.answer);setVideoReady(true);}catch{flash('The computer returned an invalid screen-share answer.',true);}}
       if(typeof payload.canControl==='boolean')setCoordinateControl(payload.canControl);
       if(payload.candidate){try{await pc.addIceCandidate(payload.candidate);}catch{/* stale ICE candidate */}}
@@ -113,7 +114,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     });
     channelRef.current=channel;
     return ()=>{disposed=true;channelRef.current=null;void supabase.removeChannel(channel);};
-  },[deviceId,roomId,terminalPeerId,closePeer,flash]);
+  },[deviceId,roomId,closePeer,flash]);
 
   useEffect(()=>()=>{void closePeer();},[closePeer]);
 
@@ -125,7 +126,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const startTerminal=async()=>{
     try{
       const peerId=uuid();const pc=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun.cloudflare.com:3478']}]});
-      const data=pc.createDataChannel('backroom-terminal',{ordered:true});dataRef.current=data;peerRef.current=pc;screenSessionRef.current=peerId;setTerminalPeerId(peerId);setTerminalText('Waiting for local terminal approval…\\n');
+      const data=pc.createDataChannel('backroom-terminal',{ordered:true});dataRef.current=data;peerRef.current=pc;screenSessionRef.current=peerId;setTerminalPeerId(peerId);terminalPeerRef.current=peerId;setTerminalText('Waiting for local terminal approval…\\n');
       data.onmessage=event=>{let message:any;try{message=JSON.parse(event.data);}catch{return;}if(message.kind==='terminal_output'){const output=new TextDecoder().decode(new Uint8Array(message.data||[]));setTerminalText(old=>(old+output).slice(-30000));}};
       pc.onicecandidate=event=>{if(event.candidate)void publish('signal',{sessionId:peerId,candidate:event.candidate.toJSON()}).catch(error=>flash(String(error),true));};
       pc.onconnectionstatechange=()=>{if(pc.connectionState==='failed'||pc.connectionState==='disconnected')flash('Terminal data connection interrupted.',true);};
@@ -174,7 +175,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       const peerId=screenSessionRef.current||terminalPeerId;
       if(peerId)await publish('command',{requestId:uuid(),action:'stop_session',sessionId:peerId,terminalSessionId:terminalSession});
     }catch{/* the local device can still revoke its own grants */}
-    await closePeer();setTerminalSession('');setTerminalPeerId('');setTerminalText('');
+    await closePeer();setTerminalSession('');setTerminalPeerId('');terminalPeerRef.current='';setTerminalText('');
   };
 
   const videoContentRect=()=>{
