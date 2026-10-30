@@ -37,10 +37,6 @@ export function createCompanionCommandGate({
     const time=now();
     if(Math.abs(time-msg.sentAt)>maxAgeMs)throw new Error('Command expired or from the future');
     if(seen.has(msg.commandId)||pending.has(msg.commandId))throw new Error('Duplicate command');
-    if((await isAuthenticated({deviceId,userId}))!==true)
-      throw new Error('Device session not authenticated');
-    if((await authorizeRoom({deviceId,userId,roomId:msg.scope.roomId,action:msg.action}))!==true)
-      throw new Error('Room permission denied');
     // Never run an incoming command directly: native confirmation remains separate.
     const operation=msg.action.replace(/^request_/,'');
     const execute=async()=>{
@@ -50,6 +46,11 @@ export function createCompanionCommandGate({
     };
     pending.set(msg.commandId,true);
     try {
+      if((await isAuthenticated({deviceId,userId}))!==true)
+        throw new Error('Device session not authenticated');
+      if((await authorizeRoom({deviceId,userId,roomId:msg.scope.roomId,action:msg.action}))!==true)
+        throw new Error('Room permission denied');
+      if(stopped)throw new Error('Companion disconnected');
       const result=await execute();
       // Limit retained deduplication IDs, including normal close commands.
       seen.set(msg.commandId,time);
