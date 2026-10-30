@@ -1,11 +1,23 @@
 import { useEffect, useState } from 'react';
+import { Monitor, Smartphone } from 'lucide-react';
 import CloudApp from './CloudApp';
 import BackroomDevicesApp from './BackroomDevicesApp';
+import BackroomSimulatorApp from './BackroomSimulatorApp';
+import './backroom-mode-nav.css';
 import { supabase } from './supabase';
 
+function backroomViewHref(browser: boolean) {
+  const params = new URLSearchParams(window.location.search);
+  params.set('backroom', '1');
+  if (browser) params.set('browser', '1');
+  else params.delete('browser');
+  return window.location.pathname + '?' + params.toString();
+}
+
 /**
- * The cloud Device Frame is the only user-facing Backroom route.
- * Signed-out visitors use the existing Rub Minds authentication flow.
+ * Backroom uses one sign-in gate for both workspaces. The cloud Device Frame is
+ * the default route; the managed browser remains a peer workspace until its
+ * screenshot/target adapter is rendered directly inside the unified frame.
  */
 export default function BackroomApp() {
   const [ready, setReady] = useState(false);
@@ -37,5 +49,25 @@ export default function BackroomApp() {
 
   if (!ready) return <main className="br-cloud-shell" aria-live="polite">Checking Rub Minds sign-in…</main>;
   if (!authenticated) return <CloudApp />;
-  return <BackroomDevicesApp />;
+
+  const browserView = new URLSearchParams(window.location.search).get('browser') === '1';
+  return <div className="br-workspace-root">
+    <nav className="br-mode-nav" aria-label="Backroom workspaces">
+      <a
+        className={!browserView ? 'active' : ''}
+        href={backroomViewHref(false)}
+        aria-current={!browserView ? 'page' : undefined}
+      >
+        <Smartphone size={15}/> Device Frame
+      </a>
+      <a
+        className={browserView ? 'active' : ''}
+        href={backroomViewHref(true)}
+        aria-current={browserView ? 'page' : undefined}
+      >
+        <Monitor size={15}/> Browser runtime
+      </a>
+    </nav>
+    {browserView ? <BackroomSimulatorApp/> : <BackroomDevicesApp/>}
+  </div>;
 }

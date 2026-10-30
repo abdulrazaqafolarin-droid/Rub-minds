@@ -12,14 +12,31 @@ test("Backroom uses the cloud Device Frame and gates direct links with Rub Minds
   assert.match(wrapper, /CloudApp/);
   assert.match(wrapper, /supabase\.auth\.getSession/);
   assert.match(wrapper, /onAuthStateChange/);
-  assert.doesNotMatch(wrapper, /BackroomSimulatorApp|localhost|127\.0\.0\.1|host-server/);
+  assert.match(wrapper, /BackroomSimulatorApp/);
+  assert.match(wrapper, /browserView/);
+  assert.match(wrapper, /backroomViewHref/);
+  assert.match(wrapper, /Browser runtime/);
+  assert.doesNotMatch(wrapper, /localhost|127\.0\.0\.1|host-server/);
   assert.match(entry, /isBackroom \? <BackroomApp \/>/);
   assert.match(devices, /Connected runtimes/);
+  const browser = await read("src/BackroomSimulatorApp.tsx");
   assert.match(devices, /Phone apps/);
   assert.match(devices, /Desktop apps/);
   assert.match(devices, /Terminal/);
   assert.match(devices, /outbound HTTPS/);
+  assert.match(browser, /LiveBrowserPreview/);
+  assert.match(browser, /refreshBrowserInventory/);
+  assert.match(browser, /select-region/);
+  assert.match(browser, /browser_tab/);
   assert.match(devices, /No localhost server or phone port bridge/);
+});
+
+test("switching browser rooms preserves the authenticated Backroom browser route", async () => {
+  const browser = await read("src/BackroomSimulatorApp.tsx");
+  assert.match(browser, /new URLSearchParams\(location\.search\)/);
+  assert.match(browser, /params\.set\('backroom', '1'\)/);
+  assert.match(browser, /params\.set\('room', e\.target\.value\)/);
+  assert.match(browser, /location\.pathname \+ '\?' \+ params\.toString\(\)/);
 });
 
 test("Device Frame shows one selected phone at a time", async () => {

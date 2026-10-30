@@ -1099,7 +1099,13 @@ export default function BackroomApp() {
       <a className="br-brand" href="/"><span className="br-brand-mark"><Layers3 size={22}/></span><span><b>rub minds</b><small>BACKROOM</small></span></a>
       <div className="br-side-heading">WORKSPACE</div>
       <label className="br-room-label" htmlFor="br-room">Active group</label>
-      <div className="br-select-wrap"><select id="br-room" aria-label="Active Rub Minds group" value={room?.id || ''} onChange={e => { setRoomId(e.target.value); history.replaceState(null, '', '/?backroom=1&room=' + encodeURIComponent(e.target.value)); }}><option value="">Select a group</option>{rooms.map(r => <option key={r.id} value={r.id}>{r.title}</option>)}</select><ChevronDown size={15}/></div>
+      <div className="br-select-wrap"><select id="br-room" aria-label="Active Rub Minds group" value={room?.id || ''} onChange={e => {
+        const params = new URLSearchParams(location.search);
+        params.set('backroom', '1');
+        params.set('room', e.target.value);
+        history.replaceState(null, '', location.pathname + '?' + params.toString());
+        setRoomId(e.target.value);
+      }}><option value="">Select a group</option>{rooms.map(r => <option key={r.id} value={r.id}>{r.title}</option>)}</select><ChevronDown size={15}/></div>
       <div className="br-side-heading br-space-heading">SPACES <span>{spaces.length}</span></div>
       <div className="br-space-list">{spaces.map(s => { const Icon = iconFor(s.surface); return <button className={'br-space-item' + (s.id === active ? ' active' : '')} key={s.id} onClick={() => { setActive(s.id); setSelection(null); setNotice(''); }}><span className="br-space-icon"><Icon size={18}/></span><span className="br-space-name"><b>{s.name}</b><small>{surfaces.find(t => t.id === s.surface)?.name}</small></span><span className="br-offline-dot"/></button>; })}</div>
       <button className="br-add-side" onClick={() => setAdding(true)} disabled={!room || spaces.length >= 30}><Plus size={17}/> Add a space</button>
