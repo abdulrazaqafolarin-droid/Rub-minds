@@ -42,14 +42,14 @@ function exactKeys(value: Record<string, unknown>, keys: string[]) {
 async function owner(req: Request) {
   return await resolveOwnerFromJwt(req, token => db.auth.getUser(token));
 }
-async function device(req: Request, allowPending = false) {
+async function device(req: Request, allowPending = false, allowRevoked = false) {
   const token = bearerPattern.exec(req.headers.get('authorization') ?? '')?.[1];
   if (!token) return null;
   const digest = await sha256(token);
   const { data, error } = await db.from('backroom_devices')
     .select('device_id,owner_id,device_label,status,capabilities')
     .eq('token_digest', digest).maybeSingle();
-  if (error || !data || data.status === 'revoked' || (!allowPending && data.status !== 'active')) return null;
+  if (error || !data || (!allowRevoked && data.status === 'revoked') || (!allowPending && data.status !== 'active')) return null;
   return data;
 }
 function fail(reason: string) { return { ok: false, reason }; }
@@ -104,7 +104,7 @@ Deno.serve(async req => {
       if (!token || !HEX.test(token) || !validatePairClaim({
         pairingCode: input.pairingCode, deviceId: input.deviceId,
         deviceLabel: input.deviceLabel, osVersion: input.osVersion, appVersion: input.appVersion
-      }) || !exactKeys(input, ['action','pairingCode','deviceId','deviceLabel','osVersion','appVersion'])) {
+      }, token) || !exactKeys(input, ['action','pairingCode','deviceId','deviceLabel','osVersion','appVersion'])) {
         return json(400, fail('invalid_pair_claim'), origin);
       }
       const { data, error } = await db.rpc('claim_backroom_device_pairing', {
@@ -119,7 +119,7 @@ Deno.serve(async req => {
 
     if (action === 'device/status') {
       if (!exactKeys(input, ['action'])) return json(400, fail('invalid_status_request'), origin);
-      const current = await device(req, true);
+      const current = await device(req, true, true);
       if (!current) return json(401, fail('device_auth_invalid'), origin);
       await db.from('backroom_devices').update({ last_seen_at: new Date().toISOString() }).eq('device_id', current.device_id);
       return json(200, { ok: true, deviceId: current.device_id, status: current.status,
@@ -174,7 +174,12 @@ Deno.serve(async req => {
         const { data: room, error: roomError } = await db.from('rooms').select('id')
           .eq('id', input.roomId).eq('owner_id', ownerId).maybeSingle();
         if (roomError) return json(503, fail('device_service_unavailable'), origin);
-        if (!room) return json(403, fail('room_owner_required'), origin);
+        if (action === 'owner/events' && !room) {
+          const { data: member, error: memberError } = await db.from('participants').select('id')
+            .eq('room_id', input.roomId).eq('user_id', ownerId).maybeSingle();
+          if (memberError) return json(503, fail('device_events_unavailable'), origin);
+          if (!member) return json(403, fail('room_member_required'), origin);
+        } else if (!room) return json(403, fail('room_owner_required'), origin);
         if (action === 'owner/events') {
           const { data, error } = await db.from('backroom_device_events').select('id,device_id,actor_type,actor_id,event_type,package_name,created_at')
             .eq('room_id', input.roomId).order('created_at', { ascending: false }).limit(100);
