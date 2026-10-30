@@ -56,11 +56,11 @@ test('ack and retry preserve separate authorized operations',async()=>{
  const {handler,calls}=fixture();
  const ack=await handler(request('https://example.test/v1/backroom/wake/ack',{body:{
   hostId:valid.hostId,bindingId:valid.bindingId,sessionDigest:valid.sessionDigest,
-  jobId:'id',leaseToken:'lease',outcome:'ignored'}}));
+  jobId:'40000000-0000-4000-8000-000000000033',leaseToken:'40000000-0000-4000-8000-000000000044',outcome:'ignored'}}));
  assert.equal(ack.status,200);
  const retry=await handler(request('https://example.test/v1/backroom/wake/retry',{body:{
   hostId:valid.hostId,bindingId:valid.bindingId,sessionDigest:valid.sessionDigest,
-  jobId:'id',leaseToken:'lease',retryAfterSeconds:5,errorCode:'provider_busy'}}));
+  jobId:'40000000-0000-4000-8000-000000000033',leaseToken:'40000000-0000-4000-8000-000000000044',retryAfterSeconds:5,errorCode:'provider_busy'}}));
  assert.equal(retry.status,200);
  assert.deepEqual(calls.map(x=>x[0]),['ack','retry']);
 });
@@ -104,4 +104,25 @@ test('activation and deactivation routes accept only exact scoped grant operatio
   gatewayUrl:'https://attacker.example'}}));
  assert.equal(extra.status,400);
  assert.equal(calls.length,2);
+});
+
+
+test('malformed UUIDs, lease tokens and retry bounds return 400 before gateway access',async()=>{
+ const {handler,calls}=fixture();
+ const cases=[
+  ['ack',{hostId:valid.hostId,bindingId:valid.bindingId,sessionDigest:valid.sessionDigest,
+   jobId:'not-a-uuid',leaseToken:'40000000-0000-4000-8000-000000000044',outcome:'acknowledged'}],
+  ['ack',{hostId:valid.hostId,bindingId:valid.bindingId,sessionDigest:valid.sessionDigest,
+   jobId:'40000000-0000-4000-8000-000000000033',leaseToken:'not-a-uuid',outcome:'acknowledged'}],
+  ['retry',{hostId:valid.hostId,bindingId:valid.bindingId,sessionDigest:valid.sessionDigest,
+   jobId:'40000000-0000-4000-8000-000000000033',leaseToken:'40000000-0000-4000-8000-000000000044',
+   retryAfterSeconds:301,errorCode:'provider_busy'}],
+  ['claim',{hostId:valid.hostId,bindingId:valid.bindingId,sessionDigest:'not-a-digest',limit:5}],
+ ];
+ for(const [route,body] of cases){
+  const out=await handler(request('https://example.test/v1/backroom/wake/'+route,{body}));
+  assert.equal(out.status,400);
+  assert.deepEqual(await out.json(),{ok:false,reason:'invalid_body'});
+ }
+ assert.equal(calls.length,0);
 });
