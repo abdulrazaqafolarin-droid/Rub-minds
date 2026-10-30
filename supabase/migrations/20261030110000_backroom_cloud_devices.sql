@@ -33,7 +33,9 @@ create table if not exists public.backroom_device_pairings (
 alter table public.backroom_device_pairings enable row level security;
 revoke all on table public.backroom_device_pairings from public, anon, authenticated;
 grant select, insert, delete on table public.backroom_device_pairings to service_role;
-create index if not exists backroom_device_pairings_owner_idx on public.backroom_device_pairings(owner_id, created_at desc);
+create index if not exists backroom_devices_owner_idx on public.backroom_devices(owner_id, created_at desc);
+create index if not exists backroom_device_pairings_room_idx on public.backroom_device_pairings(room_id);
+create index if not exists backroom_device_pairings_device_idx on public.backroom_device_pairings(device_id) where device_id is not null;
 
 create table if not exists public.backroom_device_room_bindings (
   device_id uuid not null references public.backroom_devices(device_id) on delete cascade,
@@ -46,6 +48,8 @@ create table if not exists public.backroom_device_room_bindings (
 alter table public.backroom_device_room_bindings enable row level security;
 revoke all on table public.backroom_device_room_bindings from public, anon, authenticated;
 grant select on table public.backroom_device_room_bindings to service_role;
+create index if not exists backroom_device_room_bindings_room_fk_idx on public.backroom_device_room_bindings(room_id);
+create index if not exists backroom_device_room_bindings_owner_idx on public.backroom_device_room_bindings(owner_id);
 create index if not exists backroom_device_room_bindings_room_idx on public.backroom_device_room_bindings(room_id) where revoked_at is null;
 
 create table if not exists public.backroom_device_apps (
@@ -80,6 +84,7 @@ alter table public.backroom_device_events enable row level security;
 revoke all on table public.backroom_device_events from public, anon, authenticated;
 grant select, insert on table public.backroom_device_events to service_role;
 create index if not exists backroom_device_events_room_idx on public.backroom_device_events(room_id, created_at desc);
+create index if not exists backroom_device_events_device_idx on public.backroom_device_events(device_id, created_at desc);
 
 -- A one-use, five-minute pairing code is claimed atomically. Only the service role
 -- may call this function; device and owner credentials never call it directly.
