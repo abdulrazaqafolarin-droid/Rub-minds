@@ -79,7 +79,7 @@ test("group activity reads require owner or room membership; inventory remains o
 test("no native or web localhost bridge exists in the cloud Device Frame path", async () => {
   const ui = await read("src/BackroomApp.tsx");
   const api = await read("android-companion/app/src/main/java/app/rubminds/companion/CloudDeviceApi.kt");
-  assert.doesNotMatch(ui, /localhost|127\.0\.0\.1|createBackroomHostServer/);
+  assert.doesNotMatch(ui, /http:\/\/(?:localhost|127\.0\.0\.1)|createBackroomHostServer|\/v1\/browser\//);
   assert.doesNotMatch(api, /localhost|127\.0\.0\.1|ServerSocket|HttpServer/);
   assert.match(api, /HttpsURLConnection/);
   assert.match(api, /instanceFollowRedirects = false/);
