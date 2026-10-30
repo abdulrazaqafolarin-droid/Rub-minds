@@ -5,9 +5,9 @@ This document records the isolated staging path and repeatable evidence for the 
 ## Isolated environment
 
 - Git branch: `feat/backroom-cua-artemis-workspaces`
-- Latest branch HEAD: `a7cdc2abe1e4a90f7c0ed2c1d135d5b43d6c98ff` (documentation-only update after the tested code head)
+- Latest branch HEAD: `34e1aef670fa60d5d0737cf9031ade419322487e` (documentation-only updates after the tested code head)
 - Last full executable-code test head: `72b6268b6d5acefd4dfb87192435b4133c758d6a`
-- Latest Vercel Preview deployment: `dpl_C2RPTtnfHtXKvB8Uzct693tpvu7c` — READY
+- Latest Vercel Preview deployment: `dpl_2CfnhqjgZHPtXZFbo9HgDjm8WuuM` — READY
 - Full prebuild / TypeScript / Vite evidence is for executable-code head `72b6268b6d5acefd4dfb87192435b4133c758d6a`; later commits only revise this acceptance document.
 - Stable Preview origin: `https://rub-minds-git-feat-ba-fce441-abdulrazaqafolarin-droids-projects.vercel.app`
 - Supabase staging project ref: `tzcuuynmviiuactafpld` (PostgreSQL 17.11)
@@ -140,3 +140,14 @@ The staging advisor was reviewed after the lifecycle tests:
 - Supabase Auth leaked-password protection is disabled in staging. Supabase's published guidance says this feature requires Pro or above. No plan change or Auth configuration change was made as part of this no-paid/staging-only task.
 
 Security-advisor remediation reference: [Supabase database linter](https://supabase.com/docs/guides/database/database-linter?lint=0029_authenticated_security_definer_function_executable).
+
+
+## Final Vercel environment-value verification
+
+The Vercel environment records were resolved by their exact environment-variable IDs (not by list order) and compared directly to each Supabase project's active publishable key:
+- Project-wide/base `VITE_SUPABASE_URL` still exactly equals the Production project's URL.
+- Project-wide/base `VITE_SUPABASE_ANON_KEY` still exactly equals the Production project's active publishable key.
+- Branch-scoped Preview `VITE_SUPABASE_URL` exactly equals the Staging project's URL.
+- Branch-scoped Preview `VITE_SUPABASE_ANON_KEY` exactly equals the Staging project's active publishable key.
+- Both Preview overrides remain targeted only to `preview` and only to `feat/backroom-cua-artemis-workspaces`. No secret values were printed or copied into this document.
+- Final documentation commit `34e1aef670fa60d5d0737cf9031ade419322487e` has a READY Vercel Preview deployment above; its changes after code head `72b6268` are documentation-only.
