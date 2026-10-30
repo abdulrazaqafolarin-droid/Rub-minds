@@ -20,6 +20,7 @@ import android.widget.Toast
 class DraftInputMethodService : InputMethodService() {
     private var activePackage: String? = null
     private var activeInputType: Int = InputType.TYPE_NULL
+    private var activeSigningCertificateSha256: String? = null
     private val draftText = StringBuilder()
     private var shiftEnabled = false
     private var preview: TextView? = null
@@ -85,9 +86,11 @@ class DraftInputMethodService : InputMethodService() {
         return panel
     }
 
+    @Suppress("UNUSED_PARAMETER")
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
-        if (!restarting) clearDraft()
+        // Clear every editor-start session so text cannot carry into another field.
+        clearDraft()
         updateEditorTarget(attribute)
     }
 
@@ -100,6 +103,7 @@ class DraftInputMethodService : InputMethodService() {
         super.onFinishInput()
         activePackage = null
         activeInputType = InputType.TYPE_NULL
+        activeSigningCertificateSha256 = null
         clearDraft()
         updatePermissionState()
     }
@@ -109,6 +113,9 @@ class DraftInputMethodService : InputMethodService() {
         if (activePackage != nextPackage) clearDraft()
         activePackage = nextPackage
         activeInputType = info?.inputType ?: InputType.TYPE_NULL
+        activeSigningCertificateSha256 = nextPackage?.let {
+            AppIdentity.signingCertificateSha256(this, it)
+        }
         updatePermissionState()
     }
 
@@ -151,16 +158,24 @@ class DraftInputMethodService : InputMethodService() {
             keyButtons += this
         }
 
-    private fun isInsertAllowed(): Boolean {
+    private fun isInsertAllowed(verifyCurrentSigner: Boolean = false): Boolean {
         val liveEditor = currentInputEditorInfo ?: return false
+        val packageName = activePackage ?: return false
         // Fail closed if the editor changed without the service observing a new input event.
-        if (activePackage.isNullOrBlank() ||
-            liveEditor.packageName != activePackage ||
+        if (packageName.isBlank() ||
+            liveEditor.packageName != packageName ||
             liveEditor.inputType != activeInputType
         ) return false
+        val activeDigest = activeSigningCertificateSha256 ?: return false
+        if (verifyCurrentSigner) {
+            val currentDigest = AppIdentity.signingCertificateSha256(this, packageName) ?: return false
+            if (currentDigest != activeDigest) return false
+        }
+        val grant = AppGrantStore(this).get(packageName, activeDigest) ?: return false
         return AppGrantPolicy.canInsertDraft(
-            AppGrantStore(this).get(activePackage.orEmpty()),
+            grant,
             liveEditor.packageName,
+            activeDigest,
             liveEditor.inputType
         )
     }
@@ -169,6 +184,7 @@ class DraftInputMethodService : InputMethodService() {
         val allowed = isInsertAllowed()
         status?.text = when {
             allowed -> "Draft insertion is enabled for $activePackage."
+            activeSigningCertificateSha256 == null -> "Draft insertion is unavailable because this app's signing identity could not be verified."
             AppGrantPolicy.isSensitiveInput(activeInputType) -> "Draft insertion is disabled in password fields."
             else -> "Draft insertion is not approved for this app. Change app choices in Rub Minds Companion."
         }
@@ -181,8 +197,8 @@ class DraftInputMethodService : InputMethodService() {
     }
 
     private fun insertDraft() {
-        // Re-check the live editor immediately before the only write operation.
-        if (!isInsertAllowed()) {
+        // Re-check the live editor and current APK signer immediately before the only write operation.
+        if (!isInsertAllowed(verifyCurrentSigner = true)) {
             updatePermissionState()
             Toast.makeText(this, "This app or field is not approved for draft insertion.", Toast.LENGTH_SHORT).show()
             return

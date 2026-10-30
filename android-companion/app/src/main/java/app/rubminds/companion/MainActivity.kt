@@ -20,14 +20,15 @@ import android.widget.Toast
 private data class LaunchableApp(
     val packageName: String,
     val label: String,
-    val icon: android.graphics.drawable.Drawable
+    val icon: android.graphics.drawable.Drawable,
+    val signingCertificateSha256: String?
 )
 
 class MainActivity : Activity() {
     private lateinit var store: AppGrantStore
     private lateinit var list: LinearLayout
     private lateinit var keyboardStatus: TextView
-    private val launchGrants = linkedSetOf<String>()
+    private val launchGrants = linkedMapOf<String, String>()
     private val draftGrants = linkedSetOf<String>()
     private val appRows = mutableMapOf<String, Pair<CheckBox, CheckBox>>()
     private var apps: List<LaunchableApp> = emptyList()
@@ -36,7 +37,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         store = AppGrantStore(this)
         store.all().forEach {
-            launchGrants += it.packageName
+            launchGrants[it.packageName] = it.signingCertificateSha256
             if (it.allowDraftInsertion) draftGrants += it.packageName
         }
         render()
@@ -152,7 +153,8 @@ class MainActivity : Activity() {
             val appPackage = info.activityInfo?.packageName ?: return@mapNotNull null
             if (appPackage == applicationContext.packageName) return@mapNotNull null
             val label = info.loadLabel(packageManager)?.toString()?.takeIf { it.isNotBlank() } ?: appPackage
-            LaunchableApp(appPackage, label, info.loadIcon(packageManager))
+            val signingDigest = AppIdentity.signingCertificateSha256(this, appPackage)
+            LaunchableApp(appPackage, label, info.loadIcon(packageManager), signingDigest)
         }.distinctBy { it.packageName }.sortedBy { it.label.lowercase() }
         drawAppRows()
     }
@@ -164,7 +166,24 @@ class MainActivity : Activity() {
             list.addView(TextView(this).apply { text = "No launchable apps were discovered." })
             return
         }
+        val signerChanges = apps.filter { app ->
+            val previous = launchGrants[app.packageName]
+            previous != null && app.signingCertificateSha256 != null &&
+                previous != app.signingCertificateSha256
+        }
+        if (signerChanges.isNotEmpty()) {
+            signerChanges.forEach { app ->
+                launchGrants.remove(app.packageName)
+                draftGrants.remove(app.packageName)
+            }
+            store.save(launchGrants.map { (packageName, digest) ->
+                AppGrant(packageName, digest, allowLaunch = true, allowDraftInsertion = packageName in draftGrants)
+            })
+        }
         apps.forEach { app ->
+            val currentDigest = app.signingCertificateSha256
+            val hasLaunchGrant = currentDigest != null &&
+                launchGrants[app.packageName] == currentDigest
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(0, dp(8), 0, dp(8))
@@ -184,16 +203,24 @@ class MainActivity : Activity() {
             })
             val add = CheckBox(this).apply {
                 text = "Add this app"
-                isChecked = app.packageName in launchGrants
+                isChecked = hasLaunchGrant
+                isEnabled = currentDigest != null
                 setOnCheckedChangeListener { _, checked ->
                     if (checked) {
-                        launchGrants += app.packageName
+                        if (currentDigest == null) {
+                            isChecked = false
+                            Toast.makeText(this@MainActivity, "Android could not verify this app's signing identity.", Toast.LENGTH_SHORT).show()
+                        } else {
+                            launchGrants[app.packageName] = currentDigest
+                        }
                     } else {
-                        launchGrants -= app.packageName
+                        launchGrants.remove(app.packageName)
                         draftGrants -= app.packageName
                         appRows[app.packageName]?.second?.isChecked = false
                     }
-                    appRows[app.packageName]?.second?.isEnabled = checked
+                    val granted = currentDigest != null &&
+                        launchGrants[app.packageName] == currentDigest
+                    appRows[app.packageName]?.second?.isEnabled = granted
                 }
             }
             header.addView(add)
@@ -201,13 +228,13 @@ class MainActivity : Activity() {
 
             val draft = CheckBox(this).apply {
                 text = "Allow draft insertion with Rub Minds keyboard"
-                isChecked = app.packageName in draftGrants
-                isEnabled = app.packageName in launchGrants
+                isChecked = hasLaunchGrant && app.packageName in draftGrants
+                isEnabled = hasLaunchGrant
                 setOnCheckedChangeListener { _, checked ->
                     if (checked) {
-                        if (app.packageName !in launchGrants) {
+                        if (currentDigest == null || launchGrants[app.packageName] != currentDigest) {
                             isChecked = false
-                            Toast.makeText(this@MainActivity, "Add this app first.", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(this@MainActivity, "Add this app first and verify its signing identity.", Toast.LENGTH_SHORT).show()
                         } else {
                             draftGrants += app.packageName
                         }
@@ -225,7 +252,11 @@ class MainActivity : Activity() {
     }
 
     private fun openSelectedApp(packageName: String) {
-        if (packageName !in launchGrants || !AppGrantPolicy.canLaunch(store.get(packageName))) {
+        val currentDigest = AppIdentity.signingCertificateSha256(this, packageName)
+        val savedGrant = currentDigest?.let { store.get(packageName, it) }
+        if (currentDigest == null || launchGrants[packageName] != currentDigest ||
+            !AppGrantPolicy.canLaunch(savedGrant, currentDigest)
+        ) {
             Toast.makeText(this, "Save this app as an allowed app first.", Toast.LENGTH_SHORT).show()
             return
         }
@@ -253,8 +284,13 @@ class MainActivity : Activity() {
     }
 
     private fun saveChoices() {
-        val grants = launchGrants.map { packageName ->
-            AppGrant(packageName, allowLaunch = true, allowDraftInsertion = packageName in draftGrants)
+        val grants = launchGrants.map { (packageName, signingDigest) ->
+            AppGrant(
+                packageName = packageName,
+                signingCertificateSha256 = signingDigest,
+                allowLaunch = true,
+                allowDraftInsertion = packageName in draftGrants
+            )
         }
         store.save(grants)
         appRows.forEach { (packageName, row) ->

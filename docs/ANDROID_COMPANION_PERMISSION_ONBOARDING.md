@@ -7,14 +7,14 @@
 3. Companion displays launcher apps; owner chooses individual apps.
 4. Owner separately chooses whether the Rub Minds keyboard may insert drafts into each selected app.
 5. Owner taps **Enable in Android Settings**, enables **Rub Minds draft keyboard** in the system-owned input-method settings, returns to the companion, then taps **Choose keyboard** and selects it in Android's system picker.
-6. The keyboard checks the live foreground editor package and input type against the local per-app grant and requires a deliberate **Insert draft** tap. It refuses password/credential variations and unsupported editor classes.
+6. The keyboard checks the live foreground editor package and input type against the local per-app grant and requires a deliberate **Insert draft** tap. It refuses password/credential variations and unsupported editor classes, and rechecks the current APK signing identity immediately before writing.
 
 ## Implemented in this slice
 
 - Standalone Android Gradle project under `android-companion/`.
 - Package discovery limited to launcher activities through a `<queries>` intent; no broad `QUERY_ALL_PACKAGES` declaration.
-- Local app-grant persistence and an exact-package insertion policy.
-- Optional input method with local text composition and explicit insertion.
+- Local app-grant persistence and an exact-package insertion policy bound to the current APK signing-certificate SHA-256 fingerprint; a different signer cannot inherit an earlier approval.
+- Optional input method with local text composition and explicit insertion. The keyboard rechecks the package's current signing identity immediately before the single text-insertion operation.
 - Unit tests for grant enforcement.
 
 ## Not implemented yet
@@ -46,6 +46,7 @@
 
 - [Android package visibility filtering](https://developer.android.com/training/package-visibility): installed-package discovery is filtered on modern Android, and visibility declarations should be scoped to the interactions an app needs.
 - [Declare package visibility needs](https://developer.android.com/training/package-visibility/declaring): use narrow manifest `<queries>` declarations instead of requesting broad app inventory where possible.
+- [Android SigningInfo API](https://developer.android.com/reference/android/content/pm/SigningInfo): uses current signing-certificate history for single-signer packages and the complete current signer set for multiple-signer packages.
 - [Android InputMethodService API](https://developer.android.com/reference/android/inputmethodservice/InputMethodService): the input method receives `EditorInfo` for the active editor and writes via the current `InputConnection`; the implementation uses these APIs for local, explicit draft insertion.
 - [Android Gradle Plugin 8.8 release notes](https://developer.android.com/build/releases/agp-8-8-0-release-notes): AGP 8.8 uses Gradle 8.10.2, SDK Build Tools 35.0.0 and JDK 17.
 
