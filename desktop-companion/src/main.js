@@ -363,17 +363,10 @@ async function handleCommand(payload){
   }
   if(payload.action==='stop_session'){
     const peerSessionId=payload.sessionId;
-    const terminalSessionId=payload.terminalSessionId;
-    if(typeof peerSessionId==='string'){
-      const peer=state.peers.get(peerSessionId);
-      if(peer?.terminalId){try{await invoke('stop_terminal',{sessionId:peer.terminalId});}catch{}}
-      await stopPeer(peerSessionId);
-      await invoke('revoke_control',{sessionId:peerSessionId});
-    }
-    if(typeof terminalSessionId==='string'&&terminalSessionId!==peerSessionId){
-      try{await invoke('stop_terminal',{sessionId:terminalSessionId});}catch{}
-      try{await invoke('revoke_control',{sessionId:terminalSessionId});}catch{}
-    }
+    if(typeof peerSessionId!=='string')return;
+    // The native companion, not the caller, owns the peer -> PTY mapping.
+    // Never accept an arbitrary terminal process ID from a remote command.
+    await stopPeer(peerSessionId);
     await publish('response',{requestId,ok:true,capability:'stop'});return;
   }
 }
