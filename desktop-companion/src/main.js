@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { validateDeviceCommand, validateDeviceSignal, queueIceCandidate, takeIceCandidates } from '../../integrations/backroom/desktop-realtime-protocol.mjs';
 import { waitForIceGatheringComplete } from '../../integrations/backroom/ice-gathering.mjs';
+import { validatePeerHeartbeat } from '../../integrations/backroom/peer-heartbeat.mjs';
 import './style.css';
 
 const app = document.querySelector('#app');
@@ -14,7 +15,7 @@ const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;'
 const state = {
   client: null, user: null, session: null, deviceId: null, roomId: null, deviceTokenSaved: false,
   channel: null, apps: [], pending: [], peers: new Map(), streams: new Map(), terminals: new Map(), pendingCandidates: new Map(),
-  seenCommands: new Map(), heartbeat: null, heartbeatMisses: 0,
+  seenCommands: new Map(), heartbeat: null, heartbeatMisses: 0, peerWatchdog: null,
   status: 'Not connected', terminalOutput: '', unlisten: [],
 };
 function notify(message, kind='') {
@@ -397,7 +398,8 @@ async function startTerminalPeer(payload,term){
   const peerSessionId=payload.sessionId;
   if(!peerSessionId||!payload.offer?.sdp)throw new Error('Invalid terminal WebRTC offer');
   const pc=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun.cloudflare.com:3478']}]});
-  state.peers.set(peerSessionId,{pc,stream:null,channel:null,canControl:false,terminalId:term.sessionId});
+  state.peers.set(peerSessionId,{pc,stream:null,channel:null,canControl:false,terminalId:term.sessionId,createdAt:Date.now(),lastHeartbeat:Date.now()});
+  startPeerWatchdog();
   pc.ondatachannel=event=>{
     const data=event.channel;state.peers.get(peerSessionId).channel=data;
     data.onmessage=event=>void handlePeerData(peerSessionId,event.data);
@@ -427,7 +429,8 @@ async function startViewSession(payload){
     canControl=true;
   }catch(error){notify('The screen is visible, but desktop input is disabled: '+error.message,'error');}
   const pc=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun.cloudflare.com:3478']}]});
-  state.peers.set(sessionId,{pc,stream,channel:null,canControl,terminalId:null});
+  state.peers.set(sessionId,{pc,stream,channel:null,canControl,terminalId:null,createdAt:Date.now(),lastHeartbeat:Date.now()});
+  startPeerWatchdog();
   for(const mediaTrack of stream.getTracks())pc.addTrack(mediaTrack,stream);
   pc.ondatachannel=event=>{
     const channel=event.channel;state.peers.get(sessionId).channel=channel;
@@ -471,6 +474,12 @@ async function handlePeerData(sessionId,raw){
   const peer=state.peers.get(sessionId);if(!peer)return;
   let message;try{message=JSON.parse(raw);}catch{return;}
   if(!message||typeof message.kind!=='string')return;
+  if(message.kind==='heartbeat'){
+    const heartbeat=validatePeerHeartbeat(message,{sessionId,now:Date.now(),maxAgeMs:45_000,maxFutureSkewMs:5_000});
+    if(heartbeat)peer.lastHeartbeat=Date.now();
+    return;
+  }
+  peer.lastHeartbeat=Date.now();
   if(message.kind==='input'&&message.event){
     try{await invoke('dispatch_input',{sessionId,event:message.event});}catch(error){notify(error.message,'error');}
   } else if(message.kind==='select_target'){
@@ -517,10 +526,23 @@ async function refreshPending(){
   }
   renderPending();
 }
+function startPeerWatchdog(){
+  if(state.peerWatchdog!==null)return;
+  state.peerWatchdog=window.setInterval(()=>{
+    const now=Date.now();
+    for(const [sessionId,peer] of [...state.peers.entries()]){
+      if(now-(peer.lastHeartbeat||peer.createdAt||now)>45_000){
+        notify('The Backroom browser heartbeat was lost. Stopping the corresponding local stream/terminal.','error');
+        void stopPeer(sessionId);
+      }
+    }
+  },5_000);
+}
 async function stopPeer(sessionId,{closeServer=true}={}){
   const peer=state.peers.get(sessionId);
   // Remove ownership before close() emits state changes, making teardown idempotent.
   state.peers.delete(sessionId);state.streams.delete(sessionId);state.pendingCandidates.delete(sessionId);
+  if(state.peers.size===0&&state.peerWatchdog!==null){clearInterval(state.peerWatchdog);state.peerWatchdog=null;}
   if(peer){
     peer.pc.close();peer.stream?.getTracks().forEach(track=>track.stop());
     if(peer.terminalId){
@@ -553,6 +575,7 @@ async function stopAllPeerSessions({serverAlreadyClosed=false}={}){
   for(const term of state.terminals.values())try{await invoke('stop_terminal',{sessionId:term.sessionId});}catch{}
   state.terminals.clear();
   state.pendingCandidates.clear();
+  if(state.peerWatchdog!==null){clearInterval(state.peerWatchdog);state.peerWatchdog=null;}
   if(!serverAlreadyClosed){
     for(const sessionId of serverSessionIds)await closeServerSession(sessionId);
   }
