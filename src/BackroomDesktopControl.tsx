@@ -356,7 +356,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
             <div className="br-terminal-remote-head"><SquareTerminal size={15}/> Native terminal · actual computer</div>
             <pre>{terminalText||'Waiting for terminal output…'}</pre>
             <div className="br-terminal-input"><input value={terminalInput} onChange={e=>setTerminalInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')terminalSend();}} placeholder={controlGranted?'Enter a terminal command…':'Request control on the terminal session first'} disabled={!controlGranted}/><button type="button" onClick={terminalSend} disabled={!controlGranted||!terminalInput}>Run</button></div>
-            {!controlGranted&&terminalSession&&<button type="button" onClick={()=>void sendCommand('request_control',{sessionId:terminalSession})}>Request terminal control</button>}
+            {!controlGranted&&terminalSession&&<button type="button" onClick={()=>void sendCommand('request_control',{sessionId:terminalSession,peerSessionId:terminalPeerId})}>Request terminal control</button>}
           </div>}
         </div>}
       </>
