@@ -175,6 +175,62 @@ Deno.serve(async req => {
 
 
 
+
+    if (action === 'desktop/session-abandon') {
+      const userId = await owner(req);
+      if (!userId) return json(401, fail('owner_auth_required'), origin);
+      if (!strictKeys(input, ['action','deviceId','roomId','sessionId','requestId','issuedAt']) ||
+          typeof input.deviceId !== 'string' || !UUID.test(input.deviceId) ||
+          typeof input.roomId !== 'string' || !UUID.test(input.roomId) ||
+          typeof input.sessionId !== 'string' || !UUID.test(input.sessionId) ||
+          typeof input.requestId !== 'string' || !UUID.test(input.requestId) ||
+          !Number.isSafeInteger(input.issuedAt) || Math.abs(Date.now() - input.issuedAt) > 30_000) {
+        return json(400, fail('invalid_desktop_session_abandon'), origin);
+      }
+      const [actor, binding] = await Promise.all([
+        authorizeRoomActor(input.roomId, userId),
+        verifyActiveDeviceRoomBinding(input.deviceId, input.roomId),
+      ]);
+      if (!actor.ok) return json(actor.status, fail(actor.reason), origin);
+      if (!binding.ok) return json(binding.status, fail(binding.reason), origin);
+      const { data: existing, error: lookupError } = await db.from('backroom_desktop_sessions')
+        .select('session_id,status,expires_at')
+        .eq('session_id', input.sessionId).eq('device_id', input.deviceId)
+        .eq('room_id', input.roomId).eq('requested_by', userId).maybeSingle();
+      if (lookupError) return json(503, fail('desktop_session_lookup_failed'), origin);
+      if (!existing) return json(404, fail('desktop_session_not_found'), origin);
+      if (existing.status === 'revoked' || existing.status === 'expired') {
+        return json(409, fail('desktop_session_no_longer_controllable'), origin);
+      }
+      let closed = false;
+      if (existing.status === 'active') {
+        const { data, error } = await db.from('backroom_desktop_sessions')
+          .update({ status: 'stopped', stopped_at: new Date().toISOString() })
+          .eq('session_id', input.sessionId).eq('device_id', input.deviceId)
+          .eq('room_id', input.roomId).eq('requested_by', userId).eq('status', 'active')
+          .select('session_id');
+        if (error) return json(503, fail('desktop_session_abandon_failed'), origin);
+        closed = Array.isArray(data) && data.length === 1;
+      } else if (existing.status !== 'stopped') {
+        return json(409, fail('desktop_session_no_longer_controllable'), origin);
+      }
+      try {
+        await broadcastPrivateDeviceEvent({
+          projectUrl: url, apiKey: serviceKey, deviceId: input.deviceId,
+          event: 'command',
+          payload: {
+            deviceId: input.deviceId, roomId: input.roomId,
+            requestId: input.requestId, issuedAt: input.issuedAt,
+            action: 'stop_session', sessionId: input.sessionId,
+            actorUserId: actor.userId, actorDisplayName: actor.displayName,
+          },
+        });
+      } catch {
+        return json(503, fail('desktop_session_abandon_delivery_failed'), origin);
+      }
+      return json(200, { ok: true, sessionId: input.sessionId, status: 'stopped', closed }, origin);
+    }
+
     if (action === 'desktop/session-close') {
       const current = await device(req);
       if (!current) return json(401, fail('device_not_approved'), origin);
