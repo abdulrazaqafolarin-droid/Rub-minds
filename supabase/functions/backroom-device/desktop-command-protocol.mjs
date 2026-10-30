@@ -42,7 +42,7 @@ export function validateDesktopCommand(value,{now=Date.now(),maxAgeMs=30_000}={}
  if(value.command==='request_control'||value.command==='request_draft_permission'||value.command==='stop_session'){
   if(!isUuid(d.sessionId))return null;
  }
- if(value.command==='request_control'&&d.peerSessionId!==undefined&&!isUuid(d.peerSessionId))return null;
+ if(value.command==='request_control'&&d.peerSessionId!==undefined&&(!isUuid(d.peerSessionId)||d.peerSessionId!==d.sessionId))return null;
  if(value.command==='request_draft_permission'&&value.sessionType==='terminal')return null;
  return Object.freeze({deviceId:value.deviceId.toLowerCase(),roomId:value.roomId.toLowerCase(),
   requestId:value.requestId.toLowerCase(),issuedAt:value.issuedAt,command:value.command,
