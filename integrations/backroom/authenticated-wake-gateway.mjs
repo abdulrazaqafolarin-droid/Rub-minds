@@ -11,6 +11,8 @@ import {Buffer} from 'node:buffer';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DIGEST=/^[0-9a-f]{64}$/;
 const TOKEN=/^[0-9a-f]{64}$/;
+const WAKE_ERROR_CODES=new Set(['target_unavailable','approval_required','provider_busy','transport_error','result_unconfirmed','authorization_denied','other']);
+const invalidRequest=()=>Object.freeze({ok:false,reason:'invalid_request'});
 const sha256 = v => createHash('sha256').update(v,'utf8').digest('hex');
 
 /**
@@ -53,14 +55,14 @@ export function createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,a
       const scope=await authorize(input??{},false);
       if(!scope)return Object.freeze({ok:false,reason:'unauthorized'});
       if(!UUID.test(input.grantId??'')||!Number.isSafeInteger(input.ttlSeconds)||
-         input.ttlSeconds<60||input.ttlSeconds>900)throw new TypeError('Invalid local consent grant');
+         input.ttlSeconds<60||input.ttlSeconds>900)return invalidRequest();
       return Object.freeze({ok:true,activated:await activateBinding({...scope,grantId:input.grantId,ttlSeconds:input.ttlSeconds})});
     },
     async deactivate(input) {
       if(typeof deactivateBinding!=='function')return Object.freeze({ok:false,reason:'unauthorized'});
       const scope=await authorize(input??{},false);
       if(!scope)return Object.freeze({ok:false,reason:'unauthorized'});
-      if(!UUID.test(input.grantId??''))throw new TypeError('Invalid wake grant ID');
+      if(!UUID.test(input.grantId??''))return invalidRequest();
       return Object.freeze({ok:true,deactivated:await deactivateBinding({...scope,grantId:input.grantId})});
     },
     // Returns an explicit denied status but never reveals whether a host, token or binding exists.
@@ -68,19 +70,25 @@ export function createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,a
       const scope=await authorize(input??{});
       if(!scope)return Object.freeze({ok:false,reason:'unauthorized'});
       const limit=input.limit??5;
-      if(!Number.isSafeInteger(limit)||limit<1||limit>20)throw new RangeError('Invalid claim limit');
+      if(!Number.isSafeInteger(limit)||limit<1||limit>20)return invalidRequest();
       return Object.freeze({ok:true,leases:await store.claim({...scope,limit})});
     },
     async acknowledge(input) {
       const scope=await authorize(input??{});
       if(!scope)return Object.freeze({ok:false,reason:'unauthorized'});
+      if(!UUID.test(input.jobId??'')||!UUID.test(input.leaseToken??'')||
+         !['acknowledged','ignored'].includes(input.outcome))return invalidRequest();
       return Object.freeze({ok:true,accepted:await store.acknowledge({...scope,jobId:input.jobId,leaseToken:input.leaseToken,outcome:input.outcome})});
     },
     async retry(input) {
       const scope=await authorize(input??{});
       if(!scope)return Object.freeze({ok:false,reason:'unauthorized'});
+      const errorCode=input.errorCode??'other';
+      if(!UUID.test(input.jobId??'')||!UUID.test(input.leaseToken??'')||
+         !Number.isSafeInteger(input.retryAfterSeconds)||input.retryAfterSeconds<1||input.retryAfterSeconds>300||
+         !WAKE_ERROR_CODES.has(errorCode))return invalidRequest();
       return Object.freeze({ok:true,state:await store.retry({...scope,jobId:input.jobId,leaseToken:input.leaseToken,
-        retryAfterSeconds:input.retryAfterSeconds,errorCode:input.errorCode})});
+        retryAfterSeconds:input.retryAfterSeconds,errorCode})});
     }
   });
 }
