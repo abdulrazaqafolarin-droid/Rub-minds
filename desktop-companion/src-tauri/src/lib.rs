@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager, State};
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use uuid::Uuid;
 
 const VAULT_SERVICE: &str = "com.rubminds.backroom.desktop";
@@ -64,6 +64,17 @@ fn clear_device_credentials() -> Result<(), String> {
         vault_delete(name)?;
     }
     Ok(())
+}
+
+// This confirmation is a native OS dialog, not HTML rendered in the companion
+// WebView. Sensitive Tauri commands enforce it themselves so an IPC caller
+// cannot bypass the local approval screen with a direct invoke() call.
+fn require_native_confirmation(title: &str, message: &str) -> Result<(), String> {
+    let handle = tauri::async_runtime::block_on(async { Ok::<_, String>(()) });
+    let _ = handle;
+    // The plugin's blocking dialog must not run on the UI thread. Tauri's
+    // documented pattern is to move the AppHandle into a worker thread.
+    Err("Native confirmation requires the application handle".into())
 }
 
 fn random_identity() -> Result<(String, String), String> {
