@@ -228,6 +228,8 @@ assert.ok(historyAfterRevoke.body.events.some(item => item.event_type === "devic
   "revocation must be retained in group history");
 const devicesAfterRevoke = await edge("room/devices", { roomId }, memberToken);
 expectStatus(devicesAfterRevoke, 200, "post-revoke device list");
-assert.equal(devicesAfterRevoke.body.devices.find(item => item.device_id === deviceId)?.status, "revoked");
+const revokedDevice = devicesAfterRevoke.body.devices.find(item => item.device_id === deviceId);
+assert.equal(revokedDevice?.status, "revoked");
+assert.deepEqual(revokedDevice?.apps, [], "revocation must remove the live app inventory");
 
 console.log("Local Backroom pairing, replay protection, owner approval, member visibility, selected-app inventory, activity history and revocation passed:", roomId, deviceId);

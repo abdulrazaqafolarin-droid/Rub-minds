@@ -121,3 +121,13 @@ test("local Supabase CI exercises the complete cloud device lifecycle", async ()
   assert.match(script, /revoked device inventory denial/);
   assert.match(script, /group members must be able to view/);
 });
+
+test("device revocation removes live app metadata without deleting group action history", async () => {
+  const migration = await read("supabase/migrations/20261030110000_backroom_cloud_devices.sql");
+  const e2e = await read("scripts/local-backroom-device-e2e.mjs");
+  assert.match(migration, /device_revoked[\s\S]*?delete from public\.backroom_device_apps where device_id=p_device_id/);
+  assert.match(e2e, /revocation must remove the live app inventory/);
+  assert.match(e2e, /app_added/);
+  assert.match(e2e, /app_open_requested/);
+  assert.match(e2e, /post-revoke group history/);
+});

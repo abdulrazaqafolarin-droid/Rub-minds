@@ -87,3 +87,7 @@ Until those gates pass, the web Device Frame must continue to label Android apps
 ## Primary Device Frame surface coverage
 
 The current authenticated Backroom route opens the cloud Device Frame with phone-app inventory, desktop and terminal placeholders. The managed Playwright browser implementation from the earlier simulator remains in source but is not mounted into this primary route yet. Browser therefore remains a follow-on integration surface; do not report the four-surface simulator as complete until the managed browser tab/session is exposed alongside Android, desktop and terminal in the same Device Frame.
+
+## Revocation data handling
+
+The owner-revoke transaction marks the device and room binding revoked, appends the `device_revoked` audit event, and removes the live selected-app catalog. Historical group events remain available; raw screen contents, app-private data and credentials are never stored in this catalog.

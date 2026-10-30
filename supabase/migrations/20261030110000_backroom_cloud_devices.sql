@@ -1,5 +1,5 @@
 -- Cloud-connected Backroom device registry and selected-app inventory.
--- This migration is source-only until explicitly deployed to a staging database.
+-- Staging-first rollout: validate this migration and Edge Function before any production deployment.
 create table if not exists public.backroom_devices (
   device_id uuid primary key,
   owner_id uuid not null references auth.users(id) on delete cascade,
@@ -260,6 +260,8 @@ begin
     where device_id=p_device_id and room_id=p_room_id and owner_id=p_owner_id and revoked_at is null;
   insert into public.backroom_device_events(room_id,device_id,actor_type,actor_id,event_type)
     values(p_room_id,p_device_id,'owner',p_owner_id::text,'device_revoked');
+  -- Drop the live app catalog on revoke; append-only action history remains.
+  delete from public.backroom_device_apps where device_id=p_device_id;
   return true;
 end;
 $function$;
