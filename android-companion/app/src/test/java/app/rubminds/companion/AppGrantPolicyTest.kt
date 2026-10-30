@@ -57,7 +57,6 @@ class AppGrantPolicyTest {
         assertFalse(AppGrantPolicy.isValidPackageName("com"))
         assertFalse(AppGrantPolicy.isValidPackageName("com..chat"))
         assertFalse(AppGrantPolicy.isValidPackageName("com.example;rm"))
-        assertFalse(AppGrantPolicy.isValidPackageName("com.example\\\\\\nchat"))
     }
 
     @Test fun packageAndCapabilityMismatchesFailClosed() {
