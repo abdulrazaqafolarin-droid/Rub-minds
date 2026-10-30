@@ -25,6 +25,8 @@ const VAULT_SERVICE: &str = "com.rubminds.backroom.desktop";
 const MAX_DRAFT_CHARS: usize = 4_000;
 const MAX_TERMINAL_INPUT: usize = 4_000;
 const MAX_INPUT_EVENTS_PER_SECOND: usize = 120;
+const MAX_ACTIVE_DESKTOP_PROCESSES: usize = 24;
+const MAX_ACTIVE_TERMINALS: usize = 4;
 
 fn vault_entry(name: &str) -> Result<Entry, String> {
     let permitted = matches!(name, "device-id" | "device-token" | "device-private-key" | "device-room-id" | "supabase-auth-session");
@@ -520,10 +522,13 @@ fn launch_registered_app(app: AppHandle, state: State<'_, AppState>, app_id: Str
             entry.label, path.display()
         ))?;
         let parent = path.parent().ok_or("Application directory is unavailable")?;
-        let child = Command::new(&path).current_dir(parent).spawn().map_err(|_| "Windows could not launch the approved application".to_string())?;
-        let pid = child.id();
         let mut processes = state.desktop_processes.lock().map_err(|_| "Desktop process registry unavailable")?;
         processes.retain(|_, process| process.try_wait().ok().flatten().is_none());
+        if processes.len() >= MAX_ACTIVE_DESKTOP_PROCESSES {
+            return Err("Backroom has reached the limit of 24 active launched applications. Stop an app or use Emergency Stop.".into());
+        }
+        let child = Command::new(&path).current_dir(parent).spawn().map_err(|_| "Windows could not launch the approved application".to_string())?;
+        let pid = child.id();
         processes.insert(pid, child);
         Ok(pid)
     }
@@ -894,6 +899,10 @@ struct TerminalOutput {
 #[tauri::command]
 fn start_terminal(app: AppHandle, state: State<'_, AppState>) -> Result<TerminalStarted, String> {
     require_native_confirmation(&app, "Start a native terminal?", "Start a local PowerShell/zsh/bash shell for this Backroom session? A separate time-limited control approval is needed before remote typing is enabled.")?;
+    let mut active_terminals = state.terminals.lock().map_err(|_| "Terminal registry unavailable")?;
+    if active_terminals.len() >= MAX_ACTIVE_TERMINALS {
+        return Err("Backroom has reached the limit of four active terminal sessions. Stop a terminal or use Emergency Stop.".into());
+    }
     let system = native_pty_system();
     let pair = system.openpty(PtySize { rows: 30, cols: 100, pixel_width: 0, pixel_height: 0 })
         .map_err(|_| "Could not create the native terminal session".to_string())?;
@@ -917,7 +926,7 @@ fn start_terminal(app: AppHandle, state: State<'_, AppState>) -> Result<Terminal
         writer: Mutex::new(writer),
         child: Mutex::new(child),
     });
-    state.terminals.lock().map_err(|_| "Terminal registry unavailable")?.insert(session_id.clone(), session);
+    active_terminals.insert(session_id.clone(), session);
     let event_app = app.clone();
     let event_id = session_id.clone();
     std::thread::spawn(move || {
