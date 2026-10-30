@@ -26,6 +26,8 @@ test('validates screen and terminal offer sessions with bounded SDP',()=>{
 });
 test('control, draft and stop require session IDs and stop accepts optional native terminal ID',()=>{
  assert.equal(check('request_control',{sessionId}).command,'request_control');
+ assert.equal(check('request_control',{sessionId,peerSessionId:sessionId}).command,'request_control');
+ assert.equal(check('request_control',{sessionId,peerSessionId:'bad'}),null);
  assert.equal(check('request_draft_permission',{sessionId}).command,'request_draft_permission');
  assert.equal(check('stop_session',{sessionId}).command,'stop_session');
  assert.equal(check('stop_session',{sessionId,terminalSessionId:sessionId}).command,'stop_session');
