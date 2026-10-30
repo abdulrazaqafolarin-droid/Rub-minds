@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { validateDeviceCommand, validateDeviceSignal, queueIceCandidate, takeIceCandidates } from '../../integrations/backroom/desktop-realtime-protocol.mjs';
+import { waitForIceGatheringComplete } from '../../integrations/backroom/ice-gathering.mjs';
 import './style.css';
 
 const app = document.querySelector('#app');
@@ -385,11 +386,12 @@ async function startTerminalPeer(payload,term){
     const data=event.channel;state.peers.get(peerSessionId).channel=data;
     data.onmessage=event=>void handlePeerData(peerSessionId,event.data);
   };
-  pc.onicecandidate=event=>{if(event.candidate)void publishSignal(peerSessionId,{candidate:event.candidate.toJSON()});};
+  // Send one fully gathered SDP answer instead of one REST/Realtime signal per candidate.
   pc.onconnectionstatechange=()=>{if(['failed','closed'].includes(pc.connectionState))void stopPeer(peerSessionId);};
   await pc.setRemoteDescription({type:'offer',sdp:payload.offer.sdp});
   for(const candidate of takeIceCandidates(state.pendingCandidates,peerSessionId)){try{await pc.addIceCandidate(candidate);}catch{}}
   const answer=await pc.createAnswer();await pc.setLocalDescription(answer);
+  await waitForIceGatheringComplete(pc);
   await publishSignal(peerSessionId,{answer:pc.localDescription.toJSON(),canControl:false});
 }
 async function startViewSession(payload){
@@ -415,12 +417,13 @@ async function startViewSession(payload){
     const channel=event.channel;state.peers.get(sessionId).channel=channel;
     channel.onmessage=event=>void handlePeerData(sessionId,event.data);
   };
-  pc.onicecandidate=event=>{if(event.candidate)void publishSignal(sessionId,{candidate:event.candidate.toJSON()});};
+  // The answer carries the completed ICE candidate set in its SDP.
   pc.onconnectionstatechange=()=>{if(['failed','closed','disconnected'].includes(pc.connectionState))void stopPeer(sessionId);};
   track.addEventListener('ended',()=>void stopPeer(sessionId));
   await pc.setRemoteDescription({type:'offer',sdp:payload.offer.sdp});
   for(const candidate of takeIceCandidates(state.pendingCandidates,sessionId)){try{await pc.addIceCandidate(candidate);}catch{}}
   const answer=await pc.createAnswer();await pc.setLocalDescription(answer);
+  await waitForIceGatheringComplete(pc);
   await publishSignal(sessionId,{answer:pc.localDescription.toJSON(),canControl});
   await publish('response',{requestId:payload.requestId,ok:true,sessionId,capability:'view'});
   state.streams.set(sessionId,stream);
