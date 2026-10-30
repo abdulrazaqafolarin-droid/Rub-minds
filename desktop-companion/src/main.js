@@ -538,7 +538,19 @@ async function setupTerminalEvents(){
     const text=new TextDecoder().decode(new Uint8Array(data));
     const pre=document.querySelector('#terminal-output');if(pre){pre.textContent=(pre.textContent+text).slice(-30000);pre.scrollTop=pre.scrollHeight;}
     for(const [peerSessionId,peer] of state.peers){
-      if(peer.terminalId===terminalId&&peer.channel?.readyState==='open')peer.channel.send(JSON.stringify({kind:'terminal_output',sessionId:terminalId,data:Array.from(data)}));
+      if(peer.terminalId!==terminalId||peer.channel?.readyState!=='open')continue;
+      // Do not let a slow browser/network peer grow an unbounded RTC send buffer.
+      // Terminal output is a live view, not a durable log; the next chunk resumes
+      // naturally once bufferedAmount has drained below the threshold.
+      if(peer.channel.bufferedAmount>512*1024){
+        if(!peer.outputBackpressureNotice){
+          peer.outputBackpressureNotice=true;
+          notify('Terminal output is being throttled because the remote connection is slow. The shell remains active locally.','error');
+        }
+        continue;
+      }
+      peer.outputBackpressureNotice=false;
+      peer.channel.send(JSON.stringify({kind:'terminal_output',sessionId:terminalId,data:Array.from(data)}));
     }
   });
   state.unlisten.push(off);
