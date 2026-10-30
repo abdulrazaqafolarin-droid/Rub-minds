@@ -43,11 +43,12 @@ class AppGrantPolicyTest {
         }
     }
 
-    @Test fun ordinaryTextAndNumberFieldsAreNotMistakenForPasswordFields() {
+    @Test fun ordinaryTextEditorsAreAllowedButNumericEditorsAreDeferred() {
         assertFalse(AppGrantPolicy.isSensitiveInput(normalTextInput))
         assertFalse(AppGrantPolicy.isSensitiveInput(normalNumberInput))
         assertTrue(AppGrantPolicy.canInsertDraft(selectedGrant, "com.example.chat", normalTextInput))
-        assertTrue(AppGrantPolicy.canInsertDraft(selectedGrant, "com.example.chat", normalNumberInput))
+        assertFalse(AppGrantPolicy.isSupportedInputType(normalNumberInput))
+        assertFalse(AppGrantPolicy.canInsertDraft(selectedGrant, "com.example.chat", normalNumberInput))
     }
 
     @Test fun packageIdentifiersMustBeWellFormed() {
