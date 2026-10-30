@@ -10,10 +10,10 @@ const IDENTIFIER=/^[a-zA-Z0-9][a-zA-Z0-9_:-]{0,127}$/;
 const TYPES=new Set(['launch','view','control','draft','close','ping']);
 function validId(x){return typeof x==='string'&&IDENTIFIER.test(x)}
 export function createAccountDeviceChannel({
-  verifyAccessToken, connectTransport, onRequest,
+  verifyAccessToken, connectTransport, onRequest, isDeviceAuthorized,
   now=()=>Date.now(), maxRequestAgeMs=30_000,
 }={}){
-  if(![verifyAccessToken,connectTransport,onRequest,now].every(f=>typeof f==='function'))
+  if(![verifyAccessToken,connectTransport,onRequest,isDeviceAuthorized,now].every(f=>typeof f==='function'))
     throw new TypeError('Authenticated transport and handler required');
   if(!Number.isSafeInteger(maxRequestAgeMs)||maxRequestAgeMs<1000||maxRequestAgeMs>120_000)
     throw new TypeError('Invalid request timeout');
@@ -44,6 +44,12 @@ export function createAccountDeviceChannel({
     if(!message||typeof message!=='object'||Array.isArray(message))
       throw new Error('Invalid request');
     const {id,type,deviceId,issuedAt,payload}=message;
+    const active=current;
+    if((await isDeviceAuthorized({deviceId:active.deviceId,userId:active.userId}))!==true){
+      active.link.close();disconnected();
+      throw new Error('Device authorization revoked');
+    }
+    if(current!==active)throw new Error('Device disconnected');
     if(!validId(id)||!TYPES.has(type)||deviceId!==current.deviceId||
        !Number.isSafeInteger(issuedAt)||Math.abs(now()-issuedAt)>maxRequestAgeMs)
       throw new Error('Invalid or stale request');
@@ -62,7 +68,8 @@ export function createAccountDeviceChannel({
       payload:Object.freeze(allowedPayload),
     }));
     // The transport only acknowledges receipt and outcome; no secrets included.
-    current?.link.send({id,type:'result',success:true,result});
+    if(current!==active)throw new Error('Device disconnected during request');
+    current.link.send({id,type:'result',success:true,result});
     return result;
   }
   return Object.freeze({
