@@ -30,8 +30,8 @@ test('control, draft and stop require session IDs and stop accepts optional nati
  assert.equal(check('request_control',{sessionId,peerSessionId:'bad'}),null);
  assert.equal(check('request_draft_permission',{sessionId}).command,'request_draft_permission');
  assert.equal(check('stop_session',{sessionId}).command,'stop_session');
- assert.equal(check('stop_session',{sessionId,terminalSessionId:sessionId}).command,'stop_session');
- assert.equal(check('stop_session',{sessionId,terminalSessionId:'bad'}),null);
+ assert.equal(check('stop_session',{sessionId,terminalSessionId:sessionId}),null);
+ assert.equal(check('stop_session',{sessionId,extraProcessId:sessionId}),null);
  assert.equal(check('request_control',{sessionId,roomId}),null);
 });
 test('rejects cross-device, cross-room, stale, future, replay-shaped and malformed commands',()=>{
