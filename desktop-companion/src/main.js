@@ -252,12 +252,13 @@ async function handleCommand(payload){
     return;
   }
   if(payload.action==='terminal_start'){
-    createApproval('terminal_start','Start a real '+(navigator.platform.includes('Win')?'Windows PowerShell':'native')+' terminal session on this computer?',async()=>{
+    if(typeof payload.sessionId!=='string'||!payload.offer?.sdp)return;
+    createApproval('terminal_start','Start a native PowerShell terminal on this computer and connect it to the requesting Backroom workspace?',async()=>{
       const term=await invoke('start_terminal');
       state.terminals.set(term.sessionId,term);
-      const peer=state.peers.get(payload.sessionId);if(peer)peer.terminalId=term.sessionId;
+      await startTerminalPeer(payload,term);
       await publish('response',{requestId,ok:true,sessionId:term.sessionId,cols:term.cols,rows:term.rows,shellLabel:term.shellLabel});
-    },{requestId});
+    },{requestId,sessionId:payload.sessionId});
     return;
   }
   if(payload.action==='request_control'){
@@ -282,10 +283,37 @@ async function handleCommand(payload){
     },{requestId,sessionId:payload.sessionId});return;
   }
   if(payload.action==='stop_session'){
-    const sessionId=payload.sessionId;
-    if(typeof sessionId==='string'){await stopPeer(sessionId);await invoke('revoke_control',{sessionId});}
+    const peerSessionId=payload.sessionId;
+    const terminalSessionId=payload.terminalSessionId;
+    if(typeof peerSessionId==='string'){
+      const peer=state.peers.get(peerSessionId);
+      if(peer?.terminalId){try{await invoke('stop_terminal',{sessionId:peer.terminalId});}catch{}}
+      await stopPeer(peerSessionId);
+      await invoke('revoke_control',{sessionId:peerSessionId});
+    }
+    if(typeof terminalSessionId==='string'&&terminalSessionId!==peerSessionId){
+      try{await invoke('stop_terminal',{sessionId:terminalSessionId});}catch{}
+      try{await invoke('revoke_control',{sessionId:terminalSessionId});}catch{}
+    }
     await publish('response',{requestId,ok:true});return;
   }
+}
+async function startTerminalPeer(payload,term){
+  const peerSessionId=payload.sessionId;
+  if(!peerSessionId||!payload.offer?.sdp)throw new Error('Invalid terminal WebRTC offer');
+  const pc=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun.cloudflare.com:3478']}]});
+  state.peers.set(peerSessionId,{pc,stream:null,channel:null,canControl:false,terminalId:term.sessionId});
+  for(const candidate of (state.pendingCandidates.get(peerSessionId)||[])){try{await pc.addIceCandidate(candidate);}catch{}}
+  state.pendingCandidates.delete(peerSessionId);
+  pc.ondatachannel=event=>{
+    const data=event.channel;state.peers.get(peerSessionId).channel=data;
+    data.onmessage=event=>void handlePeerData(peerSessionId,event.data);
+  };
+  pc.onicecandidate=event=>{if(event.candidate)void publishSignal(peerSessionId,{candidate:event.candidate.toJSON()});};
+  pc.onconnectionstatechange=()=>{if(['failed','closed'].includes(pc.connectionState))void stopPeer(peerSessionId);};
+  await pc.setRemoteDescription({type:'offer',sdp:payload.offer.sdp});
+  const answer=await pc.createAnswer();await pc.setLocalDescription(answer);
+  await publishSignal(peerSessionId,{answer:pc.localDescription.toJSON(),canControl:false});
 }
 async function startViewSession(payload){
   const sessionId=payload.sessionId;
