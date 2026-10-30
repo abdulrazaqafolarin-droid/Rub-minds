@@ -36,7 +36,7 @@ function shell() {
       <div class="row"><div><h2>Connect this computer</h2><p class="muted">This computer is registered directly to your signed-in account. Device credentials stay in the operating system's secure credential store.</p></div><span class="pill" id="device-state">Not registered</span></div>
       <label for="room">Rub Minds group</label><select id="room"><option value="">Loading your groups…</option></select>
       <label for="device-label">Computer name</label><input id="device-label" maxlength="80" value="My Windows computer" />
-      <button class="primary" id="register-device">Connect this computer</button>
+      <div class="row"><button class="primary" id="register-device">Connect this computer</button><button class="danger hidden" id="revoke-device">Revoke this computer</button></div>
       <div class="muted" style="margin-top:9px">Registration requires group ownership. Other group members can send requests, but the computer still asks you locally before opening or controlling anything.</div>
     </section>
     <section class="card hidden" id="apps-card">
@@ -59,6 +59,7 @@ function shell() {
     <div class="footer">Local native execution · no cloud computer replaces this PC · protected windows may reject capture or input.</div>`;
   document.querySelector('#login-form').addEventListener('submit', signIn);
   document.querySelector('#register-device').addEventListener('click', registerDevice);
+  document.querySelector('#revoke-device').addEventListener('click', revokeDevice);
   document.querySelector('#add-app').addEventListener('click', addApp);
   document.querySelector('#start-terminal').addEventListener('click', startTerminalLocal);
   document.querySelector('#refresh-pending').addEventListener('click', refreshPending);
@@ -136,9 +137,25 @@ async function registerDevice(){
     }});
     state.deviceId=result.deviceId;state.roomId=result.roomId;state.deviceTokenSaved=result.credentialSavedToOsStore;
     document.querySelector('#device-state').textContent='Connected · '+state.deviceId.slice(0,8);
+    document.querySelector('#revoke-device').classList.remove('hidden');
     await loadApps();if(state.apps.length)await syncApps();await connectDeviceChannel();
     notify('This computer is registered to the selected group. Device credential saved in the OS secure store.','success');
   }catch(error){notify(error?.message||'Could not register this computer.','error');}
+}
+async function revokeDevice(){
+  hideNotice();
+  if(!state.deviceTokenSaved)return notify('This computer has no active device credential.','error');
+  if(!confirm('Revoke this computer from the selected Rub Minds group? This closes Backroom terminal sessions and revokes local desktop-control permissions.'))return;
+  try{
+    const session=await currentSession();
+    await invoke('revoke_desktop_device',{supabaseUrl:cfg.url,publishableKey:cfg.key,accessToken:session.access_token,roomId:state.roomId});
+    state.deviceTokenSaved=false;state.deviceId=null;state.roomId=null;state.apps=[];state.pending=[];state.terminals.clear();
+    if(state.channel){await state.client.removeChannel(state.channel);state.channel=null;}
+    document.querySelector('#device-state').textContent='Revoked';
+    document.querySelector('#revoke-device').classList.add('hidden');
+    renderApps();renderPending();setConnected(false,'Computer revoked');
+    notify('Computer revoked in Rub Minds. The local device credential was removed and active Backroom sessions were stopped.','success');
+  }catch(error){notify(error?.message||'Could not revoke this computer.','error');}
 }
 async function loadApps(){
   state.apps=await invoke('list_registered_apps');
@@ -458,6 +475,7 @@ async function boot(){
         const status=await invoke('desktop_device_status',{supabaseUrl:cfg.url,publishableKey:cfg.key});
         state.deviceTokenSaved=status.status!=='revoked';state.roomId=status.roomId;
         document.querySelector('#device-state').textContent=status.status+' · '+status.deviceId.slice(0,8);
+        document.querySelector('#revoke-device').classList.toggle('hidden',status.status!=='active');
         await connectDeviceChannel();
         await loadApps();
       }catch{/* New device: user can register after selecting a group. */}
