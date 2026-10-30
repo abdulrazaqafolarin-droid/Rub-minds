@@ -6,6 +6,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolveOwnerFromJwt } from './owner-jwt.mjs';
 import { sanitizeDeviceEvent, validatePairClaim, validateSelectedApps } from './cloud-device-protocol.mjs';
+import { validateDesktopRegistration } from './desktop-device-protocol.mjs';
 
 const url = Deno.env.get('SUPABASE_URL');
 const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
@@ -78,6 +79,57 @@ Deno.serve(async req => {
   }
   const action = input.action;
   try {
+    if (action === 'desktop/register') {
+      const ownerId = await owner(req);
+      if (!ownerId) return json(401, fail('owner_auth_required'), origin);
+      if (!exactKeys(input, ['action','deviceId','deviceLabel','platform','osVersion','appVersion','roomId','devicePublicKey'])) {
+        return json(400, fail('invalid_desktop_registration'), origin);
+      }
+      const registration = validateDesktopRegistration({
+        deviceId: input.deviceId,
+        deviceLabel: input.deviceLabel,
+        platform: input.platform,
+        osVersion: input.osVersion,
+        appVersion: input.appVersion,
+        roomId: input.roomId,
+        devicePublicKey: input.devicePublicKey
+      });
+      if (!registration) return json(400, fail('invalid_desktop_registration'), origin);
+      const { data: room, error: roomError } = await db.from('rooms').select('id')
+        .eq('id', registration.roomId).eq('owner_id', ownerId).maybeSingle();
+      if (roomError) return json(503, fail('device_service_unavailable'), origin);
+      if (!room) return json(403, fail('room_owner_required'), origin);
+
+      // Generated once, returned once, and persisted only as a SHA-256 digest.
+      // The native app must save it in the OS credential store before it starts
+      // polling/connecting. Never log this value or return it from status APIs.
+      const deviceToken = randomHex(32);
+      const { data, error } = await db.rpc('register_backroom_desktop_device', {
+        p_device_id: registration.deviceId,
+        p_owner_id: ownerId,
+        p_room_id: registration.roomId,
+        p_token_digest: await sha256(deviceToken),
+        p_device_public_key: registration.devicePublicKey,
+        p_device_label: registration.deviceLabel,
+        p_platform: registration.platform,
+        p_os_version: registration.osVersion,
+        p_app_version: registration.appVersion
+      });
+      if (error) return json(409, fail('desktop_registration_failed'), origin);
+      if (!Array.isArray(data) || data.length !== 1 ||
+          data[0]?.device_id !== registration.deviceId || data[0]?.status !== 'active') {
+        return json(409, fail('desktop_registration_conflict'), origin);
+      }
+      return json(201, {
+        ok: true, deviceId: registration.deviceId, status: 'active',
+        deviceToken, roomId: registration.roomId,
+        capabilities: {
+          appDiscovery: true, separateAppData: false, embeddedVirtualApp: false,
+          liveScreen: false, touchControl: false, desktopControl: false, terminalControl: false
+        }
+      }, origin);
+    }
+
     if (action === 'pair/create') {
       const ownerId = await owner(req);
       if (!ownerId) return json(401, fail('owner_auth_required'), origin);
