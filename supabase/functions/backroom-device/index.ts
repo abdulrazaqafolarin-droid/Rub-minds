@@ -10,6 +10,7 @@ import { validateDesktopRegistration } from './desktop-device-protocol.mjs';
 import { validateDesktopApps } from './desktop-app-protocol.mjs';
 import { validateDesktopCommand, validateDesktopSignal } from './desktop-command-protocol.mjs';
 import { validateDesktopSessionClose } from './desktop-session-close-protocol.mjs';
+import { validateDesktopSessionAbandon } from './desktop-session-abandon-protocol.mjs';
 import { broadcastPrivateDeviceEvent } from './realtime-broadcast.mjs';
 
 const url = Deno.env.get('SUPABASE_URL');
@@ -179,24 +180,18 @@ Deno.serve(async req => {
     if (action === 'desktop/session-abandon') {
       const userId = await owner(req);
       if (!userId) return json(401, fail('owner_auth_required'), origin);
-      if (!strictKeys(input, ['action','deviceId','roomId','sessionId','requestId','issuedAt']) ||
-          typeof input.deviceId !== 'string' || !UUID.test(input.deviceId) ||
-          typeof input.roomId !== 'string' || !UUID.test(input.roomId) ||
-          typeof input.sessionId !== 'string' || !UUID.test(input.sessionId) ||
-          typeof input.requestId !== 'string' || !UUID.test(input.requestId) ||
-          !Number.isSafeInteger(input.issuedAt) || Math.abs(Date.now() - input.issuedAt) > 30_000) {
-        return json(400, fail('invalid_desktop_session_abandon'), origin);
-      }
+      const abandonRequest = validateDesktopSessionAbandon(input);
+      if (!abandonRequest) return json(400, fail('invalid_desktop_session_abandon'), origin);
       const [actor, binding] = await Promise.all([
-        authorizeRoomActor(input.roomId, userId),
-        verifyActiveDeviceRoomBinding(input.deviceId, input.roomId),
+        authorizeRoomActor(abandonRequest.roomId, userId),
+        verifyActiveDeviceRoomBinding(abandonRequest.deviceId, abandonRequest.roomId),
       ]);
       if (!actor.ok) return json(actor.status, fail(actor.reason), origin);
       if (!binding.ok) return json(binding.status, fail(binding.reason), origin);
       const { data: existing, error: lookupError } = await db.from('backroom_desktop_sessions')
-        .select('session_id,status,expires_at')
-        .eq('session_id', input.sessionId).eq('device_id', input.deviceId)
-        .eq('room_id', input.roomId).eq('requested_by', userId).maybeSingle();
+        .select('session_id,status')
+        .eq('session_id', abandonRequest.sessionId).eq('device_id', abandonRequest.deviceId)
+        .eq('room_id', abandonRequest.roomId).eq('requested_by', userId).maybeSingle();
       if (lookupError) return json(503, fail('desktop_session_lookup_failed'), origin);
       if (!existing) return json(404, fail('desktop_session_not_found'), origin);
       if (existing.status === 'revoked' || existing.status === 'expired') {
@@ -206,8 +201,8 @@ Deno.serve(async req => {
       if (existing.status === 'active') {
         const { data, error } = await db.from('backroom_desktop_sessions')
           .update({ status: 'stopped', stopped_at: new Date().toISOString() })
-          .eq('session_id', input.sessionId).eq('device_id', input.deviceId)
-          .eq('room_id', input.roomId).eq('requested_by', userId).eq('status', 'active')
+          .eq('session_id', abandonRequest.sessionId).eq('device_id', abandonRequest.deviceId)
+          .eq('room_id', abandonRequest.roomId).eq('requested_by', userId).eq('status', 'active')
           .select('session_id');
         if (error) return json(503, fail('desktop_session_abandon_failed'), origin);
         closed = Array.isArray(data) && data.length === 1;
@@ -216,19 +211,19 @@ Deno.serve(async req => {
       }
       try {
         await broadcastPrivateDeviceEvent({
-          projectUrl: url, apiKey: serviceKey, deviceId: input.deviceId,
+          projectUrl: url, apiKey: serviceKey, deviceId: abandonRequest.deviceId,
           event: 'command',
           payload: {
-            deviceId: input.deviceId, roomId: input.roomId,
-            requestId: input.requestId, issuedAt: input.issuedAt,
-            action: 'stop_session', sessionId: input.sessionId,
+            deviceId: abandonRequest.deviceId, roomId: abandonRequest.roomId,
+            requestId: abandonRequest.requestId, issuedAt: abandonRequest.issuedAt,
+            action: 'stop_session', sessionId: abandonRequest.sessionId,
             actorUserId: actor.userId, actorDisplayName: actor.displayName,
           },
         });
       } catch {
         return json(503, fail('desktop_session_abandon_delivery_failed'), origin);
       }
-      return json(200, { ok: true, sessionId: input.sessionId, status: 'stopped', closed }, origin);
+      return json(200, { ok: true, sessionId: abandonRequest.sessionId, status: 'stopped', closed }, origin);
     }
 
     if (action === 'desktop/session-close') {
