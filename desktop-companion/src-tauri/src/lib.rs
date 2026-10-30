@@ -438,6 +438,43 @@ async fn desktop_device_status(
     })
 }
 
+#[tauri::command]
+async fn close_desktop_session(
+    supabase_url: String,
+    publishable_key: String,
+    session_id: String,
+) -> Result<(), String> {
+    if Uuid::parse_str(&session_id).is_err() {
+        return Err("Invalid Backroom session identity".into());
+    }
+    let device_id = vault_get("device-id")?.ok_or("This computer has no saved device identity")?;
+    let room_id = vault_get("device-room-id")?.ok_or("This computer has no saved group binding")?;
+    let token = vault_get("device-token")?.ok_or("This computer is not registered")?;
+    if Uuid::parse_str(&device_id).is_err() || Uuid::parse_str(&room_id).is_err() {
+        return Err("Stored device identity is invalid".into());
+    }
+    let base = validate_supabase_config(&supabase_url, &publishable_key, &"x".repeat(100))?;
+    let response = Client::builder().timeout(Duration::from_secs(10)).build()
+        .map_err(|_| "Could not initialize secure network transport".to_string())?
+        .post(format!("{base}/functions/v1/backroom-device"))
+        .header("apikey", publishable_key.trim())
+        .bearer_auth(token)
+        .json(&json!({
+            "action": "desktop/session-close",
+            "roomId": room_id,
+            "sessionId": session_id
+        }))
+        .send().await
+        .map_err(|_| "Could not close the server-side Backroom session".to_string())?;
+    let status = response.status();
+    let body: Value = response.json().await
+        .map_err(|_| "Rub Minds returned an invalid session-close response".to_string())?;
+    if !status.is_success() || body.get("ok").and_then(Value::as_bool) != Some(true) {
+        return Err("Rub Minds could not close this desktop session. It will expire automatically.".into());
+    }
+    Ok(())
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ApprovedApp {
@@ -1085,7 +1122,7 @@ pub fn run() {
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             secure_auth_get, secure_auth_set, secure_auth_delete,
-            device_identity, register_desktop_device, desktop_device_status, sync_desktop_app_inventory, revoke_desktop_device,
+            device_identity, register_desktop_device, desktop_device_status, sync_desktop_app_inventory, revoke_desktop_device, close_desktop_session,
             pick_and_register_app, list_registered_apps, launch_registered_app, stop_registered_app,
             grant_control, revoke_control, grant_draft_typing, set_capture_geometry,
             dispatch_input, select_draft_target, stage_draft_request, list_pending_drafts,
