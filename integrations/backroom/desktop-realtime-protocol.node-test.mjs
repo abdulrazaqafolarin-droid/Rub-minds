@@ -30,13 +30,13 @@ test('classifies grant responses distinctly so draft permission cannot masquerad
  assert.equal(classifyDeviceResponse({ok:true,capability:'view'}),'view');
  assert.equal(classifyDeviceResponse({ok:true,capability:'terminal',sessionId:requestId}),'terminal');
  assert.equal(classifyDeviceResponse({ok:true,capability:'launch',pid:123}),'launch');
- assert.equal(classifyDeviceResponse({ok:true,expiresSeconds:60}),'error');
+ assert.equal(classifyDeviceResponse({ok:true,expiresSeconds:60}),null);
  assert.equal(classifyDeviceResponse({ok:false,capability:'control'}),'error');
 });
 test('ICE candidates are bounded per session and globally and are drained once',()=>{
  const queue=new Map();
  for(let i=0;i<64;i++)assert.equal(queueIceCandidate(queue,requestId,{candidate:String(i)}),true);
- assert.equal(queueIceCandidate(queue,requestId,{candidate:'overflow'}),false);
+ assert.equal(queueIceCandidate(queue,requestId,{candidate:'overflow'}),false);assert.equal(queueIceCandidate(queue,requestId,{candidate:'x'.repeat(2049)}),false);assert.equal(queueIceCandidate(queue,requestId,{candidate:'x',evil:'field'}),false);
  assert.equal(takeIceCandidates(queue,requestId).length,64);
  assert.equal(takeIceCandidates(queue,requestId).length,0);
  assert.equal(queueIceCandidate(queue,'bad',{candidate:'x'}),false);
