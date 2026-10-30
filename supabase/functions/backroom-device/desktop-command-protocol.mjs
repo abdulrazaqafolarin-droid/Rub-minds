@@ -32,7 +32,7 @@ export function validateDesktopCommand(value,{now=Date.now(),maxAgeMs=30_000}={}
     !value.details||typeof value.details!=='object'||Array.isArray(value.details))return null;
  const d=value.details;
  const required=KEYS[value.command];
- const allowed=value.command==='stop_session'?[...required,'terminalSessionId']:value.command==='request_control'?[...required,'peerSessionId']:required;
+ const allowed=value.command==='request_control'?[...required,'peerSessionId']:required;
  const detailKeys=Object.keys(d);
  if(!required.every(key=>Object.hasOwn(d,key))||detailKeys.some(key=>!allowed.includes(key)))return null;
  if(value.command==='launch_app'&&!isUuid(d.appId))return null;
@@ -42,7 +42,6 @@ export function validateDesktopCommand(value,{now=Date.now(),maxAgeMs=30_000}={}
  if(value.command==='request_control'||value.command==='request_draft_permission'||value.command==='stop_session'){
   if(!isUuid(d.sessionId))return null;
  }
- if(value.command==='stop_session'&&d.terminalSessionId!==undefined&&!isUuid(d.terminalSessionId))return null;
  if(value.command==='request_control'&&d.peerSessionId!==undefined&&!isUuid(d.peerSessionId))return null;
  if(value.command==='request_draft_permission'&&value.sessionType==='terminal')return null;
  return Object.freeze({deviceId:value.deviceId.toLowerCase(),roomId:value.roomId.toLowerCase(),
