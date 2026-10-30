@@ -43,6 +43,7 @@ export function createHostWakeService({
   throw new TypeError('Trusted local host identity and browser runtime required');
 
  const trustedUrl=trustedGatewayUrl(gatewayUrl);
+ const trustedGatewayHost=new URL(trustedUrl).hostname.toLowerCase();
  const journal=new FileWakeExecutionJournal({directory:journalDirectory});
  const bindings=new Map();
 
@@ -204,7 +205,7 @@ export function createHostWakeService({
     bindingId:entry.scope.bindingId,polling:entry.poller.running===true,
     consentActive:Boolean(entry.activeGrantId),deactivationPending:Boolean(entry.pendingGrantId)
    }));
-   return Object.freeze({configured:list.length>0,count:list.length,bindings:Object.freeze(list)});
+   return Object.freeze({configured:list.length>0,count:list.length,bindings:Object.freeze(list),gatewayHost:trustedGatewayHost});
   }
  });
 }
