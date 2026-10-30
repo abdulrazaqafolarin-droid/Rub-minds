@@ -8,6 +8,7 @@ const setup=(overrides={})=>{
  const channel=createAccountDeviceChannel({
   verifyAccessToken:async t=>t===token?{userId:'owner-1',deviceId:'desktop-1'}:null,
   connectTransport:async()=>({send:data=>sent.push(data),close:()=>closed++}),
+  isDeviceAuthorized:async()=>true,
   onRequest:async request=>(handled.push(request),{accepted:true}),
   now:()=>now,...overrides
  });
@@ -43,4 +44,13 @@ test('expired requests, disconnected devices and shutdown are denied',async()=>{
  s.channel.stop();
  assert.equal(s.closed,1);
  await assert.rejects(s.channel.open({accessToken:token,deviceId:'desktop-1'}),/stopped/);
+});
+
+test('device revoked after connection is disconnected before delivering a command',async()=>{
+ const s=setup({isDeviceAuthorized:async()=>false});
+ await s.channel.open({accessToken:token,deviceId:'desktop-1'});
+ await assert.rejects(s.channel.receive({id:'revoked-1',type:'launch',deviceId:'desktop-1',issuedAt:123456,payload:{}}),/revoked/);
+ assert.equal(s.handled.length,0);
+ assert.equal(s.channel.status.connected,false);
+ assert.equal(s.closed,1);
 });
