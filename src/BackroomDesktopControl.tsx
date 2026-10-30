@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent, type KeyboardEvent } from 'react';
 import { Activity, Monitor, Play, Power, RefreshCw, ShieldCheck, SquareTerminal, TextCursorInput, X } from 'lucide-react';
 import { supabase } from './supabase';
-import { buildScopedDeviceMessage, classifyDeviceResponse, queueIceCandidate, takeIceCandidates } from '../integrations/backroom/desktop-realtime-protocol.mjs';
+import { buildScopedDeviceMessage, classifyDeviceResponse, validateDeviceSignal, queueIceCandidate, takeIceCandidates } from '../integrations/backroom/desktop-realtime-protocol.mjs';
 import { listBackroomDevices, type BackroomDevice } from './backroomCloudDevices';
 import './backroomDesktopControl.css';
 
@@ -63,11 +63,23 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   useEffect(()=>{void refresh();},[refresh]);
 
   const publish=useCallback(async(event:'command'|'signal',payload:Record<string,unknown>)=>{
-    const channel=channelRef.current;
-    if(!channel||!deviceId)throw new Error('The private device channel is not connected.');
+    if(!supabase||!deviceId)throw new Error('The authenticated private device channel is not connected.');
     const scoped=buildScopedDeviceMessage(payload,{roomId,deviceId});
-    const result=await channel.send({type:'broadcast',event,payload:scoped});
-    if(result!=='ok')throw new Error('Could not send the private device request.');
+    let body:Record<string,unknown>;
+    if(event==='command'){
+      const {requestId,action,issuedAt,deviceId:_deviceId,roomId:_roomId,...details}=scoped;
+      if(typeof requestId!=='string'||typeof action!=='string'||typeof issuedAt!=='number')
+        throw new Error('The desktop command is incomplete.');
+      body={action:'desktop/command',deviceId,roomId,requestId,issuedAt,command:action,details};
+    }else{
+      if(typeof scoped.sessionId!=='string'||!scoped.candidate||typeof scoped.candidate!=='object')
+        throw new Error('The WebRTC signal is incomplete.');
+      body={action:'desktop/signal',deviceId,roomId,sessionId:scoped.sessionId,issuedAt:Date.now(),candidate:scoped.candidate};
+    }
+    const {data,error}=await supabase.functions.invoke('backroom-device',{body});
+    if(error)throw new Error(error.message||'The Rub Minds desktop gateway rejected the request.');
+    if(!data||data.ok!==true)throw new Error(typeof data?.reason==='string'?data.reason.replaceAll('_',' '):'The Rub Minds desktop gateway rejected the request.');
+    return data;
   },[deviceId,roomId]);
 
   const sendCommand=useCallback(async(action:string,extra:Record<string,unknown>={})=>{
@@ -92,22 +104,24 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     let disposed=false;
     const channel=supabase.channel('backroom-device:'+deviceId,{config:{private:true,broadcast:{ack:true,self:false}}});
     channel.on('broadcast',{event:'signal'},async({payload}:any)=>{
-      if(disposed||payload?.roomId!==roomId||payload?.deviceId!==deviceId)return;
+      if(disposed)return;
+      const signal=validateDeviceSignal(payload,{deviceId,roomId,now:Date.now(),maxAgeMs:120_000});
+      if(!signal)return;
       const pc=peerRef.current;
-      if(!pc||payload.sessionId!==screenSessionRef.current&&payload.sessionId!==terminalPeerRef.current)return;
-      if(payload.answer){
+      if(!pc||signal.sessionId!==screenSessionRef.current&&signal.sessionId!==terminalPeerRef.current)return;
+      if(signal.answer){
         try{
-          await pc.setRemoteDescription(payload.answer);
-          for(const candidate of takeIceCandidates(pendingCandidatesRef.current,payload.sessionId)){try{await pc.addIceCandidate(candidate);}catch{/* stale ICE candidate */}}
+          await pc.setRemoteDescription(signal.answer);
+          for(const candidate of takeIceCandidates(pendingCandidatesRef.current,signal.sessionId)){try{await pc.addIceCandidate(candidate);}catch{/* stale ICE candidate */}}
           setVideoReady(true);
         }catch{flash('The computer returned an invalid screen-share answer.',true);}
       }
-      if(typeof payload.canControl==='boolean')setCoordinateControl(payload.canControl);
-      if(payload.candidate){
-        if(!pc.remoteDescription)queueIceCandidate(pendingCandidatesRef.current,payload.sessionId,payload.candidate);
-        else try{await pc.addIceCandidate(payload.candidate);}catch{/* stale ICE candidate */}
+      if(typeof signal.canControl==='boolean')setCoordinateControl(signal.canControl);
+      if(signal.candidate){
+        if(!pc.remoteDescription)queueIceCandidate(pendingCandidatesRef.current,signal.sessionId,signal.candidate);
+        else try{await pc.addIceCandidate(signal.candidate);}catch{/* stale ICE candidate */}
       }
-      if(payload.stop)void closePeer();
+      if(signal.stop)void closePeer();
     });
     channel.on('broadcast',{event:'response'},({payload}:any)=>{
       if(disposed||payload?.roomId!==roomId||payload?.deviceId!==deviceId)return;
@@ -144,7 +158,13 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       const peerId=uuid();const pc=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun.cloudflare.com:3478']}]});
       const data=pc.createDataChannel('backroom-terminal',{ordered:true});dataRef.current=data;peerRef.current=pc;screenSessionRef.current=peerId;setTerminalPeerId(peerId);terminalPeerRef.current=peerId;setTerminalText('Waiting for local terminal approval…\\n');
       data.onmessage=event=>{let message:any;try{message=JSON.parse(event.data);}catch{return;}if(message.kind==='terminal_output'){const output=new TextDecoder().decode(new Uint8Array(message.data||[]));setTerminalText(old=>(old+output).slice(-30000));}};
-      pc.onicecandidate=event=>{if(event.candidate)void publish('signal',{sessionId:peerId,candidate:event.candidate.toJSON()}).catch(error=>flash(String(error),true));};
+      const pendingIce:RTCIceCandidateInit[]=[];let sessionCreated=false;
+      pc.onicecandidate=event=>{
+        if(!event.candidate)return;
+        const candidate=event.candidate.toJSON();
+        if(!sessionCreated){pendingIce.push(candidate);return;}
+        void publish('signal',{sessionId:peerId,candidate}).catch(error=>flash(String(error),true));
+      };
       pc.onconnectionstatechange=()=>{
         if(pc.connectionState==='failed'||pc.connectionState==='disconnected'){
           flash('Terminal data connection interrupted. The local terminal will be stopped.',true);
@@ -154,6 +174,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       };
       const offer=await pc.createOffer();await pc.setLocalDescription(offer);
       await sendCommand('terminal_start',{sessionId:peerId,offer:{sdp:pc.localDescription?.sdp}});
+      sessionCreated=true;for(const candidate of pendingIce)await publish('signal',{sessionId:peerId,candidate});
       flash('Native terminal request sent. Approve it on the computer.');
     }catch(error){await closePeer();flash(error instanceof Error?error.message:'Could not request terminal.',true);}
   };
@@ -165,7 +186,13 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     const data=pc.createDataChannel('backroom-input',{ordered:true});
     dataRef.current=data;peerRef.current=pc;setScreenSession(sessionId);setTerminalPeerId('');
     pc.ontrack=event=>{if(videoRef.current)videoRef.current.srcObject=event.streams[0];setVideoReady(true);};
-    pc.onicecandidate=event=>{if(event.candidate)void publish('signal',{sessionId,candidate:event.candidate.toJSON()}).catch(error=>flash(String(error),true));};
+    const pendingIce:RTCIceCandidateInit[]=[];let sessionCreated=false;
+    pc.onicecandidate=event=>{
+      if(!event.candidate)return;
+      const candidate=event.candidate.toJSON();
+      if(!sessionCreated){pendingIce.push(candidate);return;}
+      void publish('signal',{sessionId,candidate}).catch(error=>flash(String(error),true));
+    };
     pc.onconnectionstatechange=()=>{
       if(pc.connectionState==='failed'||pc.connectionState==='disconnected'){
         flash('Screen connection interrupted. The local stream will be stopped.',true);
