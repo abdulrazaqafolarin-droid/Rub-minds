@@ -87,6 +87,7 @@ class DraftInputMethodService : InputMethodService() {
 
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
+        if (!restarting) clearDraft()
         updateEditorTarget(attribute)
     }
 
@@ -99,22 +100,13 @@ class DraftInputMethodService : InputMethodService() {
         super.onFinishInput()
         activePackage = null
         activeInputType = InputType.TYPE_NULL
-        draftText.clear()
-        shiftEnabled = false
-        refreshCharacterKeys()
-        refreshPreview()
+        clearDraft()
         updatePermissionState()
     }
 
     private fun updateEditorTarget(info: EditorInfo?) {
         val nextPackage = info?.packageName
-        if (activePackage != nextPackage) {
-            // Never carry a draft composed for one app into a different app.
-            draftText.clear()
-            shiftEnabled = false
-            refreshCharacterKeys()
-            refreshPreview()
-        }
+        if (activePackage != nextPackage) clearDraft()
         activePackage = nextPackage
         activeInputType = info?.inputType ?: InputType.TYPE_NULL
         updatePermissionState()
@@ -133,6 +125,13 @@ class DraftInputMethodService : InputMethodService() {
             row.addView(key, LinearLayout.LayoutParams(0, dp(44), 1f))
         }
         parent.addView(row)
+    }
+
+    private fun clearDraft() {
+        draftText.clear()
+        shiftEnabled = false
+        refreshCharacterKeys()
+        refreshPreview()
     }
 
     private fun refreshCharacterKeys() {
