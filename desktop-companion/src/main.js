@@ -253,16 +253,23 @@ async function connectDeviceChannel(){
   channel.on('broadcast',{event:'command'},message=>void handleCommand(message.payload||{}));
   channel.on('broadcast',{event:'signal'},message=>void handleSignal(message.payload||{}));
   state.channel=channel;
-  const result=await new Promise((resolve,reject)=>{
-    const timeout=setTimeout(()=>reject(new Error('Private device channel timed out. Check Realtime private channel authorization.')),15000);
-    channel.subscribe(status=>{
-      if(status==='SUBSCRIBED'){clearTimeout(timeout);resolve(status);}
-      if(status==='CHANNEL_ERROR'||status==='TIMED_OUT'||status==='CLOSED'){clearTimeout(timeout);reject(new Error('Private device channel '+status+'.'));}
+  try{
+    const result=await new Promise((resolve,reject)=>{
+      const timeout=setTimeout(()=>reject(new Error('Private device channel timed out. Check Realtime private channel authorization.')),15000);
+      channel.subscribe(status=>{
+        if(status==='SUBSCRIBED'){clearTimeout(timeout);resolve(status);}
+        if(status==='CHANNEL_ERROR'||status==='TIMED_OUT'||status==='CLOSED'){clearTimeout(timeout);reject(new Error('Private device channel '+status+'.'));}
+      });
     });
-  });
-  setConnected(true,'Account connected · private channel active');
-  startHeartbeat();
-  return result;
+    setConnected(true,'Account connected · private channel active');
+    startHeartbeat();
+    return result;
+  }catch(error){
+    if(state.channel===channel)state.channel=null;
+    try{await state.client.removeChannel(channel);}catch{}
+    setConnected(false,'Device channel unavailable');
+    throw error;
+  }
 }
 async function handleCommand(payload){
   if(!validateDeviceCommand(payload,{deviceId:state.deviceId,roomId:state.roomId,maxAgeMs:30_000}))return;
@@ -287,8 +294,15 @@ async function handleCommand(payload){
     createApproval('terminal_start','Start a native PowerShell terminal on this computer and connect it to the requesting Backroom workspace?',async()=>{
       const term=await invoke('start_terminal');
       state.terminals.set(term.sessionId,term);
-      await startTerminalPeer(payload,term);
-      await publish('response',{requestId,ok:true,sessionId:term.sessionId,cols:term.cols,rows:term.rows,shellLabel:term.shellLabel});
+      try{
+        await startTerminalPeer(payload,term);
+        await publish('response',{requestId,ok:true,sessionId:term.sessionId,capability:'terminal',cols:term.cols,rows:term.rows,shellLabel:term.shellLabel});
+      }catch(error){
+        state.terminals.delete(term.sessionId);
+        try{await invoke('stop_terminal',{sessionId:term.sessionId});}catch{}
+        await stopPeer(payload.sessionId);
+        throw error;
+      }
     },{requestId,sessionId:payload.sessionId,remote:true,capability:'terminal'});
     return;
   }
@@ -310,7 +324,8 @@ async function handleCommand(payload){
   if(payload.action==='view_offer'){
     if(typeof payload.sessionId!=='string'||!payload.offer?.sdp)return;
     createApproval('view_offer','Share your entire monitor with this Backroom session. Windows will show its screen-sharing picker. Choosing a single window keeps the frame view-only.',async()=>{
-      await startViewSession(payload);
+      try{await startViewSession(payload);}
+      catch(error){await stopPeer(payload.sessionId);throw error;}
     },{requestId,sessionId:payload.sessionId,remote:true,capability:'view'});return;
   }
   if(payload.action==='stop_session'){
@@ -384,7 +399,7 @@ async function handleSignal(payload){
   if(payload.deviceId!==state.deviceId||payload.roomId!==state.roomId||typeof payload.sessionId!=='string')return;
   const peer=state.peers.get(payload.sessionId);
   if(!peer){
-    if(payload.candidate){const queued=state.pendingCandidates.get(payload.sessionId)||[];if(queued.length<64)queued.push(payload.candidate);state.pendingCandidates.set(payload.sessionId,queued);}
+    if(payload.candidate)queueIceCandidate(state.pendingCandidates,payload.sessionId,payload.candidate);
     return;
   }
   if(payload.answer){
@@ -491,8 +506,9 @@ async function emergencyStop(){
     stopHeartbeat();
     await stopAllPeerSessions();
     await invoke('emergency_stop');
-    state.pending=[];renderPending();
-    notify('Emergency stop complete. Active permissions and Backroom-launched sessions were revoked.','success');
+    if(state.channel){await state.client.removeChannel(state.channel);state.channel=null;}
+    state.pending=[];renderPending();setConnected(false,'Emergency stop · disconnected');
+    notify('Emergency stop complete. Local permissions and Backroom-launched sessions were stopped. Reopen the companion to reconnect.','success');
   }catch(error){notify('Emergency stop needs attention: '+error.message,'error');}
 }
 async function disconnect(){
