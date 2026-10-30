@@ -68,7 +68,14 @@ node --test integrations/backroom/selection-geometry.node-test.mjs integrations/
 
 Result: **21 passed, 0 failed**. Coverage includes reverse drag / calibrated Android portrait coordinates, desktop display offsets, stale/out-of-bounds selections, unique composer targeting, conversation identity rechecks, occupied composers, independent read-back, and no automatic Send.
 
-The repository also contains Playwright Chromium browser tests for the selection overlay and host→selection→target-registration→draft path. Those require an installed Playwright browser runtime; they were not executed in the isolated Node-only sandbox for this acceptance round. The simulated Backroom preview panel is not itself a live application binding; the managed-browser overlay is the real browser target-selection path.
+The Playwright Chromium browser tests were executed in a disposable isolated Node 22 sandbox with Playwright 1.56.1 (matching the repository's package range), Chromium and its Linux runtime dependencies installed:
+
+```bash
+node --test integrations/backroom/browser-overlay.browser-test.mjs integrations/backroom/browser-draft.browser-test.mjs
+node --test integrations/backroom/browser-host-e2e.browser-test.mjs
+```
+
+Result: **8 passed, 0 failed**. The first command covers seven real-browser cases (one-field selection, multiple-input rejection, Escape, stale overlay/listener cleanup, read-only rejection, and empty-composer draft without Send). The second runs the complete local-host → Chromium overlay → group-scoped target registration → read-back-verified draft flow, including isolation/identity regression checks. The temporary sandbox was isolated from the project and later shut down. The simulated Backroom preview panel is not itself a live application binding; the managed-browser overlay is the real browser target-selection path.
 
 ## Live Supabase staging HTTP checks
 
