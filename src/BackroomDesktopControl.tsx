@@ -178,6 +178,10 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       if(message.kind==='terminal_output'){
         const text=new TextDecoder().decode(new Uint8Array(message.data||[]));
         setTerminalText(old=>(old+text).slice(-30000));
+      }else if(message.kind==='draft_result'){
+        flash(message.ok===true
+          ?'Draft inserted into the selected area on the computer. No Send or Enter action was triggered.'
+          :'Draft was not inserted: '+(message.result||'denied on the computer.'));
       }
     };
     try{
