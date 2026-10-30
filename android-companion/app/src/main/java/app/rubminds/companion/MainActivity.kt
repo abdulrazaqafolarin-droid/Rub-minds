@@ -374,6 +374,12 @@ class MainActivity : Activity() {
                     Toast.makeText(this, "Pairing submitted. Approve this phone in Rub Minds Backroom.", Toast.LENGTH_LONG).show()
                 }
             } catch (error: Exception) {
+                // A definitive 400/409 means this one-use code did not register the device.
+                // Keep the token on timeouts/5xx: the server may have consumed the code already.
+                if (error is CloudDeviceApiException &&
+                    error.action == "pair/claim" &&
+                    (error.statusCode == 400 || error.statusCode == 409)
+                ) vault.clear()
                 runOnUiThread { setBusy(false, error.message ?: "Device pairing failed.") }
             }
         }

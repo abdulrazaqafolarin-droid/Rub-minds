@@ -6,6 +6,13 @@ import org.json.JSONObject
 import java.net.URL
 import javax.net.ssl.HttpsURLConnection
 
+/** HTTP failure metadata distinguishes rejection from uncertain transport failure. */
+class CloudDeviceApiException(
+    val action: String,
+    val statusCode: Int,
+    message: String
+) : IllegalStateException(message)
+
 /** Outbound-only HTTPS client. There is no server socket or inbound port. */
 class CloudDeviceApi {
     private val endpoint: String = endpointUrl()
@@ -40,11 +47,15 @@ class CloudDeviceApi {
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val response = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
-            if (status !in 200..299) throw IllegalStateException(
-                when (status) {
-                    401 -> "Backroom device authentication expired. Pair this phone again."
-                    403 -> "This device is not approved for this Rub Minds group."
-                    409 -> "The pairing code expired or was already used."
+            if (status !in 200..299) throw CloudDeviceApiException(
+                action, status,
+                when {
+                    action == "pair/claim" && status == 400 ->
+                        "The pairing request was rejected. Request a fresh code and try again."
+                    action == "pair/claim" && status == 409 ->
+                        "The pairing code expired or was already used. Request a fresh code."
+                    status == 401 -> "Backroom device authentication expired. Pair this phone again."
+                    status == 403 -> "This device is not approved for this Rub Minds group."
                     else -> "Backroom cloud request failed ($status)."
                 }
             )
