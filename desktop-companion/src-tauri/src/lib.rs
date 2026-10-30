@@ -59,6 +59,13 @@ fn vault_delete(name: &str) -> Result<(), String> {
     }
 }
 
+fn clear_device_credentials() -> Result<(), String> {
+    for name in ["device-token", "device-id", "device-private-key", "device-room-id"] {
+        vault_delete(name)?;
+    }
+    Ok(())
+}
+
 fn random_identity() -> Result<(String, String), String> {
     let device_id = match vault_get("device-id")? {
         Some(value) if Uuid::parse_str(&value).is_ok() => value,
@@ -251,10 +258,7 @@ async fn revoke_desktop_device(
         return Err("Rub Minds did not confirm computer revocation. The device credential remains stored.".into());
     }
     emergency_stop(state)?;
-    vault_delete("device-token")?;
-    vault_delete("device-id")?;
-    vault_delete("device-private-key")?;
-    vault_delete("device-room-id")?;
+    clear_device_credentials()?;
     Ok(())
 }
 
@@ -310,25 +314,65 @@ struct DeviceStatus {
 }
 
 #[tauri::command]
-async fn desktop_device_status(supabase_url: String, publishable_key: String) -> Result<DeviceStatus, String> {
+async fn desktop_device_status(
+    state: State<'_, AppState>,
+    supabase_url: String,
+    publishable_key: String,
+) -> Result<DeviceStatus, String> {
     let token = vault_get("device-token")?.ok_or("This computer is not registered")?;
+    let device_id = vault_get("device-id")?.ok_or("This computer has no saved identity")?;
+    let room_id = vault_get("device-room-id")?.unwrap_or_default();
     let base = validate_supabase_config(&supabase_url, &publishable_key, &"x".repeat(100))?;
-    let response = Client::new()
+    let client = Client::builder().timeout(Duration::from_secs(10)).build()
+        .map_err(|_| "Could not initialize secure network transport".to_string())?;
+    let response = client
         .post(format!("{base}/functions/v1/backroom-device"))
-        .header("apikey", publishable_key)
+        .header("apikey", publishable_key.trim())
         .bearer_auth(token)
         .json(&json!({"action":"device/status"}))
         .send().await.map_err(|_| "Could not reach Rub Minds".to_string())?;
-    let status = response.status();
+    let http_status = response.status();
     let body: Value = response.json().await.map_err(|_| "Invalid device status response".to_string())?;
-    if !status.is_success() || body.get("ok").and_then(Value::as_bool) != Some(true) {
-        return Err("This computer is no longer authorized. Sign in and register it again.".into());
+    let revoked = body.get("status").and_then(Value::as_str) == Some("revoked")
+        || (http_status.as_u16() == 401
+            && body.get("reason").and_then(Value::as_str) == Some("device_auth_invalid"));
+    if revoked {
+        // A remote revocation is authoritative: close native processes and discard
+        // the stale device identity so this computer can be enrolled again.
+        emergency_stop(state)?;
+        clear_device_credentials()?;
+        return Ok(DeviceStatus {
+            status: "revoked".into(),
+            device_id,
+            room_id,
+            app_discovery: false,
+            live_screen: false,
+            desktop_control: false,
+            terminal_control: false,
+        });
+    }
+    if !http_status.is_success() || body.get("ok").and_then(Value::as_bool) != Some(true) {
+        return Err("Could not verify this computer's Rub Minds authorization. Retry when the connection is stable.".into());
+    }
+    let returned_device = body.get("deviceId").and_then(Value::as_str).unwrap_or_default();
+    if returned_device != device_id {
+        emergency_stop(state)?;
+        clear_device_credentials()?;
+        return Ok(DeviceStatus {
+            status: "revoked".into(),
+            device_id,
+            room_id,
+            app_discovery: false,
+            live_screen: false,
+            desktop_control: false,
+            terminal_control: false,
+        });
     }
     let caps = body.get("capabilities").cloned().unwrap_or(Value::Null);
     Ok(DeviceStatus {
         status: body.get("status").and_then(Value::as_str).unwrap_or("unknown").to_string(),
-        device_id: body.get("deviceId").and_then(Value::as_str).unwrap_or_default().to_string(),
-        room_id: vault_get("device-room-id")?.ok_or("This computer has no saved group binding")?,
+        device_id: returned_device.to_string(),
+        room_id,
         app_discovery: caps.get("appDiscovery").and_then(Value::as_bool).unwrap_or(false),
         live_screen: caps.get("liveScreen").and_then(Value::as_bool).unwrap_or(false),
         desktop_control: caps.get("desktopControl").and_then(Value::as_bool).unwrap_or(false),
