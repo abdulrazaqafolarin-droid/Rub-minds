@@ -22,7 +22,7 @@ Draft insertion is provided through an optional user-selected keyboard, not invi
 
 ## Build
 
-Requirements: Android Studio with JDK 17 and Android SDK Platform 35, plus Gradle 8.10.2 or compatible.
+Requirements: JDK 17, Android SDK Platform 35 and Gradle 8.10.2 (the version required by Android Gradle Plugin 8.8.2). Android Studio can open this folder as a standalone Gradle project.
 
 From this directory:
 
@@ -32,6 +32,8 @@ gradle :app:assembleDebug
 ```
 
 The output APK is normally at `app/build/outputs/apk/debug/app-debug.apk`.
+
+From the Rub Minds repository root, run the permission-boundary source checks with `npm run test:android-companion`. These Node tests complement (but do not replace) the Android Gradle/JUnit tests and physical-device checks.
 
 ## Current integration boundary
 
