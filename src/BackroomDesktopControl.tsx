@@ -67,9 +67,11 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     const scoped=buildScopedDeviceMessage(payload,{roomId,deviceId});
     let body:Record<string,unknown>;
     if(event==='command'){
-      const {requestId,action,issuedAt,deviceId:_deviceId,roomId:_roomId,...details}=scoped;
+      const requestId=scoped.requestId,action=scoped.action,issuedAt=scoped.issuedAt;
       if(typeof requestId!=='string'||typeof action!=='string'||typeof issuedAt!=='number')
         throw new Error('The desktop command is incomplete.');
+      const details=Object.fromEntries(Object.entries(scoped).filter(([key])=>
+        !['requestId','action','issuedAt','deviceId','roomId'].includes(key)));
       body={action:'desktop/command',deviceId,roomId,requestId,issuedAt,command:action,details};
     }else{
       if(typeof scoped.sessionId!=='string'||!scoped.candidate||typeof scoped.candidate!=='object')
