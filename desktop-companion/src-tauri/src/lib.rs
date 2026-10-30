@@ -239,10 +239,35 @@ async fn register_desktop_device(app: AppHandle, args: RegisterDeviceArgs) -> Re
        token.len() != 64 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err("Registration response failed local integrity checks".into());
     }
-    // Keep the bearer credential inside Windows Credential Manager / Keychain /
-    // Secret Service. It is never returned to JavaScript or included in events.
-    vault_set("device-token", &token.to_ascii_lowercase())?;
-    vault_set("device-room-id", &args.room_id)?;
+    // Persist the room binding before the bearer. Neither value is ever returned
+    // to JavaScript; if the OS credential store fails, revoke the server row so
+    // a successful HTTP registration cannot become an unreachable orphan device.
+    let persistence = vault_set("device-room-id", &args.room_id)
+        .and_then(|_| vault_set("device-token", &token.to_ascii_lowercase()));
+    if let Err(storage_error) = persistence {
+        let rollback = client
+            .post(format!("{base}/functions/v1/backroom-device"))
+            .header("apikey", args.publishable_key.trim())
+            .bearer_auth(&args.access_token)
+            .json(&json!({"action":"owner/revoke","roomId":args.room_id,"deviceId":device_id}))
+            .send().await;
+        let rollback_confirmed = match rollback {
+            Ok(response) if response.status().is_success() => {
+                response.json::<Value>().await
+                    .map(|body| body.get("ok").and_then(Value::as_bool)==Some(true) &&
+                        body.get("status").and_then(Value::as_str)==Some("revoked"))
+                    .unwrap_or(false)
+            }
+            _ => false,
+        };
+        let _ = vault_delete("device-token");
+        let _ = vault_delete("device-room-id");
+        return Err(if rollback_confirmed {
+            format!("The OS credential store could not save this computer's device token; the server registration was rolled back. {storage_error}")
+        } else {
+            "The OS credential store could not save the device token and server-side rollback was not confirmed. This device registration may still exist; revoke it from the Backroom device list before trying again.".into()
+        });
+    }
     Ok(RegistrationSummary {
         device_id,
         room_id: args.room_id,
