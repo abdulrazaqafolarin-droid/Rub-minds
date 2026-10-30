@@ -31,6 +31,11 @@ object AppGrantPolicy {
         }
     }
 
+    fun isSupportedInputType(inputType: Int): Boolean {
+        val inputClass = inputType and InputType.TYPE_MASK_CLASS
+        return inputClass == InputType.TYPE_CLASS_TEXT || inputClass == InputType.TYPE_CLASS_NUMBER
+    }
+
     fun canInsertDraft(
         grant: AppGrant?,
         foregroundPackage: String?,
@@ -42,5 +47,6 @@ object AppGrantPolicy {
             grant.allowDraftInsertion &&
             !foregroundPackage.isNullOrBlank() &&
             grant.packageName == foregroundPackage &&
+            isSupportedInputType(inputType) &&
             !isSensitiveInput(inputType)
 }
