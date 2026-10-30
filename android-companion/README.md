@@ -14,7 +14,7 @@ This is an Android-native prototype for the Backroom device-permission direction
 
 ## Deliberate security limits
 
-This version does not request all-files access, notification access, screen capture, overlay permission, Accessibility Service, device administrator, or package-installation privileges. Selecting an app is not permission to read its private data. The companion does not capture screens, inspect chats, read passwords, press Send, or submit forms.
+This version has no Internet permission or network client and does not request all-files access, notification access, screen capture, overlay permission, Accessibility Service, device administrator, or package-installation privileges. Selecting an app is not permission to read its private data. The companion does not capture screens, inspect chats, read passwords, press Send, or submit forms.
 
 The app picker discovers apps that expose launcher activities. Android package-visibility behavior and OEM launchers can affect the list. It does not promise an inventory of every installed package or work-profile apps.
 
