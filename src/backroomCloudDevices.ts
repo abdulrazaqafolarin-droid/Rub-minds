@@ -25,7 +25,7 @@ export type BackroomDevice = {
   approved_at: string | null;
   last_seen_at: string | null;
   apps: BackroomDeviceApp[];
-  desktopApps: BackroomDesktopApp[];
+  desktopApps?: BackroomDesktopApp[];
 };
 export type BackroomDeviceEvent = {
   id: string;
