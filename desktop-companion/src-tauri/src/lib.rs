@@ -150,17 +150,26 @@ fn device_identity() -> Result<DeviceIdentity, String> {
 }
 
 fn validate_supabase_config(url: &str, publishable_key: &str, access_token: &str) -> Result<String, String> {
-    let base = url.trim().trim_end_matches('/');
-    let local = base.starts_with("http://127.0.0.1:") || base.starts_with("http://localhost:");
-    if !(base.starts_with("https://") || local) || base.contains(char::is_whitespace) ||
-        base.contains('?') || base.contains('#') || base.contains('@') {
-        return Err("Invalid Supabase project URL".into());
+    let parsed = reqwest::Url::parse(url.trim())
+        .map_err(|_| "Invalid Supabase project URL".to_string())?;
+    let host = parsed.host_str().unwrap_or_default().to_ascii_lowercase();
+    let has_credentials = !parsed.username().is_empty() || parsed.password().is_some();
+    let has_extra_url_parts = parsed.path() != "/" || parsed.query().is_some() || parsed.fragment().is_some();
+    let local_dev = cfg!(debug_assertions)
+        && parsed.scheme() == "http"
+        && matches!(host.as_str(), "localhost" | "127.0.0.1" | "[::1]")
+        && parsed.port().is_some();
+    let supabase_project = parsed.scheme() == "https"
+        && (host.ends_with(".supabase.co") || host.ends_with(".supabase.in"))
+        && parsed.port().map(|port| port == 443).unwrap_or(true);
+    if has_credentials || has_extra_url_parts || (!local_dev && !supabase_project) {
+        return Err("Only a valid HTTPS Supabase project URL is allowed (localhost is debug-only)".into());
     }
     if publishable_key.trim().len() < 20 || publishable_key.contains(char::is_whitespace) ||
        access_token.len() < 80 || access_token.contains(char::is_whitespace) {
         return Err("A valid signed-in Rub Minds session is required".into());
     }
-    Ok(base.to_string())
+    Ok(parsed.origin().ascii_serialization().trim_end_matches('/').to_string())
 }
 
 #[derive(Deserialize)]
@@ -1089,6 +1098,63 @@ mod native_input_tests {
             origin_x: 0,
             origin_y: 0,
         }
+    }
+
+    #[test]
+    fn supabase_endpoint_validation_rejects_token_exfiltration_hosts() {
+        let key = "sb_publishable_abcdefghijklmnopqrstuvwxyz";
+        let token = "a".repeat(100);
+        for attacker in [
+            "https://evil.example",
+            "https://project.supabase.co.attacker.example",
+            "https://user:pass@project.supabase.co",
+            "https://project.supabase.co/path",
+            "https://project.supabase.co?redirect=https://evil.example",
+            "https://project.supabase.co#fragment",
+            "http://project.supabase.co",
+        ] {
+            assert!(validate_supabase_config(attacker, key, &token).is_err(), "accepted {attacker}");
+        }
+    }
+
+    #[test]
+    fn supabase_endpoint_validation_accepts_project_hosts_and_debug_loopback() {
+        let key = "sb_publishable_abcdefghijklmnopqrstuvwxyz";
+        let token = "a".repeat(100);
+        assert_eq!(
+            validate_supabase_config("https://project-ref.supabase.co/", key, &token).unwrap(),
+            "https://project-ref.supabase.co"
+        );
+        assert_eq!(
+            validate_supabase_config("https://project-ref.supabase.in", key, &token).unwrap(),
+            "https://project-ref.supabase.in"
+        );
+        if cfg!(debug_assertions) {
+            assert_eq!(
+                validate_supabase_config("http://127.0.0.1:54321", key, &token).unwrap(),
+                "http://127.0.0.1:54321"
+            );
+            assert_eq!(
+                validate_supabase_config("http://localhost:54321", key, &token).unwrap(),
+                "http://localhost:54321"
+            );
+        } else {
+            assert!(validate_supabase_config("http://127.0.0.1:54321", key, &token).is_err());
+        }
+    }
+
+    #[test]
+    fn supabase_endpoint_validation_requires_publishable_key_and_user_session() {
+        assert!(validate_supabase_config(
+            "https://project-ref.supabase.co",
+            "short",
+            &"a".repeat(100)
+        ).is_err());
+        assert!(validate_supabase_config(
+            "https://project-ref.supabase.co",
+            "sb_publishable_abcdefghijklmnopqrstuvwxyz",
+            "short"
+        ).is_err());
     }
 
     #[test]
