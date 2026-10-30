@@ -1,0 +1,41 @@
+name: Backroom Windows desktop companion
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backroom-desktop-companion-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+jobs:
+  windows-native:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+      - name: Install locked JavaScript dependencies
+        run: npm ci
+      - name: Build the bundled companion WebView
+        run: npm run build:desktop-companion
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path desktop-companion/src-tauri/Cargo.toml -- --check
+      - name: Run native companion unit tests
+        run: cargo test --manifest-path desktop-companion/src-tauri/Cargo.toml
+      - name: Compile the actual Windows native companion
+        run: cargo check --manifest-path desktop-companion/src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
