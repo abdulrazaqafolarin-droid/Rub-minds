@@ -339,7 +339,10 @@ async function handleCommand(payload){
     if(typeof payload.sessionId!=='string'||!payload.offer?.sdp)return;
     createApproval('terminal_start','Start a native PowerShell terminal on this computer and connect it to the requesting Backroom workspace?',async()=>{
       const term=await invoke('start_terminal',{sessionId:payload.sessionId});
-      if(term.sessionId!==payload.sessionId)throw new Error('The native terminal session did not match the authorized Backroom session.');
+      if(term.sessionId!==payload.sessionId){
+        try{await invoke('stop_terminal',{sessionId:term.sessionId});}catch{}
+        throw new Error('The native terminal session did not match the authorized Backroom session.');
+      }
       state.terminals.set(term.sessionId,term);
       try{
         await startTerminalPeer(payload,term);
@@ -350,7 +353,7 @@ async function handleCommand(payload){
         await stopPeer(payload.sessionId);
         throw error;
       }
-    },{requestId,sessionId:payload.sessionId,remote:true,actorDisplayName:payload.actorDisplayName,capability:'terminal',onDeny:()=>closeServerSession(payload.sessionId)});
+    },{requestId,sessionId:payload.sessionId,remote:true,actorDisplayName:payload.actorDisplayName,capability:'terminal',onDeny:()=>stopPeer(payload.sessionId)});
     return;
   }
   if(payload.action==='request_control'){
@@ -373,7 +376,7 @@ async function handleCommand(payload){
     createApproval('view_offer','Share your entire monitor with this Backroom session. Windows will show its screen-sharing picker. Choosing a single window keeps the frame view-only.',async()=>{
       try{await startViewSession(payload);}
       catch(error){await stopPeer(payload.sessionId);throw error;}
-    },{requestId,sessionId:payload.sessionId,remote:true,actorDisplayName:payload.actorDisplayName,capability:'view',onDeny:()=>closeServerSession(payload.sessionId)});return;
+    },{requestId,sessionId:payload.sessionId,remote:true,actorDisplayName:payload.actorDisplayName,capability:'view',onDeny:()=>stopPeer(payload.sessionId)});return;
   }
   if(payload.action==='stop_session'){
     const peerSessionId=payload.sessionId;
