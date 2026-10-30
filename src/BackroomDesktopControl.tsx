@@ -205,7 +205,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const stop=async()=>{
     try{
       const peerId=screenSessionRef.current||terminalPeerId;
-      if(peerId)await publish('command',{requestId:uuid(),action:'stop_session',sessionId:peerId,terminalSessionId:terminalSession});
+      if(peerId)await sendCommand('stop_session',{sessionId:peerId,...(terminalSession?{terminalSessionId:terminalSession}:{})});
     }catch{/* the local device can still revoke its own grants */}
     await closePeer();setTerminalSession('');setTerminalPeerId('');terminalPeerRef.current='';setTerminalText('');
   };
