@@ -42,6 +42,8 @@ class MainActivity : Activity() {
     private lateinit var cloudStatus: TextView
     private lateinit var saveButton: Button
     private lateinit var pairButton: Button
+    private lateinit var pairConsent: CheckBox
+    private lateinit var consentPrefs: android.content.SharedPreferences
     private val launchGrants = linkedMapOf<String, String>()
     private val draftGrants = linkedSetOf<String>()
     private val appRows = mutableMapOf<String, Pair<CheckBox, CheckBox>>()
@@ -52,6 +54,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         store = AppGrantStore(this)
         vault = DeviceCredentialVault(this)
+        consentPrefs = getSharedPreferences("backroom_cloud_consent", MODE_PRIVATE)
         cloudApi = try { CloudDeviceApi() } catch (_: Exception) { null }
         store.all().forEach {
             launchGrants[it.packageName] = it.signingCertificateSha256
@@ -108,6 +111,32 @@ class MainActivity : Activity() {
             setTextColor(0xff405070.toInt())
             setPadding(0, dp(5), 0, dp(8))
         })
+        cloudCard.addView(TextView(this).apply {
+            text = "Permission and data explanation"
+            textSize = 13f
+            setTextColor(0xff172033.toInt())
+            setPadding(0, dp(12), 0, dp(3))
+        })
+        cloudCard.addView(TextView(this).apply {
+            text = "Internet: connects to Rub Minds over encrypted HTTPS for pairing and selected-app metadata. App discovery: shows launchable apps Android exposes to this profile. All Files Access is not requested because this build does not clone app data; that permission would not unlock other apps' private data. Screen capture and Accessibility control are not requested and are not available in this build."
+            textSize = 11f
+            setTextColor(0xff405070.toInt())
+        })
+        pairConsent = CheckBox(this).apply {
+            text = "I agree to share only the app entries I select with this Rub Minds group."
+            isChecked = consentPrefs.getBoolean("selected_app_inventory", false)
+            setOnCheckedChangeListener { _, checked ->
+                consentPrefs.edit().putBoolean("selected_app_inventory", checked).apply()
+                pairButton.isEnabled = checked && !busy
+                if (!checked) cloudStatus.text = "Cloud pairing and app inventory sync are paused. Remove this phone in Backroom to revoke an existing cloud device."
+            }
+        }
+        cloudCard.addView(pairConsent)
+        val disagree = Button(this).apply {
+            text = "Disagree and exit"
+            setOnClickListener { finish() }
+        }
+        cloudCard.addView(disagree)
         pairingCodeInput = EditText(this).apply {
             hint = "Paste 64-character pairing code"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
@@ -121,6 +150,7 @@ class MainActivity : Activity() {
         }
         pairButton = Button(this).apply {
             text = "Pair phone"
+            isEnabled = pairConsent.isChecked
             setOnClickListener { pairDevice() }
         }
         cloudActions.addView(pairButton, LinearLayout.LayoutParams(0, -2, 1f))
@@ -309,6 +339,10 @@ class MainActivity : Activity() {
 
     private fun pairDevice() {
         if (busy) return
+        if (!pairConsent.isChecked) {
+            Toast.makeText(this, "Agree to the app-inventory data explanation before pairing.", Toast.LENGTH_LONG).show()
+            return
+        }
         val code = pairingCodeInput.text.toString().trim().lowercase()
         if (!code.matches(Regex("^[a-f0-9]{64}$"))) {
             Toast.makeText(this, "Enter the complete 64-character one-use code.", Toast.LENGTH_SHORT).show()
@@ -340,6 +374,10 @@ class MainActivity : Activity() {
     }
 
     private fun checkExistingDevice() {
+        if (!pairConsent.isChecked) {
+            cloudStatus.text = "Cloud requests are paused until you consent. Existing access can be revoked in the Rub Minds web group."
+            return
+        }
         val token = vault.token()
         if (token == null) {
             if (::cloudStatus.isInitialized && !busy) cloudStatus.text = "Not paired. Create a code in Rub Minds Backroom first."
@@ -359,7 +397,11 @@ class MainActivity : Activity() {
                     runOnUiThread { setBusy(false, "Waiting for the Rub Minds group owner to approve this phone.") }
                 } else {
                     vault.clear()
-                    runOnUiThread { setBusy(false, "Device access was revoked. Pair this phone again when invited.") }
+                    consentPrefs.edit().putBoolean("selected_app_inventory", false).apply()
+                    runOnUiThread {
+                        pairConsent.isChecked = false
+                        setBusy(false, "Device access was revoked. Pair this phone again when invited.")
+                    }
                 }
             } catch (error: Exception) {
                 runOnUiThread { setBusy(false, error.message ?: "Could not check the cloud device status.") }
@@ -368,6 +410,10 @@ class MainActivity : Activity() {
     }
 
     private fun syncCloudInventory() {
+        if (!pairConsent.isChecked) {
+            cloudStatus.text = "Selected apps remain on this phone. Cloud inventory sync is paused until you consent."
+            return
+        }
         val token = vault.token()
         if (token == null) {
             if (::cloudStatus.isInitialized) cloudStatus.text = "App choices saved on phone. Pair to sync selected apps to the group."
@@ -418,7 +464,7 @@ class MainActivity : Activity() {
 
     private fun setBusy(value: Boolean, message: String) {
         busy = value
-        if (::pairButton.isInitialized) pairButton.isEnabled = !value
+        if (::pairButton.isInitialized) pairButton.isEnabled = !value && pairConsent.isChecked
         if (::saveButton.isInitialized) saveButton.isEnabled = !value
         appRows.forEach { (packageName, row) ->
             val hasSigner = apps.any { it.packageName == packageName && it.signingCertificateSha256 != null }
