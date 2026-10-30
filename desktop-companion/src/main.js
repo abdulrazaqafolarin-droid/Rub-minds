@@ -248,8 +248,14 @@ function renderPending(){
     });
     no.addEventListener('click',async()=>{
       try{await item.onDeny?.();}catch(error){notify(error?.message||'Could not record the denial.','error');}
-      if(item.extra?.remote) await publish('response',{requestId:item.requestId,ok:false,reason:'denied_on_device',capability:item.extra.capability});
-      state.pending=state.pending.filter(x=>x!==item);renderPending();
+      try{
+        if(item.extra?.remote)await publish('response',{requestId:item.requestId,ok:false,reason:'denied_on_device',capability:item.extra.capability});
+      }catch{
+        // The local denial and server-side session close have already been attempted.
+        // A lost response is not grounds to retain or re-open a denied approval.
+      }finally{
+        state.pending=state.pending.filter(x=>x!==item);renderPending();
+      }
     });
     actions.append(yes,no);card.append(main,actions);list.append(card);
   }
