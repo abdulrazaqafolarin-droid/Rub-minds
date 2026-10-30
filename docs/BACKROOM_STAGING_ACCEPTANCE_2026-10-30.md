@@ -5,8 +5,10 @@ This document records the isolated staging path and repeatable evidence for the 
 ## Isolated environment
 
 - Git branch: `feat/backroom-cua-artemis-workspaces`
-- Latest verified commit: `dd075ebace1ceb7f30a47b2b312655d879a48406`
-- Latest Vercel Preview deployment: `dpl_E3iL5erk4e2s5Rqq9Yo8hTMNAQS2` — READY
+- Latest branch HEAD at this document update: `f5bd0ed64f90cd6dbd9b6d6590d1484a40a4895b` (documentation-only commit after the tested code head)
+- Latest tested code head: `dd075ebace1ceb7f30a47b2b312655d879a48406`
+- Latest Vercel Preview deployment: `dpl_AwEhJ5PciAk8nQ41zKooWp4XxQzN` — READY (documentation-only branch head)
+- Full 683-test / TypeScript / Vite evidence: deployment `dpl_E3iL5erk4e2s5Rqq9Yo8hTMNAQS2` on tested code head `dd075eb`
 - Stable Preview origin: `https://rub-minds-git-feat-ba-fce441-abdulrazaqafolarin-droids-projects.vercel.app`
 - Supabase staging project ref: `tzcuuynmviiuactafpld` (PostgreSQL 17.11)
 - Staging `backroom-config`: version 2, `verify_jwt=true`
