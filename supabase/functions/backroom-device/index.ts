@@ -218,28 +218,18 @@ Deno.serve(async req => {
         if (bindingError || !binding) return json(404, fail('device_binding_not_found'), origin);
         const now = new Date().toISOString();
         if (action === 'owner/approve') {
-          const { data, error } = await db.from('backroom_devices').update({ status: 'active', approved_at: now })
-            .eq('device_id', input.deviceId).eq('owner_id', ownerId).eq('status', 'pending')
-            .select('device_id').maybeSingle();
-          if (error) return json(503, fail('device_approval_failed'), origin);
-          if (!data) return json(409, fail('device_not_pending'), origin);
-          await db.from('backroom_device_events').insert({
-            room_id: input.roomId, device_id: input.deviceId, actor_type: 'owner',
-            actor_id: ownerId, event_type: 'device_approved'
+          const { data, error } = await db.rpc('approve_backroom_device', {
+            p_device_id: input.deviceId, p_room_id: input.roomId, p_owner_id: ownerId
           });
+          if (error) return json(503, fail('device_approval_failed'), origin);
+          if (data !== true) return json(409, fail('device_not_pending_or_owner_scope_invalid'), origin);
           return json(200, { ok: true, deviceId: input.deviceId, status: 'active' }, origin);
         }
-        const { data, error } = await db.from('backroom_devices').update({ status: 'revoked', revoked_at: now })
-          .eq('device_id', input.deviceId).eq('owner_id', ownerId).neq('status', 'revoked')
-          .select('device_id').maybeSingle();
-        if (error) return json(503, fail('device_revocation_failed'), origin);
-        if (!data) return json(404, fail('device_not_found'), origin);
-        await db.from('backroom_device_room_bindings').update({ revoked_at: now })
-          .eq('device_id', input.deviceId).eq('room_id', input.roomId).is('revoked_at', null);
-        await db.from('backroom_device_events').insert({
-          room_id: input.roomId, device_id: input.deviceId, actor_type: 'owner',
-          actor_id: ownerId, event_type: 'device_revoked'
+        const { data, error } = await db.rpc('revoke_backroom_device', {
+          p_device_id: input.deviceId, p_room_id: input.roomId, p_owner_id: ownerId
         });
+        if (error) return json(503, fail('device_revocation_failed'), origin);
+        if (data !== true) return json(404, fail('device_not_found_or_owner_scope_invalid'), origin);
         return json(200, { ok: true, deviceId: input.deviceId, status: 'revoked' }, origin);
       }
     }

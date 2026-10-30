@@ -97,6 +97,7 @@ set search_path = ''
 as $function$
 declare
   v_pairing public.backroom_device_pairings%rowtype;
+  v_device_count integer;
 begin
   if p_code_digest is null or p_code_digest !~ '^[0-9a-f]{64}$'
     or p_token_digest is null or p_token_digest !~ '^[0-9a-f]{64}$'
@@ -119,6 +120,9 @@ begin
   if not exists(select 1 from public.rooms where id = v_pairing.room_id and owner_id = v_pairing.owner_id) then
     return;
   end if;
+  select count(*) into v_device_count from public.backroom_devices
+    where owner_id=v_pairing.owner_id and status <> 'revoked';
+  if v_device_count >= 5 then return; end if;
   insert into public.backroom_devices(
     device_id, owner_id, token_digest, device_label, platform, os_version, app_version, status
   ) values (
@@ -192,3 +196,63 @@ end;
 $function$;
 revoke all on function public.sync_backroom_device_apps(uuid,jsonb) from public, anon, authenticated;
 grant execute on function public.sync_backroom_device_apps(uuid,jsonb) to service_role;
+
+-- Owner actions update device state and append their activity event in one transaction.
+create or replace function public.approve_backroom_device(p_device_id uuid, p_room_id uuid, p_owner_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+declare
+  v_device_id uuid;
+begin
+  if p_device_id is null or p_room_id is null or p_owner_id is null
+    or not exists(select 1 from public.rooms where id=p_room_id and owner_id=p_owner_id)
+    or not exists(select 1 from public.backroom_device_room_bindings
+      where device_id=p_device_id and room_id=p_room_id and owner_id=p_owner_id and revoked_at is null) then
+    return false;
+  end if;
+  update public.backroom_devices
+    set status='active', approved_at=pg_catalog.clock_timestamp(), revoked_at=null
+    where device_id=p_device_id and owner_id=p_owner_id and status='pending'
+    returning device_id into v_device_id;
+  if not found then return false; end if;
+  insert into public.backroom_device_events(room_id,device_id,actor_type,actor_id,event_type)
+    values(p_room_id,p_device_id,'owner',p_owner_id::text,'device_approved');
+  return true;
+end;
+$function$;
+revoke all on function public.approve_backroom_device(uuid,uuid,uuid) from public, anon, authenticated;
+grant execute on function public.approve_backroom_device(uuid,uuid,uuid) to service_role;
+
+create or replace function public.revoke_backroom_device(p_device_id uuid, p_room_id uuid, p_owner_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+declare
+  v_device_id uuid;
+begin
+  if p_device_id is null or p_room_id is null or p_owner_id is null
+    or not exists(select 1 from public.rooms where id=p_room_id and owner_id=p_owner_id)
+    or not exists(select 1 from public.backroom_device_room_bindings
+      where device_id=p_device_id and room_id=p_room_id and owner_id=p_owner_id and revoked_at is null) then
+    return false;
+  end if;
+  update public.backroom_devices
+    set status='revoked', revoked_at=pg_catalog.clock_timestamp()
+    where device_id=p_device_id and owner_id=p_owner_id and status <> 'revoked'
+    returning device_id into v_device_id;
+  if not found then return false; end if;
+  update public.backroom_device_room_bindings
+    set revoked_at=pg_catalog.clock_timestamp()
+    where device_id=p_device_id and room_id=p_room_id and owner_id=p_owner_id and revoked_at is null;
+  insert into public.backroom_device_events(room_id,device_id,actor_type,actor_id,event_type)
+    values(p_room_id,p_device_id,'owner',p_owner_id::text,'device_revoked');
+  return true;
+end;
+$function$;
+revoke all on function public.revoke_backroom_device(uuid,uuid,uuid) from public, anon, authenticated;
+grant execute on function public.revoke_backroom_device(uuid,uuid,uuid) to service_role;
