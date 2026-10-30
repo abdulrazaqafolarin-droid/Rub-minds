@@ -33,11 +33,19 @@ export function classifyDeviceResponse(payload){
  return null;
 }
 export function queueIceCandidate(queue,sessionId,candidate,{maxSessions=16,maxPerSession=64}={}){
- if(!isUuid(sessionId)||!candidate||typeof candidate!=='object')return false;
+ if(!isUuid(sessionId)||!candidate||typeof candidate!=='object'||Array.isArray(candidate))return false;
+ const allowed=['candidate','sdpMid','sdpMLineIndex','usernameFragment'];
+ if(Object.keys(candidate).some(key=>!allowed.includes(key)))return false;
+ if(typeof candidate.candidate!=='string'||candidate.candidate.length===0||candidate.candidate.length>2048)return false;
+ if(candidate.sdpMid!==undefined&&candidate.sdpMid!==null&&(typeof candidate.sdpMid!=='string'||candidate.sdpMid.length>128))return false;
+ if(candidate.sdpMLineIndex!==undefined&&candidate.sdpMLineIndex!==null&&
+    (!Number.isSafeInteger(candidate.sdpMLineIndex)||candidate.sdpMLineIndex<0||candidate.sdpMLineIndex>256))return false;
+ if(candidate.usernameFragment!==undefined&&candidate.usernameFragment!==null&&
+    (typeof candidate.usernameFragment!=='string'||candidate.usernameFragment.length>256))return false;
  let items=queue.get(sessionId);
  if(!items){if(queue.size>=maxSessions)return false;items=[];queue.set(sessionId,items);}
  if(items.length>=maxPerSession)return false;
- items.push(candidate);return true;
+ items.push(Object.freeze({...candidate}));return true;
 }
 export function takeIceCandidates(queue,sessionId){
  const items=queue.get(sessionId)||[];queue.delete(sessionId);return items;
