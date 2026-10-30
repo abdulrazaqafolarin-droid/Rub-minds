@@ -352,10 +352,10 @@ fn list_registered_apps(app: AppHandle) -> Result<Vec<ApprovedAppSummary>, Strin
 }
 
 #[tauri::command]
-fn launch_registered_app(app: AppHandle, app_id: String) -> Result<u32, String> {
+fn launch_registered_app(app: AppHandle, state: State<'_, AppState>, app_id: String) -> Result<u32, String> {
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (app, app_id);
+        let _ = (app, state, app_id);
         return Err("Windows desktop application launch is not available on this platform".into());
     }
     #[cfg(target_os = "windows")]
@@ -371,8 +371,19 @@ fn launch_registered_app(app: AppHandle, app_id: String) -> Result<u32, String> 
         }
         let parent = path.parent().ok_or("Application directory is unavailable")?;
         let child = Command::new(&path).current_dir(parent).spawn().map_err(|_| "Windows could not launch the approved application".to_string())?;
-        child.id().ok_or("Windows did not return the application process ID".into())
+        let pid = child.id();
+        let mut processes = state.desktop_processes.lock().map_err(|_| "Desktop process registry unavailable")?;
+        processes.retain(|_, process| process.try_wait().ok().flatten().is_none());
+        processes.insert(pid, child);
+        Ok(pid)
     }
+}
+
+#[tauri::command]
+fn stop_registered_app(state: State<'_, AppState>, pid: u32) -> Result<(), String> {
+    let mut processes = state.desktop_processes.lock().map_err(|_| "Desktop process registry unavailable")?;
+    let mut child = processes.remove(&pid).ok_or("This app was not launched by Backroom or is already closed")?;
+    child.kill().map_err(|_| "Windows could not stop the selected Backroom application".to_string())
 }
 
 #[derive(Default)]
@@ -802,6 +813,10 @@ fn emergency_stop(state: State<'_, AppState>) -> Result<(), String> {
     for (_, session) in sessions {
         let _ = session.child.lock().map(|mut child| child.kill());
     }
+    let processes = std::mem::take(&mut *state.desktop_processes.lock().map_err(|_| "Desktop process registry unavailable")?);
+    for (_, mut child) in processes {
+        let _ = child.kill();
+    }
     Ok(())
 }
 
@@ -812,7 +827,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             secure_auth_get, secure_auth_set, secure_auth_delete,
             device_identity, register_desktop_device, desktop_device_status,
-            pick_and_register_app, list_registered_apps, launch_registered_app,
+            pick_and_register_app, list_registered_apps, launch_registered_app, stop_registered_app,
             grant_control, revoke_control, grant_draft_typing, set_capture_geometry,
             dispatch_input, select_draft_target, stage_draft_request, list_pending_drafts,
             approve_draft_request, deny_draft_request, start_terminal, write_terminal,
