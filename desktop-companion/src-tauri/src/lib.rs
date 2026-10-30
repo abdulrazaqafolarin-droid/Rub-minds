@@ -258,6 +258,45 @@ async fn revoke_desktop_device(
     Ok(())
 }
 
+#[tauri::command]
+async fn sync_desktop_app_inventory(
+    supabase_url: String,
+    publishable_key: String,
+    apps: Vec<ApprovedAppSummary>,
+) -> Result<usize, String> {
+    if apps.len() > 100 {
+        return Err("Select no more than 100 desktop applications".into());
+    }
+    let mut seen = std::collections::HashSet::new();
+    for app in &apps {
+        if Uuid::parse_str(&app.id).is_err() || app.label.trim().is_empty() ||
+           app.label.len() > 120 || app.sha256.len() != 64 ||
+           !app.sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) ||
+           !seen.insert(app.id.clone()) {
+            return Err("Invalid selected desktop application inventory".into());
+        }
+    }
+    let token = vault_get("device-token")?.ok_or("This computer is not registered")?;
+    let base = validate_supabase_config(&supabase_url, &publishable_key, &"x".repeat(100))?;
+    let payload = apps.iter().map(|app| json!({
+        "appId":app.id,"label":app.label,"sha256":app.sha256.to_ascii_lowercase()
+    })).collect::<Vec<_>>();
+    let response = Client::builder().timeout(Duration::from_secs(25)).build()
+        .map_err(|_| "Could not initialize secure network transport".to_string())?
+        .post(format!("{base}/functions/v1/backroom-device"))
+        .header("apikey", publishable_key.trim())
+        .bearer_auth(token)
+        .json(&json!({"action":"desktop/inventory","apps":payload}))
+        .send().await.map_err(|_| "Could not sync the selected app inventory".to_string())?;
+    let status = response.status();
+    let body: Value = response.json().await
+        .map_err(|_| "Rub Minds returned an invalid app inventory response".to_string())?;
+    if !status.is_success() || body.get("ok").and_then(Value::as_bool) != Some(true) {
+        return Err("Rub Minds rejected the selected app inventory. Reconnect this computer and retry.".into());
+    }
+    Ok(body.get("synced").and_then(Value::as_u64).unwrap_or(0) as usize)
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DeviceStatus {
@@ -868,7 +907,7 @@ pub fn run() {
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             secure_auth_get, secure_auth_set, secure_auth_delete,
-            device_identity, register_desktop_device, desktop_device_status, revoke_desktop_device,
+            device_identity, register_desktop_device, desktop_device_status, sync_desktop_app_inventory, revoke_desktop_device,
             pick_and_register_app, list_registered_apps, launch_registered_app, stop_registered_app,
             grant_control, revoke_control, grant_draft_typing, set_capture_geometry,
             dispatch_input, select_draft_target, stage_draft_request, list_pending_drafts,
