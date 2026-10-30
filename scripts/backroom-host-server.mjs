@@ -200,9 +200,11 @@ export function createBackroomHostServer({
       if (!session) { writeJson(response, 401, { error: "host_session_invalid" }, cors); return; }
       const runtimeStatus = browser.status();
       const executionReady = Object.values(runtimeStatus.capabilities).some(Boolean);
+      const wakeGatewayHost = wakeService?.status?.gatewayHost;
       writeJson(response, 200, {
         hostId: session.hostId, label: session.clientLabel, expiresAt: session.expiresAt,
         ...(enrollmentDigest ? { enrollmentDigest } : {}),
+        ...(typeof wakeGatewayHost === "string" ? { wakeGatewayHost } : {}),
         protocolVersion: PROTOCOL_VERSION, connected: true, executionReady,
         browserPages: runtimeStatus.pages,
         capabilities: runtimeStatus.capabilities,
