@@ -314,7 +314,7 @@ jobs:
       - name: Test public rate-limit helper
         run: deno test supabase/functions/_shared/public-rate-limit.deno-test.ts
       - name: Type-check Backroom coordination Edge Functions
-        run: deno check supabase/functions/backroom-config/index.ts supabase/functions/backroom-wake/index.ts
+        run: deno check supabase/functions/backroom-config/index.ts supabase/functions/backroom-wake/index.ts supabase/functions/backroom-device/index.ts
       - name: Type-check public invite Edge Functions
         run: deno check supabase/functions/redeem-ai-invite/index.ts supabase/functions/ai-invite-discovery/index.ts
       - name: Type-check session-memory Edge Function
