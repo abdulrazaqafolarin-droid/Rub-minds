@@ -209,8 +209,14 @@ Deno.serve(async req => {
         });
         if (error) return json(409, fail('desktop_session_id_conflict'), origin);
       } else {
-        const session = await activeDesktopSession(command.details.sessionId, command.deviceId, command.roomId);
+        const authorizationSessionId = command.command === 'request_control' && command.details.peerSessionId
+          ? command.details.peerSessionId : command.details.sessionId;
+        const session = await activeDesktopSession(authorizationSessionId, command.deviceId, command.roomId);
         if (!session.ok) return json(session.status, fail(session.reason), origin);
+        if (command.command === 'request_control' && command.details.peerSessionId &&
+            session.session.session_type !== 'terminal') {
+          return json(409, fail('peer_session_must_be_terminal'), origin);
+        }
         if (command.command === 'request_draft_permission' && session.session.session_type !== 'screen') {
           return json(409, fail('draft_permission_requires_screen_session'), origin);
         }
