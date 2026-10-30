@@ -3,6 +3,7 @@ package app.rubminds.companion
 import android.app.Activity
 import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.graphics.drawable.Drawable
 import android.os.Build
 import android.os.Bundle
@@ -29,7 +30,8 @@ private data class LaunchableApp(
     val label: String,
     val icon: Drawable,
     val signingCertificateSha256: String?,
-    val versionName: String
+    val versionName: String,
+    val storageLabel: String
 )
 
 class MainActivity : Activity() {
@@ -241,13 +243,15 @@ class MainActivity : Activity() {
         @Suppress("DEPRECATION")
         val resolved = packageManager.queryIntentActivities(intent, 0)
         apps = resolved.mapNotNull { info ->
-            val packageName = info.activityInfo?.packageName ?: return@mapNotNull null
+            val applicationInfo = info.activityInfo?.applicationInfo ?: return@mapNotNull null
+            val packageName = applicationInfo.packageName
             if (packageName == applicationContext.packageName) return@mapNotNull null
             val label = info.loadLabel(packageManager)?.toString()?.takeIf { it.isNotBlank() } ?: packageName
             val digest = AppIdentity.signingCertificateSha256(this, packageName)
             @Suppress("DEPRECATION")
             val version = try { packageManager.getPackageInfo(packageName, 0).versionName ?: "" } catch (_: Exception) { "" }
-            LaunchableApp(packageName, label, info.loadIcon(packageManager), digest, version.take(80))
+            val storageLabel = if ((applicationInfo.flags and ApplicationInfo.FLAG_EXTERNAL_STORAGE) != 0) "SD card" else "Phone storage"
+            LaunchableApp(packageName, label, info.loadIcon(packageManager), digest, version.take(80), storageLabel)
         }.distinctBy { it.packageName }.sortedBy { it.label.lowercase() }
         drawAppRows()
     }
@@ -317,7 +321,7 @@ class MainActivity : Activity() {
             }
             row.addView(draft)
             row.addView(TextView(this).apply {
-                text = "Version " + app.versionName + if (digest == null) " · signer unavailable" else ""
+                text = "Version " + app.versionName + " · " + app.storageLabel + if (digest == null) " · signer unavailable" else ""
                 textSize = 10f
                 setTextColor(0xff68758d.toInt())
             })

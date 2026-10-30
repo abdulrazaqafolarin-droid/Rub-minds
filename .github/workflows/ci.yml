@@ -328,6 +328,34 @@ jobs:
       - name: Run Backroom managed-browser end-to-end tests
         run: npm run test:backroom:browser
 
+
+  android-companion:
+    # Build the native companion independently from the web bundle.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
+        with:
+          gradle-version: 8.10.2
+      - name: Install Android SDK platform
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Compile and unit-test the Android companion
+        working-directory: android-companion
+        run: |
+          gradle --no-daemon \
+            -PSUPABASE_URL=https://rubminds-ci.supabase.co \
+            -PSUPABASE_PUBLISHABLE_KEY=sb_publishable_ci_placeholder \
+            :app:testDebugUnitTest :app:assembleDebug
+
   local-supabase-stack:
     # Run validation on draft PRs as well; draft status does not imply a pass.
     runs-on: ubuntu-latest

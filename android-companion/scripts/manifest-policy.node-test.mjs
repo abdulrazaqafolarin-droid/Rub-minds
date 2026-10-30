@@ -72,3 +72,11 @@ test("keyboard retains exact-package, signer and no-submit restrictions", async 
   assert.match(policy, /grant\.signingCertificateSha256 == currentSigningCertificateSha256/);
   assert.match(policy, /!isSensitiveInput\(inputType\)/);
 });
+
+test("installed apps on external storage are labelled without requesting file access", async () => {
+  const activity = await read("app/src/main/java/app/rubminds/companion/MainActivity.kt");
+  const manifest = await read("app/src/main/AndroidManifest.xml");
+  assert.match(activity, /ApplicationInfo\.FLAG_EXTERNAL_STORAGE/);
+  assert.match(activity, /"SD card"/);
+  assert.doesNotMatch(manifest, /MANAGE_EXTERNAL_STORAGE|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE/);
+});

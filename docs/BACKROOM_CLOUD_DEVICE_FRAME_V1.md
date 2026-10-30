@@ -56,3 +56,11 @@ Decision: keep the virtualization engine behind a future adapter and do not copy
 This branch currently implements launcher-visible app inventory only. The false capability flags in `DEVICE_CAPABILITIES_V1` are deliberate: there is no virtual instance, screen or touch driver yet.
 
 For Preview acceptance, set the Edge Function's `BACKROOM_DEVICE_ALLOWED_ORIGINS` to the exact HTTPS Preview origin as well as the production origin. Do not use wildcard origins. The default value intentionally allows production only.
+
+## User-facing route decision — 2026-10-30
+
+The normal `?backroom=1` entry now opens the cloud Device Frame directly. The older paired-local-host simulator is no longer linked from the Backroom navigation. Its source and isolated tests remain in the repository as a prototype, but it is not part of the normal Device Frame route. This is intentional: the phone and desktop runtimes must connect outbound to the cloud, not be controlled through localhost.
+
+The Android inventory labels installed apps on external SD storage when Android reports the package's external-storage flag. It does not browse arbitrary APK files on removable media or request broad file access. Uninstalled APK import is a separate future feature requiring a user-picked document URI and a compatible virtualization engine.
+
+A separate CI job now builds the native Android module with JDK 17 / Gradle 8.10.2 / Android SDK 35 and runs the Kotlin/JUnit policy tests. It uses placeholder public build configuration only; no production secret is passed to CI.
