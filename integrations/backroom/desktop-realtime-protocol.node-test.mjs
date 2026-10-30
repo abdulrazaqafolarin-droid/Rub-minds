@@ -10,13 +10,13 @@ test('creates immutable scoped messages and prevents scope override',()=>{
  assert.throws(()=>buildScopedDeviceMessage({},{deviceId:'bad',roomId}),/scope/);
 });
 test('creates commands with fresh UUIDs, timestamp and immutable scope',()=>{
- const message=createDeviceCommand('launch_app',{appId:'app-1'},{deviceId,roomId,now:5000,requestId});
+ const message=createDeviceCommand('launch_app',{appId:'123e4567-e89b-42d3-a456-426614174003'},{deviceId,roomId,now:5000,requestId});
  assert.deepEqual(message,{appId:'app-1',requestId,action:'launch_app',issuedAt:5000,roomId,deviceId});
  assert.throws(()=>createDeviceCommand('write_terminal',{}, {deviceId,roomId}),/Invalid/);
  assert.throws(()=>createDeviceCommand('launch_app',{issuedAt:1},{deviceId,roomId}),/Invalid/);
 });
 test('rejects stale, future, replay-shaped and cross-device or cross-room envelopes',()=>{
- const message=createDeviceCommand('view_offer',{sessionId:requestId},{deviceId,roomId,now:10_000,requestId});
+ const message=createDeviceCommand('view_offer',{sessionId:requestId,offer:{sdp:'v=0\\r\\n'}},{deviceId,roomId,now:10_000,requestId});
  assert.equal(validateDeviceCommand(message,{deviceId,roomId,now:10_000}),true);
  assert.equal(validateDeviceCommand(message,{deviceId,roomId,now:50_001}),false);
  assert.equal(validateDeviceCommand({...message,issuedAt:50_000},{deviceId,roomId,now:10_000}),false);
@@ -32,6 +32,7 @@ test('classifies grant responses distinctly so draft permission cannot masquerad
  assert.equal(classifyDeviceResponse({ok:true,capability:'launch',pid:123}),'launch');
  assert.equal(classifyDeviceResponse({ok:true,expiresSeconds:60}),null);
  assert.equal(classifyDeviceResponse({ok:false,capability:'control'}),'error');
+ assert.equal(classifyDeviceResponse({ok:true,capability:'admin'}),null);
 });
 test('ICE candidates are bounded per session and globally and are drained once',()=>{
  const queue=new Map();
@@ -45,4 +46,12 @@ test('ICE candidates are bounded per session and globally and are drained once',
    queueIceCandidate(queue,id,{candidate:'x'});
  }
  assert.equal(queueIceCandidate(queue,roomId,{candidate:'too-many-sessions'}),false);
+});
+
+test('rejects invalid app IDs, missing session IDs and oversized WebRTC SDP',()=>{
+ assert.throws(()=>createDeviceCommand('launch_app',{appId:'not-a-uuid'},{deviceId,roomId}),/Invalid/);
+ assert.throws(()=>createDeviceCommand('terminal_start',{sessionId:requestId,offer:{sdp:''}},{deviceId,roomId}),/Invalid/);
+ assert.throws(()=>createDeviceCommand('view_offer',{sessionId:requestId,offer:{sdp:'x'.repeat(65537)}},{deviceId,roomId}),/Invalid/);
+ assert.throws(()=>createDeviceCommand('request_control',{sessionId:'bad'},{deviceId,roomId}),/Invalid/);
+ assert.throws(()=>createDeviceCommand('stop_session',{sessionId:requestId,terminalSessionId:'bad'},{deviceId,roomId}),/Invalid/);
 });
