@@ -309,10 +309,13 @@ async fn revoke_desktop_device(
 
 #[tauri::command]
 async fn sync_desktop_app_inventory(
+    app: AppHandle,
     supabase_url: String,
     publishable_key: String,
-    apps: Vec<ApprovedAppSummary>,
 ) -> Result<usize, String> {
+    // Inventory originates exclusively from the native, locally approved app
+    // registry. The WebView cannot submit or substitute arbitrary app records.
+    let apps = load_apps(&app)?;
     if apps.len() > 100 {
         return Err("Select no more than 100 desktop applications".into());
     }
@@ -322,7 +325,7 @@ async fn sync_desktop_app_inventory(
            app.label.len() > 120 || app.sha256.len() != 64 ||
            !app.sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) ||
            !seen.insert(app.id.clone()) {
-            return Err("Invalid selected desktop application inventory".into());
+            return Err("Invalid locally approved desktop application inventory".into());
         }
     }
     let token = vault_get("device-token")?.ok_or("This computer is not registered")?;
