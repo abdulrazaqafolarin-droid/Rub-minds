@@ -23,8 +23,10 @@ function validCandidate(value){
   (value.usernameFragment===undefined||value.usernameFragment===null||typeof value.usernameFragment==='string'&&value.usernameFragment.length<=256);
 }
 export function validateDesktopCommand(value,{now=Date.now(),maxAgeMs=30_000}={}){
- if(!value||typeof value!=='object'||Array.isArray(value)||!isUuid(value.deviceId)||!isUuid(value.roomId)||
-    !isUuid(value.requestId)||!Number.isSafeInteger(value.issuedAt)||!Number.isSafeInteger(now)||
+ if(!value||typeof value!=='object'||Array.isArray(value)||
+    Object.keys(value).some(key=>!['deviceId','roomId','requestId','issuedAt','command','details'].includes(key))||
+    !['deviceId','roomId','requestId','issuedAt','command','details'].every(key=>Object.hasOwn(value,key))||
+    !isUuid(value.deviceId)||!isUuid(value.roomId)||!isUuid(value.requestId)||!Number.isSafeInteger(value.issuedAt)||!Number.isSafeInteger(now)||
     !Number.isSafeInteger(maxAgeMs)||maxAgeMs<1_000||maxAgeMs>120_000||
     Math.abs(now-value.issuedAt)>maxAgeMs||!COMMANDS.has(value.command)||
     !value.details||typeof value.details!=='object'||Array.isArray(value.details))return null;
