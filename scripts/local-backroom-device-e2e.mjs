@@ -182,6 +182,19 @@ expectStatus(desktopStatus, 200, "registered desktop device status");
 assert.equal(desktopStatus.body.deviceId, desktopDeviceId);
 assert.equal(desktopStatus.body.status, "active");
 
+const selectedDesktopApp = {
+  appId: randomUUID(),
+  label: "Backroom CI Desktop App",
+  sha256: "c".repeat(64),
+};
+const desktopInventory = await edge("desktop/inventory", { apps: [selectedDesktopApp] }, desktopToken);
+expectStatus(desktopInventory, 200, "desktop selected-app inventory sync");
+assert.equal(desktopInventory.body.synced, 1);
+const invalidDesktopInventory = await edge("desktop/inventory", {
+  apps: [{ ...selectedDesktopApp, executablePath: "C:\\\\Users\\\\Private\\\\app.exe" }]
+}, desktopToken);
+expectStatus(invalidDesktopInventory, 400, "reject executable paths from desktop inventory");
+
 const memberDesktopRegistration = await edge("desktop/register", {
   ...desktopRegistrationFields, deviceId: randomUUID()
 }, memberToken);
@@ -282,6 +295,9 @@ expectStatus(ownerDesktopInventory, 200, "owner desktop device listing");
 const ownerDesktopRecord = ownerDesktopInventory.body.devices.find(item => item.device_id === desktopDeviceId);
 assert.equal(ownerDesktopRecord?.status, "active");
 assert.equal(ownerDesktopRecord?.platform, "windows");
+assert.equal(ownerDesktopRecord?.desktopApps?.length, 1);
+assert.equal(ownerDesktopRecord?.desktopApps?.[0]?.app_label, selectedDesktopApp.label);
+assert.equal(ownerDesktopRecord?.desktopApps?.[0]?.executable_sha256, selectedDesktopApp.sha256);
 assert.doesNotMatch(JSON.stringify(ownerDesktopInventory.body), new RegExp(desktopToken),
   "device token must never appear in an owner device listing");
 assert.doesNotMatch(JSON.stringify(ownerDesktopInventory.body), /token_digest|device_public_key/i,
@@ -290,12 +306,18 @@ assert.doesNotMatch(JSON.stringify(ownerDesktopInventory.body), /token_digest|de
 const memberDesktopInventory = await edge("room/devices", { roomId }, memberToken);
 expectStatus(memberDesktopInventory, 200, "member desktop device visibility");
 assert.ok(memberDesktopInventory.body.devices.some(item => item.device_id === desktopDeviceId));
+const memberDesktopRecord = memberDesktopInventory.body.devices.find(item => item.device_id === desktopDeviceId);
+assert.equal(memberDesktopRecord?.desktopApps?.length, 1);
 
 const desktopRevoke = await edge("owner/revoke", { deviceId: desktopDeviceId, roomId }, ownerToken);
 expectStatus(desktopRevoke, 200, "desktop device revocation");
 const desktopRevokedStatus = await edge("device/status", {}, desktopToken);
 expectStatus(desktopRevokedStatus, 200, "revoked desktop credential status");
 assert.equal(desktopRevokedStatus.body.status, "revoked");
+const desktopAfterRevoke = await edge("room/devices", { roomId }, ownerToken);
+expectStatus(desktopAfterRevoke, 200, "desktop app inventory after revocation");
+const revokedDesktopRecord = desktopAfterRevoke.body.devices.find(item => item.device_id === desktopDeviceId);
+assert.deepEqual(revokedDesktopRecord?.desktopApps, [], "revocation must delete desktop app inventory");
 const desktopBlockedInventory = await edge("device/inventory", { apps: [] }, desktopToken);
 expectStatus(desktopBlockedInventory, 401, "revoked desktop inventory denial");
 
