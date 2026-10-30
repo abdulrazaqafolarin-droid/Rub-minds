@@ -1,0 +1,134 @@
+/**
+ * Server-side adapter for the private Supabase Backroom wake queue.
+ * Never import this module from browser UI code or pass it a public/anon client.
+ * The migration grants its RPCs to service_role only.
+ */
+import {createHash} from 'node:crypto';
+import {validId,isCanonicalWakePrompt} from './coordination-core.mjs';
+const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const HEX64=/^[0-9a-f]{64}$/;
+const LEASE=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const ERROR_CODES=new Set(['target_unavailable','approval_required','provider_busy','transport_error','result_unconfirmed','authorization_denied','other']);
+function requireMatch(value,re,name){if(typeof value!=='string'||!re.test(value))throw new TypeError('Invalid '+name);return value;}
+function requireLabel(value,name,max=256){if(typeof value!=='string'||value.trim()===''||value.length>max||/[\u0000-\u001f]/.test(value))throw new TypeError('Invalid '+name);return value;}
+function requirePrompt(value,eventId){
+ if(typeof value!=='string'||value.length>12000||!isCanonicalWakePrompt(value,eventId)||/[\u0000-\u0009\u000b-\u001f\u007f]/.test(value)){
+  throw new TypeError('Invalid prompt');
+ }
+ return value;
+}
+function requireInt(value,name,min,max){if(!Number.isSafeInteger(value)||value<min||value>max)throw new RangeError('Invalid '+name);return value;}
+function requireBoolean(value,name){if(typeof value!=='boolean')throw new TypeError('Invalid '+name);return value;}
+function rpcError(name,error){const code=typeof error?.code==='string'?error.code:'unknown';const e=new Error('Backroom queue RPC '+name+' failed ('+code+')');e.code='BACKROOM_QUEUE_RPC';throw e;}
+async function call(client,name,args){const response=await client.rpc(name,args);if(!response||response.error)rpcError(name,response?.error);return response.data;}
+export function createWakeKey(eventId,participantId,groupId,bindingId){
+ requireLabel(eventId,'eventId',128);requireLabel(participantId,'participantId');requireLabel(groupId,'groupId');requireLabel(bindingId,'bindingId');
+ // Match the SQL message-trigger key exactly: [room, event, participant, binding].
+ // PostgreSQL UUID casts canonicalize case, so normalize UUID-shaped values here too.
+ const canonical=value=>UUID.test(value)?value.toLowerCase():value;
+ return createHash('sha256').update(JSON.stringify([
+  canonical(groupId),canonical(eventId),canonical(participantId),canonical(bindingId)
+ ]),'utf8').digest('hex');
+}
+export class SupabaseBackroomWakeStore{
+ constructor({client}={}){
+  if(typeof window!=='undefined')throw new Error('SupabaseBackroomWakeStore is server-only');
+  if(!client||typeof client.rpc!=='function')throw new TypeError('Privileged server-side Supabase RPC client required');
+  this.client=client;
+ }
+ async enqueue(input){
+  const p=input?.plan?.job;
+  if(input?.plan?.action!=='queue'||!p||p.requestedAction!=='wake')throw new TypeError('Eligible canonical wake plan required');
+  const target=input.target,binding=input.binding;
+  if(!target||!binding)throw new TypeError('Registered target and binding required');
+  const args={
+   p_job_key:requireMatch(input.jobKey??createWakeKey(p.eventId,p.participantId,p.groupId,p.bindingId),HEX64,'jobKey'),
+   p_owner_id:requireMatch(input.ownerId,UUID,'ownerId'),
+   p_room_id:requireMatch(p.groupId,UUID,'groupId'),
+   p_participant_id:requireMatch(p.participantId,UUID,'participantId'),
+   p_host_id:requireMatch(target.hostId,UUID,'hostId'),
+   p_space_id:requireLabel(target.spaceId,'spaceId',128),
+   p_session_id:requireLabel(p.sessionId,'sessionId',256),
+   p_session_digest:requireMatch(input.sessionDigest,HEX64,'sessionDigest'),
+   p_binding_id:requireMatch(p.bindingId,UUID,'bindingId'),
+   p_target_id:requireLabel(p.targetId,'targetId',128),
+   p_target_identity_fingerprint:requireLabel(target.identityFingerprint,'identityFingerprint',512),
+   p_target_revision:requireInt(target.revision,'targetRevision',1,2147483647),
+   p_event_id:requireLabel(p.eventId,'eventId',256),
+   p_prompt:requirePrompt(p.prompt,p.eventId),
+   p_ttl_seconds:input.ttlSeconds===undefined?3600:requireInt(input.ttlSeconds,'ttlSeconds',60,86400),
+  };
+  if(binding.groupId!==p.groupId||binding.participantId!==p.participantId||binding.sessionId!==p.sessionId||
+     binding.bindingId!==p.bindingId||binding.targetId!==p.targetId||target.id!==p.targetId||
+     target.roomId!==p.groupId||target.sessionId!==p.sessionId)throw new Error('Wake target identity/scope mismatch');
+  if(!Array.isArray(binding.capabilities)||!binding.capabilities.includes('wake'))throw new Error('Explicit wake capability required');
+  const data=await call(this.client,'enqueue_backroom_wake_job',args);
+  if(!data||typeof data!=='object'||!UUID.test(data.job_id)||typeof data.created!=='boolean'||
+     !['pending','leased','acknowledged','ignored','failed','cancelled','expired'].includes(data.state))throw new Error('Queue returned malformed enqueue result');
+  return Object.freeze({jobId:data.job_id,created:data.created,state:data.state,jobKey:args.p_job_key});
+ }
+ async claim({hostId,sessionDigest,bindingId,limit=5,leaseSeconds=30}={}){
+  const data=await call(this.client,'claim_backroom_wake_jobs',{
+   p_host_id:requireMatch(hostId,UUID,'hostId'),p_session_digest:requireMatch(sessionDigest,HEX64,'sessionDigest'),p_binding_id:requireMatch(bindingId,UUID,'bindingId'),
+   p_limit:requireInt(limit,'limit',1,20),p_lease_seconds:requireInt(leaseSeconds,'leaseSeconds',10,120),
+  });
+  if(!Array.isArray(data))throw new Error('Queue returned malformed claim result');
+  return data.map(row=>{
+   if(!row||!UUID.test(row.out_job_id)||!HEX64.test(row.out_job_key)||!LEASE.test(row.out_lease_token)||
+      !UUID.test(row.out_owner_id)||!UUID.test(row.out_room_id)||!UUID.test(row.out_participant_id)||
+      !Number.isSafeInteger(row.out_attempt_count)||row.out_attempt_count<1||row.out_attempt_count>5||
+      typeof row.out_target_identity_fingerprint!=='string'||row.out_target_identity_fingerprint.trim()===''||row.out_target_identity_fingerprint.length>512||
+      !Number.isSafeInteger(row.out_target_revision)||row.out_target_revision<1||
+      typeof row.out_prompt!=='string'||row.out_prompt.length>12000||!isCanonicalWakePrompt(row.out_prompt,row.out_event_id)||
+      !HEX64.test(row.out_prompt_digest)||
+      createHash('sha256').update(row.out_prompt,'utf8').digest('hex')!==row.out_prompt_digest||
+      typeof row.out_event_id!=='string'||row.out_event_id.trim()===''||row.out_event_id.length>256||
+      typeof row.out_space_id!=='string'||row.out_space_id.trim()===''||row.out_space_id.length>128||
+      typeof row.out_session_id!=='string'||row.out_session_id.trim()===''||row.out_session_id.length>256||
+      !UUID.test(row.out_binding_id)||
+      typeof row.out_target_id!=='string'||row.out_target_id.trim()===''||row.out_target_id.length>128||
+      !Number.isFinite(Date.parse(row.out_expires_at)))throw new Error('Queue returned malformed lease');
+   return Object.freeze({jobId:row.out_job_id,jobKey:row.out_job_key,eventId:row.out_event_id,hostId,sessionDigest,
+    ownerId:row.out_owner_id,roomId:row.out_room_id,participantId:row.out_participant_id,
+    spaceId:row.out_space_id,sessionId:row.out_session_id,bindingId:row.out_binding_id,
+    targetId:row.out_target_id,targetIdentityFingerprint:row.out_target_identity_fingerprint,
+    targetRevision:row.out_target_revision,prompt:row.out_prompt,promptDigest:row.out_prompt_digest,
+    attemptCount:row.out_attempt_count,expiresAt:row.out_expires_at,leaseToken:row.out_lease_token});
+  });
+ }
+ async acknowledge({jobId,hostId,sessionDigest,bindingId,leaseToken,outcome='acknowledged'}={}){
+  requireMatch(jobId,UUID,'jobId');requireMatch(hostId,UUID,'hostId');requireMatch(sessionDigest,HEX64,'sessionDigest');requireMatch(bindingId,UUID,'bindingId');
+  requireMatch(leaseToken,LEASE,'leaseToken');
+  if(!['acknowledged','ignored'].includes(outcome))throw new TypeError('Invalid acknowledgement outcome');
+  return requireBoolean(await call(this.client,'ack_backroom_wake_job',{
+   p_job_id:jobId,p_host_id:hostId,p_session_digest:sessionDigest,p_binding_id:bindingId,p_lease_token:leaseToken,p_outcome:outcome,
+  }),'acknowledgement result');
+ }
+ async retry({jobId,hostId,sessionDigest,bindingId,leaseToken,retryAfterSeconds=5,errorCode='other'}={}){
+  requireMatch(jobId,UUID,'jobId');requireMatch(hostId,UUID,'hostId');requireMatch(sessionDigest,HEX64,'sessionDigest');requireMatch(bindingId,UUID,'bindingId');
+  requireMatch(leaseToken,LEASE,'leaseToken');requireInt(retryAfterSeconds,'retryAfterSeconds',1,300);
+  if(!ERROR_CODES.has(errorCode))throw new TypeError('Invalid errorCode');
+  const data=await call(this.client,'retry_backroom_wake_job',{
+   p_job_id:jobId,p_host_id:hostId,p_session_digest:sessionDigest,p_binding_id:bindingId,p_lease_token:leaseToken,
+   p_retry_after_seconds:retryAfterSeconds,p_error_code:errorCode,
+  });
+  if(!['pending','failed'].includes(data))throw new Error('Retry rejected: lease is invalid, expired, replayed, or job is no longer retryable');
+  return data;
+ }
+ async cancel({jobId,ownerId}={}){
+  requireMatch(jobId,UUID,'jobId');requireMatch(ownerId,UUID,'ownerId');
+  return requireBoolean(await call(this.client,'cancel_backroom_wake_job',{p_job_id:jobId,p_owner_id:ownerId}),'cancellation result');
+ }
+ async expire(){
+  const count=await call(this.client,'expire_backroom_wake_jobs',{});
+  if(!Number.isSafeInteger(count)||count<0)throw new Error('Queue returned invalid expiry count');
+  return count;
+ }
+ async purge({olderThanDays=14,limit=1000}={}){
+  requireInt(olderThanDays,'olderThanDays',1,90);
+  requireInt(limit,'limit',1,5000);
+  const count=await call(this.client,'purge_backroom_wake_jobs',{p_older_than_days:olderThanDays,p_limit:limit});
+  if(!Number.isSafeInteger(count)||count<0)throw new Error('Queue returned invalid purge count');
+  return count;
+ }
+}

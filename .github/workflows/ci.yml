@@ -8,8 +8,10 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
 jobs:
   mcp-migration:
+    # Run validation on draft PRs as well; draft status does not imply a pass.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -283,6 +285,7 @@ jobs:
           $test$;
           SQL
   build:
+    # Run validation on draft PRs as well; draft status does not imply a pass.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -302,12 +305,16 @@ jobs:
       - run: npm run build
       - run: npm run test
       - run: npm run test:runtime
+      - name: Test Backroom target registry, dispatcher and local host
+        run: npm run test:backroom
       - name: Set up Deno for Supabase Edge Functions
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
         with:
           deno-version: v2.x
       - name: Test public rate-limit helper
         run: deno test supabase/functions/_shared/public-rate-limit.deno-test.ts
+      - name: Type-check Backroom coordination Edge Functions
+        run: deno check supabase/functions/backroom-config/index.ts supabase/functions/backroom-wake/index.ts
       - name: Type-check public invite Edge Functions
         run: deno check supabase/functions/redeem-ai-invite/index.ts supabase/functions/ai-invite-discovery/index.ts
       - name: Type-check session-memory Edge Function
@@ -318,8 +325,11 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Run controlled browser proof of concept
         run: npm run test:browser
+      - name: Run Backroom managed-browser end-to-end tests
+        run: npm run test:backroom:browser
 
   local-supabase-stack:
+    # Run validation on draft PRs as well; draft status does not imply a pass.
     runs-on: ubuntu-latest
     # GitHub-hosted runners are isolated; serialize only superseded runs of the same PR.
     # A global non-cancelling group can leave one queued job blocking every future local-stack test.

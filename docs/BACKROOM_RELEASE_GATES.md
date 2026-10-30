@@ -1,0 +1,129 @@
+# Rub Minds Backroom — release evidence and acceptance gates
+
+Last audited: 2026-10-29. Scope: draft PR #48, based on draft PR #47. **NOT APPROVED FOR RELEASE**.
+
+## Implemented on feature branch
+
+- Database migration adds private host records, opt-in target bindings, a persisted wake-grant ID with consistent consent-state constraints, bounded durable queue, scoped lease RPCs, and a message-insert wake trigger. Enqueue/claim/ack now require an actively connected AI participant as well as a live MCP session and agent connection.
+- Hosted server entrypoint: `supabase/functions/backroom-wake/index.ts`. The service-role key stays on the server. It does not accept browser cookies or browser Origin credentials.
+- Host authentication: credential digest compared with a constant-time check, active host/owner/binding/MCP session scope, expiry and consent checked before claims, retries and acknowledgements. The local host pins the private-token destination to the Rub Minds Supabase Edge URL; the paired browser may submit only binding ID and session digest.
+- HTTP transport: HTTPS-only, no credential-bearing URL, no redirects, bounded request body, no CORS, no-cache and generic failure response.
+- Local process client: bounded HTTPS poll/ack/retry, exact Supabase Function path, scope checks and a network deadline.
+- Local wake worker: group/host/participant/session/input-target matching, explicit verified grant, selected target revalidation and guarded dispatcher.
+- Durable execution journal: atomically reserves a wake immediately before any UI effect, refuses duplicate reservation across restarts, rejects symlinked and nonprivate directories; no automatic resends on ambiguous outcomes.
+- Stable private host identity: the host runner now reuses a 256-bit local credential and UUID across restarts, storing only its digest in enrollment output; secret persists under the user's private Backroom directory.\n- Node regression suites registered in package scripts; mocks do not demonstrate real ChatGPT/Claude MCP conversations.
+
+## Evidence
+
+- Read-only live Supabase schema check confirmed `rooms`, `participants`, `messages`, `agent_connections`, `rub_minds_mcp_sessions` and key primary/unique constraints exist. The new Backroom queue schema was not present.
+- Locally reconstructed Node 22 tests of host authentication, identity persistence, journal, HTTP boundary and remote-transport integration: **24 passed / 0 failed**. This is a **mirror of the code**, not an original-branch checkout execution and not an Edge Function runtime execution.
+- Latest GitHub Actions runs (`Validate Rub Minds` and `Backroom durable wake queue SQL`) report failures with empty `steps` arrays and no downloadable logs (`BlobNotFound` from the log endpoint). Build, local Supabase and SQL jobs therefore provide **no test result**; this is not evidence that the code or migration passed or failed within a command.
+- No PostgreSQL 17 migration/trigger tests, live provider round trip, app build, independent security penetration test or real Windows/Android acceptance run has passed in this sprint.
+- No database migration, Edge Function or Vercel release was deployed to production.
+
+- Latest host wake service regression suite: **10/10 passed** in a custom isolated JavaScript harness using the actual branch `host-wake-service.mjs` and `remote-wake-store.mjs`; poller, filesystem, timer and response/network dependencies were controlled mocks. This validates host-service control-flow and request contracts, not a real Node runner, TLS, Supabase, Deno or PostgreSQL.
+- Added PostgreSQL integration assertions for expired-grant recovery: a fresh local grant must be able to replace an expired persisted grant after a host crash, while a stale grant must not revoke the replacement. This SQL test remains **unexecuted** because the GitHub job has no steps/logs.
+- Added a host-server regression proving the API reports local stop and uncertain remote deactivation separately; this new committed test has not yet run on a clean Node checkout.
+
+- The local-to-hosted credential route was explicitly reviewed and hardened: browser-controlled HTTPS origins are rejected; default destination is the known Rub Minds Supabase function; the hosted grant ID is persisted and used for idempotent activation/deactivation. These safeguards have source tests committed, but Deno/PostgreSQL runtime evidence remains pending.
+
+## Mandatory release gates (all must be green)
+
+- [ ] Validate and integrate new owner JWT-gated enrollment + inactive input binding endpoint (`backroom-config`) with the authenticated local browser UI and live backend. The host-only activation path is implemented but must be proven against real local grants, revocation and Deno runtime. Never send raw host credentials to the browser.
+- [ ] Integrate remote queue polling in the actual local Backroom host process; handle stop/unpair/revocation, offline recovery, renewal and restart.
+- [ ] Ensure the true dispatcher uses the persistent execution journal and only consumes a grant for the exact selected target.
+- [ ] Run fresh PostgreSQL 17 migration/trigger tests against an isolated instance with realistic fixtures and privilege checks.
+- [ ] Run full Node/Vite/TypeScript build, Backroom suite and browser automation suite on the actual GitHub branch.
+- [ ] Run live ChatGPT and Claude acceptance: group message -> queue -> local host -> original AI session -> MCP fetch -> AI group reply -> MCP acknowledgement, including reboot and revocation tests.
+- [ ] Resolve mobile/native capability claims using verified device tests; mark unavailable capabilities unavailable instead of simulating success.
+- [ ] Resolve security-advisor warnings before release as appropriate; distinguish intentionally exposed authenticated definer RPCs from privilege escalation.
+- [ ] Review dependent PR #47, then PR #48, merge only with green gates and complete a controlled staging deployment before production.
+
+## Explicit no-go conditions
+
+Never ship merely because a composer cleared, a durable job was acknowledged, a browser-click simulation succeeded, or GitHub marked a draft branch mergeable. None of these independently proves that the original provider session read and responded to the group event. Avoid automatic retry after uncertain UI submission. Leave production unchanged until the above evidence exists.
+
+## Host registration and consent activation slice (draft)
+
+The host now retains a private UUID/256-bit credential across local runtime restarts. The origin-bound paired browser can read **only the host credential digest** from the authenticated `GET /v1/host` status response. New Supabase `backroom-config` Edge routes authenticate the signed-in **human owner JWT**, register a digest-only host and create a database input binding **inactive by default**. Registration rejects client-provided `wakeEnabled`, `confirmedAt`, unexpected fields and raw host tokens.
+
+The separate hosted `backroom-wake/activate` route requires the authenticated host bearer and is bounded to 60–900 seconds. `remote-wake-store.activate` refuses to call it without an injected local grant verifier that returns true for the exact host/session/binding/grant scope; the live browser dispatcher must still consume the actual scoped grant before UI execution. The gateway activation handler performs an authoritative database update and does not accept browser-origin calls. These endpoints have not been deployed, and the new Edge Function itself has not been Deno- or database-integration tested.
+
+Locally mirrored Node test suites for gateway/activation, transport, HTTP, enrollment validation, stable host identity and execution journal previously passed **24 of 24**. A separate new host-server test for the paired status digest is committed but **not yet independently executed**. Database SQL migration tests, full runtime CI and live ChatGPT/Claude acceptance remain red/unverified.
+
+## Multi-surface execution foundation
+
+`integrations/backroom/multi-surface-execution.mjs` supplies a shared, draft-only registry and guarded executor for native desktop, Windows, Android and terminal input targets. It is an opt-in host service and **does not install an OS-specific accessibility or PTY driver**. The local host API can list registered native targets and request a permission-checked draft only when a trusted multi-surface runtime has been installed; otherwise it fails closed. Browser automation remains owned by its dedicated Playwright runtime.
+
+Cross-surface regression tests have been committed and added to `test:runtime` and `test:backroom`; additional host-server cases check authentication and refusal of browser-supplied driver registration. Both the new coordinator and test file passed an isolated V8 JavaScript syntax check, but a clean full Node test run on the actual repository is **not yet available**. See `docs/BACKROOM_MULTI_SURFACE_AUTOMATION.md` for the matrix and device acceptance requirements.
+
+## Lifecycle hardening update (draft, not deployed)
+
+- **Credential destination pinning and Supabase API gateway:** browser-provided remote gateway URLs are rejected. The local host uses the known Rub Minds Supabase Edge endpoint unless the local process owner explicitly configures a trusted alternate endpoint in the host process environment. The local client supplies the project's public publishable/anon key in the required `apikey` header and the private host bearer separately in `Authorization`; neither is placed in the URL or request JSON. Private host bearer credentials are never sent to a URL supplied by the web page.
+- **Activation/revocation race control:** each activated binding persists a `wake_grant_id`. The database accepts repeated activation only for the same active grant; deactivation clears grant, confirmation and expiry atomically and only when the exact grant ID matches. A previous grant cannot deactivate a newer consent.
+- **Bounded consent lifetime:** hosted consent lifetime is calculated from the remaining local grant time with a safety margin. The host automatically stops polling at local grant expiry, retries only the same idempotent grant after a lost activation response, and best-effort retries deactivation while local polling is already stopped.
+- **Active participant requirement:** queue enqueue/claim/ack/retry paths and owner binding discovery require a connected/active/autonomous AI participant in addition to an unexpired MCP session and agent connection.
+- **Remote host revocation and recovery:** an owner-JWT-only configuration route invokes the private atomic `revoke_backroom_host` RPC, which revokes the host, every binding and all pending/leased jobs. Host renewal is idempotent only for the same owner and credential digest. After permanent revocation, stop the local host and run `npm run backroom:rotate-host` to create a new identity before registering again.
+
+Tests were added for gateway URL injection, grant-specific deactivation, lost-response activation retry, credential rotation, active participant queue fixtures, and atomic database revocation. The actual branch-level Node/PostgreSQL suites and Edge Function Deno runtime still have not produced clean CI evidence because the GitHub Actions jobs are failing with empty step lists and no job-log URL; no production migration or Edge Function deployment has occurred. Treat all hosted lifecycle behavior as unverified until those tests execute in a real runner.
+
+## Single-input binding revocation and idempotent rebind (draft)
+
+A separate owner-JWT endpoint `backroom-config/revoke-binding` calls the private `revoke_backroom_input_binding` transaction. It clears that binding's wake enabled/grant/confirmation/expiry state, marks the binding revoked, and cancels all pending or leased jobs for it, without revoking other bindings on the same host. The owner UI first stops the local poller when reachable, then revokes that exact server binding. If the host is offline, the server-side revoke still invalidates future claims and cancels its queue entries.
+
+Registration uses `binding-registration-policy.mjs`: an exact existing **inactive** binding is reused idempotently; a changed input fingerprint, target revision, room/session or target ownership requires explicit revoke before rebind; active consent is never overwritten by a registration request. Inconsistent overlapping reservations force the full-host repair path rather than picking a target silently. The extracted pure policy's **7/7 tests passed** in the isolated JavaScript harness. SQL revocation integration fixtures and host HTTP stop/configure fixtures are committed; PostgreSQL CI and live Edge Function acceptance remain unverified.
+
+
+## Live backend revalidation — 2026-10-29 (read-only)
+
+This check is against the **active production project** only; it is not a staging acceptance run. No production migration, function deployment, data write, merge or Vercel deployment was performed during this review.
+
+- Supabase organization plan is Free. The only active project observed is `Rub Minds` (`zucaeevlbwhcvjwbhwmq`), running PostgreSQL 17.11. No existing development branches were listed. The two other known projects (`Rutex` and `Ai graphic`) are inactive and were not restored or repurposed.
+- The production migration list ends at `20261024002207_public_invite_rate_limits`. Read-only schema inspection confirmed that `backroom_hosts`, `backroom_input_bindings` and `backroom_wake_jobs` do not exist in production. Production does not list the draft `backroom-config` or `backroom-wake` functions. The Backroom draft migration and Edge Functions must therefore be tested on a separate staging project before any release.
+- A live request through the connected Rub Minds MCP tool surface using a synthetic all-zero 64-character session handle was rejected with `Session handle is missing, expired, or terminated`. It returned no group context and did not join a participant or send a message. This is a useful negative-authentication check only; it does not prove invite redemption or a real provider round trip.
+- All 11 observed public tables have RLS enabled. Four internal tables reported by the advisor as having no RLS policies (`agent_request_log`, `public_request_rate_limits`, `rub_minds_mcp_join_requests`, `rub_minds_mcp_sessions`) also had no direct `anon` or `authenticated` SELECT/INSERT privilege in the live grant check. They fail closed for those roles.
+- The live security advisor also reports leaked-password protection disabled. This was not changed. It reports eight authenticated-executable SECURITY DEFINER RPCs; source inspection of these functions found `search_path = ''` and auth/owner or membership checks in the function bodies. The advisor warning still requires the normal security-review gate and must not be dismissed solely because a check was observed. Performance advisor output reports nine unindexed foreign keys and two indexes with no observed use; review these separately, without speculative production DDL.
+- A staging project quote returned $0/month for this Free organization. No staging project was created in this audit because the user must select the target organization before project creation. No temporary Supabase development branch was created; its quoted cost was $0.01344/hour.
+- The connected browser-control tool was unavailable because this conversation does not have an originating browser-extension context. No real desktop ChatGPT or Claude session was controlled. Provider round-trip, Windows/Android device acceptance, and driver availability remain unverified.
+
+### Result
+
+The deployed MCP boundary passed the one exercised negative-session test. The Backroom feature itself remains **not staging-validated, not deployed and not release-ready**. Continue with a dedicated Free staging project, execute the migration and function integration tests there, then run real ChatGPT and Claude session round trips and the device/security release gates. Keep production unchanged until those gates pass.
+
+
+## Wake delivery is not the same as a completed AI reply
+
+Code review of `BrowserCanonicalWakeAdapter`, `dispatchClaimedWake` and `pollPairedWakeJobs` found an important acceptance distinction: the durable queue is acknowledged once the selected provider's wake prompt has been submitted and the composer-clear signal is observed. The worker does not itself observe the model's final answer or verify that `send_group_message` produced a new response in the same Rub Minds group.
+
+This is a reasonable delivery-queue boundary, but **queue state `acknowledged` must not be presented as proof of a complete collaboration round trip**. A passing provider E2E test must independently assert all of the following:
+
+1. The event was queued for the intended room, participant, session and exact selected input target.
+2. The canonical wake prompt was submitted only under the current, exact, user-confirmed local grant.
+3. The original provider session invoked the live Rub Minds MCP tools, read the authorized group event, and sent a fresh group reply.
+4. The reply's room and sender participant match the original binding; it appears once, with no cross-room leakage or duplicate send.
+5. Revocation/stop prevents further prompt dispatch, while an ambiguous provider-submit outcome does not cause automatic resubmission.
+
+Do not count a cleared composer, a host queue acknowledgement, a browser simulation, or an MCP tool catalogue as this full round-trip result. The real ChatGPT and Claude steps remain unverified.
+
+
+## Production Edge Function drift discovered during live comparison
+
+The deployed Edge Function source was compared directly with the current `main` source through the Supabase and GitHub connectors. This is source-level drift evidence, not a runtime exploit proof.
+
+| Function | Deployed version | Difference from `main` | Release implication |
+|---|---:|---|---|
+| `agent-messages` | v4 | Exact `index.ts` source match | No source drift found in this comparison |
+| `redeem-ai-invite` | v2 | Deployed handler lacks the main-branch `consumePublicRateLimit` call | Public invite redemption lacks that application-level rate limiter until a controlled deployment is verified |
+| `ai-invite-discovery` | v2 | Deployed handler lacks the main-branch `consumePublicRateLimit` call and the invite query-format check | Public, read-only discovery is missing source-level request throttling/input validation present in the repository |
+| `session-memory` | v2 | Deployed handler checks `Content-Length` if supplied but parses via `request.json()`; `main` also measures the actual body bytes before JSON parsing | Chunked or absent-length requests do not receive the same application-level body-size enforcement as the repository version |
+| `rub-minds-mcp` | v3 | Deployed source uses the local rate-limit helper whose content matches the current shared helper, but lacks the main-branch `prepare_session_export` tool and post-join export guidance | The connected production tool surface does not currently offer the repo's session-export preparation tool. Context preservation/export therefore remains incomplete; importing a structured memory document is not the same as capturing the existing conversation |
+
+The current connected Rub Minds tool surface exposes `import_session_memory` but not `prepare_session_export`. The latter, where available, provides a user-confirmation-gated workflow/instructions; it is not autonomous access to hidden provider history and does not guarantee complete automatic context transfer.
+
+### Required disposition
+
+- Do not hot-deploy these functions to production during this audit.
+- Create an isolated staging project first, apply the compatible migration history, deploy the exact reviewed source versions and shared files, then verify function versions and behavior.
+- Add staging tests proving public-rate-limit enforcement for invitation endpoints, bounded request bodies for session-memory operations, and explicit private-context export/import semantics.
+- Confirm the deployed MCP tool catalogue and test the context-export flow from a real supported ChatGPT session. Test Claude separately; one provider's result does not establish the other's compatibility.
+- Record exact deployed function versions and re-check source parity after the controlled release. Do not declare this release gate passed from GitHub source alone.

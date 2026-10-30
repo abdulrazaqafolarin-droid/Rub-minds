@@ -1,0 +1,980 @@
+-- Durable, private Backroom wake queue. No provider cookies, credentials or raw conversation URLs.
+-- Backroom hosts and bindings are private server-managed records. Only host token digests persist.
+create table if not exists public.backroom_hosts (
+  host_id text primary key check (host_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  credential_digest text not null unique check (credential_digest ~ '^[0-9a-f]{64}$'),
+  expires_at timestamptz not null,
+  revoked_at timestamptz,
+  created_at timestamptz not null default pg_catalog.clock_timestamp(),
+  last_seen_at timestamptz
+);
+alter table public.backroom_hosts enable row level security;
+revoke all on table public.backroom_hosts from public, anon, authenticated;
+grant all on table public.backroom_hosts to service_role;
+
+create table if not exists public.backroom_input_bindings (
+  id uuid primary key default pg_catalog.gen_random_uuid(),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  room_id uuid not null references public.rooms(id) on delete cascade,
+  participant_id uuid not null references public.participants(id) on delete cascade,
+  host_id text not null references public.backroom_hosts(host_id) on delete cascade,
+  session_digest text not null references public.rub_minds_mcp_sessions(session_digest) on delete cascade,
+  space_id text not null check (char_length(btrim(space_id)) between 1 and 128),
+  session_id text not null check (char_length(btrim(session_id)) between 1 and 256),
+  target_id text not null check (char_length(btrim(target_id)) between 1 and 128),
+  target_identity_fingerprint text not null check (char_length(btrim(target_identity_fingerprint)) between 1 and 512),
+  target_revision integer not null check (target_revision > 0),
+  surface text not null check (surface in ('browser_tab','desktop_app','windows_app','terminal','android_app')),
+  locator_kind text not null check (locator_kind in ('dom','accessibility','terminal_pty','screen_region')),
+  locator_value text not null check (char_length(btrim(locator_value)) between 1 and 2048),
+  participation_mode text not null default 'mentions' check (participation_mode in ('mentions','smart','task')),
+  wake_enabled boolean not null default false,
+  wake_grant_id uuid,
+  wake_last_revoked_grant_id uuid,
+  wake_expires_at timestamptz,
+  max_wakes_per_minute integer not null default 6 check (max_wakes_per_minute between 1 and 6),
+  confirmed_at timestamptz,
+  revoked_at timestamptz,
+  created_at timestamptz not null default pg_catalog.clock_timestamp(),
+  updated_at timestamptz not null default pg_catalog.clock_timestamp(),
+  constraint backroom_binding_wake_consent_check check (
+    (wake_enabled = false and wake_grant_id is null and wake_expires_at is null and confirmed_at is null)
+    or (wake_enabled = true and wake_grant_id is not null and confirmed_at is not null and wake_expires_at is not null)
+  )
+);
+alter table public.backroom_input_bindings enable row level security;
+revoke all on table public.backroom_input_bindings from public, anon, authenticated;
+grant all on table public.backroom_input_bindings to service_role;
+create unique index if not exists backroom_binding_active_target_idx
+  on public.backroom_input_bindings(host_id,target_id) where revoked_at is null;
+create unique index if not exists backroom_binding_active_participant_idx
+  on public.backroom_input_bindings(room_id,participant_id,session_digest) where revoked_at is null;
+create index if not exists backroom_binding_active_wake_idx
+  on public.backroom_input_bindings(host_id,room_id,wake_expires_at) where revoked_at is null and wake_enabled = true;
+
+create table if not exists public.backroom_wake_jobs (
+  id uuid primary key default pg_catalog.gen_random_uuid(),
+  job_key text not null unique check (job_key ~ '^[0-9a-f]{64}$'),
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  room_id uuid not null references public.rooms(id) on delete cascade,
+  participant_id uuid not null references public.participants(id) on delete cascade,
+  host_id text not null references public.backroom_hosts(host_id) on delete cascade,
+  space_id text not null check (char_length(btrim(space_id)) between 1 and 128),
+  session_id text not null check (char_length(btrim(session_id)) between 1 and 256),
+  session_digest text not null check (session_digest ~ '^[0-9a-f]{64}$'),
+  binding_id uuid not null references public.backroom_input_bindings(id) on delete cascade,
+  target_id text not null check (char_length(btrim(target_id)) between 1 and 128),
+  target_identity_fingerprint text not null check (char_length(btrim(target_identity_fingerprint)) between 1 and 512),
+  target_revision integer not null check (target_revision > 0),
+  event_id text not null check (event_id ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$'),
+  operation text not null default 'wake' check (operation = 'wake'),
+  prompt text not null check (
+    char_length(prompt) between 13 and 12000
+    and prompt = '@RMconnects' || pg_catalog.chr(10) || 'Event: ' || event_id || pg_catalog.chr(10) || 'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.'
+  ),
+  prompt_digest text not null check (prompt_digest ~ '^[0-9a-f]{64}$'),
+  state text not null default 'pending' check (
+    state in ('pending','leased','acknowledged','ignored','failed','cancelled','expired')
+  ),
+  attempt_count integer not null default 0 check (attempt_count between 0 and 5),
+  available_at timestamptz not null default pg_catalog.clock_timestamp(),
+  lease_owner text,
+  lease_token_hash text check (lease_token_hash is null or lease_token_hash ~ '^[0-9a-f]{64}$'),
+  lease_expires_at timestamptz,
+  expires_at timestamptz not null default (pg_catalog.clock_timestamp() + interval '1 hour'),
+  acknowledged_at timestamptz,
+  last_error_code text check (last_error_code is null or last_error_code in (
+    'target_unavailable','approval_required','provider_busy','transport_error',
+    'result_unconfirmed','authorization_denied','max_attempts','other'
+  )),
+  created_at timestamptz not null default pg_catalog.clock_timestamp(),
+  updated_at timestamptz not null default pg_catalog.clock_timestamp(),
+  constraint backroom_wake_lease_state_check check (
+    (state = 'leased' and lease_owner is not null and lease_token_hash is not null and lease_expires_at is not null)
+    or (state <> 'leased' and lease_owner is null and lease_token_hash is null and lease_expires_at is null)
+  )
+);
+
+alter table public.backroom_wake_jobs enable row level security;
+revoke all on table public.backroom_wake_jobs from public, anon, authenticated;
+grant all on table public.backroom_wake_jobs to service_role;
+
+create index if not exists backroom_wake_pending_idx
+  on public.backroom_wake_jobs (host_id, session_digest, available_at, created_at)
+  where state = 'pending';
+create index if not exists backroom_wake_lease_expiry_idx
+  on public.backroom_wake_jobs (host_id, session_digest, lease_expires_at)
+  where state = 'leased';
+create index if not exists backroom_wake_expiry_idx
+  on public.backroom_wake_jobs (expires_at)
+  where state in ('pending','leased');
+
+-- The only supported enqueue path validates every field and makes retries idempotent.
+create or replace function public.enqueue_backroom_wake_job(
+  p_job_key text,
+  p_owner_id uuid,
+  p_room_id uuid,
+  p_participant_id uuid,
+  p_host_id text,
+  p_space_id text,
+  p_session_id text,
+  p_session_digest text,
+  p_binding_id uuid,
+  p_target_id text,
+  p_target_identity_fingerprint text,
+  p_target_revision integer,
+  p_event_id text,
+  p_prompt text,
+  p_ttl_seconds integer default 3600
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $wake$
+declare
+  v_id uuid;
+  v_existing public.backroom_wake_jobs%rowtype;
+  v_prompt_digest text;
+  v_pending_count integer;
+  v_recent_count integer;
+  v_binding_rate_limit integer;
+begin
+  if p_job_key is null or p_job_key !~ '^[0-9a-f]{64}$'
+    or p_session_digest is null or p_session_digest !~ '^[0-9a-f]{64}$' then
+    raise exception 'Invalid idempotency or session digest';
+  end if;
+  if p_owner_id is null or p_room_id is null or p_participant_id is null then
+    raise exception 'Owner, room and participant are required';
+  end if;
+  if p_host_id is null or char_length(btrim(p_host_id)) not between 1 and 128
+    or p_space_id is null or char_length(btrim(p_space_id)) not between 1 and 128
+    or p_session_id is null or char_length(btrim(p_session_id)) not between 1 and 256
+    or p_binding_id is null
+    or p_target_id is null or char_length(btrim(p_target_id)) not between 1 and 128
+    or p_target_identity_fingerprint is null or char_length(btrim(p_target_identity_fingerprint)) not between 1 and 512
+    or p_event_id is null or p_event_id !~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$'
+    or p_target_revision is null or p_target_revision < 1 then
+    raise exception 'Invalid Backroom target binding';
+  end if;
+  if not exists (select 1 from public.rooms r where r.id=p_room_id and r.owner_id=p_owner_id) then
+    raise exception 'Active MCP session does not authorize this group participant';
+  end if;
+  if not exists (
+    select 1 from public.backroom_hosts h where h.host_id=p_host_id and h.owner_id=p_owner_id
+      and h.revoked_at is null and h.expires_at > pg_catalog.clock_timestamp()
+  ) then
+    raise exception 'Backroom host is missing, expired, revoked, or owned by another user';
+  end if;
+  if not exists (
+    select 1 from public.backroom_input_bindings b
+    where b.id=p_binding_id and b.owner_id=p_owner_id and b.room_id=p_room_id
+      and b.participant_id=p_participant_id and b.host_id=p_host_id
+      and b.space_id=p_space_id and b.session_id=p_session_id
+      and b.session_digest=p_session_digest and b.target_id=p_target_id
+      and b.target_identity_fingerprint=p_target_identity_fingerprint
+      and b.target_revision=p_target_revision and b.revoked_at is null
+      and b.wake_enabled=true and b.confirmed_at is not null
+      and b.wake_expires_at > pg_catalog.clock_timestamp()
+  ) then
+    raise exception 'Backroom input binding is not enabled for this wake';
+  end if;
+
+  -- Only a live, joined hosted MCP session bound to this exact group participant may enqueue.
+  if not exists (
+    select 1
+    from public.rub_minds_mcp_sessions s
+    join public.participants p on p.id = s.participant_id and p.room_id = s.room_id
+    join public.rooms r on r.id = s.room_id
+    join public.agent_connections a on a.participant_id = p.id and a.room_id = r.id
+      and a.owner_id = r.owner_id and a.revoked_at is null and a.expires_at > pg_catalog.clock_timestamp()
+    where s.session_digest = p_session_digest and s.room_id = p_room_id
+      and s.participant_id = p_participant_id and s.agent_credential_ciphertext is not null
+      and s.terminated_at is null and s.expires_at > pg_catalog.clock_timestamp()
+      and p.kind in ('original_session','model','external_agent')
+      and p.status in ('connected','active','autonomous')
+      and r.owner_id = p_owner_id
+  ) then
+    raise exception 'Active MCP session does not authorize this group participant';
+  end if;
+
+  if p_ttl_seconds is null or p_ttl_seconds < 60 or p_ttl_seconds > 86400 then
+    raise exception 'Wake TTL must be between 60 and 86400 seconds';
+  end if;
+  if p_prompt is null or char_length(p_prompt) not between 13 and 12000
+    or p_prompt <> '@RMconnects' || pg_catalog.chr(10) || 'Event: ' || p_event_id || pg_catalog.chr(10) || 'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.' then
+    raise exception 'Invalid Backroom wake prompt';
+  end if;
+
+  v_prompt_digest := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_prompt, 'UTF8')), 'hex');
+
+  -- Serialize queue admission per MCP session so concurrent inserts cannot bypass backpressure.
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(p_session_digest, 0));
+
+  -- Existing idempotent requests must stay retryable even when the session queue is at capacity.
+  select * into v_existing from public.backroom_wake_jobs where job_key = p_job_key;
+  if found then
+    if v_existing.owner_id is distinct from p_owner_id
+      or v_existing.room_id is distinct from p_room_id
+      or v_existing.participant_id is distinct from p_participant_id
+      or v_existing.host_id is distinct from p_host_id
+      or v_existing.space_id is distinct from p_space_id
+      or v_existing.session_id is distinct from p_session_id
+      or v_existing.session_digest is distinct from p_session_digest
+      or v_existing.binding_id is distinct from p_binding_id
+      or v_existing.target_id is distinct from p_target_id
+      or v_existing.target_identity_fingerprint is distinct from p_target_identity_fingerprint
+      or v_existing.target_revision is distinct from p_target_revision
+      or v_existing.event_id is distinct from p_event_id
+      or v_existing.prompt_digest is distinct from v_prompt_digest then
+      raise exception 'Wake idempotency key conflicts with a different request';
+    end if;
+    return pg_catalog.jsonb_build_object('job_id', v_existing.id, 'created', false, 'state', v_existing.state);
+  end if;
+
+  select b.max_wakes_per_minute into v_binding_rate_limit
+  from public.backroom_input_bindings b
+  where b.id=p_binding_id and b.revoked_at is null and b.wake_enabled=true;
+  if v_binding_rate_limit is null then
+    raise exception 'Backroom input binding is not enabled for this wake';
+  end if;
+  select count(*) into v_recent_count
+  from public.backroom_wake_jobs j
+  where j.binding_id=p_binding_id
+    and j.created_at >= pg_catalog.clock_timestamp()-interval '1 minute';
+  if v_recent_count >= v_binding_rate_limit then
+    raise exception 'Backroom wake rate limit reached for input binding';
+  end if;
+
+  select count(*) into v_pending_count
+  from public.backroom_wake_jobs j
+  where j.binding_id=p_binding_id and j.state in ('pending','leased')
+    and j.expires_at > pg_catalog.clock_timestamp();
+  if v_pending_count >= 100 then
+    raise exception 'Backroom wake queue is full for this input binding';
+  end if;
+
+  insert into public.backroom_wake_jobs (
+    job_key, owner_id, room_id, participant_id, host_id, space_id, session_id,
+    session_digest, binding_id, target_id, target_identity_fingerprint, target_revision, event_id, prompt,
+    prompt_digest, expires_at
+  ) values (
+    p_job_key, p_owner_id, p_room_id, p_participant_id, p_host_id, p_space_id, p_session_id,
+    p_session_digest, p_binding_id, p_target_id, p_target_identity_fingerprint, p_target_revision, p_event_id, p_prompt,
+    v_prompt_digest, pg_catalog.clock_timestamp() + pg_catalog.make_interval(secs => p_ttl_seconds)
+  )
+  on conflict (job_key) do nothing
+  returning id into v_id;
+
+  if found then
+    return pg_catalog.jsonb_build_object('job_id', v_id, 'created', true, 'state', 'pending');
+  end if;
+
+  select * into v_existing from public.backroom_wake_jobs where job_key = p_job_key;
+  if not found then
+    raise exception 'Wake idempotency conflict could not be resolved';
+  end if;
+  if v_existing.owner_id is distinct from p_owner_id
+    or v_existing.room_id is distinct from p_room_id
+    or v_existing.participant_id is distinct from p_participant_id
+    or v_existing.host_id is distinct from p_host_id
+    or v_existing.space_id is distinct from p_space_id
+    or v_existing.session_id is distinct from p_session_id
+    or v_existing.session_digest is distinct from p_session_digest
+    or v_existing.binding_id is distinct from p_binding_id
+    or v_existing.target_id is distinct from p_target_id
+    or v_existing.target_identity_fingerprint is distinct from p_target_identity_fingerprint
+    or v_existing.target_revision is distinct from p_target_revision
+    or v_existing.event_id is distinct from p_event_id
+    or v_existing.prompt_digest is distinct from v_prompt_digest then
+    raise exception 'Wake idempotency key conflicts with a different request';
+  end if;
+  return pg_catalog.jsonb_build_object('job_id', v_existing.id, 'created', false, 'state', v_existing.state);
+end;
+$wake$;
+
+-- Claims use row locks and SKIP LOCKED, so concurrent workers cannot claim the same job.
+-- The plaintext lease token is returned to the trusted backend only; only its digest is stored.
+create or replace function public.claim_backroom_wake_jobs(
+  p_host_id text,
+  p_session_digest text,
+  p_binding_id uuid,
+  p_limit integer default 5,
+  p_lease_seconds integer default 30
+)
+returns table (
+  out_job_id uuid,
+  out_job_key text,
+  out_event_id text,
+  out_owner_id uuid,
+  out_room_id uuid,
+  out_participant_id uuid,
+  out_space_id text,
+  out_session_id text,
+  out_binding_id text,
+  out_target_id text,
+  out_target_identity_fingerprint text,
+  out_target_revision integer,
+  out_prompt text,
+  out_prompt_digest text,
+  out_attempt_count integer,
+  out_expires_at timestamptz,
+  out_lease_token text
+)
+language plpgsql
+security definer
+set search_path = ''
+as $claim$
+begin
+  if p_host_id is null or char_length(btrim(p_host_id)) not between 1 and 128
+    or p_session_digest is null or p_session_digest !~ '^[0-9a-f]{64}$' or p_binding_id is null
+    or p_limit is null or p_limit < 1 or p_limit > 20
+    or p_lease_seconds is null or p_lease_seconds < 10 or p_lease_seconds > 120 then
+    raise exception 'Invalid Backroom claim parameters';
+  end if;
+
+  if not exists (
+    select 1 from public.backroom_hosts h
+    where h.host_id=p_host_id and h.revoked_at is null
+      and h.expires_at > pg_catalog.clock_timestamp()
+  ) then return; end if;
+  if not exists (
+    select 1 from public.backroom_input_bindings b
+    where b.id=p_binding_id and b.host_id=p_host_id and b.session_digest=p_session_digest
+      and b.revoked_at is null and b.wake_enabled=true and b.confirmed_at is not null
+      and b.wake_expires_at > pg_catalog.clock_timestamp()
+  ) then return; end if;
+
+  if not exists (
+    select 1
+    from public.rub_minds_mcp_sessions s
+    join public.participants p on p.id = s.participant_id and p.room_id = s.room_id
+    join public.rooms r on r.id = s.room_id
+    join public.agent_connections a on a.participant_id = p.id and a.room_id = r.id
+      and a.owner_id = r.owner_id and a.revoked_at is null and a.expires_at > pg_catalog.clock_timestamp()
+    where s.session_digest = p_session_digest and s.agent_credential_ciphertext is not null
+      and s.terminated_at is null and s.expires_at > pg_catalog.clock_timestamp()
+      and p.kind in ('original_session','model','external_agent')
+      and p.status in ('connected','active','autonomous')
+  ) then
+    return;
+  end if;
+
+  update public.backroom_wake_jobs j
+  set state = 'expired', lease_owner = null, lease_token_hash = null, lease_expires_at = null,
+      updated_at = pg_catalog.clock_timestamp()
+  where j.host_id = p_host_id and j.session_digest = p_session_digest and j.binding_id=p_binding_id
+    and j.state in ('pending','leased') and j.expires_at <= pg_catalog.clock_timestamp();
+
+  update public.backroom_wake_jobs j
+  set state = 'failed', lease_owner = null, lease_token_hash = null, lease_expires_at = null,
+      last_error_code = 'max_attempts', updated_at = pg_catalog.clock_timestamp()
+  where j.host_id = p_host_id and j.session_digest = p_session_digest and j.binding_id=p_binding_id
+    and j.state = 'leased' and j.lease_expires_at <= pg_catalog.clock_timestamp()
+    and j.attempt_count >= 5;
+
+  return query
+  with candidates as (
+    select j.id
+    from public.backroom_wake_jobs j
+    where j.host_id = p_host_id and j.session_digest = p_session_digest and j.binding_id=p_binding_id
+      and exists (
+        select 1 from public.backroom_input_bindings b
+        where b.id=p_binding_id and b.owner_id=j.owner_id and b.room_id=j.room_id
+          and b.participant_id=j.participant_id and b.host_id=j.host_id
+          and b.session_digest=j.session_digest and b.space_id=j.space_id and b.session_id=j.session_id
+          and b.target_id=j.target_id and b.target_identity_fingerprint=j.target_identity_fingerprint
+          and b.target_revision=j.target_revision and b.revoked_at is null
+          and b.wake_enabled=true and b.confirmed_at is not null
+          and b.wake_expires_at > pg_catalog.clock_timestamp()
+      )
+      and exists (
+        select 1
+        from public.rub_minds_mcp_sessions s
+        join public.participants p on p.id = s.participant_id and p.room_id = s.room_id
+        join public.rooms r on r.id = s.room_id
+        join public.agent_connections a on a.participant_id = p.id and a.room_id = r.id
+          and a.owner_id = r.owner_id and a.revoked_at is null and a.expires_at > pg_catalog.clock_timestamp()
+        where s.session_digest = j.session_digest
+          and s.room_id = j.room_id and s.participant_id = j.participant_id
+          and s.agent_credential_ciphertext is not null
+          and s.terminated_at is null and s.expires_at > pg_catalog.clock_timestamp()
+          and p.kind in ('original_session','model','external_agent')
+      and p.status in ('connected','active','autonomous')
+      )
+      and j.expires_at > pg_catalog.clock_timestamp()
+      and j.attempt_count < 5
+      and (
+        (j.state = 'pending' and j.available_at <= pg_catalog.clock_timestamp())
+        or (j.state = 'leased' and j.lease_expires_at <= pg_catalog.clock_timestamp())
+      )
+    order by j.created_at, j.id
+    for update skip locked
+    limit p_limit
+  ),
+  minted as (
+    select c.id, pg_catalog.gen_random_uuid()::text as token
+    from candidates c
+  ),
+  leased as (
+    update public.backroom_wake_jobs j
+    set state = 'leased',
+        lease_owner = p_host_id,
+        lease_token_hash = pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(m.token, 'UTF8')), 'hex'),
+        lease_expires_at = least(pg_catalog.clock_timestamp() + pg_catalog.make_interval(secs => p_lease_seconds), j.expires_at),
+        attempt_count = j.attempt_count + 1,
+        updated_at = pg_catalog.clock_timestamp()
+    from minted m
+    where j.id = m.id
+    returning j.id as job_id, j.job_key, j.event_id, j.owner_id, j.room_id, j.participant_id,
+      j.space_id, j.session_id, j.binding_id, j.target_id, j.target_identity_fingerprint, j.target_revision, j.prompt,
+      j.prompt_digest, j.attempt_count, j.expires_at, m.token as lease_token
+  )
+  select leased.job_id, leased.job_key, leased.event_id, leased.owner_id, leased.room_id,
+    leased.participant_id, leased.space_id, leased.session_id, leased.binding_id::text, leased.target_id,
+    leased.target_identity_fingerprint, leased.target_revision, leased.prompt, leased.prompt_digest,
+    leased.attempt_count, leased.expires_at, leased.lease_token
+  from leased;
+end;
+$claim$;
+
+create or replace function public.ack_backroom_wake_job(
+  p_job_id uuid,
+  p_host_id text,
+  p_session_digest text,
+  p_binding_id uuid,
+  p_lease_token text,
+  p_outcome text
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $ack$
+declare v_changed integer;
+begin
+  if p_job_id is null or p_host_id is null or char_length(btrim(p_host_id)) not between 1 and 128
+    or p_session_digest is null or p_session_digest !~ '^[0-9a-f]{64}$' or p_binding_id is null
+    or p_lease_token is null or p_lease_token !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    or p_outcome is null or p_outcome not in ('acknowledged','ignored') then
+    raise exception 'Invalid Backroom acknowledgement';
+  end if;
+  update public.backroom_wake_jobs j
+  set state = p_outcome, acknowledged_at = pg_catalog.clock_timestamp(),
+      lease_owner = null, lease_token_hash = null, lease_expires_at = null,
+      updated_at = pg_catalog.clock_timestamp()
+  where j.id = p_job_id and j.host_id = p_host_id and j.session_digest = p_session_digest and j.binding_id=p_binding_id
+    and j.state = 'leased' and j.lease_owner = p_host_id
+    and j.lease_token_hash = pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_lease_token, 'UTF8')), 'hex')
+    and j.lease_expires_at > pg_catalog.clock_timestamp() and j.expires_at > pg_catalog.clock_timestamp()
+    and exists (
+      select 1 from public.backroom_input_bindings b
+      where b.id=p_binding_id and b.owner_id=j.owner_id and b.room_id=j.room_id
+        and b.participant_id=j.participant_id and b.host_id=j.host_id
+        and b.session_digest=j.session_digest and b.space_id=j.space_id and b.session_id=j.session_id
+        and b.target_id=j.target_id and b.target_identity_fingerprint=j.target_identity_fingerprint
+        and b.target_revision=j.target_revision and b.revoked_at is null
+        and b.wake_enabled=true and b.confirmed_at is not null
+        and b.wake_expires_at > pg_catalog.clock_timestamp()
+    )
+    and exists (
+      select 1
+      from public.rub_minds_mcp_sessions s
+      join public.participants p on p.id = s.participant_id and p.room_id = s.room_id
+      join public.rooms r on r.id = s.room_id
+      join public.agent_connections a on a.participant_id = p.id and a.room_id = r.id
+        and a.owner_id = r.owner_id and a.revoked_at is null and a.expires_at > pg_catalog.clock_timestamp()
+      where s.session_digest = p_session_digest and s.room_id = j.room_id
+        and s.participant_id = j.participant_id and s.agent_credential_ciphertext is not null
+        and s.terminated_at is null and s.expires_at > pg_catalog.clock_timestamp()
+        and p.kind in ('original_session','model','external_agent')
+      and p.status in ('connected','active','autonomous')
+    );
+  get diagnostics v_changed = row_count;
+  return v_changed = 1;
+end;
+$ack$;
+
+create or replace function public.retry_backroom_wake_job(
+  p_job_id uuid,
+  p_host_id text,
+  p_session_digest text,
+  p_binding_id uuid,
+  p_lease_token text,
+  p_retry_after_seconds integer,
+  p_error_code text default 'other'
+)
+returns text
+language plpgsql
+security definer
+set search_path = ''
+as $retry$
+declare v_state text;
+begin
+  if p_job_id is null or p_host_id is null or char_length(btrim(p_host_id)) not between 1 and 128
+    or p_session_digest is null or p_session_digest !~ '^[0-9a-f]{64}$' or p_binding_id is null
+    or p_lease_token is null or p_lease_token !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    or p_retry_after_seconds is null or p_retry_after_seconds < 1 or p_retry_after_seconds > 300
+    or p_error_code is null or p_error_code not in ('target_unavailable','approval_required','provider_busy','transport_error','result_unconfirmed','authorization_denied','other') then
+    raise exception 'Invalid Backroom retry parameters';
+  end if;
+  update public.backroom_wake_jobs j
+  set state = case when j.attempt_count >= 5 or j.expires_at <= pg_catalog.clock_timestamp() then 'failed' else 'pending' end,
+      available_at = pg_catalog.clock_timestamp() + pg_catalog.make_interval(secs => p_retry_after_seconds),
+      lease_owner = null, lease_token_hash = null, lease_expires_at = null,
+      last_error_code = case when j.attempt_count >= 5 then 'max_attempts' else p_error_code end,
+      updated_at = pg_catalog.clock_timestamp()
+  where j.id = p_job_id and j.host_id = p_host_id and j.session_digest = p_session_digest and j.binding_id=p_binding_id
+    and j.state = 'leased' and j.lease_owner = p_host_id
+    and j.lease_token_hash = pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_lease_token, 'UTF8')), 'hex')
+    and j.lease_expires_at > pg_catalog.clock_timestamp() and j.expires_at > pg_catalog.clock_timestamp()
+    and exists (
+      select 1 from public.backroom_input_bindings b
+      where b.id=p_binding_id and b.owner_id=j.owner_id and b.room_id=j.room_id
+        and b.participant_id=j.participant_id and b.host_id=j.host_id
+        and b.session_digest=j.session_digest and b.space_id=j.space_id and b.session_id=j.session_id
+        and b.target_id=j.target_id and b.target_identity_fingerprint=j.target_identity_fingerprint
+        and b.target_revision=j.target_revision and b.revoked_at is null
+        and b.wake_enabled=true and b.confirmed_at is not null
+        and b.wake_expires_at > pg_catalog.clock_timestamp()
+    )
+    and exists (
+      select 1
+      from public.rub_minds_mcp_sessions s
+      join public.participants p on p.id = s.participant_id and p.room_id = s.room_id
+      join public.rooms r on r.id = s.room_id
+      join public.agent_connections a on a.participant_id = p.id and a.room_id = r.id
+        and a.owner_id = r.owner_id and a.revoked_at is null and a.expires_at > pg_catalog.clock_timestamp()
+      where s.session_digest = p_session_digest and s.room_id = j.room_id
+        and s.participant_id = j.participant_id and s.agent_credential_ciphertext is not null
+        and s.terminated_at is null and s.expires_at > pg_catalog.clock_timestamp()
+        and p.kind in ('original_session','model','external_agent')
+      and p.status in ('connected','active','autonomous')
+    )
+  returning j.state into v_state;
+  return v_state;
+end;
+$retry$;
+
+create or replace function public.cancel_backroom_wake_job(p_job_id uuid, p_owner_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $cancel$
+declare v_changed integer;
+begin
+  if p_job_id is null or p_owner_id is null then raise exception 'Job and owner are required'; end if;
+  update public.backroom_wake_jobs j
+  set state = 'cancelled', lease_owner = null, lease_token_hash = null, lease_expires_at = null,
+      updated_at = pg_catalog.clock_timestamp()
+  where j.id = p_job_id and j.owner_id = p_owner_id and j.state in ('pending','leased');
+  get diagnostics v_changed = row_count;
+  return v_changed = 1;
+end;
+$cancel$;
+
+-- Bounded cleanup for terminal jobs; pending and leased records are never removed.
+create or replace function public.purge_backroom_wake_jobs(
+  p_older_than_days integer default 14,
+  p_limit integer default 1000
+)
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $purge$
+declare v_deleted integer;
+begin
+  if p_older_than_days is null or p_older_than_days < 1 or p_older_than_days > 90
+    or p_limit is null or p_limit < 1 or p_limit > 5000 then
+    raise exception 'Invalid Backroom purge parameters';
+  end if;
+  with candidates as (
+    select j.id from public.backroom_wake_jobs j
+    where j.state in ('acknowledged','ignored','failed','cancelled','expired')
+      and j.created_at < pg_catalog.clock_timestamp() - pg_catalog.make_interval(days => p_older_than_days)
+    order by j.created_at, j.id
+    for update skip locked
+    limit p_limit
+  )
+  delete from public.backroom_wake_jobs j using candidates c where j.id=c.id;
+  get diagnostics v_deleted = row_count;
+  return v_deleted;
+end;
+$purge$;
+
+revoke all on function public.purge_backroom_wake_jobs(integer,integer) from public, anon, authenticated;
+grant execute on function public.purge_backroom_wake_jobs(integer,integer) to service_role;
+
+create or replace function public.expire_backroom_wake_jobs()
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $expire$
+declare v_changed integer;
+begin
+  update public.backroom_wake_jobs j
+  set state = 'expired', lease_owner = null, lease_token_hash = null, lease_expires_at = null,
+      updated_at = pg_catalog.clock_timestamp()
+  where j.state in ('pending','leased') and j.expires_at <= pg_catalog.clock_timestamp();
+  get diagnostics v_changed = row_count;
+  return v_changed;
+end;
+$expire$;
+
+-- Wake only enabled, consented AI bindings for new group messages. Message bodies never enter the prompt.
+create or replace function public.enqueue_backroom_wake_jobs_for_message()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $message_wake$
+declare
+  v_binding record;
+  v_prompt text;
+  v_job_key text;
+  v_mention_position integer;
+  v_search_offset integer;
+  v_candidate_position integer;
+  v_before_mention text;
+  v_after_mention text;
+  v_found_mention boolean;
+begin
+  if new.id is null or new.room_id is null or new.sender_id is null or new.body is null then
+    return new;
+  end if;
+
+  for v_binding in
+    select b.*, p.display_name
+    from public.backroom_input_bindings b
+    join public.participants p on p.id=b.participant_id and p.room_id=b.room_id
+    join public.rooms r on r.id=b.room_id and r.owner_id=b.owner_id
+    join public.agent_connections a on a.room_id=r.id and a.participant_id=p.id
+      and a.owner_id=r.owner_id and a.revoked_at is null
+      and a.expires_at > pg_catalog.clock_timestamp()
+    join public.rub_minds_mcp_sessions s on s.session_digest=b.session_digest
+      and s.room_id=b.room_id and s.participant_id=p.id
+      and s.agent_credential_ciphertext is not null and s.terminated_at is null
+      and s.expires_at > pg_catalog.clock_timestamp()
+    where b.room_id=new.room_id
+      and b.participant_id <> new.sender_id
+      and p.kind in ('original_session','model','external_agent')
+      and p.status in ('connected','active','autonomous')
+      and b.participation_mode in ('mentions','smart')
+      -- Smart-mode AI-to-AI relaying would self-amplify across participants.
+      -- AI-originated messages can wake another AI only via an explicit @mention.
+      and (b.participation_mode <> 'smart' or exists (
+        select 1 from public.participants sender
+        where sender.id=new.sender_id and sender.room_id=new.room_id and sender.kind='human'
+      ))
+      and b.wake_enabled=true and b.confirmed_at is not null
+      and b.wake_expires_at > pg_catalog.clock_timestamp()
+      and b.revoked_at is null
+  loop
+    if v_binding.participation_mode='mentions' then
+      -- Match any bounded @display_name mention, not e-mail fragments like name@TestAI,
+      -- and do not let an invalid first occurrence hide a later valid mention.
+      v_search_offset := 1;
+      v_found_mention := false;
+      loop
+        v_candidate_position := position(
+          '@'||lower(v_binding.display_name) in substring(lower(new.body) from v_search_offset)
+        );
+        if v_candidate_position=0 then exit; end if;
+        v_mention_position := v_search_offset + v_candidate_position - 1;
+        v_before_mention := case when v_mention_position>1
+          then substring(lower(new.body) from v_mention_position-1 for 1) else '' end;
+        v_after_mention := substring(lower(new.body)
+          from v_mention_position+char_length(v_binding.display_name)+1 for 1);
+        if (v_before_mention='' or v_before_mention !~ '[[:alnum:]_]')
+          and (v_after_mention='' or v_after_mention !~ '[[:alnum:]_]') then
+          v_found_mention := true;
+          exit;
+        end if;
+        v_search_offset := v_mention_position+1;
+      end loop;
+      if not v_found_mention then continue; end if;
+    end if;
+
+    v_prompt := '@RMconnects'||pg_catalog.chr(10)||'Event: '||new.id::text||pg_catalog.chr(10)||
+      'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.';
+    v_job_key := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+      pg_catalog.replace(pg_catalog.jsonb_build_array(
+        new.room_id::text,new.id::text,v_binding.participant_id::text,v_binding.id::text
+      )::text, ', ', ','),
+      'UTF8')),'hex');
+
+    begin
+      perform public.enqueue_backroom_wake_job(
+        v_job_key,v_binding.owner_id,new.room_id,v_binding.participant_id,
+        v_binding.host_id,v_binding.space_id,v_binding.session_id,v_binding.session_digest,
+        v_binding.id,v_binding.target_id,v_binding.target_identity_fingerprint,v_binding.target_revision,
+        new.id::text,v_prompt,3600);
+    exception when others then
+      -- Queue overload/revocation must not roll back the user-authored message.
+      -- Do not log the message body or the raw exception text.
+      raise warning 'Backroom wake skipped: sqlstate %, message id %, binding id %', SQLSTATE, new.id, v_binding.id;
+    end;
+  end loop;
+
+  return new;
+end;
+$message_wake$;
+
+revoke all on function public.enqueue_backroom_wake_jobs_for_message() from public, anon, authenticated;
+grant execute on function public.enqueue_backroom_wake_jobs_for_message() to service_role;
+drop trigger if exists messages_enqueue_backroom_wake_jobs_after_insert on public.messages;
+create trigger messages_enqueue_backroom_wake_jobs_after_insert
+after insert on public.messages
+for each row execute function public.enqueue_backroom_wake_jobs_for_message();
+
+revoke all on function public.enqueue_backroom_wake_job(text,uuid,uuid,uuid,text,text,text,text,uuid,text,text,integer,text,text,integer) from public, anon, authenticated;
+revoke all on function public.claim_backroom_wake_jobs(text,text,uuid,integer,integer) from public, anon, authenticated;
+revoke all on function public.ack_backroom_wake_job(uuid,text,text,uuid,text,text) from public, anon, authenticated;
+revoke all on function public.retry_backroom_wake_job(uuid,text,text,uuid,text,integer,text) from public, anon, authenticated;
+revoke all on function public.cancel_backroom_wake_job(uuid,uuid) from public, anon, authenticated;
+revoke all on function public.expire_backroom_wake_jobs() from public, anon, authenticated;
+
+grant execute on function public.enqueue_backroom_wake_job(text,uuid,uuid,uuid,text,text,text,text,uuid,text,text,integer,text,text,integer) to service_role;
+grant execute on function public.claim_backroom_wake_jobs(text,text,uuid,integer,integer) to service_role;
+grant execute on function public.ack_backroom_wake_job(uuid,text,text,uuid,text,text) to service_role;
+grant execute on function public.retry_backroom_wake_job(uuid,text,text,uuid,text,integer,text) to service_role;
+grant execute on function public.cancel_backroom_wake_job(uuid,uuid) to service_role;
+grant execute on function public.expire_backroom_wake_jobs() to service_role;
+
+
+-- Owner-authorized remote host revocation is atomic: stop future claims, revoke
+-- all target consents, and cancel pending/leased jobs in one transaction.
+create or replace function public.revoke_backroom_host(
+  p_host_id text,
+  p_owner_id uuid
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $revoke_host$
+declare
+  v_changed integer;
+  v_now timestamptz := pg_catalog.clock_timestamp();
+begin
+  if p_host_id is null or p_host_id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+    or p_owner_id is null then
+    raise exception 'Invalid Backroom host revocation';
+  end if;
+
+  -- Idempotent for the same owner: if the first response is lost, a retry
+  -- confirms the already-revoked record instead of reporting a false failure.
+  update public.backroom_hosts
+  set revoked_at = coalesce(revoked_at, v_now)
+  where host_id = p_host_id and owner_id = p_owner_id;
+  get diagnostics v_changed = row_count;
+  if v_changed <> 1 then return false; end if;
+
+  update public.backroom_input_bindings
+  set wake_enabled = false,
+      wake_last_revoked_grant_id = coalesce(wake_grant_id, wake_last_revoked_grant_id),
+      wake_grant_id = null, confirmed_at = null, wake_expires_at = null,
+      revoked_at = coalesce(revoked_at, v_now), updated_at = v_now
+  where host_id = p_host_id;
+
+  update public.backroom_wake_jobs
+  set state = 'cancelled', lease_owner = null, lease_token_hash = null,
+      lease_expires_at = null, last_error_code = 'authorization_denied',
+      updated_at = v_now
+  where host_id = p_host_id and state in ('pending','leased');
+
+  return true;
+end;
+$revoke_host$;
+
+revoke all on function public.revoke_backroom_host(text,uuid) from public, anon, authenticated;
+grant execute on function public.revoke_backroom_host(text,uuid) to service_role;
+
+
+-- Owner-scoped input revocation lets the owner rebind a changed composer without
+-- destroying the whole host. Consent and queued jobs are removed transactionally.
+create or replace function public.revoke_backroom_input_binding(
+  p_binding_id uuid,
+  p_owner_id uuid
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $revoke_binding$
+declare
+  v_changed integer;
+  v_now timestamptz := pg_catalog.clock_timestamp();
+begin
+  if p_binding_id is null or p_owner_id is null then
+    raise exception 'Invalid Backroom input revocation';
+  end if;
+
+  -- Repeat revocation by the same owner is safe after a lost response.
+  update public.backroom_input_bindings
+  set wake_enabled = false,
+      wake_last_revoked_grant_id = coalesce(wake_grant_id, wake_last_revoked_grant_id),
+      wake_grant_id = null, confirmed_at = null, wake_expires_at = null,
+      revoked_at = coalesce(revoked_at, v_now), updated_at = v_now
+  where id = p_binding_id and owner_id = p_owner_id;
+  get diagnostics v_changed = row_count;
+  if v_changed <> 1 then return false; end if;
+
+  update public.backroom_wake_jobs
+  set state = 'cancelled', lease_owner = null, lease_token_hash = null,
+      lease_expires_at = null, last_error_code = 'authorization_denied',
+      updated_at = v_now
+  where binding_id = p_binding_id and state in ('pending','leased');
+
+  return true;
+end;
+$revoke_binding$;
+
+revoke all on function public.revoke_backroom_input_binding(uuid,uuid) from public, anon, authenticated;
+grant execute on function public.revoke_backroom_input_binding(uuid,uuid) to service_role;
+
+
+-- Atomic grant activation/deactivation. These are private backend RPCs; a host
+-- authenticates at the Edge boundary and must never call the database directly.
+create or replace function public.activate_backroom_wake_grant(
+  p_host_id text,
+  p_session_digest text,
+  p_binding_id uuid,
+  p_grant_id uuid,
+  p_ttl_seconds integer
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $activate_wake$
+declare
+  v_binding public.backroom_input_bindings%rowtype;
+  v_now timestamptz := pg_catalog.clock_timestamp();
+begin
+  if p_host_id is null or p_session_digest is null or p_binding_id is null
+    or p_grant_id is null or p_ttl_seconds is null
+    or p_ttl_seconds < 60 or p_ttl_seconds > 900 then
+    raise exception 'Invalid Backroom wake grant activation';
+  end if;
+
+  select * into v_binding
+  from public.backroom_input_bindings b
+  where b.id = p_binding_id and b.host_id = p_host_id
+    and b.session_digest = p_session_digest and b.revoked_at is null
+  for update;
+
+  if not found then return false; end if;
+
+  -- Retry of the currently active grant is idempotent and does not extend TTL.
+  if v_binding.wake_enabled
+    and v_binding.wake_grant_id = p_grant_id
+    and v_binding.wake_expires_at > v_now then
+    return true;
+  end if;
+
+  -- A different active grant must not be overwritten until it is expired or
+  -- explicitly deactivated. This prevents racing consent grants from stealing
+  -- a binding from each other.
+  if v_binding.wake_enabled and v_binding.wake_grant_id is distinct from p_grant_id
+    and v_binding.wake_expires_at > v_now then
+    return false;
+  end if;
+
+  if not exists (
+    select 1 from public.backroom_hosts h
+    where h.host_id = p_host_id and h.owner_id = v_binding.owner_id
+      and h.revoked_at is null and h.expires_at > v_now
+  ) then return false; end if;
+
+  if not exists (
+    select 1 from public.participants p
+    where p.id = v_binding.participant_id and p.room_id = v_binding.room_id
+      and p.status in ('connected','active','autonomous')
+  ) then return false; end if;
+
+  if not exists (
+    select 1 from public.agent_connections ac
+    where ac.room_id = v_binding.room_id
+      and ac.participant_id = v_binding.participant_id
+      and ac.owner_id = v_binding.owner_id
+      and ac.revoked_at is null and ac.expires_at > v_now
+  ) then return false; end if;
+
+  if not exists (
+    select 1 from public.rub_minds_mcp_sessions ms
+    where ms.session_digest = p_session_digest
+      and ms.room_id = v_binding.room_id
+      and ms.participant_id = v_binding.participant_id
+      and ms.terminated_at is null and ms.expires_at > v_now
+      and ms.agent_credential_ciphertext is not null
+  ) then return false; end if;
+
+  update public.backroom_input_bindings
+  set wake_enabled = true, wake_grant_id = p_grant_id,
+      wake_last_revoked_grant_id = null, confirmed_at = v_now,
+      wake_expires_at = v_now + pg_catalog.make_interval(secs => p_ttl_seconds),
+      updated_at = v_now
+  where id = p_binding_id;
+
+  return true;
+end;
+$activate_wake$;
+
+revoke all on function public.activate_backroom_wake_grant(text,text,uuid,uuid,integer) from public, anon, authenticated;
+grant execute on function public.activate_backroom_wake_grant(text,text,uuid,uuid,integer) to service_role;
+
+create or replace function public.deactivate_backroom_wake_grant(
+  p_host_id text,
+  p_session_digest text,
+  p_binding_id uuid,
+  p_grant_id uuid
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $deactivate_wake$
+declare
+  v_changed integer;
+  v_now timestamptz := pg_catalog.clock_timestamp();
+begin
+  if p_host_id is null or p_session_digest is null or p_binding_id is null or p_grant_id is null then
+    raise exception 'Invalid Backroom wake grant deactivation';
+  end if;
+
+  update public.backroom_input_bindings
+  set wake_enabled = false, wake_last_revoked_grant_id = p_grant_id,
+      wake_grant_id = null, confirmed_at = null, wake_expires_at = null,
+      updated_at = v_now
+  where id = p_binding_id and host_id = p_host_id and session_digest = p_session_digest
+    and wake_grant_id = p_grant_id and wake_enabled = true and revoked_at is null;
+  get diagnostics v_changed = row_count;
+
+  if v_changed = 1 then
+    update public.backroom_wake_jobs
+    set state = 'cancelled', lease_owner = null, lease_token_hash = null,
+        lease_expires_at = null, last_error_code = 'authorization_denied',
+        updated_at = v_now
+    where binding_id = p_binding_id and state in ('pending','leased');
+    return true;
+  end if;
+
+  -- Idempotent confirmation only for the same last-deactivated grant. A stale
+  -- grant cannot revoke a newer activation because activation clears this ID.
+  return exists (
+    select 1 from public.backroom_input_bindings b
+    where b.id = p_binding_id and b.host_id = p_host_id
+      and b.session_digest = p_session_digest and b.revoked_at is null
+      and b.wake_enabled = false and b.wake_grant_id is null
+      and b.wake_last_revoked_grant_id = p_grant_id
+  );
+end;
+$deactivate_wake$;
+
+revoke all on function public.deactivate_backroom_wake_grant(text,text,uuid,uuid) from public, anon, authenticated;
+grant execute on function public.deactivate_backroom_wake_grant(text,text,uuid,uuid) to service_role;
