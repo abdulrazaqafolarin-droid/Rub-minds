@@ -11,6 +11,8 @@ import { createSerializedLocalApproval } from "../integrations/backroom/local-ap
 
 const DEFAULT_ORIGINS = [
   "https://rub-minds.vercel.app",
+  // Exact authenticated feature-branch Preview used for Backroom staging acceptance.
+  "https://rub-minds-git-feat-ba-fce441-abdulrazaqafolarin-droids-projects.vercel.app",
   "http://localhost:5173",
   "http://127.0.0.1:5173",
 ];
