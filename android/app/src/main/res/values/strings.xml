@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Rub Minds Companion</string>
+    <string name="accessibility_service_label">Rub Minds app identity monitor</string>
+    <string name="accessibility_service_description">When enabled, Rub Minds records only the package name of selected apps while they are in the foreground. It does not read screen text, inspect private app data, tap controls, or type on your behalf.</string>
+</resources>
