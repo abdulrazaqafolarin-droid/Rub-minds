@@ -1,6 +1,7 @@
 package app.rubminds.companion
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.ComponentName
 import android.os.Bundle
@@ -93,6 +94,10 @@ class MainActivity : Activity() {
         actions.addView(Button(this).apply {
             text = "Save app choices"
             setOnClickListener { saveChoices() }
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        actions.addView(Button(this).apply {
+            text = "Revoke all"
+            setOnClickListener { confirmRevokeAll() }
         }, LinearLayout.LayoutParams(0, -2, 1f))
         root.addView(actions)
 
@@ -230,6 +235,21 @@ class MainActivity : Activity() {
             return
         }
         startActivity(launchIntent)
+    }
+
+    private fun confirmRevokeAll() {
+        AlertDialog.Builder(this)
+            .setTitle("Revoke all app permissions?")
+            .setMessage("Rub Minds will remove every app selection and draft-insertion grant saved on this phone.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Revoke all") { _, _ ->
+                store.clear()
+                launchGrants.clear()
+                draftGrants.clear()
+                drawAppRows()
+                Toast.makeText(this, "All app permissions were revoked.", Toast.LENGTH_SHORT).show()
+            }
+            .show()
     }
 
     private fun saveChoices() {
