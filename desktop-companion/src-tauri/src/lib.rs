@@ -221,32 +221,39 @@ async fn register_desktop_device(args: RegisterDeviceArgs) -> Result<Registratio
 
 #[tauri::command]
 async fn revoke_desktop_device(
+    state: State<'_, AppState>,
     supabase_url: String,
     publishable_key: String,
     access_token: String,
     room_id: String,
 ) -> Result<(), String> {
-    let token = vault_get("device-token")?.ok_or("This computer is not registered")?;
+    let device_id = vault_get("device-id")?.ok_or("This computer has no saved device identity")?;
+    if vault_get("device-token")?.is_none() {
+        return Err("This computer is not registered".into());
+    }
     let base = validate_supabase_config(&supabase_url, &publishable_key, &access_token)?;
-    if Uuid::parse_str(&room_id).is_err() { return Err("Invalid group".into()); }
+    if Uuid::parse_str(&room_id).is_err() || Uuid::parse_str(&device_id).is_err() {
+        return Err("Invalid group or device identity".into());
+    }
     let response = Client::builder().timeout(Duration::from_secs(25)).build()
         .map_err(|_| "Could not initialize secure network transport".to_string())?
         .post(format!("{base}/functions/v1/backroom-device"))
         .header("apikey", publishable_key.trim())
         .bearer_auth(&access_token)
-        .json(&json!({"action":"owner/revoke-device-self","roomId":room_id,"deviceToken":token}))
+        .json(&json!({"action":"owner/revoke","roomId":room_id,"deviceId":device_id}))
         .send().await.map_err(|_| "Could not reach Rub Minds to revoke this computer".to_string())?;
-    if !response.status().is_success() {
+    let status = response.status();
+    let body: Value = response.json().await
+        .map_err(|_| "Rub Minds returned an invalid revocation response".to_string())?;
+    if !status.is_success() || body.get("ok").and_then(Value::as_bool) != Some(true) ||
+       body.get("status").and_then(Value::as_str) != Some("revoked") {
         return Err("Rub Minds did not confirm computer revocation. The device credential remains stored.".into());
     }
+    emergency_stop(state)?;
     vault_delete("device-token")?;
-    emergency_stop_inner_unmanaged();
+    vault_delete("device-id")?;
+    vault_delete("device-private-key")?;
     Ok(())
-}
-
-fn emergency_stop_inner_unmanaged() {
-    // The Tauri command also clears AppState. This helper only represents the
-    // credential removal path, so no in-memory permission state is touched here.
 }
 
 #[derive(Serialize)]
