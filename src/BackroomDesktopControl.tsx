@@ -28,9 +28,12 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const [selection,setSelection] = useState<DragRect|null>(null);
   const [draft,setDraft] = useState('');
   const [terminalSession,setTerminalSession] = useState('');
+  const [terminalPeerId,setTerminalPeerId] = useState('');
   const [terminalText,setTerminalText] = useState('');
   const [terminalInput,setTerminalInput] = useState('');
   const channelRef=useRef<any>(null);
+  const screenSessionRef=useRef('');
+  const pendingActions=useRef(new Map<string,string>());
   const peerRef=useRef<RTCPeerConnection|null>(null);
   const dataRef=useRef<RTCDataChannel|null>(null);
   const videoRef=useRef<HTMLVideoElement|null>(null);
@@ -64,7 +67,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   },[deviceId,roomId]);
 
   const sendCommand=useCallback(async(action:string,extra:Record<string,unknown>={})=>{
-    const requestId=uuid();setPendingRequest(requestId);
+    const requestId=uuid();setPendingRequest(requestId);pendingActions.current.set(requestId,action);
     await publish('command',{requestId,action,...extra});
     return requestId;
   },[publish]);
@@ -74,7 +77,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     if(current){current.close();peerRef.current=null;}
     dataRef.current=null;
     if(videoRef.current)videoRef.current.srcObject=null;
-    setVideoReady(false);setScreenSession('');setControlGranted(false);setDraftGranted(false);
+    setVideoReady(false);setScreenSession('');screenSessionRef.current='';setControlGranted(false);setDraftGranted(false);
     setCoordinateControl(false);setSelectMode(false);setSelection(null);
   },[]);
 
@@ -86,7 +89,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     channel.on('broadcast',{event:'signal'},async({payload}:any)=>{
       if(disposed||payload?.roomId!==roomId||payload?.deviceId!==deviceId)return;
       const pc=peerRef.current;
-      if(!pc||payload.sessionId!==screenSession)return;
+      if(!pc||payload.sessionId!==screenSessionRef.current&&payload.sessionId!==terminalPeerId)return;
       if(payload.answer){try{await pc.setRemoteDescription(payload.answer);setVideoReady(true);}catch{flash('The computer returned an invalid screen-share answer.',true);}}
       if(typeof payload.canControl==='boolean')setCoordinateControl(payload.canControl);
       if(payload.candidate){try{await pc.addIceCandidate(payload.candidate);}catch{/* stale ICE candidate */}}
@@ -110,7 +113,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     });
     channelRef.current=channel;
     return ()=>{disposed=true;channelRef.current=null;void supabase.removeChannel(channel);};
-  },[deviceId,roomId,screenSession,closePeer,flash]);
+  },[deviceId,roomId,terminalPeerId,closePeer,flash]);
 
   useEffect(()=>()=>{void closePeer();},[closePeer]);
 
@@ -120,16 +123,24 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     catch(error){flash(error instanceof Error?error.message:'Could not request launch.',true);}
   };
   const startTerminal=async()=>{
-    try{await sendCommand('terminal_start');flash('Terminal launch request sent. Approve it on the computer.');}
-    catch(error){flash(error instanceof Error?error.message:'Could not request terminal.',true);}
+    try{
+      const peerId=uuid();const pc=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun.cloudflare.com:3478']}]});
+      const data=pc.createDataChannel('backroom-terminal',{ordered:true});dataRef.current=data;peerRef.current=pc;screenSessionRef.current=peerId;setTerminalPeerId(peerId);setTerminalText('Waiting for local terminal approval…\\n');
+      data.onmessage=event=>{let message:any;try{message=JSON.parse(event.data);}catch{return;}if(message.kind==='terminal_output'){const output=new TextDecoder().decode(new Uint8Array(message.data||[]));setTerminalText(old=>(old+output).slice(-30000));}};
+      pc.onicecandidate=event=>{if(event.candidate)void publish('signal',{sessionId:peerId,candidate:event.candidate.toJSON()}).catch(error=>flash(String(error),true));};
+      pc.onconnectionstatechange=()=>{if(pc.connectionState==='failed'||pc.connectionState==='disconnected')flash('Terminal data connection interrupted.',true);};
+      const offer=await pc.createOffer();await pc.setLocalDescription(offer);
+      await sendCommand('terminal_start',{sessionId:peerId,offer:{sdp:pc.localDescription?.sdp}});
+      flash('Native terminal request sent. Approve it on the computer.');
+    }catch(error){await closePeer();flash(error instanceof Error?error.message:'Could not request terminal.',true);}
   };
   const startScreen=async()=>{
     if(!channelReady)return flash('Connect the device channel first.',true);
     if(peerRef.current)await closePeer();
-    const sessionId=uuid();
+    const sessionId=uuid();screenSessionRef.current=sessionId;
     const pc=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun.cloudflare.com:3478']}]});
     const data=pc.createDataChannel('backroom-input',{ordered:true});
-    dataRef.current=data;peerRef.current=pc;setScreenSession(sessionId);
+    dataRef.current=data;peerRef.current=pc;setScreenSession(sessionId);setTerminalPeerId('');
     pc.ontrack=event=>{if(videoRef.current)videoRef.current.srcObject=event.streams[0];setVideoReady(true);};
     pc.onicecandidate=event=>{if(event.candidate)void publish('signal',{sessionId,candidate:event.candidate.toJSON()}).catch(error=>flash(String(error),true));};
     pc.onconnectionstatechange=()=>{if(pc.connectionState==='failed'||pc.connectionState==='disconnected')flash('Screen connection interrupted. Reconnect the live view.');};
@@ -160,9 +171,10 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   };
   const stop=async()=>{
     try{
-      if(screenSession)await publish('command',{requestId:uuid(),action:'stop_session',sessionId:screenSession});
+      const peerId=screenSessionRef.current||terminalPeerId;
+      if(peerId)await publish('command',{requestId:uuid(),action:'stop_session',sessionId:peerId,terminalSessionId:terminalSession});
     }catch{/* the local device can still revoke its own grants */}
-    await closePeer();setTerminalSession('');setTerminalText('');
+    await closePeer();setTerminalSession('');setTerminalPeerId('');setTerminalText('');
   };
 
   const videoContentRect=()=>{
@@ -279,11 +291,11 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
             </div>}
             {controlGranted&&<div className="br-desktop-caption">Computer control is locally approved for a limited time. The user at the computer can revoke it immediately. Draft typing has a second independent approval and never sends or submits.</div>}
           </div>}
-          {terminalSession&&<div className="br-terminal-remote">
+          {(terminalSession||terminalPeerId)&&<div className="br-terminal-remote">
             <div className="br-terminal-remote-head"><SquareTerminal size={15}/> Native terminal · actual computer</div>
             <pre>{terminalText||'Waiting for terminal output…'}</pre>
             <div className="br-terminal-input"><input value={terminalInput} onChange={e=>setTerminalInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')terminalSend();}} placeholder={controlGranted?'Enter a terminal command…':'Request control on the terminal session first'} disabled={!controlGranted}/><button type="button" onClick={terminalSend} disabled={!controlGranted||!terminalInput}>Run</button></div>
-            {!controlGranted&&<button type="button" onClick={()=>void sendCommand('request_control',{sessionId:terminalSession})}>Request terminal control</button>}
+            {!controlGranted&&terminalSession&&<button type="button" onClick={()=>void sendCommand('request_control',{sessionId:terminalSession})}>Request terminal control</button>}
           </div>}
         </div>}
       </>
