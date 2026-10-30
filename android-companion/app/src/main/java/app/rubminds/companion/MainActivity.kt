@@ -2,9 +2,11 @@ package app.rubminds.companion
 
 import android.app.Activity
 import android.content.Intent
+import android.content.ComponentName
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.provider.Settings
+import android.view.inputmethod.InputMethodManager
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
@@ -24,6 +26,7 @@ private data class LaunchableApp(
 class MainActivity : Activity() {
     private lateinit var store: AppGrantStore
     private lateinit var list: LinearLayout
+    private lateinit var keyboardStatus: TextView
     private val launchGrants = linkedSetOf<String>()
     private val draftGrants = linkedSetOf<String>()
     private val appRows = mutableMapOf<String, Pair<CheckBox, CheckBox>>()
@@ -38,6 +41,25 @@ class MainActivity : Activity() {
         }
         render()
         discoverApps()
+        refreshKeyboardStatus()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::list.isInitialized) discoverApps()
+        if (::keyboardStatus.isInitialized) refreshKeyboardStatus()
+    }
+
+    private fun refreshKeyboardStatus() {
+        val manager = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+        val component = ComponentName(this, DraftInputMethodService::class.java).flattenToString()
+        val enabled = manager.enabledInputMethodList.any { it.id == component }
+        val selected = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD) == component
+        keyboardStatus.text = when {
+            selected -> "Rub Minds draft keyboard is currently selected."
+            enabled -> "Rub Minds draft keyboard is enabled. Select it using Choose keyboard when you need draft insertion."
+            else -> "Draft keyboard is not enabled yet. Android will ask you to approve it in Settings."
+        }
     }
 
     private fun render() {
@@ -73,11 +95,30 @@ class MainActivity : Activity() {
             text = "Save app choices"
             setOnClickListener { saveChoices() }
         }, LinearLayout.LayoutParams(0, -2, 1f))
-        actions.addView(Button(this).apply {
-            text = "Keyboard settings"
+        root.addView(actions)
+
+        val keyboardActions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        keyboardActions.addView(Button(this).apply {
+            text = "Enable in Android Settings"
             setOnClickListener { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
         }, LinearLayout.LayoutParams(0, -2, 1f))
-        root.addView(actions)
+        keyboardActions.addView(Button(this).apply {
+            text = "Choose keyboard"
+            setOnClickListener {
+                val manager = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+                manager.showInputMethodPicker()
+            }
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+        root.addView(keyboardActions)
+        keyboardStatus = TextView(this).apply {
+            textSize = 12f
+            setTextColor(0xff4b5563.toInt())
+            setPadding(0, dp(4), 0, dp(8))
+        }
+        root.addView(keyboardStatus)
 
         root.addView(TextView(this).apply {
             text = "Installed apps"
