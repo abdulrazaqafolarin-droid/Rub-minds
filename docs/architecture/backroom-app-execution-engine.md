@@ -24,12 +24,34 @@ Reject any approach that requires undisclosed broad permissions, exposes an inbo
 
 ## Initial engine research (not yet adopted)
 
-- [BlackBox Reborn](https://github.com/fdavids77/BlackBoxReborn) describes a maintained virtualization fork and claims Android 14–17 compatibility, but its repository states **GPL-3.0** and lists application-specific limitations. The compatibility claims need an actual build and device test; license compatibility must be reviewed before integration.
-- [NewBlackBox](https://github.com/ALEX5402/NewBlackbox) describes a userspace app-virtualization engine and advertises an Apache-2.0 license in its repository materials. Verify the exact upstream license, commit health, native build chain and current Android support from the actual checked-out source before relying on those claims.
-- Android's [Virtualization Framework API documentation](https://android.googlesource.com/platform/packages/modules/Virtualization/+/HEAD/libs/framework-virtualization/README.md) says its Microdroid APIs are system APIs requiring the restricted `MANAGE_VIRTUAL_MACHINE` permission; they are not a general drop-in option for ordinary third-party apps.
-- The [ZCore enhanced BlackBox fork](https://github.com/ZENINXOP/BlackBox) describes free support only through Android 14 and paid support for newer releases, so it does not currently satisfy a no-paid dependency decision without further verification.
+### ALEX5402/NewBlackbox — preferred Android 14 proof-of-concept candidate, not integration-ready
 
-**Decision:** do not add any candidate as a dependency yet. Prefer a verifiable, buildable, legally compatible engine that can be included in Rub Minds at no cost, and test it on the actual target phone before designing the control adapter around its API.
+Repository: [ALEX5402/NewBlackbox](https://github.com/ALEX5402/NewBlackbox). The GitHub repository metadata and root `LICENSE` file identify Apache-2.0. Its README claims Android 5–14+, no-root userspace virtualization, ARM64/ARMv7/x86 support, and describes a Bcore core module / AAR-style integration.
+
+The source review found important gaps between that top-level pitch and a safe Rub Minds integration:
+
+- The app and Bcore Gradle modules use Java 21 and NDK 29, despite README build guidance saying JDK 17. The root build targets SDK 35 but sets target SDK 28.
+- The Bcore manifest contains 323 `uses-permission` entries. It includes `QUERY_ALL_PACKAGES`, `MANAGE_EXTERNAL_STORAGE`, `SYSTEM_ALERT_WINDOW`, location, camera, microphone, contacts, phone/SMS, account-management, package-installation and many legacy/vendor permissions.
+- The release app build is configured with the debug signing key. Do not use the published/demo APK as a Rub Minds trust artifact.
+- The user guide says root is recommended for full functionality, although the README overview says no root is required. That discrepancy must be resolved with an unrooted proof of concept on the target handset.
+
+This is the most reasonable candidate for a **separate disposable POC** on the target Android 14 phone because its license is clear and its source documents a library module. It is not approved to merge unchanged. The POC must use a dedicated test application ID and signing key, remove unneeded modules/features, inspect the final merged manifest (not just the companion manifest), and prove that the minimum app-install/launch workflow works without granting broad permissions unnecessarily.
+
+### fdavids77/BlackBoxReborn — legal hold pending upstream clarification
+
+Repository: [fdavids77/BlackBoxReborn](https://github.com/fdavids77/BlackBoxReborn). Its README badge and text say GPL-3.0, while GitHub repository metadata and the checked-in root `LICENSE` file identify Apache-2.0. This mismatch makes the intended licensing/provenance unclear. Do not copy, link, distribute or ship its code until the upstream maintainer clarifies the governing license and the full history/dependency graph is audited.
+
+Its README reports Android 14–17 fixes but the listed successful device evidence is limited (Samsung A25 on Android 16 and a Pixel 10 Pro on Android 17), and it documents app-specific gaps such as WhatsApp companion-link handshakes and strong Play Integrity. Those claims need reproducible local testing; they are not a guarantee for this TECNO device.
+
+### Black00Z/Blacks-BlackBox — reject unchanged
+
+Repository: [Black00Z/Blacks-BlackBox](https://github.com/Black00Z/Blacks-BlackBox). Its root LICENSE and GitHub metadata indicate Apache-2.0, but its standalone application is a customized fork with a Java 21 / NDK 29 build, a large third-party dependency set and a broad Bcore permission manifest similar to NewBlackbox. Its README explicitly says compatibility is incomplete and narrows its own validation focus to selected apps / work-profile scenarios. Its release build is configured with debug signing. It is not a safe drop-in runtime.
+
+### Platform virtualization APIs
+
+Android's [Virtualization Framework API documentation](https://android.googlesource.com/platform/packages/modules/Virtualization/+/HEAD/libs/framework-virtualization/README.md) says its Microdroid APIs are system APIs requiring the restricted `MANAGE_VIRTUAL_MACHINE` permission; they are not a general drop-in option for ordinary third-party apps.
+
+**Decision:** NewBlackbox may be used for a disposable, isolated Android 14 POC only after reviewing and trimming its permission surface. No engine has been selected or integrated. Do not claim that a native app is running inside Backroom until an installed guest app has been launched in an isolated instance and its frame is actually rendered in the Backroom Device Frame on a physical device.
 
 ## Permission UX
 
