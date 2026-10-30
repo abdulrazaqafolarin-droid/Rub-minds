@@ -51,3 +51,6 @@ verify_jwt = false
 
 [functions.backroom-config]
 verify_jwt = true
+
+[functions.backroom-device]
+verify_jwt = false
