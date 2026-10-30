@@ -9,6 +9,7 @@ const invoke = (command, args = {}) => window.__TAURI__?.core?.invoke(command, a
 const listen = (event, callback) => window.__TAURI__?.event?.listen(event, callback)
   ?? Promise.reject(new Error('Native events are unavailable.'));
 const cfg = { url: import.meta.env.VITE_SUPABASE_URL || '', key: import.meta.env.VITE_SUPABASE_ANON_KEY || '' };
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 const state = {
   client: null, user: null, session: null, deviceId: null, roomId: null, deviceTokenSaved: false,
