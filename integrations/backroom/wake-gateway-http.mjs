@@ -33,6 +33,19 @@ const response=(status,body)=>new Response(JSON.stringify(body),{status,headers:
   'X-Content-Type-Options':'nosniff'
 }});
 const bad=()=>response(401,{ok:false,reason:'unauthorized'});
+const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const DIGEST=/^[0-9a-f]{64}$/;
+const RETRY_ERRORS=new Set(['target_unavailable','approval_required','provider_busy','transport_error','result_unconfirmed','authorization_denied','other']);
+function validOperationBody(method,body) {
+ if(!UUID.test(body.hostId??'')||!UUID.test(body.bindingId??'')||!DIGEST.test(body.sessionDigest??''))return false;
+ if(method==='activate')return UUID.test(body.grantId??'')&&Number.isSafeInteger(body.ttlSeconds)&&body.ttlSeconds>=60&&body.ttlSeconds<=900;
+ if(method==='deactivate')return UUID.test(body.grantId??'');
+ if(method==='claim')return body.limit===undefined||(Number.isSafeInteger(body.limit)&&body.limit>=1&&body.limit<=20);
+ if(method==='acknowledge')return UUID.test(body.jobId??'')&&UUID.test(body.leaseToken??'')&&['acknowledged','ignored'].includes(body.outcome);
+ return UUID.test(body.jobId??'')&&UUID.test(body.leaseToken??'')&&
+  Number.isSafeInteger(body.retryAfterSeconds)&&body.retryAfterSeconds>=1&&body.retryAfterSeconds<=300&&
+  typeof body.errorCode==='string'&&RETRY_ERRORS.has(body.errorCode);
+}
 async function readSmallJson(request,maxBytes) {
  const reader=request.body?.getReader();
  if(!reader)throw new Error('Missing body');
@@ -92,7 +105,8 @@ export function createWakeGatewayHttpHandler({gateway,maxBodyBytes=4096}={}) {
     method==='acknowledge'?
       ['hostId','sessionDigest','bindingId','jobId','leaseToken','outcome']:
       ['hostId','sessionDigest','bindingId','jobId','leaseToken','retryAfterSeconds','errorCode'];
-  if(Object.keys(body).some(key=>!permitted.includes(key)))return response(400,{ok:false,reason:'invalid_body'});
+  if(Object.keys(body).some(key=>!permitted.includes(key))||!validOperationBody(method,body))
+   return response(400,{ok:false,reason:'invalid_body'});
   const input={...body,hostToken:match[1]};
   try {
    const result=await gateway[method](input);
