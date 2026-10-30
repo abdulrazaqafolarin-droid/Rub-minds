@@ -190,6 +190,7 @@ class MainActivity : Activity() {
     }
 
     private fun refreshKeyboardStatus() {
+        if (cloudApi == null) return
         // System-owned IME enable/select screens are not replaced by app-controlled toggles.
         val manager = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
         val component = ComponentName(this, DraftInputMethodService::class.java).flattenToString()
@@ -262,8 +263,10 @@ class MainActivity : Activity() {
                 isChecked = selected
                 isEnabled = digest != null
                 setOnCheckedChangeListener { _, checked ->
-                    if (checked && digest != null) launchGrants[app.packageName] = digest
-                    else {
+                    if (checked && digest != null) {
+                        launchGrants[app.packageName] = digest
+                        appRows[app.packageName]?.second?.isEnabled = true
+                    } else {
                         launchGrants.remove(app.packageName)
                         draftGrants.remove(app.packageName)
                         appRows[app.packageName]?.second?.isChecked = false
@@ -417,6 +420,11 @@ class MainActivity : Activity() {
         busy = value
         if (::pairButton.isInitialized) pairButton.isEnabled = !value
         if (::saveButton.isInitialized) saveButton.isEnabled = !value
+        appRows.forEach { (packageName, row) ->
+            val hasSigner = apps.any { it.packageName == packageName && it.signingCertificateSha256 != null }
+            row.first.isEnabled = !value && hasSigner
+            row.second.isEnabled = !value && row.first.isChecked
+        }
         if (::cloudStatus.isInitialized) cloudStatus.text = message
     }
 

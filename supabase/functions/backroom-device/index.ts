@@ -89,6 +89,14 @@ Deno.serve(async req => {
         .eq('id', input.roomId).eq('owner_id', ownerId).maybeSingle();
       if (roomError) return json(503, fail('device_service_unavailable'), origin);
       if (!room) return json(403, fail('room_owner_required'), origin);
+      const now = new Date().toISOString();
+      const { count: pendingCount, error: pendingError } = await db.from('backroom_device_pairings')
+        .select('id', { count: 'exact', head: true }).eq('owner_id', ownerId)
+        .is('claimed_at', null).gt('expires_at', now);
+      if (pendingError) return json(503, fail('device_service_unavailable'), origin);
+      if ((pendingCount ?? 0) >= 5) return json(429, fail('too_many_pending_pairings'), origin);
+      await db.from('backroom_device_pairings').delete().eq('owner_id', ownerId)
+        .lt('expires_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
       const code = randomHex(32);
       const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
       const { error } = await db.from('backroom_device_pairings').insert({
