@@ -426,7 +426,7 @@ export class BrowserHostRuntime {
     const grant = this.#viewGrants.get(grantId);
     if (!grant || grant.pageId !== pageId || grant.roomId !== roomId || grant.expiresAt <= Date.now()) {
       if (grant?.expiresAt <= Date.now()) this.#viewGrants.delete(grantId);
-      throw new Error("browser_view_permission_required_or_expired");
+      throw new Error("browser view permission required or expired");
     }
     const { page, url } = this.#page(pageId);
     const readViewport = () => page.evaluate(() => {
@@ -635,7 +635,7 @@ export class BrowserHostRuntime {
             : picked?.state === "stale_view"
               ? "view changed during selection; refresh and try again"
               : picked?.state === "occupied_target"
-                ? "selected text field is not empty; clear it manually before registering"
+                ? "occupied_target: selected text field is not empty; clear it manually before registering"
                 : "selected field could not be identified safely");
       }
       const after = await page.evaluate(() => ({

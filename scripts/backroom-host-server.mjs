@@ -503,7 +503,9 @@ export function createBackroomHostServer({
               typeof input.participantId !== "string" || !id.test(input.participantId) ||
               typeof input.sessionId !== "string" || !id.test(input.sessionId) ||
               typeof input.bindingId !== "string" || !id.test(input.bindingId) ||
-              Object.keys(input).some(key => !["confirmed", "targetId", "roomId", "participantId", "sessionId", "bindingId", "ttlMs", "maxPerMinute"].includes(key))) {
+              (input.ownerConfirmed !== undefined && typeof input.ownerConfirmed !== "boolean") ||
+              (input.approved !== undefined && typeof input.approved !== "boolean") ||
+              Object.keys(input).some(key => !["confirmed", "ownerConfirmed", "approved", "targetId", "roomId", "participantId", "sessionId", "bindingId", "ttlMs", "maxPerMinute"].includes(key))) {
               writeJson(response, 400, { error: "invalid_wake_scope" }, cors);
               return;
             }
