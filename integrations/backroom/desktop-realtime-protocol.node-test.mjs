@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildScopedDeviceMessage,createDeviceCommand,validateDeviceCommand,classifyDeviceResponse,queueIceCandidate,takeIceCandidates} from './desktop-realtime-protocol.mjs';
+import {buildScopedDeviceMessage,createDeviceCommand,validateDeviceCommand,classifyDeviceResponse,validateDeviceSignal,queueIceCandidate,takeIceCandidates} from './desktop-realtime-protocol.mjs';
 const deviceId='123e4567-e89b-42d3-a456-426614174000',roomId='123e4567-e89b-42d3-a456-426614174001',requestId='123e4567-e89b-42d3-a456-426614174002';
 test('creates immutable scoped messages and prevents scope override',()=>{
  const message=buildScopedDeviceMessage({action:'ping'},{deviceId,roomId});
@@ -54,4 +54,19 @@ test('rejects invalid app IDs, missing session IDs and oversized WebRTC SDP',()=
  assert.throws(()=>createDeviceCommand('view_offer',{sessionId:requestId,offer:{sdp:'x'.repeat(65537)}},{deviceId,roomId}),/Invalid/);
  assert.throws(()=>createDeviceCommand('request_control',{sessionId:'bad'},{deviceId,roomId}),/Invalid/);
  assert.throws(()=>createDeviceCommand('stop_session',{sessionId:requestId,terminalSessionId:'bad'},{deviceId,roomId}),/Invalid/);
+});
+
+test('device signal validation binds sender, room, peer, time and answer/candidate shape',()=>{
+ const valid={
+  deviceId,roomId,sessionId:requestId,issuedAt:10_000,
+  answer:{type:'answer',sdp:'v=0\\r\\no=- 1 1 IN IP4 127.0.0.1\\r\\n'},canControl:true
+ };
+ assert.equal(validateDeviceSignal(valid,{deviceId,roomId,now:10_000}).canControl,true);
+ assert.equal(validateDeviceSignal({...valid,deviceId:roomId},{deviceId,roomId,now:10_000}),null);
+ assert.equal(validateDeviceSignal({...valid,answer:{type:'offer',sdp:'v=0\\r\\n'}},{deviceId,roomId,now:10_000}),null);
+ assert.equal(validateDeviceSignal({...valid,issuedAt:50_000},{deviceId,roomId,now:10_000}),null);
+ assert.equal(validateDeviceSignal({...valid,actorUserId:'bad'},{deviceId,roomId,now:10_000}),null);
+ const candidate={deviceId,roomId,sessionId:requestId,issuedAt:10_000,candidate:{candidate:'candidate:1 1 UDP 1 192.0.2.1 1234 typ host',sdpMid:'0'}};
+ assert.ok(validateDeviceSignal(candidate,{deviceId,roomId,now:10_000}));
+ assert.equal(validateDeviceSignal({...candidate,answer:valid.answer},{deviceId,roomId,now:10_000}),null);
 });
