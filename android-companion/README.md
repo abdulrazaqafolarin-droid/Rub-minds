@@ -44,6 +44,10 @@ This slice supports **app discovery and selected-app inventory only**. It does n
 
 Package inventory is restricted to launchable apps visible under the declared `<queries>` filter. A broader all-packages declaration is not included. The SD-card label is based on Android's installed-package metadata; this app does not scan an SD card for uninstalled APK files. Work-profile and SD-card app visibility depends on Android profile, package visibility, and OEM behavior.
 
+## Virtualization engine decision
+
+See [`docs/architecture/backroom-app-execution-engine.md`](../docs/architecture/backroom-app-execution-engine.md) for the explicit proof-of-concept gate. No virtualization library has been integrated into the companion yet; dependency selection is blocked on manifest, licensing, compatibility and physical-device testing.
+
 ## Verification status
 
 - Repository Node tests statically verify permissions, HTTPS-only transport, lack of inbound localhost listeners, credential handling, and package query scope.
