@@ -4,8 +4,8 @@
  * listener is created. This endpoint intentionally does not execute OS actions.
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { resolveOwnerFromJwt } from '../../../integrations/backroom/owner-jwt.mjs';
-import { sanitizeDeviceEvent, validatePairClaim, validateSelectedApps } from '../../../integrations/backroom/cloud-device-protocol.mjs';
+import { resolveOwnerFromJwt } from './owner-jwt.mjs';
+import { sanitizeDeviceEvent, validatePairClaim, validateSelectedApps } from './cloud-device-protocol.mjs';
 
 const url = Deno.env.get('SUPABASE_URL');
 const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
