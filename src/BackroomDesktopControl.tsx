@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent, type KeyboardEvent } from 'react';
 import { Activity, Monitor, Play, Power, RefreshCw, ShieldCheck, SquareTerminal, TextCursorInput, X } from 'lucide-react';
 import { supabase } from './supabase';
+import { buildScopedDeviceMessage, classifyDeviceResponse, queueIceCandidate, takeIceCandidates } from '../integrations/backroom/desktop-realtime-protocol.mjs';
 import { listBackroomDevices, type BackroomDevice } from './backroomCloudDevices';
 import './backroomDesktopControl.css';
 
@@ -41,6 +42,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const frameRef=useRef<HTMLDivElement|null>(null);
   const dragRef=useRef<{x:number;y:number;pointerId:number}|null>(null);
   const devicesRef=useRef<BackroomDevice[]>([]);
+  const pendingCandidatesRef=useRef(new Map<string,RTCIceCandidateInit[]>());
   const selectedDevice=devices.find(d=>d.device_id===deviceId);
   const apps=(selectedDevice?.desktopApps||[]) as DesktopApp[];
   const activeDevices=devices.filter(d=>d.status==='active'&&['windows','macos','linux'].includes(d.platform));
@@ -63,13 +65,14 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const publish=useCallback(async(event:'command'|'signal',payload:Record<string,unknown>)=>{
     const channel=channelRef.current;
     if(!channel||!deviceId)throw new Error('The private device channel is not connected.');
-    const result=await channel.send({type:'broadcast',event,payload:{...payload,roomId,deviceId}});
+    const scoped=buildScopedDeviceMessage(payload,{roomId,deviceId});
+    const result=await channel.send({type:'broadcast',event,payload:scoped});
     if(result!=='ok')throw new Error('Could not send the private device request.');
   },[deviceId,roomId]);
 
   const sendCommand=useCallback(async(action:string,extra:Record<string,unknown>={})=>{
     const requestId=uuid();setPendingRequest(requestId);pendingActions.current.set(requestId,action);
-    await publish('command',{requestId,action,...extra});
+    await publish('command',{requestId,action,issuedAt:Date.now(),...extra});
     return requestId;
   },[publish]);
 
@@ -77,6 +80,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     const current=peerRef.current;
     if(current){current.close();peerRef.current=null;}
     dataRef.current=null;
+    pendingCandidatesRef.current.clear();
     if(videoRef.current)videoRef.current.srcObject=null;
     setVideoReady(false);setScreenSession('');screenSessionRef.current='';terminalPeerRef.current='';setControlGranted(false);setDraftGranted(false);
     setCoordinateControl(false);setSelectMode(false);setSelection(null);
@@ -91,9 +95,18 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       if(disposed||payload?.roomId!==roomId||payload?.deviceId!==deviceId)return;
       const pc=peerRef.current;
       if(!pc||payload.sessionId!==screenSessionRef.current&&payload.sessionId!==terminalPeerRef.current)return;
-      if(payload.answer){try{await pc.setRemoteDescription(payload.answer);setVideoReady(true);}catch{flash('The computer returned an invalid screen-share answer.',true);}}
+      if(payload.answer){
+        try{
+          await pc.setRemoteDescription(payload.answer);
+          for(const candidate of takeIceCandidates(pendingCandidatesRef.current,payload.sessionId)){try{await pc.addIceCandidate(candidate);}catch{/* stale ICE candidate */}}
+          setVideoReady(true);
+        }catch{flash('The computer returned an invalid screen-share answer.',true);}
+      }
       if(typeof payload.canControl==='boolean')setCoordinateControl(payload.canControl);
-      if(payload.candidate){try{await pc.addIceCandidate(payload.candidate);}catch{/* stale ICE candidate */}}
+      if(payload.candidate){
+        if(!pc.remoteDescription)queueIceCandidate(pendingCandidatesRef.current,payload.sessionId,payload.candidate);
+        else try{await pc.addIceCandidate(payload.candidate);}catch{/* stale ICE candidate */}
+      }
       if(payload.stop)void closePeer();
     });
     channel.on('broadcast',{event:'response'},({payload}:any)=>{
@@ -101,11 +114,14 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       if(typeof payload.requestId!=='string')return;
       setPendingRequest(current=>current===payload.requestId?'':current);
       if(!payload.ok){flash(payload.reason==='denied_on_device'?'The request was denied on the computer.':'The computer rejected the request: '+(payload.reason||'unknown reason'),true);return;}
-      if(typeof payload.sessionId==='string'&&Number.isInteger(payload.cols)){
-        setTerminalSession(payload.sessionId);setTerminalText('Terminal ready · '+(payload.shellLabel||'native shell')+'\n');flash('Native terminal started on the selected computer.');
-      }else if(typeof payload.pid==='number'){flash('Application launched on the selected computer.');}
-      else if(payload.sessionId===screenSession){setControlGranted(true);flash('Local computer-control permission approved.');}
-      else if(payload.expiresSeconds){setDraftGranted(true);flash('Local draft-typing permission approved.');}
+      const responseKind=classifyDeviceResponse(payload);
+      if(responseKind==='terminal'){
+        setTerminalSession(payload.sessionId);setTerminalText('Terminal ready · '+(payload.shellLabel||'native shell')+'\\n');flash('Native terminal started on the selected computer.');
+      }else if(responseKind==='launch'){flash('Application launched on the selected computer.');}
+      else if(responseKind==='control'){setControlGranted(true);flash('Local computer-control permission approved.');}
+      else if(responseKind==='draft'){setDraftGranted(true);flash('Local draft-typing permission approved.');}
+      else if(responseKind==='view'){flash('The computer approved the live screen request.');}
+      else if(responseKind==='stop'){void closePeer();setTerminalSession('');flash('The computer stopped the session.');}
     });
     channel.subscribe((status:string)=>{
       if(disposed)return;
