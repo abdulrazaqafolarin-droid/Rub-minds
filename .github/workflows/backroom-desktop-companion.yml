@@ -35,5 +35,7 @@ jobs:
         run: npm run build:desktop-companion
       - name: Run native companion unit tests
         run: cargo test --manifest-path desktop-companion/src-tauri/Cargo.toml
+      - name: Run companion protocol and authorization regression tests
+        run: npm run test:companion
       - name: Compile the actual Windows native companion
         run: cargo check --manifest-path desktop-companion/src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
