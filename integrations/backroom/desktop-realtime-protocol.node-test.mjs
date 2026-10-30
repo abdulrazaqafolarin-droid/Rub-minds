@@ -11,7 +11,7 @@ test('creates immutable scoped messages and prevents scope override',()=>{
 });
 test('creates commands with fresh UUIDs, timestamp and immutable scope',()=>{
  const message=createDeviceCommand('launch_app',{appId:'123e4567-e89b-42d3-a456-426614174003'},{deviceId,roomId,now:5000,requestId});
- assert.deepEqual(message,{appId:'app-1',requestId,action:'launch_app',issuedAt:5000,roomId,deviceId});
+ assert.deepEqual(message,{appId:'123e4567-e89b-42d3-a456-426614174003',requestId,action:'launch_app',issuedAt:5000,roomId,deviceId});
  assert.throws(()=>createDeviceCommand('write_terminal',{}, {deviceId,roomId}),/Invalid/);
  assert.throws(()=>createDeviceCommand('launch_app',{issuedAt:1},{deviceId,roomId}),/Invalid/);
 });
