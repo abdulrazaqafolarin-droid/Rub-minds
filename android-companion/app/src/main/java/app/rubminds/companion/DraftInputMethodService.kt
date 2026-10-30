@@ -120,11 +120,19 @@ class DraftInputMethodService : InputMethodService() {
             keyButtons += this
         }
 
-    private fun isInsertAllowed(): Boolean = AppGrantPolicy.canInsertDraft(
-        AppGrantStore(this).get(activePackage.orEmpty()),
-        currentInputEditorInfo?.packageName ?: activePackage,
-        currentInputEditorInfo?.inputType ?: activeInputType
-    )
+    private fun isInsertAllowed(): Boolean {
+        val liveEditor = currentInputEditorInfo ?: return false
+        // Fail closed if the editor changed without the service observing a new input event.
+        if (activePackage.isNullOrBlank() ||
+            liveEditor.packageName != activePackage ||
+            liveEditor.inputType != activeInputType
+        ) return false
+        return AppGrantPolicy.canInsertDraft(
+            AppGrantStore(this).get(activePackage.orEmpty()),
+            liveEditor.packageName,
+            liveEditor.inputType
+        )
+    }
 
     private fun updatePermissionState() {
         val allowed = isInsertAllowed()
