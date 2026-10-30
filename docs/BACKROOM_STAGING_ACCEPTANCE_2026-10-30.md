@@ -38,7 +38,7 @@ Do not use wildcard origins. Pairing remains one-time, exact-origin-bound and lo
 
 ### Current-head Vercel build
 
-The Preview build for latest branch commit `f5bd0ed64f90cd6dbd9b6d6590d1484a40a4895b` reached READY. Its current prebuild suites reported:
+The Preview build for latest branch commit `63ab12fef7dbd9cfcec56dd62c27fcacc7dc11fa` reached READY. This is a documentation-only follow-up to executable-code head `f5bd0ed64f90cd6dbd9b6d6590d1484a40a4895b`. Its current prebuild suites reported:
 
 | Suite | Passed | Failed |
 |---|---:|---:|
@@ -192,3 +192,14 @@ Verification:
 - No Production deployment, environment variable, function, data row or migration was changed.
 
 This completes the staging **claim → verified draft/host result acknowledgement** HTTP path. It does not yet prove a user's signed-in Preview session can enroll a host/binding or that ChatGPT/Claude real-session wake roundtrip works.
+
+## Owner-authenticated host/binding enrollment contract review
+
+The client and local-host credential contract was checked against the staging Edge Function source:
+- `scripts/backroom-host-server.mjs` exposes `enrollmentDigest` in host status from the local persistent identity.
+- `integrations/backroom/host-identity.mjs` computes that digest as SHA-256 of the actual local `hostToken`.
+- `BackroomApp.tsx` sends the exact `hostId`, `credentialDigest` and bounded `ttlSeconds` fields to `backroom-config/host`.
+- The same UI registers the selected `roomId`, joined AI `participantId`, `hostId`, `sessionDigest`, browser space/session/target identity, revision, surface and locator to `backroom-config/binding`.
+- The deployed config function resolves the bearer JWT with `db.auth.getUser`, checks room ownership, the joined AI participant, active agent connection and hosted MCP session, and inserts the new binding inactive (`wake_enabled=false`, no confirmation/grant expiry).
+
+This proves source-level contract alignment but does **not** replace a live owner-JWT request. Authenticated host/binding enrollment from a signed-in staging Preview remains an explicit release gate; no disposable Auth user was created in this round.
