@@ -6,6 +6,7 @@
 import {createClient} from 'npm:@supabase/supabase-js@2';
 import {validateHostEnrollment,validatePendingWakeBinding} from '../../../integrations/backroom/host-enrollment-policy.mjs';
 import {classifyExistingBinding} from '../../../integrations/backroom/binding-registration-policy.mjs';
+import {resolveOwnerFromJwt} from '../../../integrations/backroom/owner-jwt.mjs';
 
 const url=Deno.env.get('SUPABASE_URL'),key=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 if(!url||!key)throw new Error('Backend configuration missing');
@@ -30,12 +31,7 @@ async function bodyJson(req:Request){
  return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(result));
 }
 async function ownerFromJwt(req:Request){
- const header=req.headers.get('authorization')??'';
- const match=/^Bearer ([A-Za-z0-9_.-]{32,4096})$/.exec(header);
- if(!match)return null;
- const {data,error}=await db.auth.getUser(match[1]);
- if(error||!data.user?.id)return null;
- return data.user.id as string;
+ return await resolveOwnerFromJwt(req,token=>db.auth.getUser(token));
 }
 Deno.serve(async req=>{
  const origin=req.headers.get('origin');
