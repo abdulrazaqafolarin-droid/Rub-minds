@@ -161,3 +161,13 @@ A further transaction exercised two AI participants plus a human sender and a bo
 - A human group message did enqueue exactly one job; the job was claimed and acknowledged normally.
 
 The test rows were rolled back. This confirms that the database trigger's smart-mode loop guard is active in the deployed staging schema.
+
+
+## Staging Auth behavior for the first Preview sign-in
+
+A public Auth settings request using the staging publishable key returned HTTP 200 and confirmed:
+- Email sign-in provider is enabled.
+- New signups are not globally disabled.
+- `mailer_autoconfirm=false`: email confirmation is required; users are not auto-confirmed.
+
+The Preview authenticates against the isolated staging project. Do not assume a Production account/session is shared or copy Production user data into Staging. A tester should use a staging-specific sign-in and complete its confirmation flow. No confirmation or Auth setting was changed by this acceptance work.
