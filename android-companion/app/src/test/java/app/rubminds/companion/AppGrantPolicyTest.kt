@@ -50,6 +50,16 @@ class AppGrantPolicyTest {
         assertTrue(AppGrantPolicy.canInsertDraft(selectedGrant, "com.example.chat", normalNumberInput))
     }
 
+    @Test fun packageIdentifiersMustBeWellFormed() {
+        assertTrue(AppGrantPolicy.isValidPackageName("com.example.chat"))
+        assertTrue(AppGrantPolicy.isValidPackageName("org.example_2.mobile"))
+        assertFalse(AppGrantPolicy.isValidPackageName(""))
+        assertFalse(AppGrantPolicy.isValidPackageName("com"))
+        assertFalse(AppGrantPolicy.isValidPackageName("com..chat"))
+        assertFalse(AppGrantPolicy.isValidPackageName("com.example;rm"))
+        assertFalse(AppGrantPolicy.isValidPackageName("com.example\\\\\\nchat"))
+    }
+
     @Test fun packageAndCapabilityMismatchesFailClosed() {
         assertFalse(AppGrantPolicy.canInsertDraft(selectedGrant, "", normalTextInput))
         assertFalse(AppGrantPolicy.canInsertDraft(selectedGrant, null, normalTextInput))
