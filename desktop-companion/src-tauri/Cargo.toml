@@ -26,3 +26,4 @@ hex = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 ed25519-dalek = { version = "2.2", features = ["rand_core"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
+tokio = { version = "1", features = ["sync"] }
