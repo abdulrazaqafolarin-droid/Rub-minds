@@ -16,7 +16,9 @@ function validOffer(value){
  return exactKeys(value,['sdp'])&&typeof value.sdp==='string'&&value.sdp.length>=8&&value.sdp.length<=65_536&&value.sdp.startsWith('v=0');
 }
 function validCandidate(value){
- return exactKeys(value,Object.keys(value))&&Object.keys(value).length>0&&Object.keys(value).every(key=>ICE_KEYS.includes(key))&&
+ if(!value||typeof value!=='object'||Array.isArray(value))return false;
+ const keys=Object.keys(value);
+ return keys.length>0&&keys.every(key=>ICE_KEYS.includes(key))&&
   typeof value.candidate==='string'&&value.candidate.length>0&&value.candidate.length<=2048&&
   (value.sdpMid===undefined||value.sdpMid===null||typeof value.sdpMid==='string'&&value.sdpMid.length<=128)&&
   (value.sdpMLineIndex===undefined||value.sdpMLineIndex===null||Number.isSafeInteger(value.sdpMLineIndex)&&value.sdpMLineIndex>=0&&value.sdpMLineIndex<=256)&&
