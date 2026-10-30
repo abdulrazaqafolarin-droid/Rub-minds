@@ -36,7 +36,7 @@ class MainActivity : Activity() {
     private val executor = Executors.newSingleThreadExecutor()
     private lateinit var store: AppGrantStore
     private lateinit var vault: DeviceCredentialVault
-    private lateinit var cloudApi: CloudDeviceApi
+    private var cloudApi: CloudDeviceApi? = null
     private lateinit var appList: LinearLayout
     private lateinit var pairingCodeInput: EditText
     private lateinit var cloudStatus: TextView
@@ -52,7 +52,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         store = AppGrantStore(this)
         vault = DeviceCredentialVault(this)
-        cloudApi = CloudDeviceApi()
+        cloudApi = try { CloudDeviceApi() } catch (_: Exception) { null }
         store.all().forEach {
             launchGrants[it.packageName] = it.signingCertificateSha256
             if (it.allowDraftInsertion) draftGrants += it.packageName
@@ -186,6 +186,7 @@ class MainActivity : Activity() {
         }, LinearLayout.LayoutParams(0, -2, 1f))
         root.addView(keyboardActions)
         setContentView(root)
+        if (cloudApi == null) cloudStatus.text = "Build this companion with SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY."
     }
 
     private fun refreshKeyboardStatus() {
@@ -320,7 +321,7 @@ class MainActivity : Activity() {
                 val deviceToken = randomHex(32)
                 val deviceId = UUID.randomUUID().toString()
                 val label = Build.MODEL?.take(80)?.ifBlank { "Android phone" } ?: "Android phone"
-                val result = cloudApi.claim(code, deviceToken, deviceId, label)
+                val result = cloudClient().claim(code, deviceToken, deviceId, label)
                 vault.save(deviceToken, deviceId)
                 runOnUiThread {
                     pairingCodeInput.text.clear()
@@ -342,13 +343,14 @@ class MainActivity : Activity() {
             return
         }
         if (busy) return
+        val rows = selectedInventory()
         setBusy(true, "Checking cloud approval…")
         executor.execute {
             try {
-                val status = cloudApi.status(token)
+                val status = cloudClient().status(token)
                 val state = status.optString("status")
                 if (state == "active") {
-                    val count = syncInventoryBlocking(token)
+                    val count = syncInventoryBlocking(token, rows)
                     runOnUiThread { setBusy(false, "Device approved · $count selected app(s) synced to this group.") }
                 } else if (state == "pending") {
                     runOnUiThread { setBusy(false, "Waiting for the Rub Minds group owner to approve this phone.") }
@@ -369,6 +371,7 @@ class MainActivity : Activity() {
             return
         }
         if (busy) return
+        val rows = selectedInventory()
         setBusy(true, "Checking approval before syncing app choices…")
         executor.execute {
             try {
@@ -387,12 +390,16 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun syncInventoryBlocking(token: String): Int {
-        val selected = apps.filter { app ->
-            app.signingCertificateSha256 != null && launchGrants[app.packageName] == app.signingCertificateSha256
-        }
+    private fun syncInventoryBlocking(token: String, rows: JSONArray): Int {
+        val result = cloudClient().inventory(token, rows)
+        return result.optInt("synced", -1).coerceAtLeast(0)
+    }
+
+    private fun selectedInventory(): JSONArray {
         val rows = JSONArray()
-        selected.forEach { app ->
+        apps.filter { app ->
+            app.signingCertificateSha256 != null && launchGrants[app.packageName] == app.signingCertificateSha256
+        }.forEach { app ->
             rows.put(JSONObject()
                 .put("packageName", app.packageName)
                 .put("label", app.label.take(120))
@@ -400,9 +407,11 @@ class MainActivity : Activity() {
                 .put("versionName", app.versionName)
                 .put("draftInsertionAllowed", app.packageName in draftGrants))
         }
-        val result = cloudApi.inventory(token, rows)
-        return result.optInt("synced", -1).coerceAtLeast(0)
+        return rows
     }
+
+    private fun cloudClient(): CloudDeviceApi =
+        cloudApi ?: throw IllegalStateException("This companion build is missing the Rub Minds cloud URL or publishable key.")
 
     private fun setBusy(value: Boolean, message: String) {
         busy = value
