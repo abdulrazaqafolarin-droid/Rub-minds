@@ -214,6 +214,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     try{
       const offer=await pc.createOffer();await pc.setLocalDescription(offer);
       await sendCommand('view_offer',{sessionId,offer:{sdp:pc.localDescription?.sdp}});
+      sessionCreated=true;for(const candidate of pendingIce)await publish('signal',{sessionId,candidate});
       flash('View request sent. The companion must approve it and you must choose a monitor in the operating-system picker.');
     }catch(error){await closePeer();flash(error instanceof Error?error.message:'Could not create the screen-share request.',true);}
   };
