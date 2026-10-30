@@ -28,6 +28,22 @@ test('rejects attacker URLs, credentials in URL, paths, and unsupported protocol
   await assert.rejects(broadcastPrivateDeviceEvent({projectUrl,apiKey:'x'.repeat(20),deviceId,event:'command',payload}),/Supabase|HTTPS|URL/);
  }
 });
+test('allows the exact internal local Supabase Kong gateway only',async()=>{
+ let called=0;
+ await broadcastPrivateDeviceEvent({
+  projectUrl:'http://kong:8000',apiKey:'x'.repeat(20),deviceId,event:'command',payload,
+  fetchImpl:async()=>{called++;return {ok:true,status:202};}
+ });
+ assert.equal(called,1);
+ await assert.rejects(broadcastPrivateDeviceEvent({
+  projectUrl:'http://kong:8080',apiKey:'x'.repeat(20),deviceId,event:'command',payload,
+  fetchImpl:async()=>({ok:true,status:202})
+ }),/HTTPS|Supabase/);
+ await assert.rejects(broadcastPrivateDeviceEvent({
+  projectUrl:'http://attacker:8000',apiKey:'x'.repeat(20),deviceId,event:'command',payload,
+  fetchImpl:async()=>({ok:true,status:202})
+ }),/HTTPS|Supabase/);
+});
 test('does not report success if Realtime server rejects the private event',async()=>{
  await assert.rejects(broadcastPrivateDeviceEvent({
   projectUrl:'https://example-project.supabase.co',apiKey:'x'.repeat(20),
