@@ -42,6 +42,13 @@
 - Confirm there are no manifest requests for all-files, accessibility, overlay, notifications, media projection, or broad package inventory.
 - Complete a threat-model review before implementing cloud/device pairing.
 
+## Official platform references
+
+- [Android package visibility filtering](https://developer.android.com/training/package-visibility): installed-package discovery is filtered on modern Android, and visibility declarations should be scoped to the interactions an app needs.
+- [Declare package visibility needs](https://developer.android.com/training/package-visibility/declaring): use narrow manifest `<queries>` declarations instead of requesting broad app inventory where possible.
+- [Android InputMethodService API](https://developer.android.com/reference/android/inputmethodservice/InputMethodService): the input method receives `EditorInfo` for the active editor and writes via the current `InputConnection`; the implementation uses these APIs for local, explicit draft insertion.
+- [Android Gradle Plugin 8.8 release notes](https://developer.android.com/build/releases/agp-8-8-0-release-notes): AGP 8.8 uses Gradle 8.10.2, SDK Build Tools 35.0.0 and JDK 17.
+
 ## Status
 
 The Android source is on a feature branch and is not merged, released, or installed on a phone. No APK build or physical-device test has been claimed.
