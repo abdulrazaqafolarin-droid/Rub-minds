@@ -21,10 +21,12 @@ class DraftInputMethodService : InputMethodService() {
     private var activePackage: String? = null
     private var activeInputType: Int = InputType.TYPE_NULL
     private val draftText = StringBuilder()
+    private var shiftEnabled = false
     private var preview: TextView? = null
     private var status: TextView? = null
     private var insert: Button? = null
     private val keyButtons = mutableListOf<Button>()
+    private val characterKeys = mutableListOf<Pair<Button, Char>>()
 
     override fun onCreateInputView(): View {
         val panel = LinearLayout(this).apply {
@@ -41,11 +43,25 @@ class DraftInputMethodService : InputMethodService() {
         panel.addView(status)
         panel.addView(preview)
 
+        addCharacterRow(panel, "1234567890")
         addCharacterRow(panel, "qwertyuiop")
         addCharacterRow(panel, "asdfghjkl")
         addCharacterRow(panel, "zxcvbnm")
 
+        val punctuation = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        ".,?!'-@".forEach { character ->
+            punctuation.addView(makeKey(character.toString()) {
+                draftText.append(character)
+                refreshPreview()
+            }, LinearLayout.LayoutParams(0, dp(40), 1f))
+        }
+        panel.addView(punctuation)
+
         val controls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        controls.addView(makeKey("Shift") {
+            shiftEnabled = !shiftEnabled
+            refreshCharacterKeys()
+        }, LinearLayout.LayoutParams(0, dp(44), 1f))
         controls.addView(makeKey("Space") { draftText.append(' '); refreshPreview() },
             LinearLayout.LayoutParams(0, dp(44), 1f))
         controls.addView(makeKey("Delete") {
@@ -101,12 +117,23 @@ class DraftInputMethodService : InputMethodService() {
     private fun addCharacterRow(parent: LinearLayout, characters: String) {
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         characters.forEach { character ->
-            row.addView(makeKey(character.toString()) {
-                draftText.append(character)
+            val key = makeKey(character.toString()) {
+                draftText.append(if (shiftEnabled) character.uppercaseChar() else character)
+                shiftEnabled = false
+                refreshCharacterKeys()
                 refreshPreview()
-            }, LinearLayout.LayoutParams(0, dp(44), 1f))
+            }
+            keyButtons += key
+            characterKeys += key to character
+            row.addView(key, LinearLayout.LayoutParams(0, dp(44), 1f))
         }
         parent.addView(row)
+    }
+
+    private fun refreshCharacterKeys() {
+        characterKeys.forEach { (button, character) ->
+            button.text = if (shiftEnabled) character.uppercaseChar().toString() else character.toString()
+        }
     }
 
     private fun makeKey(label: String, action: () -> Unit): Button =
@@ -117,7 +144,6 @@ class DraftInputMethodService : InputMethodService() {
             setOnClickListener {
                 if (isInsertAllowed()) action()
             }
-            keyButtons += this
         }
 
     private fun isInsertAllowed(): Boolean {
