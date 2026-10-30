@@ -186,7 +186,10 @@ struct RegistrationSummary {
 }
 
 #[tauri::command]
-async fn register_desktop_device(args: RegisterDeviceArgs) -> Result<RegistrationSummary, String> {
+async fn register_desktop_device(app: AppHandle, args: RegisterDeviceArgs) -> Result<RegistrationSummary, String> {
+    require_native_confirmation(&app, "Connect this computer to Rub Minds?", &format!(
+        "Register this computer as a Backroom device for group {}. The selected application inventory will share labels and executable fingerprints, not file contents or application sessions.", args.room_id
+    ))?;
     let base = validate_supabase_config(&args.supabase_url, &args.publishable_key, &args.access_token)?;
     if Uuid::parse_str(&args.room_id).is_err() || args.device_label.trim().is_empty() ||
        args.device_label.len() > 80 || args.os_version.len() > 40 ||
