@@ -202,6 +202,7 @@ const closedDesktopSession = await edge("desktop/session-close", {
 }, desktopToken);
 expectStatus(closedDesktopSession, 200, "device-authenticated desktop session close");
 assert.equal(closedDesktopSession.body.status, "stopped");
+assert.equal(closedDesktopSession.body.closed, true);
 const closedDesktopSessionRow = await adminRequest(
   "/rest/v1/backroom_desktop_sessions?select=status&session_id=eq." + desktopSessionId
 );
@@ -211,6 +212,8 @@ const repeatedDesktopSessionClose = await edge("desktop/session-close", {
   roomId, sessionId: desktopSessionId,
 }, desktopToken);
 expectStatus(repeatedDesktopSessionClose, 200, "idempotent desktop session close");
+assert.equal(repeatedDesktopSessionClose.body.closed, false);
+assert.equal(repeatedDesktopSessionClose.body.status, "unchanged");
 const invalidDesktopSessionClose = await edge("desktop/session-close", {
   roomId, sessionId: "not-a-session",
 }, desktopToken);
@@ -258,6 +261,31 @@ assert.equal(activeStatus.body.capabilities?.appDiscovery, true);
 assert.equal(activeStatus.body.capabilities?.embeddedVirtualApp, false);
 assert.equal(activeStatus.body.capabilities?.liveScreen, false);
 assert.equal(activeStatus.body.capabilities?.touchControl, false);
+
+const androidSessionId = randomUUID();
+await adminRequest("/rest/v1/backroom_desktop_sessions", {
+  method: "POST",
+  headers: { Prefer: "return=minimal" },
+  body: JSON.stringify({
+    session_id: androidSessionId,
+    device_id: deviceId,
+    room_id: roomId,
+    requested_by: owner.id,
+    session_type: "screen",
+    status: "active",
+    expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+  }),
+});
+const crossDeviceClose = await edge("desktop/session-close", {
+  roomId, sessionId: androidSessionId,
+}, desktopToken);
+expectStatus(crossDeviceClose, 200, "cross-device session close no-op");
+assert.equal(crossDeviceClose.body.closed, false);
+const stillActiveAndroidSession = await adminRequest(
+  "/rest/v1/backroom_desktop_sessions?select=status&session_id=eq." + androidSessionId
+);
+assert.equal(stillActiveAndroidSession[0]?.status, "active",
+  "a desktop credential must never close another device's session");
 
 const app = {
   packageName: "com.example.backroomci",
