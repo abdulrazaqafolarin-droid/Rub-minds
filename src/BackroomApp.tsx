@@ -68,7 +68,7 @@ export default function BackroomApp() {
   }, [roomId, refresh]);
 
   const selectedRoom = rooms.find(room => room.id === roomId);
-  const addedApps = useMemo(() => devices.flatMap(device =>
+  const addedApps = useMemo(() => devices.filter(device => device.status === 'active').flatMap(device =>
     device.apps.map(app => ({ ...app, deviceId: device.device_id, deviceLabel: device.device_label, status: device.status }))
   ), [devices]);
   const activeDevice = devices.find(device => device.status === 'active');
@@ -162,7 +162,7 @@ export default function BackroomApp() {
             {surface === 'phone' ? <div className="br-cloud-phone">
               <div className="br-cloud-phone-notch"/>
               {phoneReady ? <div className="br-cloud-phone-screen">
-                <div className="br-cloud-phone-bar"><span>Backroom apps</span><small>{addedApps.length} added</small></div>
+                <div className="br-cloud-phone-bar"><span>Selected apps</span><small>{addedApps.length} added</small></div>
                 {addedApps.length ? addedApps.map(app => <div className="br-cloud-app-row" key={app.deviceId + app.package_name}>
                   <div className="br-cloud-app-icon"><Smartphone size={18}/></div><div><b>{app.app_label}</b><small>{app.package_name}</small></div><span className={app.status}>{app.status}</span>
                 </div>) : <div className="br-cloud-phone-empty"><ArrowDownToLine size={27}/><b>No apps added yet</b><span>Choose apps in the Android companion. Only selected app metadata is synced.</span></div>}
@@ -180,8 +180,8 @@ export default function BackroomApp() {
           </div>
 
           <div className="br-cloud-capabilities">
-            <div><b>Current phone capabilities</b><span>Actual runtime-reported status</span></div>
-            <div className="br-cloud-capability-row"><span>Installed-app discovery</span><b className="ready">Available</b></div>
+            <div><b>Current phone capabilities</b><span>Available in the current companion build</span></div>
+            <div className="br-cloud-capability-row"><span>Launcher-visible app discovery</span><b className="ready">Available</b></div>
             <div className="br-cloud-capability-row"><span>Separate app data / virtualization</span><b>Not available</b></div>
             <div className="br-cloud-capability-row"><span>Live screen and touch control</span><b>Not available</b></div>
             <div className="br-cloud-capability-row"><span>AI-directed device actions</span><b>Not available</b></div>

@@ -404,7 +404,15 @@ class MainActivity : Activity() {
                     }
                 }
             } catch (error: Exception) {
-                runOnUiThread { setBusy(false, error.message ?: "Could not check the cloud device status.") }
+                val message = error.message ?: "Could not check the cloud device status."
+                if (message.contains("authentication expired", ignoreCase = true)) {
+                    vault.clear()
+                    consentPrefs.edit().putBoolean("selected_app_inventory", false).apply()
+                }
+                runOnUiThread {
+                    if (message.contains("authentication expired", ignoreCase = true)) pairConsent.isChecked = false
+                    setBusy(false, message)
+                }
             }
         }
     }
@@ -466,6 +474,7 @@ class MainActivity : Activity() {
         busy = value
         if (::pairButton.isInitialized) pairButton.isEnabled = !value && pairConsent.isChecked
         if (::saveButton.isInitialized) saveButton.isEnabled = !value
+        if (::pairConsent.isInitialized) pairConsent.isEnabled = !value
         appRows.forEach { (packageName, row) ->
             val hasSigner = apps.any { it.packageName == packageName && it.signingCertificateSha256 != null }
             row.first.isEnabled = !value && hasSigner

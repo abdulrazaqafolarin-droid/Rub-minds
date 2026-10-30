@@ -195,7 +195,7 @@ Deno.serve(async req => {
           return json(200, { ok: true, events: data ?? [] }, origin);
         }
         const { data: bindings, error: bindingError } = await db.from('backroom_device_room_bindings')
-          .select('device_id').eq('room_id', input.roomId).is('revoked_at', null);
+          .select('device_id').eq('room_id', input.roomId).eq('owner_id', ownerId);
         if (bindingError) return json(503, fail('device_list_unavailable'), origin);
         const ids = [...new Set((bindings ?? []).map((item: any) => item.device_id))];
         if (!ids.length) return json(200, { ok: true, devices: [] }, origin);
