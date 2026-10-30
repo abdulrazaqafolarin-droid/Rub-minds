@@ -7,9 +7,9 @@ const hex = "a".repeat(64);
 const app = { packageName:"com.example.chat", label:"Chat", signingCertificateSha256:hex, versionName:"1.2.3", draftInsertionAllowed:false };
 
 test("pair claim accepts only bounded typed credentials and identity", () => {
-  assert.equal(validatePairClaim({pairingCode:hex,deviceToken:"b".repeat(64),deviceId:uuid,deviceLabel:"My phone",osVersion:"14",appVersion:"0.2"}),true);
-  assert.equal(validatePairClaim({pairingCode:hex,deviceToken:"b".repeat(64),deviceId:uuid,deviceLabel:"x".repeat(81),osVersion:"14",appVersion:"0.2"}),false);
-  assert.equal(validatePairClaim({pairingCode:hex,deviceToken:"b".repeat(64),deviceId:uuid,deviceLabel:"Phone",osVersion:"14",appVersion:"0.2",ownerId:uuid}),false);
+  assert.equal(validatePairClaim({pairingCode:hex,deviceId:uuid,deviceLabel:"My phone",osVersion:"14",appVersion:"0.2"},"b".repeat(64)),true);
+  assert.equal(validatePairClaim({pairingCode:hex,deviceId:uuid,deviceLabel:"x".repeat(81),osVersion:"14",appVersion:"0.2"},"b".repeat(64)),false);
+  assert.equal(validatePairClaim({pairingCode:hex,deviceId:uuid,deviceLabel:"Phone",osVersion:"14",appVersion:"0.2",ownerId:uuid},"b".repeat(64)),false);
 });
 test("inventory accepts a bounded unique selected-app list only", () => {
   assert.equal(validateSelectedApps([app]),true);
@@ -24,7 +24,7 @@ test("unsupported execution capabilities never appear available by assumption", 
   assert.equal(isDeviceControlAvailable({status:"active",capabilities:{touchControl:true}},"touchControl"),true);
 });
 test("activity events reject arbitrary payloads and secret-bearing fields", () => {
-  assert.deepEqual(sanitizeDeviceEvent({eventType:"app_open_requested",packageName:"com.example.chat"}),{eventType:"app_open_requested",packageName:"com.example.chat"});
+  assert.deepEqual(sanitizeDeviceEvent({action:"device/event",eventType:"app_open_requested",packageName:"com.example.chat"}),{eventType:"app_open_requested",packageName:"com.example.chat"});
   assert.equal(sanitizeDeviceEvent({eventType:"app_open_requested",packageName:"com.example.chat",text:"private prompt"}),null);
   assert.equal(sanitizeDeviceEvent({eventType:"shell_command",packageName:"com.example.chat"}),null);
 });

@@ -2,12 +2,12 @@ const PACKAGE = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-export function validatePairClaim(input) {
+export function validatePairClaim(input, deviceToken) {
   if (!input || typeof input !== "object" || Array.isArray(input)) return false;
-  const keys = ["pairingCode", "deviceToken", "deviceId", "deviceLabel", "osVersion", "appVersion"];
+  const keys = ["pairingCode", "deviceId", "deviceLabel", "osVersion", "appVersion"];
   if (Object.keys(input).some(key => !keys.includes(key))) return false;
   return typeof input.pairingCode === "string" && SHA256.test(input.pairingCode) &&
-    typeof input.deviceToken === "string" && SHA256.test(input.deviceToken) &&
+    typeof deviceToken === "string" && SHA256.test(deviceToken) &&
     typeof input.deviceId === "string" && UUID.test(input.deviceId) &&
     typeof input.deviceLabel === "string" && input.deviceLabel.trim().length > 0 && input.deviceLabel.length <= 80 &&
     typeof input.osVersion === "string" && input.osVersion.length <= 40 &&
@@ -41,7 +41,7 @@ export function sanitizeDeviceEvent(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) return null;
   const allowed = new Set(["app_open_requested", "app_added", "app_removed", "device_connected", "device_disconnected"]);
   if (!allowed.has(input.eventType)) return null;
-  if (Object.keys(input).some(key => !["eventType", "packageName"].includes(key))) return null;
+  if (Object.keys(input).some(key => !["action", "eventType", "packageName"].includes(key))) return null;
   if (input.packageName !== undefined && (typeof input.packageName !== "string" || !PACKAGE.test(input.packageName))) return null;
   return { eventType: input.eventType, ...(input.packageName ? { packageName: input.packageName } : {}) };
 }

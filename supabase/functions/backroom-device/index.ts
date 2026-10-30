@@ -101,10 +101,10 @@ Deno.serve(async req => {
 
     if (action === 'pair/claim') {
       const token = bearerPattern.exec(req.headers.get('authorization') ?? '')?.[1];
-      if (!token || !HEX.test(token) || input.deviceToken !== token || !validatePairClaim({
-        pairingCode: input.pairingCode, deviceToken: input.deviceToken, deviceId: input.deviceId,
+      if (!token || !HEX.test(token) || !validatePairClaim({
+        pairingCode: input.pairingCode, deviceId: input.deviceId,
         deviceLabel: input.deviceLabel, osVersion: input.osVersion, appVersion: input.appVersion
-      }) || !exactKeys(input, ['action','pairingCode','deviceToken','deviceId','deviceLabel','osVersion','appVersion'])) {
+      }) || !exactKeys(input, ['action','pairingCode','deviceId','deviceLabel','osVersion','appVersion'])) {
         return json(400, fail('invalid_pair_claim'), origin);
       }
       const { data, error } = await db.rpc('claim_backroom_device_pairing', {
@@ -201,7 +201,7 @@ Deno.serve(async req => {
         if (!exactKeys(input, ['action','deviceId','roomId']) || typeof input.deviceId !== 'string' || !UUID.test(input.deviceId) ||
           typeof input.roomId !== 'string' || !UUID.test(input.roomId)) return json(400, fail('invalid_device_scope'), origin);
         const { data: binding, error: bindingError } = await db.from('backroom_device_room_bindings')
-          .select('device_id,room_id').eq('device_id', input.deviceId).eq('room_id', input.roomId).is('revoked_at', null).maybeSingle();
+          .select('device_id,room_id,owner_id').eq('device_id', input.deviceId).eq('room_id', input.roomId).eq('owner_id', ownerId).is('revoked_at', null).maybeSingle();
         if (bindingError || !binding) return json(404, fail('device_binding_not_found'), origin);
         const now = new Date().toISOString();
         if (action === 'owner/approve') {
