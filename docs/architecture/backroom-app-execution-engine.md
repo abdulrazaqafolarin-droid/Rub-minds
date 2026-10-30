@@ -4,7 +4,7 @@ Status: **decision pending a device-backed proof of concept**. This is an archit
 
 ## Product target
 
-Backroom should eventually offer one group-visible Device Frame with three surfaces: Android apps in an isolated phone-shaped space, desktop apps in a desktop window, and terminals in a terminal surface. A human or authorized AI may request launch, close, restart, switch, tap, swipe, type, press keys, or run commands. Every accepted, rejected, and completed action must be attributed to its human/AI actor and appended to the group's durable activity log.
+Backroom should eventually offer one group-visible Device Frame with four surfaces: Android apps in an isolated phone-shaped space, managed browser sessions/tabs, desktop apps in a desktop window, and terminals in a terminal surface. A human or authorized AI may request launch, close, restart, switch, tap, swipe, type, press keys, or run commands. Every accepted, rejected, and completed action must be attributed to its human/AI actor and appended to the group's durable activity log.
 
 ## Android constraint
 
@@ -61,8 +61,15 @@ Ask only for a permission required by a demonstrated feature, immediately before
 
 1. **Cloud device foundation (current):** pairing, owner approval/revocation, selected app inventory, HTTPS-only device client and group audit events.
 2. **Android virtualization spike:** isolated app runtime proof-of-concept and compatibility matrix; no production permission expansion.
-3. **Device Frame contract:** unified surface/session/action schema, capability grants, actor attribution, replayable audit events.
-4. **Execution drivers:** Android virtual-app driver, desktop driver and terminal driver, each with explicit scopes and confirmation rules.
+3. **Device Frame contract:** unified surface/session/action schema for Android, browser, desktop and terminal; capability grants, actor attribution and replayable audit events.
+4. **Execution drivers:** wire the existing managed Playwright/Chromium host into the primary Device Frame, then add an Android virtual-app driver, desktop driver and terminal driver, each with explicit scopes and confirmation rules.
 5. **End-to-end acceptance:** group human and AI launch/switch/operate flows; verify revocation, denied actions, restart behavior and complete audit trail.
 
 A stage is complete only when its acceptance tests run successfully; source-only checks are not a substitute for an installed-device test.
+
+
+## Current primary-frame gap
+
+The current user-facing `BackroomApp` routes signed-in users to `BackroomDevicesApp`, whose surface selector currently contains **Phone apps, Desktop apps and Terminal**. It does not yet expose the browser surface. The earlier managed-browser implementation remains in `src/BackroomSimulatorApp.tsx`, but that component is not mounted by the current Backroom route. Therefore the browser implementation is preserved in source but is not currently integrated into the primary cloud Device Frame. A future change must restore browser as a first-class tab/session in the same frame rather than quietly dropping the browser capability.
+
+Likewise, the phone tab currently renders selected-app metadata, not a guest app screenshot or running virtual app. The Android companion reports discovery/inventory only. These are explicit V1 boundaries, not completed app virtualization.

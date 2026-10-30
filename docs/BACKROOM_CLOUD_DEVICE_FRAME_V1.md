@@ -82,3 +82,8 @@ The library also uses Java 21 and NDK 29, has native build integration, requires
 6. measuring battery, memory, compatibility and remote-view latency before advertising an in-simulator app experience.
 
 Until those gates pass, the web Device Frame must continue to label Android apps as selected inventory only. It must not render them as running virtual apps or imply that an AI can already see or control their screens.
+
+
+## Primary Device Frame surface coverage
+
+The current authenticated Backroom route opens the cloud Device Frame with phone-app inventory, desktop and terminal placeholders. The managed Playwright browser implementation from the earlier simulator remains in source but is not mounted into this primary route yet. Browser therefore remains a follow-on integration surface; do not report the four-surface simulator as complete until the managed browser tab/session is exposed alongside Android, desktop and terminal in the same Device Frame.
