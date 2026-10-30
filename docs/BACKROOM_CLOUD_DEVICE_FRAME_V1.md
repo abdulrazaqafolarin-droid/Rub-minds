@@ -64,3 +64,21 @@ The normal `?backroom=1` entry now opens the cloud Device Frame directly. The ol
 The Android inventory labels installed apps as external/internal storage based on Android's `ApplicationInfo.FLAG_EXTERNAL_STORAGE` metadata. That flag is not a reliable claim that a removable SD card is present. It does not browse arbitrary APK files on removable media or request broad file access. Uninstalled APK import is a separate future feature requiring a user-picked document URI and a compatible virtualization engine.
 
 A separate CI job now builds the native Android module with JDK 17 / Gradle 8.10.2 / Android SDK 35 and runs the Kotlin/JUnit policy tests. It uses placeholder public build configuration only; no production secret is passed to CI.
+
+
+## Virtualization dependency security review — 2026-10-30 (expanded)
+
+The upstream candidate exposes a `Bcore` Android library module, but that does not make it a safe drop-in dependency. The inspected `Bcore/src/main/AndroidManifest.xml` contains 323 `uses-permission` entries. Among its declared permissions are `QUERY_ALL_PACKAGES`, `MANAGE_EXTERNAL_STORAGE`, `SYSTEM_ALERT_WINDOW`, camera, microphone, location, contacts, phone/SMS, account-management, package-installation and other system permissions. Many entries are vendor- or Google-services-specific, obsolete or unavailable to ordinary apps; their presence still creates manifest-merging and runtime-permission review work. Its own app manifest separately requests `QUERY_ALL_PACKAGES`, legacy storage and a Samsung account permission.
+
+The library also uses Java 21 and NDK 29, has native build integration, requires several additional Gradle modules and dependencies (including JitPack and Aliyun Maven repositories), while this companion is intentionally Java 17 and currently has a minimal permission surface. The upstream app's release build configuration signs with the debug signing configuration. The published debug APK is therefore not an acceptable production dependency or trust anchor for Rub Minds.
+
+**Decision: do not import its application module, merge its manifest unchanged, or install its published debug APK as the Rub Minds runtime.** A later virtualization spike may reuse reviewed, separable library code only after:
+
+1. pinning an immutable upstream commit and auditing the complete transitive dependency/license graph;
+2. creating a minimal host-specific manifest and testing that core guest launch works without broad permissions (otherwise the missing permission must be justified and consented individually);
+3. removing demo/gallery/VPN/device-spoofing features and vendor-specific compatibility code not required by the Rub Minds use case;
+4. building and signing a dedicated Rub Minds artifact with a controlled release key;
+5. proving guest-app install, launch, isolated data, lifecycle, close and uninstall on the target Android 14 TECNO device; and
+6. measuring battery, memory, compatibility and remote-view latency before advertising an in-simulator app experience.
+
+Until those gates pass, the web Device Frame must continue to label Android apps as selected inventory only. It must not render them as running virtual apps or imply that an AI can already see or control their screens.
