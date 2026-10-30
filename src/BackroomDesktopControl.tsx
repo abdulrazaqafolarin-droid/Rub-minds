@@ -172,12 +172,12 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       if(disposed||payload?.roomId!==roomId||payload?.deviceId!==deviceId)return;
       if(typeof payload.requestId!=='string')return;
       clearSessionStartTimers(payload.requestId);
+      if(payload.capability==='stop'&&typeof payload.sessionId==='string')clearSessionStartTimers(undefined,payload.sessionId);
+      setPendingRequest(current=>current===payload.requestId?'':current);pendingActions.current.delete(payload.requestId);
       if(typeof payload.sessionId==='string'&&abandonedSessions.current.has(payload.sessionId)){
         void publish('command',{requestId:uuid(),action:'stop_session',issuedAt:Date.now(),sessionId:payload.sessionId}).catch(()=>{});
         return;
       }
-      if(payload.capability==='stop'&&typeof payload.sessionId==='string')clearSessionStartTimers(undefined,payload.sessionId);
-      setPendingRequest(current=>current===payload.requestId?'':current);pendingActions.current.delete(payload.requestId);
       if(!payload.ok){flash(payload.reason==='denied_on_device'?'The request was denied on the computer.':'The computer rejected the request: '+(payload.reason||'unknown reason'),true);return;}
       const responseKind=classifyDeviceResponse(payload);
       if(responseKind==='terminal'){
@@ -196,6 +196,16 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     channelRef.current=channel;
     return ()=>{disposed=true;channelRef.current=null;void supabase.removeChannel(channel);};
   },[deviceId,roomId,closePeer,flash,clearSessionStartTimers]);
+
+  useEffect(()=>{
+    const timer=window.setInterval(()=>{
+      const sessionId=screenSessionRef.current||terminalPeerRef.current;
+      const channel=dataRef.current;
+      if(!sessionId||!channel||channel.readyState!=='open')return;
+      try{channel.send(JSON.stringify({kind:'heartbeat',sessionId,sentAt:Date.now()}));}catch{}
+    },15_000);
+    return ()=>window.clearInterval(timer);
+  },[]);
 
   useEffect(()=>()=>{
     const activeSessionId=screenSessionRef.current||terminalPeerRef.current;
