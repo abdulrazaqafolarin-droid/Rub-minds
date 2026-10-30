@@ -103,3 +103,15 @@ test('deactivation is bound to the authenticated host and exact one-time grant',
  await assert.rejects(()=>gateway.deactivate({...scope,grantId:'not-a-uuid'}),/grant ID/);
  assert.equal(calls.length,2);
 });
+
+
+test('host-token verification works without a Node Buffer global, as in Deno 2',async()=>{
+ const {gateway}=setup();
+ const original=globalThis.Buffer;
+ try{
+  globalThis.Buffer=undefined;
+  assert.deepEqual(await gateway.claim({...scope,limit:1}),{ok:true,leases:[]});
+ }finally{
+  globalThis.Buffer=original;
+ }
+});
