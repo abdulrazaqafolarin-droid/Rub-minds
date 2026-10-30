@@ -86,8 +86,14 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
 
   const sendCommand=useCallback(async(action:string,extra:Record<string,unknown>={})=>{
     const requestId=uuid();setPendingRequest(requestId);pendingActions.current.set(requestId,action);
-    await publish('command',{requestId,action,issuedAt:Date.now(),...extra});
-    return requestId;
+    try{
+      await publish('command',{requestId,action,issuedAt:Date.now(),...extra});
+      return requestId;
+    }catch(error){
+      pendingActions.current.delete(requestId);
+      setPendingRequest(current=>current===requestId?'':current);
+      throw error;
+    }
   },[publish]);
 
   const closePeer=useCallback(async()=>{
@@ -128,7 +134,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     channel.on('broadcast',{event:'response'},({payload}:any)=>{
       if(disposed||payload?.roomId!==roomId||payload?.deviceId!==deviceId)return;
       if(typeof payload.requestId!=='string')return;
-      setPendingRequest(current=>current===payload.requestId?'':current);
+      setPendingRequest(current=>current===payload.requestId?'':current);pendingActions.current.delete(payload.requestId);
       if(!payload.ok){flash(payload.reason==='denied_on_device'?'The request was denied on the computer.':'The computer rejected the request: '+(payload.reason||'unknown reason'),true);return;}
       const responseKind=classifyDeviceResponse(payload);
       if(responseKind==='terminal'){
