@@ -7,9 +7,8 @@ const KEYS={
  view_offer:['sessionId','offer'],
  request_control:['sessionId'],
  request_draft_permission:['sessionId'],
- stop_session:['sessionId','terminalSessionId'],
+ stop_session:['sessionId'],
 };
-const SIGNAL_KEYS=['sessionId','candidate'];
 const ICE_KEYS=['candidate','sdpMid','sdpMLineIndex','usernameFragment'];
 const isUuid=value=>typeof value==='string'&&UUID.test(value);
 function exactKeys(value,keys){return !!value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).length===keys.length&&Object.keys(value).every(key=>keys.includes(key));}
@@ -28,8 +27,12 @@ export function validateDesktopCommand(value,{now=Date.now(),maxAgeMs=30_000}={}
     !isUuid(value.requestId)||!Number.isSafeInteger(value.issuedAt)||!Number.isSafeInteger(now)||
     !Number.isSafeInteger(maxAgeMs)||maxAgeMs<1_000||maxAgeMs>120_000||
     Math.abs(now-value.issuedAt)>maxAgeMs||!COMMANDS.has(value.command)||
-    !exactKeys(value.details,KEYS[value.command]))return null;
+    !value.details||typeof value.details!=='object'||Array.isArray(value.details))return null;
  const d=value.details;
+ const required=KEYS[value.command];
+ const allowed=value.command==='stop_session'?[...required,'terminalSessionId']:value.command==='request_control'?[...required,'peerSessionId']:required;
+ const detailKeys=Object.keys(d);
+ if(!required.every(key=>Object.hasOwn(d,key))||detailKeys.some(key=>!allowed.includes(key)))return null;
  if(value.command==='launch_app'&&!isUuid(d.appId))return null;
  if(value.command==='terminal_start'||value.command==='view_offer'){
   if(!isUuid(d.sessionId)||!validOffer(d.offer))return null;
@@ -38,6 +41,7 @@ export function validateDesktopCommand(value,{now=Date.now(),maxAgeMs=30_000}={}
   if(!isUuid(d.sessionId))return null;
  }
  if(value.command==='stop_session'&&d.terminalSessionId!==undefined&&!isUuid(d.terminalSessionId))return null;
+ if(value.command==='request_control'&&d.peerSessionId!==undefined&&!isUuid(d.peerSessionId))return null;
  if(value.command==='request_draft_permission'&&value.sessionType==='terminal')return null;
  return Object.freeze({deviceId:value.deviceId.toLowerCase(),roomId:value.roomId.toLowerCase(),
   requestId:value.requestId.toLowerCase(),issuedAt:value.issuedAt,command:value.command,
