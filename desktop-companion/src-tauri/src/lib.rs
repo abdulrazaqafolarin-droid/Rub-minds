@@ -515,6 +515,10 @@ fn launch_registered_app(app: AppHandle, state: State<'_, AppState>, app_id: Str
         if sha256_file(&path)? != entry.sha256 {
             return Err("Application binary changed since it was approved. Remove it and approve the new binary.".into());
         }
+        require_native_confirmation(&app, "Launch approved application?", &format!(
+            "Open {} on this computer?\\n\\nExecutable: {}\\n\\nThe app runs locally; Backroom does not receive its private files or login state.",
+            entry.label, path.display()
+        ))?;
         let parent = path.parent().ok_or("Application directory is unavailable")?;
         let child = Command::new(&path).current_dir(parent).spawn().map_err(|_| "Windows could not launch the approved application".to_string())?;
         let pid = child.id();
@@ -619,7 +623,7 @@ fn check_input_rate(state: &AppState) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn grant_control(state: State<'_, AppState>, session_id: String, seconds: u64) -> Result<(), String> {
+fn grant_control(app: AppHandle, state: State<'_, AppState>, session_id: String, seconds: u64) -> Result<(), String> {
     if !valid_session_id(&session_id) { return Err("Invalid session".into()); }
     let has_live_capture = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
         .contains_key(&session_id);
@@ -628,6 +632,10 @@ fn grant_control(state: State<'_, AppState>, session_id: String, seconds: u64) -
     if !has_live_capture && !has_live_terminal {
         return Err("Control can only be granted to a live Backroom screen or terminal session".into());
     }
+    require_native_confirmation(&app, "Allow Backroom control?", &format!(
+        "Allow this group to control local session {} for up to {} seconds? Pointer, keyboard, and terminal input may reach the selected application.",
+        session_id, seconds.clamp(30, 600)
+    ))?;
     let ttl = seconds.clamp(30, 600);
     state.control_grants.lock().map_err(|_| "Control state unavailable")?
         .insert(session_id, Instant::now() + Duration::from_secs(ttl));
@@ -646,11 +654,15 @@ fn revoke_control(state: State<'_, AppState>, session_id: String) -> Result<(), 
 }
 
 #[tauri::command]
-fn grant_draft_typing(state: State<'_, AppState>, session_id: String, seconds: u64) -> Result<(), String> {
+fn grant_draft_typing(app: AppHandle, state: State<'_, AppState>, session_id: String, seconds: u64) -> Result<(), String> {
     control_granted(&state, &session_id)?;
     if !state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?.contains_key(&session_id) {
         return Err("Draft typing is available only in an active screen session".into());
     }
+    require_native_confirmation(&app, "Allow unsent draft typing?", &format!(
+        "Allow Backroom to type only into a drag-selected area of this live screen for up to {} seconds? It will not press Enter or Send.",
+        seconds.clamp(30, 120)
+    ))?;
     let ttl = seconds.clamp(30, 120);
     state.draft_grants.lock().map_err(|_| "Draft state unavailable")?
         .insert(session_id, Instant::now() + Duration::from_secs(ttl));
