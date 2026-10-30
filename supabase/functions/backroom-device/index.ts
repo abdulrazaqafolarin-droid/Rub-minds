@@ -230,6 +230,25 @@ Deno.serve(async req => {
           requested_by: userId, session_type: sessionType, status: 'active', expires_at: expiresAt,
         });
         if (error) return json(409, fail('desktop_session_id_conflict'), origin);
+      } else if (command.command === 'stop_session') {
+        const { data: existing, error: lookupError } = await db.from('backroom_desktop_sessions')
+          .select('session_id,status,expires_at')
+          .eq('session_id', command.details.sessionId).eq('device_id', command.deviceId)
+          .eq('room_id', command.roomId).maybeSingle();
+        if (lookupError) return json(503, fail('desktop_session_lookup_failed'), origin);
+        if (!existing) return json(404, fail('desktop_session_not_found'), origin);
+        if (existing.status === 'revoked' || existing.status === 'expired') {
+          return json(409, fail('desktop_session_no_longer_controllable'), origin);
+        }
+        if (existing.status === 'active') {
+          const { error } = await db.from('backroom_desktop_sessions')
+            .update({ status: 'stopped', stopped_at: new Date().toISOString() })
+            .eq('session_id', command.details.sessionId).eq('device_id', command.deviceId)
+            .eq('room_id', command.roomId).eq('status', 'active');
+          if (error) return json(503, fail('desktop_session_stop_failed'), origin);
+        } else if (existing.status !== 'stopped') {
+          return json(409, fail('desktop_session_no_longer_controllable'), origin);
+        }
       } else {
         const authorizationSessionId = command.command === 'request_control' && command.details.peerSessionId
           ? command.details.peerSessionId : command.details.sessionId;
@@ -241,13 +260,6 @@ Deno.serve(async req => {
         }
         if (command.command === 'request_draft_permission' && session.session.session_type !== 'screen') {
           return json(409, fail('draft_permission_requires_screen_session'), origin);
-        }
-        if (command.command === 'stop_session') {
-          const { error } = await db.from('backroom_desktop_sessions')
-            .update({ status: 'stopped', stopped_at: new Date().toISOString() })
-            .eq('session_id', command.details.sessionId).eq('device_id', command.deviceId)
-            .eq('room_id', command.roomId).eq('status', 'active');
-          if (error) return json(503, fail('desktop_session_stop_failed'), origin);
         }
       }
 
