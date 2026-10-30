@@ -953,7 +953,7 @@ struct TerminalOutput {
 }
 
 #[tauri::command]
-async fn start_terminal(app: AppHandle, state: State<'_, AppState>) -> Result<TerminalStarted, String> {
+async fn start_terminal(app: AppHandle, state: State<'_, AppState>, session_id: Option<String>) -> Result<TerminalStarted, String> {
     check_approval_rate(&state)?;
     require_native_confirmation(&app, "Start a native terminal?", "Start a local PowerShell/zsh/bash shell for this Backroom session? A separate time-limited control approval is needed before remote typing is enabled.")?;
     let mut active_terminals = state.terminals.lock().map_err(|_| "Terminal registry unavailable")?;
@@ -977,7 +977,14 @@ async fn start_terminal(app: AppHandle, state: State<'_, AppState>) -> Result<Te
     let child = pair.slave.spawn_command(command).map_err(|_| "Could not launch the native terminal shell".to_string())?;
     let reader = pair.master.try_clone_reader().map_err(|_| "Could not attach terminal output".to_string())?;
     let writer = pair.master.take_writer().map_err(|_| "Could not attach terminal input".to_string())?;
-    let session_id = Uuid::new_v4().to_string();
+    let session_id = match session_id {
+        Some(value) if valid_session_id(&value) => value,
+        Some(_) => return Err("Invalid terminal session identity".into()),
+        None => Uuid::new_v4().to_string(),
+    };
+    if active_terminals.contains_key(&session_id) {
+        return Err("This terminal session identity is already active".into());
+    }
     let session = Arc::new(TerminalSession {
         master: Mutex::new(pair.master),
         writer: Mutex::new(writer),
