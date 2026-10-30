@@ -1123,4 +1123,13 @@ mod native_input_tests {
         assert!(!valid_session_id(""));
         assert!(!valid_session_id("../other-session"));
     }
+
+    #[test]
+    fn native_approval_dialogs_are_rate_limited() {
+        let state = AppState::default();
+        for _ in 0..MAX_NATIVE_APPROVALS_PER_MINUTE {
+            assert!(check_approval_rate(&state).is_ok());
+        }
+        assert!(check_approval_rate(&state).is_err());
+    }
 }
