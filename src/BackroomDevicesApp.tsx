@@ -38,6 +38,7 @@ export default function BackroomApp() {
   const [userId, setUserId] = useState<string | null>(null);
   const [roomId, setRoomId] = useState(() => new URLSearchParams(location.search).get('room') ?? '');
   const [devices, setDevices] = useState<BackroomDevice[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState('');
   const [events, setEvents] = useState<BackroomDeviceEvent[]>([]);
   const [surface, setSurface] = useState<Surface>('phone');
   const [pairCode, setPairCode] = useState('');
@@ -78,12 +79,19 @@ export default function BackroomApp() {
   }, [roomId, refresh]);
 
   const selectedRoom = rooms.find(room => room.id === roomId);
-  const addedApps = useMemo(() => devices.filter(device => device.status === 'active').flatMap(device =>
-    device.apps.map(app => ({ ...app, deviceId: device.device_id, deviceLabel: device.device_label, status: device.status }))
-  ), [devices]);
-  const activeDevice = devices.find(device => device.status === 'active');
+  const activeDevices = useMemo(() => devices.filter(device => device.status === 'active'), [devices]);
+  const activeDevice = activeDevices.find(device => device.device_id === selectedDeviceId) ?? activeDevices[0];
+  const addedApps = useMemo(() => activeDevice
+    ? activeDevice.apps.map(app => ({ ...app, deviceId: activeDevice.device_id, deviceLabel: activeDevice.device_label, status: activeDevice.status }))
+    : [], [activeDevice]);
   const phoneReady = Boolean(activeDevice);
   const canManageDevices = Boolean(selectedRoom && userId && selectedRoom.owner_id === userId);
+
+  useEffect(() => {
+    if (!activeDevices.some(device => device.device_id === selectedDeviceId)) {
+      setSelectedDeviceId(activeDevices[0]?.device_id ?? '');
+    }
+  }, [activeDevices, selectedDeviceId]);
 
   async function createPairing() {
     if (!roomId || !canManageDevices || busy) return;
@@ -141,7 +149,7 @@ export default function BackroomApp() {
       <div className="br-cloud-security"><ShieldCheck size={19}/><span>Owner approval required<br/><small>Pairing codes are one-use and expire in 5 minutes.</small></span></div>
     </section>
 
-    {!selectedRoom ? <section className="br-cloud-empty"><Smartphone size={32}/><h2>Create or join a group first</h2><p>Backroom devices are scoped to a Rub Minds group.</p></section> : <>
+    {!selectedRoom ? <section className="br-cloud-empty"><Smartphone size={32}/><h2>Create or join a group first</h2><p>Backroom devices are scoped to a Rub Minds group.</p><a className="br-cloud-primary" href="/">Open Rub Minds groups</a></section> : <>
       <section className="br-cloud-layout">
         <div className="br-cloud-sidebar">
           <div className="br-cloud-panel-head"><div><span className="br-cloud-eyebrow">DEVICES</span><h2>Connected runtimes</h2></div><span className="br-cloud-count">{devices.length}</span></div>
@@ -171,6 +179,12 @@ export default function BackroomApp() {
             {(['phone','desktop','terminal'] as Surface[]).map(id => <button key={id} className={surface === id ? 'active' : ''} onClick={() => setSurface(id)}>
               {id === 'phone' ? <Smartphone size={16}/> : id === 'desktop' ? <Monitor size={16}/> : <SquareTerminal size={16}/>} {surfaceLabels[id]}
             </button>)}
+            {surface === 'phone' && activeDevices.length > 1 ? <label className="br-cloud-device-picker">
+              <span>Phone</span>
+              <select aria-label="Select Android phone" value={activeDevice?.device_id ?? ''} onChange={event => setSelectedDeviceId(event.target.value)}>
+                {activeDevices.map(device => <option key={device.device_id} value={device.device_id}>{device.device_label}</option>)}
+              </select>
+            </label> : null}
           </div>
           <div className={'br-cloud-device-frame ' + surface}>
             {surface === 'phone' ? <div className="br-cloud-phone">

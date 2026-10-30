@@ -7,5 +7,5 @@ import { isCloudConfigured } from './supabase';
 import './styles.css';
 const isBackroom = new URLSearchParams(window.location.search).get('backroom') === '1';
 ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>{isCloudConfigured ? (isBackroom ? <BackroomApp /> : <CloudApp />) : <App />}</React.StrictMode>
+  <React.StrictMode>{isBackroom ? <BackroomApp /> : (isCloudConfigured ? <CloudApp /> : <App />)}</React.StrictMode>
 );
