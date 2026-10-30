@@ -47,11 +47,11 @@ export function createBackroomDevicePairing(roomId: string, deviceLabel = 'Andro
   return invoke<{ ok: true; pairingCode: string; expiresAt: string }>('pair/create', { roomId, deviceLabel });
 }
 export async function listBackroomDevices(roomId: string) {
-  const data = await invoke<{ devices: BackroomDevice[] }>('owner/list', { roomId });
+  const data = await invoke<{ devices: BackroomDevice[] }>('room/devices', { roomId });
   return data.devices;
 }
 export async function listBackroomDeviceEvents(roomId: string) {
-  const data = await invoke<{ events: BackroomDeviceEvent[] }>('owner/events', { roomId });
+  const data = await invoke<{ events: BackroomDeviceEvent[] }>('room/events', { roomId });
   return data.events;
 }
 export function approveBackroomDevice(deviceId: string, roomId: string) {

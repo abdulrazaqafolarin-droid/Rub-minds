@@ -172,36 +172,36 @@ Deno.serve(async req => {
       return json(201, { ok: true }, origin);
     }
 
-    if (action.startsWith('owner/')) {
+    if (action.startsWith('owner/') || action.startsWith('room/')) {
       const ownerId = await owner(req);
       if (!ownerId) return json(401, fail('owner_auth_required'), origin);
-      if (action === 'owner/list' || action === 'owner/events') {
+      if (action === 'room/devices' || action === 'room/events') {
         if (!exactKeys(input, ['action','roomId']) || typeof input.roomId !== 'string' || !UUID.test(input.roomId)) {
           return json(400, fail('invalid_room_scope'), origin);
         }
         const { data: room, error: roomError } = await db.from('rooms').select('id')
           .eq('id', input.roomId).eq('owner_id', ownerId).maybeSingle();
         if (roomError) return json(503, fail('device_service_unavailable'), origin);
-        if (action === 'owner/events' && !room) {
+        if (!room) {
           const { data: member, error: memberError } = await db.from('participants').select('id')
             .eq('room_id', input.roomId).eq('user_id', ownerId).maybeSingle();
-          if (memberError) return json(503, fail('device_events_unavailable'), origin);
+          if (memberError) return json(503, fail('device_membership_unavailable'), origin);
           if (!member) return json(403, fail('room_member_required'), origin);
-        } else if (!room) return json(403, fail('room_owner_required'), origin);
-        if (action === 'owner/events') {
+        }
+        if (action === 'room/events') {
           const { data, error } = await db.from('backroom_device_events').select('id,device_id,actor_type,actor_id,event_type,package_name,created_at')
             .eq('room_id', input.roomId).order('created_at', { ascending: false }).limit(100);
           if (error) return json(503, fail('device_events_unavailable'), origin);
           return json(200, { ok: true, events: data ?? [] }, origin);
         }
         const { data: bindings, error: bindingError } = await db.from('backroom_device_room_bindings')
-          .select('device_id').eq('room_id', input.roomId).eq('owner_id', ownerId);
+          .select('device_id').eq('room_id', input.roomId);
         if (bindingError) return json(503, fail('device_list_unavailable'), origin);
         const ids = [...new Set((bindings ?? []).map((item: any) => item.device_id))];
         if (!ids.length) return json(200, { ok: true, devices: [] }, origin);
         const [devices, apps] = await Promise.all([
           db.from('backroom_devices').select('device_id,device_label,platform,os_version,app_version,status,capabilities,created_at,approved_at,last_seen_at')
-            .eq('owner_id', ownerId).in('device_id', ids).order('created_at', { ascending: false }),
+            .in('device_id', ids).order('created_at', { ascending: false }),
           db.from('backroom_device_apps').select('device_id,package_name,app_label,version_name,draft_insertion_allowed,discovered_at')
             .in('device_id', ids).order('app_label', { ascending: true })
         ]);

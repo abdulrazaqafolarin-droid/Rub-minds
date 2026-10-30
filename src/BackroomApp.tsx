@@ -29,6 +29,7 @@ function eventLabel(event: BackroomDeviceEvent) {
 
 export default function BackroomApp() {
   const [rooms, setRooms] = useState<CloudRoom[]>([]);
+  const [userId, setUserId] = useState<string | null>(null);
   const [roomId, setRoomId] = useState(() => new URLSearchParams(location.search).get('room') ?? '');
   const [devices, setDevices] = useState<BackroomDevice[]>([]);
   const [events, setEvents] = useState<BackroomDeviceEvent[]>([]);
@@ -42,6 +43,9 @@ export default function BackroomApp() {
 
   const loadRooms = useCallback(async () => {
     if (!supabase) return;
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+    if (authError) throw authError;
+    setUserId(authData.user?.id ?? null);
     const next = await listCloudRooms();
     setRooms(next);
     setRoomId(current => current && next.some(room => room.id === current) ? current : next[0]?.id ?? '');
@@ -73,10 +77,11 @@ export default function BackroomApp() {
   ), [devices]);
   const activeDevice = devices.find(device => device.status === 'active');
   const phoneReady = Boolean(activeDevice);
+  const canManageDevices = Boolean(selectedRoom && userId && selectedRoom.owner_id === userId);
   const unsupported = surface !== 'phone';
 
   async function createPairing() {
-    if (!roomId || busy) return;
+    if (!roomId || !canManageDevices || busy) return;
     setBusy(true); setError(''); setNotice('');
     try {
       const result = await createBackroomDevicePairing(roomId);
@@ -94,6 +99,7 @@ export default function BackroomApp() {
   }
 
   async function approve(deviceId: string) {
+    if (!canManageDevices) return;
     setBusy(true); setError(''); setNotice('');
     try { await approveBackroomDevice(deviceId, roomId); await refresh(); setNotice('Device approved. It can now sync the apps you selected on the phone.'); }
     catch (e) { setError(e instanceof Error ? e.message : 'Device approval failed.'); }
@@ -101,6 +107,7 @@ export default function BackroomApp() {
   }
 
   async function revoke(deviceId: string) {
+    if (!canManageDevices) return;
     if (!window.confirm('Revoke this phone? It will lose access to this Rub Minds group.')) return;
     setBusy(true); setError(''); setNotice('');
     try { await revokeBackroomDevice(deviceId, roomId); await refresh(); setNotice('Device revoked.'); }
@@ -133,7 +140,9 @@ export default function BackroomApp() {
       <section className="br-cloud-layout">
         <div className="br-cloud-sidebar">
           <div className="br-cloud-panel-head"><div><span className="br-cloud-eyebrow">DEVICES</span><h2>Connected runtimes</h2></div><span className="br-cloud-count">{devices.length}</span></div>
-          <button className="br-cloud-primary" disabled={busy} onClick={() => void createPairing()}><Smartphone size={17}/> Pair Android phone</button>
+          {canManageDevices
+            ? <button className="br-cloud-primary" disabled={busy} onClick={() => void createPairing()}><Smartphone size={17}/> Pair Android phone</button>
+            : <p className="br-cloud-help">Only the group owner can pair, approve or revoke devices. All group members can view selected app inventory and the activity history.</p>}
           {pairCode ? <div className="br-cloud-pair-card">
             <b>One-use pairing code</b>
             <code>{pairCode}</code>
@@ -144,10 +153,10 @@ export default function BackroomApp() {
             <div className="br-cloud-device-icon"><Smartphone size={19}/></div>
             <div className="br-cloud-device-copy"><b>{device.device_label}</b><small>{device.platform} · Android {device.os_version || 'version unknown'}</small><span className={'br-cloud-status ' + device.status}>{device.status}</span></div>
             <div className="br-cloud-device-actions">
-              {device.status === 'pending' ? <button disabled={busy} onClick={() => void approve(device.device_id)}>Approve</button> : null}
-              {device.status !== 'revoked' ? <button className="danger" disabled={busy} onClick={() => void revoke(device.device_id)}>Revoke</button> : null}
+              {canManageDevices && device.status === 'pending' ? <button disabled={busy} onClick={() => void approve(device.device_id)}>Approve</button> : null}
+              {canManageDevices && device.status !== 'revoked' ? <button className="danger" disabled={busy} onClick={() => void revoke(device.device_id)}>Revoke</button> : null}
             </div>
-          </article>) : <div className="br-cloud-empty-mini"><Smartphone size={24}/><b>No devices paired</b><span>Pair an Android companion to add selected apps.</span></div>}
+          </article>) : <div className="br-cloud-empty-mini"><Smartphone size={24}/><b>No devices paired</b><span>Ask the group owner to pair an Android companion and approve its selected app inventory.</span></div>}
           <button className="br-cloud-link" onClick={() => setShowHelp(value => !value)}><LockKeyhole size={15}/> {showHelp ? 'Hide connection details' : 'How device pairing works'} <ChevronDown size={14}/></button>
           {showHelp ? <p className="br-cloud-help">The phone creates a private device credential locally and sends only its digest to the cloud. The pairing code is single-use. A device remains pending until you approve it here. Revoke stops future device API access.</p> : null}
         </div>

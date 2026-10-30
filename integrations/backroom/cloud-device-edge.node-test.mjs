@@ -68,12 +68,16 @@ test("owner approval and revocation are transactional, scoped and auditable", as
   assert.match(sql, /device_revoked/);
 });
 
-test("group activity reads require owner or room membership; inventory remains owner-only", async () => {
+test("group members can view device inventory and history; device management stays owner-scoped", async () => {
   const edge = await read("supabase/functions/backroom-device/index.ts");
-  assert.match(edge, /action === 'owner\/events' && !room/);
+  const sql = await read("supabase/migrations/20261030110000_backroom_cloud_devices.sql");
+  assert.match(edge, /action === 'room\/devices' \|\| action === 'room\/events'/);
   assert.match(edge, /from\('participants'\)\.select\('id'\)/);
   assert.match(edge, /room_member_required/);
-  assert.match(edge, /else if \(!room\) return json\(403, fail\('room_owner_required'\)/);
+  assert.match(edge, /\.eq\('room_id', input\.roomId\)\.eq\('user_id', ownerId\)/);
+  assert.match(sql, /approve_backroom_device/);
+  assert.match(sql, /revoke_backroom_device/);
+  assert.match(sql, /where device_id=p_device_id and owner_id=p_owner_id and status='pending'/);
 });
 
 test("no native or web localhost bridge exists in the cloud Device Frame path", async () => {
