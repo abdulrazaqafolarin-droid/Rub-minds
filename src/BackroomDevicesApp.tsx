@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Activity, ArrowDownToLine, Check, ChevronDown, CircleAlert, Clock3, Copy, Laptop,
+  Activity, ArrowDownToLine, Check, ChevronDown, CircleAlert, Copy, Laptop,
   LockKeyhole, Monitor, RefreshCw, ShieldCheck, Smartphone, SquareTerminal, X,
 } from 'lucide-react';
 import { listCloudRooms, type CloudRoom } from './cloudRooms';
@@ -84,7 +84,6 @@ export default function BackroomApp() {
   const activeDevice = devices.find(device => device.status === 'active');
   const phoneReady = Boolean(activeDevice);
   const canManageDevices = Boolean(selectedRoom && userId && selectedRoom.owner_id === userId);
-  const unsupported = surface !== 'phone';
 
   async function createPairing() {
     if (!roomId || !canManageDevices || busy) return;
@@ -181,7 +180,7 @@ export default function BackroomApp() {
                 {addedApps.length ? addedApps.map(app => <div className="br-cloud-app-row" key={app.deviceId + app.package_name}>
                   <div className="br-cloud-app-icon"><Smartphone size={18}/></div><div><b>{app.app_label}</b><small>{app.package_name}</small></div><span className={app.status}>{app.status}</span>
                 </div>) : <div className="br-cloud-phone-empty"><ArrowDownToLine size={27}/><b>No apps added yet</b><span>Choose apps in the Android companion. Only selected app metadata is synced.</span></div>}
-                <div className="br-cloud-frame-foot"><Check size={14}/> Inventory synced from {activeDevice.device_label}</div>
+                <div className="br-cloud-frame-foot"><Check size={14}/> Inventory synced from {activeDevice?.device_label ?? 'Android device'}</div>
               </div> : <div className="br-cloud-phone-screen disconnected">
                 <div className="br-cloud-phone-bar"><span>Backroom</span><small>Not connected</small></div>
                 <Smartphone size={32}/><b>Connect your Android runtime</b><p>Pair the phone, approve it, then select apps inside Rub Minds Companion.</p>
