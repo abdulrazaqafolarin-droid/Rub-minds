@@ -5,14 +5,12 @@ This document records the isolated staging path and repeatable evidence for the 
 ## Isolated environment
 
 - Git branch: `feat/backroom-cua-artemis-workspaces`
-- Latest branch HEAD: `34e1aef670fa60d5d0737cf9031ade419322487e` (documentation-only updates after the tested code head)
-- Last full executable-code test head: `72b6268b6d5acefd4dfb87192435b4133c758d6a`
-- Latest Vercel Preview deployment: `dpl_2CfnhqjgZHPtXZFbo9HgDjm8WuuM` — READY
-- Full prebuild / TypeScript / Vite evidence is for executable-code head `72b6268b6d5acefd4dfb87192435b4133c758d6a`; later commits only revise this acceptance document.
+- Latest verified commit: `dd075ebace1ceb7f30a47b2b312655d879a48406`
+- Latest Vercel Preview deployment: `dpl_E3iL5erk4e2s5Rqq9Yo8hTMNAQS2` — READY
 - Stable Preview origin: `https://rub-minds-git-feat-ba-fce441-abdulrazaqafolarin-droids-projects.vercel.app`
 - Supabase staging project ref: `tzcuuynmviiuactafpld` (PostgreSQL 17.11)
 - Staging `backroom-config`: version 2, `verify_jwt=true`
-- Staging `backroom-wake`: version 3, `verify_jwt=false` because it uses its own host-token authorization protocol; host/binding/session/lease authorization is checked server-side before any queue operation.
+- Staging `backroom-wake`: version 7, ACTIVE, `verify_jwt=false`; its own host-token, host/binding/session and active-consent authorization is enforced before private queue operations.
 
 Vercel has two **Preview-only and feature-branch-scoped** variables for this branch:
 - `VITE_SUPABASE_URL=https://tzcuuynmviiuactafpld.supabase.co`
@@ -38,16 +36,16 @@ Do not use wildcard origins. Pairing remains one-time, exact-origin-bound and lo
 
 ### Current-head Vercel build
 
-The Preview build for commit `72b6268b6d5acefd4dfb87192435b4133c758d6a` reached READY. Its prebuild suites reported:
+The Preview build for code commit `dd075ebace1ceb7f30a47b2b312655d879a48406` reached READY. Its current prebuild suites reported:
 
 | Suite | Passed | Failed |
 |---|---:|---:|
-| Runtime | 370 | 0 |
-| Backroom | 257 | 0 |
+| Runtime | 374 | 0 |
+| Backroom | 261 | 0 |
 | External workspaces | 48 | 0 |
-| **Total** | **675** | **0** |
+| **Total** | **683** | **0** |
 
-TypeScript (`tsc -b`) and Vite production bundling also completed successfully.
+TypeScript (`tsc -b`) and Vite production bundling also completed successfully. The stable Preview branch alias resolves to this deployment.
 
 ### Exact local-host Preview pairing
 
@@ -110,7 +108,7 @@ These tests exercise the deployed database trigger and security-definer function
 
 - Owner-JWT-authenticated `backroom-config/host` and `/binding` calls from a real signed-in Preview session.
 - Browser UI acceptance with Vercel's protected Preview in a user's browser, plus local host pairing from the same desktop.
-- Actual Playwright Chromium browser overlay test in the user's real installed browser; browser test files are present but the isolated Node runner did not have Playwright installed.
+- Pairing and overlay acceptance in the user's own installed browser/desktop with the local host, plus a real authenticated session in the protected Preview.
 - Real ChatGPT or Claude original-session participation, hosted wake response, and group reply roundtrip.
 - Physical desktop CUA Driver, ARTEMIS on an allowlisted Android device/work profile, and local gVisor terminal lifecycle.
 - Production parity or release approval. This PR remains draft.
@@ -171,3 +169,20 @@ A public Auth settings request using the staging publishable key returned HTTP 2
 - `mailer_autoconfirm=false`: email confirmation is required; users are not auto-confirmed.
 
 The Preview authenticates against the isolated staging project. Do not assume a Production account/session is shared or copy Production user data into Staging. A tester should use a staging-specific sign-in and complete its confirmation flow. No confirmation or Auth setting was changed by this acceptance work.
+
+
+## Deno Edge Runtime host-token fix and HTTP validation — 2026-10-30
+
+The first live Backroom wake gateway request returned 503 during host-token verification. The deployed adapter used `Buffer.from()` without importing Buffer. This passed Node tests because Node exposes a global Buffer, but the deployed Supabase Deno 2 runtime does not expose Buffer as a global in user code; the correct Deno-compatible form is an explicit `node:buffer` import. See [Deno's Node compatibility reference](https://docs.deno.com/runtime/fundamentals/node/). The adapter now imports `Buffer` explicitly.
+
+The HTTP boundary was also tightened. It now validates required UUIDs, session digests, lease-token UUIDs, consent TTLs, retry bounds and retry error codes before calling the privileged gateway/database functions. Malformed input returns HTTP 400 instead of reaching a SQL exception and being misreported as 503.
+
+Verification:
+- Authenticated gateway + HTTP adapter tests: **17 passed, 0 failed**. This includes a regression test that sets `globalThis.Buffer=undefined` and proves host-token verification still succeeds through the explicit import.
+- Staging Edge Function is ACTIVE at `backroom-wake` version 7 with the corrected source. Its gateway continues to use its internal host-token protocol (`verify_jwt=false`); the function does not accept browser cookies or public CORS requests.
+- Live staging HTTP checks against the deployed gateway: missing authorization returned **401**; malformed binding UUID returned **400**.
+- A disposable live host fixture demonstrated that a wrong host token returns **401** and a correct host token can pass verification and claim two correctly scoped staged jobs. That test stopped at a deliberately malformed lease-token negative probe; the DB correctly rejected the malformed UUID, so live HTTP acknowledgement/retry was not marked passed in that run.
+- A subsequent retry attempt was blocked before request execution; all disposable host/room/binding/session/message/connection/job rows were deleted, and follow-up counts for both live fixtures were **zero**.
+- The PostgreSQL rollback-only lifecycle tests and the Node gateway tests above separately passed acknowledgement, retry, lease-token rejection, consent deactivation and queue cancellation.
+
+Do not overstate this as a full remote host roundtrip: live HTTP claim is demonstrated; live HTTP ack/retry still need a complete clean rerun. The exact status is recorded here for honest release gating.
