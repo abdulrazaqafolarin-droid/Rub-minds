@@ -138,7 +138,7 @@ test('authenticated gateway input validation maps malformed wake IDs to HTTP 400
   hostId:valid.hostId,bindingId:valid.bindingId,sessionDigest:valid.sessionDigest,
   jobId:'bad-id',leaseToken:'bad-token',outcome:'acknowledged'}}));
  assert.equal(ack.status,400);
- assert.deepEqual(await ack.json(),{ok:false,reason:'invalid_request'});
+ assert.deepEqual(await ack.json(),{ok:false,reason:'invalid_body'});
  const retry=await handler(request('https://example.test/v1/backroom/wake/retry',{body:{
   hostId:valid.hostId,bindingId:valid.bindingId,sessionDigest:valid.sessionDigest,
   jobId:'bad-id',leaseToken:'bad-token',retryAfterSeconds:0,errorCode:'unsafe'}}));
