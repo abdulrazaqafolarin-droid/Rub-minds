@@ -37,6 +37,8 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const screenSessionRef=useRef('');
   const terminalPeerRef=useRef('');
   const pendingActions=useRef(new Map<string,string>());
+  const sessionStartTimers=useRef(new Map<string,{timer:number;sessionId:string}>());
+  const abandonedSessions=useRef(new Set<string>());
   const peerRef=useRef<RTCPeerConnection|null>(null);
   const dataRef=useRef<RTCDataChannel|null>(null);
   const videoRef=useRef<HTMLVideoElement|null>(null);
@@ -85,17 +87,51 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     return data;
   },[deviceId,roomId]);
 
+  const clearSessionStartTimers=useCallback((requestId?:string,sessionId?:string)=>{
+    for(const [id,entry] of sessionStartTimers.current){
+      if((requestId&&id===requestId)||(sessionId&&entry.sessionId===sessionId)){
+        window.clearTimeout(entry.timer);
+        sessionStartTimers.current.delete(id);
+      }
+    }
+  },[]);
+  const abandonSession=useCallback(async(sessionId:string)=>{
+    if(!isUuid(sessionId)||!supabase||!deviceId||!roomId)return false;
+    abandonedSessions.current.add(sessionId);
+    clearSessionStartTimers(undefined,sessionId);
+    window.setTimeout(()=>abandonedSessions.current.delete(sessionId),5*60*1000);
+    const {data,error}=await supabase.functions.invoke('backroom-device',{body:{
+      action:'desktop/session-abandon',deviceId,roomId,sessionId,requestId:uuid(),issuedAt:Date.now()
+    }});
+    if(error||!data||data.ok!==true)throw new Error(error?.message||data?.reason||'Could not abandon the unanswered desktop session.');
+    return true;
+  },[deviceId,roomId,clearSessionStartTimers]);
   const sendCommand=useCallback(async(action:string,extra:Record<string,unknown>={})=>{
     const requestId=uuid();setPendingRequest(requestId);pendingActions.current.set(requestId,action);
     try{
       await publish('command',{requestId,action,issuedAt:Date.now(),...extra});
+      if((action==='terminal_start'||action==='view_offer')&&typeof extra.sessionId==='string'&&isUuid(extra.sessionId)){
+        const sessionId=extra.sessionId;
+        const timer=window.setTimeout(()=>{
+          sessionStartTimers.current.delete(requestId);
+          pendingActions.current.delete(requestId);
+          setPendingRequest(current=>current===requestId?'':current);
+          void abandonSession(sessionId).then(()=>{
+            flash('The computer did not respond within 45 seconds. The pending screen/terminal session was stopped; you can retry.',true);
+          }).catch(error=>{
+            flash(error instanceof Error?error.message:'The unanswered session could not be closed. It will expire automatically.',true);
+          });
+        },45_000);
+        sessionStartTimers.current.set(requestId,{timer,sessionId});
+      }
       return requestId;
     }catch(error){
       pendingActions.current.delete(requestId);
+      clearSessionStartTimers(requestId);
       setPendingRequest(current=>current===requestId?'':current);
       throw error;
     }
-  },[publish]);
+  },[publish,abandonSession,clearSessionStartTimers,flash]);
 
   const closePeer=useCallback(async()=>{
     const current=peerRef.current;
@@ -135,6 +171,12 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     channel.on('broadcast',{event:'response'},({payload}:any)=>{
       if(disposed||payload?.roomId!==roomId||payload?.deviceId!==deviceId)return;
       if(typeof payload.requestId!=='string')return;
+      clearSessionStartTimers(payload.requestId);
+      if(typeof payload.sessionId==='string'&&abandonedSessions.current.has(payload.sessionId)){
+        void publish('command',{requestId:uuid(),action:'stop_session',issuedAt:Date.now(),sessionId:payload.sessionId}).catch(()=>{});
+        return;
+      }
+      if(payload.capability==='stop'&&typeof payload.sessionId==='string')clearSessionStartTimers(undefined,payload.sessionId);
       setPendingRequest(current=>current===payload.requestId?'':current);pendingActions.current.delete(payload.requestId);
       if(!payload.ok){flash(payload.reason==='denied_on_device'?'The request was denied on the computer.':'The computer rejected the request: '+(payload.reason||'unknown reason'),true);return;}
       const responseKind=classifyDeviceResponse(payload);
@@ -153,9 +195,26 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     });
     channelRef.current=channel;
     return ()=>{disposed=true;channelRef.current=null;void supabase.removeChannel(channel);};
-  },[deviceId,roomId,closePeer,flash]);
+  },[deviceId,roomId,closePeer,flash,clearSessionStartTimers]);
 
-  useEffect(()=>()=>{void closePeer();},[closePeer]);
+  useEffect(()=>()=>{
+    const activeSessionId=screenSessionRef.current||terminalPeerRef.current;
+    if(activeSessionId)void abandonSession(activeSessionId).catch(()=>{});
+    for(const entry of sessionStartTimers.current.values())window.clearTimeout(entry.timer);
+    sessionStartTimers.current.clear();
+    void closePeer();
+  },[closePeer,abandonSession]);
+
+
+  const stopActivePeer=useCallback(async()=>{
+    const peerId=screenSessionRef.current||terminalPeerRef.current;
+    if(peerId){
+      clearSessionStartTimers(undefined,peerId);
+      try{await sendCommand('stop_session',{sessionId:peerId});}
+      catch{try{await abandonSession(peerId);}catch{}}
+    }
+    await closePeer();setTerminalSession('');setTerminalPeerId('');terminalPeerRef.current='';setTerminalText('');
+  },[sendCommand,abandonSession,clearSessionStartTimers,closePeer]);
 
   const launchApp=async()=>{
     if(!selectedApp)return flash('Select an installed application first.',true);
@@ -163,6 +222,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     catch(error){flash(error instanceof Error?error.message:'Could not request launch.',true);}
   };
   const startTerminal=async()=>{
+    if(peerRef.current)await stopActivePeer();
     try{
       const peerId=uuid();const pc=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun.cloudflare.com:3478']}]});
       const data=pc.createDataChannel('backroom-terminal',{ordered:true});dataRef.current=data;peerRef.current=pc;screenSessionRef.current=peerId;setTerminalPeerId(peerId);terminalPeerRef.current=peerId;setTerminalText('Waiting for local terminal approval…\\n');
@@ -170,8 +230,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       pc.onconnectionstatechange=()=>{
         if(pc.connectionState==='failed'||pc.connectionState==='disconnected'){
           flash('Terminal data connection interrupted. The local terminal will be stopped.',true);
-          void sendCommand('stop_session',{sessionId:peerId}).catch(()=>{});
-          void closePeer();
+          void stopActivePeer();
         }
       };
       const offer=await pc.createOffer();await pc.setLocalDescription(offer);
@@ -182,7 +241,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   };
   const startScreen=async()=>{
     if(!channelReady)return flash('Connect the device channel first.',true);
-    if(peerRef.current)await closePeer();
+    if(peerRef.current)await stopActivePeer();
     const sessionId=uuid();screenSessionRef.current=sessionId;
     const pc=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun.cloudflare.com:3478']}]});
     const data=pc.createDataChannel('backroom-input',{ordered:true});
@@ -191,8 +250,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     pc.onconnectionstatechange=()=>{
       if(pc.connectionState==='failed'||pc.connectionState==='disconnected'){
         flash('Screen connection interrupted. The local stream will be stopped.',true);
-        void sendCommand('stop_session',{sessionId}).catch(()=>{});
-        void closePeer();
+        void stopActivePeer();
       }
     };
     data.onmessage=event=>{
@@ -225,13 +283,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     try{await sendCommand('request_draft_permission',{sessionId:screenSession});flash('Separate typing permission requested. Approve it on the computer.');}
     catch(error){flash(error instanceof Error?error.message:'Could not request typing permission.',true);}
   };
-  const stop=async()=>{
-    try{
-      const peerId=screenSessionRef.current||terminalPeerId;
-      if(peerId)await sendCommand('stop_session',{sessionId:peerId});
-    }catch{/* the local device can still revoke its own grants */}
-    await closePeer();setTerminalSession('');setTerminalPeerId('');terminalPeerRef.current='';setTerminalText('');
-  };
+  const stop=async()=>{await stopActivePeer();};
 
   const videoContentRect=()=>{
     const el=videoRef.current;if(!el)return null;
