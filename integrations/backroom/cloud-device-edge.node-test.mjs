@@ -106,3 +106,18 @@ test("Supabase config declares the device Edge Function exactly once with manual
   assert.equal(config.split(section).length - 1, 1);
   assert.ok(config.includes(section + String.fromCharCode(10) + "verify_jwt = false"));
 });
+
+
+test("local Supabase CI exercises the complete cloud device lifecycle", async () => {
+  const workflow = await read(".github/workflows/ci.yml");
+  const script = await read("scripts/local-backroom-device-e2e.mjs");
+  assert.match(workflow, /Start Backroom device Edge Function/);
+  assert.match(workflow, /node scripts\/local-backroom-device-e2e\.mjs/);
+  assert.match(workflow, /Stop isolated Supabase services/);
+  for (const action of ["pair/create","pair/claim","device/status","owner/approve","device/inventory","device/event","room/devices","room/events","owner/revoke"]) {
+    assert.ok(script.includes('"' + action + '"') || script.includes("'" + action + "'"), "missing E2E action: " + action);
+  }
+  assert.match(script, /pairing replay/);
+  assert.match(script, /revoked device inventory denial/);
+  assert.match(script, /group members must be able to view/);
+});

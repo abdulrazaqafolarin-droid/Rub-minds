@@ -642,6 +642,49 @@ jobs:
             --header "Authorization: Bearer $LOCAL_SUPABASE_SERVICE_ROLE_KEY" \
             --header "Prefer: return=minimal"
           node scripts/local-mcp-sdk-e2e.mjs
+      - name: Start Backroom device Edge Function
+        run: |
+          set -euo pipefail
+          eval "$(supabase status -o env)"
+          : "${SERVICE_ROLE_KEY:?Local Supabase service-role key missing}"
+          if [ -f "$RUNNER_TEMP/mcp-edge.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/mcp-edge.pid")" 2>/dev/null || true
+          fi
+          cat > "$RUNNER_TEMP/backroom-device.env" <<EOF
+          SUPABASE_URL=${API_URL:-http://127.0.0.1:54321}
+          SUPABASE_SERVICE_ROLE_KEY=${SERVICE_ROLE_KEY}
+          BACKROOM_DEVICE_ALLOWED_ORIGINS=
+          EOF
+          supabase functions serve backroom-device --env-file "$RUNNER_TEMP/backroom-device.env" > "$RUNNER_TEMP/backroom-device-edge.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/backroom-device-edge.pid"
+          for attempt in $(seq 1 60); do
+            status_code="$(curl --silent --output /dev/null --write-out '%{http_code}' --request POST \
+              http://127.0.0.1:54321/functions/v1/backroom-device \
+              --header "Content-Type: application/json" --data '{}' || true)"
+            if [ "$status_code" = "400" ]; then exit 0; fi
+            if ! kill -0 "$(cat "$RUNNER_TEMP/backroom-device-edge.pid")" 2>/dev/null; then
+              cat "$RUNNER_TEMP/backroom-device-edge.log"
+              exit 1
+            fi
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/backroom-device-edge.log"
+          echo "Backroom device Edge Function did not become ready"
+          exit 1
+      - name: Test Backroom device pairing, inventory, group history and revocation
+        run: |
+          eval "$(supabase status -o env)"
+          export LOCAL_SUPABASE_URL="${API_URL:-http://127.0.0.1:54321}"
+          export LOCAL_SUPABASE_ANON_KEY="${ANON_KEY:?Local anon key missing}"
+          export LOCAL_SUPABASE_SERVICE_ROLE_KEY="${SERVICE_ROLE_KEY:?Local service-role key missing}"
+          node scripts/local-backroom-device-e2e.mjs
       - name: Stop isolated Supabase services
         if: always()
-        run: supabase stop --no-backup
+        run: |
+          if [ -f "$RUNNER_TEMP/backroom-device-edge.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/backroom-device-edge.pid")" 2>/dev/null || true
+          fi
+          if [ -f "$RUNNER_TEMP/mcp-edge.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/mcp-edge.pid")" 2>/dev/null || true
+          fi
+          supabase stop --no-backup
