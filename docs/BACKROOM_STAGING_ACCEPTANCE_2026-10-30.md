@@ -129,3 +129,14 @@ A second transaction passed four more security checks:
 - Deactivation disables consent, cancels pending and leased work, rejects stale acknowledgement and blocks subsequent claims. Repeating deactivation with the same grant is idempotently confirmed.
 
 All rows were rolled back. The repository remains free of these fixture IDs and no staging migration/schema change was needed for these tests.
+
+
+## Staging Supabase security-advisor review
+
+The staging advisor was reviewed after the lifecycle tests:
+- Seven RLS-enabled internal tables have no client policies. A role-grant inspection confirmed `anon` and `authenticated` have no direct SELECT/INSERT/UPDATE/DELETE privileges on these tables; the service role has the required access. This is an intentional deny-by-default shape for Backroom host credentials, bindings, queue jobs, MCP session material, request logs and rate-limit state.
+- Eight existing product RPCs were flagged because they are `SECURITY DEFINER` and callable by `authenticated`. Source definitions were inspected: all eight set `search_path TO ''`, deny anonymous execution, and enforce `auth.uid()` plus room-owner/token checks for their intended room creation, invitation, membership or external-agent operation. The Supabase advisor warning remains visible because these are still privileged authenticated RPC entrypoints and deserve ongoing API review; this acceptance work did not modify them.
+- Backroom queue RPCs (`enqueue/claim/ack/retry/activate/deactivate/revoke`) are not in that authenticated-RPC set; grant checks confirmed they are executable by `service_role` only, not `anon` or `authenticated`.
+- Supabase Auth leaked-password protection is disabled in staging. Supabase's published guidance says this feature requires Pro or above. No plan change or Auth configuration change was made as part of this no-paid/staging-only task.
+
+Security-advisor remediation reference: [Supabase database linter](https://supabase.com/docs/guides/database/database-linter?lint=0029_authenticated_security_definer_function_executable).
