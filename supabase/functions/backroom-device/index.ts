@@ -9,6 +9,7 @@ import { sanitizeDeviceEvent, validatePairClaim, validateSelectedApps } from './
 import { validateDesktopRegistration } from './desktop-device-protocol.mjs';
 import { validateDesktopApps } from './desktop-app-protocol.mjs';
 import { validateDesktopCommand, validateDesktopSignal } from './desktop-command-protocol.mjs';
+import { validateDesktopSessionClose } from './desktop-session-close-protocol.mjs';
 import { broadcastPrivateDeviceEvent } from './realtime-broadcast.mjs';
 
 const url = Deno.env.get('SUPABASE_URL');
@@ -177,19 +178,21 @@ Deno.serve(async req => {
     if (action === 'desktop/session-close') {
       const current = await device(req);
       if (!current) return json(401, fail('device_not_approved'), origin);
-      if (!strictKeys(input, ['action','roomId','sessionId']) ||
-          typeof input.roomId !== 'string' || !UUID.test(input.roomId) ||
-          typeof input.sessionId !== 'string' || !UUID.test(input.sessionId)) {
-        return json(400, fail('invalid_desktop_session_close'), origin);
-      }
-      const binding = await verifyActiveDeviceRoomBinding(current.device_id, input.roomId);
+      const closeRequest = validateDesktopSessionClose(input);
+      if (!closeRequest) return json(400, fail('invalid_desktop_session_close'), origin);
+      const binding = await verifyActiveDeviceRoomBinding(current.device_id, closeRequest.roomId);
       if (!binding.ok) return json(binding.status, fail(binding.reason), origin);
-      const { error } = await db.from('backroom_desktop_sessions')
+      const { data, error } = await db.from('backroom_desktop_sessions')
         .update({ status: 'stopped', stopped_at: new Date().toISOString() })
-        .eq('session_id', input.sessionId).eq('device_id', current.device_id)
-        .eq('room_id', input.roomId).eq('status', 'active');
+        .eq('session_id', closeRequest.sessionId).eq('device_id', current.device_id)
+        .eq('room_id', closeRequest.roomId).eq('status', 'active')
+        .select('session_id');
       if (error) return json(503, fail('desktop_session_close_failed'), origin);
-      return json(200, { ok: true, sessionId: input.sessionId, status: 'stopped' }, origin);
+      return json(200, {
+        ok: true, sessionId: closeRequest.sessionId,
+        status: data?.length ? 'stopped' : 'unchanged',
+        closed: Array.isArray(data) && data.length === 1,
+      }, origin);
     }
 
     if (action === 'desktop/command') {
