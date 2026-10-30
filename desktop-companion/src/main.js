@@ -10,7 +10,7 @@ const cfg = { url: import.meta.env.VITE_SUPABASE_URL || '', key: import.meta.env
 const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 const state = {
   client: null, user: null, session: null, deviceId: null, roomId: null, deviceTokenSaved: false,
-  channel: null, apps: [], pending: [], peers: new Map(), streams: new Map(), terminals: new Map(),
+  channel: null, apps: [], pending: [], peers: new Map(), streams: new Map(), terminals: new Map(), pendingCandidates: new Map(),
   status: 'Not connected', terminalOutput: '', unlisten: [],
 };
 function notify(message, kind='') {
@@ -324,7 +324,12 @@ async function startViewSession(payload){
 async function publishSignal(sessionId,signal){await state.channel.send({type:'broadcast',event:'signal',payload:{deviceId:state.deviceId,roomId:state.roomId,sessionId,...signal}});}
 async function handleSignal(payload){
   if(payload.deviceId!==state.deviceId||payload.roomId!==state.roomId||typeof payload.sessionId!=='string')return;
-  const peer=state.peers.get(payload.sessionId);if(!peer)return;
+  const peer=state.peers.get(payload.sessionId);
+  if(!peer){
+    if(payload.candidate){const queued=state.pendingCandidates.get(payload.sessionId)||[];if(queued.length<64)queued.push(payload.candidate);state.pendingCandidates.set(payload.sessionId,queued);}
+    return;
+  }
+  if(payload.answer){try{await peer.pc.setRemoteDescription(payload.answer);}catch(error){notify('WebRTC answer rejected: '+error.message,'error');}}
   if(payload.candidate){try{await peer.pc.addIceCandidate(payload.candidate);}catch{}}
   if(payload.stop){await stopPeer(payload.sessionId);}
 }
@@ -343,7 +348,8 @@ async function handlePeerData(sessionId,raw){
     if(!terminalId)return;
     try{await invoke('write_terminal',{sessionId:terminalId,data:message.data});}catch(error){notify(error.message,'error');}
   } else if(message.kind==='terminal_resize'){
-    try{await invoke('resize_terminal',{sessionId,cols:message.cols,rows:message.rows});}catch(error){notify(error.message,'error');}
+    const terminalId=message.sessionId||peer.terminalId;if(!terminalId)return;
+    try{await invoke('resize_terminal',{sessionId:terminalId,cols:message.cols,rows:message.rows});}catch(error){notify(error.message,'error');}
   } else if(message.kind==='terminal_start'){
     if(!state.terminals.has(sessionId)){
       createApproval('terminal_start','Start the native terminal for this Backroom session?',async()=>{
@@ -422,7 +428,7 @@ async function boot(){
       const identity=await invoke('device_identity');state.deviceId=identity.deviceId;
       try{
         const status=await invoke('desktop_device_status',{supabaseUrl:cfg.url,publishableKey:cfg.key});
-        state.deviceTokenSaved=status.status!=='revoked';
+        state.deviceTokenSaved=status.status!=='revoked';state.roomId=status.roomId;
         document.querySelector('#device-state').textContent=status.status+' · '+status.deviceId.slice(0,8);
         await connectDeviceChannel();
         await loadApps();
