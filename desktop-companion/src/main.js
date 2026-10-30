@@ -391,7 +391,7 @@ async function handleCommand(payload){
     // The native companion, not the caller, owns the peer -> PTY mapping.
     // Never accept an arbitrary terminal process ID from a remote command.
     await stopPeer(peerSessionId);
-    await publish('response',{requestId,ok:true,capability:'stop'});return;
+    await publish('response',{requestId,ok:true,capability:'stop',sessionId:peerSessionId});return;
   }
 }
 async function startTerminalPeer(payload,term){
