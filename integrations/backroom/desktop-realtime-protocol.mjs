@@ -10,9 +10,11 @@ export function buildScopedDeviceMessage(payload,{deviceId,roomId}={}){
  return Object.freeze({...payload,roomId,deviceId});
 }
 export function createDeviceCommand(action,details,{deviceId,roomId,now=Date.now(),requestId=crypto.randomUUID()}={}){
- if(!COMMANDS.has(action)||!isUuid(requestId)||!Number.isSafeInteger(now))
+ if(!COMMANDS.has(action)||!isUuid(requestId)||!Number.isSafeInteger(now)||
+    !details||typeof details!=='object'||Array.isArray(details)||
+    ['requestId','action','issuedAt','deviceId','roomId'].some(key=>Object.hasOwn(details,key)))
   throw new TypeError('Invalid device command');
- return buildScopedDeviceMessage({requestId,action,issuedAt:now,...details},{deviceId,roomId});
+ return buildScopedDeviceMessage({...details,requestId,action,issuedAt:now},{deviceId,roomId});
 }
 export function validateDeviceCommand(payload,{deviceId,roomId,now=Date.now(),maxAgeMs=30_000}={}){
  if(!payload||typeof payload!=='object'||Array.isArray(payload)||
