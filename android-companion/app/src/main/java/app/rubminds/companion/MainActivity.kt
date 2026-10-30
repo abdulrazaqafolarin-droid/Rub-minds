@@ -358,8 +358,10 @@ class MainActivity : Activity() {
                 val deviceToken = randomHex(32)
                 val deviceId = UUID.randomUUID().toString()
                 val label = Build.MODEL?.take(80)?.ifBlank { "Android phone" } ?: "Android phone"
-                val result = cloudClient().claim(code, deviceToken, deviceId, label)
+                // Persist first: the server may consume the one-use code even if the
+                // HTTPS response is lost. The same device token then recovers via status.
                 vault.save(deviceToken, deviceId)
+                val result = cloudClient().claim(code, deviceToken, deviceId, label)
                 runOnUiThread {
                     pairingCodeInput.text.clear()
                     setBusy(false, if (result.optString("status") == "pending")

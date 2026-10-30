@@ -27,6 +27,9 @@ test("pairing is owner-scoped, one-use, time-limited and device credentials stay
   assert.match(sql, /claimed_at is null/i);
   assert.match(sql, /expires_at > pg_catalog\.clock_timestamp\(\)/i);
   assert.match(sql, /pg_advisory_xact_lock/);
+  const android = await read("android-companion/app/src/main/java/app/rubminds/companion/MainActivity.kt");
+  assert.ok(android.indexOf("vault.save(deviceToken, deviceId)") < android.indexOf("cloudClient().claim(code, deviceToken, deviceId, label)"),
+    "Persist the token before the one-use pairing call so a lost response can recover via status.");
 });
 
 test("device and app tables are isolated from direct client table access", async () => {
@@ -38,13 +41,13 @@ test("device and app tables are isolated from direct client table access", async
     assert.match(next, new RegExp("alter table public\\." + table + " enable row level security"));
     assert.match(next, new RegExp("revoke all on table public\\." + table + " from public, anon, authenticated"));
     const serviceGrant = ({
-      backroom_devices: /grant select, update\\(last_seen_at\\) on table public\\.backroom_devices to service_role/,
-      backroom_device_pairings: /grant select, insert, delete on table public\\.backroom_device_pairings to service_role/,
-      backroom_device_room_bindings: /grant select on table public\\.backroom_device_room_bindings to service_role/,
-      backroom_device_apps: /grant select on table public\\.backroom_device_apps to service_role/,
-      backroom_device_events: /grant select, insert on table public\\.backroom_device_events to service_role/
+      backroom_devices: "grant select, update(last_seen_at) on table public.backroom_devices to service_role;",
+      backroom_device_pairings: "grant select, insert, delete on table public.backroom_device_pairings to service_role;",
+      backroom_device_room_bindings: "grant select on table public.backroom_device_room_bindings to service_role;",
+      backroom_device_apps: "grant select on table public.backroom_device_apps to service_role;",
+      backroom_device_events: "grant select, insert on table public.backroom_device_events to service_role;"
     })[table];
-    assert.match(next, serviceGrant);
+    assert.ok(next.includes(serviceGrant), "Unexpected service-role grant for " + table);
   }
 });
 
