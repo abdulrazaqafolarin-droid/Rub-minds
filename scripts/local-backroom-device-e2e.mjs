@@ -219,6 +219,42 @@ const invalidDesktopSessionClose = await edge("desktop/session-close", {
 }, desktopToken);
 expectStatus(invalidDesktopSessionClose, 400, "invalid desktop session close rejection");
 
+const abandonedDesktopSessionId = randomUUID();
+await adminRequest("/rest/v1/backroom_desktop_sessions", {
+  method: "POST",
+  headers: { Prefer: "return=minimal" },
+  body: JSON.stringify({
+    session_id: abandonedDesktopSessionId,
+    device_id: desktopDeviceId,
+    room_id: roomId,
+    requested_by: owner.id,
+    session_type: "screen",
+    status: "active",
+    expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+  }),
+});
+const memberCannotAbandonOwnerSession = await edge("desktop/session-abandon", {
+  deviceId: desktopDeviceId, roomId, sessionId: abandonedDesktopSessionId,
+  requestId: randomUUID(), issuedAt: Date.now(),
+}, memberToken);
+expectStatus(memberCannotAbandonOwnerSession, 404, "group member cannot abandon another user's session");
+const protectedSession = await adminRequest(
+  "/rest/v1/backroom_desktop_sessions?select=status&session_id=eq." + abandonedDesktopSessionId
+);
+assert.equal(protectedSession[0]?.status, "active");
+const ownerAbandon = await edge("desktop/session-abandon", {
+  deviceId: desktopDeviceId, roomId, sessionId: abandonedDesktopSessionId,
+  requestId: randomUUID(), issuedAt: Date.now(),
+}, ownerToken);
+expectStatus(ownerAbandon, 200, "request owner session abandonment");
+assert.equal(ownerAbandon.body.closed, true);
+const ownerAbandonReplay = await edge("desktop/session-abandon", {
+  deviceId: desktopDeviceId, roomId, sessionId: abandonedDesktopSessionId,
+  requestId: randomUUID(), issuedAt: Date.now(),
+}, ownerToken);
+expectStatus(ownerAbandonReplay, 200, "idempotent session abandonment");
+assert.equal(ownerAbandonReplay.body.closed, false);
+
 const repeatStopAfterLocalClose = await edge("desktop/command", {
   deviceId: desktopDeviceId,
   roomId,
