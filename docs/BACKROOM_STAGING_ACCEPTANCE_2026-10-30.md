@@ -151,3 +151,13 @@ The Vercel environment records were resolved by their exact environment-variable
 - Branch-scoped Preview `VITE_SUPABASE_ANON_KEY` exactly equals the Staging project's active publishable key.
 - Both Preview overrides remain targeted only to `preview` and only to `feat/backroom-cua-artemis-workspaces`. No secret values were printed or copied into this document.
 - Final documentation commit `34e1aef670fa60d5d0737cf9031ade419322487e` has a READY Vercel Preview deployment above; its changes after code head `72b6268` are documentation-only.
+
+
+### Smart-mode AI loop-prevention test — same rollback-only staging method
+
+A further transaction exercised two AI participants plus a human sender and a bound `smart`-mode input:
+- AI-originated text without a mention did not enqueue a wake.
+- AI-originated text with an explicit `@AI Beta` mention still did not enqueue in `smart` mode (prevents AI-to-AI echo loops).
+- A human group message did enqueue exactly one job; the job was claimed and acknowledged normally.
+
+The test rows were rolled back. This confirms that the database trigger's smart-mode loop guard is active in the deployed staging schema.
