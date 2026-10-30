@@ -3,6 +3,7 @@ package app.rubminds.companion
 import android.inputmethodservice.InputMethodService
 import android.view.View
 import android.view.inputmethod.EditorInfo
+import android.text.InputType
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -18,6 +19,7 @@ import android.widget.Toast
  */
 class DraftInputMethodService : InputMethodService() {
     private var activePackage: String? = null
+    private var activeInputType: Int = InputType.TYPE_NULL
     private var status: TextView? = null
     private var draft: EditText? = null
     private var insert: Button? = null
@@ -63,12 +65,15 @@ class DraftInputMethodService : InputMethodService() {
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
         activePackage = attribute?.packageName
+        activeInputType = attribute?.inputType ?: InputType.TYPE_NULL
         updatePermissionState()
     }
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
-        activePackage = info?.packageName ?: currentInputEditorInfo?.packageName
+        val activeInfo = info ?: currentInputEditorInfo
+        activePackage = activeInfo?.packageName
+        activeInputType = activeInfo?.inputType ?: InputType.TYPE_NULL
         updatePermissionState()
     }
 
@@ -95,12 +100,13 @@ class DraftInputMethodService : InputMethodService() {
     private fun updatePermissionState() {
         val allowed = AppGrantPolicy.canInsertDraft(
             AppGrantStore(this).get(activePackage.orEmpty()),
-            activePackage
+            activePackage,
+            activeInputType
         )
         status?.text = if (allowed) {
             "Draft permission enabled for ${activePackage}."
         } else {
-            "Draft insertion is not approved for this app. Change app choices in Rub Minds Companion."
+            if (AppGrantPolicy.isSensitiveInput(activeInputType)) "Draft insertion is disabled in password fields." else "Draft insertion is not approved for this app. Change app choices in Rub Minds Companion."
         }
         insert?.isEnabled = allowed
         draft?.isEnabled = allowed
@@ -110,7 +116,7 @@ class DraftInputMethodService : InputMethodService() {
     private fun insertDraft() {
         val targetPackage = activePackage
         val grant = AppGrantStore(this).get(targetPackage.orEmpty())
-        if (!AppGrantPolicy.canInsertDraft(grant, currentInputEditorInfo?.packageName)) {
+        if (!AppGrantPolicy.canInsertDraft(grant, currentInputEditorInfo?.packageName, currentInputEditorInfo?.inputType ?: InputType.TYPE_NULL)) {
             updatePermissionState()
             Toast.makeText(this, "This app has not been approved for draft insertion.", Toast.LENGTH_SHORT).show()
             return
