@@ -204,11 +204,22 @@ async function localLaunch(appItem){
   });
   return card;
 }
+async function closeServerSession(sessionId){
+  if(typeof sessionId!=='string'||!UUID_PATTERN.test(sessionId))return false;
+  try{
+    await invoke('close_desktop_session',{supabaseUrl:cfg.url,publishableKey:cfg.key,sessionId});
+    return true;
+  }catch(error){
+    notify('The computer could not confirm server-side session cleanup. The session will expire automatically. '+(error?.message||''),'error');
+    return false;
+  }
+}
+
 function createApproval(kind,description,onApprove,extra={}){
   const requestId=extra.requestId||crypto.randomUUID();
   const actor=extra.remote&&typeof extra.actorDisplayName==='string'?extra.actorDisplayName.trim().slice(0,80):'';
   const actorNote=actor?'Requested by '+actor+' through the verified Rub Minds group.\\n\\n':'';
-  const item={kind,description:actorNote+description,onApprove,requestId,extra};
+  const item={kind,description:actorNote+description,onApprove,onDeny:extra.onDeny,requestId,extra};
   state.pending.push(item);renderPending();
   return {requestId};
 }
@@ -228,6 +239,7 @@ function renderPending(){
     yes.addEventListener('click',async()=>{
       yes.disabled=true;no.disabled=true;
       try{await item.onApprove();}catch(error){
+        try{await item.onDeny?.();}catch{}
         notify(error?.message||'The approved action failed.','error');
         if(item.extra?.remote){try{await publish('response',{requestId:item.requestId,ok:false,reason:'device_action_failed',capability:item.extra.capability});}catch{}}
       }
@@ -310,7 +322,7 @@ async function handleCommand(payload){
   const now=Date.now();
   for(const [id,issuedAt] of state.seenCommands)if(now-issuedAt>120_000)state.seenCommands.delete(id);
   if(state.seenCommands.has(requestId))return;
-  if(state.pending.length>=32){await publish('response',{requestId,ok:false,reason:'local_approval_queue_full'});return;}
+  if(state.pending.length>=32){if(['terminal_start','view_offer'].includes(payload.action))await closeServerSession(payload.sessionId);await publish('response',{requestId,ok:false,reason:'local_approval_queue_full'});return;}
   state.seenCommands.set(requestId,payload.issuedAt);
   if(state.seenCommands.size>2048)state.seenCommands.delete(state.seenCommands.keys().next().value);
   if(payload.action==='launch_app'){
@@ -337,7 +349,7 @@ async function handleCommand(payload){
         await stopPeer(payload.sessionId);
         throw error;
       }
-    },{requestId,sessionId:payload.sessionId,remote:true,actorDisplayName:payload.actorDisplayName,capability:'terminal'});
+    },{requestId,sessionId:payload.sessionId,remote:true,actorDisplayName:payload.actorDisplayName,capability:'terminal',onDeny:()=>closeServerSession(payload.sessionId)});
     return;
   }
   if(payload.action==='request_control'){
@@ -360,7 +372,7 @@ async function handleCommand(payload){
     createApproval('view_offer','Share your entire monitor with this Backroom session. Windows will show its screen-sharing picker. Choosing a single window keeps the frame view-only.',async()=>{
       try{await startViewSession(payload);}
       catch(error){await stopPeer(payload.sessionId);throw error;}
-    },{requestId,sessionId:payload.sessionId,remote:true,actorDisplayName:payload.actorDisplayName,capability:'view'});return;
+    },{requestId,sessionId:payload.sessionId,remote:true,actorDisplayName:payload.actorDisplayName,capability:'view',onDeny:()=>closeServerSession(payload.sessionId)});return;
   }
   if(payload.action==='stop_session'){
     const peerSessionId=payload.sessionId;
@@ -508,6 +520,14 @@ async function stopPeer(sessionId){
     }
   }
   try{await invoke('revoke_control',{sessionId});}catch{}
+  await closeServerSession(sessionId);
+  const pending=state.pending.filter(item=>item.extra?.remote&&item.extra?.sessionId===sessionId&&
+    ['terminal','view'].includes(item.extra?.capability));
+  for(const item of pending){
+    try{await item.onDeny?.();}catch{}
+    state.pending=state.pending.filter(candidate=>candidate!==item);
+  }
+  if(pending.length)renderPending();
 }
 async function stopAllPeerSessions(){
   for(const [peerSessionId] of [...state.peers.entries()]){
