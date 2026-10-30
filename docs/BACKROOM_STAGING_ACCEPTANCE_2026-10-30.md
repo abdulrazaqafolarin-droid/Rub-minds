@@ -5,10 +5,10 @@ This document records the isolated staging path and repeatable evidence for the 
 ## Isolated environment
 
 - Git branch: `feat/backroom-cua-artemis-workspaces`
-- Latest branch HEAD at this document update: `d8971b62c0178ae0b057dcecaed4c1a4b6fdd2aa`
-- Latest code/test commit included in that head: `529ac6abda3f9654c6137023eb00fda6ccc5d313` (local host Staging gateway routing regression)
-- Latest Vercel Preview deployment: `dpl_8e79mUni2iMXKJvPg94FQ8WvRWMF` — READY
-- Full 685-test / TypeScript / Vite evidence: deployment `dpl_8e79mUni2iMXKJvPg94FQ8WvRWMF` on branch head `d8971b62`
+- Latest executable code/test commit: `529ac6abda3f9654c6137023eb00fda6ccc5d313` (local host Staging gateway routing regression)
+- Latest full prebuild Preview: `dpl_EoQaChuCUNWULuQNQgRvoD9i7HoL` — READY; branch head `f5d599caef75f2d5d9a21e9222dfe2e0f9de05c2` differs only by documentation after the tested source
+- Full 685-test / TypeScript / Vite evidence: runtime 375, Backroom 262, external workspaces 48; 0 failures
+- Stable branch Preview alias: `https://rub-minds-git-feat-ba-fce441-abdulrazaqafolarin-droids-projects.vercel.app`
 - Stable Preview origin: `https://rub-minds-git-feat-ba-fce441-abdulrazaqafolarin-droids-projects.vercel.app`
 - Supabase staging project ref: `tzcuuynmviiuactafpld` (PostgreSQL 17.11)
 - Staging `backroom-config`: version 2, `verify_jwt=true`
