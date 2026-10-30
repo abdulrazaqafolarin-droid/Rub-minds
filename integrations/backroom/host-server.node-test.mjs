@@ -658,3 +658,35 @@ test("backroom unconfigure accepts standard JSON content types and rejects non-J
  },{wakeService});
 });
 
+
+
+test("default host allowlist supports the exact authenticated Backroom staging Preview origin",async()=>{
+ const previewOrigin="https://rub-minds-git-feat-ba-fce441-abdulrazaqafolarin-droids-projects.vercel.app";
+ const previous=process.env.BACKROOM_ALLOWED_ORIGINS;
+ delete process.env.BACKROOM_ALLOWED_ORIGINS;
+ const host=createBackroomHostServer({port:0,pairingCode:"ef".repeat(16),hostId:"preview-origin-test"});
+ const {port}=await host.start();
+ const base="http://127.0.0.1:"+port;
+ try{
+  assert.ok(host.authority.allowedOrigins.includes(previewOrigin));
+  const preflight=await fetch(base+"/v1/pair",{method:"OPTIONS",headers:{
+   Origin:previewOrigin,"Access-Control-Request-Method":"POST",
+   "Access-Control-Request-Headers":"authorization,content-type"
+  }});
+  assert.equal(preflight.status,204);
+  assert.equal(preflight.headers.get("access-control-allow-origin"),previewOrigin);
+  const credentials=await pair(base,previewOrigin,"ef".repeat(16));
+  assert.equal(credentials.status,200);
+  const session=await credentials.json();
+  assert.match(session.sessionToken,/^[a-f0-9]{64}$/);
+  const status=await fetch(base+"/v1/host",{headers:{Origin:previewOrigin,Authorization:"Bearer "+session.sessionToken}});
+  assert.equal(status.status,200);
+  const lookalike="https://rub-minds-git-feat-ba-fce441-abdulrazaqafolarin-droids-projects.vercel.app.attacker.example";
+  const denied=await pair(base,lookalike);
+  assert.equal(denied.status,403);
+ }finally{
+  await host.close();
+  if(previous===undefined)delete process.env.BACKROOM_ALLOWED_ORIGINS;
+  else process.env.BACKROOM_ALLOWED_ORIGINS=previous;
+ }
+});
