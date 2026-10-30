@@ -325,7 +325,8 @@ async function handleCommand(payload){
   if(payload.action==='terminal_start'){
     if(typeof payload.sessionId!=='string'||!payload.offer?.sdp)return;
     createApproval('terminal_start','Start a native PowerShell terminal on this computer and connect it to the requesting Backroom workspace?',async()=>{
-      const term=await invoke('start_terminal');
+      const term=await invoke('start_terminal',{sessionId:payload.sessionId});
+      if(term.sessionId!==payload.sessionId)throw new Error('The native terminal session did not match the authorized Backroom session.');
       state.terminals.set(term.sessionId,term);
       try{
         await startTerminalPeer(payload,term);
