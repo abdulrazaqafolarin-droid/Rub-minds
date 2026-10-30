@@ -219,6 +219,17 @@ const invalidDesktopSessionClose = await edge("desktop/session-close", {
 }, desktopToken);
 expectStatus(invalidDesktopSessionClose, 400, "invalid desktop session close rejection");
 
+const repeatStopAfterLocalClose = await edge("desktop/command", {
+  deviceId: desktopDeviceId,
+  roomId,
+  requestId: randomUUID(),
+  issuedAt: Date.now(),
+  command: "stop_session",
+  details: { sessionId: desktopSessionId },
+}, ownerToken);
+expectStatus(repeatStopAfterLocalClose, 202, "idempotent stop after the native device already closed the session");
+assert.equal(repeatStopAfterLocalClose.body.command, "stop_session");
+
 const selectedDesktopApp = {
   appId: randomUUID(),
   label: "Backroom CI Desktop App",
