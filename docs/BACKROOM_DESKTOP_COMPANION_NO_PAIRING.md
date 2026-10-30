@@ -38,7 +38,7 @@ Backroom web client
 - Browser commands and ICE signals go through the authenticated `backroom-device` Edge Function. The browser does not write commands directly to the private device topic.
 - The Edge Function verifies the JWT, active human room membership (or room ownership), active device status, and an unrevoked device-room binding before dispatch.
 - Selected-app launch requests must reference an app already registered by the companion.
-- Screen and terminal sessions are server-recorded, bound to device + room, and expire after at most 12 hours. Control/draft requests must reference an active session; draft permission is restricted to screen sessions.
+- Screen and terminal sessions are server-recorded, bound to device + room, and expire after at most 12 hours. Control/draft requests must reference an active session; draft permission is restricted to screen sessions. A native device-bearer endpoint closes sessions after local denial, failed negotiation, disconnect, or peer shutdown; it reports whether it actually changed an active row and is safe to retry.
 - Edge commands are sent by the server through the private Realtime REST broadcast endpoint, without keeping a server WebSocket open.
 - The device-owner is the only authenticated role allowed to send directly to a device's private Realtime topic. Active human group members may receive responses/signals for the bound device.
 - Device revocation changes the server-side device/binding status, marks its active sessions revoked, and sends a private revocation event. The companion's status check is a fallback, not the primary command path.
@@ -95,7 +95,7 @@ GitHub Actions includes a Windows native job to build the WebView, run Rust test
 ## Staging status — 30 October 2026
 
 - The staging project has the desktop companion registration, app inventory, room-membership Realtime, topic authorization, and desktop-session migrations applied.
-- The staging `backroom-device` Edge Function is active at **version 4**, with the authenticated desktop command/signal routes and private server broadcast helper.
+- The staging `backroom-device` Edge Function is active at **version 7**, with the authenticated desktop command/signal routes, private server broadcast helper, and device-authenticated session-close endpoint.
 - The staging session table is RLS-enabled; `anon` and `authenticated` have no table privileges, while the service role has the required read/insert/update privileges.
 - Staging Realtime policies were checked: the device owner can send to the private topic and active human room members can receive.
 - Production has not been migrated or deployed by this work.
