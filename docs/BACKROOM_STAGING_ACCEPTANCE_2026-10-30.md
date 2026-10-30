@@ -109,3 +109,14 @@ These tests exercise the deployed database trigger and security-definer function
 ## Production safety record
 
 No production Supabase migration, production Edge Function deployment, production Vercel variable change, production deployment, branch merge, or PR merge was performed for this acceptance work.
+
+
+### Additional negative-path queue tests — same rollback-only staging method
+
+A second transaction passed four more security checks:
+- Same consent-grant ID is idempotent; a competing grant cannot replace a still-active grant.
+- Wrong host ID, wrong session digest and wrong binding ID each return zero leases and leave the pending queue unchanged.
+- An incorrect lease token cannot acknowledge or mutate a live lease.
+- Deactivation disables consent, cancels pending and leased work, rejects stale acknowledgement and blocks subsequent claims. Repeating deactivation with the same grant is idempotently confirmed.
+
+All rows were rolled back. The repository remains free of these fixture IDs and no staging migration/schema change was needed for these tests.
