@@ -5,13 +5,13 @@ This document records the isolated staging path and repeatable evidence for the 
 ## Isolated environment
 
 - Git branch: `feat/backroom-cua-artemis-workspaces`
-- Latest executable code/test commit: `529ac6abda3f9654c6137023eb00fda6ccc5d313` (local host Staging gateway routing regression)
-- Latest full prebuild Preview: `dpl_EoQaChuCUNWULuQNQgRvoD9i7HoL` — READY; branch head `f5d599caef75f2d5d9a21e9222dfe2e0f9de05c2` differs only by documentation after the tested source
-- Full 685-test / TypeScript / Vite evidence: runtime 375, Backroom 262, external workspaces 48; 0 failures
+- Latest executable code/test branch head: `6692b2595bc751ed7898e87ba61ab8e74b0aee2f`
+- Latest full prebuild Preview: `dpl_6cuVixCCHov6TF2589ejumfdXaTZ` — READY on the same code/test head
+- Full 697-test / TypeScript / Vite evidence: runtime 381, Backroom 268, external workspaces 48; 0 failures
 - Stable branch Preview alias: `https://rub-minds-git-feat-ba-fce441-abdulrazaqafolarin-droids-projects.vercel.app`
 - Stable Preview origin: `https://rub-minds-git-feat-ba-fce441-abdulrazaqafolarin-droids-projects.vercel.app`
 - Supabase staging project ref: `tzcuuynmviiuactafpld` (PostgreSQL 17.11)
-- Staging `backroom-config`: version 2, `verify_jwt=true`
+- Staging `backroom-config`: version 3, `verify_jwt=true`; owner identity verification uses the extracted `owner-jwt.mjs` resolver and Supabase Auth `getUser()`
 - Staging `backroom-wake`: version 7, ACTIVE, `verify_jwt=false`; its own host-token, host/binding/session and active-consent authorization is enforced before private queue operations.
 
 Vercel has two **Preview-only and feature-branch-scoped** variables for this branch:
@@ -38,14 +38,14 @@ Do not use wildcard origins. Pairing remains one-time, exact-origin-bound and lo
 
 ### Current-head Vercel build
 
-The Preview build for branch head `d8971b62c0178ae0b057dcecaed4c1a4b6fdd2aa` reached READY. Its current prebuild suites reported:
+The Preview build for branch head `6692b2595bc751ed7898e87ba61ab8e74b0aee2f` reached READY. Its current prebuild suites reported:
 
 | Suite | Passed | Failed |
 |---|---:|---:|
-| Runtime | 375 | 0 |
-| Backroom | 262 | 0 |
+| Runtime | 381 | 0 |
+| Backroom | 268 | 0 |
 | External workspaces | 48 | 0 |
-| **Total** | **685** | **0** |
+| **Total** | **697** | **0** |
 
 TypeScript (`tsc -b`) and Vite production bundling also completed successfully. The stable Preview branch alias resolves to this deployment.
 
@@ -117,6 +117,30 @@ These requests were sent to the deployed staging project, not mocked:
 - staging publishable key against Auth settings/health and a read-only PostgREST table query: **200**.
 
 A publishable key was not used against privileged OpenAPI discovery; that endpoint correctly demands a secret key. No service-role key was exposed to the browser.
+
+
+## Owner-JWT identity resolver and staging checks — 2026-10-30
+
+The Edge Function's owner identity extraction is now isolated in `integrations/backroom/owner-jwt.mjs`. The handler passes only the bearer access token to Supabase Auth `getUser()`; the request JSON is never consulted for `owner_id`. If the header is absent or malformed, if Auth returns an error or no canonical user UUID, the request is rejected. Auth transport failures continue to surface as service-unavailable through the outer Edge Function error boundary instead of being treated as an authenticated user.
+
+Focused tests: **6 passed, 0 failed** for:
+- owner identity comes only from the verified Auth user, not a spoofed request-body `ownerId`;
+- missing, malformed, wrong-scheme and oversized bearer headers fail before Auth lookup;
+- invalid/expired/revoked token results fail closed;
+- missing or non-UUID user IDs are not accepted;
+- Auth transport failures propagate;
+- missing request/verifier dependencies are rejected.
+
+The tests are included in both the Runtime and Backroom prebuild suites. The Staging Edge Function `backroom-config` was deployed as **v3 ACTIVE** with `verify_jwt=true` and the new helper file.
+
+Live Staging v3 checks:
+- approved Preview Origin `OPTIONS`: **204**, exact allow-origin, `POST, OPTIONS`;
+- unlisted Origin `OPTIONS`: **403**, no allow-origin;
+- `POST /host` without JWT: **401**;
+- `POST /host` with malformed bearer JWT: **401** at the Supabase gateway before handler execution;
+- previous live checks remain: `/binding` and `/sessions` without JWT return **401**.
+
+No valid owner access token was available in this non-browser test session, so the real signed-in owner flow is still unverified. No staging account was created, no host/binding rows were written by these checks, and no Auth policy was weakened.
 
 ## Rollback-only PostgreSQL lifecycle tests
 
