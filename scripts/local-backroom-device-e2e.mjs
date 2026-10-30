@@ -150,7 +150,51 @@ const memberJoin = await userRequest("/rest/v1/rpc/redeem_room_invite", memberTo
   body: JSON.stringify({ invite_token: memberInvite.body }),
 });
 assert.ok(memberJoin.response.ok, "could not redeem member invitation: " + JSON.stringify(memberJoin.body));
+
 assert.equal(memberJoin.body, roomId);
+
+// Desktop registration is bound to the authenticated Rub Minds account:
+// no localhost URL, copied pairing code or Android-style claim flow.
+const desktopDeviceId = randomUUID();
+const desktopRegistrationFields = {
+  deviceId: desktopDeviceId,
+  deviceLabel: "CI Windows workstation",
+  platform: "windows",
+  osVersion: "Windows 11 CI",
+  appVersion: "0.3.0",
+  roomId,
+  devicePublicKey: randomBytes(32).toString("hex"),
+};
+const desktopRegistration = await edge("desktop/register", desktopRegistrationFields, ownerToken);
+expectStatus(desktopRegistration, 201, "account-authenticated desktop registration");
+assert.equal(desktopRegistration.body.status, "active");
+assert.equal(desktopRegistration.body.deviceId, desktopDeviceId);
+assert.match(desktopRegistration.body.deviceToken, /^[a-f0-9]{64}$/);
+assert.equal(desktopRegistration.body.capabilities?.appDiscovery, true);
+assert.equal(desktopRegistration.body.capabilities?.liveScreen, false);
+assert.equal(desktopRegistration.body.capabilities?.desktopControl, false);
+assert.equal(desktopRegistration.body.capabilities?.terminalControl, false);
+assert.equal(Object.hasOwn(desktopRegistration.body, "pairingCode"), false);
+const desktopToken = desktopRegistration.body.deviceToken;
+
+const desktopStatus = await edge("device/status", {}, desktopToken);
+expectStatus(desktopStatus, 200, "registered desktop device status");
+assert.equal(desktopStatus.body.deviceId, desktopDeviceId);
+assert.equal(desktopStatus.body.status, "active");
+
+const memberDesktopRegistration = await edge("desktop/register", {
+  ...desktopRegistrationFields, deviceId: randomUUID()
+}, memberToken);
+expectStatus(memberDesktopRegistration, 403, "non-owner desktop registration denial");
+assert.equal(memberDesktopRegistration.body.reason, "room_owner_required");
+
+const duplicateDesktopRegistration = await edge("desktop/register", desktopRegistrationFields, ownerToken);
+expectStatus(duplicateDesktopRegistration, 409, "duplicate desktop device identity rejection");
+
+const memberCannotRevokeDesktop = await edge("owner/revoke", {
+  deviceId: desktopDeviceId, roomId
+}, memberToken);
+expectStatus(memberCannotRevokeDesktop, 404, "non-owner desktop revoke denial");
 
 const memberCannotPair = await edge("pair/create", { roomId, deviceLabel: "Unauthorized member phone" }, memberToken);
 expectStatus(memberCannotPair, 403, "member pairing denial");
@@ -232,4 +276,27 @@ const revokedDevice = devicesAfterRevoke.body.devices.find(item => item.device_i
 assert.equal(revokedDevice?.status, "revoked");
 assert.deepEqual(revokedDevice?.apps, [], "revocation must remove the live app inventory");
 
-console.log("Local Backroom pairing, replay protection, owner approval, member visibility, selected-app inventory, activity history and revocation passed:", roomId, deviceId);
+// Account-authenticated desktop: active registration and secure digest-backed token.
+const ownerDesktopInventory = await edge("room/devices", { roomId }, ownerToken);
+expectStatus(ownerDesktopInventory, 200, "owner desktop device listing");
+const ownerDesktopRecord = ownerDesktopInventory.body.devices.find(item => item.device_id === desktopDeviceId);
+assert.equal(ownerDesktopRecord?.status, "active");
+assert.equal(ownerDesktopRecord?.platform, "windows");
+assert.doesNotMatch(JSON.stringify(ownerDesktopInventory.body), new RegExp(desktopToken),
+  "device token must never appear in an owner device listing");
+assert.doesNotMatch(JSON.stringify(ownerDesktopInventory.body), /token_digest|device_public_key/i,
+  "device credentials and public key must not be exposed by the public listing");
+
+const memberDesktopInventory = await edge("room/devices", { roomId }, memberToken);
+expectStatus(memberDesktopInventory, 200, "member desktop device visibility");
+assert.ok(memberDesktopInventory.body.devices.some(item => item.device_id === desktopDeviceId));
+
+const desktopRevoke = await edge("owner/revoke", { deviceId: desktopDeviceId, roomId }, ownerToken);
+expectStatus(desktopRevoke, 200, "desktop device revocation");
+const desktopRevokedStatus = await edge("device/status", {}, desktopToken);
+expectStatus(desktopRevokedStatus, 200, "revoked desktop credential status");
+assert.equal(desktopRevokedStatus.body.status, "revoked");
+const desktopBlockedInventory = await edge("device/inventory", { apps: [] }, desktopToken);
+expectStatus(desktopBlockedInventory, 401, "revoked desktop inventory denial");
+
+console.log("Local Backroom Android pairing and account-authenticated desktop registration, authorization, token secrecy, member visibility and revocation passed:", roomId, deviceId, desktopDeviceId);
