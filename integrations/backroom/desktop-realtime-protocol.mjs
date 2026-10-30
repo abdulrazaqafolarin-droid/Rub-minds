@@ -12,7 +12,8 @@ export function buildScopedDeviceMessage(payload,{deviceId,roomId}={}){
 export function createDeviceCommand(action,details,{deviceId,roomId,now=Date.now(),requestId=crypto.randomUUID()}={}){
  if(!COMMANDS.has(action)||!isUuid(requestId)||!Number.isSafeInteger(now)||
     !details||typeof details!=='object'||Array.isArray(details)||
-    ['requestId','action','issuedAt','deviceId','roomId'].some(key=>Object.hasOwn(details,key)))
+    ['requestId','action','issuedAt','deviceId','roomId'].some(key=>Object.hasOwn(details,key))||
+    !validCommandDetails(action,details))
   throw new TypeError('Invalid device command');
  return buildScopedDeviceMessage({...details,requestId,action,issuedAt:now},{deviceId,roomId});
 }
