@@ -38,8 +38,8 @@ object AppGrantPolicy {
     }
 
     fun isSupportedInputType(inputType: Int): Boolean {
-        val inputClass = inputType and InputType.TYPE_MASK_CLASS
-        return inputClass == InputType.TYPE_CLASS_TEXT || inputClass == InputType.TYPE_CLASS_NUMBER
+        // This first keyboard contains letters and punctuation, not a numeric keypad.
+        return (inputType and InputType.TYPE_MASK_CLASS) == InputType.TYPE_CLASS_TEXT
     }
 
     fun canInsertDraft(
