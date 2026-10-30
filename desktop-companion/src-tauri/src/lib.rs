@@ -625,6 +625,14 @@ fn valid_session_id(value: &str) -> bool {
     Uuid::parse_str(value).is_ok()
 }
 
+fn resolve_terminal_session_id(requested: Option<String>) -> Result<String, String> {
+    match requested {
+        Some(value) if valid_session_id(&value) => Ok(value),
+        Some(_) => Err("Invalid terminal session identity".into()),
+        None => Ok(Uuid::new_v4().to_string()),
+    }
+}
+
 fn control_granted(state: &AppState, session_id: &str) -> Result<(), String> {
     if !valid_session_id(session_id) {
         return Err("Invalid control session".into());
@@ -977,11 +985,7 @@ async fn start_terminal(app: AppHandle, state: State<'_, AppState>, session_id: 
     let child = pair.slave.spawn_command(command).map_err(|_| "Could not launch the native terminal shell".to_string())?;
     let reader = pair.master.try_clone_reader().map_err(|_| "Could not attach terminal output".to_string())?;
     let writer = pair.master.take_writer().map_err(|_| "Could not attach terminal input".to_string())?;
-    let session_id = match session_id {
-        Some(value) if valid_session_id(&value) => value,
-        Some(_) => return Err("Invalid terminal session identity".into()),
-        None => Uuid::new_v4().to_string(),
-    };
+    let session_id = resolve_terminal_session_id(session_id)?;
     if active_terminals.contains_key(&session_id) {
         return Err("This terminal session identity is already active".into());
     }
@@ -1162,6 +1166,23 @@ mod native_input_tests {
             "sb_publishable_abcdefghijklmnopqrstuvwxyz",
             "short"
         ).is_err());
+    }
+
+    #[test]
+    fn terminal_session_uses_server_authorized_peer_uuid() {
+        let peer_id = Uuid::new_v4().to_string();
+        assert_eq!(resolve_terminal_session_id(Some(peer_id.clone())).unwrap(), peer_id);
+    }
+
+    #[test]
+    fn terminal_session_rejects_malformed_remote_identity() {
+        assert!(resolve_terminal_session_id(Some("not-a-session".into())).is_err());
+    }
+
+    #[test]
+    fn local_terminal_can_generate_its_own_identity() {
+        let id = resolve_terminal_session_id(None).unwrap();
+        assert!(valid_session_id(&id));
     }
 
     #[test]
