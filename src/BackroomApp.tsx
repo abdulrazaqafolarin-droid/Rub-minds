@@ -20,11 +20,17 @@ function formatTime(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? 'Unknown time' : date.toLocaleString();
 }
-function eventLabel(event: BackroomDeviceEvent) {
-  const app = event.package_name ? ' · ' + event.package_name : '';
-  const actor = event.actor_type === 'owner' ? 'Group owner' : event.actor_type === 'ai' ? 'AI participant' : event.actor_type === 'device' ? 'Android device' : 'System';
+function eventLabel(event: BackroomDeviceEvent, devices: BackroomDevice[]) {
+  const sourceDevice = event.actor_type === 'device' ? devices.find(device => device.device_id === event.actor_id) : undefined;
+  const sourceApp = event.package_name
+    ? devices.flatMap(device => device.apps).find(app => app.package_name === event.package_name)
+    : undefined;
+  const app = event.package_name ? ' · ' + (sourceApp?.app_label ?? event.package_name) : '';
+  const actor = event.actor_type === 'owner' ? 'Group owner'
+    : event.actor_type === 'ai' ? 'AI participant'
+    : event.actor_type === 'device' ? sourceDevice?.device_label ?? 'Android device' : 'System';
   const action = event.event_type.replaceAll('_', ' ');
-  return { actor, action, app };
+  return { actor, action, app, actorId: event.actor_id };
 }
 
 export default function BackroomApp() {
@@ -201,8 +207,8 @@ export default function BackroomApp() {
       <section className="br-cloud-activity">
         <div className="br-cloud-panel-head"><div><span className="br-cloud-eyebrow">GROUP ACTIVITY</span><h2>Device history</h2></div><span className="br-cloud-count">{events.length}</span></div>
         {events.length ? events.map(event => {
-          const meta = eventLabel(event);
-          return <div className="br-cloud-event" key={event.id}><Activity size={16}/><div><b>{meta.actor}</b><span>{meta.action}{meta.app}</span></div><time>{formatTime(event.created_at)}</time></div>;
+          const meta = eventLabel(event, devices);
+          return <div className="br-cloud-event" key={event.id}><Activity size={16}/><div><b>{meta.actor}</b><span>{meta.action}{meta.app}</span><small className="br-cloud-actor-id">Actor ID · {meta.actorId}</small></div><time>{formatTime(event.created_at)}</time></div>;
         }) : <p className="br-cloud-no-events">Pairing, approval and selected-app activity will appear here. Remote AI actions are not yet enabled.</p>}
       </section>
     </>}

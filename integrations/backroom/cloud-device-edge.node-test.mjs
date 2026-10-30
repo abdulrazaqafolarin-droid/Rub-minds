@@ -37,7 +37,14 @@ test("device and app tables are isolated from direct client table access", async
     const next = block.slice(0, block.indexOf("create table if not exists public.", 20) > 0 ? block.indexOf("create table if not exists public.", 20) : 1500);
     assert.match(next, new RegExp("alter table public\\." + table + " enable row level security"));
     assert.match(next, new RegExp("revoke all on table public\\." + table + " from public, anon, authenticated"));
-    assert.match(next, new RegExp("grant all on table public\\." + table + " to service_role"));
+    const serviceGrant = ({
+      backroom_devices: /grant select, update\\(last_seen_at\\) on table public\\.backroom_devices to service_role/,
+      backroom_device_pairings: /grant select, insert, delete on table public\\.backroom_device_pairings to service_role/,
+      backroom_device_room_bindings: /grant select on table public\\.backroom_device_room_bindings to service_role/,
+      backroom_device_apps: /grant select on table public\\.backroom_device_apps to service_role/,
+      backroom_device_events: /grant select, insert on table public\\.backroom_device_events to service_role/
+    })[table];
+    assert.match(next, serviceGrant);
   }
 });
 

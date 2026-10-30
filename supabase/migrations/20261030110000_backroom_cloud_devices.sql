@@ -17,7 +17,7 @@ create table if not exists public.backroom_devices (
 );
 alter table public.backroom_devices enable row level security;
 revoke all on table public.backroom_devices from public, anon, authenticated;
-grant all on table public.backroom_devices to service_role;
+grant select, update(last_seen_at) on table public.backroom_devices to service_role;
 
 create table if not exists public.backroom_device_pairings (
   id uuid primary key default pg_catalog.gen_random_uuid(),
@@ -32,7 +32,7 @@ create table if not exists public.backroom_device_pairings (
 );
 alter table public.backroom_device_pairings enable row level security;
 revoke all on table public.backroom_device_pairings from public, anon, authenticated;
-grant all on table public.backroom_device_pairings to service_role;
+grant select, insert, delete on table public.backroom_device_pairings to service_role;
 create index if not exists backroom_device_pairings_owner_idx on public.backroom_device_pairings(owner_id, created_at desc);
 
 create table if not exists public.backroom_device_room_bindings (
@@ -45,7 +45,7 @@ create table if not exists public.backroom_device_room_bindings (
 );
 alter table public.backroom_device_room_bindings enable row level security;
 revoke all on table public.backroom_device_room_bindings from public, anon, authenticated;
-grant all on table public.backroom_device_room_bindings to service_role;
+grant select on table public.backroom_device_room_bindings to service_role;
 create index if not exists backroom_device_room_bindings_room_idx on public.backroom_device_room_bindings(room_id) where revoked_at is null;
 
 create table if not exists public.backroom_device_apps (
@@ -60,7 +60,7 @@ create table if not exists public.backroom_device_apps (
 );
 alter table public.backroom_device_apps enable row level security;
 revoke all on table public.backroom_device_apps from public, anon, authenticated;
-grant all on table public.backroom_device_apps to service_role;
+grant select on table public.backroom_device_apps to service_role;
 
 create table if not exists public.backroom_device_events (
   id uuid primary key default pg_catalog.gen_random_uuid(),
@@ -78,7 +78,7 @@ create table if not exists public.backroom_device_events (
 );
 alter table public.backroom_device_events enable row level security;
 revoke all on table public.backroom_device_events from public, anon, authenticated;
-grant all on table public.backroom_device_events to service_role;
+grant select, insert on table public.backroom_device_events to service_role;
 create index if not exists backroom_device_events_room_idx on public.backroom_device_events(room_id, created_at desc);
 
 -- A one-use, five-minute pairing code is claimed atomically. Only the service role
