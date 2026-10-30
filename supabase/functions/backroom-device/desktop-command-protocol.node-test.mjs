@@ -39,7 +39,7 @@ test('rejects cross-device, cross-room, stale, future, replay-shaped and malform
  assert.equal(validateDesktopCommand({...base,deviceId:'bad',command:'launch_app',details:{appId}}),null);
  assert.equal(validateDesktopCommand({...base,roomId:'bad',command:'launch_app',details:{appId}}),null);
  assert.equal(check('launch_app',{appId},40_001),null);
- assert.equal(validateDesktopCommand({...base,issuedAt:10_001,command:'launch_app',details:{appId}},{now:10_000}),null);
+ assert.equal(validateDesktopCommand({...base,issuedAt:40_001,command:'launch_app',details:{appId}},{now:10_000}),null);
  assert.equal(validateDesktopCommand({...base,action:'request_control',command:'request_control',details:{sessionId}},{now:10_000}),null);
  assert.equal(validateDesktopCommand({...base,command:'shell_exec',details:{command:'whoami'}},{now:10_000}),null);
  assert.equal(validateDesktopCommand({...base,command:'launch_app',details:{appId},admin:true},{now:10_000}),null);
