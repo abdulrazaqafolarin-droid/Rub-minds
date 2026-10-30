@@ -11,6 +11,8 @@ const token='b'.repeat(64);
 const credentialDigest=createHash('sha256').update(token).digest('hex');
 const expiresAt='2030-01-01T00:00:00.000Z';
 const scope={hostId,hostToken:token,bindingId,sessionDigest};
+const jobId='40000000-0000-4000-8000-000000000033';
+const leaseToken='40000000-0000-4000-8000-000000000044';
 function setup({host={},binding={},now=()=>Date.parse('2026-10-29T00:00:00Z'),activateBinding=async()=>true,deactivateBinding=async()=>true}={}) {
  const calls=[];
  const hostRecord={hostId,ownerId,credentialDigest,expiresAt,revokedAt:null,...host};
@@ -28,8 +30,8 @@ function setup({host={},binding={},now=()=>Date.parse('2026-10-29T00:00:00Z'),ac
 test('authenticated claims, acknowledgements, retries are scoped to DB-authoritative identities',async()=>{
  const {gateway,calls}=setup();
  assert.deepEqual(await gateway.claim({...scope,limit:2}),{ok:true,leases:[]});
- assert.deepEqual(await gateway.acknowledge({...scope,jobId:'job-id',leaseToken:'lease',outcome:'ignored'}),{ok:true,accepted:true});
- assert.deepEqual(await gateway.retry({...scope,jobId:'job-id',leaseToken:'lease',errorCode:'provider_busy',retryAfterSeconds:5}),{ok:true,state:'pending'});
+ assert.deepEqual(await gateway.acknowledge({...scope,jobId,leaseToken,outcome:'ignored'}),{ok:true,accepted:true});
+ assert.deepEqual(await gateway.retry({...scope,jobId,leaseToken,errorCode:'provider_busy',retryAfterSeconds:5}),{ok:true,state:'pending'});
  assert.equal(calls.length,3);
  assert.deepEqual(calls[0][1],{hostId,bindingId,sessionDigest,limit:2});
  assert.equal(calls[1][1].hostToken,undefined);
@@ -58,9 +60,26 @@ test('revoked, expired, unconfirmed or differently owned host/binding denied',as
   assert.equal(calls.length,0);
  }
 });
-test('invalid claim limit rejected after authentication',async()=>{
+test('invalid claim limit rejected as a client error after authentication',async()=>{
  const {gateway,calls}=setup();
- await assert.rejects(()=>gateway.claim({...scope,limit:21}),/limit/);
+ assert.deepEqual(await gateway.claim({...scope,limit:21}),{ok:false,reason:'invalid_request'});
+ assert.equal(calls.length,0);
+});
+
+test('malformed acknowledgement and retry identifiers never reach privileged RPCs',async()=>{
+ const {gateway,calls}=setup();
+ for(const input of [
+  {jobId:'not-a-uuid',leaseToken,outcome:'acknowledged'},
+  {jobId,leaseToken:'not-a-uuid',outcome:'acknowledged'},
+  {jobId,leaseToken,outcome:'send'},
+ ]) assert.deepEqual(await gateway.acknowledge({...scope,...input}),{ok:false,reason:'invalid_request'});
+ for(const input of [
+  {jobId:'not-a-uuid',leaseToken,retryAfterSeconds:5,errorCode:'provider_busy'},
+  {jobId,leaseToken:'not-a-uuid',retryAfterSeconds:5,errorCode:'provider_busy'},
+  {jobId,leaseToken,retryAfterSeconds:0,errorCode:'provider_busy'},
+  {jobId,leaseToken,retryAfterSeconds:301,errorCode:'provider_busy'},
+  {jobId,leaseToken,retryAfterSeconds:5,errorCode:'unsafe'},
+ ]) assert.deepEqual(await gateway.retry({...scope,...input}),{ok:false,reason:'invalid_request'});
  assert.equal(calls.length,0);
 });
 
@@ -82,7 +101,7 @@ test('inactive consent can only be activated by a correctly authenticated host f
  assert.equal(calls[0].hostToken,undefined);
  assert.equal(calls[0].ttlSeconds,300);
  assert.deepEqual(await gateway.activate({...scope,hostToken:'c'.repeat(64),grantId,ttlSeconds:300}),{ok:false,reason:'unauthorized'});
- await assert.rejects(()=>gateway.activate({...scope,grantId,ttlSeconds:901}),/grant/);
+ assert.deepEqual(await gateway.activate({...scope,grantId,ttlSeconds:901}),{ok:false,reason:'invalid_request'});
  assert.equal(calls.length,1);
 });
 
@@ -100,7 +119,7 @@ test('deactivation is bound to the authenticated host and exact one-time grant',
  assert.equal(calls.length,2);
  assert.deepEqual(await gateway.deactivate({...scope,hostToken:'c'.repeat(64),grantId}),{ok:false,reason:'unauthorized'});
  assert.equal(calls.length,2);
- await assert.rejects(()=>gateway.deactivate({...scope,grantId:'not-a-uuid'}),/grant ID/);
+ assert.deepEqual(await gateway.deactivate({...scope,grantId:'not-a-uuid'}),{ok:false,reason:'invalid_request'});
  assert.equal(calls.length,2);
 });
 
