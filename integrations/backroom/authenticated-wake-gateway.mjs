@@ -7,6 +7,7 @@
  * authorizes an existing provisioned, unrevoked host + binding.
  */
 import {createHash,timingSafeEqual} from 'node:crypto';
+import {Buffer} from 'node:buffer';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DIGEST=/^[0-9a-f]{64}$/;
 const TOKEN=/^[0-9a-f]{64}$/;
