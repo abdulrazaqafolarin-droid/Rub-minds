@@ -24,10 +24,11 @@ test('validates screen and terminal offer sessions with bounded SDP',()=>{
  assert.equal(check('view_offer',{sessionId,offer:{sdp:'v=0'+'.'.repeat(70_000)}}),null);
  assert.equal(check('terminal_start',{sessionId,offer,roomId}),null);
 });
-test('control, draft and stop require session IDs and stop accepts optional native terminal ID',()=>{
+test('control, draft and stop require session IDs and terminal peer IDs must match',()=>{
  assert.equal(check('request_control',{sessionId}).command,'request_control');
  assert.equal(check('request_control',{sessionId,peerSessionId:sessionId}).command,'request_control');
  assert.equal(check('request_control',{sessionId,peerSessionId:'bad'}),null);
+ assert.equal(check('request_control',{sessionId,peerSessionId:'60000000-0000-4000-8000-000000000006'}),null);
  assert.equal(check('request_draft_permission',{sessionId}).command,'request_draft_permission');
  assert.equal(check('stop_session',{sessionId}).command,'stop_session');
  assert.equal(check('stop_session',{sessionId,terminalSessionId:sessionId}),null);
