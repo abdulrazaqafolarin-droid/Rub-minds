@@ -201,7 +201,7 @@ Deno.serve(async req => {
       if (command.command === 'view_offer') sessionType = 'screen';
       if (command.command === 'terminal_start') sessionType = 'terminal';
       if (sessionType) {
-        const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+        const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
         const { error } = await db.from('backroom_desktop_sessions').insert({
           session_id: command.details.sessionId,
           device_id: command.deviceId, room_id: command.roomId,
