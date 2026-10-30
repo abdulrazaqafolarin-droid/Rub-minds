@@ -16,18 +16,31 @@ export function createDeviceCommand(action,details,{deviceId,roomId,now=Date.now
   throw new TypeError('Invalid device command');
  return buildScopedDeviceMessage({...details,requestId,action,issuedAt:now},{deviceId,roomId});
 }
+function validCommandDetails(action,details){
+ if(!details||typeof details!=='object'||Array.isArray(details))return false;
+ if(action==='launch_app')return isUuid(details.appId);
+ if(action==='terminal_start'||action==='view_offer'){
+  return isUuid(details.sessionId)&&details.offer&&typeof details.offer==='object'&&
+    typeof details.offer.sdp==='string'&&details.offer.sdp.length>0&&details.offer.sdp.length<=65_536;
+ }
+ if(action==='request_control'||action==='request_draft_permission')return isUuid(details.sessionId);
+ if(action==='stop_session')return isUuid(details.sessionId)&&
+   (details.terminalSessionId===undefined||isUuid(details.terminalSessionId));
+ return false;
+}
 export function validateDeviceCommand(payload,{deviceId,roomId,now=Date.now(),maxAgeMs=30_000}={}){
  if(!payload||typeof payload!=='object'||Array.isArray(payload)||
-  !isUuid(deviceId)||!isUuid(roomId)||
-  payload.deviceId!==deviceId||payload.roomId!==roomId||
+  !isUuid(deviceId)||!isUuid(roomId)||payload.deviceId!==deviceId||payload.roomId!==roomId||
   !isUuid(payload.requestId)||!COMMANDS.has(payload.action)||
-  !Number.isSafeInteger(payload.issuedAt)||Math.abs(now-payload.issuedAt)>maxAgeMs)
+  !Number.isSafeInteger(payload.issuedAt)||!Number.isSafeInteger(now)||
+  !Number.isSafeInteger(maxAgeMs)||maxAgeMs<1_000||maxAgeMs>120_000||
+  Math.abs(now-payload.issuedAt)>maxAgeMs||!validCommandDetails(payload.action,payload))
   return false;
  return true;
 }
 export function classifyDeviceResponse(payload){
  if(!payload||typeof payload!=='object'||payload.ok!==true)return 'error';
- if(CAPABILITIES.has(payload.capability))return payload.capability;
+ if(payload.capability!==undefined)return CAPABILITIES.has(payload.capability)?payload.capability:null;
  if(typeof payload.sessionId==='string'&&Number.isInteger(payload.cols))return 'terminal';
  if(typeof payload.pid==='number')return 'launch';
  return null;
