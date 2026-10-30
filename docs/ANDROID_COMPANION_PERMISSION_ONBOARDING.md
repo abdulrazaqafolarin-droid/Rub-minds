@@ -6,8 +6,8 @@
 2. User installs and opens the Android companion APK.
 3. Companion displays launcher apps; owner chooses individual apps.
 4. Owner separately chooses whether the Rub Minds keyboard may insert drafts into each selected app.
-5. To enable insertion, owner opens Android input-method settings, enables **Rub Minds draft keyboard**, and selects it as the active keyboard.
-6. The keyboard checks the foreground editor package against the local per-app grant and requires a deliberate **Insert draft** tap.
+5. Owner taps **Enable in Android Settings**, enables **Rub Minds draft keyboard** in the system-owned input-method settings, returns to the companion, then taps **Choose keyboard** and selects it in Android's system picker.
+6. The keyboard checks the live foreground editor package and input type against the local per-app grant and requires a deliberate **Insert draft** tap. It refuses password/credential variations and unsupported editor classes.
 
 ## Implemented in this slice
 
