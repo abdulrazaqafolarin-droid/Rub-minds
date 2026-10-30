@@ -79,6 +79,34 @@ node --test integrations/backroom/browser-host-e2e.browser-test.mjs
 
 Result: **8 passed, 0 failed**. The first command covers seven real-browser cases (one-field selection, multiple-input rejection, Escape, stale overlay/listener cleanup, read-only rejection, and empty-composer draft without Send). The second runs the complete local-host → Chromium overlay → group-scoped target registration → read-back-verified draft flow, including isolation/identity regression checks. The temporary sandbox was isolated from the project and later shut down. The simulated Backroom preview panel is not itself a live application binding; the managed-browser overlay is the real browser target-selection path.
 
+
+
+## Local Backroom host must be pointed at Staging for Preview acceptance
+
+The local host is a separate process from the Vercel Preview. Its default wake gateway is the **Production** Supabase function URL, by design. The Preview's `VITE_SUPABASE_URL` override does not change the local process. For a staging Preview test, set the local host's `BACKROOM_WAKE_GATEWAY_URL` explicitly before launching it:
+
+Staging URL (exact):
+```text
+https://tzcuuynmviiuactafpld.supabase.co/functions/v1/backroom-wake/
+```
+
+Windows PowerShell:
+```powershell
+$env:BACKROOM_WAKE_GATEWAY_URL = "https://tzcuuynmviiuactafpld.supabase.co/functions/v1/backroom-wake/"
+npm run backroom:host
+```
+
+Git Bash:
+```bash
+BACKROOM_WAKE_GATEWAY_URL='https://tzcuuynmviiuactafpld.supabase.co/functions/v1/backroom-wake/' npm run backroom:host
+```
+
+After stopping the host, PowerShell can clear the per-shell setting with `Remove-Item Env:BACKROOM_WAKE_GATEWAY_URL`; Git Bash can use `unset BACKROOM_WAKE_GATEWAY_URL`. A fresh shell without the override returns to the normal Production default.
+
+Do **not** set the headless binding variables (`BACKROOM_WAKE_SESSION_DIGEST`, `BACKROOM_WAKE_BINDING_ID`, `BACKROOM_WAKE_PUBLISHABLE_KEY`) for the interactive UI pairing test. Those are a separate explicit headless mode and must be provided together. The browser cannot override the gateway destination or host token.
+
+A focused regression was added to `integrations/backroom/host-wake-service.node-test.mjs`; it verifies that an environment-configured Staging URL is used exclusively for consent activation/deactivation. Result: **12 passed, 0 failed**. The host's URL allowlist still rejects an attacker-selected URL unless the local operator explicitly places that exact HTTPS endpoint in the host process environment.
+
 ## Live Supabase staging HTTP checks
 
 These requests were sent to the deployed staging project, not mocked:
