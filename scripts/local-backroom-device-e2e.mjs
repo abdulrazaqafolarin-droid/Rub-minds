@@ -182,6 +182,40 @@ expectStatus(desktopStatus, 200, "registered desktop device status");
 assert.equal(desktopStatus.body.deviceId, desktopDeviceId);
 assert.equal(desktopStatus.body.status, "active");
 
+const desktopSessionId = randomUUID();
+const desktopSessionExpiry = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+await adminRequest("/rest/v1/backroom_desktop_sessions", {
+  method: "POST",
+  headers: { Prefer: "return=minimal" },
+  body: JSON.stringify({
+    session_id: desktopSessionId,
+    device_id: desktopDeviceId,
+    room_id: roomId,
+    requested_by: owner.id,
+    session_type: "terminal",
+    status: "active",
+    expires_at: desktopSessionExpiry,
+  }),
+});
+const closedDesktopSession = await edge("desktop/session-close", {
+  roomId, sessionId: desktopSessionId,
+}, desktopToken);
+expectStatus(closedDesktopSession, 200, "device-authenticated desktop session close");
+assert.equal(closedDesktopSession.body.status, "stopped");
+const closedDesktopSessionRow = await adminRequest(
+  "/rest/v1/backroom_desktop_sessions?select=status&session_id=eq." + desktopSessionId
+);
+assert.equal(closedDesktopSessionRow.length, 1);
+assert.equal(closedDesktopSessionRow[0].status, "stopped");
+const repeatedDesktopSessionClose = await edge("desktop/session-close", {
+  roomId, sessionId: desktopSessionId,
+}, desktopToken);
+expectStatus(repeatedDesktopSessionClose, 200, "idempotent desktop session close");
+const invalidDesktopSessionClose = await edge("desktop/session-close", {
+  roomId, sessionId: "not-a-session",
+}, desktopToken);
+expectStatus(invalidDesktopSessionClose, 400, "invalid desktop session close rejection");
+
 const selectedDesktopApp = {
   appId: randomUUID(),
   label: "Backroom CI Desktop App",
