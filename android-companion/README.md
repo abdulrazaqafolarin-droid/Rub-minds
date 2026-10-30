@@ -8,7 +8,7 @@ This is an Android-native prototype for the Backroom device-permission direction
 - Launcher-app discovery using an Android package-visibility intent query; it deliberately does **not** request `QUERY_ALL_PACKAGES`.
 - Owner-controlled per-app selection stored locally on the phone.
 - Separate per-app draft-insertion grant.
-- Optional Rub Minds input method (keyboard). Android requires the user to enable and select it through system keyboard settings; the app cannot silently grant itself that authority.
+- Optional Rub Minds input method (keyboard). The companion has separate **Enable in Android Settings** and **Choose keyboard** actions; Android requires the user to enable and select it through system-owned screens.
 - The keyboard checks the active editor package against the saved per-app grant and inserts text only after the user taps **Insert draft**.
 - Unit tests for the app-grant policy.
 
@@ -18,7 +18,7 @@ This version does not request all-files access, notification access, screen capt
 
 The app picker discovers apps that expose launcher activities. Android package-visibility behavior and OEM launchers can affect the list. It does not promise an inventory of every installed package or work-profile apps.
 
-Draft insertion is provided through an optional user-selected keyboard, not invisible cross-app control. Some secure fields and apps may block third-party input methods. Android's keyboard chooser is the approval surface. A keyboard can technically type into any focused field while enabled; this prototype narrows its own Insert action to apps selected by the owner. Users should switch back to their trusted keyboard when they do not need Rub Minds draft insertion.
+Draft insertion is provided through an optional user-selected keyboard, not invisible cross-app control. Some secure fields and apps may block third-party input methods. Android's keyboard chooser is the approval surface. A keyboard can technically type into any focused field while enabled; this prototype narrows its own Insert action to apps selected by the owner. Android may warn that enabled keyboards can process text entered through them. This prototype has no Internet permission or network client and does not read existing target-field text, but users should enable only keyboards they trust and switch back to their trusted keyboard when Rub Minds draft insertion is not needed.
 
 ## Build
 
