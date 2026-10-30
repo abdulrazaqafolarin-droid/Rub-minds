@@ -17,7 +17,7 @@ data class AppGrant(
 
 object AppGrantPolicy {
     private val packageNamePattern =
-        Regex("^[A-Za-z_][A-Za-z0-9_]*(?:\\\\.[A-Za-z_][A-Za-z0-9_]*)+$")
+        Regex("^[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)+$")
 
     fun isValidPackageName(packageName: String): Boolean =
         packageNamePattern.matches(packageName)
