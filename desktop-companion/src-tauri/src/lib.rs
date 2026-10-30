@@ -27,6 +27,7 @@ const MAX_TERMINAL_INPUT: usize = 4_000;
 const MAX_INPUT_EVENTS_PER_SECOND: usize = 120;
 const MAX_ACTIVE_DESKTOP_PROCESSES: usize = 24;
 const MAX_ACTIVE_TERMINALS: usize = 4;
+const MAX_NATIVE_APPROVALS_PER_MINUTE: usize = 10;
 
 fn vault_entry(name: &str) -> Result<Entry, String> {
     let permitted = matches!(name, "device-id" | "device-token" | "device-private-key" | "device-room-id" | "supabase-auth-session");
@@ -541,6 +542,7 @@ async fn launch_registered_app(app: AppHandle, state: State<'_, AppState>, app_i
         if sha256_file(&path)? != entry.sha256 {
             return Err("Application binary changed since it was approved. Remove it and approve the new binary.".into());
         }
+        check_approval_rate(&state)?;
         require_native_confirmation(&app, "Launch approved application?", &format!(
             "Open {} on this computer?\\n\\nExecutable: {}\\n\\nThe app runs locally; Backroom does not receive its private files or login state.",
             entry.label, path.display()
@@ -575,6 +577,7 @@ struct AppState {
     terminals: Mutex<HashMap<String, Arc<TerminalSession>>>,
     desktop_processes: Mutex<HashMap<u32, NativeChild>>,
     input_events: Mutex<VecDeque<Instant>>,
+    approval_events: Mutex<VecDeque<Instant>>,
 }
 
 struct TerminalSession {
@@ -638,6 +641,19 @@ fn draft_granted(state: &AppState, session_id: &str) -> Result<(), String> {
     }
 }
 
+fn check_approval_rate(state: &AppState) -> Result<(), String> {
+    let now = Instant::now();
+    let mut events = state.approval_events.lock().map_err(|_| "Approval state unavailable")?;
+    while events.front().map(|time| now.duration_since(*time) >= Duration::from_secs(60)).unwrap_or(false) {
+        events.pop_front();
+    }
+    if events.len() >= MAX_NATIVE_APPROVALS_PER_MINUTE {
+        return Err("Too many native approval prompts were requested. Wait one minute before approving more actions.".into());
+    }
+    events.push_back(now);
+    Ok(())
+}
+
 fn check_input_rate(state: &AppState) -> Result<(), String> {
     let now = Instant::now();
     let mut events = state.input_events.lock().map_err(|_| "Input state unavailable")?;
@@ -661,6 +677,7 @@ async fn grant_control(app: AppHandle, state: State<'_, AppState>, session_id: S
     if !has_live_capture && !has_live_terminal {
         return Err("Control can only be granted to a live Backroom screen or terminal session".into());
     }
+    check_approval_rate(&state)?;
     require_native_confirmation(&app, "Allow Backroom control?", &format!(
         "Allow this group to control local session {} for up to {} seconds? Pointer, keyboard, and terminal input may reach the selected application.",
         session_id, seconds.clamp(30, 600)
@@ -688,6 +705,7 @@ async fn grant_draft_typing(app: AppHandle, state: State<'_, AppState>, session_
     if !state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?.contains_key(&session_id) {
         return Err("Draft typing is available only in an active screen session".into());
     }
+    check_approval_rate(&state)?;
     require_native_confirmation(&app, "Allow unsent draft typing?", &format!(
         "Allow Backroom to type only into a drag-selected area of this live screen for up to {} seconds? It will not press Enter or Send.",
         seconds.clamp(30, 120)
@@ -883,6 +901,7 @@ async fn approve_draft_request(app: AppHandle, state: State<'_, AppState>, reque
     }
     control_granted(&state, &pending.session_id)?;
     draft_granted(&state, &pending.session_id)?;
+    check_approval_rate(&state)?;
     require_native_confirmation(&app, "Insert this unsent draft?", &format!(
         "Insert this exact text into the center of the area you selected? No Enter or Send action will be performed.\\n\\n{}",
         pending.text
@@ -926,6 +945,7 @@ struct TerminalOutput {
 
 #[tauri::command]
 async fn start_terminal(app: AppHandle, state: State<'_, AppState>) -> Result<TerminalStarted, String> {
+    check_approval_rate(&state)?;
     require_native_confirmation(&app, "Start a native terminal?", "Start a local PowerShell/zsh/bash shell for this Backroom session? A separate time-limited control approval is needed before remote typing is enabled.")?;
     let mut active_terminals = state.terminals.lock().map_err(|_| "Terminal registry unavailable")?;
     if active_terminals.len() >= MAX_ACTIVE_TERMINALS {
