@@ -27,9 +27,9 @@ begin
     or p_token_digest is null or p_token_digest !~ '^[0-9a-f]{64}$'
     or p_device_public_key is null or p_device_public_key !~ '^[0-9a-f]{64}$'
     or p_device_label is null or pg_catalog.char_length(pg_catalog.btrim(p_device_label)) not between 1 and 80
-    or p_platform not in ('windows','macos','linux')
-    or pg_catalog.char_length(pg_catalog.coalesce(p_os_version,'')) > 40
-    or pg_catalog.char_length(pg_catalog.coalesce(p_app_version,'')) > 40 then
+    or p_platform is null or p_platform not in ('windows','macos','linux')
+    or pg_catalog.char_length(coalesce(p_os_version,'')) > 40
+    or pg_catalog.char_length(coalesce(p_app_version,'')) > 40 then
     raise exception 'Invalid desktop companion registration';
   end if;
 
@@ -61,7 +61,7 @@ begin
     capabilities
   ) values (
     p_device_id, p_owner_id, p_token_digest, pg_catalog.btrim(p_device_label), p_platform,
-    pg_catalog.coalesce(p_os_version,''), pg_catalog.coalesce(p_app_version,''),
+    coalesce(p_os_version,''), coalesce(p_app_version,''),
     'active', pg_catalog.clock_timestamp(), p_device_public_key,
     '{"appDiscovery":true,"separateAppData":false,"embeddedVirtualApp":false,"liveScreen":false,"touchControl":false,"desktopControl":false,"terminalControl":false}'::jsonb
   );
