@@ -95,7 +95,7 @@ GitHub Actions includes a Windows native job to build the WebView, run Rust test
 ## Staging status — 30 October 2026
 
 - The staging project has the desktop companion registration, app inventory, room-membership Realtime, topic authorization, and desktop-session migrations applied.
-- The staging `backroom-device` Edge Function is active at **version 7**, with the authenticated desktop command/signal routes, private server broadcast helper, and device-authenticated session-close endpoint.
+- The staging `backroom-device` Edge Function is active at **version 8**, with the authenticated desktop command/signal routes, private server broadcast helper, and device-authenticated session-close endpoint.
 - The staging session table is RLS-enabled; `anon` and `authenticated` have no table privileges, while the service role has the required read/insert/update privileges.
 - Staging Realtime policies were checked: the device owner can send to the private topic and active human room members can receive.
 - Production has not been migrated or deployed by this work.
