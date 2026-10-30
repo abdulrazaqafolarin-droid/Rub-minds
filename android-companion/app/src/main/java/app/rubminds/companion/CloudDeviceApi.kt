@@ -14,7 +14,7 @@ class CloudDeviceApi {
         val configured = BuildConfig.SUPABASE_URL.trimEnd('/')
         val parsed = try { URL(configured) } catch (_: Exception) { null }
             ?: throw IllegalStateException("Set SUPABASE_URL when building the companion.")
-        if (parsed.protocol != "https" || !parsed.host.endsWith(".supabase.co") || parsed.path != "/" ||
+        if (parsed.protocol != "https" || !parsed.host.endsWith(".supabase.co") || (parsed.path.isNotEmpty() && parsed.path != "/") ||
             parsed.port != -1 && parsed.port != 443 || parsed.userInfo != null ||
             parsed.query != null || parsed.ref != null
         ) throw IllegalStateException("Backroom requires the official HTTPS Supabase endpoint.")
@@ -28,6 +28,7 @@ class CloudDeviceApi {
         val body = JSONObject(fields.toString()).put("action", action)
         val connection = URL(endpoint).openConnection() as HttpsURLConnection
         try {
+            connection.instanceFollowRedirects = false
             connection.instanceFollowRedirects = false
             connection.requestMethod = "POST"
             connection.connectTimeout = 10_000
