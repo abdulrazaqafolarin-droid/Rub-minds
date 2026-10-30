@@ -27,7 +27,7 @@ const MAX_TERMINAL_INPUT: usize = 4_000;
 const MAX_INPUT_EVENTS_PER_SECOND: usize = 120;
 
 fn vault_entry(name: &str) -> Result<Entry, String> {
-    let permitted = matches!(name, "device-id" | "device-token" | "device-private-key" | "supabase-auth-session");
+    let permitted = matches!(name, "device-id" | "device-token" | "device-private-key" | "device-room-id" | "supabase-auth-session");
     if !permitted {
         return Err("Credential name is not permitted".into());
     }
@@ -211,6 +211,7 @@ async fn register_desktop_device(args: RegisterDeviceArgs) -> Result<Registratio
     // Keep the bearer credential inside Windows Credential Manager / Keychain /
     // Secret Service. It is never returned to JavaScript or included in events.
     vault_set("device-token", &token.to_ascii_lowercase())?;
+    vault_set("device-room-id", &args.room_id)?;
     Ok(RegistrationSummary {
         device_id,
         room_id: args.room_id,
@@ -253,6 +254,7 @@ async fn revoke_desktop_device(
     vault_delete("device-token")?;
     vault_delete("device-id")?;
     vault_delete("device-private-key")?;
+    vault_delete("device-room-id")?;
     Ok(())
 }
 
@@ -261,6 +263,7 @@ async fn revoke_desktop_device(
 struct DeviceStatus {
     status: String,
     device_id: String,
+    room_id: String,
     app_discovery: bool,
     live_screen: bool,
     desktop_control: bool,
@@ -286,6 +289,7 @@ async fn desktop_device_status(supabase_url: String, publishable_key: String) ->
     Ok(DeviceStatus {
         status: body.get("status").and_then(Value::as_str).unwrap_or("unknown").to_string(),
         device_id: body.get("deviceId").and_then(Value::as_str).unwrap_or_default().to_string(),
+        room_id: vault_get("device-room-id")?.ok_or("This computer has no saved group binding")?,
         app_discovery: caps.get("appDiscovery").and_then(Value::as_bool).unwrap_or(false),
         live_screen: caps.get("liveScreen").and_then(Value::as_bool).unwrap_or(false),
         desktop_control: caps.get("desktopControl").and_then(Value::as_bool).unwrap_or(false),
