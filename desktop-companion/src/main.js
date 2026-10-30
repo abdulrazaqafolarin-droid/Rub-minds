@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { validateDeviceCommand, queueIceCandidate, takeIceCandidates } from '../../integrations/backroom/desktop-realtime-protocol.mjs';
 import './style.css';
 
 const app = document.querySelector('#app');
@@ -11,6 +12,7 @@ const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;'
 const state = {
   client: null, user: null, session: null, deviceId: null, roomId: null, deviceTokenSaved: false,
   channel: null, apps: [], pending: [], peers: new Map(), streams: new Map(), terminals: new Map(), pendingCandidates: new Map(),
+  seenCommands: new Map(), heartbeat: null, heartbeatMisses: 0,
   status: 'Not connected', terminalOutput: '', unlisten: [],
 };
 function notify(message, kind='') {
@@ -144,6 +146,9 @@ async function registerDevice(){
 }
 async function revokeDevice(){
   hideNotice();
+  stopHeartbeat();
+  await stopAllPeerSessions();
+  await invoke('emergency_stop');
   if(!state.deviceTokenSaved)return notify('This computer has no active device credential.','error');
   if(!confirm('Revoke this computer from the selected Rub Minds group? This closes Backroom terminal sessions and revokes local desktop-control permissions.'))return;
   try{
@@ -219,11 +224,14 @@ function renderPending(){
     const no=document.createElement('button');no.className='ghost';no.textContent='Deny';
     yes.addEventListener('click',async()=>{
       yes.disabled=true;no.disabled=true;
-      try{await item.onApprove();}catch(error){notify(error?.message||'The approved action failed.','error');}
+      try{await item.onApprove();}catch(error){
+        notify(error?.message||'The approved action failed.','error');
+        if(item.extra?.remote){try{await publish('response',{requestId:item.requestId,ok:false,reason:'device_action_failed',capability:item.extra.capability});}catch{}}
+      }
       finally{state.pending=state.pending.filter(x=>x!==item);renderPending();}
     });
     no.addEventListener('click',async()=>{
-      if(item.extra?.sessionId) await publish('response',{requestId:item.requestId,ok:false,reason:'denied_on_device'});
+      if(item.extra?.remote) await publish('response',{requestId:item.requestId,ok:false,reason:'denied_on_device',capability:item.extra.capability});
       state.pending=state.pending.filter(x=>x!==item);renderPending();
     });
     actions.append(yes,no);card.append(main,actions);list.append(card);
@@ -231,7 +239,7 @@ function renderPending(){
 }
 async function publish(event,payload){
   if(!state.channel)throw new Error('The private device channel is disconnected.');
-  const result=await state.channel.send({type:'broadcast',event,payload:{...payload,deviceId:state.deviceId}});
+  const result=await state.channel.send({type:'broadcast',event,payload:{...payload,roomId:state.roomId,deviceId:state.deviceId}});
   if(result!=='ok')throw new Error('Could not send a private device message.');
 }
 async function connectDeviceChannel(){
@@ -244,6 +252,7 @@ async function connectDeviceChannel(){
   const channel=state.client.channel(topic,{config:{private:true,broadcast:{ack:true,self:false}}});
   channel.on('broadcast',{event:'command'},message=>void handleCommand(message.payload||{}));
   channel.on('broadcast',{event:'signal'},message=>void handleSignal(message.payload||{}));
+  state.channel=channel;
   const result=await new Promise((resolve,reject)=>{
     const timeout=setTimeout(()=>reject(new Error('Private device channel timed out. Check Realtime private channel authorization.')),15000);
     channel.subscribe(status=>{
@@ -251,21 +260,26 @@ async function connectDeviceChannel(){
       if(status==='CHANNEL_ERROR'||status==='TIMED_OUT'||status==='CLOSED'){clearTimeout(timeout);reject(new Error('Private device channel '+status+'.'));}
     });
   });
-  state.channel=channel;
   setConnected(true,'Account connected · private channel active');
+  startHeartbeat();
   return result;
 }
 async function handleCommand(payload){
-  if(payload.deviceId!==state.deviceId||payload.roomId!==state.roomId||typeof payload.action!=='string')return;
-  const requestId=String(payload.requestId||'');
-  if(!/^[a-z0-9-]{20,80}$/i.test(requestId))return;
+  if(!validateDeviceCommand(payload,{deviceId:state.deviceId,roomId:state.roomId,maxAgeMs:30_000}))return;
+  const requestId=payload.requestId;
+  const now=Date.now();
+  for(const [id,issuedAt] of state.seenCommands)if(now-issuedAt>120_000)state.seenCommands.delete(id);
+  if(state.seenCommands.has(requestId))return;
+  if(state.pending.length>=32){await publish('response',{requestId,ok:false,reason:'local_approval_queue_full'});return;}
+  state.seenCommands.set(requestId,payload.issuedAt);
+  if(state.seenCommands.size>2048)state.seenCommands.delete(state.seenCommands.keys().next().value);
   if(payload.action==='launch_app'){
     const appItem=state.apps.find(item=>item.id===payload.appId);
     if(!appItem){await publish('response',{requestId,ok:false,reason:'app_not_selected'});return;}
     createApproval('launch_app','Open '+appItem.label+' on this actual computer?',async()=>{
       const pid=await invoke('launch_registered_app',{appId:appItem.id});
       await publish('response',{requestId,ok:true,pid});
-    },{requestId});
+    },{requestId,remote:true,capability:'launch'});
     return;
   }
   if(payload.action==='terminal_start'){
@@ -275,7 +289,7 @@ async function handleCommand(payload){
       state.terminals.set(term.sessionId,term);
       await startTerminalPeer(payload,term);
       await publish('response',{requestId,ok:true,sessionId:term.sessionId,cols:term.cols,rows:term.rows,shellLabel:term.shellLabel});
-    },{requestId,sessionId:payload.sessionId});
+    },{requestId,sessionId:payload.sessionId,remote:true,capability:'terminal'});
     return;
   }
   if(payload.action==='request_control'){
@@ -283,21 +297,21 @@ async function handleCommand(payload){
     if(typeof sessionId!=='string')return;
     createApproval('control','Allow this Backroom group to control the selected app/terminal for up to 120 seconds? Mouse, keyboard and terminal input will be enabled.',async()=>{
       await invoke('grant_control',{sessionId,seconds:120});
-      await publish('response',{requestId,ok:true,sessionId,expiresSeconds:120});
-    },{requestId,sessionId});return;
+      await publish('response',{requestId,ok:true,sessionId,capability:'control',expiresSeconds:120});
+    },{requestId,sessionId,remote:true,capability:'control'});return;
   }
   if(payload.action==='request_draft_permission'){
     const sessionId=payload.sessionId;if(typeof sessionId!=='string')return;
     createApproval('draft_typing','Allow separately approved draft typing into the exact area you select for up to 60 seconds? This never presses Enter or Send.',async()=>{
       await invoke('grant_draft_typing',{sessionId,seconds:60});
-      await publish('response',{requestId,ok:true,sessionId,expiresSeconds:60});
-    },{requestId,sessionId});return;
+      await publish('response',{requestId,ok:true,sessionId,capability:'draft',expiresSeconds:60});
+    },{requestId,sessionId,remote:true,capability:'draft'});return;
   }
   if(payload.action==='view_offer'){
     if(typeof payload.sessionId!=='string'||!payload.offer?.sdp)return;
     createApproval('view_offer','Share your entire monitor with this Backroom session. Windows will show its screen-sharing picker. Choosing a single window keeps the frame view-only.',async()=>{
       await startViewSession(payload);
-    },{requestId,sessionId:payload.sessionId});return;
+    },{requestId,sessionId:payload.sessionId,remote:true,capability:'view'});return;
   }
   if(payload.action==='stop_session'){
     const peerSessionId=payload.sessionId;
@@ -312,7 +326,7 @@ async function handleCommand(payload){
       try{await invoke('stop_terminal',{sessionId:terminalSessionId});}catch{}
       try{await invoke('revoke_control',{sessionId:terminalSessionId});}catch{}
     }
-    await publish('response',{requestId,ok:true});return;
+    await publish('response',{requestId,ok:true,capability:'stop'});return;
   }
 }
 async function startTerminalPeer(payload,term){
@@ -320,8 +334,6 @@ async function startTerminalPeer(payload,term){
   if(!peerSessionId||!payload.offer?.sdp)throw new Error('Invalid terminal WebRTC offer');
   const pc=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun.cloudflare.com:3478']}]});
   state.peers.set(peerSessionId,{pc,stream:null,channel:null,canControl:false,terminalId:term.sessionId});
-  for(const candidate of (state.pendingCandidates.get(peerSessionId)||[])){try{await pc.addIceCandidate(candidate);}catch{}}
-  state.pendingCandidates.delete(peerSessionId);
   pc.ondatachannel=event=>{
     const data=event.channel;state.peers.get(peerSessionId).channel=data;
     data.onmessage=event=>void handlePeerData(peerSessionId,event.data);
@@ -329,6 +341,7 @@ async function startTerminalPeer(payload,term){
   pc.onicecandidate=event=>{if(event.candidate)void publishSignal(peerSessionId,{candidate:event.candidate.toJSON()});};
   pc.onconnectionstatechange=()=>{if(['failed','closed'].includes(pc.connectionState))void stopPeer(peerSessionId);};
   await pc.setRemoteDescription({type:'offer',sdp:payload.offer.sdp});
+  for(const candidate of takeIceCandidates(state.pendingCandidates,peerSessionId)){try{await pc.addIceCandidate(candidate);}catch{}}
   const answer=await pc.createAnswer();await pc.setLocalDescription(answer);
   await publishSignal(peerSessionId,{answer:pc.localDescription.toJSON(),canControl:false});
 }
@@ -350,8 +363,6 @@ async function startViewSession(payload){
   }catch(error){notify('The screen is visible, but desktop input is disabled: '+error.message,'error');}
   const pc=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun.cloudflare.com:3478']}]});
   state.peers.set(sessionId,{pc,stream,channel:null,canControl,terminalId:null});
-  for(const candidate of (state.pendingCandidates.get(sessionId)||[])){try{await pc.addIceCandidate(candidate);}catch{}}
-  state.pendingCandidates.delete(sessionId);
   for(const mediaTrack of stream.getTracks())pc.addTrack(mediaTrack,stream);
   pc.ondatachannel=event=>{
     const channel=event.channel;state.peers.get(sessionId).channel=channel;
@@ -361,8 +372,10 @@ async function startViewSession(payload){
   pc.onconnectionstatechange=()=>{if(['failed','closed','disconnected'].includes(pc.connectionState))void stopPeer(sessionId);};
   track.addEventListener('ended',()=>void stopPeer(sessionId));
   await pc.setRemoteDescription({type:'offer',sdp:payload.offer.sdp});
+  for(const candidate of takeIceCandidates(state.pendingCandidates,sessionId)){try{await pc.addIceCandidate(candidate);}catch{}}
   const answer=await pc.createAnswer();await pc.setLocalDescription(answer);
   await publishSignal(sessionId,{answer:pc.localDescription.toJSON(),canControl});
+  await publish('response',{requestId:payload.requestId,ok:true,sessionId,capability:'view'});
   state.streams.set(sessionId,stream);
   notify('Screen share active. '+(canControl?'Monitor coordinates matched; control can be approved separately.':'View-only: choose the full monitor for coordinate-safe control.'),'success');
 }
@@ -374,8 +387,16 @@ async function handleSignal(payload){
     if(payload.candidate){const queued=state.pendingCandidates.get(payload.sessionId)||[];if(queued.length<64)queued.push(payload.candidate);state.pendingCandidates.set(payload.sessionId,queued);}
     return;
   }
-  if(payload.answer){try{await peer.pc.setRemoteDescription(payload.answer);}catch(error){notify('WebRTC answer rejected: '+error.message,'error');}}
-  if(payload.candidate){try{await peer.pc.addIceCandidate(payload.candidate);}catch{}}
+  if(payload.answer){
+    try{
+      await peer.pc.setRemoteDescription(payload.answer);
+      for(const candidate of takeIceCandidates(state.pendingCandidates,payload.sessionId)){try{await peer.pc.addIceCandidate(candidate);}catch{}}
+    }catch(error){notify('WebRTC answer rejected: '+error.message,'error');}
+  }
+  if(payload.candidate){
+    if(!peer.pc.remoteDescription)queueIceCandidate(state.pendingCandidates,payload.sessionId,payload.candidate);
+    else try{await peer.pc.addIceCandidate(payload.candidate);}catch{}
+  }
   if(payload.stop){await stopPeer(payload.sessionId);}
 }
 async function handlePeerData(sessionId,raw){
@@ -417,6 +438,41 @@ async function stopPeer(sessionId){
   state.peers.delete(sessionId);state.streams.delete(sessionId);state.pendingCandidates.delete(sessionId);
   try{await invoke('revoke_control',{sessionId});}catch{}
 }
+async function stopAllPeerSessions(){
+  for(const [peerSessionId,peer] of [...state.peers.entries()]){
+    if(peer?.terminalId){try{await invoke('stop_terminal',{sessionId:peer.terminalId});}catch{}}
+    await stopPeer(peerSessionId);
+  }
+  for(const stream of state.streams.values())for(const track of stream.getTracks())track.stop();
+  state.streams.clear();
+  for(const term of state.terminals.values())try{await invoke('stop_terminal',{sessionId:term.sessionId});}catch{}
+  state.terminals.clear();
+  state.pendingCandidates.clear();
+}
+function stopHeartbeat(){if(state.heartbeat){clearInterval(state.heartbeat);state.heartbeat=null;}}
+function startHeartbeat(){
+  stopHeartbeat();state.heartbeatMisses=0;
+  state.heartbeat=setInterval(async()=>{
+    try{
+      const status=await invoke('desktop_device_status',{supabaseUrl:cfg.url,publishableKey:cfg.key});
+      state.heartbeatMisses=0;
+      if(status.status!=='active'||status.deviceId!==state.deviceId){
+        stopHeartbeat();await stopAllPeerSessions();try{await invoke('emergency_stop');}catch{}
+        if(state.channel){await state.client.removeChannel(state.channel);state.channel=null;}
+        state.deviceTokenSaved=false;setConnected(false,'Computer authorization revoked');
+        notify('Rub Minds revoked this computer. Backroom streams, terminal sessions and local control grants were stopped.','error');
+      }
+    }catch(error){
+      state.heartbeatMisses++;
+      if(state.heartbeatMisses>=3){
+        stopHeartbeat();await stopAllPeerSessions();try{await invoke('emergency_stop');}catch{}
+        if(state.channel){await state.client.removeChannel(state.channel);state.channel=null;}
+        setConnected(false,'Device disconnected');
+        notify('The authenticated device connection was lost. Active Backroom sessions were stopped locally. Reconnect after checking the internet connection.','error');
+      }
+    }
+  },5_000);
+}
 async function startTerminalLocal(){
   try{
     const term=await invoke('start_terminal');state.terminals.set(term.sessionId,term);
@@ -432,15 +488,17 @@ async function sendLocalTerminal(){
 }
 async function emergencyStop(){
   try{
-    for(const id of [...state.peers.keys()])await stopPeer(id);
+    stopHeartbeat();
+    await stopAllPeerSessions();
     await invoke('emergency_stop');
-    state.terminals.clear();state.pending=[];renderPending();
-    for(const stream of state.streams.values())stream.getTracks().forEach(t=>t.stop());
-    state.streams.clear();
+    state.pending=[];renderPending();
     notify('Emergency stop complete. Active permissions and Backroom-launched sessions were revoked.','success');
   }catch(error){notify('Emergency stop needs attention: '+error.message,'error');}
 }
 async function disconnect(){
+  stopHeartbeat();
+  await stopAllPeerSessions();
+  try{await invoke('emergency_stop');}catch{}
   if(state.channel){await state.client.removeChannel(state.channel);state.channel=null;}
   setConnected(false,'Disconnected from device channel');
 }
