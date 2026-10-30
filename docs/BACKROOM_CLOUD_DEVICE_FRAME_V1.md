@@ -45,3 +45,14 @@ Android companion
 7. Implement a durable cloud action queue and append-only group audit trail before enabling AI-directed operations.
 
 Production Supabase and the production Vercel deployment have not been modified by this source change.
+
+
+## Virtualization engine assessment — 2026-10-30
+
+Candidate reviewed: [Black00Z/Blacks-BlackBox](https://github.com/Black00Z/Blacks-BlackBox), Apache-2.0. The repository is a standalone Android application/engine (not a drop-in Android library). Its current README explicitly narrows validation to a work-profile + Instagram priority path, says compatibility is incomplete, and says game support is not included. Its Gradle app uses Java 21, Kotlin, NDK 29, several external dependencies, and its own app identity; our current companion targets Java 17. This is not safe to embed or ship as a universal clone engine without a dependency/licensing review and an ARM64 Android 14 device smoke test.
+
+Decision: keep the virtualization engine behind a future adapter and do not copy its code into this branch yet. First build and test its unmodified demo on the target device; select one non-sensitive test app; verify fresh isolated data, launch/close/restart, profile-bound package identity, media/URI behavior and uninstall cleanup. Do not promise work-profile apps, game/banking apps, Play Integrity, Google sign-in or every OEM until each is tested.
+
+This branch currently implements launcher-visible app inventory only. The false capability flags in `DEVICE_CAPABILITIES_V1` are deliberate: there is no virtual instance, screen or touch driver yet.
+
+For Preview acceptance, set the Edge Function's `BACKROOM_DEVICE_ALLOWED_ORIGINS` to the exact HTTPS Preview origin as well as the production origin. Do not use wildcard origins. The default value intentionally allows production only.

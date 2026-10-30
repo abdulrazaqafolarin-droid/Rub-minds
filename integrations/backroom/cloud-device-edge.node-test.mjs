@@ -63,7 +63,7 @@ test("owner approval and revocation are transactional, scoped and auditable", as
   assert.match(edge, /revoke_backroom_device/);
   assert.match(sql, /function public\.approve_backroom_device/);
   assert.match(sql, /function public\.revoke_backroom_device/);
-  assert.match(sql, /p_room_id=p_room_id and owner_id=p_owner_id/);
+  assert.match(sql, /where id=p_room_id and owner_id=p_owner_id/);
   assert.match(sql, /device_approved/);
   assert.match(sql, /device_revoked/);
 });
