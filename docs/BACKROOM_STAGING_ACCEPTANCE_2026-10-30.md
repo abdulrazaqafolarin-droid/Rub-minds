@@ -38,7 +38,7 @@ Do not use wildcard origins. Pairing remains one-time, exact-origin-bound and lo
 
 ### Current-head Vercel build
 
-The Preview build for code commit `dd075ebace1ceb7f30a47b2b312655d879a48406` reached READY. Its current prebuild suites reported:
+The Preview build for latest branch commit `f5bd0ed64f90cd6dbd9b6d6590d1484a40a4895b` reached READY. Its current prebuild suites reported:
 
 | Suite | Passed | Failed |
 |---|---:|---:|
@@ -183,8 +183,12 @@ Verification:
 - Authenticated gateway + HTTP adapter tests: **17 passed, 0 failed**. This includes a regression test that sets `globalThis.Buffer=undefined` and proves host-token verification still succeeds through the explicit import.
 - Staging Edge Function is ACTIVE at `backroom-wake` version 7 with the corrected source. Its gateway continues to use its internal host-token protocol (`verify_jwt=false`); the function does not accept browser cookies or public CORS requests.
 - Live staging HTTP checks against the deployed gateway: missing authorization returned **401**; malformed binding UUID returned **400**.
-- A disposable live host fixture demonstrated that a wrong host token returns **401** and a correct host token can pass verification and claim two correctly scoped staged jobs. That test stopped at a deliberately malformed lease-token negative probe; the DB correctly rejected the malformed UUID, so live HTTP acknowledgement/retry was not marked passed in that run.
-- A subsequent retry attempt was blocked before request execution; all disposable host/room/binding/session/message/connection/job rows were deleted, and follow-up counts for both live fixtures were **zero**.
-- The PostgreSQL rollback-only lifecycle tests and the Node gateway tests above separately passed acknowledgement, retry, lease-token rejection, consent deactivation and queue cancellation.
+- The first live request exposed a deployed-source mismatch: staging `backroom-wake` v3 did not include the branch's explicit `node:buffer` import, so Deno 2 threw during host-token verification and the HTTP boundary safely returned 503. The corrected function was deployed to staging; it is now ACTIVE at **version 7**.
+- Added strict request validation for UUID host/binding/job/lease/grant identifiers, session digests, grant TTL, retry bounds/error codes and acknowledgement outcome. Invalid input is rejected with HTTP 400 before the privileged SQL RPC.
+- Authenticated gateway + HTTP adapter regression tests: **17 passed, 0 failed**, including host-token verification with `globalThis.Buffer` removed, malformed job/lease UUIDs, retry bounds, consent operations and fail-closed authorization.
+- **Live staging HTTP v7 lifecycle passed:** a wrong host token returned **401**; the valid paired host claimed exactly one correctly scoped message-triggered lease (**200**); a malformed lease-token UUID was rejected as **400**; the server-issued lease token acknowledged the job (**200, accepted=true**); and the next claim returned **zero** jobs.
+- The live HTTP retry and deactivation routes were not claimed as tested in this round. The rollback-only PostgreSQL tests separately passed lease retry, consent deactivation, stale-lease rejection and cancellation of pending/leased jobs.
+- Every live fixture (room, participant, message, host, binding, job, MCP session and agent connection) was deleted after testing; follow-up counts for all eight sets were **zero**. Both disposable Node runners were stopped.
+- No Production deployment, environment variable, function, data row or migration was changed.
 
-Do not overstate this as a full remote host roundtrip: live HTTP claim is demonstrated; live HTTP ack/retry still need a complete clean rerun. The exact status is recorded here for honest release gating.
+This completes the staging **claim → verified draft/host result acknowledgement** HTTP path. It does not yet prove a user's signed-in Preview session can enroll a host/binding or that ChatGPT/Claude real-session wake roundtrip works.
