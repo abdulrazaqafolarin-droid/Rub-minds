@@ -377,6 +377,7 @@ test('local staging environment pins the paired host wake gateway to the staging
    }
   });
   service.configure({sessionDigest,bindingId,publishableKey});
+  assert.equal(service.status.gatewayHost,'tzcuuynmviiuactafpld.supabase.co');
   const groupId='40000000-0000-4000-8000-000000000044';
   const participantId='40000000-0000-4000-8000-000000000055';
   const sessionId='40000000-0000-4000-8000-000000000066';
@@ -388,6 +389,27 @@ test('local staging environment pins the paired host wake gateway to the staging
   assert.ok(urls.includes(stagingUrl+'activate'));
   assert.ok(urls.includes(stagingUrl+'deactivate'));
   assert.ok(urls.every(url=>url.startsWith(stagingUrl)));
+ }finally{
+  if(previous===undefined)delete process.env.BACKROOM_WAKE_GATEWAY_URL;
+  else process.env.BACKROOM_WAKE_GATEWAY_URL=previous;
+  await rm(dir,{recursive:true,force:true});
+ }
+});
+
+
+test('default local wake service reports the Production gateway host for mismatch detection',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'backroom-production-gateway-host-'));
+ const previous=process.env.BACKROOM_WAKE_GATEWAY_URL;
+ try{
+  delete process.env.BACKROOM_WAKE_GATEWAY_URL;
+  const service=createHostWakeService({
+   identity:{hostId,hostToken},browserRuntime:runtime(),
+   journalDirectory:join(dir,'journal'),
+   fetchImpl:async()=>{throw new Error('no network request expected');}
+  });
+  assert.equal(service.status.gatewayHost,'zucaeevlbwhcvjwbhwmq.supabase.co');
+  assert.equal(service.status.configured,false);
+  await service.stop();
  }finally{
   if(previous===undefined)delete process.env.BACKROOM_WAKE_GATEWAY_URL;
   else process.env.BACKROOM_WAKE_GATEWAY_URL=previous;
