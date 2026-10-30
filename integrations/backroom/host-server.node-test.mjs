@@ -100,21 +100,25 @@ test("health endpoint is no-store and query strings are rejected",async()=>{
 });
 
 function fakeBrowserRuntime() {
- let running=false, selected=null, selectionRoom=null, selectionAttemptId=null, selectionCounter=0, targets=[];
+ let running=false, selected=null, selectionRoom=null, selectionAttemptId=null, selectionCounter=0, targets=[], viewGrants=new Map();
  const pageId="12345678-1234-4234-9234-123456789012";
  const targetId="12345678-1234-4234-9234-123456789013";
  const makeSelectionAttempt=()=> "32345678-1234-4234-9234-"+String(++selectionCounter).padStart(12,"0");
- const status=()=>({running,pages:running?1:0,capabilities:{browserDraft:running,desktopAccessibility:false,androidAccessibility:false,terminal:false}});
+ const status=()=>({running,pages:running?1:0,capabilities:{browserDraft:running,browserView:running,desktopAccessibility:false,androidAccessibility:false,terminal:false}});
  return {
   status,
   start:async()=>{running=true;return status()},
   openUrl:async url=>({pageId,title:"Test chat",site:new URL(url).hostname,canSelect:true}),
-  stop:async()=>{running=false;targets=[];return status()},
+  stop:async()=>{running=false;targets=[];viewGrants.clear();return status()},
+  grantView:async(id,roomId)=>{if(!running||id!==pageId)throw Error("page not available");const grantId="52345678-1234-4234-9234-123456789099";const value={grantId,pageId:id,roomId,expiresAt:Date.now()+300000};viewGrants.set(grantId,value);return value},
+  revokeView:(id,roomId,grantId)=>{const item=viewGrants.get(grantId);if(!item||item.pageId!==id||item.roomId!==roomId)return false;viewGrants.delete(grantId);return true},
+  captureView:async(id,roomId,grantId)=>{const item=viewGrants.get(grantId);if(!item||item.pageId!==id||item.roomId!==roomId)throw Error("view permission required");return {pageId:id,roomId,grantId,frameId:"62345678-1234-4234-9234-123456789099",mimeType:"image/jpeg",image:Buffer.from("fake").toString("base64"),width:1200,height:800,expiresAt:Date.now()+4500}},
+  selectRegionFromView:async(id,roomId,frameId,region)=>({id:targetId,pageId:id,roomId,title:"Test chat",site:"chatgpt.com",surface:"browser_tab",operations:["draft"]}),
   listPages:async()=>running?[{pageId,title:"Test chat",site:"chatgpt.com",canSelect:true}]:[],
   startSelection:async(id,roomId)=>{if(id!==pageId)throw Error("page not found");selectionRoom=roomId;selectionAttemptId=makeSelectionAttempt();selected={state:"pending",selectionAttemptId};return selected},
   cancelSelection:async(id,roomId,attemptId)=>{if(id!==pageId||roomId!==selectionRoom||attemptId!==selectionAttemptId||!selected)return false;selectionRoom=null;selectionAttemptId=null;selected=null;return true},
   getSelection:async(id,attemptId)=>({state:id===pageId&&selected?.selectionAttemptId===attemptId?selected?.state||"unavailable":"cancelled"}),
-  registerSelectedTarget:async(id,roomId,attemptId)=>{if(id!==pageId||selected?.state!=="selected"||roomId!==selectionRoom||attemptId!==selectionAttemptId)throw Error("selection missing, replaced or wrong room");const t={id:targetId,pageId,roomId,title:"Test chat",site:"chatgpt.com",surface:"browser_tab",operations:["draft"]};targets.push(t);return t},
+  registerSelectedTarget:async(id,roomId,attemptId)=>{if(id!==pageId||selected?.state!=="selected"||roomId!==selectionRoom||attemptId!==selectionAttemptId)throw Error("selection missing, replaced or wrong room");const t={id:targetId,pageId,roomId,title:"Test chat",site:"chatgpt.com",surface:"browser_tab",operations:["draft","wake"],wakeAvailable:true};targets.push(t);return t},
   listTargets:async()=>targets,
   unregisterTarget:async(id,roomId)=>{const index=targets.findIndex(t=>t.id===id&&t.roomId===roomId);if(index<0)return false;targets.splice(index,1);return true},
   draft:async(id,text,{approved,roomId}={})=>{if(approved!==true)throw Error("approval required");if(!targets.some(t=>t.id===id&&t.roomId===roomId)){const error=Error("target scope mismatch");error.status=409;throw error}return {state:"completed",result:{drafted:true,submitted:false},submitted:false}},
@@ -127,12 +131,13 @@ function fakeBrowserRuntime() {
 }
 test("browser control routes require host pairing and expose truthful capability status",async()=>{
  const browserRuntime=fakeBrowserRuntime();
+ const draftApprovals=[];
  await withHost(async({base,origin,host})=>{
   const pairResult=await pair(base,origin);const credentials=await pairResult.json();const auth={Origin:origin,Authorization:"Bearer "+credentials.sessionToken};
   assert.equal((await fetch(base+"/v1/browser/pages",{headers:{Origin:origin}})).status,401);
   assert.equal((await fetch(base+"/v1/browser/start",{method:"POST",headers:auth})).status,200);
   const hostStatus=await (await fetch(base+"/v1/host",{headers:auth})).json();
-  assert.equal(hostStatus.capabilities.browserDraft,true);assert.equal(hostStatus.capabilities.androidAccessibility,false);
+  assert.equal(hostStatus.capabilities.browserDraft,true);assert.equal(hostStatus.capabilities.browserView,true);assert.equal(hostStatus.capabilities.androidAccessibility,false);
   const opened=await fetch(base+"/v1/browser/open",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({url:"https://chatgpt.com/"})});
   assert.equal(opened.status,200);
   assert.equal((await opened.json()).site,"chatgpt.com");
@@ -146,12 +151,60 @@ test("browser control routes require host pairing and expose truthful capability
   assert.equal((await fetch(base+"/v1/browser/targets",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId:"12345678-1234-4234-9234-123456789014",attemptId:selectionAttemptId})})).status,201);
   const draft=await fetch(base+"/v1/browser/draft",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({targetId:browserRuntime.targetId,roomId:"12345678-1234-4234-9234-123456789014",text:"draft only",approved:true})});
   assert.equal(draft.status,200);assert.equal((await draft.json()).submitted,false);
+  assert.equal(draftApprovals.length,1);assert.equal(draftApprovals[0].operation,"browser.draft");
+  assert.equal(draftApprovals[0].site,"chatgpt.com");assert.equal(draftApprovals[0].text,"draft only");
   const wrongGroup=await fetch(base+"/v1/browser/draft",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({targetId:browserRuntime.targetId,roomId:"12345678-1234-4234-9234-123456789099",text:"wrong room",approved:true})});
-  assert.equal(wrongGroup.status,409);
+  assert.equal(wrongGroup.status,404);
   assert.equal((await fetch(base+"/v1/unpair",{method:"POST",headers:auth})).status,200);
   assert.equal((await fetch(base+"/v1/browser/pages",{headers:auth})).status,401);
+ },{browserRuntime,authorizeLocalAction:async action=>{draftApprovals.push(action);return true;}});
+});
+
+test("browser screenshot view requires trusted local approval and is scoped and revocable", async () => {
+ const browserRuntime=fakeBrowserRuntime();
+ const approvals=[];
+ await withHost(async({base,origin})=>{
+  const credentials=await (await pair(base,origin)).json();
+  const auth={Origin:origin,Authorization:"Bearer "+credentials.sessionToken,"Content-Type":"application/json"};
+  await fetch(base+"/v1/browser/start",{method:"POST",headers:auth});
+  const roomId="12345678-1234-4234-9234-123456789014";
+  const pageId=browserRuntime.pageId;
+  const grant=await fetch(base+"/v1/browser/view/grant",{method:"POST",headers:auth,body:JSON.stringify({pageId,roomId})});
+  assert.equal(grant.status,201);
+  const viewGrant=await grant.json();
+  assert.match(viewGrant.grantId,/^[a-f0-9-]{36}$/i);
+  assert.equal(approvals.length,1);
+  assert.deepEqual(approvals[0].capabilities,["view"]);
+  assert.equal(approvals[0].site,"chatgpt.com");
+  assert.equal(approvals[0].title,"Test chat");
+  const view=await fetch(base+"/v1/browser/view/"+pageId+"/"+roomId+"/"+viewGrant.grantId,{headers:auth});
+  assert.equal(view.status,200);
+  const frame=await view.json();
+  assert.equal(frame.pageId,pageId);assert.equal(frame.roomId,roomId);
+  assert.equal(Buffer.from(frame.image,"base64").toString(),"fake");
+  const wrongRoom=await fetch(base+"/v1/browser/view/"+pageId+"/22345678-1234-4234-9234-123456789014/"+viewGrant.grantId,{headers:auth});
+  assert.notEqual(wrongRoom.status,200);
+  const revoked=await fetch(base+"/v1/browser/view/revoke",{method:"POST",headers:auth,body:JSON.stringify({pageId,roomId,grantId:viewGrant.grantId})});
+  assert.equal(revoked.status,200);assert.equal((await revoked.json()).revoked,true);
+  const afterRevoke=await fetch(base+"/v1/browser/view/"+pageId+"/"+roomId+"/"+viewGrant.grantId,{headers:auth});
+  assert.notEqual(afterRevoke.status,200);
+ },{browserRuntime,authorizeLocalAction:async action=>{approvals.push(action);return true}});
+});
+
+test("browser view permission cannot be self-approved by a remote request body", async () => {
+ const browserRuntime=fakeBrowserRuntime();
+ await withHost(async({base,origin})=>{
+  const credentials=await (await pair(base,origin)).json();
+  const auth={Origin:origin,Authorization:"Bearer "+credentials.sessionToken,"Content-Type":"application/json"};
+  await fetch(base+"/v1/browser/start",{method:"POST",headers:auth});
+  const body={pageId:browserRuntime.pageId,roomId:"12345678-1234-4234-9234-123456789014",approved:true,ownerConfirmed:true};
+  const rejected=await fetch(base+"/v1/browser/view/grant",{method:"POST",headers:auth,body:JSON.stringify(body)});
+  assert.equal(rejected.status,400);
+  const denied=await fetch(base+"/v1/browser/view/grant",{method:"POST",headers:auth,body:JSON.stringify({pageId:body.pageId,roomId:body.roomId})});
+  assert.equal(denied.status,403);
  },{browserRuntime});
 });
+
 test("browser drafting endpoint requires explicit approval and JSON content type",async()=>{
  const browserRuntime=fakeBrowserRuntime();
  await withHost(async({base,origin})=>{
@@ -163,6 +216,8 @@ test("browser drafting endpoint requires explicit approval and JSON content type
   await fetch(base+"/v1/browser/targets",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({pageId:browserRuntime.pageId,roomId:"12345678-1234-4234-9234-123456789014",attemptId:selectionAttemptId})});
   const noApproval=await fetch(base+"/v1/browser/draft",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({targetId:browserRuntime.targetId,roomId:"12345678-1234-4234-9234-123456789014",text:"text",approved:false})});
   assert.equal(noApproval.status,403);
+  const remoteApprovalOnly=await fetch(base+"/v1/browser/draft",{method:"POST",headers:{...auth,"Content-Type":"application/json"},body:JSON.stringify({targetId:browserRuntime.targetId,roomId:"12345678-1234-4234-9234-123456789014",text:"text",approved:true})});
+  assert.equal(remoteApprovalOnly.status,403);
   const noJson=await fetch(base+"/v1/browser/select",{method:"POST",headers:auth,body:"{}"});
   assert.equal(noJson.status,415);
  },{browserRuntime});
@@ -409,6 +464,31 @@ test("canonical wake HTTP routes require pairing, explicit opt-in, exact scope a
   assert.equal(wake.status,200);assert.equal((await wake.json()).triggerOnly,true);
   const revoke=await fetch(base+"/v1/browser/wake/grants/revoke",{method:"POST",headers:auth,body:JSON.stringify({grantId:grant.grantId,targetId,roomId,bindingId:request.bindingId})});
   assert.equal(revoke.status,200);assert.equal((await revoke.json()).revoked,true);
+ },{browserRuntime,authorizeLocalAction:async()=>true});
+});
+
+
+test("remote ownerConfirmed and confirmed flags cannot grant autonomous browser wake",async()=>{
+ const browserRuntime=fakeBrowserRuntime();
+ let enableCalls=0;
+ const originalEnable=browserRuntime.enableContinuousWake;
+ browserRuntime.enableContinuousWake=async input=>{enableCalls++;return originalEnable(input)};
+ await withHost(async({base,origin})=>{
+  const token=(await (await pair(base,origin)).json()).sessionToken;
+  const auth={Origin:origin,Authorization:"Bearer "+token,"Content-Type":"application/json"};
+  await fetch(base+"/v1/browser/start",{method:"POST",headers:auth});
+  const roomId="12345678-1234-4234-9234-123456789014";
+  const selection=await (await fetch(base+"/v1/browser/select",{method:"POST",headers:auth,body:JSON.stringify({pageId:browserRuntime.pageId,roomId})})).json();
+  browserRuntime.testSetSelected();
+  assert.equal((await fetch(base+"/v1/browser/targets",{method:"POST",headers:auth,body:JSON.stringify({pageId:browserRuntime.pageId,roomId,attemptId:selection.selectionAttemptId})})).status,201);
+  const denied=await fetch(base+"/v1/browser/wake/grants",{method:"POST",headers:auth,body:JSON.stringify({
+   confirmed:true,ownerConfirmed:true,approved:true,targetId:browserRuntime.targetId,roomId,
+   participantId:"32345678-1234-4234-9234-123456789011",sessionId:browserRuntime.pageId,
+   bindingId:"32345678-1234-4234-9234-123456789012"
+  })});
+  assert.equal(denied.status,403);
+  assert.equal((await denied.json()).error,"trusted_local_browser_wake_approval_denied");
+  assert.equal(enableCalls,0);
  },{browserRuntime});
 });
 
@@ -439,6 +519,7 @@ test("local approval activates hosted wake, and unpair/revoke stop remote worker
  const browserRuntime={
   status:()=>({running:true,pages:1,capabilities:{browserDraft:true,browserCanonicalWake:true}}),
   stop:async()=>{calls.push("browser-stop");},
+  listTargets:async()=>[{id:targetId,pageId:sessionId,roomId,title:"Research tab",site:"chatgpt.com",operations:["draft","wake"],wakeAvailable:true}],
   enableContinuousWake:async input=>{
    assert.equal(input.confirmed,true);
    calls.push("local-grant");
@@ -457,7 +538,7 @@ test("local approval activates hosted wake, and unpair/revoke stop remote worker
   const body={targetId,roomId,participantId,sessionId,bindingId,confirmed:true};
   const response=await fetch(base+"/v1/browser/wake/grants",{method:"POST",headers:auth,body:JSON.stringify(body)});
   assert.equal(response.status,201);
-  assert.deepEqual(calls.slice(0,2),["local-grant","remote-activate"]);
+  assert.deepEqual(calls.slice(0,3),["trusted-owner","local-grant","remote-activate"]);
   const revoke=await fetch(base+"/v1/browser/wake/grants/revoke",{method:"POST",headers:auth,
    body:JSON.stringify({grantId,targetId,roomId,bindingId})});
   assert.equal(revoke.status,200);
@@ -466,7 +547,7 @@ test("local approval activates hosted wake, and unpair/revoke stop remote worker
   assert.equal(unpair.status,200);
   assert.ok(calls.filter(x=>x.startsWith("poller-stop:")).length>=2);
   assert.ok(calls.includes("poller-stop:all"));;
- },{browserRuntime,wakeService});
+ },{browserRuntime,wakeService,authorizeLocalAction:async action=>{calls.push(action.operation==="browser.wake.enable"?"trusted-owner":"unexpected");return true;}});
 });
 test("remote activation failure revokes local grant and never reports success",async()=>{
  const roomId="12345678-1234-4234-9234-123456789014";
@@ -476,6 +557,7 @@ test("remote activation failure revokes local grant and never reports success",a
  const browserRuntime={
   status:()=>({running:true,pages:1,capabilities:{browserCanonicalWake:true}}),
   stop:async()=>{},
+  listTargets:async()=>[{id:targetId,pageId:"12345678-1234-4234-9234-123456789017",roomId,title:"Research tab",site:"chatgpt.com",operations:["draft","wake"],wakeAvailable:true}],
   enableContinuousWake:async()=>({grantId}),
   revokeContinuousWake:()=>{revoked++;return true;}
  };
@@ -493,7 +575,7 @@ test("remote activation failure revokes local grant and never reports success",a
   assert.equal(response.status,503);
   assert.equal(revoked,1);
   assert.doesNotMatch(await response.text(),/secret network/);
- },{browserRuntime,wakeService});
+ },{browserRuntime,wakeService,authorizeLocalAction:async()=>true});
 });
 
 

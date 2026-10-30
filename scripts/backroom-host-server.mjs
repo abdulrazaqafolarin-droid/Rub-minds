@@ -34,13 +34,15 @@ function parseOrigins(value) {
 
 function disabledBrowserRuntime() {
   const status = () => ({ running: false, pages: 0, capabilities: {
-    browserDraft: false, browserCanonicalWake: false, desktopAccessibility: false, androidAccessibility: false, terminal: false,
+    browserDraft: false, browserView: false, browserCanonicalWake: false, desktopAccessibility: false, androidAccessibility: false, terminal: false,
   } });
   const unavailable = async () => { throw new Error("browser_runtime_unavailable"); };
   return {
     status, stop: async () => status(), start: unavailable, openUrl: unavailable, listPages: async () => [],
     listTargets: async () => [], startSelection: unavailable, cancelSelection: async () => false, getSelection: async () => ({ state: "unavailable" }),
-    registerSelectedTarget: unavailable, unregisterTarget: async () => false, draft: unavailable,
+    registerSelectedTarget: unavailable, grantView: unavailable, revokeView: () => false,
+    captureView: unavailable, selectRegionFromView: unavailable,
+    unregisterTarget: async () => false, draft: unavailable,
     enableContinuousWake: unavailable, revokeContinuousWake: async () => false, wake: unavailable,
   };
 }
@@ -83,7 +85,7 @@ function bearer(request) {
  */
 export function createBackroomHostServer({
   port = 43781, host = "127.0.0.1", allowedOrigins = parseOrigins(process.env.BACKROOM_ALLOWED_ORIGINS),
-  pairingCode, hostId = randomUUID(), enrollmentDigest = null, now = () => Date.now(), pairingTtlMs, sessionTtlMs, maxPairAttempts, browserRuntime, wakeService, multiSurfaceRuntime, externalWorkspaceRuntime = null,
+  pairingCode, hostId = randomUUID(), enrollmentDigest = null, now = () => Date.now(), pairingTtlMs, sessionTtlMs, maxPairAttempts, browserRuntime, wakeService, multiSurfaceRuntime, externalWorkspaceRuntime = null, authorizeLocalAction = async () => false,
 } = {}) {
   if (host !== "127.0.0.1") throw new TypeError("Backroom host must bind to IPv4 loopback only");
   if (enrollmentDigest !== null && (typeof enrollmentDigest !== "string" || !/^[a-f0-9]{64}$/.test(enrollmentDigest))) throw new TypeError("Invalid enrollment digest");
@@ -334,6 +336,11 @@ export function createBackroomHostServer({
           writeJson(response, 200, { pages: await browser.listPages() }, cors);
           return;
         }
+        const viewMatch = /^\/v1\/browser\/view\/([a-f0-9-]{36})\/([a-f0-9-]{36})\/([a-f0-9-]{36})$/i.exec(url.pathname);
+        if (request.method === "GET" && viewMatch) {
+          writeJson(response, 200, await browser.captureView(viewMatch[1], viewMatch[2], viewMatch[3]), cors);
+          return;
+        }
         if (request.method === "GET" && url.pathname === "/v1/browser/targets") {
           writeJson(response, 200, { targets: await browser.listTargets() }, cors);
           return;
@@ -370,7 +377,7 @@ export function createBackroomHostServer({
           return;
         }
         if (request.method === "POST" && [
-          "/v1/browser/select", "/v1/browser/select/cancel", "/v1/browser/targets", "/v1/browser/targets/unregister", "/v1/browser/draft",
+          "/v1/browser/select", "/v1/browser/select/cancel", "/v1/browser/select-region", "/v1/browser/view/grant", "/v1/browser/view/revoke", "/v1/browser/targets", "/v1/browser/targets/unregister", "/v1/browser/draft",
           "/v1/browser/wake/grants", "/v1/browser/wake/grants/revoke", "/v1/browser/wake",
         ].includes(url.pathname)) {
           if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
@@ -378,6 +385,61 @@ export function createBackroomHostServer({
             return;
           }
           const input = await readJson(request);
+          if (url.pathname === "/v1/browser/view/grant") {
+            const id = /^[a-f0-9-]{36}$/i;
+            if (typeof input.pageId !== "string" || !id.test(input.pageId) ||
+              typeof input.roomId !== "string" || !id.test(input.roomId) ||
+              Object.keys(input).some(key => !["pageId", "roomId"].includes(key))) {
+              writeJson(response, 400, { error: "invalid_browser_view_scope" }, cors);
+              return;
+            }
+            const discoveredPage = (await browser.listPages()).find(page => page.pageId === input.pageId);
+            if (!discoveredPage) {
+              writeJson(response, 404, { error: "browser_tab_not_discovered" }, cors);
+              return;
+            }
+            const locallyApproved = await authorizeLocalAction({
+              operation: "browser.view", pageId: input.pageId, roomId: input.roomId,
+              site: discoveredPage.site, title: discoveredPage.title,
+              hostId: authority.hostId, capabilities: ["view"], ttlMs: 300000,
+            });
+            if (locallyApproved !== true) {
+              writeJson(response, 403, { error: "trusted_local_browser_view_approval_denied" }, cors);
+              return;
+            }
+            writeJson(response, 201, await browser.grantView(input.pageId, input.roomId), cors);
+            return;
+          }
+          if (url.pathname === "/v1/browser/view/revoke") {
+            const id = /^[a-f0-9-]{36}$/i;
+            if (typeof input.pageId !== "string" || !id.test(input.pageId) ||
+              typeof input.roomId !== "string" || !id.test(input.roomId) ||
+              typeof input.grantId !== "string" || !id.test(input.grantId) ||
+              Object.keys(input).some(key => !["pageId", "roomId", "grantId"].includes(key))) {
+              writeJson(response, 400, { error: "invalid_browser_view_revoke_scope" }, cors);
+              return;
+            }
+            const revoked = browser.revokeView(input.pageId, input.roomId, input.grantId);
+            writeJson(response, revoked ? 200 : 404, { revoked }, cors);
+            return;
+          }
+          if (url.pathname === "/v1/browser/select-region") {
+            const id = /^[a-f0-9-]{36}$/i;
+            const region = input.region;
+            if (typeof input.pageId !== "string" || !id.test(input.pageId) ||
+              typeof input.roomId !== "string" || !id.test(input.roomId) ||
+              typeof input.frameId !== "string" || !id.test(input.frameId) ||
+              !region || typeof region !== "object" || Array.isArray(region) ||
+              Object.keys(input).some(key => !["pageId", "roomId", "frameId", "region"].includes(key)) ||
+              Object.keys(region).some(key => !["x", "y", "width", "height"].includes(key)) ||
+              ["x", "y", "width", "height"].some(key => typeof region[key] !== "number" || !Number.isFinite(region[key]))) {
+              writeJson(response, 400, { error: "invalid_view_region_scope" }, cors);
+              return;
+            }
+            const target = await browser.selectRegionFromView(input.pageId, input.roomId, input.frameId, region);
+            writeJson(response, 201, target, cors);
+            return;
+          }
           if (url.pathname === "/v1/browser/select/cancel") {
             if (typeof input.pageId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.pageId) ||
               typeof input.roomId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.roomId) ||
@@ -440,8 +502,26 @@ export function createBackroomHostServer({
               typeof input.roomId !== "string" || !id.test(input.roomId) ||
               typeof input.participantId !== "string" || !id.test(input.participantId) ||
               typeof input.sessionId !== "string" || !id.test(input.sessionId) ||
-              typeof input.bindingId !== "string" || !id.test(input.bindingId)) {
+              typeof input.bindingId !== "string" || !id.test(input.bindingId) ||
+              Object.keys(input).some(key => !["confirmed", "targetId", "roomId", "participantId", "sessionId", "bindingId", "ttlMs", "maxPerMinute"].includes(key))) {
               writeJson(response, 400, { error: "invalid_wake_scope" }, cors);
+              return;
+            }
+            const target = (await browser.listTargets()).find(item =>
+              item.id === input.targetId && item.roomId === input.roomId && item.operations?.includes("wake") && item.wakeAvailable === true);
+            if (!target) {
+              writeJson(response, 409, { error: "canonical_wake_target_unavailable" }, cors);
+              return;
+            }
+            const locallyApproved = await authorizeLocalAction({
+              operation: "browser.wake.enable", targetId: target.id, pageId: target.pageId,
+              roomId: input.roomId, participantId: input.participantId, sessionId: input.sessionId,
+              bindingId: input.bindingId, site: target.site, title: target.title,
+              capabilities: ["wake"], ttlMs: input.ttlMs ?? 300000,
+              maxPerMinute: input.maxPerMinute ?? 6,
+            });
+            if (locallyApproved !== true) {
+              writeJson(response, 403, { error: "trusted_local_browser_wake_approval_denied" }, cors);
               return;
             }
             const grant = await browser.enableContinuousWake({
@@ -502,8 +582,27 @@ export function createBackroomHostServer({
             writeJson(response, 403, { error: "explicit_user_approval_required" }, cors);
             return;
           }
-          if (typeof input.targetId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.targetId) || typeof input.roomId !== "string" || !/^[a-f0-9-]{36}$/i.test(input.roomId)) {
-            writeJson(response, 400, { error: "invalid_target_or_room_id" }, cors);
+          const id = /^[a-f0-9-]{36}$/i;
+          if (typeof input.targetId !== "string" || !id.test(input.targetId) ||
+            typeof input.roomId !== "string" || !id.test(input.roomId) ||
+            typeof input.text !== "string" || !input.text.trim() || input.text.length > 10000 ||
+            Object.keys(input).some(key => !["approved", "targetId", "roomId", "text"].includes(key))) {
+            writeJson(response, 400, { error: "invalid_target_or_draft_scope" }, cors);
+            return;
+          }
+          const target = (await browser.listTargets()).find(item =>
+            item.id === input.targetId && item.roomId === input.roomId && item.operations?.includes("draft"));
+          if (!target) {
+            writeJson(response, 404, { error: "browser_draft_target_unavailable" }, cors);
+            return;
+          }
+          const locallyApproved = await authorizeLocalAction({
+            operation: "browser.draft", targetId: target.id, pageId: target.pageId,
+            roomId: input.roomId, site: target.site, title: target.title,
+            capabilities: ["draft"], text: input.text,
+          });
+          if (locallyApproved !== true) {
+            writeJson(response, 403, { error: "trusted_local_browser_draft_approval_denied" }, cors);
             return;
           }
           const result = await browser.draft(input.targetId, input.text, { approved: true, roomId: input.roomId });
@@ -699,7 +798,8 @@ export async function runBackroomHost() {
   if(configured===3)wakeService.configure({sessionDigest,bindingId,publishableKey});
   const externalWorkspaceRuntime = await configureExternalWorkspaceRuntime(hostId);
   const instance = createBackroomHostServer({
-    hostId,browserRuntime,enrollmentDigest:identity.credentialDigest,wakeService,externalWorkspaceRuntime
+    hostId,browserRuntime,enrollmentDigest:identity.credentialDigest,wakeService,externalWorkspaceRuntime,
+    authorizeLocalAction: authorizeLocalWorkspaceAction
   });
   const address = await instance.start();
   process.stdout.write([

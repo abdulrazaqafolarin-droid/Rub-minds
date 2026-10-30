@@ -7,7 +7,8 @@ import './backroom.css';
 import ExternalWorkspacePanel from './ExternalWorkspacePanel';
 
 type Surface = 'browser_tab' | 'desktop_app' | 'windows_app' | 'terminal' | 'android_app';
-type Space = { id: string; name: string; surface: Surface; app: string; createdAt: number };
+type Space = { id: string; name: string; surface: Surface; app: string; createdAt: number; pageId?: string };
+type BrowserViewFrame = { pageId: string; roomId: string; grantId: string; frameId: string; mimeType: 'image/jpeg'; image: string; width: number; height: number; expiresAt: number };
 type Rect = { x: number; y: number; width: number; height: number };
 type HostStatus = { hostId: string; label: string; expiresAt: number; protocolVersion: string; connected: boolean; executionReady: boolean; capabilities: Record<string, boolean>; nextStep: string; browserPages?: number; enrollmentDigest?: string; wakeGatewayHost?: string };
 type BrowserPageRow = { pageId: string; title: string; site: string; canSelect: boolean };
@@ -74,6 +75,10 @@ function parseHostStatus(value: unknown, expectedHostId?: string): HostStatus {
     if (typeof supplied[key] !== 'boolean') throw new HostStatusValidationError('Local host returned an invalid capability flag.');
     capabilities[key] = supplied[key] as boolean;
   }
+  if (supplied.browserView !== undefined && typeof supplied.browserView !== 'boolean') {
+    throw new HostStatusValidationError('Local host returned an invalid browser-view capability flag.');
+  }
+  capabilities.browserView = supplied.browserView === true;
   if (row.executionReady !== Object.values(capabilities).some(Boolean)) {
     throw new HostStatusValidationError('Local host status conflicts with its declared capabilities.');
   }
@@ -136,6 +141,81 @@ function Preview({ surface, appName, onSelect, selected }: { surface: Surface; a
   </div>;
 }
 
+
+function LiveBrowserPreview({ frame, appName, onSelectRegion }: {
+  frame: BrowserViewFrame;
+  appName: string;
+  onSelectRegion: (frameId: string, region: Rect) => void;
+}) {
+  const [start, setStart] = useState<{ x: number; y: number; frameId: string } | null>(null);
+  const [drag, setDrag] = useState<Rect | null>(null);
+  const [dragFrame, setDragFrame] = useState<BrowserViewFrame | null>(null);
+  const visibleFrame = dragFrame ?? frame;
+  function point(event: PointerEvent<HTMLDivElement>) {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    return {
+      x: clamp((event.clientX - bounds.left) / Math.max(1, bounds.width) * 100),
+      y: clamp((event.clientY - bounds.top) / Math.max(1, bounds.height) * 100),
+    };
+  }
+  function move(event: PointerEvent<HTMLDivElement>) {
+    if (!start) return;
+    const end = point(event);
+    setDrag({
+      x: Math.min(start.x, end.x), y: Math.min(start.y, end.y),
+      width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y),
+    });
+  }
+  function finish(event: PointerEvent<HTMLDivElement>) {
+    if (!start) return;
+    const end = point(event);
+    const region = {
+      x: Math.min(start.x, end.x), y: Math.min(start.y, end.y),
+      width: Math.abs(end.x - start.x), height: Math.abs(end.y - start.y),
+    };
+    if (region.width >= 1.5 && region.height >= 1.5) onSelectRegion(start.frameId, region);
+    setStart(null); setDrag(null); setDragFrame(null);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+  const rectangle = drag;
+  return <div className="br-live-view">
+    <div className="br-live-view-head">
+      <div><b>{appName}</b><small>Paired local Chromium · authenticated tab</small></div>
+      <span className="br-live-local-chip">LOCAL VIEW · SNAPSHOT</span>
+    </div>
+    <div className="br-live-frame" aria-label="Local browser tab screenshot">
+      <img
+        src={'data:' + visibleFrame.mimeType + ';base64,' + visibleFrame.image}
+        alt={'Current visual snapshot of ' + appName}
+        draggable={false}
+      />
+      <div
+        className="br-live-drag"
+        onPointerDown={event => {
+          if (event.button !== 0) return;
+          event.preventDefault();
+          event.currentTarget.setPointerCapture(event.pointerId);
+          const startPoint = point(event);
+          setDragFrame(frame);
+          setStart({ ...startPoint, frameId: frame.frameId });
+          setDrag(null);
+        }}
+        onPointerMove={move}
+        onPointerUp={finish}
+        onPointerCancel={() => { setStart(null); setDrag(null); setDragFrame(null); }}
+        role="group"
+        aria-label="Drag around exactly one visible empty text field to register it as a draft-only target"
+        tabIndex={0}
+      />
+      {rectangle && <div className="br-live-selection" style={{
+        left: rectangle.x + '%', top: rectangle.y + '%',
+        width: rectangle.width + '%', height: rectangle.height + '%',
+      }} />}
+    </div>
+    <div className="br-live-caption">Read-only visual snapshots are refreshed locally. Drag around one visible empty editable field; Backroom resolves the region against the live DOM and rejects stale, ambiguous or occupied targets.</div>
+  </div>;
+}
+
 export default function BackroomApp() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -158,6 +238,10 @@ export default function BackroomApp() {
   const [browserUrl, setBrowserUrl] = useState('https://chatgpt.com/');
   const [browserNotice, setBrowserNotice] = useState('');
   const [browserBusy, setBrowserBusy] = useState(false);
+  const [selectedBrowserPage, setSelectedBrowserPage] = useState('');
+  const [liveViewEnabled, setLiveViewEnabled] = useState(false);
+  const [liveFrame, setLiveFrame] = useState<BrowserViewFrame | null>(null);
+  const [liveGrantId, setLiveGrantId] = useState('');
   const [hostedAiSessions,setHostedAiSessions] = useState<HostedAiSession[]>([]);
   const [selectedHostedSession,setSelectedHostedSession] = useState('');
   const [hostedWakeBinding,setHostedWakeBinding] = useState<HostedWakeBinding | null>(null);
@@ -168,9 +252,6 @@ export default function BackroomApp() {
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [active, setActive] = useState('');
   const [adding, setAdding] = useState(false);
-  const [name, setName] = useState('');
-  const [app, setApp] = useState('');
-  const [surface, setSurface] = useState<Surface>('desktop_app');
   const [selection, setSelection] = useState<Rect | null>(null);
   const [notice, setNotice] = useState('');
   useEffect(() => {
@@ -205,7 +286,7 @@ export default function BackroomApp() {
             const origin = localHostOrigin(saved.origin);
             setHostUrl(origin);
             setHostToken(saved.sessionToken);
-            setHostInfo({ ...saved.info, connected: false, executionReady: false, browserPages: 0, capabilities: { ...saved.info.capabilities, browserDraft: false } });
+            setHostInfo({ ...saved.info, connected: false, executionReady: false, browserPages: 0, capabilities: { ...saved.info.capabilities, browserDraft: false, browserView: false } });
             setHostMessage('Saved host session restored for this tab. Check connection before use.');
           } else sessionStorage.removeItem('rub-backroom-host-session-v1:' + data.user.id);
         }
@@ -270,6 +351,54 @@ export default function BackroomApp() {
   }
   const current = spaces.find(s => s.id === active);
   const roomBrowserTargets = browserTargets.filter(target => target.roomId === room?.id);
+  const currentBrowserTarget = current?.pageId
+    ? roomBrowserTargets.find(target => target.pageId === current.pageId) : undefined;
+  useEffect(() => {
+    setLiveViewEnabled(false);
+    setLiveGrantId('');
+    setLiveFrame(null);
+  }, [active, current?.pageId, hostToken]);
+  useEffect(() => {
+    if (!liveViewEnabled || !current?.pageId || !room?.id || !hostToken || !liveGrantId || hostInfo?.capabilities.browserView !== true) {
+      setLiveFrame(null);
+      return;
+    }
+    let disposed = false;
+    let timer: number | undefined;
+    const pageId = current.pageId;
+    const loadFrame = async () => {
+      try {
+        const next = await hostApi<BrowserViewFrame>('/v1/browser/view/' + encodeURIComponent(pageId) + '/' + encodeURIComponent(room.id) + '/' + encodeURIComponent(liveGrantId));
+        if (!disposed) {
+          if (next.pageId !== pageId || next.roomId !== room.id || next.grantId !== liveGrantId || next.mimeType !== 'image/jpeg' ||
+            typeof next.image !== 'string' || next.image.length === 0 ||
+            !Number.isSafeInteger(next.width) || !Number.isSafeInteger(next.height) ||
+            next.width <= 0 || next.height <= 0 || !/^[a-f0-9-]{36}$/i.test(next.frameId)) {
+            throw new Error('The local host returned an invalid browser view frame.');
+          }
+          setLiveFrame(next);
+        }
+      } catch (error) {
+        if (!disposed) {
+          setLiveViewEnabled(false);
+          setLiveGrantId('');
+          setLiveFrame(null);
+          setNotice('Local browser view paused: ' +
+            (error instanceof Error ? error.message : 'the selected tab is no longer available.'));
+        }
+        return;
+      }
+      if (!disposed) timer = window.setTimeout(() => { void loadFrame(); }, 1200);
+    };
+    void loadFrame();
+    return () => {
+      disposed = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+      if (liveGrantId && current?.pageId && room?.id && hostToken) {
+        void hostApi('/v1/browser/view/revoke', { method: 'POST', body: { pageId: current.pageId, roomId: room.id, grantId: liveGrantId } }).catch(() => {});
+      }
+    };
+  }, [liveViewEnabled, current?.pageId, room?.id, hostToken, liveGrantId, hostInfo?.capabilities.browserView, hostUrl]);
   function supportsLoopbackNetworkRequests() {
     // Feature-detect the browser API instead of assuming every embedded WebView
     // implements RequestInit.targetAddressSpace. Creating this Request does not
@@ -599,7 +728,7 @@ export default function BackroomApp() {
         // executable. Keep the token for an explicit retry, but clear all targets.
         setHostInfo(previous => previous ? {
           ...previous, connected: false, executionReady: false, browserPages: 0,
-          capabilities: { ...previous.capabilities, browserDraft: false },
+          capabilities: { ...previous.capabilities, browserDraft: false, browserView: false },
         } : previous);
       }
       setBrowserPages([]); setBrowserTargets([]); setSelectedBrowserTarget('');
@@ -674,7 +803,7 @@ export default function BackroomApp() {
     } catch (error) {
       setHostInfo(previous => previous ? {
         ...previous, connected: false, executionReady: false, browserPages: 0,
-        capabilities: { ...previous.capabilities, browserDraft: false },
+        capabilities: { ...previous.capabilities, browserDraft: false, browserView: false },
       } : previous);
       setBrowserPages([]); setBrowserTargets([]); setSelectedBrowserTarget('');
       if (error instanceof Error && error.message.startsWith('This browser does not support the loopback permission signal')) throw error;
@@ -695,6 +824,64 @@ export default function BackroomApp() {
     }
     return payload as T;
   }
+  async function toggleLiveBrowserView() {
+    if (!current?.pageId || !room?.id || !hostToken || hostInfo?.capabilities.browserView !== true) {
+      setNotice('A paired, updated local browser host and a selected managed tab are required for this view adapter.');
+      return;
+    }
+    if (liveViewEnabled && liveGrantId) {
+      try {
+        const result = await hostApi<{ revoked: boolean }>('/v1/browser/view/revoke', {
+          method: 'POST', body: { pageId: current.pageId, roomId: room.id, grantId: liveGrantId },
+        });
+        if (!result.revoked) throw new Error('The view permission was already expired or revoked.');
+        setLiveViewEnabled(false); setLiveGrantId(''); setLiveFrame(null);
+        setNotice('Read-only view permission revoked. No further screenshots will be requested.');
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : 'Could not confirm view revocation.');
+      }
+      return;
+    }
+    if (!window.confirm('Request read-only screenshots of this exact managed browser tab? The paired host terminal will ask for a separate local approval. Images stay in this browser session, are not stored by Rub Minds, and are not uploaded. This does not grant draft insertion, sending or terminal access.')) return;
+    setBrowserBusy(true);
+    setLiveFrame(null);
+    try {
+      const grant = await hostApi<{ grantId: string; pageId: string; roomId: string; expiresAt: number }>(
+        '/v1/browser/view/grant', { method: 'POST', body: { pageId: current.pageId, roomId: room.id } },
+      );
+      if (grant.pageId !== current.pageId || grant.roomId !== room.id ||
+        !/^[a-f0-9-]{36}$/i.test(grant.grantId) || !Number.isFinite(grant.expiresAt)) {
+        throw new Error('The local host returned an invalid browser view permission.');
+      }
+      setLiveGrantId(grant.grantId);
+      setLiveViewEnabled(true);
+      setNotice('Read-only view approved on the local host. Screenshots will refresh while this view remains open.');
+    } catch (error) {
+      setLiveGrantId(''); setLiveViewEnabled(false);
+      setNotice(error instanceof Error ? error.message : 'Local browser view approval was denied.');
+    } finally { setBrowserBusy(false); }
+  }
+  async function registerLiveRegion(frameId: string, region: Rect) {
+    const pageId = current?.pageId;
+    const groupId = room?.id;
+    if (!pageId || !groupId || !hostToken || !liveViewEnabled || !liveFrame) return;
+    if (!window.confirm('Register the field inside this rectangle on the selected live tab? The local host will accept only one visible, editable, empty text field. Registration grants draft insertion only; it will never send or press Enter.')) return;
+    setBrowserBusy(true);
+    try {
+      const target = await hostApi<BrowserTargetRow>('/v1/browser/select-region', {
+        method: 'POST', body: { pageId, roomId: groupId, frameId, region },
+      });
+      if (target.pageId !== pageId || target.roomId !== groupId || target.surface !== 'browser_tab' ||
+        !target.operations.includes('draft')) {
+        throw new Error('The local host returned a target outside the selected tab or draft-only scope.');
+      }
+      setBrowserTargets(previous => [target, ...previous.filter(existing => existing.id !== target.id)]);
+      setSelectedBrowserTarget(target.id);
+      setNotice('Live tab target registered. The host retains the exact DOM element and revalidates it before draft insertion. No message was sent.');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not register this live typing area.');
+    } finally { setBrowserBusy(false); }
+  }
   async function refreshBrowserInventory() {
     setBrowserBusy(true); setBrowserNotice('');
     try {
@@ -708,7 +895,10 @@ export default function BackroomApp() {
         hostCapabilityKeys.some(key => typeof runtimeStatus.capabilities[key] !== 'boolean')) {
         throw new Error('Local host returned invalid browser runtime status.');
       }
-      const capabilities = { ...runtimeStatus.capabilities, browserDraft: runtimeStatus.running && runtimeStatus.capabilities.browserDraft };
+      const capabilities = { ...runtimeStatus.capabilities,
+        browserDraft: runtimeStatus.running && runtimeStatus.capabilities.browserDraft,
+        browserView: runtimeStatus.running && runtimeStatus.capabilities.browserView === true,
+      };
       setHostInfo(previous => previous ? {
         ...previous, executionReady: Object.values(capabilities).some(Boolean),
         capabilities, browserPages: runtimeStatus.pages,
@@ -727,9 +917,9 @@ export default function BackroomApp() {
   async function startManagedBrowser() {
     setBrowserBusy(true); setBrowserNotice('');
     try {
-      const status = await hostApi<{ running: boolean }>('/v1/browser/start', { method: 'POST' });
+      const status = await hostApi<{ running: boolean; capabilities?: Record<string, boolean> }>('/v1/browser/start', { method: 'POST' });
       if (!status.running) throw new Error('Managed browser did not start.');
-      setHostInfo(previous => previous ? { ...previous, executionReady: true, capabilities: { ...previous.capabilities, browserDraft: true } } : previous);
+      setHostInfo(previous => previous ? { ...previous, executionReady: true, capabilities: { ...previous.capabilities, browserDraft: true, browserView: status.capabilities?.browserView === true } } : previous);
       setBrowserNotice('Managed browser opened. Sign in to ChatGPT or Claude yourself, then open a conversation.');
       const [pageResult, targetResult] = await Promise.all([
         hostApi<{ pages: BrowserPageRow[] }>('/v1/browser/pages'),
@@ -762,7 +952,8 @@ export default function BackroomApp() {
     try {
       await hostApi('/v1/browser/stop', { method: 'POST' });
       setBrowserPages([]); setBrowserTargets([]); setSelectedBrowserTarget('');
-      setHostInfo(previous => previous ? { ...previous, executionReady: false, capabilities: { ...previous.capabilities, browserDraft: false }, browserPages: 0 } : previous);
+      setHostInfo(previous => previous ? { ...previous, executionReady: false, capabilities: { ...previous.capabilities, browserDraft: false, browserView: false }, browserPages: 0 } : previous);
+      setLiveViewEnabled(false); setLiveGrantId(''); setLiveFrame(null);
       setBrowserNotice('Managed browser closed. Its local profile remains on this computer.');
     } catch (e) { setBrowserNotice(e instanceof Error ? e.message : 'Could not stop the managed browser.'); }
     finally { setBrowserBusy(false); }
@@ -885,10 +1076,21 @@ export default function BackroomApp() {
     finally { setBrowserBusy(false); }
   }
   function add() {
-    if (!room || !name.trim() || spaces.length >= 30) return;
-    const next = { id: randomId(), name: name.trim().slice(0, 60), app: app.trim().slice(0, 100), surface, createdAt: Date.now() };
-    save([...spaces, next]); setActive(next.id); setSelection(null); setAdding(false); setName(''); setApp('');
-    setNotice('Space layout created locally. A device host is still required to connect this app.');
+    if (!room || !hostToken || !hostInfo?.connected || !hostInfo.capabilities.browserDraft || spaces.length >= 30) return;
+    const selectedPage = browserPages.find(page => page.pageId === selectedBrowserPage && page.canSelect);
+    if (!selectedPage) {
+      setNotice('Discover and select a verified managed browser tab before adding an app.');
+      return;
+    }
+    const displayName = (selectedPage.title || selectedPage.site || 'Browser conversation').trim().slice(0, 60);
+    const next: Space = {
+      id: randomId(), name: displayName, app: selectedPage.site, surface: 'browser_tab',
+      pageId: selectedPage.pageId, createdAt: Date.now(),
+    };
+    save([...spaces, next]); setActive(next.id); setSelection(null);
+    setAdding(false); setSelectedBrowserPage('');
+    setLiveViewEnabled(false); setLiveGrantId(''); setLiveFrame(null);
+    setNotice('Verified managed browser tab added. Start its separate local view permission from the workspace to display screenshots.');
   }
   if (loading) return <div className="br-gate">Checking Backroom access…</div>;
   if (!user || error) return <div className="br-gate"><ShieldCheck size={36}/><h1>Backroom access</h1><p>{error || 'Please sign in.'}</p><a href="/">Return to Rub Minds</a></div>;
@@ -911,8 +1113,15 @@ export default function BackroomApp() {
         <div className="br-metrics"><div><span>Registered spaces</span><strong>{spaces.length.toString().padStart(2, '0')}</strong><small>Local workspace layouts</small></div><div><span>Connected hosts</span><strong>{hostInfo?.connected ? "01" : "00"}</strong><small>{hostInfo?.connected ? "Local host is reachable" : hostInfo ? "Reconnect to verify the saved host" : "Pair a local host to connect"}</small></div><div><span>Active automations</span><strong>00</strong><small>No device commands running</small></div></div>
         {notice && <div className="br-notice" role="status"><CircleHelp size={16}/>{notice}<button onClick={() => setNotice('')} aria-label="Dismiss notice"><X size={15}/></button></div>}
         {!current ? <div className="br-empty-card"><div className="br-empty-symbol"><Layers3 size={34}/></div><h2>Give every AI its own space.</h2><p>Create spaces for phone apps, desktop assistants, terminals and browser sessions. Pair the local host for browser drafts; native Android, desktop, Windows and terminal drivers are still in development.</p><button className="br-primary" onClick={() => setAdding(true)}><Plus size={16}/> Create your first space</button><div className="br-platforms">{surfaces.map(s => { const Icon = iconFor(s.id); return <span key={s.id} title={s.name}><Icon size={18}/></span>; })}</div></div> :
-        <div className="br-workspace-grid"><section className="br-panel br-stage"><div className="br-panel-head"><div><span className="br-eyebrow">ACTIVE SPACE</span><h2>{current.name}</h2><p>{current.app || surfaces.find(s => s.id === current.surface)?.detail}</p></div><button className="br-icon-button" aria-label="Remove this local space" title="Remove local space" onClick={() => { if (!confirm('Remove this local space layout? No external app will be changed.')) return; save(spaces.filter(s => s.id !== current.id)); setActive(''); setSelection(null); }}><Trash2 size={17}/></button></div><Preview key={current.id} surface={current.surface} appName={current.app || current.name} selected={selection} onSelect={setSelection}/><div className="br-stage-foot"><MousePointer2 size={16}/><span>Demo canvas only. Drag-select tests the overlay geometry; real app input requires local device approval.</span><button type="button" className="br-sample-select" onClick={() => setHostModal(true)}>Connect device / permissions</button><button type="button" className="br-sample-select" onClick={() => setSelection({ x: 12, y: 72, width: 76, height: 17 })}>Select sample input</button></div></section>
-        <section className="br-panel br-inspector"><span className="br-eyebrow">SPACE INSPECTOR</span><h2>Connection details</h2><div className="br-detail"><span>Platform</span><b>{surfaces.find(s => s.id === current.surface)?.name}</b></div><div className="br-detail"><span>Host status</span><b className="br-muted">{hostInfo?.connected ? (hostInfo.capabilities.browserDraft ? 'Paired · browser draft only' : 'Paired · browser idle') : hostInfo ? 'Offline · paired before' : 'Not connected'}</b></div><div className="br-detail"><span>App view</span><b className="br-muted">Demo · no live stream</b></div><div className="br-detail"><span>Device permission</span><b className="br-muted">{current.surface === 'browser_tab' && hostInfo?.capabilities.browserDraft ? 'Managed browser ready · select a tab' : 'Not granted for this space'}</b></div><div className="br-detail"><span>Typing target</span><b>{selection ? 'Demo region · not authorized' : 'Not registered'}</b></div><div className="br-onboard-steps"><b>Open this app in Backroom</b><div><span>1</span> Connect and authenticate the device host</div><div><span>2</span> Choose the real app, window, tab or terminal session</div><div><span>3</span> Approve view and draft permissions separately on the device</div><div><span>4</span> Start an authorized live view (driver required)</div></div>{selection && <div className="br-coords"><b>Preview selection</b><code>x {selection.x.toFixed(1)}% · y {selection.y.toFixed(1)}%</code><code>w {selection.width.toFixed(1)}% · h {selection.height.toFixed(1)}%</code><button onClick={() => setSelection(null)}>Clear selection</button></div>}<div className="br-warning"><ShieldCheck size={19}/><div><b>Preview selection only</b><p>{hostInfo?.capabilities.browserDraft ? 'This simulated space preview is not bound to a real app target. Use the Managed browser panel to select a real empty composer and insert a confirmed draft. Native and terminal panels are separate from the simulated preview and require their respective local runtime.' : 'This simulated preview does not control a real app. Pair the local host and launch its managed browser for the current draft-only path. Native Android, Windows, desktop-app and terminal control require a separately configured local runtime.'}</p></div></div><button className="br-disabled-action" onClick={() => setHostModal(true)}><Command size={16}/> {hostInfo ? 'Manage local host' : 'Pair local host'} <span>{hostInfo?.connected ? 'Online' : hostInfo ? 'Offline' : 'Connect'}</span></button></section></div>}
+        <div className="br-workspace-grid"><section className="br-panel br-stage"><div className="br-panel-head"><div><span className="br-eyebrow">ACTIVE SPACE</span><h2>{current.name}</h2><p>{current.app || surfaces.find(s => s.id === current.surface)?.detail}</p></div><button className="br-icon-button" aria-label="Remove this local space" title="Remove local space" onClick={() => { if (!confirm('Remove this local space layout? No external app will be changed.')) return; save(spaces.filter(s => s.id !== current.id)); setActive(''); setSelection(null); }}><Trash2 size={17}/></button></div>{current.pageId
+          ? liveViewEnabled && liveFrame
+            ? <LiveBrowserPreview key={current.id} frame={liveFrame} appName={current.app || current.name} onSelectRegion={(frameId, region) => void registerLiveRegion(frameId, region)}/>
+            : <div className="br-live-placeholder" role="status"><Monitor size={28}/><b>{liveViewEnabled ? 'Connecting to the selected browser tab…' : 'Live view paused'}</b><p>{hostInfo?.capabilities.browserView ? 'Enable the read-only local view to display the actual managed tab here. Its screenshots are not stored or uploaded.' : 'This paired host does not advertise the browser-view adapter. Update and restart the local host.'}</p></div>
+          : <Preview key={current.id} surface={current.surface} appName={current.app || current.name} selected={selection} onSelect={setSelection}/>}
+        <div className="br-stage-foot"><MousePointer2 size={16}/><span>{current.pageId ? (liveFrame ? 'Local screenshot view. Drag around one empty field to register a real DOM target.' : 'This space is linked to a discovered tab; no screenshot is being captured while paused.') : 'Legacy demo layout only. It is not connected to a real application.'}</span>{current.pageId
+          ? <button type="button" className="br-sample-select" onClick={() => void toggleLiveBrowserView()} disabled={browserBusy || !hostInfo?.connected || hostInfo.capabilities.browserView !== true}>{liveViewEnabled ? 'Revoke view permission' : 'Request local view permission'}</button>
+          : <><button type="button" className="br-sample-select" onClick={() => setHostModal(true)}>Connect device / permissions</button><button type="button" className="br-sample-select" onClick={() => setSelection({ x: 12, y: 72, width: 76, height: 17 })}>Select demo region</button></>}</div></section>
+        <section className="br-panel br-inspector"><span className="br-eyebrow">SPACE INSPECTOR</span><h2>Connection details</h2><div className="br-detail"><span>Platform</span><b>{surfaces.find(s => s.id === current.surface)?.name}</b></div><div className="br-detail"><span>Host status</span><b className="br-muted">{hostInfo?.connected ? (hostInfo.capabilities.browserDraft ? 'Paired · browser draft only' : 'Paired · browser idle') : hostInfo ? 'Offline · paired before' : 'Not connected'}</b></div><div className="br-detail"><span>App view</span><b className="br-muted">{current.pageId ? (liveFrame ? 'Local screenshot view active' : liveViewEnabled ? 'Connecting' : 'Paused') : 'Demo · not connected'}</b></div><div className="br-detail"><span>View permission</span><b className="br-muted">{current.pageId && liveViewEnabled ? 'Enabled for this tab' : 'Not enabled'}</b></div><div className="br-detail"><span>Typing target</span><b>{currentBrowserTarget ? 'Verified · draft only' : current.pageId ? 'Not registered' : selection ? 'Demo region · not authorized' : 'Not registered'}</b></div><div className="br-onboard-steps"><b>Open this app in Backroom</b><div><span>1</span> Connect and authenticate the device host</div><div><span>2</span> Choose the real app, window, tab or terminal session</div><div><span>3</span> Approve view and draft permissions separately on the device</div><div><span>4</span> Start an authorized live view (driver required)</div></div>{selection && <div className="br-coords"><b>Preview selection</b><code>x {selection.x.toFixed(1)}% · y {selection.y.toFixed(1)}%</code><code>w {selection.width.toFixed(1)}% · h {selection.height.toFixed(1)}%</code><button onClick={() => setSelection(null)}>Clear selection</button></div>}<div className="br-warning"><ShieldCheck size={19}/><div><b>{current.pageId ? 'Local tab identity and draft-only permissions' : 'Demo workspace only'}</b><p>{current.pageId ? 'This tile is linked to a discovered managed browser tab. View permission is separate from draft registration. The local host resolves drag selections against one exact visible DOM field, then revalidates the node and conversation before inserting text. Enter, Send and submission are not part of this adapter.' : 'This is a legacy simulated layout without a verified app connection. Add only creates spaces from actual tabs discovered by the paired local browser. Desktop, Windows, Android and terminal tiles stay unavailable until their drivers report real targets.'}</p></div></div><button className="br-disabled-action" onClick={() => setHostModal(true)}><Command size={16}/> {hostInfo ? 'Manage local host' : 'Pair local host'} <span>{hostInfo?.connected ? 'Online' : hostInfo ? 'Offline' : 'Connect'}</span></button></section></div>}
         {hostToken && <ExternalWorkspacePanel
           hostToken={hostToken}
           roomId={room.id}
@@ -922,7 +1131,7 @@ export default function BackroomApp() {
           onSelectSession={setSelectedHostedSession}
           onFindSessions={() => void discoverHostedAiSessions()}
         />}
-        <div className="br-bottom-note"><Cpu size={16}/><span>The in-space views are visual demos, not embedded live apps. A future permissioned device stream will be required for real in-space viewing. The Connected workspaces panel reports currently supported host actions.</span><a href="https://github.com/abdulrazaqafolarin-droid/Rub-minds/pull/48" target="_blank" rel="noreferrer">Backroom core <ExternalLink size={13}/></a></div>
+        <div className="br-bottom-note"><Cpu size={16}/><span>Verified managed Chromium tabs can be displayed here as read-only local screenshot snapshots after trusted host approval. This is not an interactive remote desktop stream; draft insertion is separate and never submits. Desktop, Windows, Android and terminal views remain unavailable until their drivers provide verified targets and transport.</span><a href="https://github.com/abdulrazaqafolarin-droid/Rub-minds/pull/48" target="_blank" rel="noreferrer">Backroom core <ExternalLink size={13}/></a></div>
       </div>}
     </main>
     {hostModal && <div className="br-modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setHostModal(false); }}><div className="br-modal" role="dialog" aria-modal="true" aria-labelledby="br-host-title"><div className="br-modal-top"><div className="br-modal-icon"><Cpu size={22}/></div><button className="br-icon-button" onClick={() => setHostModal(false)} aria-label="Close host pairing"><X size={20}/></button></div><h2 id="br-host-title">{hostStopped ? 'Emergency stop is active' : hostInfo ? 'Local host connection' : 'Pair a local host'}</h2><p>Run the Backroom host on this same computer, then enter its one-time code. Use a current Chrome or Edge browser; local-network permission may be required. Embedded webviews, Firefox or Safari may block this HTTP loopback connection. Pairing exposes host status first. Browser, desktop, Android and terminal capabilities are advertised only when the respective local runtime is actually configured and ready.</p>{hostMessage && <div className="br-host-message" role="status">{hostMessage}</div>}{hostInfo && wakeGatewayMismatch(hostInfo) && <div className="br-host-message br-host-stopped" role="alert">This local host sends wake requests to {hostInfo.wakeGatewayHost}, but this Rub Minds Preview uses {expectedSupabaseHost}. Stop the host and restart it with BACKROOM_WAKE_GATEWAY_URL set to this project's exact backroom-wake function URL before enabling hosted wake.</div>}{!hostInfo ? <>{hostStopped && <div className="br-host-message br-host-stopped" role="status">The previous host session was emergency-stopped. Stop the old local host process with Ctrl+C, restart it to generate a fresh one-time code, then pair below. The host health check will reject pairing if the emergency stop is still latched.</div>}<label htmlFor="br-host-url">Local host address</label><input id="br-host-url" autoFocus value={hostUrl} onChange={e => setHostUrl(e.target.value)} placeholder="http://127.0.0.1:43781" autoCapitalize="none" spellCheck={false}/><label htmlFor="br-pair-code">One-time pairing code</label><input id="br-pair-code" value={pairingCode} onChange={e => setPairingCode(e.target.value.trim().slice(0, 32))} placeholder="Paste code from the host terminal" autoComplete="off" autoCapitalize="none" spellCheck={false}/><div className="br-warning"><ShieldCheck size={19}/><div><b>Local-only connection</b><p>The host should bind to 127.0.0.1. Never share the pairing code or session token with a Rub Minds group.</p></div></div><div className="br-modal-actions"><button className="br-secondary" onClick={() => setHostModal(false)}>Close</button><button className="br-primary" onClick={() => void pairLocalHost()} disabled={hostBusy || !/^[a-f0-9]{32}$/i.test(pairingCode.trim())}>{hostBusy ? 'Pairing…' : 'Pair host'} <ArrowRight size={16}/></button></div></> : <><div className="br-detail"><span>Host ID</span><b>{hostInfo.hostId}</b></div><div className="br-detail"><span>Connection</span><b>{hostInfo.connected ? 'Authenticated' : 'Offline'}</b></div><div className="br-detail"><span>Available local capability</span><b className="br-muted">{hostInfo.capabilities.browserDraft ? 'Browser draft insertion only' : 'No execution driver enabled'}</b></div><div className="br-warning"><ShieldCheck size={19}/><div><b>{hostInfo.capabilities.browserDraft ? 'Browser draft adapter ready' : 'Browser adapter not started'}</b><p>{hostInfo.capabilities.browserDraft ? 'The managed browser supports inserting text into an explicitly registered empty composer. It never presses Send.' : 'Launch a dedicated visible browser profile. Log into AI websites yourself; Backroom does not copy existing cookies or sign you in.'} Desktop, Android and terminal actions appear in Connected workspaces only when their local adapters are configured and ready.</p></div></div>
@@ -955,6 +1164,11 @@ export default function BackroomApp() {
 </div>}
 <div className="br-emergency-stop-row"><div><b>Emergency stop</b><small>Close Chromium, revoke all paired sessions, and block reconnection until the host is restarted.</small></div><button className="br-danger-action" onClick={() => void emergencyStopLocalHost()} disabled={hostBusy || browserBusy || !hostToken}>Stop all</button></div>
 {hostInfo.enrollmentDigest && <><div className="br-modal-actions"><button className="br-secondary" onClick={() => void registerHostedWakeHost()} disabled={hostBusy || browserBusy}>Register or renew hosted wake host</button></div><div className="br-modal-actions"><button className="br-danger-action" onClick={() => void revokeHostedWakeHost()} disabled={hostBusy || browserBusy}>Permanently revoke hosted host</button></div></>}<div className="br-modal-actions"><button className="br-secondary" onClick={() => void unpairLocalHost()} disabled={hostBusy || browserBusy}>Unpair</button><button className="br-primary" onClick={() => void checkLocalHost()} disabled={hostBusy || browserBusy}>{hostBusy ? 'Checking…' : 'Check connection'}</button></div></>}</div></div>}
-    {adding && <div className="br-modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setAdding(false); }}><div className="br-modal" role="dialog" aria-modal="true" aria-labelledby="br-modal-title"><div className="br-modal-top"><div className="br-modal-icon"><Plus size={22}/></div><button className="br-icon-button" onClick={() => setAdding(false)} aria-label="Close"><X size={20}/></button></div><h2 id="br-modal-title">Add a new space</h2><p>Choose the kind of interface this workspace will connect to.</p><label htmlFor="br-name">Space name</label><input id="br-name" maxLength={60} autoFocus placeholder="e.g. Claude research assistant" value={name} onChange={e => setName(e.target.value)}/><label htmlFor="br-app">App or session label <span>(optional)</span></label><input id="br-app" maxLength={100} placeholder="e.g. Claude Desktop · Research thread" value={app} onChange={e => setApp(e.target.value)}/><div className="br-modal-label">Interface type</div><div className="br-surface-options">{surfaces.map(s => { const Icon = iconFor(s.id); return <button key={s.id} className={'br-surface-option' + (surface === s.id ? ' chosen' : '')} onClick={() => setSurface(s.id)}><Icon size={20}/><span><b>{s.name}</b><small>{s.detail}</small></span>{surface === s.id && <Check size={17}/>}</button>; })}</div><div className="br-modal-actions"><button className="br-secondary" onClick={() => setAdding(false)}>Cancel</button><button className="br-primary" onClick={add} disabled={!name.trim()}>Create space <ArrowRight size={16}/></button></div></div></div>}
+    {adding && <div className="br-modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setAdding(false); }}><div className="br-modal" role="dialog" aria-modal="true" aria-labelledby="br-modal-title"><div className="br-modal-top"><div className="br-modal-icon"><Plus size={22}/></div><button className="br-icon-button" onClick={() => setAdding(false)} aria-label="Close"><X size={20}/></button></div><h2 id="br-modal-title">Add a discovered app</h2><p>A space is created only from an app or session the paired local host actually discovered. This first live adapter supports managed Chromium tabs.</p>{!hostToken || !hostInfo?.connected
+          ? <div className="br-discovery-state"><b>Device disconnected</b><p>Connect and authenticate the Backroom host on this computer before discovering applications.</p><button className="br-primary" onClick={() => { setAdding(false); setHostModal(true); }}>Connect device</button></div>
+          : !hostInfo.capabilities.browserDraft
+            ? <div className="br-discovery-state"><b>Browser driver unavailable</b><p>Pair the host, then launch the dedicated managed Chromium profile. Sign in to ChatGPT, Claude or another supported site yourself.</p><button className="br-primary" onClick={() => { setAdding(false); setHostModal(true); }}>Open device setup</button></div>
+            : <><div className="br-discovery-tools"><button className="br-secondary" onClick={() => void refreshBrowserInventory()} disabled={browserBusy}>Discover / refresh verified tabs</button><span>{browserBusy ? 'Discovering…' : browserPages.length + ' discovered tab(s)'}</span></div><label htmlFor="br-discovered-tab">Select a discovered browser session</label><select id="br-discovered-tab" value={selectedBrowserPage} onChange={event => setSelectedBrowserPage(event.target.value)}><option value="">Choose a verified open tab</option>{browserPages.filter(page => page.canSelect).map(page => <option key={page.pageId} value={page.pageId}>{page.site} · {page.title || 'Untitled tab'}</option>)}</select>{!browserPages.length && <p className="br-browser-empty">No supported tabs have been discovered yet. Open a page in the managed browser, then refresh this list.</p>}{browserPages.length > 0 && !browserPages.some(page => page.canSelect) && <p className="br-browser-empty">The host discovered tabs, but none currently has a supported view target.</p>}</>}
+          <div className="br-modal-label">Other application drivers</div><div className="br-surface-options">{surfaces.filter(item => item.id !== 'browser_tab').map(item => { const Icon = iconFor(item.id); return <div className="br-surface-option br-surface-unavailable" key={item.id} aria-disabled="true"><Icon size={20}/><span><b>{item.name}</b><small>Driver unavailable · no verified local targets discovered</small></span><span className="br-driver-status">Unavailable</span></div>; })}</div><div className="br-modal-actions"><button className="br-secondary" onClick={() => setAdding(false)}>Cancel</button><button className="br-primary" onClick={add} disabled={!browserPages.some(page => page.pageId === selectedBrowserPage && page.canSelect) || !hostInfo?.connected || !hostInfo.capabilities.browserDraft}>Add selected app <ArrowRight size={16}/></button></div></div></div>}
   </div>;
 }

@@ -233,6 +233,8 @@ export class BrowserHostRuntime {
   #targets = new Map();
   #bindings = new Map();
   #selectionRooms = new Map();
+  #viewFrames = new Map();
+  #viewGrants = new Map();
   #remoteWakeGrants = new Map();
   constructor({ hostId, profileDir = join(homedir(), ".rub-minds", "backroom", "browser-profile"),
     chromiumProvider = async () => (await import("playwright")).chromium,
@@ -293,6 +295,8 @@ export class BrowserHostRuntime {
           }
           this.#pages.clear();
           this.#selectionRooms.clear();
+          this.#viewFrames.clear();
+          this.#viewGrants.clear();
           this.#targets.clear();
           this.#bindings.clear();
       this.#remoteWakeGrants.clear();
@@ -322,6 +326,8 @@ export class BrowserHostRuntime {
       }
       this.#pages.clear();
       this.#selectionRooms.clear();
+      this.#viewFrames.clear();
+      this.#viewGrants.clear();
       this.#targets.clear();
       this.#bindings.clear();
       if (context) await context.close();
@@ -339,6 +345,8 @@ export class BrowserHostRuntime {
       page.on("close", () => {
         this.#pages.delete(id);
         this.#selectionRooms.delete(id);
+        for (const [frameId, frame] of this.#viewFrames) if (frame.pageId === id) this.#viewFrames.delete(frameId);
+        for (const [grantId, grant] of this.#viewGrants) if (grant.pageId === id) this.#viewGrants.delete(grantId);
         for (const [targetId, binding] of this.#bindings) {
           if (binding.pageId === id) {
             this.wakeAuthority.revokeForTarget(targetId);
@@ -354,7 +362,7 @@ export class BrowserHostRuntime {
   }
   status() {
     return Object.freeze({ running: this.running, pages: this.#pages.size,
-      capabilities: Object.freeze({ browserDraft: this.running, browserCanonicalWake: this.running && [...this.#bindings.values()].some(binding => Boolean(binding.wakeAdapter)), desktopAccessibility: false, androidAccessibility: false, terminal: false }) });
+      capabilities: Object.freeze({ browserDraft: this.running, browserView: this.running, browserCanonicalWake: this.running && [...this.#bindings.values()].some(binding => Boolean(binding.wakeAdapter)), desktopAccessibility: false, androidAccessibility: false, terminal: false }) });
   }
   async openUrl(value) {
     if (!this.#context) throw new Error("Start the managed browser first.");
@@ -388,6 +396,266 @@ export class BrowserHostRuntime {
     }
     return pages;
   }
+  async grantView(pageId, roomId, { ttlMs = 300_000 } = {}) {
+    if (typeof pageId !== "string" || !/^[a-f0-9-]{36}$/i.test(pageId) ||
+      typeof roomId !== "string" || !/^[a-f0-9-]{36}$/i.test(roomId) ||
+      !Number.isSafeInteger(ttlMs) || ttlMs < 10_000 || ttlMs > 900_000) {
+      throw new TypeError("a valid page, room and 10-second to 15-minute view grant are required");
+    }
+    this.#page(pageId);
+    const now = Date.now();
+    for (const [id, grant] of this.#viewGrants) {
+      if (grant.expiresAt <= now || grant.pageId === pageId) {
+        this.#viewGrants.delete(id);
+        for (const [frameId, frame] of this.#viewFrames) if (frame.grantId === id) this.#viewFrames.delete(frameId);
+      }
+    }
+    const grantId = randomUUID();
+    const grant = { pageId, roomId, expiresAt: now + ttlMs };
+    this.#viewGrants.set(grantId, grant);
+    return Object.freeze({ grantId, pageId, roomId, expiresAt: grant.expiresAt });
+  }
+  revokeView(pageId, roomId, grantId) {
+    const grant = this.#viewGrants.get(grantId);
+    if (!grant || grant.pageId !== pageId || grant.roomId !== roomId) return false;
+    this.#viewGrants.delete(grantId);
+    for (const [frameId, frame] of this.#viewFrames) if (frame.grantId === grantId) this.#viewFrames.delete(frameId);
+    return true;
+  }
+  async captureView(pageId, roomId, grantId) {
+    const grant = this.#viewGrants.get(grantId);
+    if (!grant || grant.pageId !== pageId || grant.roomId !== roomId || grant.expiresAt <= Date.now()) {
+      if (grant?.expiresAt <= Date.now()) this.#viewGrants.delete(grantId);
+      throw new Error("browser_view_permission_required_or_expired");
+    }
+    const { page, url } = this.#page(pageId);
+    const readViewport = () => page.evaluate(() => {
+      let state = window.__RM_BACKROOM_VIEW_STATE_V1__;
+      if (!state || !Number.isSafeInteger(state.revision)) {
+        state = { revision: 0 };
+        const observer = new MutationObserver(() => { state.revision++; });
+        observer.observe(document.documentElement, {
+          subtree: true, childList: true, attributes: true, characterData: true,
+        });
+        Object.defineProperty(window, "__RM_BACKROOM_VIEW_STATE_V1__", {
+          value: state, configurable: false, enumerable: false, writable: false,
+        });
+      }
+      return {
+        marker: "RM_BACKROOM_VIEWPORT_V1", width: window.innerWidth, height: window.innerHeight,
+        scrollX: window.scrollX, scrollY: window.scrollY, href: window.location.href,
+        revision: state.revision,
+      };
+    });
+    const before = await readViewport();
+    const validViewport = value => value && value.marker === "RM_BACKROOM_VIEWPORT_V1" &&
+      Number.isSafeInteger(value.width) && value.width > 0 && value.width <= 10000 &&
+      Number.isSafeInteger(value.height) && value.height > 0 && value.height <= 10000 &&
+      Number.isFinite(value.scrollX) && Number.isFinite(value.scrollY) &&
+      Number.isSafeInteger(value.revision) && value.href === url.href;
+    if (!validViewport(before)) throw new Error("browser_viewport_unavailable");
+    const image = await page.screenshot({
+      type: "jpeg", quality: 55, scale: "css", fullPage: false,
+      animations: "disabled", timeout: 5000,
+    });
+    if (!Buffer.isBuffer(image) || image.length === 0 || image.length > 1_250_000) {
+      throw new Error("browser_view_frame_too_large_or_unavailable");
+    }
+    const after = await readViewport();
+    if (!validViewport(after) || before.width !== after.width || before.height !== after.height ||
+      before.scrollX !== after.scrollX || before.scrollY !== after.scrollY ||
+      before.revision !== after.revision || before.href !== after.href ||
+      safeSiteUrl(page.url())?.href !== url.href) {
+      throw new Error("browser_view_changed_during_capture");
+    }
+    const now = Date.now();
+    for (const [id, frame] of this.#viewFrames) {
+      if (frame.expiresAt <= now) this.#viewFrames.delete(id);
+    }
+    while (this.#viewFrames.size >= 64) {
+      const oldest = this.#viewFrames.keys().next().value;
+      if (!oldest) break;
+      this.#viewFrames.delete(oldest);
+    }
+    const frameId = randomUUID();
+    const expiresAt = now + 4500;
+    const identityFingerprint = url.origin + url.pathname + url.search + url.hash + ":" + pageId;
+    this.#viewFrames.set(frameId, {
+      pageId, roomId, grantId, identityFingerprint, href: url.href, width: before.width, height: before.height,
+      scrollX: before.scrollX, scrollY: before.scrollY, revision: before.revision, expiresAt,
+    });
+    return {
+      pageId, roomId, grantId, frameId, mimeType: "image/jpeg", image: image.toString("base64"),
+      width: before.width, height: before.height, expiresAt,
+    };
+  }
+
+  async selectRegionFromView(pageId, roomId, frameId, region) {
+    if (typeof pageId !== "string" || !/^[a-f0-9-]{36}$/i.test(pageId) ||
+      typeof roomId !== "string" || !/^[a-f0-9-]{36}$/i.test(roomId) ||
+      typeof frameId !== "string" || !/^[a-f0-9-]{36}$/i.test(frameId)) {
+      throw new TypeError("page, group and view-frame IDs are required");
+    }
+    if (!region || typeof region !== "object" ||
+      ["x", "y", "width", "height"].some(key => typeof region[key] !== "number" || !Number.isFinite(region[key])) ||
+      region.x < 0 || region.y < 0 || region.width <= 0 || region.height <= 0 ||
+      region.x + region.width > 100 || region.y + region.height > 100) {
+      throw new TypeError("a non-empty in-bounds view selection is required");
+    }
+    const frame = this.#viewFrames.get(frameId);
+    if (!frame || frame.pageId !== pageId || frame.roomId !== roomId ||
+      !this.#viewGrants.has(frame.grantId) || this.#viewGrants.get(frame.grantId)?.expiresAt <= Date.now() || frame.expiresAt <= Date.now()) {
+      this.#viewFrames.delete(frameId);
+      throw new Error("view_frame_expired; refresh the live view and select again");
+    }
+    const { page, url } = this.#page(pageId);
+    const fingerprint = url.origin + url.pathname + url.search + url.hash + ":" + pageId;
+    const viewport = await page.evaluate(() => ({
+      marker: "RM_BACKROOM_VIEWPORT_V1",
+      width: window.innerWidth, height: window.innerHeight,
+      scrollX: window.scrollX, scrollY: window.scrollY, href: window.location.href,
+      revision: window.__RM_BACKROOM_VIEW_STATE_V1__?.revision,
+    }));
+    if (frame.identityFingerprint !== fingerprint || frame.href !== url.href ||
+      viewport?.marker !== "RM_BACKROOM_VIEWPORT_V1" || viewport.href !== frame.href ||
+      viewport.width !== frame.width || viewport.height !== frame.height ||
+      viewport.scrollX !== frame.scrollX || viewport.scrollY !== frame.scrollY || viewport.revision !== frame.revision) {
+      this.#viewFrames.delete(frameId);
+      throw new Error("view_frame_invalidated; the page, scroll position or viewport changed");
+    }
+
+    // Consume the frame before resolving DOM coordinates so it cannot be replayed.
+    this.#viewFrames.delete(frameId);
+    const attemptId = randomUUID();
+    const selectionId = randomUUID();
+    const bounds = {
+      left: region.x / 100 * frame.width,
+      top: region.y / 100 * frame.height,
+      right: (region.x + region.width) / 100 * frame.width,
+      bottom: (region.y + region.height) / 100 * frame.height,
+    };
+    const binding = { roomId, attemptId, fingerprint };
+    const previous = this.#selectionRooms.get(pageId);
+    if (previous) await this.#clearSelectionAttempt(page, previous.attemptId);
+    this.#selectionRooms.set(pageId, binding);
+    try {
+      const picked = await page.evaluate(request => {
+        /* RM_BACKROOM_REGION_PICK_V1 */
+        const visibleAndEditable = element => {
+          if (!(element instanceof HTMLElement) || !element.isConnected ||
+            element.closest('[aria-hidden="true"],[inert],[hidden]') ||
+            element.matches(":disabled") || ("disabled" in element && element.disabled) ||
+            ("readOnly" in element && element.readOnly) ||
+            element.getAttribute("aria-disabled") === "true" ||
+            element.getAttribute("aria-readonly") === "true") return false;
+          if (element instanceof HTMLInputElement &&
+            !["text", "search", "url", "tel", "email"].includes(element.type)) return false;
+          if (!(element instanceof HTMLInputElement) &&
+            !(element instanceof HTMLTextAreaElement) && !element.isContentEditable) return false;
+          const rect = element.getBoundingClientRect();
+          if (rect.width <= 8 || rect.height <= 8 ||
+            rect.left < request.bounds.left || rect.top < request.bounds.top ||
+            rect.right > request.bounds.right || rect.bottom > request.bounds.bottom) return false;
+          let ancestor = element;
+          while (ancestor instanceof HTMLElement) {
+            const style = getComputedStyle(ancestor);
+            if (ancestor.hasAttribute("hidden") || ancestor.hasAttribute("inert") ||
+              ancestor.getAttribute("aria-hidden") === "true" || style.display === "none" ||
+              style.visibility === "hidden" || style.visibility === "collapse" ||
+              Number(style.opacity) === 0 || style.pointerEvents === "none") return false;
+            ancestor = ancestor.parentElement;
+          }
+          return true;
+        };
+        if (window.location.href !== request.href ||
+          window.innerWidth !== request.width || window.innerHeight !== request.height ||
+          window.scrollX !== request.scrollX || window.scrollY !== request.scrollY ||
+          window.__RM_BACKROOM_VIEW_STATE_V1__?.revision !== request.revision) {
+          return { state: "stale_view" };
+        }
+        const candidates = [...document.querySelectorAll(
+          'textarea,input:not([type="password"]),[contenteditable="true"],[role="textbox"]'
+        )].filter(visibleAndEditable);
+        if (candidates.length !== 1) {
+          return { state: candidates.length === 0 ? "no_editable_target" : "ambiguous_targets" };
+        }
+        const node = candidates[0];
+        const currentValue = node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement
+          ? node.value : node.isContentEditable ? node.textContent ?? "" : null;
+        if (currentValue !== "") return { state: "occupied_target" };
+        const escapeValue = value => value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+        const unique = candidate => {
+          const attrs = ["data-testid", "aria-label", "name", "placeholder"];
+          for (const attribute of attrs) {
+            const value = candidate.getAttribute(attribute);
+            if (!value) continue;
+            const selector = "[" + attribute + '="' + escapeValue(value) + '"]';
+            try { if (document.querySelectorAll(selector).length === 1) return selector; } catch {}
+          }
+          if (candidate.id) {
+            const selector = "#" + CSS.escape(candidate.id);
+            try { if (document.querySelectorAll(selector).length === 1) return selector; } catch {}
+          }
+          const parts = [];
+          let current = candidate;
+          while (current && current !== document.body && parts.length < 8) {
+            let part = current.tagName.toLowerCase();
+            const siblings = current.parentElement
+              ? [...current.parentElement.children].filter(item => item.tagName === current.tagName) : [];
+            if (siblings.length > 1) part += ":nth-of-type(" + (siblings.indexOf(current) + 1) + ")";
+            parts.unshift(part);
+            const selector = parts.join(" > ");
+            try { if (document.querySelectorAll(selector).length === 1) return selector; } catch {}
+            current = current.parentElement;
+          }
+          return parts.join(" > ");
+        };
+        const selector = unique(node);
+        if (!selector) return { state: "unstable_selector" };
+        try {
+          const matches = document.querySelectorAll(selector);
+          if (matches.length !== 1 || matches[0] !== node) return { state: "unstable_selector" };
+        } catch { return { state: "unstable_selector" }; }
+        window.__RM_BACKROOM_ACTIVE_SELECTION_ATTEMPT_V1__ = request.attemptId;
+        window.__RM_BACKROOM_SELECTED_ELEMENT_V1__ = node;
+        window.__RM_BACKROOM_SELECTION_V1__ = {
+          state: "selected", attemptId: request.attemptId, selectionId: request.selectionId,
+          selector, tagName: node.tagName.toLowerCase(), selectedAt: Date.now(),
+        };
+        return { state: "selected", selector, tagName: node.tagName.toLowerCase() };
+      }, {
+        attemptId, selectionId, bounds, href: frame.href, width: frame.width, height: frame.height,
+        scrollX: frame.scrollX, scrollY: frame.scrollY, revision: frame.revision,
+      });
+      if (picked?.state !== "selected") {
+        throw new Error(picked?.state === "ambiguous_targets"
+          ? "selection contains more than one editable field; narrow the drag area"
+          : picked?.state === "no_editable_target"
+            ? "selection does not contain one visible editable field"
+            : picked?.state === "stale_view"
+              ? "view changed during selection; refresh and try again"
+              : picked?.state === "occupied_target"
+                ? "selected text field is not empty; clear it manually before registering"
+                : "selected field could not be identified safely");
+      }
+      const after = await page.evaluate(() => ({
+        marker: "RM_BACKROOM_VIEWPORT_V1",
+        width: window.innerWidth, height: window.innerHeight,
+        scrollX: window.scrollX, scrollY: window.scrollY, href: window.location.href,
+        revision: window.__RM_BACKROOM_VIEW_STATE_V1__?.revision,
+      }));
+      if (after?.href !== frame.href || after.width !== frame.width || after.height !== frame.height ||
+        after.scrollX !== frame.scrollX || after.scrollY !== frame.scrollY || after.revision !== frame.revision) {
+        throw new Error("view changed while selecting; refresh and try again");
+      }
+      return await this.registerSelectedTarget(pageId, roomId, attemptId);
+    } catch (error) {
+      if (this.#selectionRooms.get(pageId) === binding) this.#selectionRooms.delete(pageId);
+      await this.#clearSelectionAttempt(page, attemptId);
+      throw error;
+    }
+  }
+
   #page(pageId) {
     const page = this.#pages.get(pageId);
     if (!page || page.isClosed() || !this.#context) throw new Error("browser_page_unavailable");
