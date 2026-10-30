@@ -5,10 +5,10 @@ This document records the isolated staging path and repeatable evidence for the 
 ## Isolated environment
 
 - Git branch: `feat/backroom-cua-artemis-workspaces`
-- Latest branch HEAD at this document update: `f5bd0ed64f90cd6dbd9b6d6590d1484a40a4895b` (documentation-only commit after the tested code head)
-- Latest tested code head: `dd075ebace1ceb7f30a47b2b312655d879a48406`
-- Latest Vercel Preview deployment: `dpl_AwEhJ5PciAk8nQ41zKooWp4XxQzN` — READY (documentation-only branch head)
-- Full 683-test / TypeScript / Vite evidence: deployment `dpl_E3iL5erk4e2s5Rqq9Yo8hTMNAQS2` on tested code head `dd075eb`
+- Latest branch HEAD at this document update: `d8971b62c0178ae0b057dcecaed4c1a4b6fdd2aa`
+- Latest code/test commit included in that head: `529ac6abda3f9654c6137023eb00fda6ccc5d313` (local host Staging gateway routing regression)
+- Latest Vercel Preview deployment: `dpl_8e79mUni2iMXKJvPg94FQ8WvRWMF` — READY
+- Full 685-test / TypeScript / Vite evidence: deployment `dpl_8e79mUni2iMXKJvPg94FQ8WvRWMF` on branch head `d8971b62`
 - Stable Preview origin: `https://rub-minds-git-feat-ba-fce441-abdulrazaqafolarin-droids-projects.vercel.app`
 - Supabase staging project ref: `tzcuuynmviiuactafpld` (PostgreSQL 17.11)
 - Staging `backroom-config`: version 2, `verify_jwt=true`
@@ -38,14 +38,14 @@ Do not use wildcard origins. Pairing remains one-time, exact-origin-bound and lo
 
 ### Current-head Vercel build
 
-The Preview build for latest branch commit `63ab12fef7dbd9cfcec56dd62c27fcacc7dc11fa` reached READY. This is a documentation-only follow-up to executable-code head `f5bd0ed64f90cd6dbd9b6d6590d1484a40a4895b`. Its current prebuild suites reported:
+The Preview build for branch head `d8971b62c0178ae0b057dcecaed4c1a4b6fdd2aa` reached READY. Its current prebuild suites reported:
 
 | Suite | Passed | Failed |
 |---|---:|---:|
-| Runtime | 374 | 0 |
-| Backroom | 261 | 0 |
+| Runtime | 375 | 0 |
+| Backroom | 262 | 0 |
 | External workspaces | 48 | 0 |
-| **Total** | **683** | **0** |
+| **Total** | **685** | **0** |
 
 TypeScript (`tsc -b`) and Vite production bundling also completed successfully. The stable Preview branch alias resolves to this deployment.
 
