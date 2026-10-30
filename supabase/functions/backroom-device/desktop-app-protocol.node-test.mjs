@@ -9,7 +9,7 @@ test('rejects paths, tokens, extra fields and malformed hashes',()=>{
 test('rejects duplicate app IDs and unsafe labels',()=>{
  assert.equal(validateDesktopApps([app,{...app,label:'Other'}]),false);
  assert.equal(validateDesktopApps([{...app,label:'x'.repeat(121)}]),false);
- assert.equal(validateDesktopApps([{...app,label:'evil\\nlabel'}]),false);
+ assert.equal(validateDesktopApps([{...app,label:'evil\nlabel'}]),false);
 });
 test('caps app inventory at 100 items and rejects malformed input',()=>{
  assert.equal(validateDesktopApps(Array.from({length:101},(_,i)=>({...app,appId:'123e4567-e89b-42d3-a456-'+String(i).padStart(12,'0')}))),false);
