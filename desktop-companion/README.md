@@ -9,6 +9,7 @@ The desktop companion runs selected applications and a native terminal **on the 
 - Owner-scoped desktop registration through the backroom-device Edge Function. The Edge Function generates a one-time device bearer and stores only its SHA-256 digest.
 - Private Realtime topic scoped to the device UUID. The device owner alone may send directly; active human group members may receive. Browser commands and ICE signals go through the authenticated `backroom-device` Edge Function, which verifies user JWT, membership, active device binding, selected app/session scope, and records expiring sessions.
 - The server sends private commands through the Supabase Realtime REST endpoint. Initial WebRTC offers/answers wait for ICE gathering to finish, so a browser session does not create one Edge Function request per ICE candidate. Device-status fallback is hourly; Realtime revocation/connection events are the primary path.
+- Server session records are explicitly closed through a narrow device-bearer endpoint after denial, failed negotiation, disconnect, peer shutdown or Emergency Stop. It is device-bound, reports whether an active row was actually stopped, and is safe to retry; owner revocation marks sessions revoked server-side.
 - Windows: explicit file-picker selection of an EXE, local SHA-256 allowlist, launch without shell interpolation, and direct-child process tracking. Linux/macOS app registration/launch is not implemented yet.
 - Windows PowerShell, macOS zsh and Linux bash native PTY sessions using portable-pty.
 - Monitor capture uses the operating system display picker (getDisplayMedia) and WebRTC. Coordinate-based input is enabled only after the user shares an entire monitor and capture geometry matches the companion display.
@@ -56,7 +57,7 @@ The Tauri config starts the companion Vite server on loopback only in developmen
 ## Tests
 
 From the repository root:
-- npm run test:companion — protocol, authorization, PTY adapter and desktop device validation tests.
+- npm run test:companion — protocol, authorization, PTY adapter, desktop device validation and session-close scope tests.
 - npm run test:external-workspaces — workspace host and native security regressions.
 - cargo test --manifest-path desktop-companion/src-tauri/Cargo.toml — native geometry / input rate tests.
 - cargo check --manifest-path desktop-companion/src-tauri/Cargo.toml — compile the native crate.
