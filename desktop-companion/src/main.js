@@ -261,16 +261,20 @@ async function handleDeviceRevoked(payload){
   renderPending();
   notify('This computer was revoked by the Rub Minds group owner. Backroom streams, terminal sessions and native permissions have been stopped.','error');
 }
-async function failClosedDeviceChannel(reason){
+async function failClosedDeviceChannel(reason,failedChannel){
+  if(failedChannel&&state.channel!==failedChannel)return;
   stopHeartbeat();
+  const channel=failedChannel||state.channel;
+  state.channel=null;
   await stopAllPeerSessions();
   try{await invoke('emergency_stop');}catch{}
+  if(channel&&state.client){try{await state.client.removeChannel(channel);}catch{}}
   setConnected(false,'Device channel unavailable');
   notify(reason||'The private device channel was lost. Active Backroom sessions were stopped locally. Reconnect to resume.', 'error');
 }
 
 async function connectDeviceChannel(){
-  if(state.channel){await state.client.removeChannel(state.channel);state.channel=null;}
+  if(state.channel){const previous=state.channel;state.channel=null;await state.client.removeChannel(previous);}
   await currentSession();
   const response=await invoke('desktop_device_status',{supabaseUrl:cfg.url,publishableKey:cfg.key});
   if(response.status!=='active'||response.deviceId!==state.deviceId)throw new Error('Device registration is not active.');
@@ -283,10 +287,10 @@ async function connectDeviceChannel(){
   state.channel=channel;
   try{
     const result=await new Promise((resolve,reject)=>{
-      const timeout=setTimeout(()=>reject(new Error('Private device channel timed out. Check Realtime private channel authorization.')),15000);
+      const timeout=setTimeout(()=>{void failClosedDeviceChannel('Private device channel timed out. Check Realtime private channel authorization.',channel);reject(new Error('Private device channel timed out.'));},15000);
       channel.subscribe(status=>{
         if(status==='SUBSCRIBED'){clearTimeout(timeout);resolve(status);}
-        if(status==='CHANNEL_ERROR'||status==='TIMED_OUT'||status==='CLOSED'){clearTimeout(timeout);void failClosedDeviceChannel('Private device channel '+status+'. Active local sessions were stopped.');reject(new Error('Private device channel '+status+'.'));}
+        if(status==='CHANNEL_ERROR'||status==='TIMED_OUT'||status==='CLOSED'){clearTimeout(timeout);void failClosedDeviceChannel('Private device channel '+status+'. Active local sessions were stopped.',channel);reject(new Error('Private device channel '+status+'.'));}
       });
     });
     setConnected(true,'Account connected · private channel active');
@@ -519,7 +523,7 @@ function startHeartbeat(){
       state.heartbeatMisses=0;
       if(status.status!=='active'||status.deviceId!==state.deviceId){
         stopHeartbeat();await stopAllPeerSessions();try{await invoke('emergency_stop');}catch{}
-        if(state.channel){await state.client.removeChannel(state.channel);state.channel=null;}
+        if(state.channel){const channel=state.channel;state.channel=null;await state.client.removeChannel(channel);}
         state.deviceTokenSaved=false;setConnected(false,'Computer authorization revoked');
         notify('Rub Minds revoked this computer. Backroom streams, terminal sessions and local control grants were stopped.','error');
       }
