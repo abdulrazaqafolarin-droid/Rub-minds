@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent, type Keybo
 import { Activity, Monitor, Play, Power, RefreshCw, ShieldCheck, SquareTerminal, TextCursorInput, X } from 'lucide-react';
 import { supabase } from './supabase';
 import { buildScopedDeviceMessage, classifyDeviceResponse, validateDeviceSignal, queueIceCandidate, takeIceCandidates } from '../integrations/backroom/desktop-realtime-protocol.mjs';
+import { waitForIceGatheringComplete } from '../integrations/backroom/ice-gathering.mjs';
 import { listBackroomDevices, type BackroomDevice } from './backroomCloudDevices';
 import './backroomDesktopControl.css';
 
@@ -166,13 +167,6 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       const peerId=uuid();const pc=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun.cloudflare.com:3478']}]});
       const data=pc.createDataChannel('backroom-terminal',{ordered:true});dataRef.current=data;peerRef.current=pc;screenSessionRef.current=peerId;setTerminalPeerId(peerId);terminalPeerRef.current=peerId;setTerminalText('Waiting for local terminal approval…\\n');
       data.onmessage=event=>{let message:any;try{message=JSON.parse(event.data);}catch{return;}if(message.kind==='terminal_output'){const output=new TextDecoder().decode(new Uint8Array(message.data||[]));setTerminalText(old=>(old+output).slice(-30000));}};
-      const pendingIce:RTCIceCandidateInit[]=[];let sessionCreated=false;
-      pc.onicecandidate=event=>{
-        if(!event.candidate)return;
-        const candidate=event.candidate.toJSON();
-        if(!sessionCreated){pendingIce.push(candidate);return;}
-        void publish('signal',{sessionId:peerId,candidate}).catch(error=>flash(String(error),true));
-      };
       pc.onconnectionstatechange=()=>{
         if(pc.connectionState==='failed'||pc.connectionState==='disconnected'){
           flash('Terminal data connection interrupted. The local terminal will be stopped.',true);
@@ -181,8 +175,8 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
         }
       };
       const offer=await pc.createOffer();await pc.setLocalDescription(offer);
+      await waitForIceGatheringComplete(pc);
       await sendCommand('terminal_start',{sessionId:peerId,offer:{sdp:pc.localDescription?.sdp}});
-      sessionCreated=true;for(const candidate of pendingIce)await publish('signal',{sessionId:peerId,candidate});
       flash('Native terminal request sent. Approve it on the computer.');
     }catch(error){await closePeer();flash(error instanceof Error?error.message:'Could not request terminal.',true);}
   };
@@ -194,13 +188,6 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     const data=pc.createDataChannel('backroom-input',{ordered:true});
     dataRef.current=data;peerRef.current=pc;setScreenSession(sessionId);setTerminalPeerId('');
     pc.ontrack=event=>{if(videoRef.current)videoRef.current.srcObject=event.streams[0];setVideoReady(true);};
-    const pendingIce:RTCIceCandidateInit[]=[];let sessionCreated=false;
-    pc.onicecandidate=event=>{
-      if(!event.candidate)return;
-      const candidate=event.candidate.toJSON();
-      if(!sessionCreated){pendingIce.push(candidate);return;}
-      void publish('signal',{sessionId,candidate}).catch(error=>flash(String(error),true));
-    };
     pc.onconnectionstatechange=()=>{
       if(pc.connectionState==='failed'||pc.connectionState==='disconnected'){
         flash('Screen connection interrupted. The local stream will be stopped.',true);
@@ -221,8 +208,8 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     };
     try{
       const offer=await pc.createOffer();await pc.setLocalDescription(offer);
+      await waitForIceGatheringComplete(pc);
       await sendCommand('view_offer',{sessionId,offer:{sdp:pc.localDescription?.sdp}});
-      sessionCreated=true;for(const candidate of pendingIce)await publish('signal',{sessionId,candidate});
       flash('View request sent. The companion must approve it and you must choose a monitor in the operating-system picker.');
     }catch(error){await closePeer();flash(error instanceof Error?error.message:'Could not create the screen-share request.',true);}
   };
