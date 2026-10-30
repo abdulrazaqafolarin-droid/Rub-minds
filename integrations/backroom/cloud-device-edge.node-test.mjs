@@ -98,3 +98,10 @@ test("no native or web localhost bridge exists in the cloud Device Frame path", 
   assert.match(api, /HttpsURLConnection/);
   assert.match(api, /instanceFollowRedirects = false/);
 });
+
+
+test("Supabase config declares the device Edge Function exactly once with manual JWT verification", async () => {
+  const config = await read("supabase/config.toml");
+  assert.equal((config.match(/^\\[functions\\.backroom-device\\]$/gm) ?? []).length, 1);
+  assert.match(config, /\\[functions\\.backroom-device\\]\\s+verify_jwt = false/);
+});
