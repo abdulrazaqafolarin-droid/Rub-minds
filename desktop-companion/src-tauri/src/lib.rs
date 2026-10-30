@@ -842,7 +842,7 @@ fn list_pending_drafts(state: State<'_, AppState>) -> Result<Vec<PendingDraftSum
 }
 
 #[tauri::command]
-fn approve_draft_request(state: State<'_, AppState>, request_id: String) -> Result<String, String> {
+fn approve_draft_request(app: AppHandle, state: State<'_, AppState>, request_id: String) -> Result<String, String> {
     let pending = state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?
         .remove(&request_id).ok_or("Draft request expired or no longer exists")?;
     if pending.expires_at <= Instant::now() {
@@ -850,6 +850,10 @@ fn approve_draft_request(state: State<'_, AppState>, request_id: String) -> Resu
     }
     control_granted(&state, &pending.session_id)?;
     draft_granted(&state, &pending.session_id)?;
+    require_native_confirmation(&app, "Insert this unsent draft?", &format!(
+        "Insert this exact text into the center of the area you selected? No Enter or Send action will be performed.\\n\\n{}",
+        pending.text
+    ))?;
     let geometry = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
         .get(&pending.session_id).cloned().ok_or("Live monitor capture is not active")?;
     let center_x = pending.target.x + pending.target.width / 2.0;
@@ -889,6 +893,7 @@ struct TerminalOutput {
 
 #[tauri::command]
 fn start_terminal(app: AppHandle, state: State<'_, AppState>) -> Result<TerminalStarted, String> {
+    require_native_confirmation(&app, "Start a native terminal?", "Start a local PowerShell/zsh/bash shell for this Backroom session? A separate time-limited control approval is needed before remote typing is enabled.")?;
     let system = native_pty_system();
     let pair = system.openpty(PtySize { rows: 30, cols: 100, pixel_width: 0, pixel_height: 0 })
         .map_err(|_| "Could not create the native terminal session".to_string())?;
