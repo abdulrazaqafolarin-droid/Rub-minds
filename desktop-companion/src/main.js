@@ -192,7 +192,7 @@ async function addApp(){
 }
 async function syncApps(){
   // The native command obtains the bearer token directly from the OS keyring.
-  const result=await invoke('sync_desktop_app_inventory',{supabaseUrl:cfg.url,publishableKey:cfg.key,apps:state.apps});
+  const result=await invoke('sync_desktop_app_inventory',{supabaseUrl:cfg.url,publishableKey:cfg.key});
   notify('Synced '+result+' selected desktop apps. Executable paths and app data remain on this computer.','success');
 }
 async function localLaunch(appItem){
