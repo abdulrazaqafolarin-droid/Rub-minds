@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { validateDeviceCommand, queueIceCandidate, takeIceCandidates } from '../../integrations/backroom/desktop-realtime-protocol.mjs';
+import { validateDeviceCommand, validateDeviceSignal, queueIceCandidate, takeIceCandidates } from '../../integrations/backroom/desktop-realtime-protocol.mjs';
 import './style.css';
 
 const app = document.querySelector('#app');
@@ -146,12 +146,12 @@ async function registerDevice(){
 }
 async function revokeDevice(){
   hideNotice();
-  stopHeartbeat();
-  await stopAllPeerSessions();
-  await invoke('emergency_stop');
   if(!state.deviceTokenSaved)return notify('This computer has no active device credential.','error');
   if(!confirm('Revoke this computer from the selected Rub Minds group? This closes Backroom terminal sessions and revokes local desktop-control permissions.'))return;
+  stopHeartbeat();
   try{
+    await stopAllPeerSessions();
+    await invoke('emergency_stop');
     const session=await currentSession();
     await invoke('revoke_desktop_device',{supabaseUrl:cfg.url,publishableKey:cfg.key,accessToken:session.access_token,roomId:state.roomId});
     state.deviceTokenSaved=false;state.deviceId=null;state.roomId=null;state.apps=[];state.pending=[];state.terminals.clear();
@@ -205,7 +205,9 @@ async function localLaunch(appItem){
 }
 function createApproval(kind,description,onApprove,extra={}){
   const requestId=extra.requestId||crypto.randomUUID();
-  const item={kind,description,onApprove,requestId,extra};
+  const actor=extra.remote&&typeof extra.actorDisplayName==='string'?extra.actorDisplayName.trim().slice(0,80):'';
+  const actorNote=actor?'Requested by '+actor+' through the verified Rub Minds group.\\n\\n':'';
+  const item={kind,description:actorNote+description,onApprove,requestId,extra};
   state.pending.push(item);renderPending();
   return {requestId};
 }
@@ -243,6 +245,30 @@ async function publish(event,payload){
   const result=await state.channel.send({type:'broadcast',event,payload:{...payload,roomId:state.roomId,deviceId:state.deviceId}});
   if(result!=='ok')throw new Error('Could not send a private device message.');
 }
+
+async function handleDeviceRevoked(payload){
+  if(payload?.deviceId!==state.deviceId||payload?.roomId!==state.roomId||payload?.status!=='revoked')return;
+  stopHeartbeat();
+  await stopAllPeerSessions();
+  // Native status verification clears the OS keyring credential and all grants.
+  try{await invoke('desktop_device_status',{supabaseUrl:cfg.url,publishableKey:cfg.key});}
+  catch{try{await invoke('emergency_stop');}catch{}}
+  if(state.channel){const channel=state.channel;state.channel=null;try{await state.client.removeChannel(channel);}catch{}}
+  state.deviceTokenSaved=false;state.pending=[];state.terminals.clear();
+  setConnected(false,'Computer authorization revoked');
+  const stateNode=document.querySelector('#device-state');if(stateNode)stateNode.textContent='Revoked';
+  document.querySelector('#revoke-device')?.classList.add('hidden');
+  renderPending();
+  notify('This computer was revoked by the Rub Minds group owner. Backroom streams, terminal sessions and native permissions have been stopped.','error');
+}
+async function failClosedDeviceChannel(reason){
+  stopHeartbeat();
+  await stopAllPeerSessions();
+  try{await invoke('emergency_stop');}catch{}
+  setConnected(false,'Device channel unavailable');
+  notify(reason||'The private device channel was lost. Active Backroom sessions were stopped locally. Reconnect to resume.', 'error');
+}
+
 async function connectDeviceChannel(){
   if(state.channel){await state.client.removeChannel(state.channel);state.channel=null;}
   await currentSession();
@@ -253,13 +279,14 @@ async function connectDeviceChannel(){
   const channel=state.client.channel(topic,{config:{private:true,broadcast:{ack:true,self:false}}});
   channel.on('broadcast',{event:'command'},message=>void handleCommand(message.payload||{}));
   channel.on('broadcast',{event:'signal'},message=>void handleSignal(message.payload||{}));
+  channel.on('broadcast',{event:'device_revoked'},message=>void handleDeviceRevoked(message.payload||{}));
   state.channel=channel;
   try{
     const result=await new Promise((resolve,reject)=>{
       const timeout=setTimeout(()=>reject(new Error('Private device channel timed out. Check Realtime private channel authorization.')),15000);
       channel.subscribe(status=>{
         if(status==='SUBSCRIBED'){clearTimeout(timeout);resolve(status);}
-        if(status==='CHANNEL_ERROR'||status==='TIMED_OUT'||status==='CLOSED'){clearTimeout(timeout);reject(new Error('Private device channel '+status+'.'));}
+        if(status==='CHANNEL_ERROR'||status==='TIMED_OUT'||status==='CLOSED'){clearTimeout(timeout);void failClosedDeviceChannel('Private device channel '+status+'. Active local sessions were stopped.');reject(new Error('Private device channel '+status+'.'));}
       });
     });
     setConnected(true,'Account connected · private channel active');
@@ -287,7 +314,7 @@ async function handleCommand(payload){
     createApproval('launch_app','Open '+appItem.label+' on this actual computer?',async()=>{
       const pid=await invoke('launch_registered_app',{appId:appItem.id});
       await publish('response',{requestId,ok:true,pid});
-    },{requestId,remote:true,capability:'launch'});
+    },{requestId,remote:true,actorDisplayName:payload.actorDisplayName,capability:'launch'});
     return;
   }
   if(payload.action==='terminal_start'){
@@ -304,7 +331,7 @@ async function handleCommand(payload){
         await stopPeer(payload.sessionId);
         throw error;
       }
-    },{requestId,sessionId:payload.sessionId,remote:true,capability:'terminal'});
+    },{requestId,sessionId:payload.sessionId,remote:true,actorDisplayName:payload.actorDisplayName,capability:'terminal'});
     return;
   }
   if(payload.action==='request_control'){
@@ -313,21 +340,21 @@ async function handleCommand(payload){
     createApproval('control','Allow this Backroom group to control the selected app/terminal for up to 120 seconds? Mouse, keyboard and terminal input will be enabled.',async()=>{
       await invoke('grant_control',{sessionId,seconds:120});
       await publish('response',{requestId,ok:true,sessionId,capability:'control',expiresSeconds:120});
-    },{requestId,sessionId,remote:true,capability:'control'});return;
+    },{requestId,sessionId,remote:true,actorDisplayName:payload.actorDisplayName,capability:'control'});return;
   }
   if(payload.action==='request_draft_permission'){
     const sessionId=payload.sessionId;if(typeof sessionId!=='string')return;
     createApproval('draft_typing','Allow separately approved draft typing into the exact area you select for up to 60 seconds? This never presses Enter or Send.',async()=>{
       await invoke('grant_draft_typing',{sessionId,seconds:60});
       await publish('response',{requestId,ok:true,sessionId,capability:'draft',expiresSeconds:60});
-    },{requestId,sessionId,remote:true,capability:'draft'});return;
+    },{requestId,sessionId,remote:true,actorDisplayName:payload.actorDisplayName,capability:'draft'});return;
   }
   if(payload.action==='view_offer'){
     if(typeof payload.sessionId!=='string'||!payload.offer?.sdp)return;
     createApproval('view_offer','Share your entire monitor with this Backroom session. Windows will show its screen-sharing picker. Choosing a single window keeps the frame view-only.',async()=>{
       try{await startViewSession(payload);}
       catch(error){await stopPeer(payload.sessionId);throw error;}
-    },{requestId,sessionId:payload.sessionId,remote:true,capability:'view'});return;
+    },{requestId,sessionId:payload.sessionId,remote:true,actorDisplayName:payload.actorDisplayName,capability:'view'});return;
   }
   if(payload.action==='stop_session'){
     const peerSessionId=payload.sessionId;
@@ -395,25 +422,27 @@ async function startViewSession(payload){
   state.streams.set(sessionId,stream);
   notify('Screen share active. '+(canControl?'Monitor coordinates matched; control can be approved separately.':'View-only: choose the full monitor for coordinate-safe control.'),'success');
 }
-async function publishSignal(sessionId,signal){await state.channel.send({type:'broadcast',event:'signal',payload:{deviceId:state.deviceId,roomId:state.roomId,sessionId,...signal}});}
+async function publishSignal(sessionId,signal){await state.channel.send({type:'broadcast',event:'signal',payload:{deviceId:state.deviceId,roomId:state.roomId,sessionId,issuedAt:Date.now(),...signal}});}
 async function handleSignal(payload){
-  if(payload.deviceId!==state.deviceId||payload.roomId!==state.roomId||typeof payload.sessionId!=='string')return;
-  const peer=state.peers.get(payload.sessionId);
+  const signal=validateDeviceSignal(payload,{deviceId:state.deviceId,roomId:state.roomId,now:Date.now(),maxAgeMs:120_000});
+  if(!signal)return;
+  const peer=state.peers.get(signal.sessionId);
   if(!peer){
-    if(payload.candidate)queueIceCandidate(state.pendingCandidates,payload.sessionId,payload.candidate);
+    if(signal.candidate)queueIceCandidate(state.pendingCandidates,signal.sessionId,signal.candidate);
     return;
   }
-  if(payload.answer){
+  if(signal.answer){
     try{
-      await peer.pc.setRemoteDescription(payload.answer);
-      for(const candidate of takeIceCandidates(state.pendingCandidates,payload.sessionId)){try{await peer.pc.addIceCandidate(candidate);}catch{}}
+      await peer.pc.setRemoteDescription(signal.answer);
+      for(const candidate of takeIceCandidates(state.pendingCandidates,signal.sessionId)){try{await peer.pc.addIceCandidate(candidate);}catch{}}
     }catch(error){notify('WebRTC answer rejected: '+error.message,'error');}
   }
-  if(payload.candidate){
-    if(!peer.pc.remoteDescription)queueIceCandidate(state.pendingCandidates,payload.sessionId,payload.candidate);
-    else try{await peer.pc.addIceCandidate(payload.candidate);}catch{}
+  if(signal.candidate){
+    if(!peer.pc.remoteDescription)queueIceCandidate(state.pendingCandidates,signal.sessionId,signal.candidate);
+    else try{await peer.pc.addIceCandidate(signal.candidate);}catch{}
   }
-  if(payload.stop){await stopPeer(payload.sessionId);}
+  if(signal.canControl===true)notify('Full-monitor geometry was verified. Control still requires separate approval.','success');
+  if(signal.stop){await stopPeer(signal.sessionId);}
 }
 async function handlePeerData(sessionId,raw){
   const peer=state.peers.get(sessionId);if(!peer)return;
@@ -503,7 +532,7 @@ function startHeartbeat(){
         notify('The authenticated device connection was lost. Active Backroom sessions were stopped locally. Reconnect after checking the internet connection.','error');
       }
     }
-  },5_000);
+  },15*60*1000);
 }
 async function startTerminalLocal(){
   try{
