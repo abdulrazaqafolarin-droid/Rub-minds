@@ -51,6 +51,7 @@ test("device bearer credential is encrypted with Android Keystore", async () => 
   assert.match(vault, /AES\/GCM\/NoPadding/);
   assert.match(vault, /setRandomizedEncryptionRequired\(true\)/);
   assert.match(vault, /credential_ciphertext/);
+  assert.match(vault, /\.commit\(\)/, "Pairing credentials must persist synchronously before a one-use network redemption.");
 });
 
 test("selected inventory is the only app information sent to cloud", async () => {

@@ -19,11 +19,12 @@ class DeviceCredentialVault(context: Context) {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, key())
         val encrypted = cipher.doFinal(token.toByteArray(Charsets.UTF_8))
-        preferences.edit()
+        val persisted = preferences.edit()
             .putString(KEY_IV, Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
             .putString(KEY_TOKEN, Base64.encodeToString(encrypted, Base64.NO_WRAP))
             .putString(KEY_DEVICE_ID, deviceId)
-            .apply()
+            .commit()
+        check(persisted) { "Could not persist the encrypted Backroom device credential." }
     }
 
     fun token(): String? {
@@ -43,7 +44,9 @@ class DeviceCredentialVault(context: Context) {
     fun deviceId(): String? = preferences.getString(KEY_DEVICE_ID, null)
 
     fun clear() {
-        preferences.edit().remove(KEY_IV).remove(KEY_TOKEN).remove(KEY_DEVICE_ID).apply()
+        check(preferences.edit().remove(KEY_IV).remove(KEY_TOKEN).remove(KEY_DEVICE_ID).commit()) {
+            "Could not clear the saved Backroom device credential."
+        }
     }
 
     private fun key(): SecretKey {
