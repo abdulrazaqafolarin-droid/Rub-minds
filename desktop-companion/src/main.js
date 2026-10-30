@@ -263,7 +263,7 @@ async function publish(event,payload){
 async function handleDeviceRevoked(payload){
   if(payload?.deviceId!==state.deviceId||payload?.roomId!==state.roomId||payload?.status!=='revoked')return;
   stopHeartbeat();
-  await stopAllPeerSessions();
+  await stopAllPeerSessions({serverAlreadyClosed:true});
   // Native status verification clears the OS keyring credential and all grants.
   try{await invoke('desktop_device_status',{supabaseUrl:cfg.url,publishableKey:cfg.key});}
   catch{try{await invoke('emergency_stop');}catch{}}
@@ -508,7 +508,7 @@ async function refreshPending(){
   }
   renderPending();
 }
-async function stopPeer(sessionId){
+async function stopPeer(sessionId,{closeServer=true}={}){
   const peer=state.peers.get(sessionId);
   // Remove ownership before close() emits state changes, making teardown idempotent.
   state.peers.delete(sessionId);state.streams.delete(sessionId);state.pendingCandidates.delete(sessionId);
@@ -521,7 +521,7 @@ async function stopPeer(sessionId){
     }
   }
   try{await invoke('revoke_control',{sessionId});}catch{}
-  await closeServerSession(sessionId);
+  if(closeServer)await closeServerSession(sessionId);
   const pending=state.pending.filter(item=>item.extra?.remote&&item.extra?.sessionId===sessionId&&
     ['terminal','view'].includes(item.extra?.capability));
   for(const item of pending){
@@ -530,15 +530,26 @@ async function stopPeer(sessionId){
   }
   if(pending.length)renderPending();
 }
-async function stopAllPeerSessions(){
+async function stopAllPeerSessions({serverAlreadyClosed=false}={}){
+  const serverSessionIds=new Set(state.peers.keys());
+  for(const item of state.pending){
+    if(item.extra?.remote&&['terminal','view'].includes(item.extra?.capability)&&typeof item.extra?.sessionId==='string')
+      serverSessionIds.add(item.extra.sessionId);
+  }
   for(const [peerSessionId] of [...state.peers.entries()]){
-    await stopPeer(peerSessionId);
+    await stopPeer(peerSessionId,{closeServer:false});
   }
   for(const stream of state.streams.values())for(const track of stream.getTracks())track.stop();
   state.streams.clear();
   for(const term of state.terminals.values())try{await invoke('stop_terminal',{sessionId:term.sessionId});}catch{}
   state.terminals.clear();
   state.pendingCandidates.clear();
+  if(!serverAlreadyClosed){
+    for(const sessionId of serverSessionIds)await closeServerSession(sessionId);
+  }
+  state.pending=state.pending.filter(item=>!(item.extra?.remote&&
+    ['terminal','view'].includes(item.extra?.capability)&&serverSessionIds.has(item.extra?.sessionId)));
+  renderPending();
 }
 function stopHeartbeat(){if(state.heartbeat){clearInterval(state.heartbeat);state.heartbeat=null;}}
 function startHeartbeat(){
