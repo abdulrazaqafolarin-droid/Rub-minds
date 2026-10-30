@@ -10,7 +10,7 @@ import {classifyExistingBinding} from '../../../integrations/backroom/binding-re
 const url=Deno.env.get('SUPABASE_URL'),key=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 if(!url||!key)throw new Error('Backend configuration missing');
 const db=createClient(url,key,{auth:{persistSession:false,autoRefreshToken:false}});
-const origins=new Set(['https://rub-minds.vercel.app','http://localhost:5173','http://127.0.0.1:5173']);
+const origins=new Set(['https://rub-minds.vercel.app','https://rub-minds-fjfauo0n2-abdulrazaqafolarin-droids-projects.vercel.app','https://rub-minds-git-feat-ba-fce441-abdulrazaqafolarin-droids-projects.vercel.app','http://localhost:5173','http://127.0.0.1:5173']);
 const MAX_BYTES=8192;
 const json=(status:number,payload:unknown,origin:string|null)=>new Response(JSON.stringify(payload),{
  status,headers:{'Content-Type':'application/json','Cache-Control':'no-store',
