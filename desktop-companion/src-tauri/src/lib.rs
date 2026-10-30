@@ -71,20 +71,16 @@ fn clear_device_credentials() -> Result<(), String> {
 // This confirmation is a native OS dialog, not HTML rendered in the companion
 // WebView. Sensitive Tauri commands enforce it themselves so an IPC caller
 // cannot bypass the local approval screen with a direct invoke() call.
-fn require_native_confirmation(app: AppHandle, title: &str, message: &str) -> Result<(), String> {
-    let handle = app.clone();
-    let title = title.to_string();
-    let message = message.to_string();
-    // blocking_show must not run on the UI thread. Display the system dialog
-    // from a worker so the WebView remains responsive while the user decides.
-    let result = std::thread::spawn(move || {
-        handle.dialog()
-            .message(message)
-            .title(title)
-            .buttons(MessageDialogButtons::YesNo)
-            .blocking_show()
-    }).join().map_err(|_| "Native approval dialog failed".to_string())?;
-    if result { Ok(()) } else { Err("Action denied in the operating-system confirmation dialog".into()) }
+async fn require_native_confirmation(app: AppHandle, title: &str, message: &str) -> Result<(), String> {
+    let (sender, receiver) = tokio::sync::oneshot::channel::<bool>();
+    app.dialog()
+        .message(message.to_string())
+        .title(title.to_string())
+        .buttons(MessageDialogButtons::YesNo)
+        .show(move |approved| { let _ = sender.send(approved); });
+    let approved = receiver.await
+        .map_err(|_| "The operating-system approval dialog closed unexpectedly".to_string())?;
+    if approved { Ok(()) } else { Err("Action denied in the operating-system confirmation dialog".into()) }
 }
 
 fn random_identity() -> Result<(String, String), String> {
@@ -525,7 +521,7 @@ fn list_registered_apps(app: AppHandle) -> Result<Vec<ApprovedAppSummary>, Strin
 }
 
 #[tauri::command]
-fn launch_registered_app(app: AppHandle, state: State<'_, AppState>, app_id: String) -> Result<u32, String> {
+async fn launch_registered_app(app: AppHandle, state: State<'_, AppState>, app_id: String) -> Result<u32, String> {
     #[cfg(not(target_os = "windows"))]
     {
         let _ = (app, state, app_id);
@@ -653,7 +649,7 @@ fn check_input_rate(state: &AppState) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn grant_control(app: AppHandle, state: State<'_, AppState>, session_id: String, seconds: u64) -> Result<(), String> {
+async fn grant_control(app: AppHandle, state: State<'_, AppState>, session_id: String, seconds: u64) -> Result<(), String> {
     if !valid_session_id(&session_id) { return Err("Invalid session".into()); }
     let has_live_capture = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
         .contains_key(&session_id);
@@ -684,7 +680,7 @@ fn revoke_control(state: State<'_, AppState>, session_id: String) -> Result<(), 
 }
 
 #[tauri::command]
-fn grant_draft_typing(app: AppHandle, state: State<'_, AppState>, session_id: String, seconds: u64) -> Result<(), String> {
+async fn grant_draft_typing(app: AppHandle, state: State<'_, AppState>, session_id: String, seconds: u64) -> Result<(), String> {
     control_granted(&state, &session_id)?;
     if !state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?.contains_key(&session_id) {
         return Err("Draft typing is available only in an active screen session".into());
@@ -872,7 +868,7 @@ fn list_pending_drafts(state: State<'_, AppState>) -> Result<Vec<PendingDraftSum
 }
 
 #[tauri::command]
-fn approve_draft_request(app: AppHandle, state: State<'_, AppState>, request_id: String) -> Result<String, String> {
+async fn approve_draft_request(app: AppHandle, state: State<'_, AppState>, request_id: String) -> Result<String, String> {
     let pending = state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?
         .remove(&request_id).ok_or("Draft request expired or no longer exists")?;
     if pending.expires_at <= Instant::now() {
@@ -922,7 +918,7 @@ struct TerminalOutput {
 }
 
 #[tauri::command]
-fn start_terminal(app: AppHandle, state: State<'_, AppState>) -> Result<TerminalStarted, String> {
+async fn start_terminal(app: AppHandle, state: State<'_, AppState>) -> Result<TerminalStarted, String> {
     require_native_confirmation(&app, "Start a native terminal?", "Start a local PowerShell/zsh/bash shell for this Backroom session? A separate time-limited control approval is needed before remote typing is enabled.")?;
     let mut active_terminals = state.terminals.lock().map_err(|_| "Terminal registry unavailable")?;
     if active_terminals.len() >= MAX_ACTIVE_TERMINALS {
