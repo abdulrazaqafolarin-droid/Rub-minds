@@ -42,7 +42,7 @@ This slice supports **app discovery and selected-app inventory only**. It does n
 
 `MANAGE_EXTERNAL_STORAGE` is deliberately not requested. It grants broad access to shared storage, not another app's private sandbox (`/data/user/0/<package>` or another app's `Android/data` directory). Existing private logins and app databases cannot be copied by an ordinary app. A future virtualization engine must create a fresh, isolated data container and pass app-specific compatibility tests; the user signs into that instance separately.
 
-Package inventory is restricted to launchable apps visible under the declared `<queries>` filter. A broader all-packages declaration is not included. The SD-card label is based on Android's installed-package metadata; this app does not scan an SD card for uninstalled APK files. Work-profile and SD-card app visibility depends on Android profile, package visibility, and OEM behavior.
+Package inventory is restricted to launchable apps visible under the declared `<queries>` filter. A broader all-packages declaration is not included. The external-storage label is based on Android's installed-package metadata; this app does not scan removable media for uninstalled APK files. Work-profile and external-storage app visibility depends on Android profile, package visibility, and OEM behavior.
 
 ## Virtualization engine decision
 

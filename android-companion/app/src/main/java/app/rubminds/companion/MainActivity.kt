@@ -250,7 +250,7 @@ class MainActivity : Activity() {
             val digest = AppIdentity.signingCertificateSha256(this, packageName)
             @Suppress("DEPRECATION")
             val version = try { packageManager.getPackageInfo(packageName, 0).versionName ?: "" } catch (_: Exception) { "" }
-            val storageLabel = if ((applicationInfo.flags and ApplicationInfo.FLAG_EXTERNAL_STORAGE) != 0) "SD card" else "Phone storage"
+            val storageLabel = if ((applicationInfo.flags and ApplicationInfo.FLAG_EXTERNAL_STORAGE) != 0) "External storage" else "Internal storage"
             LaunchableApp(packageName, label, info.loadIcon(packageManager), digest, version.take(80), storageLabel)
         }.distinctBy { it.packageName }.sortedBy { it.label.lowercase() }
         drawAppRows()

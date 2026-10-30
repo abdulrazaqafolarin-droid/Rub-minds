@@ -61,6 +61,6 @@ For Preview acceptance, set the Edge Function's `BACKROOM_DEVICE_ALLOWED_ORIGINS
 
 The normal `?backroom=1` entry now opens the cloud Device Frame directly. The older paired-local-host simulator is no longer linked from the Backroom navigation. Its source and isolated tests remain in the repository as a prototype, but it is not part of the normal Device Frame route. This is intentional: the phone and desktop runtimes must connect outbound to the cloud, not be controlled through localhost.
 
-The Android inventory labels installed apps on external SD storage when Android reports the package's external-storage flag. It does not browse arbitrary APK files on removable media or request broad file access. Uninstalled APK import is a separate future feature requiring a user-picked document URI and a compatible virtualization engine.
+The Android inventory labels installed apps as external/internal storage based on Android's `ApplicationInfo.FLAG_EXTERNAL_STORAGE` metadata. That flag is not a reliable claim that a removable SD card is present. It does not browse arbitrary APK files on removable media or request broad file access. Uninstalled APK import is a separate future feature requiring a user-picked document URI and a compatible virtualization engine.
 
 A separate CI job now builds the native Android module with JDK 17 / Gradle 8.10.2 / Android SDK 35 and runs the Kotlin/JUnit policy tests. It uses placeholder public build configuration only; no production secret is passed to CI.
