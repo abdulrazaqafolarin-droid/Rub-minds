@@ -7,6 +7,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolveOwnerFromJwt } from './owner-jwt.mjs';
 import { sanitizeDeviceEvent, validatePairClaim, validateSelectedApps } from './cloud-device-protocol.mjs';
 import { validateDesktopRegistration } from './desktop-device-protocol.mjs';
+import { validateDesktopApps } from './desktop-app-protocol.mjs';
 
 const url = Deno.env.get('SUPABASE_URL');
 const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
@@ -186,6 +187,20 @@ Deno.serve(async req => {
         capabilities: current.capabilities }, origin);
     }
 
+    if (action === 'desktop/inventory') {
+      const current = await device(req);
+      if (!current) return json(401, fail('device_not_approved'), origin);
+      if (!exactKeys(input, ['action','apps']) || !validateDesktopApps(input.apps)) {
+        return json(400, fail('invalid_desktop_inventory'), origin);
+      }
+      const { data, error } = await db.rpc('sync_backroom_desktop_apps', {
+        p_device_id: current.device_id,
+        p_apps: input.apps.map((app: any) => ({ app_id: app.appId, app_label: app.label.trim(), executable_sha256: app.sha256 }))
+      });
+      if (error) return json(409, fail('desktop_inventory_sync_failed'), origin);
+      await db.from('backroom_devices').update({ last_seen_at: new Date().toISOString() }).eq('device_id', current.device_id);
+      return json(200, { ok: true, synced: Number(data) || 0 }, origin);
+    }
     if (action === 'device/inventory') {
       const current = await device(req);
       if (!current) return json(401, fail('device_not_approved'), origin);
@@ -251,15 +266,19 @@ Deno.serve(async req => {
         if (bindingError) return json(503, fail('device_list_unavailable'), origin);
         const ids = [...new Set((bindings ?? []).map((item: any) => item.device_id))];
         if (!ids.length) return json(200, { ok: true, devices: [] }, origin);
-        const [devices, apps] = await Promise.all([
+        const [devices, apps, desktopApps] = await Promise.all([
           db.from('backroom_devices').select('device_id,device_label,platform,os_version,app_version,status,capabilities,created_at,approved_at,last_seen_at')
             .in('device_id', ids).order('created_at', { ascending: false }),
           db.from('backroom_device_apps').select('device_id,package_name,app_label,version_name,draft_insertion_allowed,discovered_at')
+            .in('device_id', ids).order('app_label', { ascending: true }),
+          db.from('backroom_desktop_apps').select('device_id,app_id,app_label,executable_sha256,discovered_at')
             .in('device_id', ids).order('app_label', { ascending: true })
         ]);
-        if (devices.error || apps.error) return json(503, fail('device_list_unavailable'), origin);
+        if (devices.error || apps.error || desktopApps.error) return json(503, fail('device_list_unavailable'), origin);
         return json(200, { ok: true, devices: (devices.data ?? []).map((d: any) => ({
-          ...d, apps: (apps.data ?? []).filter((app: any) => app.device_id === d.device_id)
+          ...d,
+          apps: (apps.data ?? []).filter((app: any) => app.device_id === d.device_id),
+          desktopApps: (desktopApps.data ?? []).filter((app: any) => app.device_id === d.device_id)
         })) }, origin);
       }
       if (action === 'owner/approve' || action === 'owner/revoke') {
