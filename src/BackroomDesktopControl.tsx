@@ -145,7 +145,13 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       const data=pc.createDataChannel('backroom-terminal',{ordered:true});dataRef.current=data;peerRef.current=pc;screenSessionRef.current=peerId;setTerminalPeerId(peerId);terminalPeerRef.current=peerId;setTerminalText('Waiting for local terminal approval…\\n');
       data.onmessage=event=>{let message:any;try{message=JSON.parse(event.data);}catch{return;}if(message.kind==='terminal_output'){const output=new TextDecoder().decode(new Uint8Array(message.data||[]));setTerminalText(old=>(old+output).slice(-30000));}};
       pc.onicecandidate=event=>{if(event.candidate)void publish('signal',{sessionId:peerId,candidate:event.candidate.toJSON()}).catch(error=>flash(String(error),true));};
-      pc.onconnectionstatechange=()=>{if(pc.connectionState==='failed'||pc.connectionState==='disconnected')flash('Terminal data connection interrupted.',true);};
+      pc.onconnectionstatechange=()=>{
+        if(pc.connectionState==='failed'||pc.connectionState==='disconnected'){
+          flash('Terminal data connection interrupted. The local terminal will be stopped.',true);
+          void sendCommand('stop_session',{sessionId:peerId}).catch(()=>{});
+          void closePeer();
+        }
+      };
       const offer=await pc.createOffer();await pc.setLocalDescription(offer);
       await sendCommand('terminal_start',{sessionId:peerId,offer:{sdp:pc.localDescription?.sdp}});
       flash('Native terminal request sent. Approve it on the computer.');
@@ -160,7 +166,13 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     dataRef.current=data;peerRef.current=pc;setScreenSession(sessionId);setTerminalPeerId('');
     pc.ontrack=event=>{if(videoRef.current)videoRef.current.srcObject=event.streams[0];setVideoReady(true);};
     pc.onicecandidate=event=>{if(event.candidate)void publish('signal',{sessionId,candidate:event.candidate.toJSON()}).catch(error=>flash(String(error),true));};
-    pc.onconnectionstatechange=()=>{if(pc.connectionState==='failed'||pc.connectionState==='disconnected')flash('Screen connection interrupted. Reconnect the live view.');};
+    pc.onconnectionstatechange=()=>{
+      if(pc.connectionState==='failed'||pc.connectionState==='disconnected'){
+        flash('Screen connection interrupted. The local stream will be stopped.',true);
+        void sendCommand('stop_session',{sessionId}).catch(()=>{});
+        void closePeer();
+      }
+    };
     data.onmessage=event=>{
       let message:any;try{message=JSON.parse(event.data);}catch{return;}
       if(message.kind==='terminal_output'){
