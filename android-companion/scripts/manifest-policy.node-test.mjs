@@ -54,6 +54,12 @@ test("device bearer credential is encrypted with Android Keystore", async () => 
   assert.match(vault, /\.commit\(\)/, "Pairing credentials must persist synchronously before a one-use network redemption.");
 });
 
+test("pairing is disabled without cloud configuration and cannot strand an unsent token", async () => {
+  const activity = await read("app/src/main/java/app/rubminds/companion/MainActivity.kt");
+  assert.match(activity, /isEnabled = pairConsent\.isChecked && cloudApi != null/);
+  assert.match(activity, /if \(cloudApi == null\) \{/);
+});
+
 test("selected inventory is the only app information sent to cloud", async () => {
   const activity = await read("app/src/main/java/app/rubminds/companion/MainActivity.kt");
   assert.match(activity, /CATEGORY_LAUNCHER/);

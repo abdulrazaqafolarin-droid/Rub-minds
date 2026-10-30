@@ -129,7 +129,7 @@ class MainActivity : Activity() {
             isChecked = consentPrefs.getBoolean("selected_app_inventory", false)
             setOnCheckedChangeListener { _, checked ->
                 consentPrefs.edit().putBoolean("selected_app_inventory", checked).apply()
-                pairButton.isEnabled = checked && !busy
+                pairButton.isEnabled = checked && !busy && cloudApi != null
                 if (!checked) cloudStatus.text = "Cloud pairing and app inventory sync are paused. Remove this phone in Backroom to revoke an existing cloud device."
             }
         }
@@ -152,7 +152,7 @@ class MainActivity : Activity() {
         }
         pairButton = Button(this).apply {
             text = "Pair phone"
-            isEnabled = pairConsent.isChecked
+            isEnabled = pairConsent.isChecked && cloudApi != null
             setOnClickListener { pairDevice() }
         }
         cloudActions.addView(pairButton, LinearLayout.LayoutParams(0, -2, 1f))
@@ -343,6 +343,10 @@ class MainActivity : Activity() {
 
     private fun pairDevice() {
         if (busy) return
+        if (cloudApi == null) {
+            cloudStatus.text = "This companion build needs SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY before pairing."
+            return
+        }
         if (!pairConsent.isChecked) {
             Toast.makeText(this, "Agree to the app-inventory data explanation before pairing.", Toast.LENGTH_LONG).show()
             return
@@ -494,7 +498,7 @@ class MainActivity : Activity() {
 
     private fun setBusy(value: Boolean, message: String) {
         busy = value
-        if (::pairButton.isInitialized) pairButton.isEnabled = !value && pairConsent.isChecked
+        if (::pairButton.isInitialized) pairButton.isEnabled = !value && pairConsent.isChecked && cloudApi != null
         if (::saveButton.isInitialized) saveButton.isEnabled = !value
         if (::pairConsent.isInitialized) pairConsent.isEnabled = !value
         appRows.forEach { (packageName, row) ->
