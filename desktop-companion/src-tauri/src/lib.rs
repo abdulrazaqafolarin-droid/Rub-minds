@@ -1,0 +1,823 @@
+use std::{
+    collections::{HashMap, VecDeque},
+    fs::{self, File},
+    io::{Read, Write},
+    path::{Path, PathBuf},
+    process::{Child as NativeChild, Command},
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
+
+use ed25519_dalek::SigningKey;
+use enigo::{Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings};
+use keyring::Entry;
+use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use rand_core::OsRng;
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_dialog::DialogExt;
+use uuid::Uuid;
+
+const VAULT_SERVICE: &str = "com.rubminds.backroom.desktop";
+const MAX_DRAFT_CHARS: usize = 4_000;
+const MAX_TERMINAL_INPUT: usize = 4_000;
+const MAX_INPUT_EVENTS_PER_SECOND: usize = 120;
+
+fn vault_entry(name: &str) -> Result<Entry, String> {
+    let permitted = matches!(name, "device-id" | "device-token" | "device-private-key" | "supabase-auth-session");
+    if !permitted {
+        return Err("Credential name is not permitted".into());
+    }
+    Entry::new(VAULT_SERVICE, name).map_err(|_| "OS credential store is unavailable".into())
+}
+
+fn vault_get(name: &str) -> Result<Option<String>, String> {
+    let entry = vault_entry(name)?;
+    match entry.get_password() {
+        Ok(value) => Ok(Some(value)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(_) => Err("Could not read the OS credential store".into()),
+    }
+}
+
+fn vault_set(name: &str, value: &str) -> Result<(), String> {
+    if value.is_empty() || value.len() > 32_768 || value.chars().any(char::is_control) {
+        return Err("Invalid credential value".into());
+    }
+    vault_entry(name)?
+        .set_password(value)
+        .map_err(|_| "Could not save to the OS credential store".into())
+}
+
+fn vault_delete(name: &str) -> Result<(), String> {
+    match vault_entry(name)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(_) => Err("Could not remove the OS credential".into()),
+    }
+}
+
+fn random_identity() -> Result<(String, String), String> {
+    let device_id = match vault_get("device-id")? {
+        Some(value) if Uuid::parse_str(&value).is_ok() => value,
+        _ => {
+            let value = Uuid::new_v4().to_string();
+            vault_set("device-id", &value)?;
+            value
+        }
+    };
+
+    let signing_key = match vault_get("device-private-key")? {
+        Some(encoded) => {
+            let bytes = hex::decode(encoded).map_err(|_| "Stored device identity is corrupt".to_string())?;
+            let array: [u8; 32] = bytes.try_into().map_err(|_| "Stored device identity is corrupt".to_string())?;
+            SigningKey::from_bytes(&array)
+        }
+        None => {
+            let key = SigningKey::generate(&mut OsRng);
+            vault_set("device-private-key", &hex::encode(key.to_bytes()))?;
+            key
+        }
+    };
+    Ok((device_id, hex::encode(signing_key.verifying_key().to_bytes())))
+}
+
+#[tauri::command]
+fn secure_auth_get() -> Result<Option<String>, String> {
+    vault_get("supabase-auth-session")
+}
+
+#[tauri::command]
+fn secure_auth_set(value: String) -> Result<(), String> {
+    vault_set("supabase-auth-session", &value)
+}
+
+#[tauri::command]
+fn secure_auth_delete() -> Result<(), String> {
+    vault_delete("supabase-auth-session")
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeviceIdentity {
+    device_id: String,
+    device_public_key: String,
+    platform: &'static str,
+}
+
+fn current_platform() -> &'static str {
+    #[cfg(target_os = "windows")]
+    { "windows" }
+    #[cfg(target_os = "macos")]
+    { "macos" }
+    #[cfg(target_os = "linux")]
+    { "linux" }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    { "unsupported" }
+}
+
+#[tauri::command]
+fn device_identity() -> Result<DeviceIdentity, String> {
+    let (device_id, device_public_key) = random_identity()?;
+    Ok(DeviceIdentity { device_id, device_public_key, platform: current_platform() })
+}
+
+fn validate_supabase_config(url: &str, publishable_key: &str, access_token: &str) -> Result<String, String> {
+    let base = url.trim().trim_end_matches('/');
+    let local = base.starts_with("http://127.0.0.1:") || base.starts_with("http://localhost:");
+    if !(base.starts_with("https://") || local) || base.contains(char::is_whitespace) ||
+        base.contains('?') || base.contains('#') || base.contains('@') {
+        return Err("Invalid Supabase project URL".into());
+    }
+    if publishable_key.trim().len() < 20 || publishable_key.contains(char::is_whitespace) ||
+       access_token.len() < 80 || access_token.contains(char::is_whitespace) {
+        return Err("A valid signed-in Rub Minds session is required".into());
+    }
+    Ok(base.to_string())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RegisterDeviceArgs {
+    supabase_url: String,
+    publishable_key: String,
+    access_token: String,
+    room_id: String,
+    device_label: String,
+    os_version: String,
+    app_version: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RegistrationSummary {
+    device_id: String,
+    room_id: String,
+    status: String,
+    credential_saved_to_os_store: bool,
+}
+
+#[tauri::command]
+async fn register_desktop_device(args: RegisterDeviceArgs) -> Result<RegistrationSummary, String> {
+    let base = validate_supabase_config(&args.supabase_url, &args.publishable_key, &args.access_token)?;
+    if Uuid::parse_str(&args.room_id).is_err() || args.device_label.trim().is_empty() ||
+       args.device_label.len() > 80 || args.os_version.len() > 40 ||
+       args.app_version.trim().is_empty() || args.app_version.len() > 40 {
+        return Err("Invalid device or group details".into());
+    }
+    if vault_get("device-token")?.is_some() {
+        return Err("This computer already has a registered device credential. Revoke that device before registering it again.".into());
+    }
+    let (device_id, device_public_key) = random_identity()?;
+    let client = Client::builder().timeout(Duration::from_secs(25)).build()
+        .map_err(|_| "Could not initialize secure network transport".to_string())?;
+    let response = client
+        .post(format!("{base}/functions/v1/backroom-device"))
+        .header("apikey", args.publishable_key.trim())
+        .bearer_auth(&args.access_token)
+        .json(&json!({
+            "action": "desktop/register",
+            "deviceId": device_id,
+            "roomId": args.room_id,
+            "deviceLabel": args.device_label.trim(),
+            "platform": current_platform(),
+            "osVersion": args.os_version,
+            "appVersion": args.app_version.trim(),
+            "devicePublicKey": device_public_key
+        }))
+        .send().await.map_err(|_| "Could not connect to Rub Minds. Check your internet connection.".to_string())?;
+    let status = response.status();
+    let body: Value = response.json().await
+        .map_err(|_| "Rub Minds returned an invalid registration response".to_string())?;
+    if !status.is_success() || body.get("ok").and_then(Value::as_bool) != Some(true) {
+        let reason = body.get("reason").and_then(Value::as_str).unwrap_or("desktop_registration_failed");
+        return Err(match reason {
+            "room_owner_required" => "You must own this Rub Minds group to register this computer.".into(),
+            "device_limit_reached" => "This account has reached its registered desktop device limit.".into(),
+            "desktop_registration_conflict" => "This computer is already registered. Revoke the existing device first.".into(),
+            "owner_auth_required" => "Your Rub Minds session expired. Sign in again.".into(),
+            _ => "Rub Minds could not register this computer.".into(),
+        });
+    }
+    let returned_id = body.get("deviceId").and_then(Value::as_str).unwrap_or_default();
+    let token = body.get("deviceToken").and_then(Value::as_str).unwrap_or_default();
+    let registered_status = body.get("status").and_then(Value::as_str).unwrap_or_default();
+    if returned_id != device_id || registered_status != "active" ||
+       token.len() != 64 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("Registration response failed local integrity checks".into());
+    }
+    // Keep the bearer credential inside Windows Credential Manager / Keychain /
+    // Secret Service. It is never returned to JavaScript or included in events.
+    vault_set("device-token", &token.to_ascii_lowercase())?;
+    Ok(RegistrationSummary {
+        device_id,
+        room_id: args.room_id,
+        status: "active".into(),
+        credential_saved_to_os_store: true,
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeviceStatus {
+    status: String,
+    device_id: String,
+    app_discovery: bool,
+    live_screen: bool,
+    desktop_control: bool,
+    terminal_control: bool,
+}
+
+#[tauri::command]
+async fn desktop_device_status(supabase_url: String, publishable_key: String) -> Result<DeviceStatus, String> {
+    let token = vault_get("device-token")?.ok_or("This computer is not registered")?;
+    let base = validate_supabase_config(&supabase_url, &publishable_key, &"x".repeat(100))?;
+    let response = Client::new()
+        .post(format!("{base}/functions/v1/backroom-device"))
+        .header("apikey", publishable_key)
+        .bearer_auth(token)
+        .json(&json!({"action":"device/status"}))
+        .send().await.map_err(|_| "Could not reach Rub Minds".to_string())?;
+    let status = response.status();
+    let body: Value = response.json().await.map_err(|_| "Invalid device status response".to_string())?;
+    if !status.is_success() || body.get("ok").and_then(Value::as_bool) != Some(true) {
+        return Err("This computer is no longer authorized. Sign in and register it again.".into());
+    }
+    let caps = body.get("capabilities").cloned().unwrap_or(Value::Null);
+    Ok(DeviceStatus {
+        status: body.get("status").and_then(Value::as_str).unwrap_or("unknown").to_string(),
+        device_id: body.get("deviceId").and_then(Value::as_str).unwrap_or_default().to_string(),
+        app_discovery: caps.get("appDiscovery").and_then(Value::as_bool).unwrap_or(false),
+        live_screen: caps.get("liveScreen").and_then(Value::as_bool).unwrap_or(false),
+        desktop_control: caps.get("desktopControl").and_then(Value::as_bool).unwrap_or(false),
+        terminal_control: caps.get("terminalControl").and_then(Value::as_bool).unwrap_or(false),
+    })
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ApprovedApp {
+    id: String,
+    label: String,
+    executable_path: String,
+    sha256: String,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ApprovedAppSummary {
+    id: String,
+    label: String,
+    sha256: String,
+}
+
+fn app_registry_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let mut dir = app.path().app_data_dir().map_err(|_| "App data directory is unavailable".to_string())?;
+    fs::create_dir_all(&dir).map_err(|_| "Could not create app registry".to_string())?;
+    dir.push("approved-applications.json");
+    Ok(dir)
+}
+
+fn load_apps(app: &AppHandle) -> Result<Vec<ApprovedApp>, String> {
+    let path = app_registry_path(app)?;
+    match fs::read(path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|_| "The local application registry is corrupt".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(_) => Err("Could not read the local application registry".into()),
+    }
+}
+
+fn save_apps(app: &AppHandle, entries: &[ApprovedApp]) -> Result<(), String> {
+    let path = app_registry_path(app)?;
+    let bytes = serde_json::to_vec_pretty(entries).map_err(|_| "Could not encode app registry".to_string())?;
+    let temp = path.with_extension("json.tmp");
+    fs::write(&temp, bytes).map_err(|_| "Could not save the local application registry".to_string())?;
+    fs::rename(&temp, &path).map_err(|_| "Could not finalize the local application registry".to_string())
+}
+
+fn sha256_file(path: &Path) -> Result<String, String> {
+    let mut file = File::open(path).map_err(|_| "The selected application cannot be read".to_string())?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(|_| "Could not verify the selected application".to_string())?;
+        if read == 0 { break; }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+#[tauri::command]
+async fn pick_and_register_app(app: AppHandle) -> Result<ApprovedAppSummary, String> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+        return Err("Installed desktop application registration is currently enabled for Windows .exe files only.".into());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let selected = app.dialog().file()
+            .add_filter("Windows applications", &["exe"])
+            .blocking_pick_file()
+            .ok_or("Application selection was cancelled")?;
+        let path = selected.into_path().map_err(|_| "Invalid selected application path".to_string())?;
+        let path = path.canonicalize().map_err(|_| "The selected application does not exist".to_string())?;
+        if !path.is_absolute() || path.extension().and_then(|ext| ext.to_str()).map(|ext| !ext.eq_ignore_ascii_case("exe")).unwrap_or(true) {
+            return Err("Only native Windows .exe applications can be registered".into());
+        }
+        let metadata = fs::metadata(&path).map_err(|_| "Could not inspect the selected application".to_string())?;
+        if !metadata.is_file() || metadata.len() == 0 || metadata.len() > 2 * 1024 * 1024 * 1024 {
+            return Err("The selected application file is invalid".into());
+        }
+        let sha256 = sha256_file(&path)?;
+        let label = path.file_stem().and_then(|name| name.to_str()).unwrap_or("Windows application").chars().take(80).collect::<String>();
+        let entry = ApprovedApp { id: Uuid::new_v4().to_string(), label, executable_path: path.to_string_lossy().to_string(), sha256: sha256.clone() };
+        let mut apps = load_apps(&app)?;
+        if apps.iter().any(|item| item.executable_path == entry.executable_path) {
+            return Err("This application is already registered".into());
+        }
+        apps.push(entry.clone());
+        save_apps(&app, &apps)?;
+        Ok(ApprovedAppSummary { id: entry.id, label: entry.label, sha256 })
+    }
+}
+
+#[tauri::command]
+fn list_registered_apps(app: AppHandle) -> Result<Vec<ApprovedAppSummary>, String> {
+    Ok(load_apps(&app)?.into_iter().map(|entry| ApprovedAppSummary {
+        id: entry.id, label: entry.label, sha256: entry.sha256
+    }).collect())
+}
+
+#[tauri::command]
+fn launch_registered_app(app: AppHandle, app_id: String) -> Result<u32, String> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, app_id);
+        return Err("Windows desktop application launch is not available on this platform".into());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let apps = load_apps(&app)?;
+        let entry = apps.into_iter().find(|item| item.id == app_id).ok_or("Application not found in the local allowlist")?;
+        let path = PathBuf::from(&entry.executable_path);
+        if !path.is_absolute() || path.extension().and_then(|ext| ext.to_str()).map(|ext| !ext.eq_ignore_ascii_case("exe")).unwrap_or(true) {
+            return Err("Stored application path is invalid".into());
+        }
+        if sha256_file(&path)? != entry.sha256 {
+            return Err("Application binary changed since it was approved. Remove it and approve the new binary.".into());
+        }
+        let parent = path.parent().ok_or("Application directory is unavailable")?;
+        let child = Command::new(&path).current_dir(parent).spawn().map_err(|_| "Windows could not launch the approved application".to_string())?;
+        child.id().ok_or("Windows did not return the application process ID".into())
+    }
+}
+
+#[derive(Default)]
+struct AppState {
+    control_grants: Mutex<HashMap<String, Instant>>,
+    draft_grants: Mutex<HashMap<String, Instant>>,
+    capture_geometry: Mutex<HashMap<String, CaptureGeometry>>,
+    draft_targets: Mutex<HashMap<String, DraftTarget>>,
+    pending_drafts: Mutex<HashMap<String, PendingDraft>>,
+    terminals: Mutex<HashMap<String, Arc<TerminalSession>>>,
+    input_events: Mutex<VecDeque<Instant>>,
+}
+
+struct TerminalSession {
+    master: Mutex<Box<dyn MasterPty + Send>>,
+    writer: Mutex<Box<dyn Write + Send>>,
+    child: Mutex<Box<dyn Child + Send>>,
+}
+
+#[derive(Clone)]
+struct CaptureGeometry {
+    frame_width: u32,
+    frame_height: u32,
+    screen_width: u32,
+    screen_height: u32,
+    origin_x: i32,
+    origin_y: i32,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DraftTarget {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+struct PendingDraft {
+    session_id: String,
+    text: String,
+    target: DraftTarget,
+    expires_at: Instant,
+}
+
+fn valid_session_id(value: &str) -> bool {
+    Uuid::parse_str(value).is_ok()
+}
+
+fn control_granted(state: &AppState, session_id: &str) -> Result<(), String> {
+    if !valid_session_id(session_id) {
+        return Err("Invalid control session".into());
+    }
+    let mut grants = state.control_grants.lock().map_err(|_| "Control state unavailable")?;
+    match grants.get(session_id) {
+        Some(expires_at) if *expires_at > Instant::now() => Ok(()),
+        _ => {
+            grants.remove(session_id);
+            Err("Local computer-control approval is required".into())
+        }
+    }
+}
+
+fn draft_granted(state: &AppState, session_id: &str) -> Result<(), String> {
+    let mut grants = state.draft_grants.lock().map_err(|_| "Draft state unavailable")?;
+    match grants.get(session_id) {
+        Some(expires_at) if *expires_at > Instant::now() => Ok(()),
+        _ => {
+            grants.remove(session_id);
+            Err("Local typing approval is required".into())
+        }
+    }
+}
+
+fn check_input_rate(state: &AppState) -> Result<(), String> {
+    let now = Instant::now();
+    let mut events = state.input_events.lock().map_err(|_| "Input state unavailable")?;
+    while events.front().map(|time| now.duration_since(*time) > Duration::from_secs(1)).unwrap_or(false) {
+        events.pop_front();
+    }
+    if events.len() >= MAX_INPUT_EVENTS_PER_SECOND {
+        return Err("Input rate limit exceeded".into());
+    }
+    events.push_back(now);
+    Ok(())
+}
+
+#[tauri::command]
+fn grant_control(state: State<'_, AppState>, session_id: String, seconds: u64) -> Result<(), String> {
+    if !valid_session_id(&session_id) { return Err("Invalid session".into()); }
+    let ttl = seconds.clamp(30, 600);
+    state.control_grants.lock().map_err(|_| "Control state unavailable")?
+        .insert(session_id, Instant::now() + Duration::from_secs(ttl));
+    Ok(())
+}
+
+#[tauri::command]
+fn revoke_control(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+    state.control_grants.lock().map_err(|_| "Control state unavailable")?.remove(&session_id);
+    state.draft_grants.lock().map_err(|_| "Draft state unavailable")?.remove(&session_id);
+    state.draft_targets.lock().map_err(|_| "Draft state unavailable")?.remove(&session_id);
+    let mut drafts = state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?;
+    drafts.retain(|_, draft| draft.session_id != session_id);
+    Ok(())
+}
+
+#[tauri::command]
+fn grant_draft_typing(state: State<'_, AppState>, session_id: String, seconds: u64) -> Result<(), String> {
+    control_granted(&state, &session_id)?;
+    let ttl = seconds.clamp(30, 120);
+    state.draft_grants.lock().map_err(|_| "Draft state unavailable")?
+        .insert(session_id, Instant::now() + Duration::from_secs(ttl));
+    Ok(())
+}
+
+#[tauri::command]
+fn set_capture_geometry(
+    state: State<'_, AppState>,
+    session_id: String,
+    frame_width: u32,
+    frame_height: u32,
+    screen_width_css: u32,
+    screen_height_css: u32,
+    device_scale_factor: f64,
+    origin_x_css: i32,
+    origin_y_css: i32,
+    display_surface: String,
+) -> Result<(), String> {
+    if !valid_session_id(&session_id) || display_surface != "monitor" ||
+       !(320..=16_384).contains(&frame_width) || !(200..=16_384).contains(&frame_height) ||
+       !(320..=8_192).contains(&screen_width_css) || !(200..=8_192).contains(&screen_height_css) ||
+       !device_scale_factor.is_finite() || !(0.5..=4.0).contains(&device_scale_factor) ||
+       origin_x_css.abs() > 16_384 || origin_y_css.abs() > 16_384 {
+        return Err("For safe input mapping, share an entire monitor instead of a single window".into());
+    }
+    let screen_width = (screen_width_css as f64 * device_scale_factor).round() as u32;
+    let screen_height = (screen_height_css as f64 * device_scale_factor).round() as u32;
+    let tolerance_x = (screen_width as f64 * 0.02).max(16.0) as u32;
+    let tolerance_y = (screen_height as f64 * 0.02).max(16.0) as u32;
+    if frame_width.abs_diff(screen_width) > tolerance_x || frame_height.abs_diff(screen_height) > tolerance_y {
+        return Err("Captured monitor does not match this companion display. Move Backroom to the shared monitor and share it again.".into());
+    }
+    state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?.insert(session_id, CaptureGeometry {
+        frame_width, frame_height, screen_width, screen_height,
+        origin_x: (origin_x_css as f64 * device_scale_factor).round() as i32,
+        origin_y: (origin_y_css as f64 * device_scale_factor).round() as i32,
+    });
+    Ok(())
+}
+
+fn screen_point(geometry: &CaptureGeometry, x: f64, y: f64) -> Result<(i32, i32), String> {
+    if !x.is_finite() || !y.is_finite() || !(0.0..=1.0).contains(&x) || !(0.0..=1.0).contains(&y) {
+        return Err("Pointer coordinates are outside the shared monitor".into());
+    }
+    let px = geometry.origin_x + (x * geometry.screen_width as f64).round() as i32;
+    let py = geometry.origin_y + (y * geometry.screen_height as f64).round() as i32;
+    Ok((px, py))
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum NativeInput {
+    Move { x: f64, y: f64 },
+    Click { x: f64, y: f64, button: String },
+    Key { key: String },
+    Text { text: String },
+}
+
+fn map_key(value: &str) -> Option<Key> {
+    Some(match value {
+        "Enter" => Key::Return, "Escape" => Key::Escape, "Tab" => Key::Tab,
+        "Backspace" => Key::Backspace, "Delete" => Key::Delete, "Space" => Key::Space,
+        "ArrowUp" => Key::UpArrow, "ArrowDown" => Key::DownArrow,
+        "ArrowLeft" => Key::LeftArrow, "ArrowRight" => Key::RightArrow,
+        "Home" => Key::Home, "End" => Key::End, "PageUp" => Key::PageUp,
+        "PageDown" => Key::PageDown, "Shift" => Key::Shift, "Control" => Key::Control,
+        "Alt" => Key::Alt, "F1" => Key::F1, "F2" => Key::F2, "F3" => Key::F3,
+        "F4" => Key::F4, "F5" => Key::F5, "F6" => Key::F6, "F7" => Key::F7,
+        "F8" => Key::F8, "F9" => Key::F9, "F10" => Key::F10, "F11" => Key::F11,
+        "F12" => Key::F12,
+        _ => {
+            let mut chars = value.chars();
+            let ch = chars.next()?;
+            if chars.next().is_some() || ch.is_control() { return None; }
+            Key::Unicode(ch)
+        }
+    })
+}
+
+#[tauri::command]
+fn dispatch_input(state: State<'_, AppState>, session_id: String, event: NativeInput) -> Result<(), String> {
+    control_granted(&state, &session_id)?;
+    check_input_rate(&state)?;
+    let geometry = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
+        .get(&session_id).cloned().ok_or("Live monitor capture is not active")?;
+    let mut enigo = Enigo::new(&Settings::default()).map_err(|_| "OS input driver is unavailable. Check accessibility permissions.".to_string())?;
+    match event {
+        NativeInput::Move { x, y } => {
+            let (px, py) = screen_point(&geometry, x, y)?;
+            enigo.move_mouse(px, py, Coordinate::Abs).map_err(|_| "Could not move the desktop pointer".to_string())?;
+        }
+        NativeInput::Click { x, y, button } => {
+            let (px, py) = screen_point(&geometry, x, y)?;
+            enigo.move_mouse(px, py, Coordinate::Abs).map_err(|_| "Could not move the desktop pointer".to_string())?;
+            let button = match button.as_str() {
+                "left" => Button::Left, "right" => Button::Right, "middle" => Button::Middle,
+                _ => return Err("Unsupported mouse button".into())
+            };
+            enigo.button(button, Direction::Click).map_err(|_| "Could not click the desktop".to_string())?;
+        }
+        NativeInput::Key { key } => {
+            if matches!(key.as_str(), "Meta" | "Windows" | "Command" | "Alt+F4" | "Ctrl+Alt+Delete") {
+                return Err("This system-level shortcut is disabled by the companion".into());
+            }
+            let key = map_key(&key).ok_or("Unsupported key")?;
+            enigo.key(key, Direction::Click).map_err(|_| "Could not send key input".to_string())?;
+        }
+        NativeInput::Text { text } => {
+            if text.is_empty() || text.chars().count() > MAX_DRAFT_CHARS || text.chars().any(char::is_control) {
+                return Err("Text input must be plain, single-line text of at most 4000 characters".into());
+            }
+            enigo.text(&text).map_err(|_| "Could not type into the selected application".to_string())?;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn select_draft_target(state: State<'_, AppState>, session_id: String, target: DraftTarget) -> Result<(), String> {
+    control_granted(&state, &session_id)?;
+    draft_granted(&state, &session_id)?;
+    let geometry = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
+        .get(&session_id).cloned().ok_or("Live monitor capture is not active")?;
+    if !target.x.is_finite() || !target.y.is_finite() || !target.width.is_finite() || !target.height.is_finite() ||
+       target.x < 0.0 || target.y < 0.0 || target.width < 0.01 || target.height < 0.01 ||
+       target.x + target.width > 1.0 || target.y + target.height > 1.0 {
+        return Err("Select a visible text-entry area inside the frame".into());
+    }
+    if target.width * geometry.frame_width as f64 < 8.0 || target.height * geometry.frame_height as f64 < 8.0 {
+        return Err("Selected typing area is too small".into());
+    }
+    state.draft_targets.lock().map_err(|_| "Draft state unavailable")?.insert(session_id, target);
+    Ok(())
+}
+
+#[tauri::command]
+fn stage_draft_request(state: State<'_, AppState>, session_id: String, text: String) -> Result<String, String> {
+    control_granted(&state, &session_id)?;
+    draft_granted(&state, &session_id)?;
+    if text.trim().is_empty() || text.chars().count() > MAX_DRAFT_CHARS || text.chars().any(char::is_control) {
+        return Err("Draft must be non-empty, single-line plain text".into());
+    }
+    let target = state.draft_targets.lock().map_err(|_| "Draft state unavailable")?
+        .get(&session_id).cloned().ok_or("Drag-select a typing area in the live frame first")?;
+    let request_id = Uuid::new_v4().to_string();
+    state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?.insert(request_id.clone(), PendingDraft {
+        session_id, text, target, expires_at: Instant::now() + Duration::from_secs(60),
+    });
+    Ok(request_id)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PendingDraftSummary {
+    request_id: String,
+    text: String,
+    session_id: String,
+    expires_in_seconds: u64,
+}
+
+#[tauri::command]
+fn list_pending_drafts(state: State<'_, AppState>) -> Result<Vec<PendingDraftSummary>, String> {
+    let now = Instant::now();
+    let mut pending = state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?;
+    pending.retain(|_, draft| draft.expires_at > now);
+    Ok(pending.iter().map(|(id, draft)| PendingDraftSummary {
+        request_id: id.clone(), text: draft.text.clone(), session_id: draft.session_id.clone(),
+        expires_in_seconds: now.duration_since(draft.expires_at - Duration::from_secs(60)).as_secs().min(60),
+    }).collect())
+}
+
+#[tauri::command]
+fn approve_draft_request(state: State<'_, AppState>, request_id: String) -> Result<String, String> {
+    let pending = state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?
+        .remove(&request_id).ok_or("Draft request expired or no longer exists")?;
+    if pending.expires_at <= Instant::now() {
+        return Err("Draft request expired. Inspect the target and ask again.".into());
+    }
+    control_granted(&state, &pending.session_id)?;
+    draft_granted(&state, &pending.session_id)?;
+    let geometry = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
+        .get(&pending.session_id).cloned().ok_or("Live monitor capture is not active")?;
+    let center_x = pending.target.x + pending.target.width / 2.0;
+    let center_y = pending.target.y + pending.target.height / 2.0;
+    let (px, py) = screen_point(&geometry, center_x, center_y)?;
+    // Consume the selection before interacting so an uncertain outcome cannot
+    // be replayed and accidentally duplicate text.
+    state.draft_targets.lock().map_err(|_| "Draft state unavailable")?.remove(&pending.session_id);
+    let mut enigo = Enigo::new(&Settings::default()).map_err(|_| "OS input driver is unavailable".to_string())?;
+    enigo.move_mouse(px, py, Coordinate::Abs).map_err(|_| "Could not focus the selected target".to_string())?;
+    enigo.button(Button::Left, Direction::Click).map_err(|_| "Could not focus the selected target".to_string())?;
+    enigo.text(&pending.text).map_err(|_| "Typing outcome is uncertain; inspect the target before retrying".to_string())?;
+    Ok("Draft typed into the selected area. No Enter or submit action was sent.".into())
+}
+
+#[tauri::command]
+fn deny_draft_request(state: State<'_, AppState>, request_id: String) -> Result<(), String> {
+    state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?.remove(&request_id);
+    Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TerminalStarted {
+    session_id: String,
+    shell_label: String,
+    cols: u16,
+    rows: u16,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TerminalOutput {
+    session_id: String,
+    data: Vec<u8>,
+}
+
+#[tauri::command]
+fn start_terminal(app: AppHandle, state: State<'_, AppState>) -> Result<TerminalStarted, String> {
+    let system = native_pty_system();
+    let pair = system.openpty(PtySize { rows: 30, cols: 100, pixel_width: 0, pixel_height: 0 })
+        .map_err(|_| "Could not create the native terminal session".to_string())?;
+    #[cfg(target_os = "windows")]
+    let (shell, label) = ("powershell.exe", "Windows PowerShell");
+    #[cfg(target_os = "macos")]
+    let (shell, label) = ("/bin/zsh", "zsh");
+    #[cfg(target_os = "linux")]
+    let (shell, label) = ("/bin/bash", "bash");
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    return Err("Native terminal is not supported on this operating system".into());
+    let mut command = CommandBuilder::new(shell);
+    command.env("TERM", "xterm-256color");
+    command.env("CLICOLOR", "1");
+    let child = pair.slave.spawn_command(command).map_err(|_| "Could not launch the native terminal shell".to_string())?;
+    let reader = pair.master.try_clone_reader().map_err(|_| "Could not attach terminal output".to_string())?;
+    let writer = pair.master.take_writer().map_err(|_| "Could not attach terminal input".to_string())?;
+    let session_id = Uuid::new_v4().to_string();
+    let session = Arc::new(TerminalSession {
+        master: Mutex::new(pair.master),
+        writer: Mutex::new(writer),
+        child: Mutex::new(child),
+    });
+    state.terminals.lock().map_err(|_| "Terminal registry unavailable")?.insert(session_id.clone(), session);
+    let event_app = app.clone();
+    let event_id = session_id.clone();
+    std::thread::spawn(move || {
+        let mut reader = reader;
+        let mut buffer = [0u8; 16 * 1024];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(size) => {
+                    let _ = event_app.emit("backroom-terminal-output", TerminalOutput {
+                        session_id: event_id.clone(), data: buffer[..size].to_vec()
+                    });
+                }
+            }
+        }
+        let _ = event_app.emit("backroom-terminal-exited", json!({"sessionId":event_id}));
+    });
+    Ok(TerminalStarted { session_id, shell_label: label.into(), cols: 100, rows: 30 })
+}
+
+#[tauri::command]
+fn write_terminal(state: State<'_, AppState>, session_id: String, data: String) -> Result<(), String> {
+    control_granted(&state, &session_id)?;
+    check_input_rate(&state)?;
+    if data.is_empty() || data.len() > MAX_TERMINAL_INPUT || data.contains('\0') {
+        return Err("Terminal input is empty or exceeds the 4000-character limit".into());
+    }
+    let sessions = state.terminals.lock().map_err(|_| "Terminal registry unavailable")?;
+    let session = sessions.get(&session_id).ok_or("Terminal session is closed")?;
+    let mut writer = session.writer.lock().map_err(|_| "Terminal writer unavailable")?;
+    writer.write_all(data.as_bytes()).map_err(|_| "Terminal input failed")?;
+    writer.flush().map_err(|_| "Terminal input failed")
+}
+
+#[tauri::command]
+fn resize_terminal(state: State<'_, AppState>, session_id: String, cols: u16, rows: u16) -> Result<(), String> {
+    control_granted(&state, &session_id)?;
+    if !(20..=300).contains(&cols) || !(5..=120).contains(&rows) {
+        return Err("Terminal dimensions are outside the supported range".into());
+    }
+    let sessions = state.terminals.lock().map_err(|_| "Terminal registry unavailable")?;
+    let session = sessions.get(&session_id).ok_or("Terminal session is closed")?;
+    session.master.lock().map_err(|_| "Terminal resize is unavailable")?
+        .resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+        .map_err(|_| "Terminal resize failed".into())
+}
+
+#[tauri::command]
+fn stop_terminal(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+    revoke_control_inner(&state, &session_id)?;
+    let session = state.terminals.lock().map_err(|_| "Terminal registry unavailable")?
+        .remove(&session_id).ok_or("Terminal session is already closed")?;
+    session.child.lock().map_err(|_| "Terminal process state unavailable")?
+        .kill().map_err(|_| "Could not stop the terminal shell".to_string())
+}
+
+fn revoke_control_inner(state: &AppState, session_id: &str) -> Result<(), String> {
+    state.control_grants.lock().map_err(|_| "Control state unavailable")?.remove(session_id);
+    state.draft_grants.lock().map_err(|_| "Draft state unavailable")?.remove(session_id);
+    state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?.remove(session_id);
+    state.draft_targets.lock().map_err(|_| "Draft state unavailable")?.remove(session_id);
+    state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?.retain(|_, draft| draft.session_id != session_id);
+    Ok(())
+}
+
+#[tauri::command]
+fn emergency_stop(state: State<'_, AppState>) -> Result<(), String> {
+    state.control_grants.lock().map_err(|_| "Control state unavailable")?.clear();
+    state.draft_grants.lock().map_err(|_| "Draft state unavailable")?.clear();
+    state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?.clear();
+    state.draft_targets.lock().map_err(|_| "Draft state unavailable")?.clear();
+    state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?.clear();
+    let sessions = std::mem::take(&mut *state.terminals.lock().map_err(|_| "Terminal registry unavailable")?);
+    for (_, session) in sessions {
+        let _ = session.child.lock().map(|mut child| child.kill());
+    }
+    Ok(())
+}
+
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .manage(AppState::default())
+        .invoke_handler(tauri::generate_handler![
+            secure_auth_get, secure_auth_set, secure_auth_delete,
+            device_identity, register_desktop_device, desktop_device_status,
+            pick_and_register_app, list_registered_apps, launch_registered_app,
+            grant_control, revoke_control, grant_draft_typing, set_capture_geometry,
+            dispatch_input, select_draft_target, stage_draft_request, list_pending_drafts,
+            approve_draft_request, deny_draft_request, start_terminal, write_terminal,
+            resize_terminal, stop_terminal, emergency_stop
+        ])
+        .run(tauri::generate_context!())
+        .expect("failed to run Rub Minds Backroom Companion");
+}
