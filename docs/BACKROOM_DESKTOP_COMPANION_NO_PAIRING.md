@@ -50,7 +50,7 @@ Backroom web client
 - Windows PowerShell, macOS zsh, and Linux bash use a native PTY via `portable-pty`.
 - macOS/Linux installed-app discovery and launch are not implemented yet; current app launch is Windows-only.
 - The companion asks locally before launch. Screen view, desktop control, terminal control, and draft typing are separate permissions. A remote payload cannot self-approve a request.
-- Terminal input is separately authorized and bounded. The remote client cannot submit an arbitrary local terminal ID: the companion resolves the WebRTC peer to its own native PTY session.
+- Terminal input is separately authorized and bounded. For remote terminal sessions, the browser peer UUID is validated by the server and passed to the native PTY launcher; the companion uses the same UUID as the local PTY key. The remote client cannot submit an independent native process ID. Local-only terminals still generate their own UUID.
 - Emergency Stop revokes local grants, clears draft state, stops PTYs, and kills direct child processes tracked as launched by Backroom. It cannot guarantee cleanup of all helper processes spawned by a desktop application.
 
 ### Screen, input, and drag-select
