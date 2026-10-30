@@ -387,7 +387,7 @@ async function startTerminalPeer(payload,term){
     data.onmessage=event=>void handlePeerData(peerSessionId,event.data);
   };
   // Send one fully gathered SDP answer instead of one REST/Realtime signal per candidate.
-  pc.onconnectionstatechange=()=>{if(['failed','closed'].includes(pc.connectionState))void stopPeer(peerSessionId);};
+  pc.onconnectionstatechange=()=>{if(['failed','closed','disconnected'].includes(pc.connectionState))void stopPeer(peerSessionId);};
   await pc.setRemoteDescription({type:'offer',sdp:payload.offer.sdp});
   for(const candidate of takeIceCandidates(state.pendingCandidates,peerSessionId)){try{await pc.addIceCandidate(candidate);}catch{}}
   const answer=await pc.createAnswer();await pc.setLocalDescription(answer);
@@ -502,7 +502,15 @@ async function refreshPending(){
   renderPending();
 }
 async function stopPeer(sessionId){
-  const peer=state.peers.get(sessionId);if(peer){peer.pc.close();peer.stream?.getTracks().forEach(track=>track.stop());}
+  const peer=state.peers.get(sessionId);
+  if(peer){
+    peer.pc.close();peer.stream?.getTracks().forEach(track=>track.stop());
+    if(peer.terminalId){
+      try{await invoke('stop_terminal',{sessionId:peer.terminalId});}catch{}
+      state.terminals.delete(peer.terminalId);
+      try{await invoke('revoke_control',{sessionId:peer.terminalId});}catch{}
+    }
+  }
   state.peers.delete(sessionId);state.streams.delete(sessionId);state.pendingCandidates.delete(sessionId);
   try{await invoke('revoke_control',{sessionId});}catch{}
 }
