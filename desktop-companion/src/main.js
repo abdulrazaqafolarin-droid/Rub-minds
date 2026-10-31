@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { validateDeviceCommand, validateDeviceSignal, queueIceCandidate, takeIceCandidates } from '../../integrations/backroom/desktop-realtime-protocol.mjs';
+import { validateTerminalDraftMessage, validateTerminalSubmitMessage } from '../../integrations/backroom/terminal-pty-protocol.mjs';
 import { waitForIceGatheringComplete } from '../../integrations/backroom/ice-gathering.mjs';
 import { validatePeerHeartbeat } from '../../integrations/backroom/peer-heartbeat.mjs';
 import { beginTargetSelection, confirmTargetSelection, invalidateTargetSelection, rejectTargetSelection, canStageDraftForCurrentSelection, isPendingDraftForCurrentSelection, enqueuePeerOperation } from '../../integrations/backroom/desktop-target-selection.mjs';
@@ -647,20 +648,16 @@ async function handlePeerData(sessionId,raw){
     peer.targetQueue=tracked;
     await tracked;
   } else if(message.kind==='terminal_draft'){
-    const terminalId=peer.terminalId;
-    const requestId=message.requestId;
-    if(!terminalId||message.sessionId!==terminalId||typeof requestId!=='string'||!UUID_PATTERN.test(requestId))return;
+    const draft=validateTerminalDraftMessage(message,peer.terminalId);
+    if(!draft)return;
+    const {requestId,sessionId,data}=draft;
     const respond=(ok,reason)=>{
       if(peer.channel?.readyState==='open'){
         try{peer.channel.send(JSON.stringify({kind:'terminal_action_result',requestId,action:'draft',ok,reason}));}catch{}
       }
     };
-    if(typeof message.data!=='string'){
-      respond(false,'Terminal draft text is invalid.');
-      return;
-    }
     try{
-      await invoke('write_terminal',{sessionId:terminalId,data:message.data});
+      await invoke('write_terminal',{sessionId,data});
       respond(true);
     }catch(error){
       const reason=error?.message||'Terminal draft could not be typed.';
@@ -668,16 +665,16 @@ async function handlePeerData(sessionId,raw){
       notify(reason,'error');
     }
   } else if(message.kind==='terminal_submit'){
-    const terminalId=peer.terminalId;
-    const requestId=message.requestId;
-    if(!terminalId||message.sessionId!==terminalId||typeof requestId!=='string'||!UUID_PATTERN.test(requestId))return;
+    const submit=validateTerminalSubmitMessage(message,peer.terminalId);
+    if(!submit)return;
+    const {requestId,sessionId}=submit;
     const respond=(ok,reason)=>{
       if(peer.channel?.readyState==='open'){
         try{peer.channel.send(JSON.stringify({kind:'terminal_action_result',requestId,action:'submit',ok,reason}));}catch{}
       }
     };
     try{
-      await invoke('submit_terminal_input',{sessionId:terminalId});
+      await invoke('submit_terminal_input',{sessionId});
       respond(true);
     }catch(error){
       const reason=error?.message||'Terminal Enter could not be sent.';
