@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {
   getContainedVideoRect,
   mapVideoSelectionToFrame,
+  normalizeClientPointToVideo,
+  createNormalizedDragSelection,
 } from './video-selection-overlay.mjs';
 
 test('portrait monitor is centred with horizontal letterboxing in a landscape frame', () => {
@@ -73,4 +75,27 @@ test('invalid video, frame and normalized selection geometry fail closed', () =>
   assert.equal(mapVideoSelectionToFrame(frame, frame, {
     x: 0, y: 0, width: 0, height: 0.5,
   }), null);
+});
+
+
+test('client pointer mapping uses real video bounds and rejects letterbox/outside points', () => {
+  const rect = { left: 100, top: 50, width: 400, height: 200 };
+  assert.deepEqual(normalizeClientPointToVideo(rect, 100, 50), { x: 0, y: 0 });
+  assert.deepEqual(normalizeClientPointToVideo(rect, 500, 250), { x: 1, y: 1 });
+  assert.deepEqual(normalizeClientPointToVideo(rect, 300, 150), { x: 0.5, y: 0.5 });
+  assert.equal(normalizeClientPointToVideo(rect, 99.9, 150), null);
+  assert.equal(normalizeClientPointToVideo(rect, 300, 250.1), null);
+  assert.equal(normalizeClientPointToVideo({ ...rect, width: 0 }, 300, 150), null);
+  assert.equal(normalizeClientPointToVideo(rect, Number.NaN, 150), null);
+});
+
+test('drag selection normalizes reverse drags and rejects tiny or invalid regions', () => {
+  assert.deepEqual(
+    createNormalizedDragSelection({ x: 0.8, y: 0.9 }, { x: 0.2, y: 0.1 }),
+    { x: 0.2, y: 0.1, width: 0.6, height: 0.8 },
+  );
+  assert.equal(createNormalizedDragSelection({ x: 0.2, y: 0.2 }, { x: 0.205, y: 0.8 }), null);
+  assert.equal(createNormalizedDragSelection({ x: 0.2, y: 0.2 }, { x: 1.01, y: 0.8 }), null);
+  assert.equal(createNormalizedDragSelection({ x: 0, y: 0 }, { x: 1, y: 1 }, 0), null);
+  assert.equal(createNormalizedDragSelection({ x: Number.NaN, y: 0 }, { x: 1, y: 1 }), null);
 });
