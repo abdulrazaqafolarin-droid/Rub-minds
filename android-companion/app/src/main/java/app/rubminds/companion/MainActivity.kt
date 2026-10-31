@@ -311,14 +311,14 @@ class MainActivity : Activity() {
                 workProfileSetupButton.visibility = android.view.View.GONE
                 workProfileAccessButton.visibility = android.view.View.GONE
             }
-            snapshot.targetProfileCount == 0 -> {
+            snapshot.profileCount == 0 -> {
                 workProfileStatusText.text = if (snapshot.canProvision)
                     "No managed Work Profile is connected. Setup requires your confirmation in Android's own provisioning screens."
                 else "No managed Work Profile is available, or Android/device policy currently blocks profile provisioning."
                 workProfileSetupButton.visibility = if (snapshot.canProvision) android.view.View.VISIBLE else android.view.View.GONE
                 workProfileAccessButton.visibility = android.view.View.GONE
             }
-            snapshot.targetProfileCount > 1 -> {
+            snapshot.profileCount > 1 -> {
                 workProfileStatusText.text = "Multiple cross-profile targets were found. Backroom refuses to guess which profile should receive an app launch."
                 workProfileSetupButton.visibility = android.view.View.GONE
                 workProfileAccessButton.visibility = android.view.View.GONE
@@ -328,12 +328,12 @@ class MainActivity : Activity() {
                 workProfileSetupButton.visibility = android.view.View.GONE
                 workProfileAccessButton.visibility = android.view.View.GONE
             }
-            snapshot.canInteractAcrossProfiles -> {
+            snapshot.canInteract -> {
                 workProfileStatusText.text = "Work Profile is available and Android has approved cross-profile handoff. Apps still need to be installed and approved separately inside the Work Profile. Launches are local-only; cloud commands cannot trigger them."
                 workProfileSetupButton.visibility = android.view.View.GONE
                 workProfileAccessButton.visibility = android.view.View.GONE
             }
-            snapshot.canRequestCrossProfileAccess -> {
+            snapshot.canRequestAccess -> {
                 workProfileStatusText.text = "Work Profile found. Android requires your separate approval before Rub Minds can open the same companion in that profile."
                 workProfileSetupButton.visibility = android.view.View.GONE
                 workProfileAccessButton.visibility = android.view.View.VISIBLE
@@ -438,7 +438,7 @@ class MainActivity : Activity() {
         }
         val profileSnapshot = WorkProfileCoordinator(this).snapshot()
         val canLaunchInWorkProfile = !profileSnapshot.isProfileOwner &&
-            profileSnapshot.targetProfileCount == 1 && profileSnapshot.canInteractAcrossProfiles &&
+            profileSnapshot.profileCount == 1 && profileSnapshot.canInteract &&
             profileSnapshot.hasBridgeSecret
         apps.forEach { app ->
             val digest = app.signingCertificateSha256
