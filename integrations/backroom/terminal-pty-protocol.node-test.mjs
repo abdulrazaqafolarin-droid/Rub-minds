@@ -111,6 +111,9 @@ test('native PTY exit reaches the exact Backroom peer and retires its session', 
   assert.match(host, /listen\('backroom-terminal-exited'/);
   assert.match(host, /kind:'terminal_exited',sessionId:terminalId/);
   assert.match(host, /const wasTracked=state\.terminals\.has\(terminalId\)/);
+  assert.match(host, /state\.exitedTerminals\.add\(terminalId\)/);
+  assert.match(host, /state\.exitedTerminals\.has\(term\.sessionId\)/);
+  assert.match(host, /state\.terminals\.delete\(peer\.terminalId\);\s*try\{await invoke\('stop_terminal'/);
   assert.match(host, /stopPeer\(peerSessionId\)/);
   assert.match(browser, /validateTerminalExitedMessage\(message,terminalPeerRef\.current\)/);
   assert.match(browser, /void stopActivePeer\(\)/);
