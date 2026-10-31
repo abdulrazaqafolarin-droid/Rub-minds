@@ -933,6 +933,18 @@ fn select_draft_target(state: State<'_, AppState>, session_id: String, mut targe
     if !value.is_empty() {
         return Err("For safety, drag-select an empty editable field. Existing text will not be overwritten.".into());
     }
+    let (selection_start_x, selection_start_y) = screen_point(&geometry, target.x, target.y)?;
+    let (selection_end_x, selection_end_y) = screen_point(
+        &geometry, target.x + target.width, target.y + target.height,
+    )?;
+    let selection_bounds = [
+        selection_start_x.min(selection_end_x),
+        selection_start_y.min(selection_end_y),
+        selection_start_x.max(selection_end_x).saturating_add(1),
+        selection_start_y.max(selection_end_y).saturating_add(1),
+    ];
+    input_targeting::validate_drag_coverage(selection_bounds, identity.bounds)
+        .map_err(|_| "Keep the drag rectangle mostly inside one text field. Avoid selecting surrounding controls.".to_string())?;
     let mode_message = match identity.access_mode.as_str() {
         "value" => "Windows verified an empty editable field. Direct Value-pattern insertion will be used.",
         "text" => "Windows verified an empty multi-line editor. Focus-bound Text-pattern typing and exact readback will be used.",
