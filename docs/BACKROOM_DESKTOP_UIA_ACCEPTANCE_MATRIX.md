@@ -1,25 +1,26 @@
 # Backroom desktop UI Automation acceptance matrix
 
-Status: native Windows UI Automation target resolution is implemented in the feature branch; physical acceptance is still pending.
+Status: Windows UI Automation targeting is implemented in the feature branch. Physical Windows acceptance and CI compilation are still pending.
 
-## Automated gates
+## Automated validation gates
 
-- [ ] Root Node test/build workflow passes.
-- [ ] Bundled Tauri companion WebView builds.
-- [ ] Rust native unit tests pass, including the pure target eligibility policy.
-- [ ] Windows x86_64 MSVC companion compiles with the pinned UI Automation dependency.
-- [ ] Companion protocol and authorization regressions pass.
+- [ ] Root Node tests and production web build.
+- [ ] Bundled Tauri companion WebView build.
+- [ ] Rust native unit tests, including target eligibility, drag-coverage and exact post-write readback tests.
+- [ ] Windows x86_64 MSVC compile with the pinned `uiautomation = 0.25.1` dependency.
+- [ ] Companion protocol and authorization regression tests.
 
 ## Manual Windows acceptance
 
-Run on a real Windows 10/11 desktop with the installed Backroom companion, the paired owner account, and a disposable Rub Minds group.
+Run on a real Windows 10/11 desktop with the installed Backroom companion, paired owner account, and a disposable Rub Minds group.
 
 | Target | Expected behavior |
 |---|---|
-| Windows Notepad empty text field | Drag-selection resolves to an accessible Edit control; owner approves; exact text is inserted and read back |
-| Added native desktop app with UIA Edit | Same exact-control behavior |
-| Chromium/WebView2 single-line composer exposing UIA Value | Same exact-control behavior through ValuePattern |\n| Multi-line Edit/Document editor exposing UIA Text | Focus the exact UIA element, send literal text to that element, then read back the exact complete text |
-| Rich/custom editor without readable+writable UIA Value or Text pattern | Reject; no coordinate-only fallback |
+| Windows Notepad empty text field | Resolve to an accessible Edit control; owner approves; exact text is inserted and read back |
+| Added native desktop app exposing UIA Edit | Same exact-control behavior |
+| Chromium/WebView2 single-line composer exposing UIA Value | Use ValuePattern; read back exact value |
+| Multi-line Edit/Document editor exposing UIA Text | Focus the exact UIA element, send literal text to that element, then read back exact complete text |
+| Rich/custom editor without readable/writable UIA Value or Text | Reject; no coordinate-only fallback |
 | Password/protected field | Reject before draft staging |
 | Disabled, off-screen or read-only control | Reject |
 | Non-empty field | Reject; never overwrite existing content |
@@ -29,42 +30,23 @@ Run on a real Windows 10/11 desktop with the installed Backroom companion, the p
 
 Also verify whole-monitor capture geometry at 100%, 125%, 150% and 200% display scaling where available, plus a second monitor with a non-zero origin.
 
-## Platform and scope boundaries
+## Safety and lifecycle guarantees
 
-- This implementation is Windows-only. macOS/Linux accessibility targeting is not implemented.
-- It only accepts Windows UIA Edit or Document controls that expose a writable/readable Value pattern, or a readable Text pattern with keyboard focus. Text-pattern writes are sent only through the exact focused UIA element, then read back. Other editor implementations deliberately fail closed.
-- Android's current Phone Frame is selected-app inventory, not a live guest-app screen. Android virtual-app rendering, screen capture, accessibility target identification and remote target-bound insertion are not implemented. The phone overlay must remain disabled until those components and physical-device acceptance exist.
-- A real Claude Code/OpenCode terminal is a PTY target, not a UIA text-field target. Terminal text-only input and explicit Enter are separate actions; the terminal does not use this desktop drag-select path.
+- The drag rectangle must be at least 65% covered by one resolved editable control. A centre-point hit with a rectangle spanning neighbouring controls is rejected.
+- Each accepted native drag gets a locally generated selection ID; the browser cannot supply or override it.
+- Every browser drag carries a separate request ID. The companion serializes up to four checks per session, and the Device Frame ignores replies for superseded drags.
+- A fresh, authorized drag clears the previous target and pending drafts for that session before validating the new target. A queue-overflow rejection clears the previous target too.
+- Draft approval rechecks the active selection ID and complete UIA identity both before and after the native Yes/No confirmation dialog.
+- The local approval card and native dialog show the destination process ID, control type/class and Value-vs-Text write mode.
+- ValuePattern is used for single-line fields. Multi-line editors with readable TextPattern use the exact UIA element's focused `send_text` operation, then read back the exact value.
+- Text insertion is one-shot. The selected target is consumed before writing; ambiguous outcomes require inspection, not automatic retry. Backroom never sends Enter or Send.
+- Exact post-write readback rejects empty expected drafts, truncation, appended text or mismatched content.
 
-No production migration, merge, or deployment is part of this acceptance checklist.
+## Platform and surface boundaries
 
-## Latest implementation details to verify
+- This implementation is Windows-only. Equivalent macOS/Linux accessibility drivers are not implemented.
+- Only Windows UIA Edit or Document controls with writable/readable Value access, or readable Text access plus keyboard focus, are accepted. Unsupported custom editors fail closed.
+- Android's current Phone Frame shows selected-app inventory only. No virtual guest app is rendered there; Android screen capture, accessibility target identification and remote target-bound insertion are not implemented. The phone drag-select overlay must remain unavailable until those components and physical-device acceptance exist.
+- Claude Code/OpenCode terminals are PTY targets, not UIA text fields. Terminal text-only input and explicit Enter remain separate actions and do not use this desktop drag-select path.
 
-- The dragged rectangle must remain at least 65% inside the resolved edit/document field; a centre-point hit with a rectangle spanning neighbouring controls is rejected.
-- Starting a new drag invalidates the previous native target immediately. Rejected/overflowing checks clear any previously stored target. The browser ignores replies that do not match its latest selection-attempt ID.
-- Exact post-write readback is independently covered by unit tests: empty expected drafts, truncated/extra text and mismatched values must fail.
-
-- Each browser drag has a unique attempt ID. The companion serializes up to four queued target checks per session, and the Device Frame ignores acknowledgements for superseded drags.
-- The local native approval dialog runs only after the target has been resolved and rechecked.
-- After approval, the companion re-resolves the exact target and uses ValuePattern for single-line fields, or focused-element Text-pattern input for multi-line editors, then reads the exact text back. It does not click the target centre or use an unscoped global keyboard action.
-- The final pass re-reads the same UIA element and confirms the exact text, while retaining the enabled/visible/non-password/writable checks. Empty-value is required before insertion, not after it.
-
-- The pre-write validator must reject any non-empty field; the post-write validator must allow only a non-empty exact match to the submitted text while still enforcing enabled, visible, non-password and writable metadata.
-
-
-## Latest native selection safeguards
-
-- A failed or new drag clears the previously stored target before validation.
-- A queue-overflow rejection also clears the previous native target.
-- Each drag is tagged with a unique attempt ID; the browser ignores any reply for an older selection.
-- The native driver uses half-open pixel rectangles for the drag area and UIA field bounds; the selected rectangle must be at least 65% covered by the one resolved editable control.
-- The final read-back helper must match the exact non-empty submitted draft and reject truncation, extra content or an empty expected value.
-
-
-## Current selection and approval lifecycle
-
-- Every accepted native drag gets a locally generated selection ID that is not accepted from the browser payload.
-- A fresh, authorized drag clears the prior target and pending drafts for that session before the new target is validated.
-- Draft approval rechecks that the active selection ID and full UIA control identity still match the pending draft both before and after the native Yes/No dialog.
-- The local approval card and native dialog display the destination process ID, control type/class and whether Value or Text access will be used.
-- Changing the selection removes obsolete local approval cards and returns a cancellation result to the browser session.
+No production migration, merge to `main`, or deployment is part of this acceptance checklist.
