@@ -606,36 +606,55 @@ class AndroidScreenShareService : Service() {
                     sendNavigationAcknowledgement(channel, sessionId, navigationId, action, accepted)
                     return
                 }
-                val allowedKeys = setOf("kind", "gestureId", "sessionId", "appPackageName", "gesture", "from", "to", "durationMs")
                 val gestureId = input.optString("gestureId")
-                if (input.keys().asSequence().toSet() != allowedKeys ||
-                    input.optString("kind") != "touch" ||
+                // Acknowledge only requests bound to this live session and app.
+                // Once that identity is established, reject malformed payloads
+                // explicitly so the frame can distinguish rejection from packet loss.
+                if (input.optString("kind") != "touch" ||
                     !UUID_PATTERN.matches(gestureId) ||
                     input.optString("sessionId") != sessionId ||
                     input.optString("appPackageName") != appPackage
                 ) return
+                val rejectGesture = { sendTouchAcknowledgement(channel, sessionId, gestureId, false) }
+                val allowedKeys = setOf("kind", "gestureId", "sessionId", "appPackageName", "gesture", "from", "to", "durationMs")
+                if (input.keys().asSequence().toSet() != allowedKeys) {
+                    rejectGesture()
+                    return
+                }
                 if (!localControlGranted || !RemoteTouchGate.isArmed(this@AndroidScreenShareService)) {
-                    sendTouchAcknowledgement(channel, sessionId, gestureId, false)
+                    rejectGesture()
                     return
                 }
                 val kind = when (input.optString("gesture")) {
                     "tap" -> RemoteGestureKind.TAP
                     "swipe" -> RemoteGestureKind.SWIPE
                     "long_press" -> RemoteGestureKind.LONG_PRESS
-                    else -> return
+                    else -> {
+                        rejectGesture()
+                        return
+                    }
                 }
-                val from = input.optJSONObject("from") ?: return
-                val to = input.optJSONObject("to") ?: return
+                val from = input.optJSONObject("from") ?: run { rejectGesture(); return }
+                val to = input.optJSONObject("to") ?: run { rejectGesture(); return }
                 if (from.keys().asSequence().toSet() != setOf("x", "y") ||
-                    to.keys().asSequence().toSet() != setOf("x", "y")) return
-                val fromX = from.opt("x") as? Number ?: return
-                val fromY = from.opt("y") as? Number ?: return
-                val toX = to.opt("x") as? Number ?: return
-                val toY = to.opt("y") as? Number ?: return
-                val durationValue = input.opt("durationMs") as? Number ?: return
-                if (durationValue.toDouble() % 1.0 != 0.0) return
+                    to.keys().asSequence().toSet() != setOf("x", "y")) {
+                    rejectGesture()
+                    return
+                }
+                val fromX = from.opt("x") as? Number ?: run { rejectGesture(); return }
+                val fromY = from.opt("y") as? Number ?: run { rejectGesture(); return }
+                val toX = to.opt("x") as? Number ?: run { rejectGesture(); return }
+                val toY = to.opt("y") as? Number ?: run { rejectGesture(); return }
+                val durationValue = input.opt("durationMs") as? Number ?: run { rejectGesture(); return }
+                if (durationValue.toDouble() % 1.0 != 0.0) {
+                    rejectGesture()
+                    return
+                }
                 val durationMillis = durationValue.toInt()
-                if (durationMillis !in 40..1_500) return
+                if (durationMillis !in 40..1_500) {
+                    rejectGesture()
+                    return
+                }
                 val gesture = RemoteTouchGesture(
                     sessionId = sessionId,
                     appPackageName = appPackage,
