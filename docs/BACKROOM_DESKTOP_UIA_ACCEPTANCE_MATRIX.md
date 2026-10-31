@@ -145,3 +145,14 @@ Important boundary:
 - The native companion's terminal draft permission approval text now differs by surface: a desktop screen draft describes drag-selecting one actual editable area; a terminal draft explicitly warns that text goes to the currently active PTY program and that the companion cannot identify the focused TUI widget. The user must inspect the visible terminal prompt.
 - Terminal resize messages are now bound to the exact PTY session assigned to the WebRTC peer; a remote message cannot choose another session ID.
 - This test result is a focused isolated harness, not a full `npm run test:companion`, Vite/TypeScript production build, Cargo unit-test run, MSVC compile, or physical Windows acceptance. Rust/Cargo are not installed in the current execution environment.
+
+### Native terminal Enter approval and race-safety — 2026-10-31
+
+- A terminal Enter request now opens a second native operating-system Yes/No dialog on the computer. The dialog states that Enter can submit a Claude Code/OpenCode prompt or execute a shell command, and warns that the companion cannot inspect the TUI input buffer.
+- The remote browser button is not authorization: a direct WebRTC message still reaches the same native confirmation gate.
+- The Enter lease transitions from `Ready` to `Confirming` before the OS dialog opens. Duplicate Enter requests are rejected, and a new draft write is blocked while confirmation is pending so the text cannot change under the user's approval.
+- A local denial restores the one-use lease only while its original 30-second expiry remains valid. An approval consumes the lease before PTY I/O; an ambiguous write failure never enables automatic retry.
+- The native command rechecks the local control grant after the dialog and holds the control + submit-state locks through the final one-byte Enter write, so a concurrent revocation or draft cannot race between approval and delivery.
+- A new authorized draft attempt retires the previous Enter lease before validation and writing. If the new draft is invalid or write fails, the old text cannot be submitted with a stale approval.
+- Native Rust unit tests were added for reserve/confirm/deny/consume transitions, duplicate confirmation rejection, session binding, expiry and attempts to modify text during confirmation. These Rust tests are not yet executed in this environment because Cargo is unavailable.
+- The React UI preserves Enter readiness only after an explicit local OS-dialog denial. Expiry, revocation, stale authorization and PTY I/O failures disable the button and require a fresh draft.
