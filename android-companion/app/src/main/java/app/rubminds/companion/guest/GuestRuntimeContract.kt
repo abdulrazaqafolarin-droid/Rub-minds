@@ -173,6 +173,8 @@ object GuestRuntimeAdmissionPolicy {
     private val requiredCapabilities = GuestRuntimeCapability.values().toSet()
     private val requiredAcceptance = GuestAcceptanceCheck.values().toSet()
     private val sha256Pattern = Regex("^[a-f0-9]{64}$")
+    private val expectedLauncherClass = ".MainActivity"
+    private val expectedImeClass = ".DraftInputMethodService"
 
     fun review(
         descriptor: GuestRuntimeDescriptor,
@@ -207,16 +209,22 @@ object GuestRuntimeAdmissionPolicy {
             val isExpectedLauncher = component.type == GuestHostComponentType.ACTIVITY &&
                 component.isLauncherActivity && component.className.endsWith(".MainActivity") &&
                 component.permission == null
+            val permissionAtom = component.permission?.substringAfterLast('.')?.uppercase()
+            val permissionIsExplicitlyBlocked = permissionAtom in blockedPermissionAtoms
             val isExpectedInputMethod = component.type == GuestHostComponentType.SERVICE &&
-                component.isSystemBoundInputMethod && component.className.endsWith(".DraftInputMethodService") &&
+                component.isSystemBoundInputMethod && component.className.endsWith(expectedImeClass) &&
                 component.permission == "android.permission.BIND_INPUT_METHOD" &&
                 component.permissionProtection == GuestPermissionProtection.SIGNATURE
             val protectedInternalComponent = component.permissionProtection == GuestPermissionProtection.SIGNATURE &&
                 !component.permission.isNullOrBlank()
-            !(isExpectedLauncher || isExpectedInputMethod || protectedInternalComponent)
+            permissionIsExplicitlyBlocked || !(isExpectedLauncher || isExpectedInputMethod || protectedInternalComponent)
         }
         if (unsafeComponents.isNotEmpty()) {
             blockers += "unapproved_exported_components:${unsafeComponents.map { it.className }.sorted().joinToString(",")}"
+        }
+        val launcherCount = descriptor.mergedHostComponents.count { it.exported && it.isLauncherActivity }
+        if (launcherCount != 1 || descriptor.mergedHostComponents.count { it.exported && it.isSystemBoundInputMethod } > 1) {
+            blockers += "unexpected_exported_entrypoint_count"
         }
 
         if (blockers.isNotEmpty()) {
@@ -347,7 +355,7 @@ interface GuestRuntimeProvider {
 
 object GuestInstallPolicy {
     private val packageNamePattern = Regex("^[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z][A-Za-z0-9_]*)+$")
-    private val digestPattern = Regex("^[a-f0-9]{64}$")
+    private val digestPattern = Regex("^[a-f0-9]{64}(?:\\.[a-f0-9]{64})*$")
 
     fun validate(request: GuestAppInstallRequest): String? {
         if (!packageNamePattern.matches(request.packageName)) return "guest_package_name_invalid"
@@ -495,7 +503,7 @@ class GuestLocalApprovalReceipt private constructor(
     @Synchronized
     internal fun consume(sessionId: String, selectionId: String, nowMillis: Long): Boolean {
         if (consumed || this.sessionId != sessionId || this.selectionId != selectionId) return false
-        if (nowMillis > expiresAtMillis || issuedAtMillis > nowMillis + 2_000L ||
+        if (nowMillis >= expiresAtMillis || issuedAtMillis > nowMillis + 2_000L ||
             expiresAtMillis <= issuedAtMillis || expiresAtMillis - issuedAtMillis > 60_000L) return false
         consumed = true
         return true
@@ -504,7 +512,7 @@ class GuestLocalApprovalReceipt private constructor(
     @Synchronized
     internal fun isUsableFor(sessionId: String, selectionId: String, nowMillis: Long): Boolean =
         !consumed && this.sessionId == sessionId && this.selectionId == selectionId &&
-            nowMillis <= expiresAtMillis && issuedAtMillis <= nowMillis + 2_000L &&
+            nowMillis < expiresAtMillis && issuedAtMillis <= nowMillis + 2_000L &&
             expiresAtMillis > issuedAtMillis && expiresAtMillis - issuedAtMillis <= 60_000L
 
     companion object {
@@ -638,6 +646,7 @@ object GuestTargetPolicy {
     private const val MIN_SELECTION_COVERAGE = 0.65
     private const val MAX_DRAFT_CHARS = 4_000
     private const val SELECTION_TTL_MILLIS = 60_000L
+    private val uuidPattern = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
 
     fun validateSelection(
         frame: GuestFrame,
@@ -648,7 +657,7 @@ object GuestTargetPolicy {
         if (selection.sessionId != frame.sessionId || field.sessionId != frame.sessionId) return "target_session_mismatch"
         if (selection.guestInstanceId != frame.guestInstanceId || field.guestInstanceId != frame.guestInstanceId) return "target_guest_instance_mismatch"
         if (selection.frameSequence != frame.sequence || field.frameSequence != frame.sequence) return "target_frame_is_stale"
-        if (selection.selectionId.isBlank() || selection.fieldId.isBlank() || selection.fieldId != field.fieldId) return "target_identity_invalid"
+        if (!uuidPattern.matches(selection.selectionId) || selection.fieldId.isBlank() || selection.fieldId != field.fieldId) return "target_identity_invalid"
         if (selection.expiresAtMillis <= nowMillis || selection.createdAtMillis > nowMillis + 2_000L ||
             selection.expiresAtMillis - selection.createdAtMillis > SELECTION_TTL_MILLIS) return "target_selection_expired"
         if (!field.enabled || !field.editable || !field.accessibilityBacked) return "target_not_accessible_editable"
@@ -669,7 +678,7 @@ object GuestTargetPolicy {
     ): String? {
         val selectionError = validateSelection(frame, field, selection, nowMillis)
         if (selectionError != null) return selectionError
-        if (request.requestId.isBlank() || request.selectionId != selection.selectionId) return "draft_selection_mismatch"
+        if (!uuidPattern.matches(request.requestId) || request.selectionId != selection.selectionId) return "draft_selection_mismatch"
         val approval = request.approval ?: return "local_approval_required"
         if (!approval.isUsableFor(selection.sessionId, selection.selectionId, nowMillis)) return "local_approval_invalid_or_expired"
         if (request.submit) return "submit_not_supported"
