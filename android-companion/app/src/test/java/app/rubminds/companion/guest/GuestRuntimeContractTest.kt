@@ -433,7 +433,8 @@ class GuestRuntimeContractTest {
             val request = GuestAppInstallRequest(
                 packageName = "com.example.app$index",
                 signingCertificateSha256 = "a".repeat(64),
-                sourceKind = GuestAppSourceKind.USER_SELECTED_APK_DOCUMENT
+                sourceKind = GuestAppSourceKind.USER_SELECTED_APK_DOCUMENT,
+                selectedApkDocumentUri = "content://com.android.providers.downloads.documents/document/app.apk"
             )
             val instance = GuestAppInstance(
                 "instance-$index", request.packageName, request.signingCertificateSha256,
@@ -481,6 +482,18 @@ class GuestRuntimeContractTest {
         )
         assertNull(GuestInstallPolicy.validate(request))
         assertNull(GuestInstallPolicy.validate(request.copy(signingCertificateSha256 = "a".repeat(64) + "." + "b".repeat(64))))
+        assertEquals(
+            "user_selected_apk_content_uri_required",
+            GuestInstallPolicy.validate(request.copy(sourceKind = GuestAppSourceKind.USER_SELECTED_APK_DOCUMENT))
+        )
+        assertEquals(
+            "installed_apk_must_not_supply_document_uri",
+            GuestInstallPolicy.validate(request.copy(selectedApkDocumentUri = "content://invalid"))
+        )
+        assertNull(GuestInstallPolicy.validate(request.copy(
+            sourceKind = GuestAppSourceKind.USER_SELECTED_APK_DOCUMENT,
+            selectedApkDocumentUri = "content://com.android.providers.downloads.documents/document/app.apk"
+        )))
         assertEquals(
             "private_app_data_import_forbidden",
             GuestInstallPolicy.validate(request.copy(importPrivateData = true))
