@@ -5,6 +5,11 @@ import javax.xml.parsers.DocumentBuilderFactory
 import java.security.MessageDigest
 import java.util.Locale
 
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+}
+
 // Keep this record at script scope. A local data class inside Gradle's
 // nested task action triggers a Kotlin DSL IR code-generation failure.
 data class GuestManifestComponentRecord(
@@ -14,11 +19,6 @@ data class GuestManifestComponentRecord(
     val permission: String,
     val element: Element
 )
-
-plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android")
-}
 
 fun buildConfigString(value: String): String =
     "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""

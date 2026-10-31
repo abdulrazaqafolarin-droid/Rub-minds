@@ -83,3 +83,19 @@ test('Android-specific events are accepted but remain distinct from generic desk
  assert.equal(result.event,'android_response');
  assert.ok(calledUrl.includes(encodeURIComponent('backroom-android:'+deviceId+':'+roomId)));
 });
+
+test('desktop events keep their legacy topic while Android events include room scope',async()=>{
+ let desktopUrl='',androidUrl='';
+ await broadcastPrivateDeviceEvent({
+  projectUrl:'https://example-project.supabase.co',apiKey:'server-key-long-enough',
+  deviceId,event:'signal',payload:{deviceId,roomId,sessionId:requestId,issuedAt:Date.now(),stop:true},
+  fetchImpl:async(url)=>{desktopUrl=url;return {ok:true,status:202};}
+ });
+ await broadcastPrivateDeviceEvent({
+  projectUrl:'https://example-project.supabase.co',apiKey:'server-key-long-enough',
+  deviceId,event:'android_signal',payload:{deviceId,roomId,sessionId:requestId,issuedAt:Date.now(),stop:true},
+  fetchImpl:async(url)=>{androidUrl=url;return {ok:true,status:202};}
+ });
+ assert.ok(desktopUrl.includes(encodeURIComponent('backroom-device:'+deviceId)));
+ assert.ok(androidUrl.includes(encodeURIComponent('backroom-android:'+deviceId+':'+roomId)));
+});

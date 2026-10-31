@@ -18,7 +18,9 @@ export async function broadcastPrivateDeviceEvent({
    throw new TypeError('Invalid Supabase project URL');
  if(!local&&!/(?:^|\.)supabase\.(?:co|in)$/i.test(url.hostname))
    throw new TypeError('Expected a Supabase project URL');
- const topic=event.startsWith('android_')\n  ? 'backroom-android:'+deviceId.toLowerCase()+':'+payload.roomId.toLowerCase()\n  : 'backroom-device:'+deviceId.toLowerCase();
+ const topic=event.startsWith('android_')
+  ? 'backroom-android:'+deviceId.toLowerCase()+':'+payload.roomId.toLowerCase()
+  : 'backroom-device:'+deviceId.toLowerCase();
  const endpoint=base+'/realtime/v1/api/broadcast/'+encodeURIComponent(topic)+'/events/'+encodeURIComponent(event)+'?private=true';
  const response=await fetchImpl(endpoint,{
   method:'POST',

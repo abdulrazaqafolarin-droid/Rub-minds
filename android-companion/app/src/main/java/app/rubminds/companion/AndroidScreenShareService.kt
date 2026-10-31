@@ -506,9 +506,10 @@ class AndroidScreenShareService : Service() {
         dataChannel?.close()
         dataChannel = null
         invalidatePeerDisconnectTimer()
-        peer?.close()
-        peer?.dispose()
+        val closingPeer = peer
         peer = null
+        closingPeer?.close()
+        closingPeer?.dispose()
         activeSessionId?.let(AndroidTouchAccessibilityService::clearActiveSession)
         activeSessionId = null
         activeAppPackage = null

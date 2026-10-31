@@ -24,6 +24,10 @@ test("Android stream Edge actions keep human auth, device bearer and platform bo
   assert.match(endpoint, /one_active_screen_per_device/);
   assert.match(endpoint, /row_number\\(\\) over \\(partition by device_id/);
   assert.match(endpoint, /mapAndroidQueuedCommand/);
+  const migration = await read("supabase/migrations/20261031183000_backroom_android_streaming_commands.sql");
+  assert.match(migration, /can_access_backroom_android_realtime_topic/);
+  assert.match(migration, /backroom-android:'\|\|d.device_id::text\|\|':'\|\|b.room_id::text/);
+  assert.match(migration, /backroom_android_room_member_receive_private_broadcast/);
   assert.match(endpoint, /ANDROID_SESSION_LEASE_MS/);
   assert.match(endpoint, /android_session_heartbeat_failed/);
   assert.match(endpoint, /nextSessionExpiry/);
@@ -31,6 +35,8 @@ test("Android stream Edge actions keep human auth, device bearer and platform bo
   assert.match(endpoint, /action: command.command/);
   assert.match(endpoint, /lease_until/);
   assert.match(endpoint, /android_session_close_failed/);
+  assert.match(endpoint, /event: 'android_signal'/);
+  assert.match(endpoint, /event: 'android_response'/);
   assert.match(endpoint, /event: 'android_signal'/);
   assert.match(endpoint, /event: 'android_response'/);
   assert.match(endpoint, /validateAndroidSessionStart/);

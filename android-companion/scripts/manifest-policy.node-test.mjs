@@ -208,6 +208,7 @@ test("Gradle APK build audits the final merged host manifest and records its dig
   const workflow = await read("../.github/workflows/ci.yml");
   const readme = await read("README.md");
   assert.match(gradle, /SingleArtifact\.MERGED_MANIFEST/);
+  assert.ok(gradle.indexOf("plugins {") < gradle.indexOf("data class GuestManifestComponentRecord"), "Gradle plugin block must precede executable script declarations.");
   assert.match(gradle, /audit\$\{variantTitle\}GuestHostManifest/);
   assert.match(gradle, /accessExternalDTD/);
   assert.match(gradle, /disallow-doctype-decl/);
