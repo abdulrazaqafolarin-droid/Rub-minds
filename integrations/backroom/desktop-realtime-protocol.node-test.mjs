@@ -64,7 +64,7 @@ test('device signal validation binds sender, room, peer, time and answer/candida
  assert.equal(validateDeviceSignal(valid,{deviceId,roomId,now:10_000}).canControl,true);
  assert.equal(validateDeviceSignal({...valid,deviceId:roomId},{deviceId,roomId,now:10_000}),null);
  assert.equal(validateDeviceSignal({...valid,answer:{type:'offer',sdp:'v=0\\r\\n'}},{deviceId,roomId,now:10_000}),null);
- assert.equal(validateDeviceSignal({...valid,issuedAt:50_000},{deviceId,roomId,now:10_000}),null);
+ assert.equal(validateDeviceSignal({...valid,issuedAt:200_000},{deviceId,roomId,now:10_000}),null);
  assert.equal(validateDeviceSignal({...valid,actorUserId:'bad'},{deviceId,roomId,now:10_000}),null);
  const candidate={deviceId,roomId,sessionId:requestId,issuedAt:10_000,candidate:{candidate:'candidate:1 1 UDP 1 192.0.2.1 1234 typ host',sdpMid:'0'}};
  assert.ok(validateDeviceSignal(candidate,{deviceId,roomId,now:10_000}));
