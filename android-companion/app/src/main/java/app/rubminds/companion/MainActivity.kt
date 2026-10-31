@@ -287,7 +287,16 @@ class MainActivity : Activity() {
         val snapshot = WorkProfileCoordinator(this).snapshot()
         when {
             snapshot.isProfileOwner -> {
-                workProfileStatusText.text = "This companion is running inside the managed Work Profile. Apps opened here use this profile's separate Android app data. In-frame streaming and remote touch are not enabled."
+                workProfileStatusText.text = when {
+                    !snapshot.profileOwnerConfirmed ->
+                        "Android has not confirmed Rub Minds as the Work Profile owner. Cross-profile handoff stays disabled."
+                    !snapshot.hasBridgeSecret ->
+                        "This Work Profile is provisioned, but its local handoff secret was not saved. Recreate the profile before using cross-profile launch."
+                    snapshot.crossProfileAllowlistReady != true ->
+                        "The Work Profile is OS-isolated, but Android's DPC package allowlist could not be verified. Cross-profile handoff remains disabled."
+                    else ->
+                        "Work Profile owner and DPC allowlist verified. Apps opened here use separate Android profile data. In-frame streaming and remote touch are not enabled."
+                }
                 workProfileSetupButton.visibility = android.view.View.GONE
                 workProfileAccessButton.visibility = android.view.View.GONE
             }
