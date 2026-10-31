@@ -79,3 +79,35 @@ See [`docs/architecture/backroom-app-execution-engine.md`](../docs/architecture/
 The companion shows **Open on this phone** next to discovered applications. This is an explicit local Android action only. The selected app must first be saved in the device-local allowlist, and its Android signing certificate must still match. The companion asks for a local confirmation and revalidates the saved grant and signer after confirmation. It then uses Android's normal launcher intent. It does not send a cloud command or transmit a screen. An app that is not installed or visible under the Android user profile cannot be opened. Remote app execution and virtualization remain separate, unimplemented capabilities.
 
 The local Open button is enabled only for a persisted matching-signature grant. Pressing **Save and sync selected apps** redraws the app rows immediately so newly saved apps become openable and deselected apps lose their Open action without requiring a restart.
+
+
+## OS-isolated Work Profile (local handoff, not Phone Frame virtualization)
+
+The companion includes an **optional Android managed Work Profile** path. This is a real Android-managed user/profile boundary: packages installed in the Work Profile have profile-scoped app data, accounts and logins separate from the personal profile. It does not clone the personal app's private data.
+
+Setup is user-initiated:
+1. Tap **Set up isolated Work Profile** and review the explanation.
+2. Continue into Android's own managed-profile provisioning UI. Android/device policy may disallow provisioning; the companion reports that state and does not bypass it.
+3. During provisioning, Android installs the same Rub Minds companion as the profile owner in the new Work Profile. Its DPC receiver stores a per-profile copy of a one-use bridge secret in that profile's Android Keystore and allowlists only the Rub Minds companion package for cross-profile communication.
+4. Return to the personal profile and use **Allow secure Work Profile handoff**. Android's own consent screen controls the INTERACT_ACROSS_PROFILES grant.
+5. Install the desired app separately inside the Work Profile (for example through the Work Profile's app store), open Rub Minds Companion there, and separately select/save that app. Sign into it again; nothing is copied from the personal profile.
+6. In the personal profile, **Open in Work Profile** sends one short-lived HMAC-SHA256-authenticated request to the companion in the single managed profile. The target profile consumes the nonce, independently checks the app's installed signing certificate and its profile-local saved grant, then opens the app locally.
+
+The bridge secret is encrypted independently with Android Keystore in each profile. The handoff is time-bounded, nonce-protected, signer-bound and local-only. The target refuses missing/invalid secrets, replayed/expired requests, multiple target profiles, missing apps, signer changes and apps not explicitly approved inside the Work Profile. The one-use nonce ledger retains every still-valid entry and fails closed at its storage cap rather than evicting a live replay guard.
+
+**Important boundary:** this is genuine OS-managed data separation and a local cross-profile app-launch bridge. It does **not** create an Android VirtualDevice, guest virtual display, in-frame app renderer, screen stream, remote touch driver, guest accessibility tree or drag-to-select insertion. The Phone Frame must continue to report guest app execution as unavailable. A Work Profile app opens as an ordinary Android Activity in the Work Profile, outside the Backroom canvas. The feature must not be described as a virtualized app running inside Backroom.
+
+The only additional host permission is **android.permission.INTERACT_ACROSS_PROFILES**. It is meaningful only when the DPC allowlists the package and the user grants the OS consent. The merged-manifest gate now permits only this permission plus INTERNET, and exactly three exported components: the launcher activity, the BIND_INPUT_METHOD draft keyboard and the exact BIND_DEVICE_ADMIN Work Profile receiver. No accessibility service, all-files access, package-wide visibility, overlay, install permission, ADB listener or cloud-issued app launch is introduced.
+
+Android references:
+- [Managed profile provisioning](https://developer.android.com/reference/android/app/admin/DevicePolicyManager#ACTION_PROVISION_MANAGED_PROFILE)
+- [Device admin provisioning extras](https://developer.android.com/reference/android/app/admin/DevicePolicyManager#EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE)
+- [Cross-profile app access](https://developer.android.com/reference/android/content/pm/CrossProfileApps)
+- [DPC cross-profile package allowlist](https://developer.android.com/reference/android/app/admin/DevicePolicyManager#setCrossProfilePackages(android.content.ComponentName,java.util.Set))
+
+## Verification boundary for Work Profile
+
+- The command MAC/expiry/replay helper has JUnit tests for valid, tampered, expired, future-dated, wrong-secret and malformed requests.
+- Source-policy tests cover the DPC receiver/export allowlist, only the approved profile permission, HMAC command path, local signer recheck and profile-local grant.
+- The final merged-manifest audit includes the DPC receiver metadata and provisioning filters.
+- **Not yet verified here:** Android Gradle/JUnit execution, actual DPC provisioning on the TECNO KL4, system consent, cross-profile launch, app availability in the profile, or removal/recovery behavior. Those remain physical-device acceptance steps. Work Profile success does not make the GuestRuntimeProvider READY and does not satisfy live Phone Frame rendering/touch acceptance.
