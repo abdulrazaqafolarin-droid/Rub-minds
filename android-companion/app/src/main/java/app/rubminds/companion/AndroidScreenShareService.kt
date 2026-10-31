@@ -528,7 +528,15 @@ class AndroidScreenShareService : Service() {
         channel.registerObserver(object : DataChannel.Observer {
             override fun onBufferedAmountChange(previousAmount: Long) = Unit
             override fun onStateChange() {
-                if (channel.state() == DataChannel.State.CLOSED && dataChannel === channel) dataChannel = null
+                when (channel.state()) {
+                    DataChannel.State.OPEN -> {
+                        if (dataChannel === channel) {
+                            sendAppVisibility(channel, sessionId, capturedContentVisible && !stopping)
+                        }
+                    }
+                    DataChannel.State.CLOSED -> if (dataChannel === channel) dataChannel = null
+                    else -> Unit
+                }
             }
             override fun onMessage(buffer: DataChannel.Buffer) {
                 if (buffer.binary || buffer.data.remaining() !in 1..4_096) return

@@ -172,3 +172,10 @@ test("Android projection visibility is explicitly relayed over the data channel"
   assert.match(browser, /setSourceVisible\(acknowledgement.visible\)/);
   assert.match(browser, /setControlGranted\(false\)/);
 });
+
+test("initial Android visibility state is sent when the SCTP data channel opens", async () => {
+  const service = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  const channel = service.slice(service.indexOf("private fun observeInputChannel"), service.indexOf("@Synchronized", service.indexOf("private fun observeInputChannel")));
+  assert.match(channel, /DataChannel\.State\.OPEN/);
+  assert.match(channel, /sendAppVisibility\(channel, sessionId, capturedContentVisible && !stopping\)/);
+});
