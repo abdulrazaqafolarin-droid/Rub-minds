@@ -108,6 +108,8 @@ test("guest runtime code remains a provider-neutral contract with no bundled vir
   assert.match(contract, /GuestRuntimeDecision\.BLOCKED/);
   assert.match(contract, /mergedHostPermissions/);
   assert.match(contract, /releaseArtifactDebugSigned/);
+  assert.match(contract, /releaseArtifactSha256/);
+  assert.match(contract, /mergedManifestSha256/);
   assert.match(contract, /GuestCaptureScope\.GUEST_APP/);
   assert.match(contract, /GuestCaptureScope\.WHOLE_DEVICE/);
   assert.match(contract, /approvedLocally/);
