@@ -46,6 +46,10 @@ class MainActivity : Activity() {
     private lateinit var pairButton: Button
     private lateinit var pairConsent: CheckBox
     private lateinit var consentPrefs: android.content.SharedPreferences
+    private lateinit var workProfileStatusText: TextView
+    private lateinit var workProfileSetupButton: Button
+    private lateinit var workProfileAccessButton: Button
+    private val workProfileButtons = mutableMapOf<String, Button>()
     private val launchGrants = linkedMapOf<String, String>()
     private val draftGrants = linkedSetOf<String>()
     private val appRows = mutableMapOf<String, Pair<CheckBox, CheckBox>>()
@@ -65,6 +69,8 @@ class MainActivity : Activity() {
         render()
         discoverApps()
         refreshKeyboardStatus()
+        refreshWorkProfileStatus()
+        handleWorkProfileLaunchIntent(intent)
         checkExistingDevice()
     }
 
@@ -72,6 +78,20 @@ class MainActivity : Activity() {
         super.onResume()
         if (::appList.isInitialized) discoverApps()
         refreshKeyboardStatus()
+        refreshWorkProfileStatus()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleWorkProfileLaunchIntent(intent)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        WorkProfileCoordinator(this).onActivityResult(requestCode, resultCode)
+        refreshWorkProfileStatus()
+        if (requestCode == WorkProfileCoordinator.REQUEST_CROSS_PROFILE_ACCESS) drawAppRows()
     }
 
     override fun onDestroy() {
@@ -169,6 +189,7 @@ class MainActivity : Activity() {
         }
         cloudCard.addView(cloudStatus)
         root.addView(cloudCard)
+        buildWorkProfileCard(root)
 
         val scopeNote = TextView(this).apply {
             text = "Privacy boundary: Backroom syncs only the apps you select, with their package names, labels, signer fingerprints and version names. It does not upload app data, login sessions, files, messages or passwords."
@@ -219,6 +240,108 @@ class MainActivity : Activity() {
         root.addView(keyboardActions)
         setContentView(root)
         if (cloudApi == null) cloudStatus.text = "Build this companion with SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY."
+        refreshWorkProfileStatus()
+    }
+
+    private fun buildWorkProfileCard(root: LinearLayout) {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setBackgroundColor(0xffeef4f0.toInt())
+        }
+        card.addView(TextView(this).apply {
+            text = "Android OS-isolated Work Profile"
+            textSize = 16f
+            setTextColor(0xff172033.toInt())
+        })
+        card.addView(TextView(this).apply {
+            text = "This creates a genuine Android managed profile with separate app data. Apps must be installed and signed into separately inside that profile. This is not yet a live virtual display or an app embedded in Backroom's Phone Frame."
+            textSize = 12f
+            setTextColor(0xff405070.toInt())
+            setPadding(0, dp(5), 0, dp(8))
+        })
+        workProfileStatusText = TextView(this).apply {
+            textSize = 12f
+            setTextColor(0xff304b3c.toInt())
+        }
+        card.addView(workProfileStatusText)
+        workProfileSetupButton = Button(this).apply {
+            text = "Set up isolated Work Profile"
+            setOnClickListener { confirmWorkProfileProvisioning() }
+        }
+        card.addView(workProfileSetupButton)
+        workProfileAccessButton = Button(this).apply {
+            text = "Allow secure Work Profile handoff"
+            setOnClickListener {
+                val error = WorkProfileCoordinator(this@MainActivity).requestAccess(this@MainActivity)
+                if (error != null) Toast.makeText(this@MainActivity, error, Toast.LENGTH_LONG).show()
+                refreshWorkProfileStatus()
+            }
+        }
+        card.addView(workProfileAccessButton)
+        root.addView(card)
+    }
+
+    private fun refreshWorkProfileStatus() {
+        if (!::workProfileStatusText.isInitialized) return
+        val snapshot = WorkProfileCoordinator(this).snapshot()
+        when {
+            snapshot.isProfileOwner -> {
+                workProfileStatusText.text = "This companion is running inside the managed Work Profile. Apps opened here use this profile's separate Android app data. In-frame streaming and remote touch are not enabled."
+                workProfileSetupButton.visibility = android.view.View.GONE
+                workProfileAccessButton.visibility = android.view.View.GONE
+            }
+            snapshot.targetProfileCount == 0 -> {
+                workProfileStatusText.text = if (snapshot.canProvision)
+                    "No managed Work Profile is connected. Setup requires your confirmation in Android's own provisioning screens."
+                else "No managed Work Profile is available, or Android/device policy currently blocks profile provisioning."
+                workProfileSetupButton.visibility = if (snapshot.canProvision) android.view.View.VISIBLE else android.view.View.GONE
+                workProfileAccessButton.visibility = android.view.View.GONE
+            }
+            snapshot.targetProfileCount > 1 -> {
+                workProfileStatusText.text = "Multiple cross-profile targets were found. Backroom refuses to guess which profile should receive an app launch."
+                workProfileSetupButton.visibility = android.view.View.GONE
+                workProfileAccessButton.visibility = android.view.View.GONE
+            }
+            !snapshot.hasBridgeSecret -> {
+                workProfileStatusText.text = "A profile exists, but its Rub Minds secure handoff secret is missing. No app will be launched across profiles."
+                workProfileSetupButton.visibility = android.view.View.GONE
+                workProfileAccessButton.visibility = android.view.View.GONE
+            }
+            snapshot.canInteractAcrossProfiles -> {
+                workProfileStatusText.text = "Work Profile is available and Android has approved cross-profile handoff. Apps still need to be installed and approved separately inside the Work Profile. Launches are local-only; cloud commands cannot trigger them."
+                workProfileSetupButton.visibility = android.view.View.GONE
+                workProfileAccessButton.visibility = android.view.View.GONE
+            }
+            snapshot.canRequestCrossProfileAccess -> {
+                workProfileStatusText.text = "Work Profile found. Android requires your separate approval before Rub Minds can open the same companion in that profile."
+                workProfileSetupButton.visibility = android.view.View.GONE
+                workProfileAccessButton.visibility = android.view.View.VISIBLE
+            }
+            else -> {
+                workProfileStatusText.text = "Work Profile found, but device policy does not allow Rub Minds to request cross-profile handoff. App launch remains disabled."
+                workProfileSetupButton.visibility = android.view.View.GONE
+                workProfileAccessButton.visibility = android.view.View.GONE
+            }
+        }
+        drawAppRowsWhenReady()
+    }
+
+    private fun drawAppRowsWhenReady() {
+        if (::appList.isInitialized && apps.isNotEmpty()) drawAppRows()
+    }
+
+    private fun confirmWorkProfileProvisioning() {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Set up an Android Work Profile?")
+            .setMessage("Android will create a separate managed profile for work apps. Apps, accounts, logins, files and app data in that profile are separate from your personal profile. Rub Minds becomes profile owner only inside that new profile; this app does not request device-wide control, wipe, lock, or broad storage access. You must install apps and sign in again inside the Work Profile. This does not yet stream apps into Backroom's Phone Frame.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Continue to Android setup") { _, _ ->
+                val error = WorkProfileCoordinator(this).startProvisioning(this)
+                if (error != null) Toast.makeText(this, error, Toast.LENGTH_LONG).show()
+                refreshWorkProfileStatus()
+            }
+            .show()
     }
 
     private fun refreshKeyboardStatus() {
@@ -259,6 +382,7 @@ class MainActivity : Activity() {
     private fun drawAppRows() {
         appList.removeAllViews()
         appRows.clear()
+        workProfileButtons.clear()
         if (apps.isEmpty()) {
             appList.addView(TextView(this).apply { text = "No launchable apps were discovered for this user profile." })
             return
@@ -276,6 +400,10 @@ class MainActivity : Activity() {
                 AppGrant(packageName, digest, allowLaunch = true, allowDraftInsertion = packageName in draftGrants)
             })
         }
+        val profileSnapshot = WorkProfileCoordinator(this).snapshot()
+        val canLaunchInWorkProfile = !profileSnapshot.isProfileOwner &&
+            profileSnapshot.targetProfileCount == 1 && profileSnapshot.canInteractAcrossProfiles &&
+            profileSnapshot.hasBridgeSecret
         apps.forEach { app ->
             val digest = app.signingCertificateSha256
             val selected = digest != null && launchGrants[app.packageName] == digest
@@ -322,11 +450,19 @@ class MainActivity : Activity() {
             row.addView(draft)
             row.addView(Button(this).apply {
                 text = "Open on this phone"
-                // This is a deliberate local action, never a cloud-issued
-                // remote launch. Saving app selections is a separate step.
+                // This is a deliberate local action, never a cloud-issued remote launch.
                 isEnabled = selected && store.get(app.packageName, digest ?: "") != null
                 setOnClickListener { openSelectedAppLocally(app.packageName) }
             })
+            if (canLaunchInWorkProfile && digest != null) {
+                val workButton = Button(this).apply {
+                    text = "Open in Work Profile"
+                    isEnabled = selected && store.get(app.packageName, digest) != null
+                    setOnClickListener { confirmWorkProfileAppLaunch(app.packageName, digest) }
+                }
+                row.addView(workButton)
+                workProfileButtons[app.packageName] = workButton
+            }
             row.addView(TextView(this).apply {
                 text = "Version " + app.versionName + " · " + app.storageLabel + if (digest == null) " · signer unavailable" else ""
                 textSize = 10f
@@ -336,6 +472,91 @@ class MainActivity : Activity() {
                 LinearLayout.LayoutParams(-1, dp(1)))
             appList.addView(row)
             appRows[app.packageName] = add to draft
+        }
+    }
+
+    private fun confirmWorkProfileAppLaunch(packageName: String, signerSha256: String) {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Open app in Work Profile?")
+            .setMessage("This sends a one-use, signer-bound local launch request to the Rub Minds companion in your Work Profile. The target app must already be installed and separately approved inside that profile. No cloud/AI command can invoke this action.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Open in Work Profile") { _, _ ->
+                val currentDigest = AppIdentity.signingCertificateSha256(this, packageName)
+                val grant = currentDigest?.let { store.get(packageName, it) }
+                if (currentDigest != signerSha256 || !AppGrantPolicy.canLaunch(grant, currentDigest)) {
+                    Toast.makeText(this, "The app identity changed or its local grant was removed.", Toast.LENGTH_LONG).show()
+                    return@setPositiveButton
+                }
+                val error = WorkProfileAppLauncher(this).launch(this, packageName, signerSha256)
+                if (error != null) Toast.makeText(this, when (error) {
+                    "work_profile_bridge_secret_unavailable" -> "The Work Profile secure link is unavailable. Recreate the profile before using it."
+                    "managed_work_profile_not_found" -> "No managed Work Profile is available."
+                    "multiple_profiles_found_target_ambiguous" -> "More than one profile is available; Backroom will not guess."
+                    else -> error
+                }, Toast.LENGTH_LONG).show()
+            }
+            .show()
+    }
+
+    private fun handleWorkProfileLaunchIntent(incoming: Intent?) {
+        if (incoming?.action != WorkProfileContract.ACTION_OPEN_APP) return
+        // Retire the activity intent immediately so a resume/recreation cannot replay it.
+        setIntent(Intent(this, MainActivity::class.java))
+        if (!getSystemService(android.app.admin.DevicePolicyManager::class.java)
+                .isProfileOwnerApp(packageName)
+        ) {
+            Toast.makeText(this, "Cross-profile launch was rejected outside the managed Work Profile.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val command = WorkProfileLaunchCommand(
+            packageName = incoming.getStringExtra(WorkProfileContract.EXTRA_PACKAGE).orEmpty(),
+            signerSha256 = incoming.getStringExtra(WorkProfileContract.EXTRA_SIGNER).orEmpty(),
+            issuedAtMillis = incoming.getLongExtra(WorkProfileContract.EXTRA_ISSUED_AT, 0L),
+            nonce = incoming.getStringExtra(WorkProfileContract.EXTRA_NONCE).orEmpty(),
+            macSha256 = incoming.getStringExtra(WorkProfileContract.EXTRA_MAC).orEmpty()
+        )
+        val secret = WorkProfileBridgeSecretStore(this).load()
+        if (secret == null) {
+            Toast.makeText(this, "The Work Profile does not have its setup secret. Recreate the managed profile.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val prefs = getSharedPreferences("work_profile_launch_nonces", MODE_PRIVATE)
+        val used = prefs.getStringSet("used", emptySet()).orEmpty()
+        val usedNonces = used.toSet()
+        val failure = try {
+            WorkProfileLaunchAuthenticator.verify(secret, command, System.currentTimeMillis(), command.nonce in usedNonces)
+        } finally {
+            secret.fill(0)
+        }
+        if (failure != null) {
+            Toast.makeText(this, "Work Profile rejected this local launch request: $failure", Toast.LENGTH_LONG).show()
+            return
+        }
+        val actualSigner = AppIdentity.signingCertificateSha256(this, command.packageName)
+        if (actualSigner == null || actualSigner != command.signerSha256) {
+            Toast.makeText(this, "The app is not installed in this Work Profile or its signing identity differs.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val localGrant = AppGrantStore(this).get(command.packageName, actualSigner)
+        if (!AppGrantPolicy.canLaunch(localGrant, actualSigner)) {
+            Toast.makeText(this, "Select and save this app inside the Work Profile before opening it here.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val launch = packageManager.getLaunchIntentForPackage(command.packageName)
+        if (launch == null) {
+            Toast.makeText(this, "Install this app inside the Work Profile first, then select it in Rub Minds Companion there.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val nextNonces = (usedNonces + command.nonce).takeLast(512).toSet()
+        if (!prefs.edit().putStringSet("used", nextNonces).commit()) {
+            Toast.makeText(this, "Could not persist the one-use launch guard. No app was opened.", Toast.LENGTH_LONG).show()
+            return
+        }
+        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            startActivity(launch)
+        } catch (_: Exception) {
+            Toast.makeText(this, "Android could not open this app in the Work Profile.", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -554,6 +775,9 @@ class MainActivity : Activity() {
             val hasSigner = apps.any { it.packageName == packageName && it.signingCertificateSha256 != null }
             row.first.isEnabled = !value && hasSigner
             row.second.isEnabled = !value && row.first.isChecked
+        }
+        workProfileButtons.forEach { (packageName, button) ->
+            button.isEnabled = !value && apps.any { it.packageName == packageName && it.signingCertificateSha256 != null && launchGrants[packageName] == it.signingCertificateSha256 }
         }
         if (::cloudStatus.isInitialized) cloudStatus.text = message
     }
