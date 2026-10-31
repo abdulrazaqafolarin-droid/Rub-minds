@@ -478,11 +478,61 @@ data class GuestSelectionLease(
     val expiresAtMillis: Long
 )
 
+/**
+ * Opaque receipt issued only after the local native confirmation dialog succeeds.
+ * The private constructor prevents network/deserialized request data from setting
+ * a trusted boolean. The provider must consume it exactly once.
+ */
+class GuestLocalApprovalReceipt private constructor(
+    val sessionId: String,
+    val selectionId: String,
+    val issuedAtMillis: Long,
+    val expiresAtMillis: Long,
+    private val nonce: String
+) {
+    private var consumed = false
+
+    @Synchronized
+    internal fun consume(sessionId: String, selectionId: String, nowMillis: Long): Boolean {
+        if (consumed || this.sessionId != sessionId || this.selectionId != selectionId) return false
+        if (nowMillis > expiresAtMillis || issuedAtMillis > nowMillis + 2_000L ||
+            expiresAtMillis <= issuedAtMillis || expiresAtMillis - issuedAtMillis > 60_000L) return false
+        consumed = true
+        return true
+    }
+
+    @Synchronized
+    internal fun isUsableFor(sessionId: String, selectionId: String, nowMillis: Long): Boolean =
+        !consumed && this.sessionId == sessionId && this.selectionId == selectionId &&
+            nowMillis <= expiresAtMillis && issuedAtMillis <= nowMillis + 2_000L &&
+            expiresAtMillis > issuedAtMillis && expiresAtMillis - issuedAtMillis <= 60_000L
+
+    companion object {
+        /** Call only on the affirmative result from an OS/native local confirmation UI. */
+        internal fun issueAfterNativeConfirmation(
+            sessionId: String,
+            selectionId: String,
+            issuedAtMillis: Long,
+            expiresAtMillis: Long
+        ): GuestLocalApprovalReceipt? {
+            if (sessionId.isBlank() || selectionId.isBlank() || expiresAtMillis <= issuedAtMillis ||
+                expiresAtMillis - issuedAtMillis > 60_000L) return null
+            return GuestLocalApprovalReceipt(
+                sessionId = sessionId,
+                selectionId = selectionId,
+                issuedAtMillis = issuedAtMillis,
+                expiresAtMillis = expiresAtMillis,
+                nonce = java.util.UUID.randomUUID().toString()
+            )
+        }
+    }
+}
+
 data class GuestDraftRequest(
     val requestId: String,
     val selectionId: String,
     val text: String,
-    val approvedLocally: Boolean,
+    val approval: GuestLocalApprovalReceipt?,
     val submit: Boolean = false
 )
 
@@ -561,6 +611,11 @@ class GuestSelectionGuard {
                 error != "draft_selection_mismatch") activeSelectionId = null
             return error
         }
+        val approval = request.approval
+        if (approval == null || !approval.consume(selection.sessionId, selection.selectionId, nowMillis)) {
+            activeSelectionId = null
+            return "local_approval_invalid_or_expired"
+        }
         consumedSelectionIds += selection.selectionId
         activeSelectionId = null
         return null
@@ -615,7 +670,8 @@ object GuestTargetPolicy {
         val selectionError = validateSelection(frame, field, selection, nowMillis)
         if (selectionError != null) return selectionError
         if (request.requestId.isBlank() || request.selectionId != selection.selectionId) return "draft_selection_mismatch"
-        if (!request.approvedLocally) return "local_approval_required"
+        val approval = request.approval ?: return "local_approval_required"
+        if (!approval.isUsableFor(selection.sessionId, selection.selectionId, nowMillis)) return "local_approval_invalid_or_expired"
         if (request.submit) return "submit_not_supported"
         if (request.text.isBlank() || request.text.length > MAX_DRAFT_CHARS ||
             request.text.any { it.isISOControl() }) return "draft_text_invalid"
