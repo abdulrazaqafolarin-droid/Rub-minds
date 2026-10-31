@@ -47,7 +47,7 @@ class WorkProfileCoordinator(context: Context) {
             canProvision = canProvision,
             canRequestAccess = canRequest,
             canInteract = canInteract,
-            hasBridgeSecret = secrets.load() != null,
+            hasBridgeSecret = secrets.hasSecret(),
             profileOwnerConfirmed = profileOwnerConfirmed,
             crossProfileAllowlistReady = crossProfileAllowlistReady
         )
