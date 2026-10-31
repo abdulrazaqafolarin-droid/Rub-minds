@@ -20,6 +20,8 @@ on:
       - 'src/backroom-cloud.css'
       - 'integrations/backroom/desktop-target-selection.mjs'
       - 'integrations/backroom/desktop-target-selection.node-test.mjs'
+      - 'integrations/backroom/video-selection-overlay.mjs'
+      - 'integrations/backroom/video-selection-overlay.node-test.mjs'
       - 'package.json'
       - 'package-lock.json'
 
