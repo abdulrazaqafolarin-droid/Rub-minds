@@ -483,20 +483,34 @@ async function handlePeerData(sessionId,raw){
   if(message.kind==='input'&&message.event){
     try{await invoke('dispatch_input',{sessionId,event:message.event});}catch(error){notify(error.message,'error');}
   } else if(message.kind==='select_target'){
+    const requestId=typeof message.requestId==='string'&&message.requestId.length>0&&message.requestId.length<=80?message.requestId:null;
     const report=(ok,reason)=>{
       if(peer.channel?.readyState==='open'){
-        try{peer.channel.send(JSON.stringify({kind:'target_result',ok,reason}));}catch{}
+        try{peer.channel.send(JSON.stringify({kind:'target_result',requestId,ok,reason}));}catch{}
       }
     };
-    try{
-      await invoke('select_draft_target',{sessionId,target:message.target});
-      report(true,'Verified an empty, editable Windows text field. Its app identity will be rechecked before typing.');
-      notify('Drag selection matched an accessible empty text field.','success');
-    }catch(error){
-      const reason=error?.message||'The selected area is not a verifiable editable field.';
-      report(false,reason);
-      notify(reason,'error');
+    if(!requestId){report(false,'A unique selection-attempt identifier is required.');return;}
+    peer.targetQueueDepth=(peer.targetQueueDepth||0)+1;
+    if(peer.targetQueueDepth>4){
+      peer.targetQueueDepth-=1;
+      report(false,'Too many target checks are pending. Wait for the current selection result.');
+      return;
     }
+    // UIA calls may take different amounts of time. Serialize by peer so an
+    // earlier, slow drag cannot overwrite the most recent target selection.
+    peer.targetQueue=(peer.targetQueue||Promise.resolve()).then(async()=>{
+      try{
+        await invoke('select_draft_target',{sessionId,target:message.target});
+        report(true,'Verified an empty, editable Windows text field. Its app identity will be rechecked before insertion.');
+        notify('Drag selection matched an accessible empty text field.','success');
+      }catch(error){
+        const reason=error?.message||'The selected area is not a verifiable editable field.';
+        report(false,reason);
+        notify(reason,'error');
+      }finally{
+        peer.targetQueueDepth=Math.max(0,(peer.targetQueueDepth||1)-1);
+      }
+    });
   } else if(message.kind==='draft'){
     try{const id=await invoke('stage_draft_request',{sessionId,text:message.text});await refreshPending();notify('Draft request '+id+' is waiting for approval on this computer.');}catch(error){notify(error.message,'error');}
   } else if(message.kind==='terminal_input'){
