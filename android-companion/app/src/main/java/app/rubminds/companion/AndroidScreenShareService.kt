@@ -64,6 +64,7 @@ class AndroidScreenShareService : Service() {
     private var pollingStarted = false
     @Volatile private var consecutivePollFailures = 0
     @Volatile private var capturedContentVisible = false
+    @Volatile private var peerDisconnectToken = 0L
     @Volatile private var serverCloseSent = false
     @Volatile private var stopping = false
 
@@ -253,6 +254,28 @@ class AndroidScreenShareService : Service() {
         }
     }
 
+    private fun invalidatePeerDisconnectTimer() {
+        synchronized(this) { peerDisconnectToken += 1L }
+    }
+
+    private fun schedulePeerDisconnectStop(sessionId: String, connection: PeerConnection) {
+        val token = synchronized(this) {
+            peerDisconnectToken += 1L
+            peerDisconnectToken
+        }
+        try {
+            executor.schedule({
+                val stillDisconnected = connection.connectionState() == PeerConnection.PeerConnectionState.DISCONNECTED ||
+                    connection.iceConnectionState() == PeerConnection.IceConnectionState.DISCONNECTED
+                if (!stopping && peerDisconnectToken == token && activeSessionId == sessionId && stillDisconnected) {
+                    stopCapture("webrtc_peer_disconnected")
+                }
+            }, PEER_DISCONNECT_GRACE_SECONDS, TimeUnit.SECONDS)
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            // Service shutdown already tears down the peer and projection.
+        }
+    }
+
     private fun startPeerAnswer(sessionId: String, appPackage: String, offerSdp: String, roomId: String): Boolean {
         if (!UUID_PATTERN.matches(sessionId) || !AppGrantPolicy.isValidPackageName(appPackage) ||
             appPackage != locallySelectedPackage || !UUID_PATTERN.matches(roomId) ||
@@ -285,11 +308,19 @@ class AndroidScreenShareService : Service() {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
         }
         val observer = object : PeerConnection.Observer {
+            private fun connectionForObserver(): PeerConnection =
+                peer ?: error("WebRTC peer not initialised")
             override fun onSignalingChange(newState: PeerConnection.SignalingState) = Unit
             override fun onIceConnectionChange(newState: PeerConnection.IceConnectionState) {
-                if (newState == PeerConnection.IceConnectionState.FAILED ||
-                    newState == PeerConnection.IceConnectionState.CLOSED
-                ) stopCapture("webrtc_connection_failed")
+                when (newState) {
+                    PeerConnection.IceConnectionState.DISCONNECTED ->
+                        schedulePeerDisconnectStop(sessionId, connectionForObserver())
+                    PeerConnection.IceConnectionState.CONNECTED,
+                    PeerConnection.IceConnectionState.COMPLETED -> invalidatePeerDisconnectTimer()
+                    PeerConnection.IceConnectionState.FAILED,
+                    PeerConnection.IceConnectionState.CLOSED -> stopCapture("webrtc_connection_failed")
+                    else -> Unit
+                }
             }
             override fun onIceConnectionReceivingChange(receiving: Boolean) = Unit
             override fun onIceGatheringChange(newState: PeerConnection.IceGatheringState) {
@@ -307,9 +338,14 @@ class AndroidScreenShareService : Service() {
             override fun onAddTrack(receiver: org.webrtc.RtpReceiver, mediaStreams: Array<out org.webrtc.MediaStream>) = Unit
             override fun onTrack(transceiver: org.webrtc.RtpTransceiver) = Unit
             override fun onConnectionChange(newState: PeerConnection.PeerConnectionState) {
-                if (newState == PeerConnection.PeerConnectionState.FAILED ||
-                    newState == PeerConnection.PeerConnectionState.CLOSED
-                ) stopCapture("webrtc_connection_failed")
+                when (newState) {
+                    PeerConnection.PeerConnectionState.DISCONNECTED ->
+                        schedulePeerDisconnectStop(sessionId, connectionForObserver())
+                    PeerConnection.PeerConnectionState.CONNECTED -> invalidatePeerDisconnectTimer()
+                    PeerConnection.PeerConnectionState.FAILED,
+                    PeerConnection.PeerConnectionState.CLOSED -> stopCapture("webrtc_connection_failed")
+                    else -> Unit
+                }
             }
         }
         val connection = factory.createPeerConnection(rtcConfig, observer) ?: run { closePeer(); return false }
@@ -443,6 +479,7 @@ class AndroidScreenShareService : Service() {
         dataChannel?.unregisterObserver()
         dataChannel?.close()
         dataChannel = null
+        invalidatePeerDisconnectTimer()
         peer?.close()
         peer?.dispose()
         peer = null
@@ -560,6 +597,7 @@ class AndroidScreenShareService : Service() {
         private const val CAPTURE_FPS = 20
         private const val MAX_CAPTURE_DIMENSION = 1_440
         private const val POLL_INTERVAL_SECONDS = 8L
+        private const val PEER_DISCONNECT_GRACE_SECONDS = 20L
         private const val MAX_POLL_FAILURES = 12
         private const val MAX_WAIT_WITHOUT_SESSION_MS = 5 * 60 * 1000L
         private const val MAX_SDP_CHARS = 65_536

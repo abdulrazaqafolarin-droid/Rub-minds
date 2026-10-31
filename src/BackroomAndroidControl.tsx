@@ -29,6 +29,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const pointerRef = useRef<PointerStart | null>(null);
   const controlExpiryRef = useRef<number | null>(null);
   const startTimerRef = useRef<number | null>(null);
+  const disconnectTimerRef = useRef<number | null>(null);
 
   const notify = useCallback((text: string, error = false) => {
     setMessage(text); setMessageError(error);
@@ -37,7 +38,8 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const disposePeer = useCallback(() => {
     if (controlExpiryRef.current !== null) window.clearTimeout(controlExpiryRef.current);
     if (startTimerRef.current !== null) window.clearTimeout(startTimerRef.current);
-    controlExpiryRef.current = null; startTimerRef.current = null;
+    if (disconnectTimerRef.current !== null) window.clearTimeout(disconnectTimerRef.current);
+    controlExpiryRef.current = null; startTimerRef.current = null; disconnectTimerRef.current = null;
     const peer = peerRef.current;
     if (peer) { peer.ontrack = null; peer.onconnectionstatechange = null; peer.close(); }
     peerRef.current = null;
@@ -115,6 +117,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       // Avoid React state writes from an unmount cleanup.
       if (controlExpiryRef.current !== null) window.clearTimeout(controlExpiryRef.current);
       if (startTimerRef.current !== null) window.clearTimeout(startTimerRef.current);
+      if (disconnectTimerRef.current !== null) window.clearTimeout(disconnectTimerRef.current);
       peerRef.current?.close(); dataRef.current?.close();
       streamRef.current?.getTracks().forEach(track => track.stop());
       if (videoRef.current) videoRef.current.srcObject = null;
@@ -163,7 +166,19 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       };
       peer.onconnectionstatechange = () => {
         if (peerRef.current !== peer) return;
-        if (peer.connectionState === 'failed' || peer.connectionState === 'closed') {
+        if (peer.connectionState === 'connected') {
+          if (disconnectTimerRef.current !== null) window.clearTimeout(disconnectTimerRef.current);
+          disconnectTimerRef.current = null;
+        } else if (peer.connectionState === 'disconnected') {
+          if (disconnectTimerRef.current !== null) window.clearTimeout(disconnectTimerRef.current);
+          disconnectTimerRef.current = window.setTimeout(() => {
+            disconnectTimerRef.current = null;
+            if (peerRef.current === peer && peer.connectionState === 'disconnected') {
+              notify('The phone connection stayed offline for 20 seconds. Ending screen sharing to protect the session.', true);
+              void stopRemote(nextSessionId);
+            }
+          }, 20_000);
+        } else if (peer.connectionState === 'failed' || peer.connectionState === 'closed') {
           notify('WebRTC connection failed or closed. Check network/peer connectivity and retry.', true);
           void stopRemote(nextSessionId);
         }

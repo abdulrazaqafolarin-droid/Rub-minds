@@ -41,6 +41,8 @@ test("Android queue and media components do not add an inbound phone listener or
   const setup = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidStreamSetupActivity.kt");
   assert.match(companion, /HttpsURLConnection|CloudDeviceApi/);
   assert.match(companion, /ACTION_START/);
+  assert.match(companion, /PEER_DISCONNECT_GRACE_SECONDS = 20L/);
+  assert.match(companion, /webrtc_peer_disconnected/);
   assert.match(setup, /createScreenCaptureIntent\(\)/);
   assert.match(setup, /startForegroundService\(service\)/);
   assert.match(setup, /AppGrantStore\(this\)\.get\(targetPackageName, signer\)/);
