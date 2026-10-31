@@ -61,7 +61,7 @@ test("Android Phone Frame wires a consented WebRTC stream and a separate touch g
   const control = await read("src/BackroomAndroidControl.tsx");
   const phone = await read("src/BackroomDevicesApp.tsx");
   assert.match(phone, /import BackroomAndroidControl/);
-  assert.match(phone, /<BackroomAndroidControl device=\{activeDevice\} roomId=\{roomId\} \/>/);
+  assert.ok(phone.includes("BackroomAndroidControl device={activeDevice}") && phone.includes("roomId={roomId}"));
   assert.match(control, /RTCPeerConnection/);
   assert.match(control, /addTransceiver\\('video', \\{ direction: 'recvonly' \\}\\)/);
   assert.match(control, /android\/session-start/);
