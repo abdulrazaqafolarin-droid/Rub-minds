@@ -325,6 +325,8 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     if(selectMode){
       const point=normalized(e.clientX,e.clientY);if(!point)return;
       setTargetStatus('');setSelection(null);targetAttemptRef.current='';
+      try{sendData({kind:'clear_target'});}
+      catch(error){flash('Could not clear the previous typing target. Stopping this remote session for safety.',true);void stopActivePeer();return;}
       dragRef.current={...point,pointerId:e.pointerId};e.currentTarget.setPointerCapture(e.pointerId);return;
     }
     if(!controlGranted)return;
@@ -417,10 +419,9 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
             <div className="br-desktop-toolbar">
               <span>{videoReady?'Live computer display':'View request pending'}{coordinateControl?' · full-monitor geometry verified':' · view-only unless full monitor selected'}</span>
               <button type="button" onClick={()=>void requestControl()} disabled={!videoReady||!coordinateControl||controlGranted}>Request control</button>
-              <button type="button" onClick={()=>{setTargetStatus('');setSelection(null);targetAttemptRef.current='';setSelectMode(v=>!v);}} disabled={!controlGranted||!draftGranted}>{selectMode?'Cancel area selection':'Drag-select typing area'}</button>
+              <button type="button" onClick={()=>{setTargetStatus('');setSelection(null);targetAttemptRef.current='';try{sendData({kind:'clear_target'});}catch(error){flash('Could not clear the previous typing target. Stopping this remote session for safety.',true);void stopActivePeer();}setSelectMode(v=>!v);}} disabled={!controlGranted||!draftGranted}>{selectMode?'Cancel area selection':'Drag-select typing area'}</button>
               <button type="button" onClick={()=>void requestDraftPermission()} disabled={!controlGranted||draftGranted}><TextCursorInput size={13}/> Request typing permission</button>
             </div>
-            {targetStatus&&<div className="br-desktop-caption" role="status">{targetStatus}</div>}
             {targetStatus&&<div className="br-desktop-caption" role="status">{targetStatus}</div>}
             {controlGranted&&draftGranted&&<div className="br-desktop-draft">
               <textarea value={draft} onChange={e=>setDraft(e.target.value)} rows={2} maxLength={4000} placeholder="Write the text to insert in the selected area. It will never press Enter or Send."/>
