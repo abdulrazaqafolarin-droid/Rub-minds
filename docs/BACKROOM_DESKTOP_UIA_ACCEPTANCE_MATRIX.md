@@ -95,3 +95,6 @@ A Windows window capture may be interactive only when all of these conditions ho
 | User selects whole monitor | Existing full-monitor geometry path remains available |
 
 The native source tests cover the pure geometry and window-identity checks. They do not replace Windows compilation or this physical acceptance matrix. No claim that single-window interaction is physically verified is made.
+
+### Native app identity revalidation (2026-10-31)
+The companion now records the app ID and child process ID in Rust when the approved executable starts. The browser-supplied PID is checked against that native record; it is not sufficient by itself. On every interactive action and draft targeting check, the native companion verifies that the app ID still maps to the original process, the child process is still live, and its unique window identity/focus remain valid. A browser request cannot register an arbitrary PID through the window-capture API. Native compilation and physical Windows interaction remain unverified.

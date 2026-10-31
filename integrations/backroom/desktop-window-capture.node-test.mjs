@@ -34,7 +34,7 @@ test('window capture requires native identity and matching geometry', () => {
   assert.match(native, /window_binding: Option<WindowCaptureBinding>/);
   assert.match(native, /validate_window_capture_dimensions\(frame_width, frame_height, target\.bounds\)/);
   assert.match(native, /window_binding_matches\(binding, &current\)/);
-  assert.match(native, /capture_bounds\(&geometry\)\?/);
+  assert.match(native, /capture_bounds\(&state, &geometry\)\?/);
 });
 
 test('window capture never controls the companion window or a different app process', () => {
@@ -42,6 +42,9 @@ test('window capture never controls the companion window or a different app proc
   assert.match(native, /app_id: Option<String>/);
   assert.match(native, /launched_app_ids: Mutex<HashMap<String, u32>>/);
   assert.match(native, /registered_pid/);
+  assert.match(native, /current_pid != Some\(binding\.process_id\)/);
+  assert.match(native, /child\.try_wait\(\)/);
+  assert.match(native, /app_id: selected_app_id/);
   assert.match(companion, /expectedProcessId:Number\.isSafeInteger\(expectedProcessId\)\?expectedProcessId:null,\s*appId/);
   assert.match(native, /target\.process_id != expected_pid/);
   assert.match(native, /identity\.process_id != binding\.process_id/);
@@ -54,7 +57,7 @@ test('window input is mapped from the captured window origin and revalidated per
   assert.match(native, /fn map_normalized_point\(/);
   assert.match(native, /width\.saturating_sub\(1\)/);
   assert.match(native, /height\.saturating_sub\(1\)/);
-  assert.match(native, /let bounds = capture_bounds\(&geometry\)\?/);
+  assert.match(native, /let bounds = capture_bounds\(&state, &geometry\)\?/);
   assert.match(native, /map_normalized_point\(bounds, x, y\)\?/);
 });
 

@@ -640,6 +640,7 @@ struct TerminalSession {
 
 #[derive(Clone)]
 struct WindowCaptureBinding {
+    app_id: String,
     process_id: u32,
     handle: String,
     class_name: String,
@@ -842,6 +843,7 @@ fn set_capture_geometry(
             frame_width, frame_height, screen_width, screen_height,
             origin_x: left, origin_y: top,
             window_binding: Some(WindowCaptureBinding {
+                app_id: selected_app_id,
                 process_id: target.process_id,
                 handle: target.handle,
                 class_name: target.class_name,
@@ -885,8 +887,19 @@ fn window_binding_matches(
         && current.class_name == binding.class_name
 }
 
-fn capture_bounds(geometry: &CaptureGeometry) -> Result<(i32, i32, u32, u32), String> {
+fn capture_bounds(state: &AppState, geometry: &CaptureGeometry) -> Result<(i32, i32, u32, u32), String> {
     if let Some(binding) = &geometry.window_binding {
+        let current_pid = state.launched_app_ids.lock().map_err(|_| "App identity registry unavailable")?
+            .get(&binding.app_id).copied();
+        if current_pid != Some(binding.process_id) {
+            return Err("The selected app process was replaced or its registration was revoked".into());
+        }
+        let mut processes = state.desktop_processes.lock().map_err(|_| "Desktop process registry unavailable")?;
+        let child = processes.get_mut(&binding.process_id).ok_or("The selected process is no longer tracked")?;
+        if child.try_wait().map_err(|_| "Could not inspect selected process")?.is_some() {
+            return Err("The selected app process exited. Start a fresh window session.".into());
+        }
+        drop(processes);
         let current = input_targeting::foreground_window_snapshot_for_process(binding.process_id)?;
         if !window_binding_matches(binding, &current) {
             return Err("The captured application window is no longer the verified foreground window. Restore it and restart the screen session before controlling it.".into());
@@ -917,8 +930,8 @@ fn map_normalized_point(
     Ok((origin_x + (x * max_x).round() as i32, origin_y + (y * max_y).round() as i32))
 }
 
-fn screen_point(geometry: &CaptureGeometry, x: f64, y: f64) -> Result<(i32, i32), String> {
-    map_normalized_point(capture_bounds(geometry)?, x, y)
+fn screen_point(state: &AppState, geometry: &CaptureGeometry, x: f64, y: f64) -> Result<(i32, i32), String> {
+    map_normalized_point(capture_bounds(state, geometry)?, x, y)
 }
 
 #[derive(Deserialize)]
@@ -960,7 +973,7 @@ fn dispatch_input(state: State<'_, AppState>, session_id: String, event: NativeI
     // Resolve the capture identity once per action. Window sessions re-check
     // foreground HWND/process/class here; both pointer mapping and dispatch use
     // that same verified geometry snapshot.
-    let bounds = capture_bounds(&geometry)?;
+    let bounds = capture_bounds(&state, &geometry)?;
     let mut enigo = Enigo::new(&Settings::default()).map_err(|_| "OS input driver is unavailable. Check accessibility permissions.".to_string())?;
     match event {
         NativeInput::Move { x, y } => {
@@ -993,10 +1006,10 @@ fn dispatch_input(state: State<'_, AppState>, session_id: String, event: NativeI
     Ok(())
 }
 
-fn selected_target_point(geometry: &CaptureGeometry, target: &DraftTarget) -> Result<(i32, i32), String> {
+fn selected_target_point(state: &AppState, geometry: &CaptureGeometry, target: &DraftTarget) -> Result<(i32, i32), String> {
     let center_x = target.x + target.width / 2.0;
     let center_y = target.y + target.height / 2.0;
-    screen_point(geometry, center_x, center_y)
+    screen_point(state, geometry, center_x, center_y)
 }
 
 fn verify_current_draft_selection(state: &AppState, pending: &PendingDraft) -> Result<(), String> {
@@ -1013,11 +1026,12 @@ fn verify_current_draft_selection(state: &AppState, pending: &PendingDraft) -> R
 }
 
 fn verify_selected_editable_target(
+    state: &AppState,
     geometry: &CaptureGeometry,
     target: &DraftTarget,
 ) -> Result<(EditableTargetIdentity, i32, i32), String> {
     let expected = target.identity.as_ref().ok_or("Select and verify an accessible text field again")?;
-    let (px, py) = selected_target_point(geometry, target)?;
+    let (px, py) = selected_target_point(state, geometry, target)?;
     let (current, value) = input_targeting::inspect_at(px, py)?;
     if let Some(binding) = &geometry.window_binding {
         if current.process_id != binding.process_id {
@@ -1053,7 +1067,7 @@ fn select_draft_target(state: State<'_, AppState>, session_id: String, mut targe
     if target.width * (geometry.frame_width as f64) < 8.0 || target.height * (geometry.frame_height as f64) < 8.0 {
         return Err("Selected typing area is too small".into());
     }
-    let (px, py) = selected_target_point(&geometry, &target)?;
+    let (px, py) = selected_target_point(&state, &geometry, &target)?;
     let (identity, value) = input_targeting::inspect_at(px, py)?;
     if let Some(binding) = &geometry.window_binding {
         if identity.process_id != binding.process_id {
@@ -1063,9 +1077,9 @@ fn select_draft_target(state: State<'_, AppState>, session_id: String, mut targe
     if !value.is_empty() {
         return Err("For safety, drag-select an empty editable field. Existing text will not be overwritten.".into());
     }
-    let (selection_start_x, selection_start_y) = screen_point(&geometry, target.x, target.y)?;
+    let (selection_start_x, selection_start_y) = screen_point(&state, &geometry, target.x, target.y)?;
     let (selection_end_x, selection_end_y) = screen_point(
-        &geometry, target.x + target.width, target.y + target.height,
+        &state, &geometry, target.x + target.width, target.y + target.height,
     )?;
     let selection_bounds = [
         selection_start_x.min(selection_end_x),
@@ -1185,7 +1199,7 @@ async fn approve_draft_request(app: AppHandle, state: State<'_, AppState>, reque
     // selection is presented as valid to the person approving it.
     let geometry_before = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
         .get(&pending.session_id).cloned().ok_or("Live screen capture is not active")?;
-    verify_selected_editable_target(&geometry_before, &pending.target)?;
+    verify_selected_editable_target(&state, &geometry_before, &pending.target)?;
     verify_current_draft_selection(&state, &pending)?;
 
     let identity = pending.target.identity.as_ref().ok_or("The saved draft has no verified target identity")?;
@@ -1204,7 +1218,7 @@ async fn approve_draft_request(app: AppHandle, state: State<'_, AppState>, reque
     draft_granted(&state, &pending.session_id)?;
     let geometry = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
         .get(&pending.session_id).cloned().ok_or("Live screen capture is not active")?;
-    let (identity, px, py) = verify_selected_editable_target(&geometry, &pending.target)?;
+    let (identity, px, py) = verify_selected_editable_target(&state, &geometry, &pending.target)?;
     verify_current_draft_selection(&state, &pending)?;
 
     // Consume before the one-shot UIA write. The native driver re-resolves
@@ -1492,19 +1506,21 @@ mod native_input_tests {
 
     #[test]
     fn normalized_pointer_maps_to_visible_monitor_pixels() {
+        let state = AppState::default();
         let g = geometry();
-        assert_eq!(screen_point(&g, 0.0, 0.0).unwrap(), (0, 0));
-        assert_eq!(screen_point(&g, 0.5, 0.5).unwrap(), (960, 540));
-        assert_eq!(screen_point(&g, 1.0, 1.0).unwrap(), (1919, 1079));
+        assert_eq!(screen_point(&state, &g, 0.0, 0.0).unwrap(), (0, 0));
+        assert_eq!(screen_point(&state, &g, 0.5, 0.5).unwrap(), (960, 540));
+        assert_eq!(screen_point(&state, &g, 1.0, 1.0).unwrap(), (1919, 1079));
     }
 
     #[test]
     fn pointer_coordinates_outside_frame_are_rejected() {
+        let state = AppState::default();
         let g = geometry();
-        assert!(screen_point(&g, -0.001, 0.5).is_err());
-        assert!(screen_point(&g, 1.001, 0.5).is_err());
-        assert!(screen_point(&g, f64::NAN, 0.5).is_err());
-        assert!(screen_point(&g, 0.5, f64::INFINITY).is_err());
+        assert!(screen_point(&state, &g, -0.001, 0.5).is_err());
+        assert!(screen_point(&state, &g, 1.001, 0.5).is_err());
+        assert!(screen_point(&state, &g, f64::NAN, 0.5).is_err());
+        assert!(screen_point(&state, &g, 0.5, f64::INFINITY).is_err());
     }
 
     #[test]
