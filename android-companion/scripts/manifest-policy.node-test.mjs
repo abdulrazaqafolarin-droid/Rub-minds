@@ -311,3 +311,15 @@ test("Android stream answer callback contains real Kotlin lines, not escaped new
   assert.match(service, /override fun onSetSuccess\(\) \{\s+if \(connection\.iceGatheringState\(\)/);
   assert.equal(service.includes("\\n"), false, "Kotlin source must not contain literal backslash-n sequences from templated edits.");
 });
+
+
+test("local touch revocation remains fail-closed when preference persistence fails", async () => {
+  const gate = await read("app/src/main/java/app/rubminds/companion/RemoteTouchGate.kt");
+  const service = await read("app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  assert.match(gate, /@Volatile private var processRevoked = false/);
+  assert.match(gate, /if \(processRevoked\) return false/);
+  assert.match(gate, /processRevoked = true[\\s\\S]*runCatching/);
+  assert.match(gate, /processRevoked = false/);
+  assert.match(service, /localControlGranted = false[\\s\\S]*AndroidTouchAccessibilityService\\.clearActiveSession\\(activeSessionId\\)[\\s\\S]*RemoteTouchGate\\.disarm\\(this\\)[\\s\\S]*runCatching \\{ closePeer\\(\\) \\}/);
+  assert.match(service, /fun revokeLocalTouch\\(context: Context\\)[\\s\\S]*AndroidTouchAccessibilityService\\.clearActiveSession\\(\\)/);
+});
