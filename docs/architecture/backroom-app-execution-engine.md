@@ -67,9 +67,9 @@ Frame and target rules are fail-closed:
 - The drag rectangle must cover at least 65% of that single field. A selection expires after 60 seconds and cannot cross a guest restart or a newer frame.
 - A new drag immediately supersedes the previous selection; invalid drags also retire the old target. A valid selection lease is consumed before a write attempt, so an ambiguous result requires a fresh drag rather than an automatic retry.
 - Each guest instance must have its own fresh data-container ID. The included registry is process-local test/helper code; a production provider must persist that ownership mapping across app-process death and prove it in the acceptance run.
-- Draft insertion requires separate local approval, the exact current selection ID, single-line plain text (maximum 4,000 characters), exact read-back and an explicit no-submit result. Enter/Send is not part of this interface.
+- Draft insertion requires a short-lived opaque receipt issued only after a local native confirmation succeeds, the exact current selection ID, single-line plain text (maximum 4,000 characters), exact read-back and an explicit no-submit result. The receipt is bound to the guest session and one selection, and is consumed once. A caller cannot provide a `approvedLocally` Boolean or serialize a trusted receipt from the network. Enter/Send is not part of this interface.
 
-This contract creates the integration point for a future provider; it does not yet implement app installation, guest process creation, video capture, touch injection or real accessibility queries. No current Android provider implements `GuestRuntimeProvider`, and no guest frame is available to the Phone Frame.
+The receipt factory is only an internal contract boundary; a real provider must call it exclusively after its native confirmation dialog returns affirmative. No local approval dialog or receipt issuer is wired to a live guest runtime in this slice. This contract creates the integration point for a future provider; it does not yet implement app installation, guest process creation, video capture, touch injection or real accessibility queries. No current Android provider implements `GuestRuntimeProvider`, and no guest frame is available to the Phone Frame.
 
 ## Permission UX
 
