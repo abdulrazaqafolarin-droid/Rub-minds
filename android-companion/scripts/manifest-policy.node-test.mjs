@@ -340,3 +340,76 @@ test("Android acknowledges malformed touch gestures with an explicit rejection",
   assert.match(parser, /durationValue\.toDouble\(\) % 1\.0 != 0\.0[\s\S]*rejectGesture\(\)/);
   assert.match(parser, /durationMillis !in 40\.\.1_500[\s\S]*rejectGesture\(\)/);
 });
+
+
+test("remote typing is process-local, locally armed and limited to the focused approved phone field", async () => {
+  const gate = await read("app/src/main/java/app/rubminds/companion/RemoteKeyboardGate.kt");
+  const keyboard = await read("app/src/main/java/app/rubminds/companion/DraftInputMethodService.kt");
+  const grantPolicy = await read("app/src/main/java/app/rubminds/companion/AppGrantPolicy.kt");
+  assert.match(gate, /ARM_LIFETIME_MS = 15 \* 60 \* 1000L/);
+  assert.match(gate, /armedUntilMillis/);
+  assert.match(gate, /fun armFromLocalConfirmation/);
+  assert.match(gate, /fun disarm\\(\\)/);
+  assert.doesNotMatch(gate, /SharedPreferences|putLong|commit\\(/, "Remote typing consent must not survive process death.");
+  assert.match(keyboard, /activeInstance = this/);
+  assert.match(keyboard, /boundSessionId != sessionId \\|\\| boundPackageName != packageName/);
+  assert.match(keyboard, /currentInputEditorInfo/);
+  assert.match(keyboard, /liveEditor\\.packageName != packageName/);
+  assert.match(keyboard, /AppGrantPolicy\\.isSensitiveInput/);
+  assert.match(keyboard, /isInsertAllowed\\(verifyCurrentSigner = true\\)/);
+  assert.match(keyboard, /currentInputConnection/);
+  assert.match(keyboard, /connection\\.commitText\\(text, 1\\)/);
+  assert.match(keyboard, /MAX_REMOTE_TEXT_CHARS = 4_000/);
+  assert.match(grantPolicy, /grant\\.allowDraftInsertion/);
+  assert.match(grantPolicy, /grant\\.signingCertificateSha256 == currentSigningCertificateSha256/);
+  const remoteInsertStart = keyboard.indexOf("private fun insertRemoteText(");
+  const remoteInsertEnd = keyboard.indexOf("\\n    companion object", remoteInsertStart);
+  assert.ok(remoteInsertStart >= 0 && remoteInsertEnd > remoteInsertStart);
+  const remoteInsert = keyboard.slice(remoteInsertStart, remoteInsertEnd);
+  assert.doesNotMatch(remoteInsert, /performEditorAction|sendKeyEvent|KEYCODE_ENTER|getTextBeforeCursor|getTextAfterCursor/);
+});
+
+test("phone streaming binds remote typing to the exact session and returns an explicit acknowledgement", async () => {
+  const service = await read("app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  const start = service.indexOf('if (input.optString("kind") == "remote_text")');
+  const end = service.indexOf('if (input.optString("kind") == "navigation")', start);
+  assert.ok(start >= 0 && end > start);
+  const handler = service.slice(start, end);
+  assert.match(handler, /UUID_PATTERN\\.matches\\(requestId\\)/);
+  assert.match(handler, /input\\.optString\\("sessionId"\\) != sessionId/);
+  assert.match(handler, /input\\.optString\\("appPackageName"\\) != appPackage/);
+  assert.match(handler, /allowedTextKeys = setOf\\("kind", "requestId", "sessionId", "appPackageName", "text"\\)/);
+  assert.match(handler, /mainHandler\\.post/);
+  assert.match(handler, /DraftInputMethodService\\.insertRemoteText/);
+  assert.match(service, /DraftInputMethodService\\.bindRemoteSession\\(sessionId, appPackage\\)/);
+  assert.match(service, /DraftInputMethodService\\.clearRemoteSession\\(activeSessionId\\)/);
+  assert.match(service, /kind", "remote_text_ack/);
+  assert.match(service, /result == "inserted"/);
+  assert.match(service, /buffer\\.data\\.remaining\\(\\) !in 1\\.\\.16_384/);
+});
+
+test("remote typing requires explicit on-phone IME selection and local confirmation", async () => {
+  const setup = await read("app/src/main/java/app/rubminds/companion/AndroidStreamSetupActivity.kt");
+  const keyboard = await read("app/src/main/java/app/rubminds/companion/DraftInputMethodService.kt");
+  assert.match(setup, /Choose Rub Minds phone keyboard/);
+  assert.match(setup, /showInputMethodPicker\\(\\)/);
+  assert.match(setup, /DraftInputMethodService\\.isEnabledAndSelected\\(this\\)/);
+  assert.match(setup, /Allow Backroom typing for 15 minutes/);
+  assert.match(setup, /RemoteKeyboardGate\\.armFromLocalConfirmation\\(\\)/);
+  assert.match(setup, /AndroidScreenShareService\\.revokeRemoteKeyboard\\(\\)/);
+  assert.match(keyboard, /enabledInputMethodList/);
+  assert.match(keyboard, /DEFAULT_INPUT_METHOD/);
+});
+
+test("Phone Frame remote typing is acknowledged, bounded and never auto-submits", async () => {
+  const ui = await read("..\\/src\\/BackroomAndroidControl.tsx");
+  const service = await read("app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  assert.match(ui, /kind: 'remote_text', requestId, sessionId: sessionRef\\.current, appPackageName, text/);
+  assert.match(ui, /maxLength=\\{4_000\\}/);
+  assert.match(ui, /pendingRemoteTextAcksRef\\.current\\.set\\(requestId, timeout\\)/);
+  assert.match(ui, /acknowledgement\\.kind === 'remote_text_ack'/);
+  assert.match(ui, /No phone-keyboard acknowledgement arrived/);
+  assert.match(ui, /Text inserted into the focused phone field\\. Nothing was submitted\\./);
+  assert.doesNotMatch(service, /performEditorAction|sendKeyEvent|KEYCODE_ENTER/);
+  assert.doesNotMatch(ui, /kind: 'remote_text'[\\s\\S]*?supabase\\.functions\\.invoke/);
+});
