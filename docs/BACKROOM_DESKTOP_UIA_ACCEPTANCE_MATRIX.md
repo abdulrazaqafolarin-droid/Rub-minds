@@ -138,3 +138,10 @@ Important boundary:
 - Rust unit tests were added to the native crate for the same validator and one-use submit marker, but **were not executed**: this environment has no `rustc` or `cargo`.
 - Physical Windows validation with an actual Claude Code/OpenCode process remains unperformed. The native host cannot infer the focused TUI widget from PTY output; local approval is required for text-only drafts, and Enter is a separate explicit button action.
 
+
+### Desktop targeting + terminal integration checkpoint — 2026-10-31
+
+- A combined isolated Node 22 harness built from the current branch helper/test sources passed **22/22**: nine target-selection/serialization/replay tests, six video pointer/letterbox/drag tests, three native PTY transport tests, and four strict terminal protocol tests.
+- The native companion's terminal draft permission approval text now differs by surface: a desktop screen draft describes drag-selecting one actual editable area; a terminal draft explicitly warns that text goes to the currently active PTY program and that the companion cannot identify the focused TUI widget. The user must inspect the visible terminal prompt.
+- Terminal resize messages are now bound to the exact PTY session assigned to the WebRTC peer; a remote message cannot choose another session ID.
+- This test result is a focused isolated harness, not a full `npm run test:companion`, Vite/TypeScript production build, Cargo unit-test run, MSVC compile, or physical Windows acceptance. Rust/Cargo are not installed in the current execution environment.
