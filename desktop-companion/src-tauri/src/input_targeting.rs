@@ -24,19 +24,6 @@ pub fn inspect_at(x: i32, y: i32) -> Result<(EditableTargetIdentity, String), St
     }
 }
 
-pub fn inspect_focused() -> Result<(EditableTargetIdentity, String), String> {
-    #[cfg(target_os = "windows")]
-    {
-        return std::thread::spawn(windows_impl::inspect_focused)
-            .join()
-            .map_err(|_| "Windows accessibility inspection worker stopped unexpectedly".to_string())?;
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        Err("Verified editable-field readback is currently supported by the Windows accessibility driver only".into())
-    }
-}
-
 /// Pure fail-closed gate so input-safety rules can be unit-tested on every host.
 pub fn validate_target_properties(control_type: &str, enabled: bool, offscreen: bool, password: bool, read_only: bool, value: &str) -> Result<(), &'static str> {
     if control_type != "Edit" && control_type != "Document" { return Err("not_editable_control"); }
