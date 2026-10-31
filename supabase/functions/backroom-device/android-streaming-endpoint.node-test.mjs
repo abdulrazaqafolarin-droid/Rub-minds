@@ -27,8 +27,8 @@ test("Android stream Edge actions keep human auth, device bearer and platform bo
   assert.match(migration, /backroom-android:'\|\|d.device_id::text\|\|':'\|\|b.room_id::text/);
   assert.match(migration, /backroom_android_room_member_receive_private_broadcast/);
   assert.ok(migration.includes("backroom_desktop_sessions_one_active_screen_per_device_idx"));
-  assert.match(migration, /p\\.room_id=b\\.room_id/);
-  assert.match(migration, /r\\.id=b\\.room_id and r\\.owner_id=\\(select auth\\.uid\\(\\)\\)/);
+  assert.ok(/p\.room_id\s*=\s*b\.room_id/.test(migration));
+  assert.ok(/r\.id\s*=\s*b\.room_id\s+and\s+r\.owner_id\s*=\s*\(select auth\.uid\(\)\)/.test(migration));
   assert.match(endpoint, /ANDROID_SESSION_LEASE_MS/);
   assert.match(endpoint, /android_session_heartbeat_failed/);
   assert.match(endpoint, /android_ack_binding_check_failed/);
