@@ -177,3 +177,12 @@ Latest inspected PR check suite for commit `58da34e85308ac70eee05703f77da6c0aa0a
   It runs dependency install, the repository web build/tests, companion WebView build, Rust tests, companion regressions, and an explicit Windows MSVC check, preserving per-step logs and a JSON summary under the user's TEMP directory.
 - The script has been committed but **has not been executed on Windows**. A self-hosted GitHub Actions runner is another no-hosted-minute route, but it must first be installed and registered by the repository owner; the workflow must not be switched to `self-hosted` until a matching runner is actually online.
 
+
+### Native grant lifecycle, revocation races and missing acknowledgements — 2026-10-31
+
+- `grant_control` now rechecks that the exact screen/terminal session is still live after the operating-system prompt, under the control-grant mutex, before inserting the grant.
+- `grant_draft_typing` now rechecks the still-live control grant and exact live screen/terminal resource after its OS prompt. A prompt left open while the session is revoked cannot install a stale typing grant.
+- Terminal stop performs a second revocation after removing the PTY. This closes the small interval between the first revocation and PTY removal in which an approval dialog could otherwise finish and reinsert a grant.
+- Emergency Stop clears control grants again after taking the terminal registry, closing a grant-dialog completion race during teardown. PTY input itself holds the control, typing and one-shot submit locks through the write.
+- The remote terminal UI now has a 15-second acknowledgement deadline for draft and Enter actions. If the data channel does not return an acknowledgement, the action might already have reached the computer; the UI locks further terminal input and asks the user to inspect and restart that PTY session instead of risking a duplicate.
+- Current branch CI jobs have been reported as failed with no runner allocated, no job steps and no downloadable logs. This is a runner/dispatch-level failure signal, not evidence that any code step failed. A clean Windows native run is still required for acceptance.
