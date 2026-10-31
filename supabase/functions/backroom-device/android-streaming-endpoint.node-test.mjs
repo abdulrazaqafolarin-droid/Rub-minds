@@ -91,3 +91,19 @@ test("control ACK broadcasts before marking the leased queue row acknowledged an
   assert.match(handler, /android_control_result_delivery_failed/);
   assert.match(handler, /replayed: true/);
 });
+
+test("Android view-offer retries reuse the existing peer after a lost queue ACK", async () => {
+  const service = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  const block = service.slice(service.indexOf('"view_offer" ->'), service.indexOf('"request_control" ->'));
+  assert.match(block, /activeSessionId == sessionId/);
+  assert.match(block, /activeAppPackage == appPackage/);
+  assert.match(block, /peer != null/);
+  assert.match(block, /if \(answerAlreadySent\) acknowledgePendingOffer/);
+});
+test("Phone Frame clearly reports hidden app windows and requires second-device viewing", async () => {
+  const control = await read("src/BackroomAndroidControl.tsx");
+  assert.match(control, /The selected app window is hidden on the phone/);
+  assert.match(control, /Open this Backroom control page on a second device/);
+  assert.match(control, /setSourceVisible\(false\)/);
+  assert.match(control, /disabled=\{!viewReady \|\| !sourceVisible/);
+});

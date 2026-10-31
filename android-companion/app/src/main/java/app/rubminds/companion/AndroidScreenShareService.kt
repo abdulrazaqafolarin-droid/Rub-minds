@@ -240,6 +240,14 @@ class AndroidScreenShareService : Service() {
         val roomId = command.optString("roomId")
         when (action) {
             "view_offer" -> {
+                // If a phone ACK was lost after creating the peer, the same lease may
+                // be delivered again. Reuse that peer and retry only the ACK.
+                if (activeSessionId == sessionId && activeAppPackage == appPackage && peer != null) {
+                    pendingOfferCommandId = commandId
+                    pendingOfferRequestId = requestId
+                    if (answerAlreadySent) acknowledgePendingOffer(sessionId, "answer_sent")
+                    return
+                }
                 val offer = command.optJSONObject("offer")?.optString("sdp").orEmpty()
                 pendingOfferCommandId = commandId
                 pendingOfferRequestId = requestId

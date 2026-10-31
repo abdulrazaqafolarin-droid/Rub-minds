@@ -16,6 +16,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const [busy, setBusy] = useState(false);
   const [sessionId, setSessionId] = useState('');
   const [viewReady, setViewReady] = useState(false);
+  const [sourceVisible, setSourceVisible] = useState(false);
   const [dataReady, setDataReady] = useState(false);
   const [controlGranted, setControlGranted] = useState(false);
   const [message, setMessage] = useState('Choose an app added on the phone, then start a view session.');
@@ -49,7 +50,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     streamRef.current?.getTracks().forEach(track => track.stop()); streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     sessionRef.current = ''; pointerRef.current = null; pendingControlRequestRef.current = '';
-    setSessionId(''); setViewReady(false); setDataReady(false); setControlGranted(false); setBusy(false);
+    setSessionId(''); setViewReady(false); setSourceVisible(false); setDataReady(false); setControlGranted(false); setBusy(false);
   }, []);
 
   const stopRemote = useCallback(async (expectedSession = sessionRef.current) => {
@@ -169,8 +170,21 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
             void stopRemote(nextSessionId);
           }
         });
-        setViewReady(true); setBusy(false);
-        notify('Live app stream connected. Request touch control separately after locally arming it on the phone.');
+        setViewReady(true); setSourceVisible(true); setBusy(false);
+        for (const track of stream.getVideoTracks()) {
+          track.addEventListener('mute', () => {
+            if (streamRef.current !== stream) return;
+            setSourceVisible(false);
+            setControlGranted(false);
+            notify('The selected app window is hidden on the phone. Keep that app in the foreground; the stream will resume when it is visible.');
+          });
+          track.addEventListener('unmute', () => {
+            if (streamRef.current !== stream) return;
+            setSourceVisible(true);
+            notify('The selected app window is visible again. Request touch control separately after locally arming it on the phone.');
+          });
+        }
+        notify('Live app stream connected. Keep the selected app visible on the phone. Request touch control separately after locally arming it.');
       };
       peer.onconnectionstatechange = () => {
         if (peerRef.current !== peer) return;
@@ -260,7 +274,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     return normalizeClientPointToVideo(getContainedVideoRect(box, video.videoWidth, video.videoHeight), event.clientX, event.clientY);
   };
   const pointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    if (!controlGranted || busy || event.button !== 0) return;
+    if (!controlGranted || !sourceVisible || busy || event.button !== 0) return;
     const point = contentPoint(event);
     if (!point) return;
     event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
@@ -302,6 +316,9 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       {!viewReady ? <div className="br-android-live-placeholder"><MonitorPlay size={26}/>
         <b>{sessionId ? 'Waiting for the phone stream' : 'No app stream active'}</b>
         <span>Start sharing in Rub Minds Companion, then request this app here.</span>
+      </div> : !sourceVisible ? <div className="br-android-live-placeholder">
+        <Smartphone size={24}/><b>App window hidden on the phone</b>
+        <span>Bring the selected app to the foreground on the phone. The picture and touch control resume when Android reports it visible.</span>
       </div> : null}
       {viewReady && controlGranted ? <div className="br-android-touch-hint"><Hand size={13}/> Tap · swipe · long press</div> : null}
     </div>
@@ -310,14 +327,14 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         ? <button type="button" disabled={!channelReady || !device.apps.length || busy} onClick={() => void startView()}><MonitorPlay size={14}/> Start app view</button>
         : <>
           {!controlGranted
-            ? <button type="button" disabled={!viewReady || !dataReady || busy} onClick={() => void sendDeviceCommand('request_control')}><Hand size={14}/> Request touch control</button>
+            ? <button type="button" disabled={!viewReady || !sourceVisible || !dataReady || busy} onClick={() => void sendDeviceCommand('request_control')}><Hand size={14}/> Request touch control</button>
             : <span className="br-android-control-grant"><ShieldCheck size={14}/> Touch enabled temporarily</span>}
           <button type="button" className="stop" disabled={busy} onClick={() => void sendDeviceCommand('stop_session')}><Power size={14}/> Stop session</button>
         </>}
     </div>
     <div className={'br-android-stream-status' + (messageError ? ' error' : '')} role="status">{message}</div>
     <p className="br-android-stream-disclaimer">
-      Choose this app in Android's screen-sharing picker and keep it in the foreground. Touch is a separate local 15-minute permission. Selecting the whole display shares the whole display. This mirrors the real app; it is not an isolated virtual copy.
+      Open this Backroom control page on a second device, such as your Windows laptop. The selected app must stay visible on the phone; showing Backroom on that same phone hides the shared app and pauses its picture. Choose the app window, not the whole display. Touch is a separate local 15-minute permission. This mirrors the real app; it is not an isolated virtual copy.
     </p>
   </section>;
 }
