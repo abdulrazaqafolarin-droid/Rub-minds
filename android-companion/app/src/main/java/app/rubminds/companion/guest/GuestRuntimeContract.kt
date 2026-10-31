@@ -185,6 +185,117 @@ object GuestRuntimeAdmissionPolicy {
     }
 }
 
+enum class GuestAppSourceKind {
+    SELECTED_INSTALLED_APK,
+    USER_SELECTED_APK_DOCUMENT
+}
+
+enum class GuestLifecycleState {
+    PREPARING,
+    RUNNING,
+    PAUSED,
+    STOPPING,
+    STOPPED,
+    FAILED
+}
+
+enum class GuestTouchAction {
+    DOWN,
+    MOVE,
+    UP,
+    CANCEL
+}
+
+data class GuestAppInstallRequest(
+    val packageName: String,
+    val signingCertificateSha256: String,
+    val sourceKind: GuestAppSourceKind,
+    /** Must create a new empty guest data container; never import the source app's private data. */
+    val requireFreshDataContainer: Boolean = true,
+    val importPrivateData: Boolean = false
+)
+
+data class GuestAppInstance(
+    val instanceId: String,
+    val packageName: String,
+    val signingCertificateSha256: String,
+    val dataContainerId: String,
+    val freshDataContainer: Boolean,
+    val privateDataImported: Boolean
+)
+
+data class GuestAppSession(
+    val sessionId: String,
+    val guestInstanceId: String,
+    val packageName: String,
+    val state: GuestLifecycleState
+)
+
+data class GuestTouchEvent(
+    val sessionId: String,
+    val guestInstanceId: String,
+    val frameSequence: Long,
+    val pointerId: Int,
+    val action: GuestTouchAction,
+    val x: Double,
+    val y: Double,
+    val occurredAtMillis: Long
+)
+
+data class GuestOperationResult(
+    val accepted: Boolean,
+    val reason: String? = null
+)
+
+data class GuestDraftResult(
+    val inserted: Boolean,
+    val submitted: Boolean,
+    val readBackMatches: Boolean
+)
+
+/**
+ * The future native engine adapter. Implementations must return only guest-app
+ * frames and must not fall back to launching the ordinary host-installed app.
+ */
+interface GuestRuntimeProvider {
+    val descriptor: GuestRuntimeDescriptor
+
+    suspend fun prepare(request: GuestAppInstallRequest): GuestAppInstance
+    suspend fun launch(instanceId: String): GuestAppSession
+    suspend fun captureFrame(sessionId: String): GuestFrame?
+    suspend fun dispatchTouch(event: GuestTouchEvent): GuestOperationResult
+    suspend fun inspectTextTarget(sessionId: String, selection: GuestSelectionLease): GuestTextFieldTarget?
+    suspend fun insertDraft(
+        sessionId: String,
+        selection: GuestSelectionLease,
+        field: GuestTextFieldTarget,
+        request: GuestDraftRequest
+    ): GuestDraftResult
+    suspend fun stop(sessionId: String): GuestOperationResult
+}
+
+object GuestInstallPolicy {
+    private val packageNamePattern = Regex("^[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z][A-Za-z0-9_]*)+$")
+    private val digestPattern = Regex("^[a-f0-9]{64}$")
+
+    fun validate(request: GuestAppInstallRequest): String? {
+        if (!packageNamePattern.matches(request.packageName)) return "guest_package_name_invalid"
+        if (!digestPattern.matches(request.signingCertificateSha256)) return "guest_signer_invalid"
+        if (!request.requireFreshDataContainer) return "fresh_guest_data_required"
+        if (request.importPrivateData) return "private_app_data_import_forbidden"
+        return null
+    }
+
+    fun validate(instance: GuestAppInstance, request: GuestAppInstallRequest): String? {
+        if (instance.instanceId.isBlank() || instance.dataContainerId.isBlank()) return "guest_instance_identity_invalid"
+        if (instance.packageName != request.packageName ||
+            instance.signingCertificateSha256 != request.signingCertificateSha256) return "guest_package_identity_mismatch"
+        if (!instance.freshDataContainer) return "guest_data_container_not_fresh"
+        if (instance.privateDataImported) return "private_app_data_import_forbidden"
+        return null
+    }
+}
+
 enum class GuestCaptureScope {
     GUEST_APP,
     WHOLE_DEVICE
@@ -272,6 +383,17 @@ object GuestFramePolicy {
         if (frame.encodedBytes.isEmpty() || frame.encodedBytes.size > MAX_FRAME_BYTES) return "frame_payload_size_invalid"
         if (frame.capturedAtMillis > nowMillis + FUTURE_SKEW_MILLIS ||
             nowMillis - frame.capturedAtMillis > MAX_AGE_MILLIS) return "frame_stale"
+        return null
+    }
+}
+
+object GuestTouchPolicy {
+    fun validate(event: GuestTouchEvent, frame: GuestFrame, nowMillis: Long): String? {
+        if (event.sessionId != frame.sessionId || event.guestInstanceId != frame.guestInstanceId) return "touch_session_mismatch"
+        if (event.frameSequence != frame.sequence || event.frameSequence <= 0) return "touch_frame_is_stale"
+        if (event.pointerId < 0) return "touch_pointer_invalid"
+        if (!event.x.isFinite() || !event.y.isFinite() || event.x !in 0.0..1.0 || event.y !in 0.0..1.0) return "touch_coordinates_invalid"
+        if (event.occurredAtMillis > nowMillis + 2_000L || nowMillis - event.occurredAtMillis > 5_000L) return "touch_event_stale"
         return null
     }
 }
