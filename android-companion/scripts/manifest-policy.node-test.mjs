@@ -453,3 +453,15 @@ test("remote IME field policy supports text, numeric and phone editors but not p
   assert.ok(junit.includes("sensitiveTextVariationsAreAlwaysDenied"));
   assert.ok(junit.includes("TYPE_CLASS_DATETIME"));
 });
+
+test("phone data-channel disconnect warns about ambiguous text insertion before retry", async () => {
+  const ui = await read("../src/BackroomAndroidControl.tsx");
+  const start = ui.indexOf("data.onclose = () => {");
+  const end = ui.indexOf("data.onmessage = event =>", start);
+  assert.ok(start >= 0 && end > start);
+  const closeHandler = ui.slice(start, end);
+  assert.ok(closeHandler.includes("pendingRemoteTextAcksRef.current.clear()"));
+  assert.ok(closeHandler.includes("setRemoteTextBusy(false)"));
+  assert.ok(closeHandler.includes("Check the phone field before retrying"));
+  assert.ok(closeHandler.includes("text may already have been inserted"));
+});
