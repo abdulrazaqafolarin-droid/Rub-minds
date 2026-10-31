@@ -1012,10 +1012,16 @@ fn stage_draft_request(state: State<'_, AppState>, session_id: String, text: Str
     if target.identity.is_none() || target.selection_id.is_none() {
         return Err("The selected text area has no current verified accessibility identity. Select it again.".into());
     }
+    let selection_id = target.selection_id.clone().ok_or("The selected text area has no current selection identity")?;
     let request_id = Uuid::new_v4().to_string();
     let now = Instant::now();
     let mut pending = state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?;
     pending.retain(|_, draft| draft.expires_at > now);
+    if pending.values().any(|draft| {
+        draft.session_id == session_id && draft.target.selection_id.as_deref() == Some(selection_id.as_str())
+    }) {
+        return Err("A draft is already waiting for local approval for this selected field. Approve or deny it before requesting another.".into());
+    }
     if pending.len() >= 32 {
         return Err("Too many unsent draft requests are waiting for local approval".into());
     }
