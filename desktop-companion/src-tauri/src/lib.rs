@@ -1420,15 +1420,22 @@ async fn submit_terminal_input(
 
     // Enter can execute a command or submit a prompt. It is always confirmed
     // separately on the physical computer; remote UI state is not authorization.
-    if require_native_confirmation(
+    if let Err(error) = require_native_confirmation(
         app,
         "Send Enter to this terminal?",
         "Backroom will send exactly one Enter key to this terminal session. This may submit the current Claude Code/OpenCode prompt or execute a shell command. The companion cannot inspect the TUI input buffer; inspect the visible terminal and approve only when intended. No text will be added."
-    ).await.is_err() {
+    ).await {
+        let user_denied = error == "Action denied in the operating-system confirmation dialog";
         let mut pending = state.terminal_submit_ready.lock()
             .map_err(|_| "Terminal submit state unavailable")?;
-        finish_terminal_submit_confirmation(&mut pending, &session_id, expires_at, false, Instant::now());
-        return Err("Enter was not approved on the computer. The unsent terminal text remains.".into());
+        // A deliberate No restores the unsent draft while its original lease
+        // is valid. Dialog failure/unexpected closure consumes it instead.
+        finish_terminal_submit_confirmation(&mut pending, &session_id, expires_at, !user_denied, Instant::now());
+        return Err(if user_denied {
+            "Enter was not approved on the computer. The unsent terminal text remains.".into()
+        } else {
+            "The native Enter confirmation failed. Type the terminal draft again before retrying.".into()
+        });
     }
 
     // Re-check the time-limited control grant after the native dialog. Hold
