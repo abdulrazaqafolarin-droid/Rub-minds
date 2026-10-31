@@ -47,6 +47,22 @@ pub fn validate_target_properties(control_type: &str, enabled: bool, offscreen: 
     if !value.is_empty() { return Err("nonempty_control"); }
     Ok(())
 }
+pub fn set_value_exact(x: i32, y: i32, expected: &EditableTargetIdentity, text: &str) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let expected = expected.clone();
+        let text = text.to_string();
+        return std::thread::spawn(move || windows_impl::set_value_exact(x, y, &expected, &text))
+            .join()
+            .map_err(|_| "Windows accessibility insertion worker stopped unexpectedly".to_string())?;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (x, y, expected, text);
+        Err("Verified editable-field insertion is currently supported by the Windows accessibility driver only".into())
+    }
+}
+
 #[cfg(target_os = "windows")]
 mod windows_impl {
     use super::EditableTargetIdentity;
@@ -142,6 +158,52 @@ mod windows_impl {
             return Err("The drag-selection centre is outside the editable field".into());
         }
         Ok((identity, value))
+    }
+
+    pub fn set_value_exact(
+        x: i32,
+        y: i32,
+        expected: &EditableTargetIdentity,
+        text: &str,
+    ) -> Result<(), String> {
+        if text.is_empty() || text.chars().count() > 4_000 || text.chars().any(char::is_control) {
+            return Err("Draft must be non-empty, single-line plain text of at most 4000 characters".into());
+        }
+        let automation = UIAutomation::new()
+            .map_err(|_| "Windows UI Automation could not be initialized".to_string())?;
+        let hit = automation.element_from_point(Point::new(x, y))
+            .map_err(|_| "Windows could not inspect the selected screen point".to_string())?;
+        let element = editable_ancestor(&automation, hit)?;
+        let (identity, current_value) = inspect_element(&element)?;
+        if &identity != expected {
+            return Err("The selected application field changed or moved. Drag-select it again.".into());
+        }
+        if !current_value.is_empty() {
+            return Err("The selected field is no longer empty. Existing text will not be overwritten.".into());
+        }
+
+        match element.get_control_type()
+            .map_err(|_| "Could not re-identify the selected editable control".to_string())? {
+            ControlType::Edit => {
+                let edit = EditControl::try_from(element.clone())
+                    .map_err(|_| "The selected edit control is no longer writable".to_string())?;
+                edit.set_value(text)
+                    .map_err(|_| "The selected application rejected the exact text insertion".to_string())?;
+            }
+            ControlType::Document => {
+                let document = DocumentControl::try_from(element.clone())
+                    .map_err(|_| "The selected document is no longer writable".to_string())?;
+                document.set_value(text)
+                    .map_err(|_| "The selected application rejected the exact text insertion".to_string())?;
+            }
+            _ => return Err("The selected control is no longer an editable field".into()),
+        }
+
+        let (after_identity, after_value) = inspect_element(&element)?;
+        if &after_identity != expected || after_value != text {
+            return Err("Text insertion could not be verified by reading back the exact value. Inspect the field; do not retry automatically.".into());
+        }
+        Ok(())
     }
 
     pub fn inspect_focused() -> Result<(EditableTargetIdentity, String), String> {
