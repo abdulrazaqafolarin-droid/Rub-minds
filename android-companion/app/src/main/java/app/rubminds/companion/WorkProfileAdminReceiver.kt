@@ -17,7 +17,15 @@ class WorkProfileAdminReceiver : DeviceAdminReceiver() {
         super.onProfileProvisioningComplete(context, intent)
         val admin = ComponentName(context, WorkProfileAdminReceiver::class.java)
         val manager = context.getSystemService(DevicePolicyManager::class.java)
-        val extras = intent.getParcelableExtra<PersistableBundle>(DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE)
+        @Suppress("DEPRECATION")
+        val extras = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(
+                DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE,
+                PersistableBundle::class.java
+            )
+        } else {
+            intent.getParcelableExtra(DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE) as? PersistableBundle
+        }
         val encodedSecret = extras?.getString(WorkProfileContract.ADMIN_EXTRA_SECRET)
         val secretSaved = WorkProfileBridgeSecretStore(context).saveEncoded(encodedSecret)
 
