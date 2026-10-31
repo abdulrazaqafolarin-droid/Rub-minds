@@ -433,7 +433,8 @@ async function startViewSession(payload){
       screenWidthCss:screen.width,screenHeightCss:screen.height,
       deviceScaleFactor:devicePixelRatio,originXCss:screen.availLeft||0,originYCss:screen.availTop||0,
       displaySurface:settings.displaySurface||'unknown',
-      expectedProcessId:Number.isSafeInteger(expectedProcessId)?expectedProcessId:null
+      expectedProcessId:Number.isSafeInteger(expectedProcessId)?expectedProcessId:null,
+      appId
     });
     canControl=true;
   }catch(error){notify('The screen is visible, but input is view-only because the selected capture could not be bound safely: '+error.message,'error');}

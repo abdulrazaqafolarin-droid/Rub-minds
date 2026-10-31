@@ -605,6 +605,7 @@ async fn launch_registered_app(app: AppHandle, state: State<'_, AppState>, app_i
         let child = Command::new(&path).current_dir(parent).spawn().map_err(|_| "Windows could not launch the approved application".to_string())?;
         let pid = child.id();
         processes.insert(pid, child);
+        state.launched_app_ids.lock().map_err(|_| "App identity registry unavailable")?.insert(app_id, pid);
         Ok(pid)
     }
 }
@@ -613,6 +614,7 @@ async fn launch_registered_app(app: AppHandle, state: State<'_, AppState>, app_i
 fn stop_registered_app(state: State<'_, AppState>, pid: u32) -> Result<(), String> {
     let mut processes = state.desktop_processes.lock().map_err(|_| "Desktop process registry unavailable")?;
     let mut child = processes.remove(&pid).ok_or("This app was not launched by Backroom or is already closed")?;
+    state.launched_app_ids.lock().map_err(|_| "App identity registry unavailable")?.retain(|_, tracked| *tracked != pid);
     child.kill().map_err(|_| "Windows could not stop the selected Backroom application".to_string())
 }
 
@@ -625,6 +627,7 @@ struct AppState {
     pending_drafts: Mutex<HashMap<String, PendingDraft>>,
     terminals: Mutex<HashMap<String, Arc<TerminalSession>>>,
     desktop_processes: Mutex<HashMap<u32, NativeChild>>,
+    launched_app_ids: Mutex<HashMap<String, u32>>,
     input_events: Mutex<VecDeque<Instant>>,
     approval_events: Mutex<VecDeque<Instant>>,
 }
@@ -800,6 +803,7 @@ fn set_capture_geometry(
     origin_y_css: i32,
     display_surface: String,
     expected_process_id: Option<u32>,
+    app_id: Option<String>,
 ) -> Result<(), String> {
     if !valid_session_id(&session_id)
         || !(320..=16_384).contains(&frame_width)
@@ -809,9 +813,19 @@ fn set_capture_geometry(
     }
 
     if display_surface == "window" {
-        let expected_pid = expected_process_id.ok_or(
-            "Interactive app-window capture requires an application launched by this Backroom companion."
-        )?;
+        // The browser's process ID is only a hint; the native allowlist is authoritative.
+        let selected_app_id = app_id.ok_or("Select a Backroom-launched app before interactive window capture")?;
+        let registered_pid = state.launched_app_ids.lock().map_err(|_| "App identity registry unavailable")?
+            .get(&selected_app_id).copied()
+            .ok_or("The selected app was not launched by this companion")?;
+        let expected_pid = expected_process_id.filter(|pid| *pid == registered_pid)
+            .ok_or("The selected process does not match the native app launch record")?;
+        let mut processes = state.desktop_processes.lock().map_err(|_| "Desktop process registry unavailable")?;
+        let tracked_child = processes.get_mut(&expected_pid).ok_or("The selected launched process is no longer tracked")?;
+        if tracked_child.try_wait().map_err(|_| "Could not inspect the launched app")?.is_some() {
+            return Err("The selected launched app has already exited".into());
+        }
+        drop(processes);
         if expected_pid == std::process::id() {
             return Err("The companion cannot be used as the application window target".into());
         }
@@ -1340,6 +1354,7 @@ fn emergency_stop(state: State<'_, AppState>) -> Result<(), String> {
     for (_, mut child) in processes {
         let _ = child.kill();
     }
+    state.launched_app_ids.lock().map_err(|_| "App identity registry unavailable")?.clear();
     Ok(())
 }
 
