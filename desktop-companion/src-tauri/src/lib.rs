@@ -754,10 +754,9 @@ fn begin_terminal_submit_confirmation(
     session_id: &str,
     now: Instant,
 ) -> Result<Instant, &'static str> {
-    match pending.get_mut(session_id) {
-        Some(state @ TerminalSubmitState::Ready(expires_at)) if *expires_at > now => {
-            let expires_at = *expires_at;
-            *state = TerminalSubmitState::Confirming(expires_at);
+    match pending.get(session_id).copied() {
+        Some(TerminalSubmitState::Ready(expires_at)) if expires_at > now => {
+            pending.insert(session_id.to_string(), TerminalSubmitState::Confirming(expires_at));
             Ok(expires_at)
         }
         Some(TerminalSubmitState::Confirming(_)) => Err("terminal_submit_confirmation_pending"),
