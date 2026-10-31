@@ -37,3 +37,32 @@ export function mapVideoSelectionToFrame(videoRect, frameRect, selection) {
     height: (selection.height * videoRect.height / frameRect.height) * 100,
   });
 }
+
+
+/** Convert a pointer position to normalized coordinates in the actual video content. */
+export function normalizeClientPointToVideo(rect, clientX, clientY) {
+  if (!rect || ![rect.left, rect.top, rect.width, rect.height, clientX, clientY].every(finite) ||
+      rect.width <= 0 || rect.height <= 0) {
+    return null;
+  }
+  const x = (clientX - rect.left) / rect.width;
+  const y = (clientY - rect.top) / rect.height;
+  if (x < 0 || x > 1 || y < 0 || y > 1) return null;
+  return Object.freeze({ x, y });
+}
+
+/** Build a normalized drag rectangle; invalid, tiny or out-of-video drags fail closed. */
+export function createNormalizedDragSelection(start, end, minSize = 0.01) {
+  if (!start || !end ||
+      ![start.x, start.y, end.x, end.y, minSize].every(finite) ||
+      minSize <= 0 ||
+      [start.x, start.y, end.x, end.y].some(value => value < 0 || value > 1)) {
+    return null;
+  }
+  const x = Math.min(start.x, end.x);
+  const y = Math.min(start.y, end.y);
+  const width = Math.abs(end.x - start.x);
+  const height = Math.abs(end.y - start.y);
+  if (width < minSize || height < minSize) return null;
+  return Object.freeze({ x, y, width, height });
+}
