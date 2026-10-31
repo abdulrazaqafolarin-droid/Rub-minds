@@ -109,6 +109,9 @@ test("guest runtime code remains a provider-neutral contract with no bundled vir
   assert.match(contract, /GuestInstallPolicy/);
   assert.match(contract, /GuestTouchPolicy/);
   assert.match(contract, /GuestTouchSequenceGuard/);
+  assert.match(contract, /MAX_ACTIVE_POINTERS_PER_SESSION = 10/);
+  assert.match(contract, /MAX_GUEST_INSTANCES = 8/);
+  assert.match(contract, /MAX_RETIRED_SELECTION_IDS_PER_SESSION = 1_024/);
   assert.match(contract, /touch_event_out_of_order/);
 
   assert.match(contract, /GuestRuntimeDecision\.BLOCKED/);
