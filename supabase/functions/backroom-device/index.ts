@@ -551,11 +551,37 @@ Deno.serve(async req => {
       if (current.platform !== 'android') return json(409, fail('android_device_required'), origin);
       const now = new Date().toISOString();
       const nextSessionExpiry = new Date(Date.now() + ANDROID_SESSION_LEASE_MS).toISOString();
-      const { error: heartbeatError } = await db.from('backroom_desktop_sessions')
-        .update({ expires_at: nextSessionExpiry })
+      const stopSessionIds: string[] = [];
+      const { data: activeScreenSessions, error: sessionLookupError } = await db.from('backroom_desktop_sessions')
+        .select('session_id,room_id')
         .eq('device_id', current.device_id).eq('session_type', 'screen').eq('status', 'active')
         .gt('expires_at', now);
-      if (heartbeatError) return json(503, fail('android_session_heartbeat_failed'), origin);
+      if (sessionLookupError) return json(503, fail('android_session_heartbeat_lookup_failed'), origin);
+      for (const activeSession of activeScreenSessions ?? []) {
+        const binding = await verifyActiveDeviceRoomBinding(current.device_id, activeSession.room_id);
+        if (!binding.ok && binding.status === 503) {
+          return json(503, fail('android_session_binding_check_failed'), origin);
+        }
+        if (!binding.ok || binding.platform !== 'android') {
+          const { error: revokeError } = await db.from('backroom_desktop_sessions')
+            .update({ status: 'revoked', stopped_at: new Date().toISOString() })
+            .eq('session_id', activeSession.session_id).eq('device_id', current.device_id)
+            .eq('room_id', activeSession.room_id).eq('status', 'active');
+          if (revokeError) return json(503, fail('android_session_revoke_failed'), origin);
+          const { error: commandRevokeError } = await db.from('backroom_android_commands')
+            .update({ status: 'rejected', result: 'device_room_binding_revoked', lease_until: null })
+            .eq('device_id', current.device_id).eq('room_id', activeSession.room_id)
+            .eq('session_id', activeSession.session_id).in('status', ['pending','leased']);
+          if (commandRevokeError) return json(503, fail('android_session_command_revoke_failed'), origin);
+          stopSessionIds.push(activeSession.session_id);
+          continue;
+        }
+        const { error: heartbeatError } = await db.from('backroom_desktop_sessions')
+          .update({ expires_at: nextSessionExpiry })
+          .eq('session_id', activeSession.session_id).eq('device_id', current.device_id)
+          .eq('room_id', activeSession.room_id).eq('status', 'active').gt('expires_at', now);
+        if (heartbeatError) return json(503, fail('android_session_heartbeat_failed'), origin);
+      }
       const retentionCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
       const { error: cleanupError } = await db.from('backroom_android_commands').delete()
         .eq('device_id', current.device_id).lt('created_at', retentionCutoff);
@@ -570,6 +596,13 @@ Deno.serve(async req => {
       if (pendingError) return json(503, fail('android_command_poll_failed'), origin);
       for (const row of pending ?? []) {
         if (row.command?.command !== 'stop_session') {
+          const binding = await verifyActiveDeviceRoomBinding(current.device_id, row.room_id);
+          if (!binding.ok && binding.status === 503) return json(503, fail('android_command_binding_check_failed'), origin);
+          if (!binding.ok || binding.platform !== 'android') {
+            await db.from('backroom_android_commands').update({ status: 'rejected', result: 'device_room_binding_revoked', lease_until: null })
+              .eq('id', row.id).eq('device_id', current.device_id).eq('status', 'pending');
+            continue;
+          }
           const session = await activeDesktopSession(row.session_id, current.device_id, row.room_id);
           if (!session.ok) {
             await db.from('backroom_android_commands').update({ status: 'expired', result: 'session_not_active' })
@@ -597,6 +630,13 @@ Deno.serve(async req => {
       if (leaseError) return json(503, fail('android_command_poll_failed'), origin);
       for (const row of expiredLeases ?? []) {
         if (row.command?.command !== 'stop_session') {
+          const binding = await verifyActiveDeviceRoomBinding(current.device_id, row.room_id);
+          if (!binding.ok && binding.status === 503) return json(503, fail('android_command_binding_check_failed'), origin);
+          if (!binding.ok || binding.platform !== 'android') {
+            await db.from('backroom_android_commands').update({ status: 'rejected', result: 'device_room_binding_revoked', lease_until: null })
+              .eq('id', row.id).eq('device_id', current.device_id).eq('status', 'leased');
+            continue;
+          }
           const session = await activeDesktopSession(row.session_id, current.device_id, row.room_id);
           if (!session.ok) {
             await db.from('backroom_android_commands').update({ status: 'expired', result: 'session_not_active' })
@@ -616,7 +656,7 @@ Deno.serve(async req => {
         }
       }
       await db.from('backroom_devices').update({ last_seen_at: new Date().toISOString() }).eq('device_id', current.device_id);
-      return json(200, { ok: true, commands: leased }, origin);
+      return json(200, { ok: true, commands: leased, stopSessionIds }, origin);
     }
 
     if (action === 'android/signal') {

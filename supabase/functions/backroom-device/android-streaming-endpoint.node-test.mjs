@@ -32,6 +32,9 @@ test("Android stream Edge actions keep human auth, device bearer and platform bo
   assert.match(migration, /r\\.id=b\\.room_id and r\\.owner_id=\\(select auth\\.uid\\(\\)\\)/);
   assert.match(endpoint, /ANDROID_SESSION_LEASE_MS/);
   assert.match(endpoint, /android_session_heartbeat_failed/);
+  assert.match(endpoint, /android_session_binding_check_failed/);
+  assert.match(endpoint, /device_room_binding_revoked/);
+  assert.match(endpoint, /stopSessionIds/);
   assert.match(endpoint, /nextSessionExpiry/);
   assert.match(endpoint, /ANDROID_SESSION_LEASE_MS/);
   assert.match(endpoint, /action: command.command/);
@@ -53,6 +56,8 @@ test("Android queue and media components do not add an inbound phone listener or
   assert.match(companion, /ACTION_START/);
   assert.match(companion, /PEER_DISCONNECT_GRACE_SECONDS = 20L/);
   assert.match(companion, /android_offer_rejected/);
+  assert.match(companion, /stopSessionIds/);
+  assert.match(companion, /device_room_binding_revoked/);
   assert.match(companion, /android\/session-close/);
   assert.match(companion, /stopCapture\\("android_offer_rejected"\\)/);
   assert.match(companion, /webrtc_peer_disconnected/);

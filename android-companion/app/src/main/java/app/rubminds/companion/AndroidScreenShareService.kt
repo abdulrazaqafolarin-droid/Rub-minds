@@ -200,6 +200,11 @@ class AndroidScreenShareService : Service() {
         try {
             val result = api?.post("android/commands", token) ?: throw IllegalStateException("Cloud command response missing.")
             consecutivePollFailures = 0
+            val stopSessions = result.optJSONArray("stopSessionIds")
+            if (stopSessions != null && (0 until stopSessions.length()).any { stopSessions.optString(it) == activeSessionId }) {
+                stopCapture("device_room_binding_revoked")
+                return
+            }
             val commands = result.optJSONArray("commands") ?: return
             for (index in 0 until commands.length()) {
                 val command = commands.optJSONObject(index) ?: continue
