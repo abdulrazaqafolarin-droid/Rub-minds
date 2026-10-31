@@ -87,7 +87,7 @@ async function verifyActiveDeviceRoomBinding(deviceId: string, roomId: string) {
   ]);
   if (deviceError || bindingError) return { ok: false as const, status: 503, reason: 'device_authorization_unavailable' };
   if (!deviceRow || !binding) return { ok: false as const, status: 404, reason: 'active_device_binding_not_found' };
-  return { ok: true as const };
+  return { ok: true as const, platform: deviceRow.platform as string };
 }
 async function activeDesktopSession(sessionId: string, deviceId: string, roomId: string) {
   const { data, error } = await db.from('backroom_desktop_sessions')
