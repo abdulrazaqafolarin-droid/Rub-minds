@@ -517,6 +517,18 @@ class AndroidScreenShareService : Service() {
         catch (_: Exception) { /* Local gate remains authoritative if the peer is disconnected. */ }
     }
 
+    private fun sendRemoteKeyboardRevoked() {
+        val channel = dataChannel ?: return
+        val sessionId = activeSessionId ?: return
+        if (channel.state() != DataChannel.State.OPEN || !UUID_PATTERN.matches(sessionId)) return
+        val payload = JSONObject()
+            .put("kind", "remote_keyboard_revoked")
+            .put("sessionId", sessionId)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+        runCatching { channel.send(DataChannel.Buffer(ByteBuffer.wrap(payload), false)) }
+    }
+
     private fun sendAppVisibility(channel: DataChannel, sessionId: String, visible: Boolean) {
         if (!UUID_PATTERN.matches(sessionId) || channel.state() != DataChannel.State.OPEN) return
         val payload = JSONObject()
@@ -866,6 +878,11 @@ class AndroidScreenShareService : Service() {
                 service.localControlGranted = false
                 runCatching { service.sendTouchControlRevoked() }
             }
+        }
+
+        fun revokeRemoteKeyboard() {
+            RemoteKeyboardGate.disarm()
+            instance?.let { service -> runCatching { service.sendRemoteKeyboardRevoked() } }
         }
 
         const val ACTION_START = "app.rubminds.companion.action.START_SCREEN_SHARE"
