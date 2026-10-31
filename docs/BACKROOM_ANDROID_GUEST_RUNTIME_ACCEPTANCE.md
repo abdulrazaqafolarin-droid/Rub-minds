@@ -2,6 +2,8 @@
 
 Status: **contract and admission policy implemented; no virtualization provider selected or integrated**.
 
+The Android companion's separate real-app mirror now has a verified native debug build and 137 passing automated checks (60 Kotlin/JUnit + 27 manifest/resource-policy + 50 Phone Frame/Edge/Realtime protocol checks), with a passing merged-manifest audit. This validates the companion's ordinary-app mirroring/input implementation only. It does **not** validate a `GuestRuntimeProvider`, isolated guest process/data, guest-only virtual display or any of the virtualization acceptance criteria below. Physical TECNO KL4 acceptance and staging backend validation for the mirror also remain pending.
+
 This document is the execution gate for a separate Android physical-device proof of concept. Passing source tests or a library README does not make an app virtualized. The Phone Frame must show a real app process running in an isolated guest container and must receive frames from that guest only.
 
 ## Target device and test boundary
@@ -94,7 +96,7 @@ Not implemented or verified:
 - no guest frame is rendered in the Phone Frame;
 - no real guest touch or accessibility query exists;
 - no native approval screen issues live guest approval receipts;
-- no Android Gradle build, APK install, physical acceptance or provider performance test has passed in this session.
+- no virtualization-provider build, isolated guest APK install/launch, physical guest acceptance or provider performance test has passed. The companion's non-virtualized Android live-mirror build was separately verified; see [the live-stream acceptance matrix](BACKROOM_ANDROID_LIVE_STREAM_ACCEPTANCE.md).
 
 **Do not mark Android virtualized app execution complete until the provider is implemented and every required handset check passes.**
 

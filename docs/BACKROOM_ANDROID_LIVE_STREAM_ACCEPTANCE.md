@@ -13,12 +13,28 @@ Use the exact debug artifact built from the PR source. Do not substitute a local
 - Debug signer certificate SHA-256: `6765d5a3cbed165ed9b18f45f5742bf313966c4c8cfb0106f2f94d0e75deced0`.
 - Merged-manifest SHA-256: `029cd32a4f972d980c0e9d4ce5bf7d2e9bce2b5921fa992ab51315448963a2d0`.
 
-This is a debug-signed acceptance artifact, not a production release. The Android native build (60/60 JUnit tests), manifest audit and APK assembly passed in an isolated Android SDK 35 runner. Android manifest/resource-policy tests passed 27/27 and the adjacent Phone Frame/Edge/Realtime tests passed 50/50. GitHub Actions jobs have not reached a hosted runner. Production Supabase and Vercel have not been changed.
+This is a debug-signed **compile-verification artifact**, not a production release and not the APK to use for pairing. The Android native build, final merged-manifest audit and APK assembly passed in an isolated Android SDK 35 runner against the PR source.
+
+| Verification | Result |
+|---|---:|
+| Android Kotlin/JUnit (`:app:testDebugUnitTest`) | 60 passed, 0 failed |
+| Android manifest/resource-policy Node suite | 27 passed, 0 failed |
+| Phone Frame, touch-policy, Edge Function, SDP protocol and private Realtime suite | 50 passed, 0 failed |
+| **Combined automated checks** | **137 passed, 0 failed** |
+| Merged-manifest audit (`:app:auditDebugGuestHostManifest`) | PASS |
+| Debug APK assembly (`:app:assembleDebug`) | PASS |
+| APK signature verification (`apksigner verify --print-certs`) | PASS |
+
+The merged manifest contains 5 declared permissions, 6 components and 4 exported components. Its SHA-256 is `029cd32a4f972d980c0e9d4ce5bf7d2e9bce2b5921fa992ab51315448963a2d0`. The APK is 49,967,179 bytes, SHA-256 `2cc2ba30789ff111ee49acf779871298023d0a28378212ecff7b1f4a4eee40f5`; the debug signer certificate SHA-256 is `6765d5a3cbed165ed9b18f45f5742bf313966c4c8cfb0106f2f94d0e75deced0`.
+
+**Important build configuration:** this compile-verification APK was built with empty `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` BuildConfig values. It can verify package installation, manifest and signature only; it cannot pair, authenticate to the project or create a live stream. Actual backend acceptance requires a separate rebuild with the approved staging HTTPS URL and publishable/anon key after the migration and Edge Function have been deployed to isolated staging. Never embed a service-role key.
+
+The last observed GitHub-hosted Android job ended before runner allocation (`runner_id=0`, no runner name and zero executed steps); the checks above were executed directly in the isolated Android SDK runner and are recorded separately from GitHub Actions. No physical ADB device was attached, so no handset behavior is claimed. Production Supabase and Vercel have not been changed.
 
 ## Required setup
 
 1. Use two devices. The TECNO KL4 is the capture source. Open the Backroom Phone Frame on a separate Windows laptop or another device.
-2. Install the exact debug APK on the phone. Record the installed package version and signing-certificate digest; compare them with the artifact evidence above.
+2. The hash-matched compile-verification APK may be installed only to check package installation, merged manifest and debug signer; it has empty Supabase build configuration and **cannot pair or stream**. For live acceptance, build a second APK with the approved staging URL and publishable key, record its new artifact/signer/manifest hashes, and install that staging-configured artifact.
 3. Record the actual handset values from the running app: Android release, SDK, ABI, build/display/incremental identifiers, display dimensions and density. Do not infer ABI or QPR2 support from the model name.
 4. Use an isolated staging Rub Minds project and a dedicated test group/account. The PR migration and Edge Function are source-only until a separately approved staging deployment. Do not apply them to production as part of this test.
 5. Before pairing, install the staging-configured APK (not the backend-unconfigured compile-verification APK above) after the staging migration and Edge Function have been separately applied/deployed to the isolated staging project. Pair the phone, approve it as the group owner and confirm only locally selected, signer-approved app metadata is synced.
