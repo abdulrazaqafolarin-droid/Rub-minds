@@ -3,6 +3,7 @@ import { Activity, Monitor, Play, Power, RefreshCw, ShieldCheck, SquareTerminal,
 import { supabase } from './supabase';
 import { buildScopedDeviceMessage, classifyDeviceResponse, validateDeviceSignal, queueIceCandidate, takeIceCandidates } from '../integrations/backroom/desktop-realtime-protocol.mjs';
 import { waitForIceGatheringComplete } from '../integrations/backroom/ice-gathering.mjs';
+import { getContainedVideoRect, mapVideoSelectionToFrame } from '../integrations/backroom/video-selection-overlay.mjs';
 import { listBackroomDevices, type BackroomDevice } from './backroomCloudDevices';
 import './backroomDesktopControl.css';
 
@@ -315,10 +316,8 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
 
   const videoContentRect=()=>{
     const el=videoRef.current;if(!el)return null;
-    const box=el.getBoundingClientRect();const vw=el.videoWidth||box.width;const vh=el.videoHeight||box.height;
-    const scale=Math.min(box.width/vw,box.height/vh);
-    const width=vw*scale,height=vh*scale;
-    return {left:box.left+(box.width-width)/2,top:box.top+(box.height-height)/2,width,height};
+    const box=el.getBoundingClientRect();
+    return getContainedVideoRect(box,el.videoWidth||box.width,el.videoHeight||box.height);
   };
   const normalized=(clientX:number,clientY:number)=>{
     const rect=videoContentRect();if(!rect)return null;
@@ -330,13 +329,14 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   // the 16:9 letterbox wrapper. Map them back into the wrapper for the overlay.
   const selectionOverlayStyle=()=>{
     if(!selection)return undefined;
-    const content=videoContentRect(),frame=frameRef.current?.getBoundingClientRect();
-    if(!content||!frame||frame.width<=0||frame.height<=0)return undefined;
+    const frame=frameRef.current?.getBoundingClientRect();
+    const mapped=mapVideoSelectionToFrame(videoContentRect(),frame||null,selection);
+    if(!mapped)return undefined;
     return {
-      left:((content.left-frame.left+selection.x*content.width)/frame.width*100)+'%',
-      top:((content.top-frame.top+selection.y*content.height)/frame.height*100)+'%',
-      width:(selection.width*content.width/frame.width*100)+'%',
-      height:(selection.height*content.height/frame.height*100)+'%',
+      left:mapped.left+'%',
+      top:mapped.top+'%',
+      width:mapped.width+'%',
+      height:mapped.height+'%',
     };
   };
   const sendData=(message:Record<string,unknown>)=>{
