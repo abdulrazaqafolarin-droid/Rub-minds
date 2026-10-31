@@ -25,6 +25,15 @@ export function validateDeviceCommand(
   options: DeviceScope & { now?: number; maxAgeMs?: number }
 ): payload is DeviceCommand;
 export function classifyDeviceResponse(payload: unknown): DeviceCapability | 'error' | null;
+export type DeviceSignal = {
+  deviceId: string; roomId: string; sessionId: string; issuedAt: number;
+  answer?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit;
+  stop?: boolean; canControl?: boolean; actorUserId?: string; actorDisplayName?: string;
+};
+export function validateDeviceSignal(
+  payload: unknown,
+  options: DeviceScope & { now?: number; maxAgeMs?: number }
+): Readonly<DeviceSignal> | null;
 export function queueIceCandidate(
   queue: Map<string, RTCIceCandidateInit[]>,
   sessionId: string,
