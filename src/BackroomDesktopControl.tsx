@@ -363,6 +363,11 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const keyDown=(e:KeyboardEvent<HTMLDivElement>)=>{
     if(!controlGranted||!dataRef.current||e.ctrlKey||e.metaKey||e.altKey)return;
     e.preventDefault();
+    if(targetStatus.startsWith('Verified editable field ·')){
+      targetAttemptRef.current='';setSelection(null);setTargetStatus('');
+      try{sendData({kind:'clear_target'});}
+      catch(error){flash('Could not clear the previous typing target. Stopping this remote session for safety.',true);void stopActivePeer();return;}
+    }
     const event=e.key.length===1?{kind:'text',text:e.key}:{kind:'key',key:e.key};
     try{sendData({kind:'input',event});}catch(error){flash(String(error),true);}
   };
