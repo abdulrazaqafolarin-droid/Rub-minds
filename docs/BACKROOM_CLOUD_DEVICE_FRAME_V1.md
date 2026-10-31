@@ -30,7 +30,7 @@ Android companion
 
 - No app virtualization engine or separate app-private data environment.
 - No private-data cloning; MANAGE_EXTERNAL_STORAGE cannot grant access to other apps' private sandboxes.
-- No live screen capture, touch injection, accessibility control, desktop driver, terminal runtime or AI-triggered device command executor.
+- For the Android cloud Device Frame slice specifically: no virtual guest-app rendering, Android MediaProjection screen stream, Android accessibility/touch driver or Android target-bound draft executor. The separate Windows desktop companion now has a source-level UI Automation targeting path, but native Windows compilation and physical acceptance are still release gates.
 - The Android native project has not been compiled or installed on a physical device in this environment.
 - The Supabase migration and Edge Function are source-only. Do not claim pairing is live until a separately approved staging deployment and live pairing test succeed.
 
