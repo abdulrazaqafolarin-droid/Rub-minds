@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   validateTerminalDraftMessage,
   validateTerminalSubmitMessage,
+  createTerminalActionRequestGuard,
 } from './terminal-pty-protocol.mjs';
 
 const sessionId = '123e4567-e89b-42d3-a456-426614174000';
@@ -66,4 +67,21 @@ test('terminal Enter is separate, exact-session, and carries no text payload', (
   assert.equal(validateTerminalSubmitMessage({ ...message, sessionId: 'wrong' }, sessionId), null);
   assert.equal(validateTerminalSubmitMessage({ ...message, requestId: 'invalid' }, sessionId), null);
   assert.equal(validateTerminalSubmitMessage({ ...message, kind: 'terminal_draft' }, sessionId), null);
+});
+
+
+test('terminal action request IDs are one-use across drafts and Enter and fail closed at capacity', () => {
+  const guard = createTerminalActionRequestGuard(2);
+  assert.equal(guard(requestId), true);
+  assert.equal(guard(requestId), false);
+  const second = '123e4567-e89b-42d3-a456-426614174002';
+  assert.equal(guard(second), true);
+  const third = '123e4567-e89b-42d3-a456-426614174003';
+  assert.equal(guard(third), false);
+  assert.equal(guard('not-a-uuid'), false);
+});
+
+test('terminal action replay guard rejects invalid limits', () => {
+  assert.throws(() => createTerminalActionRequestGuard(0), /between 1 and 4096/);
+  assert.throws(() => createTerminalActionRequestGuard(1.5), /between 1 and 4096/);
 });
