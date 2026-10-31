@@ -52,6 +52,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const targetAttemptRef=useRef('');
   const draftAttemptRef=useRef('');
   const terminalActionRef=useRef<{requestId:string;action:'draft'|'submit';text?:string}|null>(null);
+  const draftGrantTimerRef=useRef<number|null>(null);
   const devicesRef=useRef<BackroomDevice[]>([]);
   const pendingCandidatesRef=useRef(new Map<string,RTCIceCandidateInit[]>());
   const selectedDevice=devices.find(d=>d.device_id===deviceId);
@@ -142,6 +143,10 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   },[publish,abandonSession,clearSessionStartTimers,flash]);
 
   const closePeer=useCallback(async()=>{
+    if(draftGrantTimerRef.current!==null){
+      window.clearTimeout(draftGrantTimerRef.current);
+      draftGrantTimerRef.current=null;
+    }
     const current=peerRef.current;
     if(current){current.close();peerRef.current=null;}
     dataRef.current=null;
@@ -201,7 +206,21 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
         setTerminalSession(payload.sessionId);setTerminalText('Terminal ready · '+(payload.shellLabel||'native shell')+'\\n');flash('Native terminal started on the selected computer.');
       }else if(responseKind==='launch'){flash('Application launched on the selected computer.');}
       else if(responseKind==='control'){setControlGranted(true);flash('Local computer-control permission approved.');}
-      else if(responseKind==='draft'){setDraftGranted(true);flash('Local draft-typing permission approved.');}
+      else if(responseKind==='draft'){
+        if(draftGrantTimerRef.current!==null)window.clearTimeout(draftGrantTimerRef.current);
+        setDraftGranted(true);
+        setTerminalDraftReady(false);
+        const lifetimeSeconds=typeof payload.expiresSeconds==='number'&&Number.isFinite(payload.expiresSeconds)
+          ?Math.min(120,Math.max(1,payload.expiresSeconds)):60;
+        // Expire the UI slightly before the native grant so delayed UI state
+        // can never leave an enabled control after native authorization ends.
+        draftGrantTimerRef.current=window.setTimeout(()=>{
+          draftGrantTimerRef.current=null;
+          setDraftGranted(false);
+          setTerminalDraftReady(false);
+        },Math.max(0,lifetimeSeconds*1000-1500));
+        flash('Local draft-typing permission approved. It will expire automatically.');
+      }
       else if(responseKind==='view'){flash('The computer approved the live screen request.');}
       else if(responseKind==='stop'){void closePeer();setTerminalSession('');flash('The computer stopped the session.');}
     });
@@ -252,6 +271,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const startTerminal=async()=>{
     if(peerRef.current)await stopActivePeer();
     setDraftGranted(false);setTerminalDraftReady(false);setTerminalDraftSending(false);
+    if(draftGrantTimerRef.current!==null){window.clearTimeout(draftGrantTimerRef.current);draftGrantTimerRef.current=null;}
     terminalActionRef.current=null;
     try{
       const peerId=uuid();const pc=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun.cloudflare.com:3478']}]});
@@ -574,7 +594,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
             <div className="br-terminal-remote-head"><SquareTerminal size={15}/> Native terminal · actual computer</div>
             <pre>{terminalText||'Waiting for terminal output…'}</pre>
             <div className="br-terminal-input">
-              <input value={terminalInput} onChange={e=>setTerminalInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();terminalTypeDraft();}}} placeholder={!controlGranted?'Request terminal control first':!draftGranted?'Approve terminal draft typing first':'Text for the focused Claude Code/OpenCode prompt…'} disabled={!controlGranted||!draftGranted||terminalDraftSending}/>
+              <input value={terminalInput} onChange={e=>{setTerminalInput(e.target.value);setTerminalDraftReady(false);}} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();terminalTypeDraft();}}} placeholder={!controlGranted?'Request terminal control first':!draftGranted?'Approve terminal draft typing first':'Text for the focused Claude Code/OpenCode prompt…'} disabled={!controlGranted||!draftGranted||terminalDraftSending}/>
               {controlGranted&&!draftGranted&&<button type="button" onClick={()=>void requestTerminalDraftPermission()}>Request draft permission</button>}
               <button type="button" onClick={terminalTypeDraft} disabled={!controlGranted||!draftGranted||!terminalInput.trim()||terminalDraftSending}>Type only</button>
               <button type="button" onClick={terminalSubmit} disabled={!controlGranted||!terminalDraftReady||terminalDraftSending}>Press Enter</button>
