@@ -61,6 +61,8 @@ class AndroidScreenShareService : Service() {
     @Volatile private var answerAlreadySent = false
     private var projectionStartedAt = 0L
     private var pollingStarted = false
+    @Volatile private var serverCloseSent = false
+    @Volatile private var stopping = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -98,6 +100,8 @@ class AndroidScreenShareService : Service() {
             deviceToken = vault.token() ?: error("Pair and obtain group-owner approval before streaming.")
             api = CloudDeviceApi()
             projectionStartedAt = System.currentTimeMillis()
+            serverCloseSent = false
+            stopping = false
             initializeWebRtc(resultData)
             pollingStarted = true
             executor.scheduleWithFixedDelay({ pollDeviceCommands() }, 0, POLL_INTERVAL_SECONDS, TimeUnit.SECONDS)
@@ -402,9 +406,27 @@ class AndroidScreenShareService : Service() {
         answerAlreadySent = false
     }
 
+    @Synchronized
+    private fun notifyServerSessionClosed() {
+        if (serverCloseSent) return
+        val sessionId = activeSessionId ?: return
+        val roomId = activeRoomId ?: return
+        val token = deviceToken ?: return
+        val client = api ?: return
+        serverCloseSent = true
+        Thread {
+            try {
+                client.post("android/session-close", token, JSONObject()
+                    .put("roomId", roomId)
+                    .put("sessionId", sessionId))
+            } catch (_: Exception) { /* The session has a server-side expiry as a fallback. */ }
+        }.start()
+    }
+
     private fun stopCapture(reason: String) {
         if (stopping) return
         stopping = true
+        notifyServerSessionClosed()
         RemoteTouchGate.disarm(this)
         closePeer()
         try { capturer?.stopCapture() } catch (_: Exception) { }
@@ -427,6 +449,7 @@ class AndroidScreenShareService : Service() {
     }
 
     override fun onDestroy() {
+        notifyServerSessionClosed()
         RemoteTouchGate.disarm(this)
         AndroidTouchAccessibilityService.clearActiveSession()
         closePeer()

@@ -52,3 +52,8 @@ export function validateAndroidCommandAck(value) {
       (value.canControl !== undefined && typeof value.canControl !== "boolean")) return null;
   return Object.freeze({ ...value });
 }
+
+export function validateAndroidSessionClose(value) {
+  if (!exactKeys(value, ["roomId", "sessionId"]) || !isUuid(value.roomId) || !isUuid(value.sessionId)) return null;
+  return Object.freeze({ roomId: value.roomId, sessionId: value.sessionId });
+}

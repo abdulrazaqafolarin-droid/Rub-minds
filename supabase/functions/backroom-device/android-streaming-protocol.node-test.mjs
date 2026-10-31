@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   validateAndroidSessionStart, validateAndroidDeviceCommand,
-  validateAndroidSignal, validateAndroidCommandAck
+  validateAndroidSignal, validateAndroidCommandAck, validateAndroidSessionClose
 } from "./android-streaming-protocol.mjs";
 
 const deviceId = "123e4567-e89b-42d3-a456-426614174000";
@@ -51,4 +51,10 @@ test("command acknowledgements are bounded, exact and session-bound", () => {
   assert.equal(validateAndroidCommandAck({ ...valid, result: "x".repeat(81) }), null);
   assert.equal(validateAndroidCommandAck({ ...valid, sessionId: "bad" }), null);
   assert.equal(validateAndroidCommandAck({ ...valid, ignored: 1 }), null);
+});
+
+test("device session close is explicitly scoped to the valid room and session", () => {
+  assert.ok(validateAndroidSessionClose({ roomId, sessionId }));
+  assert.equal(validateAndroidSessionClose({ roomId: "bad", sessionId }), null);
+  assert.equal(validateAndroidSessionClose({ roomId, sessionId, deviceId }), null);
 });

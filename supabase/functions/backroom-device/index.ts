@@ -10,7 +10,7 @@ import { validateDesktopRegistration } from './desktop-device-protocol.mjs';
 import { validateDesktopApps } from './desktop-app-protocol.mjs';
 import { validateDesktopCommand, validateDesktopSignal } from './desktop-command-protocol.mjs';
 import { validateDesktopSessionClose } from './desktop-session-close-protocol.mjs';
-import { validateDesktopSessionAbandon } from './desktop-session-abandon-protocol.mjs';\nimport { validateAndroidSessionStart, validateAndroidDeviceCommand, validateAndroidSignal, validateAndroidCommandAck } from './android-streaming-protocol.mjs';
+import { validateDesktopSessionAbandon } from './desktop-session-abandon-protocol.mjs';\nimport { validateAndroidSessionStart, validateAndroidDeviceCommand, validateAndroidSignal, validateAndroidCommandAck, validateAndroidSessionClose } from './android-streaming-protocol.mjs';
 import { broadcastPrivateDeviceEvent } from './realtime-broadcast.mjs';
 
 const url = Deno.env.get('SUPABASE_URL');
@@ -510,6 +510,11 @@ Deno.serve(async req => {
       });
       if (queueError) return json(409, fail('android_command_id_conflict'), origin);
       if (command.command === 'stop_session') {
+        const { error: stopError } = await db.from('backroom_desktop_sessions')
+          .update({ status: 'stopped', stopped_at: new Date().toISOString() })
+          .eq('session_id', command.sessionId).eq('device_id', command.deviceId)
+          .eq('room_id', command.roomId).eq('status', 'active');
+        if (stopError) return json(503, fail('android_session_stop_failed'), origin);
         try {
           await broadcastPrivateDeviceEvent({
             projectUrl: url, apiKey: serviceKey, deviceId: command.deviceId, event: 'signal',
@@ -598,6 +603,40 @@ Deno.serve(async req => {
       return json(202, { ok: true, sessionId: signal.sessionId }, origin);
     }
 
+
+    if (action === 'android/session-close') {
+      if (!exactKeys(input, ['action','roomId','sessionId'])) return json(400, fail('invalid_android_session_close'), origin);
+      const current = await device(req);
+      if (!current) return json(401, fail('device_not_approved'), origin);
+      if (current.platform !== 'android') return json(409, fail('android_device_required'), origin);
+      const closeRequest = validateAndroidSessionClose({ roomId: input.roomId, sessionId: input.sessionId });
+      if (!closeRequest) return json(400, fail('invalid_android_session_close'), origin);
+      const binding = await verifyActiveDeviceRoomBinding(current.device_id, closeRequest.roomId);
+      if (!binding.ok) return json(binding.status, fail(binding.reason), origin);
+      if (binding.platform !== 'android') return json(409, fail('android_device_required'), origin);
+      const { data: existing, error: lookupError } = await db.from('backroom_desktop_sessions')
+        .select('session_id,status,session_type')
+        .eq('session_id', closeRequest.sessionId).eq('device_id', current.device_id)
+        .eq('room_id', closeRequest.roomId).maybeSingle();
+      if (lookupError) return json(503, fail('android_session_close_lookup_failed'), origin);
+      if (!existing || existing.session_type !== 'screen') return json(404, fail('android_screen_session_not_found'), origin);
+      if (existing.status === 'active') {
+        const { error } = await db.from('backroom_desktop_sessions')
+          .update({ status: 'stopped', stopped_at: new Date().toISOString() })
+          .eq('session_id', closeRequest.sessionId).eq('device_id', current.device_id)
+          .eq('room_id', closeRequest.roomId).eq('status', 'active');
+        if (error) return json(503, fail('android_session_close_failed'), origin);
+      }
+      try {
+        await broadcastPrivateDeviceEvent({
+          projectUrl: url, apiKey: serviceKey, deviceId: current.device_id, event: 'signal',
+          payload: { deviceId: current.device_id, roomId: closeRequest.roomId,
+            sessionId: closeRequest.sessionId, issuedAt: Date.now(), stop: true },
+        });
+      } catch { /* Session state is already stopped; the browser will also see peer closure. */ }
+      return json(200, { ok: true, sessionId: closeRequest.sessionId, status: 'stopped' }, origin);
+    }
+
     if (action === 'android/ack') {
       const current = await device(req);
       if (!current) return json(401, fail('device_not_approved'), origin);
@@ -618,7 +657,8 @@ Deno.serve(async req => {
       const { data, error } = await db.from('backroom_android_commands')
         .update({ status: 'acked', result: ack.result, acked_at: new Date().toISOString(), lease_until: null })
         .eq('id', ack.commandId).eq('device_id', current.device_id)
-        .eq('status', 'leased').select('id');
+        .eq('status', 'leased').gt('lease_until', new Date().toISOString())
+        .gt('expires_at', new Date().toISOString()).select('id');
       if (error) return json(503, fail('android_ack_failed'), origin);
       if (!Array.isArray(data) || data.length !== 1) return json(409, fail('android_command_lease_expired'), origin);
       if (row.command?.action === 'request_control') {
