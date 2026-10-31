@@ -350,7 +350,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       if(target.width<0.01||target.height<0.01)return flash('Drag a rectangle over the exact typing area.',true);
       const requestId=uuid();targetAttemptRef.current=requestId;
       setSelection(target);setTargetStatus('Checking the selected area against Windows accessibility…');
-      try{sendData({kind:'select_target',requestId,target});flash('Checking that the selected area resolves to one empty editable field.');}
+      try{sendData({kind:'select_target',requestId,target});flash('Checking that the selected area resolves to one empty editable field or multi-line editor.');}
       catch(error){flash(String(error),true);}
       return;
     }
@@ -417,7 +417,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
             <div className="br-desktop-toolbar">
               <span>{videoReady?'Live computer display':'View request pending'}{coordinateControl?' · full-monitor geometry verified':' · view-only unless full monitor selected'}</span>
               <button type="button" onClick={()=>void requestControl()} disabled={!videoReady||!coordinateControl||controlGranted}>Request control</button>
-              <button type="button" onClick={()=>{setTargetStatus('');setSelection(null);targetAttemptRef.current='';setSelectMode(v=>!v);}} disabled={!controlGranted||!draftGranted}>{selectMode?'Cancel area selection':'Drag-select empty text field'}</button>
+              <button type="button" onClick={()=>{setTargetStatus('');setSelection(null);targetAttemptRef.current='';setSelectMode(v=>!v);}} disabled={!controlGranted||!draftGranted}>{selectMode?'Cancel area selection':'Drag-select typing area'}</button>
               <button type="button" onClick={()=>void requestDraftPermission()} disabled={!controlGranted||draftGranted}><TextCursorInput size={13}/> Request typing permission</button>
             </div>
             {targetStatus&&<div className="br-desktop-caption" role="status">{targetStatus}</div>}
