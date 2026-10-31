@@ -940,6 +940,9 @@ fn select_draft_target(state: State<'_, AppState>, session_id: String, mut targe
 
     control_granted(&state, &session_id)?;
     draft_granted(&state, &session_id)?;
+    // Invalidate the previous target before validating a new selection. A failed
+    // or superseded drag must never leave an earlier field eligible for staging.
+    state.draft_targets.lock().map_err(|_| "Draft state unavailable")?.remove(&session_id);
     let geometry = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
         .get(&session_id).cloned().ok_or("Live monitor capture is not active")?;
     if !target.x.is_finite() || !target.y.is_finite() || !target.width.is_finite() || !target.height.is_finite() ||
