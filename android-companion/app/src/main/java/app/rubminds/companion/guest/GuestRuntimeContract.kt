@@ -398,6 +398,61 @@ object GuestTouchPolicy {
     }
 }
 
+/**
+ * One-shot, session-local selection lease. The active lease is consumed before
+ * the provider receives an insertion request. A failed/ambiguous write must
+ * therefore require a fresh drag instead of a blind retry.
+ */
+class GuestSelectionGuard {
+    private var activeSelectionId: String? = null
+    private val consumedSelectionIds = linkedSetOf<String>()
+
+    @Synchronized
+    fun activate(
+        frame: GuestFrame,
+        field: GuestTextFieldTarget,
+        selection: GuestSelectionLease,
+        nowMillis: Long
+    ): String? {
+        val error = GuestTargetPolicy.validateSelection(frame, field, selection, nowMillis)
+        if (error != null) return error
+        if (selection.selectionId in consumedSelectionIds) return "target_selection_already_used"
+        activeSelectionId = selection.selectionId
+        return null
+    }
+
+    /** Returns null only after atomically retiring the lease for this one draft. */
+    @Synchronized
+    fun consumeForDraft(
+        frame: GuestFrame,
+        field: GuestTextFieldTarget,
+        selection: GuestSelectionLease,
+        request: GuestDraftRequest,
+        nowMillis: Long
+    ): String? {
+        if (activeSelectionId != selection.selectionId || selection.selectionId in consumedSelectionIds) {
+            return "target_selection_not_active"
+        }
+        val error = GuestTargetPolicy.validateDraft(frame, field, selection, request, nowMillis)
+        if (error != null) return error
+        consumedSelectionIds += selection.selectionId
+        activeSelectionId = null
+        return null
+    }
+
+    @Synchronized
+    fun clearActive() {
+        activeSelectionId = null
+    }
+
+    /** Call only when the entire guest session is destroyed and a new session ID is issued. */
+    @Synchronized
+    fun resetForNewSession() {
+        activeSelectionId = null
+        consumedSelectionIds.clear()
+    }
+}
+
 object GuestTargetPolicy {
     private const val MIN_SELECTION_COVERAGE = 0.65
     private const val MAX_DRAFT_CHARS = 4_000
