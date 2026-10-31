@@ -696,42 +696,59 @@ class AndroidScreenShareService : Service() {
     private fun stopCapture(reason: String) {
         if (stopping) return
         stopping = true
-        notifyServerSessionClosed()
+        runCatching { notifyServerSessionClosed() }
+
+        // Invalidate the in-memory control binding before any disk or native
+        // cleanup. A failed preference write must never leave a live target.
+        localControlGranted = false
+        AndroidTouchAccessibilityService.clearActiveSession(activeSessionId)
         RemoteTouchGate.disarm(this)
-        closePeer()
-        try { capturer?.stopCapture() } catch (_: Exception) { }
-        capturer?.dispose()
+
+        // Native WebRTC/media teardown is best-effort per resource so one
+        // failing dispose() cannot prevent the remaining capture resources
+        // from being released or the foreground service from stopping.
+        runCatching { closePeer() }
+        runCatching { capturer?.stopCapture() }
+        runCatching { capturer?.dispose() }
         capturer = null
-        videoTrack?.dispose()
+        runCatching { videoTrack?.dispose() }
         videoTrack = null
-        videoSource?.dispose()
+        runCatching { videoSource?.dispose() }
         videoSource = null
-        textureHelper?.dispose()
+        runCatching { textureHelper?.dispose() }
         textureHelper = null
-        peerFactory?.dispose()
+        runCatching { peerFactory?.dispose() }
         peerFactory = null
-        eglBase?.release()
+        runCatching { eglBase?.release() }
         eglBase = null
         pollingStarted = false
-        executor.shutdownNow()
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        runCatching { executor.shutdownNow() }
+        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
         stopSelf()
     }
 
     override fun onDestroy() {
         if (instance === this) instance = null
-        notifyServerSessionClosed()
+        stopping = true
+        runCatching { notifyServerSessionClosed() }
+        localControlGranted = false
+        AndroidTouchAccessibilityService.clearActiveSession(activeSessionId)
         RemoteTouchGate.disarm(this)
-        AndroidTouchAccessibilityService.clearActiveSession()
-        closePeer()
-        try { capturer?.stopCapture() } catch (_: Exception) { }
-        capturer?.dispose()
-        textureHelper?.dispose()
-        videoTrack?.dispose()
-        videoSource?.dispose()
-        peerFactory?.dispose()
-        eglBase?.release()
-        executor.shutdownNow()
+        runCatching { closePeer() }
+        runCatching { capturer?.stopCapture() }
+        runCatching { capturer?.dispose() }
+        capturer = null
+        runCatching { textureHelper?.dispose() }
+        textureHelper = null
+        runCatching { videoTrack?.dispose() }
+        videoTrack = null
+        runCatching { videoSource?.dispose() }
+        videoSource = null
+        runCatching { peerFactory?.dispose() }
+        peerFactory = null
+        runCatching { eglBase?.release() }
+        eglBase = null
+        runCatching { executor.shutdownNow() }
         super.onDestroy()
     }
 
@@ -775,10 +792,13 @@ class AndroidScreenShareService : Service() {
         @Volatile private var instance: AndroidScreenShareService? = null
 
         fun revokeLocalTouch(context: Context) {
+            // Clear the session binding even if persistent preference cleanup
+            // fails; a later cloud request must obtain a fresh local grant.
             RemoteTouchGate.disarm(context)
+            AndroidTouchAccessibilityService.clearActiveSession()
             instance?.let { service ->
                 service.localControlGranted = false
-                service.sendTouchControlRevoked()
+                runCatching { service.sendTouchControlRevoked() }
             }
         }
 
