@@ -1746,19 +1746,23 @@ mod native_input_tests {
     }
 
     #[test]
-    fn terminal_enter_permission_is_session_bound_one_use_and_expires() {
+    fn terminal_enter_permission_is_session_bound_and_expires() {
         let now = Instant::now();
+        let expires = now + Duration::from_secs(30);
         let mut pending = HashMap::new();
-        pending.insert("session-a".to_string(), now + Duration::from_secs(30));
-        assert!(consume_terminal_submit_ready(&mut pending, "session-a", now));
-        assert!(!consume_terminal_submit_ready(&mut pending, "session-a", now));
+        pending.insert("session-a".to_string(), TerminalSubmitState::Ready(expires));
 
-        pending.insert("session-a".to_string(), now + Duration::from_secs(30));
-        assert!(!consume_terminal_submit_ready(&mut pending, "session-b", now));
-        assert!(pending.contains_key("session-a"));
+        assert!(begin_terminal_submit_confirmation(&mut pending, "session-b", now).is_err());
+        assert_eq!(pending.get("session-a"), Some(&TerminalSubmitState::Ready(expires)));
+        assert_eq!(
+            begin_terminal_submit_confirmation(&mut pending, "session-a", now),
+            Ok(expires)
+        );
 
-        pending.insert("session-expired".to_string(), now);
-        assert!(!consume_terminal_submit_ready(&mut pending, "session-expired", now));
+        let expired = now;
+        pending.insert("session-expired".to_string(), TerminalSubmitState::Ready(expired));
+        assert!(begin_terminal_submit_confirmation(&mut pending, "session-expired", now).is_err());
+        assert!(!pending.contains_key("session-expired"));
     }
 
     #[test]
