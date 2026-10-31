@@ -9,6 +9,8 @@ import org.junit.Test
 
 class GuestRuntimeContractTest {
     private val device = GuestDeviceProfile(34, "arm64-v8a", "tecno-kl4-api34-arm64")
+    private val artifactSha256 = "b".repeat(64)
+    private val manifestSha256 = "c".repeat(64)
     private val descriptor = GuestRuntimeDescriptor(
         engineId = "safe.guest.engine",
         engineVersion = "0.1.0",
@@ -17,6 +19,8 @@ class GuestRuntimeContractTest {
         maxApiLevel = 36,
         supportedAbis = setOf("arm64-v8a"),
         targetSdk = 35,
+        releaseArtifactSha256 = artifactSha256,
+        mergedManifestSha256 = manifestSha256,
         capabilities = GuestRuntimeCapability.values().toSet(),
         mergedHostPermissions = setOf("android.permission.INTERNET", "android.permission.FOREGROUND_SERVICE"),
         mergedManifestAudited = true,
@@ -94,12 +98,45 @@ class GuestRuntimeContractTest {
             apiLevel = device.apiLevel,
             abi = device.abi,
             testRunId = "poc-run-2026-10-31",
+            releaseArtifactSha256 = artifactSha256,
+            mergedManifestSha256 = manifestSha256,
             passedChecks = checks
         )
         val review = GuestRuntimeAdmissionPolicy.review(descriptor, device, evidence)
         assertEquals(GuestRuntimeDecision.READY, review.decision)
         assertEquals(emptyList<String>(), review.blockers)
         assertEquals(emptyList<GuestAcceptanceCheck>(), review.missingDeviceChecks)
+    }
+
+
+
+    @Test fun physicalAcceptanceCannotBeReusedForDifferentReleaseArtifactOrMergedManifest() {
+        val evidence = GuestDeviceAcceptanceEvidence(
+            engineId = descriptor.engineId, engineVersion = descriptor.engineVersion,
+            deviceProfileId = device.localProfileId, apiLevel = device.apiLevel, abi = device.abi,
+            testRunId = "poc-run-2026-10-31",
+            releaseArtifactSha256 = artifactSha256,
+            mergedManifestSha256 = manifestSha256,
+            passedChecks = checks
+        )
+        assertEquals(
+            GuestRuntimeDecision.DEVICE_POC_REQUIRED,
+            GuestRuntimeAdmissionPolicy.review(
+                descriptor.copy(releaseArtifactSha256 = "d".repeat(64)), device, evidence
+            ).decision
+        )
+        assertEquals(
+            GuestRuntimeDecision.DEVICE_POC_REQUIRED,
+            GuestRuntimeAdmissionPolicy.review(
+                descriptor.copy(mergedManifestSha256 = "e".repeat(64)), device, evidence
+            ).decision
+        )
+        assertEquals(
+            GuestRuntimeDecision.BLOCKED,
+            GuestRuntimeAdmissionPolicy.review(
+                descriptor.copy(releaseArtifactSha256 = "not-a-sha"), device
+            ).decision
+        )
     }
 
     @Test fun broadHostPermissionsBlockTheEngineEvenWhenTheLibraryClaimsTheyAreOptional() {
@@ -142,7 +179,8 @@ class GuestRuntimeContractTest {
         val wrongEngine = GuestDeviceAcceptanceEvidence(
             engineId = "other.engine", engineVersion = "0.1.0",
             deviceProfileId = device.localProfileId, apiLevel = 34, abi = "arm64-v8a",
-            testRunId = "run", passedChecks = checks
+            testRunId = "run", releaseArtifactSha256 = artifactSha256,
+            mergedManifestSha256 = manifestSha256, passedChecks = checks
         )
         assertEquals(
             GuestRuntimeDecision.DEVICE_POC_REQUIRED,
