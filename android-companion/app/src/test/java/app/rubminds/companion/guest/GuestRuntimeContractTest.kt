@@ -12,6 +12,7 @@ class GuestRuntimeContractTest {
     private val artifactSha256 = "b".repeat(64)
     private val manifestSha256 = "c".repeat(64)
     private val descriptor = GuestRuntimeDescriptor(
+        hostApplicationId = "app.rubminds.companion",
         engineId = "safe.guest.engine",
         engineVersion = "0.1.0",
         licenseId = "Apache-2.0",
@@ -193,6 +194,20 @@ class GuestRuntimeContractTest {
         assertNotNull(review.blockers.firstOrNull { it.startsWith("unapproved_exported_components:") })
     }
 
+
+
+    @Test fun launcherExceptionDoesNotApplyToThirdPartyClassWithSameSuffix() {
+        val bad = descriptor.copy(mergedHostComponents = listOf(
+            GuestHostComponent(
+                className = "com.thirdparty.MainActivity",
+                type = GuestHostComponentType.ACTIVITY,
+                exported = true,
+                isLauncherActivity = true
+            ),
+            descriptor.mergedHostComponents.last()
+        ))
+        assertEquals(GuestRuntimeDecision.BLOCKED, GuestRuntimeAdmissionPolicy.review(bad, device).decision)
+    }
 
     @Test fun exportedAccessibilityServiceAndItsPermissionAreAlwaysRejected() {
         val bad = descriptor.copy(mergedHostComponents = descriptor.mergedHostComponents + GuestHostComponent(
