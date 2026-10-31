@@ -45,6 +45,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const videoRef=useRef<HTMLVideoElement|null>(null);
   const frameRef=useRef<HTMLDivElement|null>(null);
   const dragRef=useRef<{x:number;y:number;pointerId:number}|null>(null);
+  const targetAttemptRef=useRef('');
   const devicesRef=useRef<BackroomDevice[]>([]);
   const pendingCandidatesRef=useRef(new Map<string,RTCIceCandidateInit[]>());
   const selectedDevice=devices.find(d=>d.device_id===deviceId);
@@ -270,6 +271,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
         const text=new TextDecoder().decode(new Uint8Array(message.data||[]));
         setTerminalText(old=>(old+text).slice(-30000));
       }else if(message.kind==='target_result'){
+        if(typeof message.requestId!=='string'||message.requestId!==targetAttemptRef.current)return;
         const ok=message.ok===true;
         const reason=typeof message.reason==='string'?message.reason:'The selected area could not be verified.';
         setTargetStatus(ok?'Verified editable field · '+reason:'Target rejected · '+reason);
@@ -322,7 +324,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const pointerDown=(e:PointerEvent<HTMLDivElement>)=>{
     if(selectMode){
       const point=normalized(e.clientX,e.clientY);if(!point)return;
-      setTargetStatus('');setSelection(null);
+      setTargetStatus('');setSelection(null);targetAttemptRef.current='';
       dragRef.current={...point,pointerId:e.pointerId};e.currentTarget.setPointerCapture(e.pointerId);return;
     }
     if(!controlGranted)return;
@@ -346,8 +348,9 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       if(!p)return;
       const target={x:Math.min(start.x,p.x),y:Math.min(start.y,p.y),width:Math.abs(p.x-start.x),height:Math.abs(p.y-start.y)};
       if(target.width<0.01||target.height<0.01)return flash('Drag a rectangle over the exact typing area.',true);
+      const requestId=uuid();targetAttemptRef.current=requestId;
       setSelection(target);setTargetStatus('Checking the selected area against Windows accessibility…');
-      try{sendData({kind:'select_target',target});flash('Checking that the selected area resolves to one empty editable field.');}
+      try{sendData({kind:'select_target',requestId,target});flash('Checking that the selected area resolves to one empty editable field.');}
       catch(error){flash(String(error),true);}
       return;
     }
@@ -414,7 +417,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
             <div className="br-desktop-toolbar">
               <span>{videoReady?'Live computer display':'View request pending'}{coordinateControl?' · full-monitor geometry verified':' · view-only unless full monitor selected'}</span>
               <button type="button" onClick={()=>void requestControl()} disabled={!videoReady||!coordinateControl||controlGranted}>Request control</button>
-              <button type="button" onClick={()=>{setTargetStatus('');setSelection(null);setSelectMode(v=>!v);}} disabled={!controlGranted||!draftGranted}>{selectMode?'Cancel area selection':'Drag-select empty text field'}</button>
+              <button type="button" onClick={()=>{setTargetStatus('');setSelection(null);targetAttemptRef.current='';setSelectMode(v=>!v);}} disabled={!controlGranted||!draftGranted}>{selectMode?'Cancel area selection':'Drag-select empty text field'}</button>
               <button type="button" onClick={()=>void requestDraftPermission()} disabled={!controlGranted||draftGranted}><TextCursorInput size={13}/> Request typing permission</button>
             </div>
             {targetStatus&&<div className="br-desktop-caption" role="status">{targetStatus}</div>}
