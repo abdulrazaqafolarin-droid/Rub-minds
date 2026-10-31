@@ -343,6 +343,7 @@ class GuestRuntimeContractTest {
     @Test fun acceptanceEvidenceMustMatchTheExactEngineVersionAndDeviceProfile() {
         val wrongEngine = GuestDeviceAcceptanceEvidence(
             engineId = "other.engine", engineVersion = "0.1.0",
+            isolationBoundary = descriptor.isolationBoundary,
             deviceProfileId = device.localProfileId, apiLevel = 34, abi = "arm64-v8a",
             testRunId = "run", releaseArtifactSha256 = artifactSha256,
             mergedManifestSha256 = manifestSha256, passedChecks = checks
