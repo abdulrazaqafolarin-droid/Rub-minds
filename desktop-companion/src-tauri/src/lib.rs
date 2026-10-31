@@ -618,6 +618,12 @@ fn stop_registered_app(state: State<'_, AppState>, pid: u32) -> Result<(), Strin
     child.kill().map_err(|_| "Windows could not stop the selected Backroom application".to_string())
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TerminalSubmitState {
+    Ready(Instant),
+    Confirming(Instant),
+}
+
 #[derive(Default)]
 struct AppState {
     control_grants: Mutex<HashMap<String, Instant>>,
@@ -626,9 +632,9 @@ struct AppState {
     draft_targets: Mutex<HashMap<String, DraftTarget>>,
     pending_drafts: Mutex<HashMap<String, PendingDraft>>,
     terminals: Mutex<HashMap<String, Arc<TerminalSession>>>,
-    // A remote Enter is permitted only immediately after a successful, approved
-    // text-only draft in this exact PTY session. The marker is one-use and expires.
-    terminal_submit_ready: Mutex<HashMap<String, Instant>>,
+    // A remote Enter is permitted only after a successful draft and a second
+    // native OS confirmation. Confirming blocks new drafts until that decision ends.
+    terminal_submit_ready: Mutex<HashMap<String, TerminalSubmitState>>,
     desktop_processes: Mutex<HashMap<u32, NativeChild>>,
     launched_app_ids: Mutex<HashMap<String, u32>>,
     input_events: Mutex<VecDeque<Instant>>,
@@ -743,16 +749,54 @@ fn validate_terminal_draft_text(text: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn consume_terminal_submit_ready(
-    pending: &mut HashMap<String, Instant>,
+fn begin_terminal_submit_confirmation(
+    pending: &mut HashMap<String, TerminalSubmitState>,
     session_id: &str,
     now: Instant,
-) -> bool {
-    matches!(pending.remove(session_id), Some(expires_at) if expires_at > now)
+) -> Result<Instant, &'static str> {
+    match pending.get_mut(session_id) {
+        Some(state @ TerminalSubmitState::Ready(expires_at)) if *expires_at > now => {
+            let expires_at = *expires_at;
+            *state = TerminalSubmitState::Confirming(expires_at);
+            Ok(expires_at)
+        }
+        Some(TerminalSubmitState::Confirming(_)) => Err("terminal_submit_confirmation_pending"),
+        _ => {
+            pending.remove(session_id);
+            Err("terminal_submit_permission_missing_or_expired")
+        }
+    }
 }
 
-fn retire_terminal_submit_ready(pending: &mut HashMap<String, Instant>, session_id: &str) {
+fn finish_terminal_submit_confirmation(
+    pending: &mut HashMap<String, TerminalSubmitState>,
+    session_id: &str,
+    expires_at: Instant,
+    approved: bool,
+    now: Instant,
+) {
+    if !matches!(
+        pending.get(session_id),
+        Some(TerminalSubmitState::Confirming(current)) if *current == expires_at
+    ) {
+        return;
+    }
+    if approved || expires_at <= now {
+        pending.remove(session_id);
+    } else {
+        pending.insert(session_id.to_string(), TerminalSubmitState::Ready(expires_at));
+    }
+}
+
+fn retire_terminal_submit_ready(
+    pending: &mut HashMap<String, TerminalSubmitState>,
+    session_id: &str,
+) -> Result<(), &'static str> {
+    if matches!(pending.get(session_id), Some(TerminalSubmitState::Confirming(_))) {
+        return Err("terminal_submit_confirmation_pending");
+    }
     pending.remove(session_id);
+    Ok(())
 }
 
 fn check_input_rate(state: &AppState) -> Result<(), String> {
@@ -1318,11 +1362,10 @@ fn write_terminal(state: State<'_, AppState>, session_id: String, data: String) 
     // Any new authorized attempt supersedes the last Enter lease, even when
     // validation or the subsequent PTY write fails. A rejected retry must not
     // leave stale terminal content eligible for submission.
-    {
-        let mut pending = state.terminal_submit_ready.lock()
-            .map_err(|_| "Terminal submit state unavailable")?;
-        retire_terminal_submit_ready(&mut pending, &session_id);
-    }
+    let mut pending_submit = state.terminal_submit_ready.lock()
+        .map_err(|_| "Terminal submit state unavailable")?;
+    retire_terminal_submit_ready(&mut pending_submit, &session_id)
+        .map_err(|_| "Enter confirmation is already open. Wait for the local approval decision before typing another draft.")?;
     check_input_rate(&state)?;
     validate_terminal_draft_text(&data).map_err(|_| {
         "Terminal drafts must contain 1-4000 characters of plain text, without Enter or control characters".to_string()
@@ -1334,28 +1377,81 @@ fn write_terminal(state: State<'_, AppState>, session_id: String, data: String) 
     writer.flush().map_err(|_| "Terminal draft input failed")?;
     drop(writer);
     drop(sessions);
-    state.terminal_submit_ready.lock().map_err(|_| "Terminal submit state unavailable")?
-        .insert(session_id, Instant::now() + Duration::from_secs(30));
+    pending_submit.insert(session_id, TerminalSubmitState::Ready(Instant::now() + Duration::from_secs(30)));
     Ok(())
 }
 
 #[tauri::command]
-fn submit_terminal_input(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+async fn submit_terminal_input(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
     control_granted(&state, &session_id)?;
     check_input_rate(&state)?;
-    let ready = {
+    check_approval_rate(&state)?;
+
+    let expires_at = {
         let mut pending = state.terminal_submit_ready.lock()
             .map_err(|_| "Terminal submit state unavailable")?;
-        consume_terminal_submit_ready(&mut pending, &session_id, Instant::now())
+        begin_terminal_submit_confirmation(&mut pending, &session_id, Instant::now())
+            .map_err(|reason| match reason {
+                "terminal_submit_confirmation_pending" =>
+                    "A terminal Enter confirmation is already open for this session.".to_string(),
+                _ =>
+                    "Type a new approved terminal draft before pressing Enter. Its permission is missing or expired.".to_string(),
+            })?
     };
-    if !ready {
-        return Err("Type a new approved terminal draft before pressing Enter. The previous Enter permission is consumed or expired.".into());
+
+    // Enter can execute a command or submit a prompt. It is always confirmed
+    // separately on the physical computer; remote UI state is not authorization.
+    if require_native_confirmation(
+        app,
+        "Send Enter to this terminal?",
+        "Backroom will send exactly one Enter key to this terminal session. This may submit the current Claude Code/OpenCode prompt or execute a shell command. The companion cannot inspect the TUI input buffer; inspect the visible terminal and approve only when intended. No text will be added."
+    ).await.is_err() {
+        let mut pending = state.terminal_submit_ready.lock()
+            .map_err(|_| "Terminal submit state unavailable")?;
+        finish_terminal_submit_confirmation(&mut pending, &session_id, expires_at, false, Instant::now());
+        return Err("Enter was not approved on the computer. The unsent terminal text remains.".into());
     }
+
+    // Re-check the time-limited control grant after the native dialog. Hold
+    // its mutex through the final write so a concurrent revocation cannot race
+    // between authorization and the one-shot Enter delivery.
+    let mut control = state.control_grants.lock().map_err(|_| "Control state unavailable")?;
+    match control.get(&session_id) {
+        Some(expiry) if *expiry > Instant::now() => {}
+        _ => {
+            control.remove(&session_id);
+            let mut pending = state.terminal_submit_ready.lock()
+                .map_err(|_| "Terminal submit state unavailable")?;
+            finish_terminal_submit_confirmation(&mut pending, &session_id, expires_at, true, Instant::now());
+            return Err("Terminal control permission expired before Enter could be sent.".into());
+        }
+    }
+
+    // Keep the submit-state lock while writing. A concurrent draft or submit
+    // cannot interleave with this confirmation and change which text is sent.
+    let mut pending = state.terminal_submit_ready.lock()
+        .map_err(|_| "Terminal submit state unavailable")?;
+    if !matches!(
+        pending.get(&session_id),
+        Some(TerminalSubmitState::Confirming(current))
+            if *current == expires_at && *current > Instant::now()
+    ) {
+        pending.remove(&session_id);
+        return Err("Terminal draft permission expired while Enter was being confirmed. Type the draft again.".into());
+    }
+
+    // Consume before touching the PTY: an I/O error is ambiguous and must never
+    // cause an automatic second Enter.
+    pending.remove(&session_id);
     let sessions = state.terminals.lock().map_err(|_| "Terminal registry unavailable")?;
     let session = sessions.get(&session_id).ok_or("Terminal session is closed")?;
     let mut writer = session.writer.lock().map_err(|_| "Terminal writer unavailable")?;
-    writer.write_all(b"\r").map_err(|_| "Terminal Enter key could not be delivered")?;
-    writer.flush().map_err(|_| "Terminal Enter key could not be delivered")
+    writer.write_all(b"\r").map_err(|_| "Terminal Enter key could not be delivered; inspect the terminal before retrying")?;
+    writer.flush().map_err(|_| "Terminal Enter key could not be delivered; inspect the terminal before retrying")
 }
 
 #[tauri::command]
@@ -1589,13 +1685,64 @@ mod native_input_tests {
     }
 
     #[test]
+    fn terminal_enter_requires_a_reserved_native_confirmation_and_is_one_use() {
+        let now = Instant::now();
+        let expires = now + Duration::from_secs(30);
+        let mut pending = HashMap::new();
+        pending.insert("session-a".to_string(), TerminalSubmitState::Ready(expires));
+
+        assert_eq!(
+            begin_terminal_submit_confirmation(&mut pending, "session-a", now),
+            Ok(expires)
+        );
+        assert_eq!(
+            pending.get("session-a"),
+            Some(&TerminalSubmitState::Confirming(expires))
+        );
+        assert_eq!(
+            begin_terminal_submit_confirmation(&mut pending, "session-a", now),
+            Err("terminal_submit_confirmation_pending")
+        );
+
+        // A local denial restores the still-valid draft for a deliberate retry.
+        finish_terminal_submit_confirmation(&mut pending, "session-a", expires, false, now);
+        assert_eq!(
+            pending.get("session-a"),
+            Some(&TerminalSubmitState::Ready(expires))
+        );
+
+        // A fresh approval consumes the lease exactly once.
+        assert_eq!(
+            begin_terminal_submit_confirmation(&mut pending, "session-a", now),
+            Ok(expires)
+        );
+        finish_terminal_submit_confirmation(&mut pending, "session-a", expires, true, now);
+        assert!(!pending.contains_key("session-a"));
+    }
+
+    #[test]
+    fn denied_or_expired_terminal_confirmation_cannot_restore_an_expired_lease() {
+        let now = Instant::now();
+        let expires = now;
+        let mut pending = HashMap::new();
+        pending.insert("session-a".to_string(), TerminalSubmitState::Ready(expires));
+        assert!(begin_terminal_submit_confirmation(&mut pending, "session-a", now).is_err());
+        assert!(!pending.contains_key("session-a"));
+    }
+
+    #[test]
     fn a_new_terminal_draft_attempt_retires_the_previous_enter_permission() {
         let now = Instant::now();
         let mut pending = HashMap::new();
-        pending.insert("session-a".to_string(), now + Duration::from_secs(30));
-        retire_terminal_submit_ready(&mut pending, "session-a");
-        assert!(!consume_terminal_submit_ready(&mut pending, "session-a", now));
-        assert!(pending.is_empty());
+        pending.insert("session-a".to_string(), TerminalSubmitState::Ready(now + Duration::from_secs(30)));
+        assert!(retire_terminal_submit_ready(&mut pending, "session-a").is_ok());
+        assert!(!pending.contains_key("session-a"));
+
+        pending.insert("session-a".to_string(), TerminalSubmitState::Confirming(now + Duration::from_secs(30)));
+        assert_eq!(
+            retire_terminal_submit_ready(&mut pending, "session-a"),
+            Err("terminal_submit_confirmation_pending")
+        );
     }
 
     #[test]
