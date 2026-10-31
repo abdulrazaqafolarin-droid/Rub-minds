@@ -37,6 +37,16 @@ pub fn inspect_focused() -> Result<(EditableTargetIdentity, String), String> {
     }
 }
 
+/// Pure fail-closed gate so input-safety rules can be unit-tested on every host.
+pub fn validate_target_properties(control_type: &str, enabled: bool, offscreen: bool, password: bool, read_only: bool, value: &str) -> Result<(), &'static str> {
+    if control_type != "Edit" && control_type != "Document" { return Err("not_editable_control"); }
+    if !enabled { return Err("disabled_control"); }
+    if offscreen { return Err("offscreen_control"); }
+    if password { return Err("protected_control"); }
+    if read_only { return Err("readonly_control"); }
+    if !value.is_empty() { return Err("nonempty_control"); }
+    Ok(())
+}
 #[cfg(target_os = "windows")]
 mod windows_impl {
     use super::EditableTargetIdentity;
@@ -67,40 +77,36 @@ mod windows_impl {
     fn inspect_element(element: &UIElement) -> Result<(EditableTargetIdentity, String), String> {
         let control_type = element.get_control_type()
             .map_err(|_| "Could not identify the selected UI control".to_string())?;
-        if control_type != ControlType::Edit && control_type != ControlType::Document {
-            return Err("Select an actual editable text field or document, not its surrounding panel".into());
-        }
-        if !element.is_enabled().map_err(|_| "Could not verify whether the text field is enabled".to_string())? {
-            return Err("The selected text field is disabled".into());
-        }
-        if element.is_offscreen().map_err(|_| "Could not verify text-field visibility".to_string())? {
-            return Err("The selected text field is no longer visible".into());
-        }
-        if element.is_password().map_err(|_| "Could not verify whether this is a protected field".to_string())? {
-            return Err("Password and protected fields cannot be targeted".into());
-        }
+        let control_type_label = match control_type {
+            ControlType::Edit => "Edit",
+            ControlType::Document => "Document",
+            _ => return Err("Select an actual editable text field or document, not its surrounding panel".into()),
+        };
+        let enabled = element.is_enabled().map_err(|_| "Could not verify whether the text field is enabled".to_string())?;
+        let offscreen = element.is_offscreen().map_err(|_| "Could not verify text-field visibility".to_string())?;
+        let password = element.is_password().map_err(|_| "Could not verify whether this is a protected field".to_string())?;
 
         // Support native Edit fields and Document controls only when they expose
         // a writable ValuePattern. Rich/custom controls without readback fail closed.
-        let value = match control_type {
+        let (read_only, value) = match control_type {
             ControlType::Edit => {
                 let edit = EditControl::try_from(element.clone())
                     .map_err(|_| "The selected control does not expose a supported editable value".to_string())?;
-                if edit.is_readonly().map_err(|_| "Could not verify whether the field is read-only".to_string())? {
-                    return Err("The selected text field is read-only".into());
-                }
-                edit.get_value()
+                let read_only = edit.is_readonly().map_err(|_| "Could not verify whether the field is read-only".to_string())?;
+                let value = edit.get_value().map_err(|_| "The selected field does not support reliable accessibility readback".to_string())?;
+                (read_only, value)
             }
             ControlType::Document => {
                 let document = DocumentControl::try_from(element.clone())
                     .map_err(|_| "The selected document does not expose an editable value".to_string())?;
-                if document.is_readonly().map_err(|_| "Could not verify whether the document is read-only".to_string())? {
-                    return Err("The selected document is read-only".into());
-                }
-                document.get_value()
+                let read_only = document.is_readonly().map_err(|_| "Could not verify whether the document is read-only".to_string())?;
+                let value = document.get_value().map_err(|_| "The selected document does not support reliable accessibility readback".to_string())?;
+                (read_only, value)
             }
             _ => unreachable!(),
-        }.map_err(|_| "The selected field does not support reliable accessibility readback".to_string())?;
+        };
+        validate_target_properties(control_type_label, enabled, offscreen, password, read_only, &value)
+            .map_err(str::to_string)?;
 
         let process_id = element.get_process_id()
             .map_err(|_| "Could not identify the application process".to_string())?;
@@ -174,5 +180,18 @@ mod tests {
         let mut other_process = identity();
         other_process.process_id += 1;
         assert_ne!(original, other_process);
+    }
+
+    #[test]
+    fn target_policy_fails_closed_for_non_editable_or_unsafe_fields() {
+        use super::validate_target_properties as validate;
+        assert!(validate("Edit", true, false, false, false, "").is_ok());
+        assert!(validate("Document", true, false, false, false, "").is_ok());
+        assert_eq!(validate("Pane", true, false, false, false, ""), Err("not_editable_control"));
+        assert_eq!(validate("Edit", false, false, false, false, ""), Err("disabled_control"));
+        assert_eq!(validate("Edit", true, true, false, false, ""), Err("offscreen_control"));
+        assert_eq!(validate("Edit", true, false, true, false, ""), Err("protected_control"));
+        assert_eq!(validate("Edit", true, false, false, true, ""), Err("readonly_control"));
+        assert_eq!(validate("Edit", true, false, false, false, "already typed"), Err("nonempty_control"));
     }
 }
