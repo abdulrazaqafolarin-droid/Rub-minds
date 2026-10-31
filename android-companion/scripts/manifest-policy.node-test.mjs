@@ -237,3 +237,33 @@ test('local Android launch requires persisted signer-bound approval before and a
   assert.match(source, /setPositiveButton\("Open"\)/);
   assert.doesNotMatch(source, /fun openSelectedAppLocally[\s\S]*?private fun saveChoices[\s\S]*?sendCommand\(/);
 });
+
+test("Work Profile DPC is a single system-bound receiver with local signer checks", async () => {
+  const manifest = await read("app/src/main/AndroidManifest.xml");
+  const gradle = await read("app/build.gradle.kts");
+  const receiver = await read("app/src/main/java/app/rubminds/companion/WorkProfileAdminReceiver.kt");
+  const launcher = await read("app/src/main/java/app/rubminds/companion/WorkProfileAppLauncher.kt");
+  const auth = await read("app/src/main/java/app/rubminds/companion/WorkProfileLaunchCommand.kt");
+  const activity = await read("app/src/main/java/app/rubminds/companion/MainActivity.kt");
+
+  assert.match(manifest, /android:name="\.WorkProfileAdminReceiver"/);
+  assert.match(manifest, /android:permission="android\.permission\.BIND_DEVICE_ADMIN"/);
+  assert.match(manifest, /android:name="android\.app\.device_admin"/);
+  assert.match(gradle, /receiver:\$expectedAppId\.WorkProfileAdminReceiver/);
+  assert.match(gradle, /expectedExported && exported\.size == 3/);
+  assert.match(gradle, /PROFILE_PROVISIONING_COMPLETE/);
+  assert.match(receiver, /setCrossProfilePackages/);
+  assert.match(receiver, /getCrossProfilePackages/);
+  assert.match(launcher, /canInteractAcrossProfiles/);
+  assert.match(launcher, /targetUserProfiles/);
+  assert.match(launcher, /startActivity/);
+  assert.match(auth, /HmacSHA256/);
+  assert.match(auth, /MessageDigest\.isEqual/);
+  assert.match(auth, /MAX_AGE_MILLIS = 60_000L/);
+  assert.match(activity, /WorkProfileLaunchAuthenticator\.verify/);
+  assert.match(activity, /usedNonces/);
+  assert.match(activity, /AppIdentity\.signingCertificateSha256/);
+  assert.match(activity, /AppGrantStore/);
+  assert.doesNotMatch(activity, /performEditorAction|KEYCODE_ENTER/);
+});
+
