@@ -660,8 +660,10 @@ async function handlePeerData(sessionId,raw){
         try{peer.channel.send(JSON.stringify({kind:'terminal_action_result',requestId,action:'draft',ok,reason}));}catch{}
       }
     };
-    if(!peer.terminalActionRequestGuard?.(requestId)){
-      respond(false,'This terminal action request was already used or the session action limit was reached. Reconnect the terminal to start a fresh action sequence.');
+    const claim=peer.terminalActionRequestGuard?.(requestId);
+    if(claim!=='accepted'){
+      if(claim==='limit')respond(false,'This terminal session reached its bounded action limit. Reconnect the terminal to start a fresh action sequence.');
+      else notify('A duplicate or invalid terminal action request was ignored. The original request remains authoritative.','error');
       return;
     }
     try{
@@ -681,8 +683,10 @@ async function handlePeerData(sessionId,raw){
         try{peer.channel.send(JSON.stringify({kind:'terminal_action_result',requestId,action:'submit',ok,reason}));}catch{}
       }
     };
-    if(!peer.terminalActionRequestGuard?.(requestId)){
-      respond(false,'This terminal action request was already used or the session action limit was reached. Reconnect the terminal to start a fresh action sequence.');
+    const claim=peer.terminalActionRequestGuard?.(requestId);
+    if(claim!=='accepted'){
+      if(claim==='limit')respond(false,'This terminal session reached its bounded action limit. Reconnect the terminal to start a fresh action sequence.');
+      else notify('A duplicate or invalid terminal action request was ignored. The original request remains authoritative.','error');
       return;
     }
     try{
