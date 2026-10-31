@@ -30,19 +30,18 @@ Android companion
 
 - No app virtualization engine or separate app-private data environment.
 - No private-data cloning; MANAGE_EXTERNAL_STORAGE cannot grant access to other apps' private sandboxes.
-- For the Android cloud Device Frame slice specifically: user-consented MediaProjection/WebRTC streaming of a locally selected real app window and an optional signer/session-bound tap/swipe/long-press path are now implemented in source. They are **not yet built or device-tested**. There is still no virtual guest-app rendering, isolated app-private data, Phone Frame accessibility field discovery, drag-select target-bound draft executor or guest-only virtual display. The separate Windows desktop companion has a source-level UI Automation targeting path, but native Windows compilation and physical acceptance are still release gates.
-- The Android native project has not been compiled or installed on a physical device in this environment.
-- The Supabase migration and Edge Function are source-only. Do not claim pairing is live until a separately approved staging deployment and live pairing test succeed.
+- For the Android cloud Device Frame slice specifically: user-consented MediaProjection/WebRTC streaming of a locally selected real app window and an optional signer/session-bound tap/swipe/long-press path are implemented. The Android project has now **compiled successfully and produced a debug APK** in an isolated Linux Android SDK 35 runner. The build ran :app:testDebugUnitTest (60/60), :app:auditDebugGuestHostManifest and :app:assembleDebug successfully; the manifest audit reported SHA-256 `029cd32a4f972d980c0e9d4ce5bf7d2e9bce2b5921fa992ab51315448963a2d0`. The APK SHA-256 is `2cc2ba30789ff111ee49acf779871298023d0a28378212ecff7b1f4a4eee40f5` (49,967,179 bytes, debug-signed). Android manifest/policy checks passed 27/27 and the adjacent Phone Frame/Edge/Realtime cross-layer suite passed 50/50. **Physical-device acceptance is still pending** because the runner had no attached handset/ADB target.
+- There is still no virtual guest-app rendering, isolated app-private data, Phone Frame accessibility field discovery, drag-select target-bound draft executor or guest-only virtual display. The separate Windows desktop companion has a source-level UI Automation targeting path, but native Windows compilation and physical acceptance remain independent release gates.
+- The Supabase migration and Edge Function are source-only. They have not been applied or deployed. Do not claim pairing is live until a separately approved staging deployment and live pairing test succeed.
 
 ## Release gates
 
-1. Apply the migration and deploy the Edge Function to an isolated staging project only after environment/cost review.
-2. Build the APK with JDK 17 / Android SDK 35, then install on a physical Android 14 device.
-3. Verify launcher package visibility, signer fingerprint, keystore persistence, code expiry/replay, pending/approval/revocation and inventory-sync isolation.
-4. Audit an Apache-2.0-compatible virtualization engine (candidate source: Blacks-BlackBox) separately for Android 14+ compatibility, Play Integrity failures, licensing and app-specific behavior. Require a fresh user sign-in inside each isolated app instance.
-5. Add screen capture only using Android's user-consented MediaProjection lifecycle.
-6. Add input controls only after their Android/Play policy, authorization, foreground identity and independent result-verification design is approved.
-7. Implement a durable cloud action queue and append-only group audit trail before enabling AI-directed operations.
+1. Install the verified debug APK on the TECNO KL4 and record the actual Android release/SDK, ABI, build identifiers, installed package signer and merged-manifest digest. The debug APK is for acceptance, not production distribution.
+2. Use two devices: keep the selected app visible on the phone and open the Backroom Phone Frame on a separate laptop/device. Confirm the Android 14 QPR2 app-window picker exposes the intended app; cancel if only full-display capture is offered.
+3. After a separately approved staging deployment, apply the migration and deploy the Edge Function to an isolated staging project. Verify pairing approval/revocation, private room-scoped SDP, WebRTC video, touch ACKs, local touch disarm while video continues, app-switch handling, projection revoke, network loss and local/remote stop.
+4. Keep the Android guest-virtualization provider as a separate project gate. Audit any candidate against the final merged host manifest, release signing, licensing, rootless launch and guest-only frame/touch/isolation acceptance. A real-app mirror is not a virtual guest.
+5. Verify the desktop companion's native Windows build and physical UI Automation acceptance independently.
+6. Keep production Supabase and Vercel unchanged until staging and physical acceptance are complete.
 
 Production Supabase and the production Vercel deployment have not been modified by this source change.
 
