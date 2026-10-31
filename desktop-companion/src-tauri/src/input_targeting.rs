@@ -62,9 +62,6 @@ pub fn validate_target_properties(
     Ok(())
 }
 
-/// Require the drag rectangle to lie predominantly inside one actual editable
-/// control. A centre-point hit alone is not enough when the rectangle spans
-/// multiple nearby controls or surrounding panels.
 /// Confirms the read-back value exactly matches the one-shot draft.
 pub fn validate_post_write_value(expected: &str, actual: &str) -> Result<(), &'static str> {
     if expected.is_empty() { return Err("empty_expected_value"); }
@@ -72,6 +69,9 @@ pub fn validate_post_write_value(expected: &str, actual: &str) -> Result<(), &'s
     Ok(())
 }
 
+/// Require the drag rectangle to lie predominantly inside one actual editable
+/// control. A centre-point hit alone is not enough when the rectangle spans
+/// multiple nearby controls or surrounding panels.
 pub fn validate_drag_coverage(
     selection: [i32; 4],
     field: [i32; 4],
@@ -118,7 +118,7 @@ pub fn set_value_exact(
 #[cfg(target_os = "windows")]
 mod windows_impl {
     use super::{
-        validate_target_metadata, validate_target_properties, EditableTargetIdentity,
+        validate_post_write_value, validate_target_metadata, validate_target_properties, EditableTargetIdentity,
     };
     use uiautomation::{
         actions::{Text, Value},
@@ -227,7 +227,7 @@ mod windows_impl {
         let rect = element.get_bounding_rectangle()
             .map_err(|_| "Could not verify the selected control bounds".to_string())?;
 
-        if process_id == 0 || runtime_id.is_empty()
+        if process_id <= 0 || runtime_id.is_empty()
             || rect.get_right() <= rect.get_left()
             || rect.get_bottom() <= rect.get_top()
         {
@@ -240,7 +240,9 @@ mod windows_impl {
             class_name,
             control_type: control_type_label.into(),
             access_mode: access_mode.into(),
-            // UIA rectangles expose inclusive right/bottom pixels. Store half-open bounds\n            // so normalized drag rectangles and overlap calculations use one convention.\n            bounds: [rect.get_left(), rect.get_top(), rect.get_right().saturating_add(1), rect.get_bottom().saturating_add(1)],
+            // UIA rectangles expose inclusive right/bottom pixels. Store half-open bounds
+            // so normalized drag rectangles and overlap calculations use one convention.
+            bounds: [rect.get_left(), rect.get_top(), rect.get_right().saturating_add(1), rect.get_bottom().saturating_add(1)],
         }, value))
     }
 
