@@ -7,7 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.CrossProfileApps
 import android.os.Build
-import android.os.Bundle
+import android.os.PersistableBundle
 
 data class WorkProfileSnapshot(
     val isProfileOwner: Boolean,
@@ -63,10 +63,10 @@ class WorkProfileCoordinator(context: Context) {
         if (intent.resolveActivity(activity.packageManager) == null) return "Android Work Profile setup is unavailable."
         val encodedSecret = secrets.createAndSave() ?: return "Could not prepare the local Work Profile link."
         val admin = ComponentName(activity, WorkProfileAdminReceiver::class.java)
-        intent.putExtra(DevicePolicyManager.EXTRA_PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME, admin.flattenToString())
+        intent.putExtra(DevicePolicyManager.EXTRA_PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME, admin)
         intent.putExtra(
             DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE,
-            Bundle().apply { putString(WorkProfileContract.ADMIN_EXTRA_SECRET, encodedSecret) }
+            PersistableBundle().apply { putString(WorkProfileContract.ADMIN_EXTRA_SECRET, encodedSecret) }
         )
         return try {
             activity.startActivityForResult(intent, REQUEST_MANAGED_PROFILE)
