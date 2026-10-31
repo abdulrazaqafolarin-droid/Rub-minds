@@ -981,6 +981,15 @@ fn select_draft_target(state: State<'_, AppState>, session_id: String, mut targe
     Ok(mode_message.to_string())
 }
 
+
+#[tauri::command]
+fn clear_draft_target(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+    control_granted(&state, &session_id)?;
+    draft_granted(&state, &session_id)?;
+    state.draft_targets.lock().map_err(|_| "Draft state unavailable")?.remove(&session_id);
+    Ok(())
+}
+
 #[tauri::command]
 fn stage_draft_request(state: State<'_, AppState>, session_id: String, text: String) -> Result<String, String> {
     control_granted(&state, &session_id)?;
@@ -1217,7 +1226,7 @@ pub fn run() {
             device_identity, register_desktop_device, desktop_device_status, sync_desktop_app_inventory, revoke_desktop_device, close_desktop_session,
             pick_and_register_app, list_registered_apps, launch_registered_app, stop_registered_app,
             grant_control, revoke_control, grant_draft_typing, set_capture_geometry,
-            dispatch_input, select_draft_target, stage_draft_request, list_pending_drafts,
+            dispatch_input, select_draft_target, clear_draft_target, stage_draft_request, list_pending_drafts,
             approve_draft_request, deny_draft_request, start_terminal, write_terminal,
             resize_terminal, stop_terminal, emergency_stop
         ])
