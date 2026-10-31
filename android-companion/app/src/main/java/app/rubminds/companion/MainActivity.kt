@@ -47,6 +47,7 @@ class MainActivity : Activity() {
     private lateinit var pairConsent: CheckBox
     private lateinit var consentPrefs: android.content.SharedPreferences
     private lateinit var workProfileStatusText: TextView
+    private lateinit var virtualDeviceStatusText: TextView
     private lateinit var workProfileSetupButton: Button
     private lateinit var workProfileAccessButton: Button
     private val workProfileButtons = mutableMapOf<String, Button>()
@@ -265,6 +266,12 @@ class MainActivity : Activity() {
             setTextColor(0xff304b3c.toInt())
         }
         card.addView(workProfileStatusText)
+        virtualDeviceStatusText = TextView(this).apply {
+            textSize = 12f
+            setTextColor(0xff304b3c.toInt())
+            setPadding(0, dp(8), 0, dp(2))
+        }
+        card.addView(virtualDeviceStatusText)
         workProfileSetupButton = Button(this).apply {
             text = "Set up isolated Work Profile"
             setOnClickListener { confirmWorkProfileProvisioning() }
@@ -334,6 +341,22 @@ class MainActivity : Activity() {
             }
         }
         drawAppRowsWhenReady()
+        refreshVirtualDeviceStatus()
+    }
+
+    private fun refreshVirtualDeviceStatus() {
+        if (!::virtualDeviceStatusText.isInitialized) return
+        val snapshot = app.rubminds.companion.guest.AndroidVirtualDeviceCapabilityProbe.read(this)
+        virtualDeviceStatusText.text = when (snapshot.state) {
+            app.rubminds.companion.guest.AndroidVirtualDevicePlatformState.ANDROID_VERSION_UNSUPPORTED ->
+                "In-frame VirtualDevice path: requires Android 14 or later. This handset reports API ${snapshot.apiLevel}."
+            app.rubminds.companion.guest.AndroidVirtualDevicePlatformState.SECONDARY_DISPLAY_FEATURE_UNAVAILABLE ->
+                "In-frame VirtualDevice path: this firmware does not advertise secondary-display activity support."
+            app.rubminds.companion.guest.AndroidVirtualDevicePlatformState.VIRTUAL_DEVICE_SERVICE_NOT_CONFIGURED ->
+                "In-frame VirtualDevice path: Android 14+ is present, but this firmware has not enabled VirtualDeviceManager."
+            app.rubminds.companion.guest.AndroidVirtualDevicePlatformState.PLATFORM_PRESENT_BUT_SYSTEM_ROLE_REQUIRED ->
+                "In-frame VirtualDevice path: platform service detected (${snapshot.visibleVirtualDeviceCount} visible virtual device(s)), but creation is restricted to OEM/system-role apps with a Companion Device Manager association. This installed companion cannot create a guest display."
+        }
     }
 
     private fun drawAppRowsWhenReady() {
