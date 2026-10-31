@@ -480,10 +480,10 @@ test("Android IME manifest metadata and subtype label resolve to packaged resour
 test("Work Profile UI references only fields declared by its snapshot contract", async () => {
   const main = await read("app/src/main/java/app/rubminds/companion/MainActivity.kt");
   const coordinator = await read("app/src/main/java/app/rubminds/companion/WorkProfileCoordinator.kt");
-  const model = coordinator.match(/data class WorkProfileSnapshot\\(([\\s\\S]*?)\\n\\)/);
+  const model = coordinator.match(/data class WorkProfileSnapshot\(([\s\S]*?)\n\)/);
   assert.ok(model, "WorkProfileSnapshot must remain discoverable as a data class");
   const declared = new Set(
-    [...model[1].matchAll(/\\bval\\s+([A-Za-z_]\\w*)\\s*:/g)].map(match => match[1])
+    [...model[1].matchAll(/\bval\s+([A-Za-z_]\w*)\s*:/g)].map(match => match[1])
   );
   const statusStart = main.indexOf("private fun refreshWorkProfileStatus()");
   const virtualStart = main.indexOf("private fun refreshVirtualDeviceStatus()", statusStart);
@@ -492,7 +492,7 @@ test("Work Profile UI references only fields declared by its snapshot contract",
   assert.ok(statusStart >= 0 && virtualStart > statusStart);
   assert.ok(rowsStart >= 0 && launchStart > rowsStart);
   const workProfileUi = main.slice(statusStart, virtualStart) + main.slice(rowsStart, launchStart);
-  const references = [...workProfileUi.matchAll(/(?:snapshot|profileSnapshot)\\.(\\w+)/g))
+  const references = [...workProfileUi.matchAll(/(?:snapshot|profileSnapshot)\.(\w+)/g))
     .map(match => match[1]);
   const unknown = [...new Set(references.filter(field => !declared.has(field)))];
   assert.deepEqual(unknown, [], "Work Profile UI must not access undeclared snapshot fields");
