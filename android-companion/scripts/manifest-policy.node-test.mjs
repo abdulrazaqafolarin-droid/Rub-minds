@@ -318,8 +318,8 @@ test("local touch revocation remains fail-closed when preference persistence fai
   const service = await read("app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
   assert.match(gate, /@Volatile private var processRevoked = false/);
   assert.match(gate, /if \(processRevoked\) return false/);
-  assert.match(gate, /processRevoked = true[\\s\\S]*runCatching/);
+  assert.match(gate, /processRevoked = true[\s\S]*runCatching/);
   assert.match(gate, /processRevoked = false/);
-  assert.match(service, /localControlGranted = false[\\s\\S]*AndroidTouchAccessibilityService\\.clearActiveSession\\(activeSessionId\\)[\\s\\S]*RemoteTouchGate\\.disarm\\(this\\)[\\s\\S]*runCatching \\{ closePeer\\(\\) \\}/);
-  assert.match(service, /fun revokeLocalTouch\\(context: Context\\)[\\s\\S]*AndroidTouchAccessibilityService\\.clearActiveSession\\(\\)/);
+  assert.match(service, /localControlGranted = false[\s\S]*AndroidTouchAccessibilityService\.clearActiveSession\(activeSessionId\)[\s\S]*RemoteTouchGate\.disarm\(this\)[\s\S]*runCatching \{ closePeer\(\) \}/);
+  assert.match(service, /fun revokeLocalTouch\(context: Context\)[\s\S]*AndroidTouchAccessibilityService\.clearActiveSession\(\)/);
 });
