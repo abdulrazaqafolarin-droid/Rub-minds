@@ -44,6 +44,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const peerRef=useRef<RTCPeerConnection|null>(null);
   const dataRef=useRef<RTCDataChannel|null>(null);
   const videoRef=useRef<HTMLVideoElement|null>(null);
+  const incomingStreamRef=useRef<MediaStream|null>(null);
   const frameRef=useRef<HTMLDivElement|null>(null);
   const dragRef=useRef<{x:number;y:number;pointerId:number}|null>(null);
   const targetAttemptRef=useRef('');
@@ -142,10 +143,20 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     if(current){current.close();peerRef.current=null;}
     dataRef.current=null;
     pendingCandidatesRef.current.clear();
+    incomingStreamRef.current=null;
     if(videoRef.current)videoRef.current.srcObject=null;
     setVideoReady(false);setScreenSession('');screenSessionRef.current='';terminalPeerRef.current='';setControlGranted(false);setDraftGranted(false);
     setCoordinateControl(false);setSelectMode(false);setSelection(null);setTargetStatus('');targetAttemptRef.current='';
   },[]);
+
+  // Keep a stream received before React mounts the video element; attach it once
+  // the active screen session has rendered its live-frame element.
+  useEffect(()=>{
+    const video=videoRef.current;
+    const stream=incomingStreamRef.current;
+    if(!screenSession||!video||!stream)return;
+    if(video.srcObject!==stream)video.srcObject=stream;
+  },[screenSession]);
 
   useEffect(()=>{
     setChannelReady(false);setPendingRequest('');
@@ -259,7 +270,13 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     const pc=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun.cloudflare.com:3478']}]});
     const data=pc.createDataChannel('backroom-input',{ordered:true});
     dataRef.current=data;peerRef.current=pc;setScreenSession(sessionId);setTerminalPeerId('');
-    pc.ontrack=event=>{if(videoRef.current)videoRef.current.srcObject=event.streams[0];};
+    pc.ontrack=event=>{
+      if(peerRef.current!==pc||screenSessionRef.current!==sessionId)return;
+      const stream=event.streams[0]??new MediaStream([event.track]);
+      incomingStreamRef.current=stream;
+      const video=videoRef.current;
+      if(video&&video.srcObject!==stream)video.srcObject=stream;
+    };
     pc.onconnectionstatechange=()=>{
       if(pc.connectionState==='failed'||pc.connectionState==='disconnected'){
         flash('Screen connection interrupted. The local stream will be stopped.',true);
