@@ -544,7 +544,7 @@ async function refreshPending(){
         try{peer.channel.send(JSON.stringify({kind:'draft_result',requestId:draft.requestId,ok,result}));}catch{}
       }
     };
-    state.pending.push({kind:'draft_text',description:'Insert this exact unsent draft into the region you selected?\\n\\n'+draft.text,
+    state.pending.push({kind:'draft_text',description:'Insert this exact unsent draft?\n\nDestination: '+(draft.targetLabel||'Verified desktop field')+'\n\n'+draft.text,
       requestId:draft.requestId,extra:{sessionId:draft.sessionId},
       onApprove:async()=>{
         try{
