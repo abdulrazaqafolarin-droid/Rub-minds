@@ -493,7 +493,10 @@ async function handlePeerData(sessionId,raw){
     peer.targetQueueDepth=(peer.targetQueueDepth||0)+1;
     if(peer.targetQueueDepth>4){
       peer.targetQueueDepth-=1;
-      report(false,'Too many target checks are pending. Wait for the current selection result.');
+      // A rejected newer drag must also revoke any previously selected target,
+      // otherwise a remote draft could still be staged against the stale field.
+      try{await invoke('clear_draft_target',{sessionId});}catch{}
+      report(false,'Too many target checks are pending. The previous target was cleared; wait and select again.');
       return;
     }
     // UIA calls may take different amounts of time. Serialize by peer so an
