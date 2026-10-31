@@ -274,6 +274,11 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       if(peerRef.current!==pc||screenSessionRef.current!==sessionId)return;
       const stream=event.streams[0]??new MediaStream([event.track]);
       incomingStreamRef.current=stream;
+      for(const track of stream.getVideoTracks()){
+        track.addEventListener('ended',()=>{
+          if(incomingStreamRef.current===stream)setVideoReady(false);
+        });
+      }
       const video=videoRef.current;
       if(video&&video.srcObject!==stream)video.srcObject=stream;
     };
@@ -488,7 +493,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
           <div className="br-desktop-live-title"><b>Active computer session</b><button type="button" onClick={()=>void stop()}><Power size={14}/> Stop session</button></div>
           {screenSession&&<div className="br-desktop-frame-wrap">
             <div className="br-desktop-video" ref={frameRef} tabIndex={0} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerCancel} onKeyDown={keyDown}>
-              <video ref={videoRef} autoPlay muted playsInline onLoadedMetadata={()=>setVideoReady(Boolean(videoRef.current?.videoWidth&&videoRef.current?.videoHeight))} onEmptied={()=>setVideoReady(false)} onError={()=>setVideoReady(false)}/>
+              <video ref={videoRef} autoPlay muted playsInline onLoadedData={()=>setVideoReady(Boolean(videoRef.current?.videoWidth&&videoRef.current?.videoHeight&&videoRef.current.readyState>=2))} onPlaying={()=>setVideoReady(Boolean(videoRef.current?.videoWidth&&videoRef.current?.videoHeight&&videoRef.current.readyState>=2))} onWaiting={()=>setVideoReady(false)} onStalled={()=>setVideoReady(false)} onEnded={()=>setVideoReady(false)} onEmptied={()=>setVideoReady(false)} onError={()=>setVideoReady(false)}/>
               {!videoReady&&<div className="br-desktop-video-empty">Waiting for the computer to approve and share its display…</div>}
               {selection&&<div className="br-desktop-selection" style={selectionOverlayStyle()}/>}
             </div>
