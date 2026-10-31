@@ -225,7 +225,18 @@ class AndroidScreenShareService : Service() {
                 activeSessionId == null
             ) stopCapture("stream_request_timeout")
         } catch (error: CloudDeviceApiException) {
-            if (error.statusCode == 401 || error.statusCode == 403) stopCapture("device_access_revoked")
+            when {
+                error.statusCode == 401 || error.statusCode == 403 ->
+                    stopCapture("device_access_revoked")
+                error.statusCode in 400..499 && error.statusCode != 429 ->
+                    stopCapture("device_command_poll_rejected")
+                else -> {
+                    consecutivePollFailures += 1
+                    if (consecutivePollFailures >= MAX_POLL_FAILURES) {
+                        stopCapture("device_cloud_heartbeat_lost")
+                    }
+                }
+            }
         } catch (_: Exception) {
             // Bound an offline device session: do not keep capturing indefinitely after
             // losing the server heartbeat that proves the group/device grant is current.

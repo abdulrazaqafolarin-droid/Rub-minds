@@ -38,8 +38,9 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         synchronized(this) { gestureInFlight = false }
+        // Accessibility is optional. Interrupting/removing it revokes remote touch
+        // but must not terminate a user-consented view-only MediaProjection session.
         AndroidScreenShareService.revokeLocalTouch(applicationContext)
-        AndroidScreenShareService.requestStop(applicationContext, "accessibility_interrupted")
     }
 
     override fun onDestroy() {

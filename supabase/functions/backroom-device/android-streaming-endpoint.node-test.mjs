@@ -201,3 +201,18 @@ test("local touch revocation is sent to the browser without ending the view sess
   assert.match(browser, /live app view continues without input control/);
   assert.doesNotMatch(service.slice(service.indexOf("private fun sendTouchControlRevoked"),service.indexOf("private fun sendAppVisibility")), /stopCapture/);
 });
+
+test("optional Accessibility interruption revokes only touch, not view-only capture", async () => {
+  const accessibility = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidTouchAccessibilityService.kt");
+  const interrupt = accessibility.slice(accessibility.indexOf("override fun onInterrupt()"), accessibility.indexOf("override fun onDestroy()"));
+  assert.match(interrupt, /AndroidScreenShareService\.revokeLocalTouch/);
+  assert.doesNotMatch(interrupt, /requestStop|stopCapture/);
+});
+test("HTTP transient failures count toward bounded Android capture heartbeat shutdown", async () => {
+  const service = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  const poll = service.slice(service.indexOf("private fun pollDeviceCommands()"), service.indexOf("private fun processCommand"));
+  assert.match(poll, /error\.statusCode in 400\.\.499 && error\.statusCode != 429/);
+  assert.match(poll, /consecutivePollFailures \+= 1/);
+  assert.match(poll, /MAX_POLL_FAILURES/);
+  assert.match(poll, /device_cloud_heartbeat_lost/);
+});
