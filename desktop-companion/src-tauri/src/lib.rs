@@ -931,7 +931,7 @@ fn verify_selected_editable_target(
 }
 
 #[tauri::command]
-fn select_draft_target(state: State<'_, AppState>, session_id: String, mut target: DraftTarget) -> Result<String, String> {
+fn select_draft_target(state: State<'_, AppState>, session_id: String, mut target: DraftTarget) -> Result<SelectedTargetSummary, String> {
     control_granted(&state, &session_id)?;
     draft_granted(&state, &session_id)?;
 
@@ -972,12 +972,23 @@ fn select_draft_target(state: State<'_, AppState>, session_id: String, mut targe
         "text" => "Windows verified an empty multi-line editor. Focus-bound Text-pattern typing and exact readback will be used.",
         _ => return Err("The selected editor exposes an unsupported accessibility write mode".into()),
     };
+    let selection_id = Uuid::new_v4().to_string();
     target.identity = Some(identity);
-    target.selection_id = Some(Uuid::new_v4().to_string());
+    target.selection_id = Some(selection_id.clone());
     state.draft_targets.lock().map_err(|_| "Draft state unavailable")?.insert(session_id, target);
-    Ok(mode_message.to_string())
+    Ok(SelectedTargetSummary {
+        message: mode_message.to_string(),
+        selection_id,
+    })
 }
 
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SelectedTargetSummary {
+    message: String,
+    selection_id: String,
+}
 
 #[tauri::command]
 fn clear_draft_target(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
@@ -1022,6 +1033,7 @@ struct PendingDraftSummary {
     session_id: String,
     expires_in_seconds: u64,
     target_label: String,
+    selection_id: String,
 }
 
 #[tauri::command]
@@ -1038,6 +1050,7 @@ fn list_pending_drafts(state: State<'_, AppState>) -> Result<Vec<PendingDraftSum
             request_id: id.clone(), text: draft.text.clone(), session_id: draft.session_id.clone(),
             expires_in_seconds: draft.expires_at.saturating_duration_since(now).as_secs().min(60),
             target_label,
+            selection_id: draft.target.selection_id.clone().unwrap_or_default(),
         }
     }).collect())
 }
