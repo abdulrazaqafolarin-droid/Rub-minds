@@ -24,6 +24,8 @@ test("Android acceptance runner builds only the current companion and verifies m
   const script = await read("scripts/backroom-android-acceptance.ps1");
   assert.match(script, /JDK 17/);
   assert.match(script, /Gradle 8\.10\.2/);
+  assert.match(script, /javaOutput\.Contains\('version "17'/);
+  assert.match(script, /gradleOutput\.Contains\('Gradle 8\.10\.2'/);
   assert.match(script, /ANDROID_SDK_ROOT/);
   assert.match(script, /manifest-policy\.node-test\.mjs/);
   assert.match(script, /:app:testDebugUnitTest/);
