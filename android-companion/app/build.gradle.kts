@@ -214,7 +214,7 @@ androidComponents {
                     it.type == "service" && it.className == "$expectedAppId.DraftInputMethodService"
                 }
                 require(inputMethod.className == "$expectedAppId.DraftInputMethodService") {
-                    "The only exported service must be the exact Rub Minds draft input method."
+                    "The exported draft keyboard must be the exact Rub Minds input method."
                 }
                 require(inputMethod.permission == "android.permission.BIND_INPUT_METHOD") {
                     "The draft input method must remain OS-bound by BIND_INPUT_METHOD."

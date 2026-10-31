@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const read = path => readFile(new URL("../../" + path, import.meta.url), "utf8");
+const read = path => readFile(new URL("../../../" + path, import.meta.url), "utf8");
 
 test("Android stream Edge actions keep human auth, device bearer and platform boundaries separate", async () => {
   const endpoint = await read("supabase/functions/backroom-device/index.ts");
