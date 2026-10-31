@@ -277,7 +277,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
         const ok=message.ok===true;
         const reason=typeof message.reason==='string'?message.reason:'The selected area could not be verified.';
         setTargetStatus(ok?'Verified editable field · '+reason:'Target rejected · '+reason);
-        if(!ok)setSelection(null);
+        if(!ok){setSelection(null);targetAttemptRef.current='';}
         flash(ok?'The selected area is a verified empty editable field.':reason,!ok);
       }else if(message.kind==='draft_result'){
         if(typeof message.requestId!=='string'||message.requestId!==draftAttemptRef.current)return;
@@ -343,6 +343,11 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     const data=dataRef.current;if(!data||data.readyState!=='open')throw new Error('Interactive data channel is not ready.');
     data.send(JSON.stringify(message));
   };
+  const hasActiveDraftTarget=()=>Boolean(
+    selection||targetAttemptRef.current||draftAttemptRef.current||
+    targetStatus.startsWith('Verified editable field ·')||
+    targetStatus.startsWith('Draft awaiting local approval')
+  );
   const pointerDown=(e:PointerEvent<HTMLDivElement>)=>{
     if(selectMode){
       const point=normalized(e.clientX,e.clientY);if(!point)return;
@@ -353,7 +358,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     }
     if(!controlGranted)return;
     const point=normalized(e.clientX,e.clientY);if(!point)return;
-    if(selection||targetStatus||draftAttemptRef.current){
+    if(hasActiveDraftTarget()){
       targetAttemptRef.current='';draftAttemptRef.current='';
       setSelection(null);
       setTargetStatus('Manual computer interaction changed the typing target. Drag-select it again before requesting a draft.');
