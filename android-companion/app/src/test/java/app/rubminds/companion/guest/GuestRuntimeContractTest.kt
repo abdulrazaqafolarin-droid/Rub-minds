@@ -23,6 +23,22 @@ class GuestRuntimeContractTest {
         mergedManifestSha256 = manifestSha256,
         capabilities = GuestRuntimeCapability.values().toSet(),
         mergedHostPermissions = setOf("android.permission.INTERNET", "android.permission.FOREGROUND_SERVICE"),
+        mergedHostComponents = listOf(
+            GuestHostComponent(
+                className = "app.rubminds.companion.MainActivity",
+                type = GuestHostComponentType.ACTIVITY,
+                exported = true,
+                isLauncherActivity = true
+            ),
+            GuestHostComponent(
+                className = "app.rubminds.companion.DraftInputMethodService",
+                type = GuestHostComponentType.SERVICE,
+                exported = true,
+                permission = "android.permission.BIND_INPUT_METHOD",
+                permissionProtection = GuestPermissionProtection.SYSTEM,
+                isSystemBoundInputMethod = true
+            )
+        ),
         mergedManifestAudited = true,
         releaseArtifactDebugSigned = false
     )
@@ -149,6 +165,38 @@ class GuestRuntimeContractTest {
         val review = GuestRuntimeAdmissionPolicy.review(candidate, device)
         assertEquals(GuestRuntimeDecision.BLOCKED, review.decision)
         assertNotNull(review.blockers.firstOrNull { it.startsWith("unapproved_host_permissions:") })
+    }
+
+
+    @Test fun onlyTheKnownLauncherAndSystemBoundInputMethodMayBeUnprotectedExportedComponents() {
+        val bad = descriptor.copy(mergedHostComponents = descriptor.mergedHostComponents + GuestHostComponent(
+            className = "com.blackbox.BridgeService",
+            type = GuestHostComponentType.SERVICE,
+            exported = true
+        ))
+        val review = GuestRuntimeAdmissionPolicy.review(bad, device)
+        assertEquals(GuestRuntimeDecision.BLOCKED, review.decision)
+        assertNotNull(review.blockers.firstOrNull { it.startsWith("unapproved_exported_components:") })
+    }
+
+    @Test fun exportedInternalComponentRequiresSignatureProtection() {
+        val safe = descriptor.copy(mergedHostComponents = descriptor.mergedHostComponents + GuestHostComponent(
+            className = "com.example.InternalProvider",
+            type = GuestHostComponentType.PROVIDER,
+            exported = true,
+            permission = "com.example.INTERNAL_ACCESS",
+            permissionProtection = GuestPermissionProtection.SIGNATURE
+        ))
+        assertEquals(GuestRuntimeDecision.DEVICE_POC_REQUIRED, GuestRuntimeAdmissionPolicy.review(safe, device).decision)
+    }
+
+    @Test fun accessibilityAndPrivilegedHostPermissionAtomsAreDenied() {
+        val bad = descriptor.copy(mergedHostPermissions = setOf(
+            "android.permission.INTERNET",
+            "android.permission.WRITE_SECURE_SETTINGS",
+            "android.permission.READ_LOGS"
+        ))
+        assertEquals(GuestRuntimeDecision.BLOCKED, GuestRuntimeAdmissionPolicy.review(bad, device).decision)
     }
 
     @Test fun rootDebugSigningLicenseAndManifestFailuresBlockAdmission() {
