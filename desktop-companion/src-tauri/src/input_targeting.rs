@@ -58,7 +58,7 @@ pub fn set_value_exact(x: i32, y: i32, expected: &EditableTargetIdentity, text: 
 
 #[cfg(target_os = "windows")]
 mod windows_impl {
-    use super::EditableTargetIdentity;
+    use super::{validate_target_metadata, validate_target_properties, EditableTargetIdentity};
     use uiautomation::{
         actions::Value,
         controls::{ControlType, DocumentControl, EditControl},
