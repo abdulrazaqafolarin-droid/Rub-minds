@@ -502,29 +502,57 @@ async function handlePeerData(sessionId,raw){
       }
     };
     if(!requestId){report(false,'A unique selection-attempt identifier is required.');return;}
+
+    // Every newer drag immediately makes the old target unusable for new drafts.
+    peer.latestTargetRequestId=requestId;
+    peer.targetVerified=false;
     peer.targetQueueDepth=(peer.targetQueueDepth||0)+1;
     if(peer.targetQueueDepth>4){
       peer.targetQueueDepth-=1;
-      // A rejected newer drag must also revoke any previously selected target,
-      // otherwise a remote draft could still be staged against the stale field.
       await invalidatePendingDraftApprovals(sessionId,'The selected typing area changed; this draft was cancelled.');
-      try{await invoke('clear_draft_target',{sessionId});}catch{}
-      report(false,'Too many target checks are pending. The previous target was cleared; wait and select again.');
+      // Queue one clear behind already-running native checks. Any subsequent
+      // accepted selection will be queued after this clear. Coalesce bursts.
+      if(!peer.targetClearPromise){
+        const clearTask=(peer.targetQueue||Promise.resolve()).then(async()=>{
+          try{
+            await invoke('clear_draft_target',{sessionId});
+          }catch(error){
+            notify(error?.message||'Could not clear the previous typing target. Draft insertion remains disabled.','error');
+          }finally{
+            peer.targetVerified=false;
+          }
+        });
+        peer.targetClearPromise=clearTask.finally(()=>{peer.targetClearPromise=null;});
+        peer.targetQueue=peer.targetClearPromise;
+      }
+      report(false,'Too many target checks are pending. The previous target is being cleared; wait and drag-select again.');
+      await peer.targetClearPromise;
       return;
     }
-    // UIA calls may take different amounts of time. Serialize by peer so an
-    // earlier, slow drag cannot overwrite the most recent target selection.
+
+    // UIA calls may take different amounts of time. Serialize per peer and
+    // discard queued attempts superseded by a newer browser drag.
     peer.targetQueue=(peer.targetQueue||Promise.resolve()).then(async()=>{
       try{
         await invalidatePendingDraftApprovals(sessionId,'The selected typing area changed; this draft was cancelled.');
+        if(requestId!==peer.latestTargetRequestId){
+          report(false,'This selection was superseded by a newer drag.');
+          return;
+        }
         const modeMessage=await invoke('select_draft_target',{sessionId,target:message.target});
+        if(requestId!==peer.latestTargetRequestId){
+          report(false,'This selection was superseded by a newer drag.');
+          return;
+        }
         const status=typeof modeMessage==='string'&&modeMessage.length<=240
           ?modeMessage
           :'Windows verified an empty editable text field. Its identity will be rechecked before insertion.';
+        peer.targetVerified=true;
         report(true,status);
         notify(status,'success');
       }catch(error){
         const reason=error?.message||'The selected area is not a verifiable editable field.';
+        if(requestId===peer.latestTargetRequestId)peer.targetVerified=false;
         report(false,reason);
         notify(reason,'error');
       }finally{
@@ -532,7 +560,18 @@ async function handlePeerData(sessionId,raw){
       }
     });
   } else if(message.kind==='draft'){
-    try{const id=await invoke('stage_draft_request',{sessionId,text:message.text});await refreshPending();notify('Draft request '+id+' is waiting for approval on this computer.');}catch(error){notify(error.message,'error');}
+    if(peer.targetVerified!==true||peer.targetClearPromise){
+      const reason='Drag-select and verify the current text field again before requesting draft insertion.';
+      try{peer.channel?.send(JSON.stringify({kind:'draft_result',ok:false,result:reason}));}catch{}
+      notify(reason,'error');
+      return;
+    }
+    try{const id=await invoke('stage_draft_request',{sessionId,text:message.text});await refreshPending();notify('Draft request '+id+' is waiting for approval on this computer.');}
+    catch(error){
+      const reason=error?.message||'Could not stage the draft for this target.';
+      try{peer.channel?.send(JSON.stringify({kind:'draft_result',ok:false,result:reason}));}catch{}
+      notify(reason,'error');
+    }
   } else if(message.kind==='terminal_input'){
     const terminalId=message.sessionId||peer.terminalId;
     if(!terminalId)return;
