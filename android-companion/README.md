@@ -67,12 +67,21 @@ Package inventory is restricted to launchable apps visible under the declared `<
 
 See [`docs/architecture/backroom-app-execution-engine.md`](../docs/architecture/backroom-app-execution-engine.md) for the explicit proof-of-concept gate and current engine review. NewBlackbox was re-audited and is rejected unchanged: its Bcore source manifest has 323 permission entries (249 unique), with broad host privileges. No virtualization library has been integrated.
 
-## Verification status
+## Verification status — 2026-10-31
 
-- Repository Node tests statically verify permissions, HTTPS-only transport, lack of inbound localhost listeners, credential handling, and package query scope.
-- Kotlin/JUnit tests cover the existing per-app draft-insertion policy and the guest runtime admission/frame/touch/target/one-shot lease safety contract.
-- Node source-contract tests verify that no virtualization dependency or broad permission has been added to the companion.
-- **Not yet verified here:** Android Gradle compilation, APK installation, WebRTC device-to-browser negotiation, MediaProjection consent on the TECNO KL4, real touch dispatch, cloud function deployment, migration execution, migration application, or pairing against a live backend. A successful Android build and physical-device acceptance are mandatory before release.
+**Native build and automated tests: passed in an isolated Linux Android SDK 35 runner.**
+
+- JDK 17 / Gradle 8.10.2 / Android Gradle Plugin build completed successfully with `:app:testDebugUnitTest :app:auditDebugGuestHostManifest :app:assembleDebug`.
+- Kotlin/JUnit: **60 tests, 0 failures, 0 errors, 0 skipped**.
+- Android manifest/resource-policy Node suite: **27/27 passed**.
+- Cross-layer Phone Frame, Edge Function, Android touch-policy, SDP protocol and private Realtime suite: **50/50 passed**.
+- Combined automated verification: **137 passed, 0 failed**.
+- The final merged-manifest audit passed. SHA-256: `029cd32a4f972d980c0e9d4ce5bf7d2e9bce2b5921fa992ab51315448963a2d0`. It contains 5 declared permissions and 4 explicitly exported components.
+- Debug APK assembled and verified with `apksigner`. Size: 49,967,179 bytes. SHA-256: `2cc2ba30789ff111ee49acf779871298023d0a28378212ecff7b1f4a4eee40f5`. Debug signer certificate SHA-256: `6765d5a3cbed165ed9b18f45f5742bf313966c4c8cfb0106f2f94d0e75deced0`.
+
+**Not yet accepted:** no physical Android handset/ADB device was attached to the remote runner. The TECNO KL4 still needs APK installation, confirmation of the Android 14 QPR2 app-window picker, pairing against an explicitly approved staging backend, WebRTC video, real tap/swipe/long-press, local disarm, app-switch and projection/network revocation checks. A debug APK build is not a production release signature.
+
+The GitHub Actions jobs on this branch continue to terminate before runner allocation (`runner_id=0`, no steps executed); that is a GitHub runner-availability failure, not a test result. The checks above were executed directly in the isolated Android SDK runner against the PR source. The migration and Edge Function remain committed source only: they have **not** been applied or deployed. Production Supabase and production Vercel were not changed.
 
 ## Local app launch (2026-10-31)
 
@@ -139,7 +148,7 @@ Android app-window sharing was introduced in Android 14 QPR2; device/OEM rollout
 
 **Still not delivered:** isolated/virtual Android guest instances, separate app-private data, guest-only virtual display rendering, accessibility-backed field discovery in the Phone Frame, drag-select target binding, guest draft insertion/readback, physical-device validation of the remote typing path, or a production Emergency Stop for an isolated guest. The remote text-to-IME bridge is implemented in source but is not yet a verified handset capability. The current stream is a mirror of an ordinary app installation and must not be labelled virtualization.
 
-The command protocol and touch policy have Node source-contract regression tests; native :app:testDebugUnitTest, merged-manifest audit and :app:assembleDebug are configured in GitHub Actions. Those commands still need a green run. No live migration or Edge Function deployment is implied by committed source.
+The command protocol and touch policy have passing regression tests (50/50 cross-layer tests); native :app:testDebugUnitTest, the merged-manifest audit and :app:assembleDebug have also passed in an isolated Android SDK 35 runner (60/60 JUnit tests and a signed debug APK). GitHub Actions on this branch still fail before runner allocation, so the direct runner result is recorded separately. No live migration or Edge Function deployment is implied by committed source.
 
 
 **Viewing topology:** the phone is the capture source and must keep the selected app window foreground. Open the Backroom Phone Frame control page on a separate device (for example a Windows laptop). Opening the control page on the same phone causes the selected app window to become hidden; Android pauses that app-window capture and Backroom shows a hidden-source state. This path is not an on-device overlay or same-phone virtual display.
