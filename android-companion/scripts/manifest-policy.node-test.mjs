@@ -98,6 +98,10 @@ test("guest runtime code remains a provider-neutral contract with no bundled vir
   assert.doesNotMatch(gradle, /Bcore|BlackBox|VirtualApp|NewBlackbox/i);
   assert.doesNotMatch(companion, /BlackBoxCore|VirtualApp|Bcore/i);
   assert.match(contract, /GuestRuntimeAdmissionPolicy/);
+  assert.match(contract, /hostApplicationId/);
+  assert.match(contract, /BIND_ACCESSIBILITY_SERVICE/);
+  assert.match(contract, /GuestRuntimeDescriptor/);
+  assert.match(contract, /GuestLocalApprovalReceipt/);
   assert.match(contract, /GuestRuntimeProvider/);
   assert.match(contract, /GuestInstanceIsolationRegistry/);
   assert.match(contract, /GuestDraftResultPolicy/);
@@ -123,6 +127,9 @@ test("guest runtime code remains a provider-neutral contract with no bundled vir
   assert.match(contract, /internal fun consume\(/);
   assert.match(contract, /private constructor/);
   assert.match(contract, /submit_not_supported/);
+  assert.doesNotMatch(contract, /approvedLocally/);
+  assert.match(contract, /uuidPattern/);
+  assert.match(contract, /a-f0-9.*\\.a-f0-9/);
 });
 
 test("phone frame target contract rejects stale, occupied, protected and non-guest targets", async () => {
