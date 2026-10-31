@@ -61,13 +61,23 @@ class WorkProfileBridgeSecretStore(context: Context) {
         val encoded = prefs.getString("secret_ciphertext", null) ?: return null
         return try {
             val stored = Base64.decode(encoded, Base64.NO_WRAP)
-            if (stored.size <= GCM_IV_BYTES + GCM_TAG_BYTES) return null
+            if (stored.size <= GCM_IV_BYTES + GCM_TAG_BYTES) {
+                clear()
+                return null
+            }
             val iv = stored.copyOfRange(0, GCM_IV_BYTES)
             val ciphertext = stored.copyOfRange(GCM_IV_BYTES, stored.size)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
             cipher.updateAAD(aad())
-            cipher.doFinal(ciphertext).takeIf { it.size == WorkProfileLaunchAuthenticator.SECRET_BYTES }
+            val decrypted = cipher.doFinal(ciphertext)
+            if (decrypted.size == WorkProfileLaunchAuthenticator.SECRET_BYTES) {
+                decrypted
+            } else {
+                decrypted.fill(0)
+                clear()
+                null
+            }
         } catch (_: Exception) {
             clear()
             null
