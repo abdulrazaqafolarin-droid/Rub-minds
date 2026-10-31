@@ -31,6 +31,7 @@ export function confirmTargetSelection(peer, requestId, summary) {
 
 export function rejectTargetSelection(peer, requestId) {
   if (!peer || typeof peer !== 'object' || peer.latestTargetRequestId !== requestId) return false;
+  peer.latestTargetRequestId = null;
   peer.targetSelectionId = null;
   peer.targetVerified = false;
   return true;
