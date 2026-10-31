@@ -18,6 +18,8 @@ on:
       - 'src/BackroomDesktopControl.tsx'
       - 'src/BackroomDevicesApp.tsx'
       - 'src/backroom-cloud.css'
+      - 'integrations/backroom/desktop-target-selection.mjs'
+      - 'integrations/backroom/desktop-target-selection.node-test.mjs'
       - 'package.json'
       - 'package-lock.json'
 
