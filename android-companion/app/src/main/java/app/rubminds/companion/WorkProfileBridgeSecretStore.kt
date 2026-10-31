@@ -41,8 +41,8 @@ class WorkProfileBridgeSecretStore(context: Context) {
     fun saveEncoded(encoded: String?): Boolean {
         if (encoded.isNullOrBlank()) return false
         val secret = try { Base64.decode(encoded, Base64.NO_WRAP) } catch (_: IllegalArgumentException) { return false }
-        if (secret.size != WorkProfileLaunchAuthenticator.SECRET_BYTES) return false
         return try {
+            if (secret.size != WorkProfileLaunchAuthenticator.SECRET_BYTES) return false
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
             cipher.updateAAD(aad())
