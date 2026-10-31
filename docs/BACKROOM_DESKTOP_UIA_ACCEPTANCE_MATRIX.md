@@ -37,3 +37,10 @@ Also verify whole-monitor capture geometry at 100%, 125%, 150% and 200% display 
 - A real Claude Code/OpenCode terminal is a PTY target, not a UIA text-field target. Terminal text-only input and explicit Enter are separate actions; the terminal does not use this desktop drag-select path.
 
 No production migration, merge, or deployment is part of this acceptance checklist.
+
+## Latest implementation details to verify
+
+- Each browser drag has a unique attempt ID. The companion serializes up to four queued target checks per session, and the Device Frame ignores acknowledgements for superseded drags.
+- The local native approval dialog runs only after the target has been resolved and rechecked.
+- After approval, the companion re-resolves the exact target and uses its own UI Automation Value pattern to write the text. It does not click the target centre or use global keyboard injection for this draft action.
+- The final pass re-reads the same UIA element and confirms the exact text, while retaining the enabled/visible/non-password/writable checks. Empty-value is required before insertion, not after it.
