@@ -16,7 +16,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 const state = {
   client: null, user: null, session: null, deviceId: null, roomId: null, deviceTokenSaved: false,
-  channel: null, apps: [], pending: [], peers: new Map(), streams: new Map(), terminals: new Map(), pendingCandidates: new Map(), draftCorrelations: new Map(),
+  channel: null, apps: [], pending: [], peers: new Map(), streams: new Map(), terminals: new Map(), exitedTerminals: new Set(), pendingCandidates: new Map(), draftCorrelations: new Map(),
   seenCommands: new Map(), heartbeat: null, heartbeatMisses: 0, peerWatchdog: null,
   status: 'Not connected', terminalOutput: '', unlisten: [],
 };
@@ -406,9 +406,17 @@ async function handleCommand(payload){
 async function startTerminalPeer(payload,term){
   const peerSessionId=payload.sessionId;
   if(!peerSessionId||!payload.offer?.sdp)throw new Error('Invalid terminal WebRTC offer');
+  if(state.exitedTerminals.has(term.sessionId)){
+    state.terminals.delete(term.sessionId);
+    throw new Error('The native terminal exited before its Backroom connection could start. Start a fresh terminal session.');
+  }
   const pc=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun.cloudflare.com:3478']}]});
   state.peers.set(peerSessionId,{pc,stream:null,channel:null,canControl:false,terminalId:term.sessionId,terminalActionRequestGuard:createTerminalActionRequestGuard(),createdAt:Date.now(),lastHeartbeat:Date.now()});
   startPeerWatchdog();
+  if(state.exitedTerminals.has(term.sessionId)){
+    await stopPeer(peerSessionId);
+    throw new Error('The native terminal exited while its Backroom connection was starting. Start a fresh terminal session.');
+  }
   pc.ondatachannel=event=>{
     const data=event.channel;state.peers.get(peerSessionId).channel=data;
     data.onmessage=event=>void handlePeerData(peerSessionId,event.data);
@@ -765,8 +773,11 @@ async function stopPeer(sessionId,{closeServer=true}={}){
   if(peer){
     peer.pc.close();peer.stream?.getTracks().forEach(track=>track.stop());
     if(peer.terminalId){
-      try{await invoke('stop_terminal',{sessionId:peer.terminalId});}catch{}
+      // Retire the local record before asking native code to kill the PTY.
+      // Its reader emits an EOF event during an intentional stop; removing
+      // ownership first prevents that expected EOF being reported as a crash.
       state.terminals.delete(peer.terminalId);
+      try{await invoke('stop_terminal',{sessionId:peer.terminalId});}catch{}
       try{await invoke('revoke_control',{sessionId:peer.terminalId});}catch{}
     }
   }
@@ -888,9 +899,11 @@ async function setupTerminalEvents(){
     if(typeof terminalId!=='string'||!UUID_PATTERN.test(terminalId))return;
     const peers=[...state.peers.entries()].filter(([,peer])=>peer.terminalId===terminalId);
     const wasTracked=state.terminals.has(terminalId);
-    // stopPeer() removes the registry entry before deliberately killing a PTY.
+    // stopPeer() retires the record before deliberately killing a PTY.
     // Ignore that expected EOF; only surface an exit that still owns a live record.
     if(!wasTracked&&!peers.length)return;
+    state.exitedTerminals.add(terminalId);
+    if(state.exitedTerminals.size>128)state.exitedTerminals.delete(state.exitedTerminals.values().next().value);
     const pre=document.querySelector('#terminal-output');
     if(pre){pre.textContent=(pre.textContent+'\\n[Native terminal process exited]\\n').slice(-30000);pre.scrollTop=pre.scrollHeight;}
     for(const [peerSessionId,peer] of peers){
