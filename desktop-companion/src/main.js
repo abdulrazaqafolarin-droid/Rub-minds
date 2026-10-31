@@ -630,7 +630,7 @@ async function handlePeerData(sessionId,raw){
       if(!canStageDraftForCurrentSelection(peer)||peer.targetClearPromise)
         throw new Error('The verified typing target changed. Drag-select it again before staging a draft.');
       const id=await invoke('stage_draft_request',{sessionId,text:message.text});
-      state.draftCorrelations.set(id,clientRequestId);
+      state.draftCorrelations.set(id,{clientRequestId,sessionId});
       await refreshPending();
       notify('Draft request '+id+' is waiting for approval on this computer.');
     });
@@ -660,10 +660,14 @@ async function refreshPending(){
   const drafts=await invoke('list_pending_drafts');
   for(const draft of drafts){
     const peer=state.peers.get(draft.sessionId);
+    const correlation=state.draftCorrelations.get(draft.requestId);
     // A delayed list response must not resurrect an approval for a previous drag.
-    if(!isPendingDraftForCurrentSelection(peer,draft))continue;
+    if(!isPendingDraftForCurrentSelection(peer,draft)){
+      state.draftCorrelations.delete(draft.requestId);
+      continue;
+    }
     if(state.pending.some(item=>item.requestId===draft.requestId))continue;
-    const clientRequestId=state.draftCorrelations.get(draft.requestId)||draft.requestId;
+    const clientRequestId=correlation?.clientRequestId||draft.requestId;
     const sendDraftResult=(ok,result)=>{
       const peer=state.peers.get(draft.sessionId);
       if(peer?.channel?.readyState==='open'){
@@ -696,6 +700,9 @@ function startPeerWatchdog(){
 }
 async function stopPeer(sessionId,{closeServer=true}={}){
   const peer=state.peers.get(sessionId);
+  for(const [draftId,correlation] of state.draftCorrelations){
+    if(correlation?.sessionId===sessionId)state.draftCorrelations.delete(draftId);
+  }
   // Cancel target-bound drafts while the peer channel still exists so the
   // browser receives an explicit result before the native session is revoked.
   await invalidatePendingDraftApprovals(sessionId,'The desktop session ended; this draft was cancelled.');
@@ -785,7 +792,7 @@ async function emergencyStop(){
     await stopAllPeerSessions();
     await invoke('emergency_stop');
     if(state.channel){await state.client.removeChannel(state.channel);state.channel=null;}
-    state.pending=[];renderPending();setConnected(false,'Emergency stop · disconnected');
+    state.pending=[];state.draftCorrelations.clear();renderPending();setConnected(false,'Emergency stop · disconnected');
     notify('Emergency stop complete. Local permissions and Backroom-launched sessions were stopped. Reopen the companion to reconnect.','success');
   }catch(error){notify('Emergency stop needs attention: '+error.message,'error');}
 }
