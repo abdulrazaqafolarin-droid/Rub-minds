@@ -344,7 +344,7 @@ class MainActivity : Activity() {
         // saved cannot authorize opening an application.
         val digest = AppIdentity.signingCertificateSha256(this, packageName)
         val grant = digest?.let { store.get(packageName, it) }
-        if (!AppGrantPolicy.canLaunch(grant, digest)) {
+        if (!AppGrantPolicy.canLaunch(grant, digest) || launchGrants[packageName] != digest) {
             Toast.makeText(this, "Save the selected app first. Its signing identity must still match.", Toast.LENGTH_LONG).show()
             return
         }
@@ -365,7 +365,8 @@ class MainActivity : Activity() {
                 // approval was visible.
                 val currentDigest = AppIdentity.signingCertificateSha256(this, packageName)
                 val currentGrant = currentDigest?.let { store.get(packageName, it) }
-                if (!AppGrantPolicy.canLaunch(currentGrant, currentDigest)) {
+                if (!AppGrantPolicy.canLaunch(currentGrant, currentDigest) ||
+                    launchGrants[packageName] != currentDigest) {
                     Toast.makeText(this, "App identity changed. Save the app again.", Toast.LENGTH_LONG).show()
                     return@setPositiveButton
                 }
