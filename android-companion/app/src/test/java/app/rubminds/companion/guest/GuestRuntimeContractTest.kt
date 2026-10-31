@@ -24,7 +24,10 @@ class GuestRuntimeContractTest {
         releaseArtifactSha256 = artifactSha256,
         mergedManifestSha256 = manifestSha256,
         capabilities = GuestRuntimeCapability.values().toSet(),
-        mergedHostPermissions = setOf("android.permission.INTERNET"),
+        mergedHostPermissions = setOf(
+            "android.permission.INTERNET",
+            "android.permission.INTERACT_ACROSS_PROFILES"
+        ),
         mergedHostComponents = listOf(
             GuestHostComponent(
                 className = "app.rubminds.companion.MainActivity",
@@ -39,6 +42,14 @@ class GuestRuntimeContractTest {
                 permission = "android.permission.BIND_INPUT_METHOD",
                 permissionProtection = GuestPermissionProtection.SIGNATURE,
                 isSystemBoundInputMethod = true
+            ),
+            GuestHostComponent(
+                className = "app.rubminds.companion.WorkProfileAdminReceiver",
+                type = GuestHostComponentType.RECEIVER,
+                exported = true,
+                permission = "android.permission.BIND_DEVICE_ADMIN",
+                permissionProtection = GuestPermissionProtection.SIGNATURE,
+                isDeviceAdminReceiver = true
             )
         ),
         mergedManifestAudited = true,
@@ -273,16 +284,71 @@ class GuestRuntimeContractTest {
 
 
     @Test fun missingOrDuplicateApprovedExportedEntrypointsAreRejected() {
-        val withoutKeyboard = descriptor.copy(mergedHostComponents = descriptor.mergedHostComponents.dropLast(1))
+        val withoutKeyboard = descriptor.copy(mergedHostComponents = descriptor.mergedHostComponents.filterNot { it.isSystemBoundInputMethod })
         assertEquals(GuestRuntimeDecision.BLOCKED, GuestRuntimeAdmissionPolicy.review(withoutKeyboard, device).decision)
 
         val duplicateKeyboard = descriptor.copy(
-            mergedHostComponents = descriptor.mergedHostComponents + descriptor.mergedHostComponents.last()
+            mergedHostComponents = descriptor.mergedHostComponents + descriptor.mergedHostComponents.single { it.isSystemBoundInputMethod }
         )
         assertEquals(GuestRuntimeDecision.BLOCKED, GuestRuntimeAdmissionPolicy.review(duplicateKeyboard, device).decision)
 
-        val withoutLauncher = descriptor.copy(mergedHostComponents = descriptor.mergedHostComponents.drop(1))
+        val withoutLauncher = descriptor.copy(mergedHostComponents = descriptor.mergedHostComponents.filterNot { it.isLauncherActivity })
         assertEquals(GuestRuntimeDecision.BLOCKED, GuestRuntimeAdmissionPolicy.review(withoutLauncher, device).decision)
+    }
+
+    @Test fun managedProfileRequiresItsOwnProvisioningAndCrossProfileEvidence() {
+        val profileDescriptor = descriptor.copy(isolationBoundary = GuestIsolationBoundary.ANDROID_MANAGED_PROFILE)
+        val profileChecks = setOf(
+            GuestAcceptanceCheck.WORK_PROFILE_OWNER_CONFIRMED,
+            GuestAcceptanceCheck.WORK_PROFILE_CROSS_PROFILE_ALLOWLIST_VERIFIED,
+            GuestAcceptanceCheck.WORK_PROFILE_SIGNER_BOUND_LAUNCH_VERIFIED
+        )
+        val evidence = GuestDeviceAcceptanceEvidence(
+            engineId = profileDescriptor.engineId,
+            engineVersion = profileDescriptor.engineVersion,
+            isolationBoundary = profileDescriptor.isolationBoundary,
+            deviceProfileId = device.localProfileId,
+            apiLevel = device.apiLevel,
+            abi = device.abi,
+            testRunId = "work-profile-poc-2026-10-31",
+            releaseArtifactSha256 = artifactSha256,
+            mergedManifestSha256 = manifestSha256,
+            passedChecks = checks - profileChecks
+        )
+        val review = GuestRuntimeAdmissionPolicy.review(profileDescriptor, device, evidence)
+        assertEquals(GuestRuntimeDecision.DEVICE_POC_REQUIRED, review.decision)
+        assertEquals(profileChecks, review.missingDeviceChecks.toSet())
+
+        val complete = GuestRuntimeAdmissionPolicy.review(
+            profileDescriptor, device, evidence.copy(passedChecks = checks)
+        )
+        assertEquals(GuestRuntimeDecision.READY, complete.decision)
+    }
+
+    @Test fun exactDpcReceiverIsAllowedButAnyOtherExportedReceiverIsRejected() {
+        val rogue = descriptor.copy(
+            mergedHostComponents = descriptor.mergedHostComponents + GuestHostComponent(
+                className = "com.example.ArbitraryReceiver",
+                type = GuestHostComponentType.RECEIVER,
+                exported = true,
+                permission = "android.permission.BIND_DEVICE_ADMIN",
+                permissionProtection = GuestPermissionProtection.SIGNATURE,
+                isDeviceAdminReceiver = true
+            )
+        )
+        val review = GuestRuntimeAdmissionPolicy.review(rogue, device)
+        assertEquals(GuestRuntimeDecision.BLOCKED, review.decision)
+        assertNotNull(review.blockers.firstOrNull { it.startsWith("unapproved_exported_components:") })
+    }
+
+    @Test fun profileBridgePermissionIsAllowedButEveryOtherPermissionRemainsDenied() {
+        val valid = descriptor.copy(mergedHostPermissions = setOf(
+            "android.permission.INTERNET",
+            "android.permission.INTERACT_ACROSS_PROFILES"
+        ))
+        assertEquals(GuestRuntimeDecision.DEVICE_POC_REQUIRED, GuestRuntimeAdmissionPolicy.review(valid, device).decision)
+        val bad = valid.copy(mergedHostPermissions = valid.mergedHostPermissions + "android.permission.QUERY_ALL_PACKAGES")
+        assertEquals(GuestRuntimeDecision.BLOCKED, GuestRuntimeAdmissionPolicy.review(bad, device).decision)
     }
 
     @Test fun launcherExceptionDoesNotApplyToThirdPartyClassWithSameSuffix() {
