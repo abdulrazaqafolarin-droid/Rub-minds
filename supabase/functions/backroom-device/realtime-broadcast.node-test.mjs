@@ -99,3 +99,21 @@ test('desktop events keep their legacy topic while Android events include room s
  assert.ok(desktopUrl.includes(encodeURIComponent('backroom-device:'+deviceId)));
  assert.ok(androidUrl.includes(encodeURIComponent('backroom-android:'+deviceId+':'+roomId)));
 });
+
+test('Android stream topic separates rooms even when the same device is paired to both',async()=>{
+ const otherRoomId='50000000-0000-4000-8000-000000000005';
+ let roomOne='',roomTwo='';
+ await broadcastPrivateDeviceEvent({
+  projectUrl:'https://example-project.supabase.co',apiKey:'server-key-long-enough',
+  deviceId,event:'android_signal',payload:{deviceId,roomId,sessionId:requestId,issuedAt:Date.now(),stop:true},
+  fetchImpl:async(url)=>{roomOne=url;return {ok:true,status:202};}
+ });
+ await broadcastPrivateDeviceEvent({
+  projectUrl:'https://example-project.supabase.co',apiKey:'server-key-long-enough',
+  deviceId,event:'android_signal',payload:{deviceId,roomId:otherRoomId,sessionId:requestId,issuedAt:Date.now(),stop:true},
+  fetchImpl:async(url)=>{roomTwo=url;return {ok:true,status:202};}
+ });
+ assert.notEqual(roomOne,roomTwo);
+ assert.ok(roomOne.includes(encodeURIComponent('backroom-android:'+deviceId+':'+roomId)));
+ assert.ok(roomTwo.includes(encodeURIComponent('backroom-android:'+deviceId+':'+otherRoomId)));
+});

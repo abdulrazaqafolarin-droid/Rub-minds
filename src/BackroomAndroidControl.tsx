@@ -68,7 +68,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     disposePeer(); setChannelReady(false);
     if (!supabase || device.platform !== 'android' || device.status !== 'active' || !roomId) return;
     let disposed = false;
-    const channel = supabase.channel('backroom-android:' + device.device_id + ':' + roomId, {
+    const channel = supabase.channel('backroom-android:' + device.device_id.toLowerCase() + ':' + roomId.toLowerCase(), {
       config: { private: true, broadcast: { ack: true, self: false } },
     });
     channel.on('broadcast', { event: 'android_signal' }, async ({ payload }: any) => {

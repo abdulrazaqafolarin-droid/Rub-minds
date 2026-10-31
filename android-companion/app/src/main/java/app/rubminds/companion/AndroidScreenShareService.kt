@@ -513,6 +513,7 @@ class AndroidScreenShareService : Service() {
         activeSessionId?.let(AndroidTouchAccessibilityService::clearActiveSession)
         activeSessionId = null
         activeAppPackage = null
+        activeRoomId = null
         answeringSessionId = null
         answerAlreadySent = false
     }

@@ -111,7 +111,7 @@ The desktop driver records whether a selected control supports `Value` or `Text`
 
 ## Android live app mirror — source implemented, validation pending
 
-The Android companion now has a local setup screen, Android 14+ MediaProjection picker, foreground mediaProjection service, WebRTC video sender, short-lived device-authenticated command queue, and a browser WebRTC receiver mounted in the Phone Frame. The phone is authenticated with its device bearer on outbound HTTPS; the browser is an authenticated Rub Minds group member; the server binds commands and SDP to the active device-room-session tuple. The phone does not join private Realtime as an invented user.
+The Android companion now has a local setup screen, Android 14+ MediaProjection picker, foreground mediaProjection service, WebRTC video sender, short-lived device-authenticated command queue, and a browser WebRTC receiver mounted in the Phone Frame. The phone is authenticated with its device bearer on outbound HTTPS; the browser is an authenticated Rub Minds group member; the server binds commands and SDP to the active device-room-session tuple. Android signaling uses a separate private Realtime topic containing both device ID and room ID, with server-side membership checks against that exact binding. The phone does not join private Realtime as an invented user.
 
 View-only capture does not require Accessibility. Touch is separate: the user enables the OS AccessibilityService and explicitly arms a 15-minute local grant. A gesture must match the current session, locally selected package, signer-bound app grant, active window and window bounds. App switches or screen-capture revocation stop the stream. No app text/accessibility tree is uploaded.
 
