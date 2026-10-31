@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent, type KeyboardEvent } from 'react';
-import { Activity, Monitor, Play, Power, RefreshCw, ShieldCheck, SquareTerminal, TextCursorInput, X } from 'lucide-react';
+import { Monitor, Play, Power, RefreshCw, ShieldCheck, SquareTerminal, TextCursorInput } from 'lucide-react';
 import { supabase } from './supabase';
 import { buildScopedDeviceMessage, classifyDeviceResponse, validateDeviceSignal, queueIceCandidate, takeIceCandidates } from '../integrations/backroom/desktop-realtime-protocol.mjs';
 import { waitForIceGatheringComplete } from '../integrations/backroom/ice-gathering.mjs';
@@ -8,7 +8,6 @@ import { listBackroomDevices, type BackroomDevice } from './backroomCloudDevices
 import './backroomDesktopControl.css';
 
 type DesktopApp = { app_id: string; app_label: string; executable_sha256: string; discovered_at: string };
-type RequestResponse = { requestId: string; ok: boolean; reason?: string; sessionId?: string; pid?: number; cols?: number; rows?: number; shellLabel?: string };
 type DragRect = { x: number; y: number; width: number; height: number };
 const uuid = () => crypto.randomUUID();
 const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -21,7 +20,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const [channelReady,setChannelReady] = useState(false);
   const [notice,setNotice] = useState('');
   const [noticeError,setNoticeError] = useState(false);
-  const [pendingRequest,setPendingRequest] = useState('');
+  const [,setPendingRequest] = useState('');
   const [screenSession,setScreenSession] = useState('');
   const [videoReady,setVideoReady] = useState(false);
   const [controlGranted,setControlGranted] = useState(false);
@@ -196,7 +195,8 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     setChannelReady(false);setPendingRequest('');
     if(!supabase||!deviceId||!roomId){channelRef.current=null;return;}
     let disposed=false;
-    const channel=supabase.channel('backroom-device:'+deviceId,{config:{private:true,broadcast:{ack:true,self:false}}});
+    const client=supabase;
+    const channel=client.channel('backroom-device:'+deviceId,{config:{private:true,broadcast:{ack:true,self:false}}});
     channel.on('broadcast',{event:'signal'},async({payload}:any)=>{
       if(disposed)return;
       const signal=validateDeviceSignal(payload,{deviceId,roomId,now:Date.now(),maxAgeMs:120_000});
@@ -256,7 +256,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       if(status==='CHANNEL_ERROR'||status==='TIMED_OUT')flash('Private device channel is unavailable. Check group membership and Realtime private-channel settings.',true);
     });
     channelRef.current=channel;
-    return ()=>{disposed=true;channelRef.current=null;void supabase.removeChannel(channel);};
+    return ()=>{disposed=true;channelRef.current=null;void client.removeChannel(channel);};
   },[deviceId,roomId,closePeer,flash,clearSessionStartTimers]);
 
   useEffect(()=>{
