@@ -29,7 +29,11 @@ class WorkProfileBridgeSecretStore(context: Context) {
     fun createAndSave(): String? {
         val secret = ByteArray(WorkProfileLaunchAuthenticator.SECRET_BYTES)
         SecureRandom().nextBytes(secret)
-        val encoded = Base64.encodeToString(secret, Base64.NO_WRAP)
+        val encoded = try {
+            Base64.encodeToString(secret, Base64.NO_WRAP)
+        } finally {
+            secret.fill(0)
+        }
         return if (saveEncoded(encoded)) encoded else null
     }
 
