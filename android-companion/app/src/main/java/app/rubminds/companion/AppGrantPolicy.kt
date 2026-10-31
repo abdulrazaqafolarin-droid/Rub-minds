@@ -52,9 +52,15 @@ object AppGrantPolicy {
     }
 
     fun isSupportedInputType(inputType: Int): Boolean {
-        // This first keyboard supports text editors only; numeric, date and phone
-        // editors remain unavailable until a reviewed keypad is implemented.
-        return (inputType and InputType.TYPE_MASK_CLASS) == InputType.TYPE_CLASS_TEXT
+        // The companion keyboard has digits and punctuation, so ordinary text,
+        // numeric and phone editors are supported. Sensitive numeric passwords
+        // remain blocked by isSensitiveInput(); date/time and unknown classes fail closed.
+        return when (inputType and InputType.TYPE_MASK_CLASS) {
+            InputType.TYPE_CLASS_TEXT,
+            InputType.TYPE_CLASS_NUMBER,
+            InputType.TYPE_CLASS_PHONE -> true
+            else -> false
+        }
     }
 
     fun canInsertDraft(

@@ -5,6 +5,11 @@ import javax.xml.parsers.DocumentBuilderFactory
 import java.security.MessageDigest
 import java.util.Locale
 
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+}
+
 // Keep this record at script scope. A local data class inside Gradle's
 // nested task action triggers a Kotlin DSL IR code-generation failure.
 data class GuestManifestComponentRecord(
@@ -14,11 +19,6 @@ data class GuestManifestComponentRecord(
     val permission: String,
     val element: Element
 )
-
-plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android")
-}
 
 fun buildConfigString(value: String): String =
     "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
@@ -49,7 +49,10 @@ android {
     kotlinOptions { jvmTarget = "17" }
 }
 
-dependencies { testImplementation("junit:junit:4.13.2") }
+dependencies {
+    testImplementation("junit:junit:4.13.2")
+    implementation("io.github.webrtc-sdk:android:150.7871.04")
+}
 
 
 // Audit the final merged manifest, not just the app's source manifest. This
@@ -118,7 +121,10 @@ androidComponents {
                     .toSet()
                 val allowedPermissions = setOf(
                     "android.permission.INTERNET",
-                    "android.permission.INTERACT_ACROSS_PROFILES"
+                    "android.permission.INTERACT_ACROSS_PROFILES",
+                    "android.permission.FOREGROUND_SERVICE",
+                    "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION",
+                    "android.permission.POST_NOTIFICATIONS"
                 )
                 require(permissions == allowedPermissions) {
                     "Guest host manifest permission allowlist mismatch. " +
@@ -167,10 +173,11 @@ androidComponents {
                 val expectedExported = setOf(
                     "activity:$expectedAppId.MainActivity",
                     "service:$expectedAppId.DraftInputMethodService",
-                    "receiver:$expectedAppId.WorkProfileAdminReceiver"
+                    "receiver:$expectedAppId.WorkProfileAdminReceiver",
+                    "service:$expectedAppId.AndroidTouchAccessibilityService"
                 )
                 val actualExported = exported.map { "${it.type}:${it.className}" }.toSet()
-                require(actualExported == expectedExported && exported.size == 3) {
+                require(actualExported == expectedExported && exported.size == 4) {
                     "Guest host exported-component allowlist mismatch. " +
                         "Expected ${expectedExported.sorted()}, found ${actualExported.sorted()}."
                 }
@@ -203,15 +210,35 @@ androidComponents {
                     "The approved launcher must retain MAIN/LAUNCHER intent filters."
                 }
 
-                val inputMethod = exported.single { it.type == "service" }
+                val inputMethod = exported.single {
+                    it.type == "service" && it.className == "$expectedAppId.DraftInputMethodService"
+                }
                 require(inputMethod.className == "$expectedAppId.DraftInputMethodService") {
-                    "The only exported service must be the exact Rub Minds draft input method."
+                    "The exported draft keyboard must be the exact Rub Minds input method."
                 }
                 require(inputMethod.permission == "android.permission.BIND_INPUT_METHOD") {
                     "The draft input method must remain OS-bound by BIND_INPUT_METHOD."
                 }
                 require(hasIntent(inputMethod, "android.view.InputMethod")) {
                     "The approved input method must retain android.view.InputMethod."
+                }
+
+                val accessibilityService = exported.single {
+                    it.type == "service" && it.className == "$expectedAppId.AndroidTouchAccessibilityService"
+                }
+                require(accessibilityService.permission == "android.permission.BIND_ACCESSIBILITY_SERVICE") {
+                    "The touch service must remain OS-bound by BIND_ACCESSIBILITY_SERVICE."
+                }
+                require(hasIntent(accessibilityService, "android.accessibilityservice.AccessibilityService")) {
+                    "The touch service must retain the Android AccessibilityService intent."
+                }
+                val hasTouchServiceMetadata = childElements(accessibilityService.element).any { metadata ->
+                    metadata.tagName == "meta-data" &&
+                        metadata.androidAttribute("name") == "android.accessibilityservice" &&
+                        metadata.androidAttribute("resource") == "@xml/backroom_touch_accessibility"
+                }
+                require(hasTouchServiceMetadata) {
+                    "The touch service must reference its explicit accessibility-service configuration."
                 }
 
                 val adminReceiver = exported.single { it.type == "receiver" }

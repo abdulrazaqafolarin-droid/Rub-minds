@@ -13,12 +13,23 @@ on:
     paths:
       - '.github/workflows/backroom-android-companion.yml'
       - 'android-companion/**'
+      - 'supabase/functions/backroom-device/**'
+      - 'supabase/migrations/20261031183000_backroom_android_streaming_commands.sql'
+      - 'integrations/backroom/android-touch-policy.*'
+      - 'src/BackroomAndroidControl.tsx'
+      - 'src/BackroomDevicesApp.tsx'
+      - 'src/backroom-cloud.css'
       - 'docs/BACKROOM_ANDROID_GUEST_RUNTIME_ACCEPTANCE.md'
   push:
-    branches: [main, feat/backroom-virtualized-execution]
+    branches: [main, feat/backroom-virtualized-execution, feat/backroom-android-live-app-stream]
     paths:
       - '.github/workflows/backroom-android-companion.yml'
       - 'android-companion/**'
+      - 'supabase/functions/backroom-device/**'
+      - 'integrations/backroom/android-touch-policy.*'
+      - 'src/BackroomAndroidControl.tsx'
+      - 'src/BackroomDevicesApp.tsx'
+      - 'src/backroom-cloud.css'
       - 'docs/BACKROOM_ANDROID_GUEST_RUNTIME_ACCEPTANCE.md'
   workflow_dispatch:
 
@@ -44,8 +55,8 @@ jobs:
         with:
           gradle-version: '8.10.2'
           cache-provider: basic
-      - name: Verify Android manifest policy source checks
-        run: node --test android-companion/scripts/manifest-policy.node-test.mjs
+      - name: Verify Android, streaming, endpoint and Phone Frame tests
+        run: node --test android-companion/scripts/manifest-policy.node-test.mjs supabase/functions/backroom-device/android-streaming-protocol.node-test.mjs supabase/functions/backroom-device/realtime-broadcast.node-test.mjs supabase/functions/backroom-device/android-streaming-endpoint.node-test.mjs integrations/backroom/android-touch-policy.node-test.mjs integrations/backroom/device-frame-entry.node-test.mjs
       - name: Run Android unit tests and merged-manifest gate
         working-directory: android-companion
         run: gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:auditDebugGuestHostManifest

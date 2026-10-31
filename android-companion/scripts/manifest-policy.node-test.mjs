@@ -12,7 +12,6 @@ test("companion requests only HTTPS and approved profile handoff permissions", a
     "android.permission.MANAGE_EXTERNAL_STORAGE",
     "android.permission.QUERY_ALL_PACKAGES",
     "android.permission.SYSTEM_ALERT_WINDOW",
-    "android.permission.BIND_ACCESSIBILITY_SERVICE",
     "android.permission.RECEIVE_BOOT_COMPLETED",
     "android.permission.PACKAGE_USAGE_STATS",
     "android.permission.REQUEST_INSTALL_PACKAGES",
@@ -22,9 +21,13 @@ test("companion requests only HTTPS and approved profile handoff permissions", a
   ];
   for (const permission of forbidden) assert.equal(manifest.includes(permission), false, "Unexpected permission: " + permission);
   assert.match(manifest, /android.permission.INTERACT_ACROSS_PROFILES/);
-  assert.equal((manifest.match(/<uses-permission\b/g) ?? []).length, 2);
+  assert.equal((manifest.match(/<uses-permission\b/g) ?? []).length, 5);
   assert.match(manifest, /android:usesCleartextTraffic="false"/);
   assert.match(manifest, /android.permission.BIND_INPUT_METHOD/);
+  assert.match(manifest, /android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION/);
+  assert.match(manifest, /android.permission.BIND_ACCESSIBILITY_SERVICE/);
+  assert.match(manifest, /android.accessibilityservice.AccessibilityService/);
+  assert.match(manifest, /android:foregroundServiceType="mediaProjection"/);
 });
 
 test("package visibility is limited to launcher activities", async () => {
@@ -102,6 +105,8 @@ test("guest runtime code remains a provider-neutral contract with no bundled vir
   assert.match(contract, /hostApplicationId/);
   assert.match(contract, /BIND_ACCESSIBILITY_SERVICE/);
   assert.match(contract, /GuestRuntimeDescriptor/);
+  assert.match(contract, /isAccessibilityService/);
+  assert.match(contract, /AndroidTouchAccessibilityService/);
   assert.match(contract, /GuestLocalApprovalReceipt/);
   assert.match(contract, /draftSha256/);
   assert.match(contract, /guestDraftSha256/);
@@ -178,7 +183,7 @@ test("guest admission allowlist stays aligned with the real companion manifest a
   assert.match(launcher, /android:exported="true"/);
   assert.doesNotMatch(launcher, /android:permission=/);
 
-  const inputMethod = manifest.match(/<service\b[^>]*>/)?.[0] ?? "";
+  const inputMethod = manifest.match(/<service\b[^>]*android:name="\.DraftInputMethodService"[^>]*>/)?.[0] ?? "";
   assert.match(inputMethod, /android:name="\.DraftInputMethodService"/);
   assert.match(inputMethod, /android:exported="true"/);
   assert.match(inputMethod, /android:permission="android\.permission\.BIND_INPUT_METHOD"/);
@@ -203,11 +208,15 @@ test("Gradle APK build audits the final merged host manifest and records its dig
   const workflow = await read("../.github/workflows/ci.yml");
   const readme = await read("README.md");
   assert.match(gradle, /SingleArtifact\.MERGED_MANIFEST/);
+  assert.ok(gradle.indexOf("plugins {") < gradle.indexOf("data class GuestManifestComponentRecord"), "Gradle plugin block must precede executable script declarations.");
+  assert.ok(gradle.includes("io.github.webrtc-sdk:android:150.7871.04"));
   assert.match(gradle, /audit\$\{variantTitle\}GuestHostManifest/);
   assert.match(gradle, /accessExternalDTD/);
   assert.match(gradle, /disallow-doctype-decl/);
   assert.match(gradle, /allowedPermissions = setOf\(/);
   assert.match(gradle, /actualExported == expectedExported/);
+  assert.match(gradle, /AndroidTouchAccessibilityService/);
+  assert.match(gradle, /hasTouchServiceMetadata/);
   assert.match(gradle, /duplicateComponents\.isEmpty\(\)/);
   assert.match(gradle, /Component \$className must declare android:exported explicitly/);
   assert.match(gradle, /android\.intent\.action\.MAIN/);
@@ -254,7 +263,9 @@ test("Work Profile DPC is a single system-bound receiver with local signer check
   assert.match(manifest, /android:permission="android\.permission\.BIND_DEVICE_ADMIN"/);
   assert.match(manifest, /android:name="android\.app\.device_admin"/);
   assert.match(gradle, /receiver:\$expectedAppId\.WorkProfileAdminReceiver/);
-  assert.match(gradle, /expectedExported && exported\.size == 3/);
+  assert.ok(gradle.includes("actualExported == expectedExported && exported.size == 4"));
+  assert.match(gradle, /AndroidTouchAccessibilityService/);
+  assert.match(gradle, /hasTouchServiceMetadata/);
   assert.match(gradle, /PROFILE_PROVISIONING_COMPLETE/);
   assert.match(receiver, /setCrossProfilePackages/);
   assert.match(receiver, /getCrossProfilePackages/);
@@ -295,6 +306,182 @@ test("Work Profile DPC is a single system-bound receiver with local signer check
 });
 
 
+test("Android stream answer callback contains real Kotlin lines, not escaped newline text", async () => {
+  const service = await read("app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  assert.match(service, /override fun onSetSuccess\(\) \{\s+if \(connection\.iceGatheringState\(\)/);
+  assert.equal(service.includes("\\n"), false, "Kotlin source must not contain literal backslash-n sequences from templated edits.");
+});
+
+
+test("local touch revocation remains fail-closed when preference persistence fails", async () => {
+  const gate = await read("app/src/main/java/app/rubminds/companion/RemoteTouchGate.kt");
+  const service = await read("app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  assert.match(gate, /@Volatile private var processRevoked = false/);
+  assert.match(gate, /if \(processRevoked\) return false/);
+  assert.match(gate, /processRevoked = true[\s\S]*runCatching/);
+  assert.match(gate, /processRevoked = false/);
+  assert.match(service, /localControlGranted = false[\s\S]*AndroidTouchAccessibilityService\.clearActiveSession\(activeSessionId\)[\s\S]*RemoteTouchGate\.disarm\(this\)[\s\S]*runCatching \{ closePeer\(\) \}/);
+  assert.match(service, /fun revokeLocalTouch\(context: Context\)[\s\S]*AndroidTouchAccessibilityService\.clearActiveSession\(\)/);
+});
+
+
+test("Android acknowledges malformed touch gestures with an explicit rejection", async () => {
+  const service = await read("app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  const start = service.indexOf('val gestureId = input.optString("gestureId")');
+  const end = service.indexOf("val gesture = RemoteTouchGesture(", start);
+  assert.ok(start >= 0 && end > start, "touch parser and dispatch boundary must remain present");
+  const parser = service.slice(start, end);
+  for (const expected of [
+    'input.optString("kind") != "touch"',
+    "UUID_PATTERN.matches(gestureId)",
+    'input.optString("sessionId") != sessionId',
+    'input.optString("appPackageName") != appPackage',
+    "val rejectGesture = { sendTouchAcknowledgement(channel, sessionId, gestureId, false) }",
+    "input.keys().asSequence().toSet() != allowedKeys",
+    'optJSONObject("from")',
+    'optJSONObject("to")',
+    "else -> {",
+    "durationValue.toDouble() % 1.0 != 0.0",
+    "durationMillis !in 40..1_500"
+  ]) assert.ok(parser.includes(expected), "Malformed touch rejection missing: " + expected);
+  assert.ok(parser.includes("rejectGesture()"));
+  assert.ok(parser.includes("return"));
+});
+
+test("remote typing is process-local, locally armed and limited to the focused approved phone field", async () => {
+  const gate = await read("app/src/main/java/app/rubminds/companion/RemoteKeyboardGate.kt");
+  const keyboard = await read("app/src/main/java/app/rubminds/companion/DraftInputMethodService.kt");
+  const grantPolicy = await read("app/src/main/java/app/rubminds/companion/AppGrantPolicy.kt");
+  for (const expected of [
+    "ARM_LIFETIME_MS = 15 * 60 * 1000L",
+    "armedUntilMillis",
+    "fun armFromLocalConfirmation",
+    "fun disarm()"
+  ]) assert.ok(gate.includes(expected), "Local typing gate missing: " + expected);
+  assert.equal(gate.includes("SharedPreferences"), false, "Remote typing consent must not survive process death.");
+  assert.equal(gate.includes("putLong"), false);
+  assert.equal(keyboard.includes("activeInstance = this"), true);
+  assert.equal(keyboard.includes("boundSessionId != sessionId || boundPackageName != packageName"), true);
+  assert.equal(keyboard.includes("currentInputEditorInfo"), true);
+  assert.equal(keyboard.includes("liveEditor.packageName != packageName"), true);
+  assert.equal(keyboard.includes("AppGrantPolicy.isSensitiveInput"), true);
+  assert.equal(keyboard.includes("isInsertAllowed(verifyCurrentSigner = true)"), true);
+  assert.equal(keyboard.includes("currentInputConnection"), true);
+  assert.equal(keyboard.includes("connection.commitText(text, 1)"), true);
+  assert.equal(keyboard.includes("TYPE_TEXT_FLAG_MULTI_LINE"), true);
+  assert.equal(keyboard.includes("MAX_REMOTE_TEXT_CHARS = 4_000"), true);
+  assert.equal(grantPolicy.includes("selectedGrant.allowDraftInsertion"), true);
+  assert.equal(grantPolicy.includes("grant.signingCertificateSha256 == currentSigningCertificateSha256"), true);
+  const remoteInsertStart = keyboard.indexOf("private fun insertRemoteText(");
+  const remoteInsertEnd = keyboard.indexOf("companion object", remoteInsertStart);
+  assert.ok(remoteInsertStart >= 0 && remoteInsertEnd > remoteInsertStart);
+  const remoteInsert = keyboard.slice(remoteInsertStart, remoteInsertEnd);
+  for (const forbidden of ["performEditorAction", "sendKeyEvent", "KEYCODE_ENTER", "getTextBeforeCursor", "getTextAfterCursor"]) {
+    assert.equal(remoteInsert.includes(forbidden), false, "Remote typing must not submit or read editor contents: " + forbidden);
+  }
+});
+
+test("phone streaming binds remote typing to the exact session and returns an explicit acknowledgement", async () => {
+  const service = await read("app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  const start = service.indexOf('if (input.optString("kind") == "remote_text")');
+  const end = service.indexOf('if (input.optString("kind") == "navigation")', start);
+  assert.ok(start >= 0 && end > start);
+  const handler = service.slice(start, end);
+  for (const expected of [
+    "UUID_PATTERN.matches(requestId)",
+    'input.optString("sessionId") != sessionId',
+    'input.optString("appPackageName") != appPackage',
+    'allowedTextKeys = setOf("kind", "requestId", "sessionId", "appPackageName", "text")',
+    "claimRemoteTextRequest(requestId)",
+    "mainHandler.post",
+    "DraftInputMethodService.insertRemoteText"
+  ]) assert.ok(handler.includes(expected), "Remote text handler missing: " + expected);
+  for (const expected of [
+    "DraftInputMethodService.bindRemoteSession(sessionId, appPackage)",
+    "DraftInputMethodService.clearRemoteSession(activeSessionId)",
+    'put("kind", "remote_text_ack")',
+    'result == "inserted"',
+    "remaining() !in 1..16_384",
+    "REMOTE_TEXT_REPLAY_WINDOW_MS = 2 * 60 * 1000L",
+    "MAX_REMOTE_TEXT_REQUEST_IDS = 128",
+    "request_replayed_or_rate_limited",
+    "!capturedContentVisible"
+  ]) assert.ok(service.includes(expected), "Remote phone service missing: " + expected);
+});
+
+test("remote typing requires explicit on-phone IME selection and local confirmation", async () => {
+  const setup = await read("app/src/main/java/app/rubminds/companion/AndroidStreamSetupActivity.kt");
+  const keyboard = await read("app/src/main/java/app/rubminds/companion/DraftInputMethodService.kt");
+  for (const expected of [
+    "Enable Rub Minds keyboard in Android Settings",
+    "showInputMethodPicker()",
+    "Settings.ACTION_INPUT_METHOD_SETTINGS",
+    "DraftInputMethodService.isEnabledAndSelected(this)",
+    "Allow Backroom typing for 15 minutes",
+    "RemoteKeyboardGate.armFromLocalConfirmation()",
+    "AndroidScreenShareService.revokeRemoteKeyboard()",
+    "RemoteKeyboardGate.disarm()"
+  ]) assert.ok(setup.includes(expected), "Phone keyboard setup missing: " + expected);
+  assert.ok(keyboard.includes("enabledInputMethodList"));
+  assert.ok(keyboard.includes("DEFAULT_INPUT_METHOD"));
+});
+
+test("Phone Frame remote typing is acknowledged, bounded and never auto-submits", async () => {
+  const ui = await read("../src/BackroomAndroidControl.tsx");
+  const service = await read("app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  for (const expected of [
+    "kind: 'remote_text', requestId, sessionId: sessionRef.current, appPackageName, text",
+    "maxLength={4_000}",
+    "pendingRemoteTextAcksRef.current.set(requestId, timeout)",
+    "acknowledgement.kind === 'remote_text_ack'",
+    "No phone-keyboard acknowledgement arrived",
+    "Text inserted into the focused phone field. Nothing was submitted.",
+    "Line breaks are accepted only by multiline phone fields"
+  ]) assert.ok(ui.includes(expected), "Phone Frame typing UI missing: " + expected);
+  for (const forbidden of ["performEditorAction", "sendKeyEvent", "KEYCODE_ENTER"]) {
+    assert.equal(service.includes(forbidden), false, "Phone bridge must not submit: " + forbidden);
+  }
+  const senderStart = ui.indexOf("const sendRemoteText");
+  const senderEnd = ui.indexOf("const contentPoint", senderStart);
+  assert.ok(senderStart >= 0 && senderEnd > senderStart);
+  assert.equal(ui.slice(senderStart, senderEnd).includes("supabase.functions.invoke"), false);
+});
+
+test("remote IME field policy supports text, numeric and phone editors but not password or date editors", async () => {
+  const policy = await read("app/src/main/java/app/rubminds/companion/AppGrantPolicy.kt");
+  const junit = await read("app/src/test/java/app/rubminds/companion/AppGrantPolicyTest.kt");
+  assert.ok(policy.includes("InputType.TYPE_CLASS_TEXT"));
+  assert.ok(policy.includes("InputType.TYPE_CLASS_NUMBER"));
+  assert.ok(policy.includes("InputType.TYPE_CLASS_PHONE"));
+  assert.ok(policy.includes("InputType.TYPE_NUMBER_VARIATION_PASSWORD"));
+  assert.ok(policy.includes("InputType.TYPE_TEXT_VARIATION_PASSWORD"));
+  assert.ok(junit.includes("ordinaryTextNumericAndPhoneEditorsAreAllowed"));
+  assert.ok(junit.includes("sensitiveTextVariationsAreAlwaysDenied"));
+  assert.ok(junit.includes("TYPE_CLASS_DATETIME"));
+});
+
+test("phone data-channel disconnect warns about ambiguous text insertion before retry", async () => {
+  const ui = await read("../src/BackroomAndroidControl.tsx");
+  const start = ui.indexOf("data.onclose = () => {");
+  const end = ui.indexOf("data.onmessage = event =>", start);
+  assert.ok(start >= 0 && end > start);
+  const closeHandler = ui.slice(start, end);
+  assert.ok(closeHandler.includes("pendingRemoteTextAcksRef.current.clear()"));
+  assert.ok(closeHandler.includes("setRemoteTextBusy(false)"));
+  assert.ok(closeHandler.includes("Check the phone field before retrying"));
+  assert.ok(closeHandler.includes("text may already have been inserted"));
+});
+
+test("Android IME manifest metadata and subtype label resolve to packaged resources", async () => {
+  const manifest = await read("app/src/main/AndroidManifest.xml");
+  const method = await read("app/src/main/res/xml/method.xml");
+  const strings = await read("app/src/main/res/values/strings.xml");
+  assert.ok(manifest.includes('android:name="android.view.im" android:resource="@xml/method"'));
+  assert.ok(method.includes('<input-method'));
+  assert.ok(method.includes('android:label="@string/keyboard_subtype"'));
+  assert.ok(strings.includes('<string name="keyboard_subtype">English (US)</string>'));
+});
+
 
 test("Work Profile UI references only fields declared by its snapshot contract", async () => {
   const main = await read("app/src/main/java/app/rubminds/companion/MainActivity.kt");
@@ -318,4 +505,11 @@ test("Work Profile UI references only fields declared by its snapshot contract",
   assert.ok(references.includes("profileCount"));
   assert.ok(references.includes("canInteract"));
   assert.ok(references.includes("canRequestAccess"));
+});
+
+test("Work Profile device-admin description uses a packaged string resource", async () => {
+  const manifest = await read("app/src/main/AndroidManifest.xml");
+  const strings = await read("app/src/main/res/values/strings.xml");
+  assert.ok(manifest.includes('android:description="@string/work_profile_admin_description"'));
+  assert.ok(strings.includes('<string name="work_profile_admin_description">Rub Minds managed Work Profile setup</string>'));
 });

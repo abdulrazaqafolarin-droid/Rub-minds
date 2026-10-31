@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Rub Minds Companion</string>
-    <string name="keyboard_subtype">Draft insertion</string>
+    <string name="work_profile_admin_description">Rub Minds managed Work Profile setup</string>
+    <string name="backroom_touch_service_description">Allows a user-approved Backroom session to tap and swipe only inside the locally selected app. Window text and accessibility content are not uploaded.</string>
+    <string name="keyboard_subtype">English (US)</string>
 </resources>

@@ -92,7 +92,8 @@ data class GuestHostComponent(
     val permissionProtection: GuestPermissionProtection = GuestPermissionProtection.NONE,
     val isLauncherActivity: Boolean = false,
     val isSystemBoundInputMethod: Boolean = false,
-    val isDeviceAdminReceiver: Boolean = false
+    val isDeviceAdminReceiver: Boolean = false,
+    val isAccessibilityService: Boolean = false
 )
 
 data class GuestRuntimeDescriptor(
@@ -146,7 +147,10 @@ object GuestRuntimeAdmissionPolicy {
     // INTERACT_ACROSS_PROFILES is usable only with DPC allowlisting and user approval.
     private val allowedHostPermissions = setOf(
         "android.permission.INTERNET",
-        "android.permission.INTERACT_ACROSS_PROFILES"
+        "android.permission.INTERACT_ACROSS_PROFILES",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION",
+        "android.permission.POST_NOTIFICATIONS"
     )
 
     // A guest engine should not add these permissions to the companion's host
@@ -194,7 +198,6 @@ object GuestRuntimeAdmissionPolicy {
         "DUMP",
         "CAPTURE_VIDEO_OUTPUT",
         "CAPTURE_SECURE_VIDEO_OUTPUT",
-        "BIND_ACCESSIBILITY_SERVICE"
     )
 
     private val requiredCapabilities = GuestRuntimeCapability.values().toSet()
@@ -260,7 +263,11 @@ object GuestRuntimeAdmissionPolicy {
                 component.isDeviceAdminReceiver && component.className == "${descriptor.hostApplicationId}.WorkProfileAdminReceiver" &&
                 component.permission == "android.permission.BIND_DEVICE_ADMIN" &&
                 component.permissionProtection == GuestPermissionProtection.SIGNATURE
-            permissionIsExplicitlyBlocked || !(isExpectedLauncher || isExpectedInputMethod || isExpectedDpcReceiver)
+            val isExpectedAccessibilityService = component.type == GuestHostComponentType.SERVICE &&
+                component.isAccessibilityService && component.className == "${descriptor.hostApplicationId}.AndroidTouchAccessibilityService" &&
+                component.permission == "android.permission.BIND_ACCESSIBILITY_SERVICE" &&
+                component.permissionProtection == GuestPermissionProtection.SIGNATURE
+            permissionIsExplicitlyBlocked || !(isExpectedLauncher || isExpectedInputMethod || isExpectedDpcReceiver || isExpectedAccessibilityService)
         }
         if (unsafeComponents.isNotEmpty()) {
             blockers += "unapproved_exported_components:${unsafeComponents.map { it.className }.sorted().joinToString(",")}"
@@ -268,7 +275,8 @@ object GuestRuntimeAdmissionPolicy {
         val launcherCount = descriptor.mergedHostComponents.count { it.exported && it.isLauncherActivity }
         val inputMethodCount = descriptor.mergedHostComponents.count { it.exported && it.isSystemBoundInputMethod }
         val dpcReceiverCount = descriptor.mergedHostComponents.count { it.exported && it.isDeviceAdminReceiver }
-        if (launcherCount != 1 || inputMethodCount != 1 || dpcReceiverCount != 1) {
+        val accessibilityServiceCount = descriptor.mergedHostComponents.count { it.exported && it.isAccessibilityService }
+        if (launcherCount != 1 || inputMethodCount != 1 || dpcReceiverCount != 1 || accessibilityServiceCount != 1) {
             blockers += "unexpected_exported_entrypoint_count"
         }
 
