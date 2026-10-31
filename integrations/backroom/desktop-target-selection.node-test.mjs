@@ -7,6 +7,7 @@ import {
   rejectTargetSelection,
   canStageDraftForCurrentSelection,
   isPendingDraftForCurrentSelection,
+  enqueuePeerOperation,
 } from './desktop-target-selection.mjs';
 
 function peer() {
@@ -92,4 +93,60 @@ test('pending approval list entries must match the exact active native selection
   assert.equal(isPendingDraftForCurrentSelection(value, {
     requestId: 'draft-missing-version',
   }), false);
+});
+
+test('native target, clear, manual input and the next drag stay in arrival order', async () => {
+  const value = peer();
+  const events = [];
+  let releaseFirst;
+  const firstGate = new Promise(resolve => { releaseFirst = resolve; });
+
+  const firstTarget = enqueuePeerOperation(value, async () => {
+    events.push('target-start');
+    await firstGate;
+    events.push('target-finish');
+  });
+  const clear = enqueuePeerOperation(value, async () => { events.push('clear'); });
+  const manualInput = enqueuePeerOperation(value, async () => { events.push('manual-input'); });
+  const nextTarget = enqueuePeerOperation(value, async () => { events.push('next-target'); });
+
+  assert.deepEqual(events, ['target-start']);
+  assert.equal(value.targetOperationsPending, 4);
+  releaseFirst();
+  await Promise.all([firstTarget, clear, manualInput, nextTarget]);
+
+  assert.deepEqual(events, [
+    'target-start',
+    'target-finish',
+    'clear',
+    'manual-input',
+    'next-target',
+  ]);
+  assert.equal(value.targetOperationsPending, 0);
+});
+
+test('a rejected native operation does not poison the per-peer queue', async () => {
+  const value = peer();
+  const events = [];
+  const failure = enqueuePeerOperation(value, async () => {
+    events.push('clear-failed');
+    throw new Error('native clear unavailable');
+  });
+  const followingDrag = enqueuePeerOperation(value, async () => {
+    events.push('next-drag');
+    return 'verified';
+  });
+
+  await assert.rejects(failure, /native clear unavailable/);
+  assert.equal(await followingDrag, 'verified');
+  assert.deepEqual(events, ['clear-failed', 'next-drag']);
+  assert.equal(value.targetOperationsPending, 0);
+});
+
+test('invalid queue arguments reject without mutating peer queue state', async () => {
+  const value = peer();
+  await assert.rejects(enqueuePeerOperation(null, async () => {}), TypeError);
+  await assert.rejects(enqueuePeerOperation(value, null), TypeError);
+  assert.equal(value.targetOperationsPending, undefined);
+  assert.equal(value.targetQueue, undefined);
 });
