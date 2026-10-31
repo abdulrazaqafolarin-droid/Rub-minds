@@ -51,3 +51,20 @@ export function validateTerminalSubmitMessage(message, expectedSessionId) {
     sessionId: expectedSessionId,
   });
 }
+
+/**
+ * Creates a per-PTY-peer replay guard. Request IDs are retained for the life
+ * of that peer; once the bounded set fills, new actions fail closed until the
+ * peer is restarted. Draft and Enter actions share the same namespace.
+ */
+export function createTerminalActionRequestGuard(maxRequests = 256) {
+  if (!Number.isInteger(maxRequests) || maxRequests < 1 || maxRequests > 4096) {
+    throw new TypeError('Terminal action request limit must be between 1 and 4096');
+  }
+  const seen = new Set();
+  return requestId => {
+    if (!validSession(requestId) || seen.has(requestId) || seen.size >= maxRequests) return false;
+    seen.add(requestId);
+    return true;
+  };
+}
