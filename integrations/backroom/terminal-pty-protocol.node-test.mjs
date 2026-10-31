@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import {
   validateTerminalDraftMessage,
   validateTerminalSubmitMessage,
@@ -102,4 +103,15 @@ test('terminal exit notice is exact-session scoped and cannot carry injected con
     assert.equal(validateTerminalExitedMessage(invalid, sessionId), null);
   }
   assert.equal(validateTerminalExitedMessage(notice, 'not-a-uuid'), null);
+});
+
+test('native PTY exit reaches the exact Backroom peer and retires its session', async () => {
+  const host = await readFile(new URL('../../desktop-companion/src/main.js', import.meta.url), 'utf8');
+  const browser = await readFile(new URL('../../src/BackroomDesktopControl.tsx', import.meta.url), 'utf8');
+  assert.match(host, /listen\('backroom-terminal-exited'/);
+  assert.match(host, /kind:'terminal_exited',sessionId:terminalId/);
+  assert.match(host, /const wasTracked=state\.terminals\.has\(terminalId\)/);
+  assert.match(host, /stopPeer\(peerSessionId\)/);
+  assert.match(browser, /validateTerminalExitedMessage\(message,terminalPeerRef\.current\)/);
+  assert.match(browser, /void stopActivePeer\(\)/);
 });
