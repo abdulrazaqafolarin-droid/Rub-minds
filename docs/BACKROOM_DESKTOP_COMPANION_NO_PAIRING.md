@@ -68,6 +68,24 @@ Backroom web client
 - The current WebRTC configuration uses public STUN servers and has **no TURN relay**. Symmetric NAT, UDP-blocking networks, and restrictive firewalls can prevent media connectivity even when account/device presence is healthy.
 - The companion's device-status fallback check is hourly. Private Realtime revocation and connection failure are intended to stop sessions sooner. No five-second polling loop is used.
 
+## Tauri host and CUA control are complementary
+
+Tauri is the installed, account-authenticated **host** on the actual PC. It owns the OS keyring, native dialogs, app launcher, PTYs, screen-sharing permissions, and Emergency Stop. A CUA (computer-use) adapter is the **AI action interface** that can request screenshots, click/type/scroll, and inspect the desktop through the host. CUA cannot replace device enrollment, native process execution, or WebRTC display transport by itself.
+
+The branch currently provides a native mouse/keyboard driver through Rust and a human-operated Backroom frame; it **does not yet expose a complete CUA tool surface for AI agents**. An existing `NativeAccessibilityDraftAdapter` establishes a fail-closed identity/focus/draft contract but is not a production Windows accessibility driver.
+
+The planned CUA bridge must:
+
+1. Accept only server-authorized `roomId`, `deviceId`, and exact active `sessionId` scopes; verify the session is live and the agent is authorized in that group.
+2. Reuse the companion's native, time-limited view/control/draft grants. Never let an AI message forge `approved:true`, bypass the OS consent dialog, or read OS keyring material.
+3. Provide explicit `observe`, `click`, `move`, `scroll`, `keypress`, `type` and `draft` tools with bounded coordinates/text and rate limits. **Observe** requires its own approved capture, while control tools require a separate local grant.
+4. Keep CUA screenshot and input actions bound to the same selected monitor/window geometry and grant lifetime; stop immediately on disconnect, monitor changes, revoked membership, session expiry, OS lock, or Emergency Stop.
+5. Preserve the drag-select overlay as a distinct **draft** operation. Coordinate targeting is provisional until an accessibility driver confirms an editable non-password field, its identity, and that no submit/Enter occurred.
+6. Record an audit receipt for each accepted action without logging screenshots, passwords, clipboard contents or unredacted terminal output. Provide an explicit human approval path for destructive operations.
+7. Keep the interface independent from any single AI vendor: ChatGPT, Claude, or another connected agent uses the same permitted CUA tool contract when that connector/runtime is actually supported and tested.
+
+**Release claim rule:** Do not label Backroom AI CUA control as implemented until a real AI tool-call-to-native-action-to-observation round trip, local approval, focus/geometry checks, revocation, and emergency-stop regression tests all pass on actual Windows hardware.
+
 ## Repository map
 
 | Area | Key files |
