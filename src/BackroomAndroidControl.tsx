@@ -184,6 +184,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         for (const timer of pendingRemoteTextAcksRef.current.values()) window.clearTimeout(timer);
         pendingRemoteTextAcksRef.current.clear();
         setRemoteTextBusy(false);
+        setRemoteTextStatus('Phone data channel closed before acknowledgement. Check the phone field before retrying; the text may already have been inserted.');
       };
       data.onmessage = event => {
         let acknowledgement: any;
