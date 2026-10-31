@@ -46,6 +46,9 @@ enum class GuestAcceptanceCheck {
     GUEST_OS_SANDBOX_BOUNDARY_VERIFIED,
     GUEST_CANNOT_READ_COMPANION_PRIVATE_DATA,
     GUEST_CANNOT_READ_OTHER_GUEST_DATA,
+    WORK_PROFILE_OWNER_CONFIRMED,
+    WORK_PROFILE_CROSS_PROFILE_ALLOWLIST_VERIFIED,
+    WORK_PROFILE_SIGNER_BOUND_LAUNCH_VERIFIED,
     NO_UNAPPROVED_HOST_PERMISSION_PROMPTS
 }
 
@@ -88,7 +91,8 @@ data class GuestHostComponent(
     val permission: String? = null,
     val permissionProtection: GuestPermissionProtection = GuestPermissionProtection.NONE,
     val isLauncherActivity: Boolean = false,
-    val isSystemBoundInputMethod: Boolean = false
+    val isSystemBoundInputMethod: Boolean = false,
+    val isDeviceAdminReceiver: Boolean = false
 )
 
 data class GuestRuntimeDescriptor(
@@ -138,9 +142,12 @@ object GuestRuntimeAdmissionPolicy {
     const val MAX_FRAME_PIXELS = 33_554_432L
 
     private val allowedLicenses = setOf("Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause")
-    // The current host needs outbound HTTPS and no other declared permission.
-    // Any future permission requires an explicit policy change and security review.
-    private val allowedHostPermissions = setOf("android.permission.INTERNET")
+    // Only HTTPS and the Android OS-mediated Work Profile permission are admitted.
+    // INTERACT_ACROSS_PROFILES is usable only with DPC allowlisting and user approval.
+    private val allowedHostPermissions = setOf(
+        "android.permission.INTERNET",
+        "android.permission.INTERACT_ACROSS_PROFILES"
+    )
 
     // A guest engine should not add these permissions to the companion's host
     // manifest. Guest-app permissions must be mediated inside the guest instead.
@@ -191,7 +198,15 @@ object GuestRuntimeAdmissionPolicy {
     )
 
     private val requiredCapabilities = GuestRuntimeCapability.values().toSet()
-    private val requiredAcceptance = GuestAcceptanceCheck.values().toSet()
+    private val profileAcceptanceChecks = setOf(
+        GuestAcceptanceCheck.WORK_PROFILE_OWNER_CONFIRMED,
+        GuestAcceptanceCheck.WORK_PROFILE_CROSS_PROFILE_ALLOWLIST_VERIFIED,
+        GuestAcceptanceCheck.WORK_PROFILE_SIGNER_BOUND_LAUNCH_VERIFIED
+    )
+    private val commonRequiredAcceptance = GuestAcceptanceCheck.values().toSet() - profileAcceptanceChecks
+    private fun requiredAcceptanceFor(boundary: GuestIsolationBoundary): Set<GuestAcceptanceCheck> =
+        if (boundary == GuestIsolationBoundary.ANDROID_MANAGED_PROFILE) commonRequiredAcceptance + profileAcceptanceChecks
+        else commonRequiredAcceptance
     private val sha256Pattern = Regex("^[a-f0-9]{64}$")
 
     fun review(
@@ -241,19 +256,24 @@ object GuestRuntimeAdmissionPolicy {
                 component.isSystemBoundInputMethod && component.className == "${descriptor.hostApplicationId}.DraftInputMethodService" &&
                 component.permission == "android.permission.BIND_INPUT_METHOD" &&
                 component.permissionProtection == GuestPermissionProtection.SIGNATURE
-            permissionIsExplicitlyBlocked || !(isExpectedLauncher || isExpectedInputMethod)
+            val isExpectedDpcReceiver = component.type == GuestHostComponentType.RECEIVER &&
+                component.isDeviceAdminReceiver && component.className == "${descriptor.hostApplicationId}.WorkProfileAdminReceiver" &&
+                component.permission == "android.permission.BIND_DEVICE_ADMIN" &&
+                component.permissionProtection == GuestPermissionProtection.SIGNATURE
+            permissionIsExplicitlyBlocked || !(isExpectedLauncher || isExpectedInputMethod || isExpectedDpcReceiver)
         }
         if (unsafeComponents.isNotEmpty()) {
             blockers += "unapproved_exported_components:${unsafeComponents.map { it.className }.sorted().joinToString(",")}"
         }
         val launcherCount = descriptor.mergedHostComponents.count { it.exported && it.isLauncherActivity }
         val inputMethodCount = descriptor.mergedHostComponents.count { it.exported && it.isSystemBoundInputMethod }
-        if (launcherCount != 1 || inputMethodCount != 1) {
+        val dpcReceiverCount = descriptor.mergedHostComponents.count { it.exported && it.isDeviceAdminReceiver }
+        if (launcherCount != 1 || inputMethodCount != 1 || dpcReceiverCount != 1) {
             blockers += "unexpected_exported_entrypoint_count"
         }
 
         if (blockers.isNotEmpty()) {
-            return GuestRuntimeReview(GuestRuntimeDecision.BLOCKED, blockers.toList(), requiredAcceptance.toList())
+            return GuestRuntimeReview(GuestRuntimeDecision.BLOCKED, blockers.toList(), requiredAcceptanceFor(descriptor.isolationBoundary).toList())
         }
 
         val evidenceBlockers = linkedSetOf<String>()
@@ -278,6 +298,7 @@ object GuestRuntimeAdmissionPolicy {
                 evidenceBlockers += "acceptance_merged_manifest_mismatch"
             }
         }
+        val requiredAcceptance = requiredAcceptanceFor(descriptor.isolationBoundary)
         val missingChecks = if (evidence == null) requiredAcceptance.toList()
         else (requiredAcceptance - evidence.passedChecks).toList()
 
