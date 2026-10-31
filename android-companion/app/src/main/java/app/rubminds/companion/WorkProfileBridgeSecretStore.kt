@@ -75,6 +75,16 @@ class WorkProfileBridgeSecretStore(context: Context) {
     }
 
     @Synchronized
+    fun hasSecret(): Boolean {
+        val secret = load() ?: return false
+        return try {
+            secret.size == WorkProfileLaunchAuthenticator.SECRET_BYTES
+        } finally {
+            secret.fill(0)
+        }
+    }
+
+    @Synchronized
     fun clear() {
         prefs.edit().clear().commit()
         try {
