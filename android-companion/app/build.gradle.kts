@@ -7,7 +7,7 @@ import java.util.Locale
 
 // Keep this record at script scope. A local data class inside Gradle's
 // nested task action triggers a Kotlin DSL IR code-generation failure.
-data class GuestManifestGuestManifestComponentRecord(
+data class GuestManifestComponentRecord(
     val type: String,
     val className: String,
     val exported: Boolean,
