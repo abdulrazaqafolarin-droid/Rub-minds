@@ -242,6 +242,8 @@ test("Work Profile DPC is a single system-bound receiver with local signer check
   const manifest = await read("app/src/main/AndroidManifest.xml");
   const gradle = await read("app/build.gradle.kts");
   const receiver = await read("app/src/main/java/app/rubminds/companion/WorkProfileAdminReceiver.kt");
+  const coordinator = await read("app/src/main/java/app/rubminds/companion/WorkProfileCoordinator.kt");
+  const secretStore = await read("app/src/main/java/app/rubminds/companion/WorkProfileBridgeSecretStore.kt");
   const launcher = await read("app/src/main/java/app/rubminds/companion/WorkProfileAppLauncher.kt");
   const auth = await read("app/src/main/java/app/rubminds/companion/WorkProfileLaunchCommand.kt");
   const activity = await read("app/src/main/java/app/rubminds/companion/MainActivity.kt");
@@ -256,6 +258,13 @@ test("Work Profile DPC is a single system-bound receiver with local signer check
   assert.match(receiver, /setCrossProfilePackages/);
   assert.match(receiver, /getCrossProfilePackages/);
   assert.match(receiver, /profile_owner_confirmed/);
+  assert.match(receiver, /PersistableBundle\\.class\\.java/);
+  assert.match(receiver, /getParcelableExtra/);
+  assert.match(receiver, /setProfileEnabled/);
+  assert.match(coordinator, /PersistableBundle/);
+  assert.match(coordinator, /EXTRA_PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME, admin/);
+  assert.match(secretStore, /hasSecret\\(\\)/);
+  assert.match(secretStore, /secret\\.fill\\(0\\)/);
   assert.match(coordinator, /PersistableBundle/);
   assert.match(coordinator, /EXTRA_PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME, admin/);
   assert.match(launcher, /canInteractAcrossProfiles/);
