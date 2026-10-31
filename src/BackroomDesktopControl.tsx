@@ -353,6 +353,13 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     }
     if(!controlGranted)return;
     const point=normalized(e.clientX,e.clientY);if(!point)return;
+    if(selection||targetStatus||draftAttemptRef.current){
+      targetAttemptRef.current='';draftAttemptRef.current='';
+      setSelection(null);
+      setTargetStatus('Manual computer interaction changed the typing target. Drag-select it again before requesting a draft.');
+      try{sendData({kind:'clear_target'});}
+      catch(error){flash('Could not clear the previous typing target. Stopping this remote session for safety.',true);void stopActivePeer();return;}
+    }
     try{sendData({kind:'input',event:{kind:'move',...point}});}catch(error){flash(String(error),true);}
   };
   const pointerMove=(e:PointerEvent<HTMLDivElement>)=>{
@@ -396,8 +403,9 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const keyDown=(e:KeyboardEvent<HTMLDivElement>)=>{
     if(!controlGranted||!dataRef.current||e.ctrlKey||e.metaKey||e.altKey)return;
     e.preventDefault();
-    if(targetStatus.startsWith('Verified editable field ·')){
-      targetAttemptRef.current='';setSelection(null);setTargetStatus('');
+    if(selection||targetStatus||draftAttemptRef.current){
+      targetAttemptRef.current='';draftAttemptRef.current='';setSelection(null);
+      setTargetStatus('Manual computer interaction changed the typing target. Drag-select it again before requesting a draft.');
       try{sendData({kind:'clear_target'});}
       catch(error){flash('Could not clear the previous typing target. Stopping this remote session for safety.',true);void stopActivePeer();return;}
     }
