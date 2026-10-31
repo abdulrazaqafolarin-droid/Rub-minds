@@ -218,8 +218,8 @@ androidComponents {
                     buildString {
                         appendLine("applicationId=$expectedAppId")
                         appendLine("manifestSha256=$digest")
-                        appendLine("permissions=${permissions.sorted().joinToString(")
-                        appendLine("exportedComponents=${actualExported.sorted().joinToString(")
+                        appendLine("permissions=${permissions.sorted().joinToString(separator = \",")}");
+                        appendLine("exportedComponents=${actualExported.sorted().joinToString(separator = \",")}");
                         appendLine("componentCount=${components.size}")
                     }
                 )
