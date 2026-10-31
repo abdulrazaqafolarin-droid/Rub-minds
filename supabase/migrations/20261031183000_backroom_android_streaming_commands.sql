@@ -36,3 +36,14 @@ create index if not exists backroom_android_commands_expiry_idx
 
 comment on table public.backroom_android_commands is
   'Service-role-only, expiring Android app-stream/control command queue. Device bearer authentication is enforced by the backroom-device Edge Function.';
+
+-- One handset has one MediaProjection and one screen peer at a time. Make the
+-- invariant atomic so requests from two rooms cannot create competing streams.
+update public.backroom_desktop_sessions
+set status = 'expired', stopped_at = coalesce(stopped_at, pg_catalog.clock_timestamp())
+where session_type = 'screen' and status = 'active'
+  and expires_at <= pg_catalog.clock_timestamp();
+
+create unique index if not exists backroom_desktop_sessions_one_active_screen_per_device_idx
+  on public.backroom_desktop_sessions(device_id)
+  where session_type = 'screen' and status = 'active';

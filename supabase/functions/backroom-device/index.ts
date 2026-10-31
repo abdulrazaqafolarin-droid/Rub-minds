@@ -453,7 +453,7 @@ Deno.serve(async req => {
       if (!app) return json(403, fail('app_not_selected_on_device'), origin);
 
       const { data: existingSession, error: existingSessionError } = await db.from('backroom_desktop_sessions')
-        .select('session_id').eq('device_id', start.deviceId).eq('room_id', start.roomId)
+        .select('session_id').eq('device_id', start.deviceId)
         .eq('session_type', 'screen').eq('status', 'active')
         .gt('expires_at', new Date().toISOString()).limit(1);
       if (existingSessionError) return json(503, fail('android_session_lookup_failed'), origin);

@@ -303,3 +303,9 @@ test("Work Profile DPC is a single system-bound receiver with local signer check
   assert.doesNotMatch(manifest, /CREATE_VIRTUAL_DEVICE/);
 });
 
+
+test("Android stream answer callback contains real Kotlin lines, not escaped newline text", async () => {
+  const service = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  assert.match(service, /override fun onSetSuccess\(\) \{\s+if \(connection\.iceGatheringState\(\)/);
+  assert.doesNotMatch(service, /\\\\n\\\\s+if \\(connection\\.iceGatheringState/);
+});
