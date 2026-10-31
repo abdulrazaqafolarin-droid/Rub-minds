@@ -216,3 +216,11 @@ test("HTTP transient failures count toward bounded Android capture heartbeat shu
   assert.match(poll, /MAX_POLL_FAILURES/);
   assert.match(poll, /device_cloud_heartbeat_lost/);
 });
+
+test("Android screen service declares a single volatile stop flag and aborts a poll batch after stop", async () => {
+  const service = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  const stoppingDeclarations = service.split("\n").filter(line => /^\s*(?:@Volatile\s+)?private var stopping = false\s*$/.test(line));
+  assert.equal(stoppingDeclarations.length, 1);
+  assert.match(service, /for \(index in 0 until commands\.length\(\)\) \{\s+if \(stopping\) break/);
+  assert.match(service, /private fun processCommand\(token: String, command: JSONObject\) \{\s+if \(stopping\) return/);
+});

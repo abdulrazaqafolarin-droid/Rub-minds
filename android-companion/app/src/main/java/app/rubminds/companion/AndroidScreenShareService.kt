@@ -218,6 +218,7 @@ class AndroidScreenShareService : Service() {
             }
             val commands = result.optJSONArray("commands") ?: return
             for (index in 0 until commands.length()) {
+                if (stopping) break
                 val command = commands.optJSONObject(index) ?: continue
                 processCommand(token, command)
             }
@@ -246,6 +247,7 @@ class AndroidScreenShareService : Service() {
     }
 
     private fun processCommand(token: String, command: JSONObject) {
+        if (stopping) return
         val commandId = command.optString("commandId")
         val requestId = command.optString("requestId")
         val sessionId = command.optString("sessionId")
@@ -731,8 +733,6 @@ class AndroidScreenShareService : Service() {
         stopCapture("task_removed")
         super.onTaskRemoved(rootIntent)
     }
-
-    private var stopping = false
 
     companion object {
         @Volatile private var instance: AndroidScreenShareService? = null
