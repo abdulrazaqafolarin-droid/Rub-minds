@@ -8,11 +8,12 @@ import android.os.Build
 
 class WorkProfileAppLauncher(context: Context) {
     private val app = context.applicationContext
-    private val crossProfiles = app.getSystemService(CrossProfileApps::class.java)
     private val secrets = WorkProfileBridgeSecretStore(app)
 
     fun launch(activity: Activity, packageName: String, signerSha256: String): String? {
         if (Build.VERSION.SDK_INT < 30) return "cross_profile_launch_requires_android_11"
+        val crossProfiles = app.getSystemService(CrossProfileApps::class.java)
+            ?: return "cross_profile_launch_service_unavailable"
         if (app.getSystemService(android.app.admin.DevicePolicyManager::class.java)
                 .isProfileOwnerApp(app.packageName)
         ) return "already_running_in_work_profile"
