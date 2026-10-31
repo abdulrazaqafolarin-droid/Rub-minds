@@ -143,3 +143,5 @@ The command protocol and touch policy have Node source-contract regression tests
 
 
 **Viewing topology:** the phone is the capture source and must keep the selected app window foreground. Open the Backroom Phone Frame control page on a separate device (for example a Windows laptop). Opening the control page on the same phone causes the selected app window to become hidden; Android pauses that app-window capture and Backroom shows a hidden-source state. This path is not an on-device overlay or same-phone virtual display.
+
+The Android stream setup screen also exposes **Disarm remote touch now**. It clears the local 15-minute gate and clears the service's active touch grant without stopping the view-only screen stream.

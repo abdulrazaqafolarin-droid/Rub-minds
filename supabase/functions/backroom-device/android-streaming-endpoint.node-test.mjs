@@ -179,3 +179,14 @@ test("initial Android visibility state is sent when the SCTP data channel opens"
   assert.match(channel, /DataChannel\.State\.OPEN/);
   assert.match(channel, /sendAppVisibility\(channel, sessionId, capturedContentVisible && !stopping\)/);
 });
+
+test("Android provides a separate local touch-disarm control without stopping view capture", async () => {
+  const setup = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidStreamSetupActivity.kt");
+  const service = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  assert.match(setup, /Disarm remote touch now/);
+  assert.match(setup, /RemoteTouchGate\.disarm\(this@AndroidStreamSetupActivity\)/);
+  assert.match(setup, /AndroidScreenShareService\.revokeLocalTouch\(this@AndroidStreamSetupActivity\)/);
+  assert.match(setup, /View-only sharing can continue/);
+  assert.match(service, /fun revokeLocalTouch\(context: Context\)/);
+  assert.match(service, /instance\?\.localControlGranted = false/);
+});

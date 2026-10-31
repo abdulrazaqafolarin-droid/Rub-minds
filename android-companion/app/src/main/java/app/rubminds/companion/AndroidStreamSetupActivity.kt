@@ -64,6 +64,15 @@ class AndroidStreamSetupActivity : Activity() {
             setOnClickListener { confirmTouchArm() }
         }
         root.addView(armButton)
+        root.addView(Button(this).apply {
+            text = "Disarm remote touch now"
+            setOnClickListener {
+                RemoteTouchGate.disarm(this@AndroidStreamSetupActivity)
+                AndroidScreenShareService.revokeLocalTouch(this@AndroidStreamSetupActivity)
+                refreshStatus()
+                Toast.makeText(this@AndroidStreamSetupActivity, "Remote touch revoked. View-only sharing can continue.", Toast.LENGTH_LONG).show()
+            }
+        })
         root.addView(TextView(this).apply {
             text = "Choose one of your saved apps to share"
             textSize = 14f
