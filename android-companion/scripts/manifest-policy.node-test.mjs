@@ -126,10 +126,11 @@ test("guest runtime code remains a provider-neutral contract with no bundled vir
   assert.match(contract, /issueAfterNativeConfirmation/);
   assert.match(contract, /internal fun consume\(/);
   assert.match(contract, /private constructor/);
+  assert.doesNotMatch(contract, /approvedLocally/);
   assert.match(contract, /submit_not_supported/);
   assert.doesNotMatch(contract, /approvedLocally/);
   assert.match(contract, /uuidPattern/);
-  assert.match(contract, /a-f0-9.*\\.a-f0-9/);
+  assert.match(contract, /digestPattern/);
 });
 
 test("phone frame target contract rejects stale, occupied, protected and non-guest targets", async () => {
