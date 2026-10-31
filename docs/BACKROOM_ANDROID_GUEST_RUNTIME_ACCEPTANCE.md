@@ -26,7 +26,7 @@ No candidate is permitted to add:
 
 ## Admission requirements
 
-The provider must pass `GuestRuntimeAdmissionPolicy` against the final signed release artifact and final merged APK manifest. Evidence must match the exact engine version, release artifact SHA-256, merged-manifest SHA-256 and handset profile. A manifest edit or rebuild invalidates the old physical-device evidence.
+The provider must pass `GuestRuntimeAdmissionPolicy` against the final signed release artifact and final merged APK manifest. Evidence must match the exact engine version, release artifact SHA-256, merged-manifest SHA-256 and handset profile. A document-picked APK must be passed only through the granted `content://` URI; the provider re-parses the actual APK and verifies its package and signing certificate. A manifest edit or rebuild invalidates the old physical-device evidence.
 
 Required capabilities:
 - rootless execution;
@@ -50,9 +50,9 @@ For each app under test (begin with a simple text editor, then ChatGPT and Claud
 | Guest frame | Capture the app | Frame is guest-only, has an increasing sequence and matches the active session and instance; no host status bar, other apps or full-device content is mislabeled as guest |
 | Coordinate transform | Tap each corner and centre in the Phone Frame | Touch lands at the corresponding guest-app position across portrait/landscape, density scaling and rotation |
 | Touch lifecycle | Perform DOWN, MOVE, UP and CANCEL, including multi-touch | Only active pointer IDs are accepted; stale, duplicate, out-of-order or excess pointers are rejected |
-| Text target | Drag over one empty text field | Accessibility driver returns the exact field identity, bounds and frame sequence; the drag covers at least 65% of that field |
+| Text target | Drag over one empty text field | The provider receives the current session/instance/frame sequence and normalized drag rectangle, then returns the actual accessibility field identity and bounds; the drag covers at least 65% of that field |
 | Unsafe targets | Try password, read-only, disabled, occupied and unexposed custom controls | Each is rejected without changing app text |
-| Draft approval | Request a draft | A native local confirmation is required; receipt is session- and selection-bound and expires |
+| Draft approval | Request a draft | A native local confirmation is required; the opaque receipt binds the session, selection, exact request ID and SHA-256 of the approved text, is single-use and expires |
 | Draft insertion | Confirm one plain-text draft | The exact field is re-resolved, verified empty and written once; read-back equals the full draft; submitted is false |
 | Replay | Reuse the old selection ID or approval receipt | Rejected; a new drag and fresh local confirmation are required |
 | Fresh drag | Drag to a different field, including an invalid field | Old selection and any pending draft are retired immediately |
