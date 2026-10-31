@@ -42,7 +42,7 @@ class AndroidStreamSetupActivity : Activity() {
             setTextColor(0xff172033.toInt())
         })
         root.addView(TextView(this).apply {
-            text = "1. Choose one of the apps saved in your local allowlist. 2. Approve Android's screen-sharing prompt and choose that same app window (not the whole display). 3. The companion brings that app to the foreground. 4. Open Backroom on your Windows laptop or another device; this phone must keep the selected app in the foreground, so the Backroom control page cannot be on this same phone while that app is being shared. 5. View streaming works without Accessibility; enable the optional touch service and arm touch locally only when you also want remote taps and swipes."
+            text = "1. Choose one of the apps saved in your local allowlist. 2. Approve Android's screen-sharing prompt and select that same app window only. App-window sharing was introduced in Android 14 QPR2; OEM rollout can vary. If the chooser offers only full-display sharing, cancel rather than sharing the whole phone. 3. The companion brings that app to the foreground. 4. Open Backroom on your Windows laptop or another device; this phone must keep the selected app in the foreground, so the Backroom control page cannot be on this same phone while that app is being shared. 5. View streaming works without Accessibility; enable the optional touch service and arm touch locally only when you also want remote taps and swipes."
             textSize = 13f
             setTextColor(0xff405070.toInt())
             setPadding(0, dp(12), 0, dp(12))
@@ -55,6 +55,12 @@ class AndroidStreamSetupActivity : Activity() {
             setPadding(dp(12), dp(12), dp(12), dp(12))
         }
         root.addView(privacy)
+        root.addView(TextView(this).apply {
+            text = "Device build: ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})\\n${Build.MANUFACTURER} ${Build.MODEL}\\nBuild: ${Build.DISPLAY}\\nIncremental: ${Build.VERSION.INCREMENTAL}"
+            textSize = 10f
+            setTextColor(0xff62708a.toInt())
+            setPadding(dp(2), dp(10), dp(2), dp(8))
+        })
         root.addView(Button(this).apply {
             text = "Enable accessibility service"
             setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
@@ -144,7 +150,7 @@ class AndroidStreamSetupActivity : Activity() {
 
     private fun requestProjection(targetPackageName: String) {
         if (Build.VERSION.SDK_INT < 34) {
-            Toast.makeText(this, "App-window selection requires Android 14 or later on this companion path.", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "MediaProjection streaming requires Android 14 or later. App-window selection specifically requires Android 14 QPR2 or later and OEM support.", Toast.LENGTH_LONG).show()
             return
         }
         val accessibilityReady = AndroidTouchAccessibilityService.isServiceEnabled(this)

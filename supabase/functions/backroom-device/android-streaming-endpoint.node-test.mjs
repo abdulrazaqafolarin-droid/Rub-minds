@@ -235,3 +235,12 @@ test("local touch revoke invalidates a late pending control grant response", asy
   const response = browser.slice(browser.indexOf("channel.on('broadcast', { event: 'android_response'"), browser.indexOf("channel.subscribe"));
   assert.match(response, /payload.requestId !== pendingControlRequestRef.current/);
 });
+
+test("Android app-window sharing UI names the QPR2 compatibility boundary and prints build identity", async () => {
+  const setup = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidStreamSetupActivity.kt");
+  assert.match(setup, /Android 14 QPR2/);
+  assert.match(setup, /cancel rather than sharing the whole phone/);
+  assert.match(setup, /Build\.VERSION\.SDK_INT/);
+  assert.match(setup, /Build\.DISPLAY/);
+  assert.match(setup, /Build\.VERSION\.INCREMENTAL/);
+});
