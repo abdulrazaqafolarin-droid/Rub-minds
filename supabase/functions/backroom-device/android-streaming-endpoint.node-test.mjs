@@ -39,6 +39,8 @@ test("Android stream Edge actions keep human auth, device bearer and platform bo
   assert.match(endpoint, /stopSessionIds/);
   assert.match(endpoint, /invalid_android_command_poll/);
   assert.match(endpoint, /activeSessionRow/);
+  assert.match(endpoint, /Date\.parse\(activeSessionRow\.expires_at\)/);
+  assert.match(endpoint, /activeSessionRow\?\.session_type === 'screen'/);
   assert.match(endpoint, /input.sessionId/);
   assert.match(companion, /pollFields.put\("sessionId", sessionId\)/);
   assert.match(endpoint, /nextSessionExpiry/);

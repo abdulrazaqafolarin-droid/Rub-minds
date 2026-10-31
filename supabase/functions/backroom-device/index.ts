@@ -569,9 +569,9 @@ Deno.serve(async req => {
           .eq('room_id', input.roomId).maybeSingle();
         if (activeSessionError) return json(503, fail('android_session_heartbeat_lookup_failed'), origin);
         if (!activeSessionRow || activeSessionRow.session_type !== 'screen' ||
-            activeSessionRow.status !== 'active' || activeSessionRow.expires_at <= now) {
-          if (activeSessionRow?.status === 'active') {
-            const status = activeSessionRow.expires_at <= now ? 'expired' : 'revoked';
+            activeSessionRow.status !== 'active' || Date.parse(activeSessionRow.expires_at) <= Date.now()) {
+          if (activeSessionRow?.session_type === 'screen' && activeSessionRow.status === 'active') {
+            const status = Date.parse(activeSessionRow.expires_at) <= Date.now() ? 'expired' : 'revoked';
             const { error } = await db.from('backroom_desktop_sessions')
               .update({ status, stopped_at: new Date().toISOString() })
               .eq('session_id', input.sessionId).eq('device_id', current.device_id)
