@@ -60,6 +60,10 @@ data class GuestRuntimeDescriptor(
     val maxApiLevel: Int,
     val supportedAbis: Set<String>,
     val targetSdk: Int,
+    /** SHA-256 of the exact signed release artifact reviewed for this provider. */
+    val releaseArtifactSha256: String,
+    /** SHA-256 of the final merged host manifest that was audited. */
+    val mergedManifestSha256: String,
     val capabilities: Set<GuestRuntimeCapability>,
     /** Permissions in the final merged host APK manifest, not just a library manifest. */
     val mergedHostPermissions: Set<String>,
@@ -74,6 +78,8 @@ data class GuestDeviceAcceptanceEvidence(
     val apiLevel: Int,
     val abi: String,
     val testRunId: String,
+    val releaseArtifactSha256: String,
+    val mergedManifestSha256: String,
     val passedChecks: Set<GuestAcceptanceCheck>
 )
 
@@ -127,6 +133,7 @@ object GuestRuntimeAdmissionPolicy {
 
     private val requiredCapabilities = GuestRuntimeCapability.values().toSet()
     private val requiredAcceptance = GuestAcceptanceCheck.values().toSet()
+    private val sha256Pattern = Regex("^[a-f0-9]{64}$")
 
     fun review(
         descriptor: GuestRuntimeDescriptor,
@@ -143,6 +150,8 @@ object GuestRuntimeAdmissionPolicy {
         if (device.abi !in descriptor.supportedAbis) blockers += "device_abi_not_supported"
         if (device.localProfileId.isBlank()) blockers += "local_device_profile_missing"
         if (descriptor.targetSdk < MIN_TARGET_SDK) blockers += "host_target_sdk_too_old"
+        if (!sha256Pattern.matches(descriptor.releaseArtifactSha256)) blockers += "release_artifact_digest_invalid"
+        if (!sha256Pattern.matches(descriptor.mergedManifestSha256)) blockers += "merged_manifest_digest_invalid"
         if (!descriptor.mergedManifestAudited) blockers += "final_merged_manifest_not_audited"
         if (descriptor.releaseArtifactDebugSigned) blockers += "release_artifact_uses_debug_signing"
 
@@ -170,6 +179,12 @@ object GuestRuntimeAdmissionPolicy {
                 evidenceBlockers += "acceptance_device_identity_mismatch"
             }
             if (evidence.testRunId.isBlank()) evidenceBlockers += "acceptance_test_run_id_missing"
+            if (evidence.releaseArtifactSha256 != descriptor.releaseArtifactSha256) {
+                evidenceBlockers += "acceptance_release_artifact_mismatch"
+            }
+            if (evidence.mergedManifestSha256 != descriptor.mergedManifestSha256) {
+                evidenceBlockers += "acceptance_merged_manifest_mismatch"
+            }
         }
         val missingChecks = if (evidence == null) requiredAcceptance.toList()
         else (requiredAcceptance - evidence.passedChecks).toList()
