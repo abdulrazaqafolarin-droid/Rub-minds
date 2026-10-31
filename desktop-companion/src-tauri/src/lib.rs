@@ -1005,33 +1005,20 @@ async fn approve_draft_request(app: AppHandle, state: State<'_, AppState>, reque
         pending.text
     ))?;
 
-    // Re-check after approval. The app may have moved, closed, changed focus,
-    // or populated the field while the dialog was open.
+    // Re-check after approval. The app may have moved, closed or populated
+    // the field while the native confirmation dialog was open.
     control_granted(&state, &pending.session_id)?;
     draft_granted(&state, &pending.session_id)?;
     let geometry = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
         .get(&pending.session_id).cloned().ok_or("Live monitor capture is not active")?;
     let (identity, px, py) = verify_selected_editable_target(&geometry, &pending.target)?;
 
-    // Consume the target before any input. An uncertain result can never be replayed.
+    // Consume before the one-shot UIA ValuePattern operation. The native driver
+    // re-resolves the exact element, verifies it is still empty, writes directly
+    // to that element and reads the exact value back. No global click/keyboard
+    // injection, Enter, Send, or automatic retry is involved.
     state.draft_targets.lock().map_err(|_| "Draft state unavailable")?.remove(&pending.session_id);
-    let mut enigo = Enigo::new(&Settings::default()).map_err(|_| "OS input driver is unavailable".to_string())?;
-    enigo.move_mouse(px, py, Coordinate::Abs).map_err(|_| "Could not focus the verified text field".to_string())?;
-    enigo.button(Button::Left, Direction::Click).map_err(|_| "Could not focus the verified text field".to_string())?;
-
-    // Confirm that the field receiving keyboard input is the same control the
-    // user selected. UIA readback is mandatory; unsupported apps fail closed.
-    let (focused_identity, focused_value) = input_targeting::inspect_focused()?;
-    if focused_identity != identity || !focused_value.is_empty() {
-        return Err("The focused field does not match the selected empty text field. No text was typed.".into());
-    }
-
-    enigo.text(&pending.text).map_err(|_| "Typing outcome is uncertain; inspect the field before retrying".to_string())?;
-    std::thread::sleep(Duration::from_millis(120));
-    let (after_identity, after_value) = input_targeting::inspect_focused()?;
-    if after_identity != identity || after_value != pending.text {
-        return Err("Text insertion could not be verified by reading back the exact field value. Inspect the field; do not retry automatically.".into());
-    }
+    input_targeting::set_value_exact(px, py, &identity, &pending.text)?;
     Ok("Text inserted into the verified editable field and read back exactly. No Enter or Send action was performed.".into())
 }
 
