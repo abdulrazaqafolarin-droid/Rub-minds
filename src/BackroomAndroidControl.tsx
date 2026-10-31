@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'react';
-import { Hand, MonitorPlay, Power, ShieldCheck, Smartphone } from 'lucide-react';
+import { ArrowLeft, Hand, MonitorPlay, Power, ShieldCheck, Smartphone } from 'lucide-react';
 import { supabase } from './supabase';
 import { type BackroomDevice } from './backroomCloudDevices';
 import { validateDeviceSignal } from '../integrations/backroom/desktop-realtime-protocol.mjs';
@@ -30,6 +30,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const pendingControlRequestRef = useRef('');
   const pointerRef = useRef<PointerStart | null>(null);
   const pendingTouchAcksRef = useRef<Map<string, number>>(new Map());
+  const pendingNavigationAcksRef = useRef<Map<string, number>>(new Map());
   const controlExpiryRef = useRef<number | null>(null);
   const startTimerRef = useRef<number | null>(null);
   const disconnectTimerRef = useRef<number | null>(null);
@@ -51,6 +52,8 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     dataRef.current?.close(); dataRef.current = null;
     for (const timer of pendingTouchAcksRef.current.values()) window.clearTimeout(timer);
     pendingTouchAcksRef.current.clear();
+    for (const timer of pendingNavigationAcksRef.current.values()) window.clearTimeout(timer);
+    pendingNavigationAcksRef.current.clear();
     streamRef.current?.getTracks().forEach(track => track.stop()); streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     sessionRef.current = ''; pointerRef.current = null; pendingControlRequestRef.current = '';
@@ -175,8 +178,22 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         let acknowledgement: any;
         try { acknowledgement = JSON.parse(String(event.data)); } catch { return; }
         if (!acknowledgement || acknowledgement.sessionId !== nextSessionId) return;
+        if (acknowledgement.kind === 'navigation_ack' &&
+            typeof acknowledgement.navigationId === 'string' &&
+            acknowledgement.action === 'back' && typeof acknowledgement.accepted === 'boolean') {
+          const navigationTimer = pendingNavigationAcksRef.current.get(acknowledgement.navigationId);
+          if (navigationTimer === undefined) return;
+          window.clearTimeout(navigationTimer);
+          pendingNavigationAcksRef.current.delete(acknowledgement.navigationId);
+          notify(acknowledgement.accepted
+            ? 'Android dispatched Back in the selected app.'
+            : 'Android rejected Back. Check that the selected app is still foreground and local touch is armed.', !acknowledgement.accepted);
+          return;
+        }
         if (acknowledgement.kind === 'touch_control_revoked') {
           setControlGranted(false);
+          for (const timer of pendingNavigationAcksRef.current.values()) window.clearTimeout(timer);
+          pendingNavigationAcksRef.current.clear();
           pendingControlRequestRef.current = '';
           if (controlExpiryRef.current !== null) window.clearTimeout(controlExpiryRef.current);
           if (controlRequestTimerRef.current !== null) window.clearTimeout(controlRequestTimerRef.current);
@@ -195,6 +212,8 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
             if (controlRequestTimerRef.current !== null) window.clearTimeout(controlRequestTimerRef.current);
             controlExpiryRef.current = null;
             controlRequestTimerRef.current = null;
+            for (const timer of pendingNavigationAcksRef.current.values()) window.clearTimeout(timer);
+            pendingNavigationAcksRef.current.clear();
             notify('The selected app window is hidden on the phone. Keep that app in the foreground; video and touch pause until Android reports it visible.');
           } else {
             notify('The selected app window is visible again. Request touch control separately after locally arming it on the phone.');
@@ -331,6 +350,29 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       }
       setBusy(false);
       notify(error instanceof Error ? error.message : 'Could not send the phone command.', true);
+    }
+  };
+
+  const sendNavigationAction = (action: 'back') => {
+    const channel = dataRef.current;
+    if (!controlGranted || !sourceVisible || !dataReady || !channel || channel.readyState !== 'open') {
+      notify('Wait for the app view and locally armed touch control before using Back.', true);
+      return;
+    }
+    const navigationId = uuid();
+    const timer = window.setTimeout(() => {
+      pendingNavigationAcksRef.current.delete(navigationId);
+      notify('No acknowledgement arrived for Back. The phone may be offline or the app may have left the foreground.', true);
+    }, 4_000);
+    pendingNavigationAcksRef.current.set(navigationId, timer);
+    try {
+      channel.send(JSON.stringify({
+        kind: 'navigation', navigationId, sessionId: sessionRef.current, appPackageName, action,
+      }));
+    } catch {
+      window.clearTimeout(timer);
+      pendingNavigationAcksRef.current.delete(navigationId);
+      notify('The phone rejected the Back command channel. Reconnect the stream before retrying.', true);
     }
   };
 

@@ -528,6 +528,27 @@ class AndroidScreenShareService : Service() {
         catch (_: Exception) { /* The video track remains the source of truth when available. */ }
     }
 
+    private fun sendNavigationAcknowledgement(
+        channel: DataChannel,
+        sessionId: String,
+        navigationId: String,
+        action: String,
+        accepted: Boolean
+    ) {
+        if (!UUID_PATTERN.matches(sessionId) || !UUID_PATTERN.matches(navigationId) ||
+            action != "back" || channel.state() != DataChannel.State.OPEN) return
+        val payload = JSONObject()
+            .put("kind", "navigation_ack")
+            .put("sessionId", sessionId)
+            .put("navigationId", navigationId)
+            .put("action", action)
+            .put("accepted", accepted)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+        try { channel.send(DataChannel.Buffer(ByteBuffer.wrap(payload), false)) }
+        catch (_: Exception) { /* The browser reports a missing navigation acknowledgement. */ }
+    }
+
     private fun sendTouchAcknowledgement(
         channel: DataChannel,
         sessionId: String,
@@ -569,6 +590,22 @@ class AndroidScreenShareService : Service() {
                 val bytes = ByteArray(buffer.data.remaining())
                 buffer.data.get(bytes)
                 val input = try { JSONObject(String(bytes, Charsets.UTF_8)) } catch (_: Exception) { return }
+                if (input.optString("kind") == "navigation") {
+                    val allowedNavigationKeys = setOf("kind", "navigationId", "sessionId", "appPackageName", "action")
+                    val navigationId = input.optString("navigationId")
+                    val action = input.optString("action")
+                    if (input.keys().asSequence().toSet() != allowedNavigationKeys ||
+                        !UUID_PATTERN.matches(navigationId) ||
+                        input.optString("sessionId") != sessionId ||
+                        input.optString("appPackageName") != appPackage ||
+                        action != "back"
+                    ) return
+                    val accepted = localControlGranted &&
+                        RemoteTouchGate.isArmed(this@AndroidScreenShareService) &&
+                        AndroidTouchAccessibilityService.performBack(sessionId, appPackage)
+                    sendNavigationAcknowledgement(channel, sessionId, navigationId, action, accepted)
+                    return
+                }
                 val allowedKeys = setOf("kind", "gestureId", "sessionId", "appPackageName", "gesture", "from", "to", "durationMs")
                 val gestureId = input.optString("gestureId")
                 if (input.keys().asSequence().toSet() != allowedKeys ||

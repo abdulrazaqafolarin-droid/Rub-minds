@@ -268,3 +268,18 @@ test("Phone Frame preserves hidden status if app-visibility message precedes fir
   assert.match(control, /notify\(initiallyVisible\s*\?/);
   assert.match(control, /Bring it to the foreground to resume the stream/);
 });
+
+test("Phone Frame Back action is OS-dispatched only with the same local touch and app identity gate", async () => {
+  const service = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  const accessibility = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidTouchAccessibilityService.kt");
+  const browser = await read("src/BackroomAndroidControl.tsx");
+  assert.match(service, /action != "back"/);
+  assert.match(service, /localControlGranted &&[\s\S]+?RemoteTouchGate\.isArmed\(this@AndroidScreenShareService\)/);
+  assert.match(service, /sendNavigationAcknowledgement\(channel, sessionId, navigationId, action, accepted\)/);
+  assert.match(accessibility, /performGlobalAction\(GLOBAL_ACTION_BACK\)/);
+  assert.match(accessibility, /boundSessionId != sessionId \|\| boundPackageName != packageName/);
+  assert.match(accessibility, /AppGrantStore\(this\)\.get\(packageName, signer\)/);
+  assert.match(browser, /sendNavigationAction\('back'\)/);
+  assert.match(browser, /kind !== 'navigation_ack'/);
+  assert.match(browser, /Android dispatched Back in the selected app/);
+});

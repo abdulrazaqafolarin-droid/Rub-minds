@@ -64,6 +64,22 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         return true
     }
 
+    fun dispatchRemoteBack(sessionId: String, packageName: String): Boolean {
+        if (boundSessionId != sessionId || boundPackageName != packageName ||
+            !RemoteTouchGate.isArmed(this) || !isServiceEnabled(this)
+        ) return false
+        val signer = AppIdentity.signingCertificateSha256(this, packageName) ?: return false
+        if (AppGrantStore(this).get(packageName, signer) == null) return false
+        val root = rootInActiveWindow ?: return false
+        try {
+            if (!root.isVisibleToUser || root.packageName?.toString() != packageName) return false
+            synchronized(this) { if (gestureInFlight) return false }
+            return performGlobalAction(GLOBAL_ACTION_BACK)
+        } finally {
+            root.recycle()
+        }
+    }
+
     fun dispatchRemoteGesture(gesture: RemoteTouchGesture, onResult: (Boolean) -> Unit): Boolean {
         val expectedSession = boundSessionId
         val expectedPackage = boundPackageName
@@ -152,6 +168,9 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             gesture: RemoteTouchGesture,
             onResult: (Boolean) -> Unit
         ): Boolean = instance?.dispatchRemoteGesture(gesture, onResult) == true
+
+        fun performBack(sessionId: String, packageName: String): Boolean =
+            instance?.dispatchRemoteBack(sessionId, packageName) == true
 
         fun clearActiveSession(sessionId: String? = null) {
             val current = instance ?: return
