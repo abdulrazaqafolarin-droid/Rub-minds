@@ -118,7 +118,10 @@ test("guest runtime code remains a provider-neutral contract with no bundled vir
   assert.match(contract, /mergedManifestSha256/);
   assert.match(contract, /GuestCaptureScope\.GUEST_APP/);
   assert.match(contract, /GuestCaptureScope\.WHOLE_DEVICE/);
-  assert.match(contract, /approvedLocally/);
+  assert.match(contract, /GuestLocalApprovalReceipt/);
+  assert.match(contract, /issueAfterNativeConfirmation/);
+  assert.match(contract, /internal fun consume\(/);
+  assert.match(contract, /private constructor/);
   assert.match(contract, /submit_not_supported/);
 });
 
