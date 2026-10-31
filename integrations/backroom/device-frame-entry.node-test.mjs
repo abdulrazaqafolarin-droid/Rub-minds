@@ -63,6 +63,7 @@ test("Android Phone Frame wires a consented WebRTC stream and a separate touch g
   assert.match(phone, /import BackroomAndroidControl/);
   assert.match(phone, /<BackroomAndroidControl device=\{activeDevice\} roomId=\{roomId\} \/>/);
   assert.match(control, /RTCPeerConnection/);
+  assert.match(control, /addTransceiver\\('video', \\{ direction: 'recvonly' \\}\\)/);
   assert.match(control, /android\/session-start/);
   assert.match(control, /android\/command/);
   assert.match(control, /request_control/);
