@@ -421,7 +421,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
             {targetStatus&&<div className="br-desktop-caption" role="status">{targetStatus}</div>}
             {controlGranted&&draftGranted&&<div className="br-desktop-draft">
               <textarea value={draft} onChange={e=>setDraft(e.target.value)} rows={2} maxLength={4000} placeholder="Write the text to insert in the selected area. It will never press Enter or Send."/>
-              <button type="button" onClick={requestDraft} disabled={!selection||!draft.trim()}>Request draft insertion</button>
+              <button type="button" onClick={requestDraft} disabled={!selection||!targetStatus.startsWith('Verified editable field ·')||!draft.trim()}>Request draft insertion</button>
             </div>}
             {controlGranted&&<div className="br-desktop-caption">Computer control is locally approved for a limited time. The user at the computer can revoke it immediately. Draft typing has a second independent approval and never sends or submits.</div>}
           </div>}
