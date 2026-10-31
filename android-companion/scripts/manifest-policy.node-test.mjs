@@ -229,6 +229,8 @@ test('local Android launch requires persisted signer-bound approval before and a
   assert.match(source, /AppGrantPolicy\.canLaunch\(grant, digest\)/);
   assert.match(source, /AppGrantPolicy\.canLaunch\(currentGrant, currentDigest\)/);
   assert.match(source, /getLaunchIntentForPackage\(packageName\)/);
+  assert.match(source, /isEnabled = selected && store\.get\(app\.packageName, digest \?: ""\) != null/);
+  assert.match(source, /store\.save\(grants\)\s*\/\/ Rebuild the rows after persisting:[\s\S]*?drawAppRows\(\)/);
   assert.match(source, /setPositiveButton\("Open"\)/);
   assert.doesNotMatch(source, /fun openSelectedAppLocally[\s\S]*?private fun saveChoices[\s\S]*?sendCommand\(/);
 });

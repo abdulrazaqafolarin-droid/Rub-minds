@@ -324,7 +324,7 @@ class MainActivity : Activity() {
                 text = "Open on this phone"
                 // This is a deliberate local action, never a cloud-issued
                 // remote launch. Saving app selections is a separate step.
-                isEnabled = selected
+                isEnabled = selected && store.get(app.packageName, digest ?: "") != null
                 setOnClickListener { openSelectedAppLocally(app.packageName) }
             })
             row.addView(TextView(this).apply {
@@ -383,7 +383,9 @@ class MainActivity : Activity() {
             AppGrant(packageName, digest, allowLaunch = true, allowDraftInsertion = packageName in draftGrants)
         }
         store.save(grants)
-        appRows.forEach { (packageName, row) -> row.second.isEnabled = packageName in launchGrants }
+        // Rebuild the rows after persisting: newly approved apps gain their
+        // local Open action; revoked apps immediately lose it.
+        drawAppRows()
         syncCloudInventory()
     }
 
