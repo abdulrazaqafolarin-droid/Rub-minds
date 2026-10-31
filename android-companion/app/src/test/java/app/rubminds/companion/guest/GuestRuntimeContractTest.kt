@@ -16,6 +16,7 @@ class GuestRuntimeContractTest {
         engineId = "safe.guest.engine",
         engineVersion = "0.1.0",
         licenseId = "Apache-2.0",
+        isolationBoundary = GuestIsolationBoundary.MICRODROID_VM,
         minApiLevel = 28,
         maxApiLevel = 36,
         supportedAbis = setOf("arm64-v8a"),
@@ -116,6 +117,25 @@ class GuestRuntimeContractTest {
     ) = GuestLocalApprovalReceipt.issueAfterNativeConfirmation(
         lease.sessionId, lease.selectionId, requestId, text, issuedAt, expiresAt
     )!!
+
+    @Test fun sameHostUidHooksAndUnverifiedBoundariesAreBlocked() {
+        val sameUid = descriptor.copy(isolationBoundary = GuestIsolationBoundary.SAME_HOST_UID_HOOKS)
+        val unverified = descriptor.copy(isolationBoundary = GuestIsolationBoundary.UNVERIFIED)
+        listOf(sameUid, unverified).forEach { candidate ->
+            val review = GuestRuntimeAdmissionPolicy.review(candidate, device)
+            assertEquals(GuestRuntimeDecision.BLOCKED, review.decision)
+            assertTrue(review.blockers.contains("guest_os_sandbox_isolation_not_enforced"))
+        }
+    }
+
+    @Test fun guestOsIsolationCapabilityIsRequiredIndependently() {
+        val candidate = descriptor.copy(
+            capabilities = descriptor.capabilities - GuestRuntimeCapability.GUEST_OS_SANDBOX_ISOLATION
+        )
+        val review = GuestRuntimeAdmissionPolicy.review(candidate, device)
+        assertEquals(GuestRuntimeDecision.BLOCKED, review.decision)
+        assertTrue(review.blockers.contains("capability_missing_guest_os_sandbox_isolation"))
+    }
 
     @Test fun safeCandidateStillRequiresDeviceAcceptanceEvidence() {
         val review = GuestRuntimeAdmissionPolicy.review(descriptor, device)
