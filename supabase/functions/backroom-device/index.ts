@@ -762,7 +762,7 @@ Deno.serve(async req => {
         return json(400, fail('invalid_android_ack'), origin);
       }
       const { data: row, error: lookupError } = await db.from('backroom_android_commands')
-        .select('id,device_id,room_id,session_id,request_id,command')
+        .select('id,device_id,room_id,session_id,request_id,command,status,lease_until,expires_at,result')
         .eq('id', ack.commandId).eq('device_id', current.device_id)
         .eq('session_id', ack.sessionId).eq('request_id', ack.requestId).maybeSingle();
       if (lookupError) return json(503, fail('android_ack_lookup_failed'), origin);
@@ -773,24 +773,55 @@ Deno.serve(async req => {
         await db.from('backroom_android_commands')
           .update({ status: 'rejected', result: 'device_room_binding_revoked', lease_until: null })
           .eq('id', ack.commandId).eq('device_id', current.device_id)
-          .eq('status', 'leased');
+          .in('status', ['pending','leased']);
         return json(403, fail('android_ack_room_binding_revoked'), origin);
       }
-      const { data, error } = await db.from('backroom_android_commands')
-        .update({ status: 'acked', result: ack.result, acked_at: new Date().toISOString(), lease_until: null })
-        .eq('id', ack.commandId).eq('device_id', current.device_id)
-        .eq('status', 'leased').gt('lease_until', new Date().toISOString())
-        .gt('expires_at', new Date().toISOString()).select('id');
-      if (error) return json(503, fail('android_ack_failed'), origin);
-      if (!Array.isArray(data) || data.length !== 1) return json(409, fail('android_command_lease_expired'), origin);
-      if (row.command?.action === 'request_control') {
-        const canControl = ack.canControl === true && ack.result === 'control_granted';
+
+      const isControlCommand = row.command?.action === 'request_control';
+      const controlGranted = isControlCommand && ack.canControl === true && ack.result === 'control_granted';
+      const broadcastControlResult = async () => {
+        if (!isControlCommand) return;
         await broadcastPrivateDeviceEvent({
           projectUrl: url, apiKey: serviceKey, deviceId: current.device_id, event: 'android_response',
           payload: { deviceId: current.device_id, roomId: row.room_id,
-            requestId: ack.requestId, sessionId: ack.sessionId, ok: canControl,
-            capability: 'control', ...(canControl ? {} : { reason: 'local_touch_permission_missing' }) },
+            requestId: ack.requestId, sessionId: ack.sessionId, ok: controlGranted,
+            capability: 'control', ...(controlGranted ? {} : { reason: 'local_touch_permission_missing' }) },
         });
+      };
+
+      // The phone may retry an ACK after a transient HTTP/Realtime failure. Do not
+      // reject a duplicate ACK: repeat the room-scoped result broadcast idempotently.
+      if (row.status === 'acked') {
+        if (row.result !== ack.result) return json(409, fail('android_ack_result_conflict'), origin);
+        try { await broadcastControlResult(); }
+        catch { return json(503, fail('android_control_result_delivery_failed'), origin); }
+        return json(200, { ok: true, acked: true, replayed: true }, origin);
+      }
+      if (row.status !== 'leased' || !row.lease_until || Date.parse(row.lease_until) <= Date.now() ||
+          Date.parse(row.expires_at) <= Date.now()) {
+        return json(409, fail('android_command_lease_expired'), origin);
+      }
+
+      // Publish before committing the ACK. If Realtime is temporarily unavailable,
+      // the device keeps the command leased and will retry it after lease expiry.
+      try { await broadcastControlResult(); }
+      catch { return json(503, fail('android_control_result_delivery_failed'), origin); }
+
+      const ackedAt = new Date().toISOString();
+      const { data, error } = await db.from('backroom_android_commands')
+        .update({ status: 'acked', result: ack.result, acked_at: ackedAt, lease_until: null })
+        .eq('id', ack.commandId).eq('device_id', current.device_id)
+        .eq('status', 'leased').gt('lease_until', ackedAt)
+        .gt('expires_at', ackedAt).select('id');
+      if (error) return json(503, fail('android_ack_failed'), origin);
+      if (!Array.isArray(data) || data.length !== 1) {
+        // A second delivery can win the compare-and-swap after the broadcast.
+        const { data: latest } = await db.from('backroom_android_commands')
+          .select('status,result').eq('id', ack.commandId).eq('device_id', current.device_id).maybeSingle();
+        if (latest?.status === 'acked' && latest.result === ack.result) {
+          return json(200, { ok: true, acked: true, replayed: true }, origin);
+        }
+        return json(409, fail('android_command_lease_expired'), origin);
       }
       if (row.command?.action === 'stop_session') {
         await db.from('backroom_desktop_sessions').update({ status: 'stopped', stopped_at: new Date().toISOString() })

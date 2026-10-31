@@ -81,3 +81,13 @@ test("Android queue and media components do not add an inbound phone listener or
   assert.doesNotMatch(companion, /ServerSocket|HttpServer|127\.0\.0\.1|localhost/);
   assert.doesNotMatch(companion, /startCapture\(.*fromCloud/);
 });
+
+test("control ACK broadcasts before marking the leased queue row acknowledged and supports replay", async () => {
+  const endpoint = await read("supabase/functions/backroom-device/index.ts");
+  const handler = endpoint.slice(endpoint.indexOf("if (action === 'android/ack')"), endpoint.indexOf("if (action === 'desktop/inventory')"));
+  assert.match(handler, /row.status === 'acked'/);
+  assert.match(handler, /row.result !== ack.result/);
+  assert.ok(handler.indexOf("await broadcastControlResult()") < handler.indexOf(".update({ status: 'acked'"));
+  assert.match(handler, /android_control_result_delivery_failed/);
+  assert.match(handler, /replayed: true/);
+});
