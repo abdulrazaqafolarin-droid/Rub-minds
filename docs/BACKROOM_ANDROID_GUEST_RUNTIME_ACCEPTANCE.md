@@ -284,3 +284,41 @@ Before calling the mirror tested, build/install the exact companion APK, apply t
 
 
 Compatibility note: app-window capture first became available in Android 14 QPR2. API 34 alone is not sufficient evidence that the TECNO/OEM firmware exposes the app-only picker. The setup UI displays Android release, SDK, build and incremental identifiers. Acceptance must record those values and confirm the Android chooser actually presents the intended single-app option. Cancel the flow if it offers full-display capture only.
+
+## Phone keyboard and remote text insertion — source implementation (2026-10-31)
+
+The live app mirror now has a separate remote typing path through the Rub Minds Android input method. This is not a keyboard overlay in the streamed image: Android app-window sharing excludes system UI, so the soft-keyboard surface should not be expected to appear in the Phone Frame. The user focuses a text field in the selected app on the phone, then types into the Backroom composer on the control device; the selected Rub Minds IME commits the text into that active phone editor.
+
+### Local setup and safety rules
+
+- The user must enable Rub Minds keyboard in Android Settings, select it in Android's input-method picker, and separately confirm **Allow Backroom typing for 15 minutes** on the phone.
+- The typing grant is process-local and is not persisted. Process death or service shutdown clears it; a fresh local confirmation is required.
+- The phone binds remote text to the active screen session and the exact locally selected app package.
+- Each insertion rechecks that the current input editor belongs to that package, the current APK signer still matches, and the app's local allowDraftInsertion grant is present.
+- Password/credential fields are rejected. Text is capped at 4,000 characters. Newlines and tabs are permitted only in a multiline field; single-line fields reject line breaks.
+- The only write API exposed to the remote path is InputConnection.commitText. It does not read editor contents, send key events, press Enter, run an IME action, or submit a form.
+- Each request has a UUID and is consumed once. The phone acknowledges inserted/rejected outcomes over the active WebRTC data channel. Request IDs are kept in a bounded two-minute replay cache.
+- The phone user can disarm remote typing independently from touch. Stopping the mirror or destroying the service also revokes typing.
+
+### Physical handset acceptance — still required
+
+| Check | Action | Pass condition |
+|---|---|---|
+| Enable/select IME | Enable Rub Minds keyboard in Android Settings, then select it from the OS input-method picker | The companion reports the exact Rub Minds IME enabled and selected |
+| Local arm | Confirm remote typing on the phone | The local grant is active for at most 15 minutes and is absent after process restart |
+| Focused text field | Open the selected app and focus an ordinary text field | Phone acknowledges that the current input connection is ready |
+| Plain text | Type a short phrase in Backroom's composer and insert it | The phrase appears at the phone cursor exactly once |
+| Multiline editor | In a multiline editor, insert a multi-line snippet | Line breaks are inserted as text; no Enter key or submit action is sent |
+| Single-line editor | Attempt to insert a payload containing a newline | Phone rejects it and leaves the editor unchanged |
+| Password field | Focus a password/credential field and try insertion | Phone rejects the request |
+| App/package mismatch | Switch away from the selected app or open a different package | Phone rejects the stale/mismatched request |
+| Permission revocation | Disarm remote typing while the stream is active | Phone sends a revocation event and subsequent text requests are rejected |
+| Stop/restart | Stop sharing, kill/restart the companion process, then retry | Remote typing is off and must be locally re-armed |
+| Replay | Deliver the same request UUID twice | The second insertion is rejected |
+| Offline/reconnect | Close the data channel during a request, then reconnect | UI reports timeout/reconnect; a new request succeeds only after a fresh acknowledgement |
+
+These are **acceptance steps, not passed results**. Record the Android firmware/API, selected app, keyboard selection state, app signer, test time and each observed phone acknowledgement. Do not mark the path production-ready until the exact signed APK builds, installs and passes these checks on the target handset.
+
+### Scope boundary
+
+The remote composer is a control-device typing surface that writes into the phone's selected IME; it does not mirror the soft keyboard itself into the app-only stream. The phone's local keyboard remains usable locally. This typing feature does not provide isolated guest execution, guest accessibility-tree capture, drag-select field discovery, or guest draft readback.
