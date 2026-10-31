@@ -100,6 +100,14 @@ class GuestRuntimeContractTest {
         expiresAtMillis = expiresAt
     )
 
+    private fun approval(
+        lease: GuestSelectionLease,
+        issuedAt: Long = 10_000,
+        expiresAt: Long = 50_000
+    ) = GuestLocalApprovalReceipt.issueAfterNativeConfirmation(
+        lease.sessionId, lease.selectionId, issuedAt, expiresAt
+    )!!
+
     @Test fun safeCandidateStillRequiresDeviceAcceptanceEvidence() {
         val review = GuestRuntimeAdmissionPolicy.review(descriptor, device)
         assertEquals(GuestRuntimeDecision.DEVICE_POC_REQUIRED, review.decision)
@@ -306,10 +314,13 @@ class GuestRuntimeContractTest {
     @Test fun draftRequiresMatchingSelectionLocalApprovalAndPlainTextWithoutSubmit() {
         val lease = selection()
         val target = field()
-        val valid = GuestDraftRequest("draft-1", lease.selectionId, "Review this answer", approvedLocally = true)
+        val valid = GuestDraftRequest("draft-1", lease.selectionId, "Review this answer", approval(lease))
         assertNull(GuestTargetPolicy.validateDraft(frame(), target, lease, valid, 10_000))
         assertEquals("local_approval_required", GuestTargetPolicy.validateDraft(
-            frame(), target, lease, valid.copy(approvedLocally = false), 10_000
+            frame(), target, lease, valid.copy(approval = null), 10_000
+        ))
+        assertEquals("local_approval_invalid_or_expired", GuestTargetPolicy.validateDraft(
+            frame(), target, lease, valid.copy(approval = approval(lease, 0, 500)), 10_000
         ))
         assertEquals("draft_selection_mismatch", GuestTargetPolicy.validateDraft(
             frame(), target, lease, valid.copy(selectionId = "stale-selection"), 10_000
@@ -326,6 +337,16 @@ class GuestRuntimeContractTest {
     }
 }
 
+
+
+    @Test fun localApprovalReceiptIsBoundToExactSessionAndSelectionAndCanBeConsumedOnlyOnce() {
+        val lease = selection()
+        val receipt = approval(lease)
+        assertTrue(receipt.consume("session-1", lease.selectionId, 10_000))
+        assertFalse(receipt.consume("session-1", lease.selectionId, 10_000))
+        val other = approval(lease.copy(selectionId = "selection-other"))
+        assertFalse(other.consume("session-other", "selection-other", 10_000))
+    }
 
     @Test fun guestInstallMustUseAValidSignerAndFreshEmptyDataContainer() {
         val request = GuestAppInstallRequest(
@@ -388,7 +409,7 @@ class GuestRuntimeContractTest {
         val currentFrame = frame()
         val currentField = field()
         val currentSelection = selection()
-        val draft = GuestDraftRequest("draft-1", currentSelection.selectionId, "one-shot draft", true)
+        val draft = GuestDraftRequest("draft-1", currentSelection.selectionId, "one-shot draft", approval(currentSelection))
         assertNull(guard.activate(currentFrame, currentField, currentSelection, 10_000))
         assertNull(guard.consumeForDraft(currentFrame, currentField, currentSelection, draft, 10_000))
         assertEquals(
@@ -406,7 +427,7 @@ class GuestRuntimeContractTest {
             "target_selection_not_active",
             guard.consumeForDraft(
                 currentFrame, currentField, nextSelection,
-                GuestDraftRequest("draft-2", nextSelection.selectionId, "text", true), 10_000
+                GuestDraftRequest("draft-2", nextSelection.selectionId, "text", approval(nextSelection)), 10_000
             )
         )
     }
@@ -421,7 +442,7 @@ class GuestRuntimeContractTest {
             "local_approval_required",
             guard.consumeForDraft(
                 currentFrame, currentField, currentSelection,
-                GuestDraftRequest("draft-1", currentSelection.selectionId, "draft", false), 10_000
+                GuestDraftRequest("draft-1", currentSelection.selectionId, "draft", null), 10_000
             )
         )
         assertNull(guard.consumeForDraft(
@@ -476,7 +497,7 @@ class GuestRuntimeContractTest {
             "target_selection_not_active",
             guard.consumeForDraft(
                 currentFrame, currentField, oldSelection,
-                GuestDraftRequest("draft-old", oldSelection.selectionId, "text", true), 10_000
+                GuestDraftRequest("draft-old", oldSelection.selectionId, "text", approval(oldSelection)), 10_000
             )
         )
     }
