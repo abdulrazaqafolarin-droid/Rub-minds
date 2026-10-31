@@ -50,3 +50,12 @@ No production migration, merge, or deployment is part of this acceptance checkli
 - The final pass re-reads the same UIA element and confirms the exact text, while retaining the enabled/visible/non-password/writable checks. Empty-value is required before insertion, not after it.
 
 - The pre-write validator must reject any non-empty field; the post-write validator must allow only a non-empty exact match to the submitted text while still enforcing enabled, visible, non-password and writable metadata.
+
+
+## Latest native selection safeguards
+
+- A failed or new drag clears the previously stored target before validation.
+- A queue-overflow rejection also clears the previous native target.
+- Each drag is tagged with a unique attempt ID; the browser ignores any reply for an older selection.
+- The native driver uses half-open pixel rectangles for the drag area and UIA field bounds; the selected rectangle must be at least 65% covered by the one resolved editable control.
+- The final read-back helper must match the exact non-empty submitted draft and reject truncation, extra content or an empty expected value.
