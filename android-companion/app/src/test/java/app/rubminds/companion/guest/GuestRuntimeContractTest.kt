@@ -35,7 +35,7 @@ class GuestRuntimeContractTest {
                 type = GuestHostComponentType.SERVICE,
                 exported = true,
                 permission = "android.permission.BIND_INPUT_METHOD",
-                permissionProtection = GuestPermissionProtection.SYSTEM,
+                permissionProtection = GuestPermissionProtection.SIGNATURE,
                 isSystemBoundInputMethod = true
             )
         ),
