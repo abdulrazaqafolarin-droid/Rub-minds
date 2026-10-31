@@ -534,7 +534,7 @@ Deno.serve(async req => {
         if (stopError) return json(503, fail('android_session_stop_failed'), origin);
         try {
           await broadcastPrivateDeviceEvent({
-            projectUrl: url, apiKey: serviceKey, deviceId: command.deviceId, event: 'signal',
+            projectUrl: url, apiKey: serviceKey, deviceId: command.deviceId, event: 'android_signal',
             payload: { deviceId: command.deviceId, roomId: command.roomId,
               sessionId: command.sessionId, issuedAt: Date.now(), stop: true,
               actorUserId: actor.userId, actorDisplayName: actor.displayName },
@@ -638,7 +638,7 @@ Deno.serve(async req => {
       if (session.session.session_type !== 'screen') return json(409, fail('android_screen_session_required'), origin);
       try {
         await broadcastPrivateDeviceEvent({
-          projectUrl: url, apiKey: serviceKey, deviceId: current.device_id, event: 'signal',
+          projectUrl: url, apiKey: serviceKey, deviceId: current.device_id, event: 'android_signal',
           payload: { deviceId: current.device_id, roomId: input.roomId,
             sessionId: signal.sessionId, issuedAt: Date.now(),
             answer: signal.answer, canControl: signal.canControl },
@@ -675,7 +675,7 @@ Deno.serve(async req => {
       }
       try {
         await broadcastPrivateDeviceEvent({
-          projectUrl: url, apiKey: serviceKey, deviceId: current.device_id, event: 'signal',
+          projectUrl: url, apiKey: serviceKey, deviceId: current.device_id, event: 'android_signal',
           payload: { deviceId: current.device_id, roomId: closeRequest.roomId,
             sessionId: closeRequest.sessionId, issuedAt: Date.now(), stop: true },
         });
@@ -710,7 +710,7 @@ Deno.serve(async req => {
       if (row.command?.action === 'request_control') {
         const canControl = ack.canControl === true && ack.result === 'control_granted';
         await broadcastPrivateDeviceEvent({
-          projectUrl: url, apiKey: serviceKey, deviceId: current.device_id, event: 'response',
+          projectUrl: url, apiKey: serviceKey, deviceId: current.device_id, event: 'android_response',
           payload: { deviceId: current.device_id, roomId: row.room_id,
             requestId: ack.requestId, sessionId: ack.sessionId, ok: canControl,
             capability: 'control', ...(canControl ? {} : { reason: 'local_touch_permission_missing' }) },

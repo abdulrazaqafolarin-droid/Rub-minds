@@ -1,5 +1,5 @@
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const EVENTS=new Set(['command','signal','device_revoked','response']);
+const EVENTS=new Set(['command','signal','device_revoked','response','android_signal','android_response']);
 export async function broadcastPrivateDeviceEvent({
  projectUrl,apiKey,deviceId,event,payload,fetchImpl=fetch
 }={}){
@@ -18,7 +18,7 @@ export async function broadcastPrivateDeviceEvent({
    throw new TypeError('Invalid Supabase project URL');
  if(!local&&!/(?:^|\.)supabase\.(?:co|in)$/i.test(url.hostname))
    throw new TypeError('Expected a Supabase project URL');
- const topic='backroom-device:'+deviceId.toLowerCase();
+ const topic=event.startsWith('android_')\n  ? 'backroom-android:'+deviceId.toLowerCase()+':'+payload.roomId.toLowerCase()\n  : 'backroom-device:'+deviceId.toLowerCase();
  const endpoint=base+'/realtime/v1/api/broadcast/'+encodeURIComponent(topic)+'/events/'+encodeURIComponent(event)+'?private=true';
  const response=await fetchImpl(endpoint,{
   method:'POST',

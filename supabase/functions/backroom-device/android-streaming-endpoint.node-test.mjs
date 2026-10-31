@@ -31,6 +31,8 @@ test("Android stream Edge actions keep human auth, device bearer and platform bo
   assert.match(endpoint, /action: command.command/);
   assert.match(endpoint, /lease_until/);
   assert.match(endpoint, /android_session_close_failed/);
+  assert.match(endpoint, /event: 'android_signal'/);
+  assert.match(endpoint, /event: 'android_response'/);
   assert.match(endpoint, /validateAndroidSessionStart/);
   assert.match(endpoint, /validateAndroidDeviceCommand/);
   assert.match(endpoint, /validateAndroidCommandAck/);

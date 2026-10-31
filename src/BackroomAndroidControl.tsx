@@ -68,10 +68,10 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     disposePeer(); setChannelReady(false);
     if (!supabase || device.platform !== 'android' || device.status !== 'active' || !roomId) return;
     let disposed = false;
-    const channel = supabase.channel('backroom-device:' + device.device_id, {
+    const channel = supabase.channel('backroom-android:' + device.device_id + ':' + roomId, {
       config: { private: true, broadcast: { ack: true, self: false } },
     });
-    channel.on('broadcast', { event: 'signal' }, async ({ payload }: any) => {
+    channel.on('broadcast', { event: 'android_signal' }, async ({ payload }: any) => {
       if (disposed) return;
       const signal = validateDeviceSignal(payload, { deviceId: device.device_id, roomId, now: Date.now(), maxAgeMs: 120_000 });
       if (!signal || signal.sessionId !== sessionRef.current) return;
@@ -82,7 +82,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       }
       if (signal.stop) { notify('The phone stopped the screen-sharing session.'); disposePeer(); }
     });
-    channel.on('broadcast', { event: 'response' }, ({ payload }: any) => {
+    channel.on('broadcast', { event: 'android_response' }, ({ payload }: any) => {
       if (disposed || payload?.deviceId !== device.device_id || payload?.roomId !== roomId ||
           payload?.sessionId !== sessionRef.current || typeof payload?.requestId !== 'string' ||
           payload.requestId !== pendingControlRequestRef.current) return;

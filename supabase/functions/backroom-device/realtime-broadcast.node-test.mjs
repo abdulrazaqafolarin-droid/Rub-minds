@@ -59,3 +59,27 @@ test('does not report success if Realtime server rejects the private event',asyn
   fetchImpl:async()=>({ok:false,status:401})
  }),/rejected/);
 });
+
+test('Android SDP and permission responses are sent to the exact device-room topic',async()=>{
+ let calledUrl='';
+ const result=await broadcastPrivateDeviceEvent({
+  projectUrl:'https://example-project.supabase.co',apiKey:'server-key-long-enough',
+  deviceId,event:'android_signal',
+  payload:{deviceId,roomId,sessionId:requestId,issuedAt:Date.now(),stop:true},
+  fetchImpl:async(url)=>{calledUrl=url;return {ok:true,status:202};}
+ });
+ assert.equal(result.event,'android_signal');
+ assert.ok(calledUrl.includes(encodeURIComponent('backroom-android:'+deviceId+':'+roomId)));
+ assert.ok(calledUrl.endsWith('/events/android_signal?private=true'));
+});
+test('Android-specific events are accepted but remain distinct from generic desktop events',async()=>{
+ let calledUrl='';
+ const result=await broadcastPrivateDeviceEvent({
+  projectUrl:'https://example-project.supabase.co',apiKey:'server-key-long-enough',
+  deviceId,event:'android_response',
+  payload:{deviceId,roomId,requestId,sessionId:requestId,ok:false,capability:'control'},
+  fetchImpl:async(url)=>{calledUrl=url;return {ok:true,status:202};}
+ });
+ assert.equal(result.event,'android_response');
+ assert.ok(calledUrl.includes(encodeURIComponent('backroom-android:'+deviceId+':'+roomId)));
+});
