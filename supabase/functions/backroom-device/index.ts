@@ -21,6 +21,7 @@ const db = createClient(url, serviceKey, { auth: { persistSession: false, autoRe
 const allowedOrigins = new Set((Deno.env.get('BACKROOM_DEVICE_ALLOWED_ORIGINS') ?? 'https://rub-minds.vercel.app')
   .split(',').map(value => value.trim()).filter(Boolean));
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ANDROID_SESSION_LEASE_MS = 2 * 60 * 1000;
 const HEX = /^[a-f0-9]{64}$/;
 const bearerPattern = /^Bearer ([A-Za-z0-9_.-]{32,4096})$/;
 const MAX_BYTES = 96 * 1024;
@@ -460,7 +461,7 @@ Deno.serve(async req => {
         return json(409, fail('android_screen_session_already_active'), origin);
       }
 
-      const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      const expiresAt = new Date(Date.now() + ANDROID_SESSION_LEASE_MS).toISOString();
       const { error: sessionError } = await db.from('backroom_desktop_sessions').insert({
         session_id: start.sessionId, device_id: start.deviceId, room_id: start.roomId,
         requested_by: userId, session_type: 'screen', status: 'active', expires_at: expiresAt,
@@ -543,6 +544,12 @@ Deno.serve(async req => {
       if (!current) return json(401, fail('device_not_approved'), origin);
       if (current.platform !== 'android') return json(409, fail('android_device_required'), origin);
       const now = new Date().toISOString();
+      const nextSessionExpiry = new Date(Date.now() + ANDROID_SESSION_LEASE_MS).toISOString();
+      const { error: heartbeatError } = await db.from('backroom_desktop_sessions')
+        .update({ expires_at: nextSessionExpiry })
+        .eq('device_id', current.device_id).eq('session_type', 'screen').eq('status', 'active')
+        .gt('expires_at', now);
+      if (heartbeatError) return json(503, fail('android_session_heartbeat_failed'), origin);
       const retentionCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
       const { error: cleanupError } = await db.from('backroom_android_commands').delete()
         .eq('device_id', current.device_id).lt('created_at', retentionCutoff);

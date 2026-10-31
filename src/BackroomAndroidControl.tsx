@@ -25,6 +25,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef('');
+  const pendingControlRequestRef = useRef('');
   const pointerRef = useRef<PointerStart | null>(null);
   const controlExpiryRef = useRef<number | null>(null);
   const startTimerRef = useRef<number | null>(null);
@@ -75,7 +76,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       const peer = peerRef.current;
       if (signal.answer && peer) {
         try { await peer.setRemoteDescription(signal.answer as RTCSessionDescriptionInit); }
-        catch { notify('The phone returned an invalid WebRTC answer. Stop and start a fresh session.', true); void stopRemote(); }
+        catch { notify('The phone returned an invalid WebRTC answer. Stop and start a fresh session.', true); void stopRemote(signal.sessionId); }
       }
       if (signal.stop) { notify('The phone stopped the screen-sharing session.'); disposePeer(); }
     });
@@ -150,7 +151,10 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         if (startTimerRef.current !== null) window.clearTimeout(startTimerRef.current);
         startTimerRef.current = null;
         for (const track of stream.getVideoTracks()) track.addEventListener('ended', () => {
-          if (streamRef.current === stream) { notify('Android screen sharing ended.', true); disposePeer(); }
+          if (streamRef.current === stream) {
+            notify('Android screen sharing ended.', true);
+            void stopRemote(nextSessionId);
+          }
         });
         setViewReady(true); setBusy(false);
         notify('Live app stream connected. Request touch control separately after locally arming it on the phone.');
@@ -158,7 +162,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       peer.onconnectionstatechange = () => {
         if (peer.connectionState === 'failed' || peer.connectionState === 'closed') {
           notify('WebRTC connection failed or closed. Check network/peer connectivity and retry.', true);
-          disposePeer();
+          void stopRemote(nextSessionId);
         }
       };
       const offer = await peer.createOffer();
@@ -172,12 +176,12 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       if (error || !result?.ok) throw new Error(result?.reason?.replaceAll('_', ' ') || error?.message || 'Android stream request rejected.');
       notify('Request sent to the phone. It must be online, sharing the selected app window, and approved in this group.');
       startTimerRef.current = window.setTimeout(() => {
-        if (sessionRef.current !== nextSessionId || peer.connectionState === 'connected') return;
+        if (sessionRef.current !== nextSessionId || (peer.connectionState === 'connected' && streamRef.current)) return;
         notify('No app stream arrived within 45 seconds. Check the companion and phone network, then stop and retry.', true);
         void stopRemote(nextSessionId);
       }, 45_000);
     } catch (error) {
-      disposePeer();
+      await stopRemote(nextSessionId);
       notify(error instanceof Error ? error.message : 'Could not start the Android app stream.', true);
     }
   };
@@ -186,17 +190,22 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     if (!supabase || !sessionRef.current || busy) return;
     if (command === 'request_control' && (!viewReady || !dataReady)) return notify('Wait until the stream and touch data channel are connected.', true);
     const expectedSession = sessionRef.current;
+    const requestId = uuid();
+    if (command === 'request_control') pendingControlRequestRef.current = requestId;
     setBusy(true);
     try {
       const { data, error } = await supabase.functions.invoke('backroom-device', {
         body: { action: 'android/command', deviceId: device.device_id, roomId,
-          requestId: uuid(), issuedAt: Date.now(), sessionId: expectedSession,
+          requestId, issuedAt: Date.now(), sessionId: expectedSession,
           command, appPackageName: appPackage },
       });
       if (error || !data?.ok) throw new Error(data?.reason?.replaceAll('_', ' ') || error?.message || 'Phone rejected the command.');
       if (command === 'request_control') { setBusy(false); notify('Touch permission requested. Confirm that local touch is armed on the phone.'); }
       else { notify('Stopping the phone session…'); disposePeer(); }
     } catch (error) {
+      if (command === 'request_control' && pendingControlRequestRef.current === requestId) {
+        pendingControlRequestRef.current = '';
+      }
       setBusy(false);
       notify(error instanceof Error ? error.message : 'Could not send the phone command.', true);
     }

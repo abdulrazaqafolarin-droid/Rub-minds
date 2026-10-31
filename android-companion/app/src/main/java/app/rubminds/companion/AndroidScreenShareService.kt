@@ -62,6 +62,8 @@ class AndroidScreenShareService : Service() {
     @Volatile private var answerAlreadySent = false
     private var projectionStartedAt = 0L
     private var pollingStarted = false
+    @Volatile private var consecutivePollFailures = 0
+    @Volatile private var capturedContentVisible = false
     @Volatile private var serverCloseSent = false
     @Volatile private var stopping = false
 
@@ -112,6 +114,7 @@ class AndroidScreenShareService : Service() {
             serverCloseSent = false
             stopping = false
             initializeWebRtc(resultData)
+            consecutivePollFailures = 0
             pollingStarted = true
             executor.scheduleWithFixedDelay({ pollDeviceCommands() }, 0, POLL_INTERVAL_SECONDS, TimeUnit.SECONDS)
         } catch (error: Exception) {
@@ -135,9 +138,24 @@ class AndroidScreenShareService : Service() {
         videoSource = source
         val helper = SurfaceTextureHelper.create("BackroomAndroidScreenCapture", egl.eglBaseContext)
         textureHelper = helper
+        capturedContentVisible = false
         val screenCapturer = ScreenCapturerAndroid(resultData, object : MediaProjection.Callback() {
             override fun onStop() {
                 stopCapture("android_projection_revoked")
+            }
+
+            override fun onCapturedContentResize(width: Int, height: Int) {
+                if (width <= 0 || height <= 0) return
+                val (captureWidth, captureHeight) = boundedCaptureSize(width, height)
+                mainHandler.post {
+                    val activeCapturer = capturer ?: return@post
+                    if (!stopping) activeCapturer.changeCaptureFormat(captureWidth, captureHeight, CAPTURE_FPS)
+                }
+            }
+
+            override fun onCapturedContentVisibilityChanged(isVisible: Boolean) {
+                capturedContentVisible = isVisible
+                mainHandler.post { videoTrack?.setEnabled(isVisible && !stopping) }
             }
         })
         capturer = screenCapturer
@@ -145,29 +163,37 @@ class AndroidScreenShareService : Service() {
         val metrics = captureMetrics()
         screenCapturer.startCapture(metrics.widthPixels, metrics.heightPixels, CAPTURE_FPS)
         val track = factory.createVideoTrack("backroom-android-screen", source)
-        track.setEnabled(true)
+        track.setEnabled(capturedContentVisible)
         videoTrack = track
     }
 
     private fun captureMetrics(): DisplayMetrics {
         val metrics = resources.displayMetrics
-        val width = metrics.widthPixels.coerceAtLeast(320)
-        val height = metrics.heightPixels.coerceAtLeast(320)
-        val scale = minOf(1f, MAX_CAPTURE_DIMENSION.toFloat() / maxOf(width, height))
-        val result = DisplayMetrics()
-        result.setTo(metrics)
-        result.widthPixels = (width * scale).toInt().coerceAtLeast(320)
-        result.heightPixels = (height * scale).toInt().coerceAtLeast(320)
-        // Preserve even dimensions for common hardware encoders.
-        result.widthPixels -= result.widthPixels % 2
-        result.heightPixels -= result.heightPixels % 2
-        return result
+        val (width, height) = boundedCaptureSize(metrics.widthPixels, metrics.heightPixels)
+        return DisplayMetrics().apply {
+            setTo(metrics)
+            widthPixels = width
+            heightPixels = height
+        }
+    }
+
+    private fun boundedCaptureSize(width: Int, height: Int): Pair<Int, Int> {
+        val safeWidth = width.coerceAtLeast(2)
+        val safeHeight = height.coerceAtLeast(2)
+        val scale = minOf(1f, MAX_CAPTURE_DIMENSION.toFloat() / maxOf(safeWidth, safeHeight))
+        var outWidth = (safeWidth * scale).toInt().coerceAtLeast(2)
+        var outHeight = (safeHeight * scale).toInt().coerceAtLeast(2)
+        // Keep H.264-friendly even dimensions and never exceed the selected app bounds.
+        outWidth -= outWidth % 2
+        outHeight -= outHeight % 2
+        return outWidth.coerceAtLeast(2) to outHeight.coerceAtLeast(2)
     }
 
     private fun pollDeviceCommands() {
         val token = deviceToken ?: return stopCapture("device_credential_missing")
         try {
-            val result = api?.post("android/commands", token) ?: return
+            val result = api?.post("android/commands", token) ?: throw IllegalStateException("Cloud command response missing.")
+            consecutivePollFailures = 0
             val commands = result.optJSONArray("commands") ?: return
             for (index in 0 until commands.length()) {
                 val command = commands.optJSONObject(index) ?: continue
@@ -179,7 +205,10 @@ class AndroidScreenShareService : Service() {
         } catch (error: CloudDeviceApiException) {
             if (error.statusCode == 401 || error.statusCode == 403) stopCapture("device_access_revoked")
         } catch (_: Exception) {
-            // Temporary network failure does not tear down an active peer immediately.
+            // Bound an offline device session: do not keep capturing indefinitely after
+            // losing the server heartbeat that proves the group/device grant is current.
+            consecutivePollFailures += 1
+            if (consecutivePollFailures >= MAX_POLL_FAILURES) stopCapture("device_cloud_heartbeat_lost")
         }
     }
 
@@ -295,7 +324,7 @@ class AndroidScreenShareService : Service() {
                     override fun onCreateSuccess(description: SessionDescription) {
                         connection.setLocalDescription(object : SdpObserver {
                             override fun onCreateSuccess(value: SessionDescription) = Unit
-                            override fun onSetSuccess() = Unit
+                            override fun onSetSuccess() = sendLocalAnswer(sessionId)
                             override fun onCreateFailure(error: String) = stopCapture("answer_create_failed")
                             override fun onSetFailure(error: String) = stopCapture("answer_set_failed")
                         }, description)
@@ -526,7 +555,8 @@ class AndroidScreenShareService : Service() {
         private const val NOTIFICATION_ID = 7301
         private const val CAPTURE_FPS = 20
         private const val MAX_CAPTURE_DIMENSION = 1_440
-        private const val POLL_INTERVAL_SECONDS = 3L
+        private const val POLL_INTERVAL_SECONDS = 8L
+        private const val MAX_POLL_FAILURES = 12
         private const val MAX_WAIT_WITHOUT_SESSION_MS = 5 * 60 * 1000L
         private const val MAX_SDP_CHARS = 65_536
         private val UUID_PATTERN = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", RegexOption.IGNORE_CASE)
