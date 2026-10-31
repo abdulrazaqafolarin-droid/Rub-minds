@@ -164,3 +164,16 @@ Important boundary:
 - The updated isolated Node 22 helper/test harness now passes **24/24**: nine desktop target selection/queue/replay cases, three PTY transport cases, six terminal protocol/replay cases, and six video pointer/geometry cases.
 - This is still an isolated Node harness based on the checked-in helper/test sources. It is **not** the complete repository test suite, Vite/TypeScript build, Rust/Cargo test run, Windows MSVC compile, or physical Windows/Claude Code/OpenCode acceptance.
 - Native terminal Enter now has a mandatory second physical-computer Yes/No dialog. A remote DataChannel message or browser UI state cannot authorize Enter without that native dialog and an unexpired, session-bound one-use draft lease.
+
+## GitHub Actions runner-provisioning diagnosis — 2026-10-31
+
+Latest inspected PR check suite for commit `58da34e85308ac70eee05703f77da6c0aa0a1e67`:
+- Windows companion job `124530754340`, run `41198957412`: failed in approximately one second, `runner_id=0`, empty `runner_name`, and `steps=[]`.
+- Durable SQL job `124530754292`, run `41198957414`: failed in approximately two seconds, `runner_id=0`, empty `runner_name`, and `steps=[]`.
+- Both job-log endpoints return `404 BlobNotFound`. There is no compiler, dependency-install or test output; these checks never reached a runner.
+- GitHub's billing documentation states private-repository hosted-runner usage is quota-based and blocked once the included allowance is used without a valid payment method. A recent GitHub community report (2026-10-14) describes the same `runner_id=0`, no-step symptom as account Actions quota/spending-limit provisioning failure. This makes account quota/billing the leading diagnosis, but the account's actual usage and payment state are not exposed by this repository connector; confirm under **GitHub Settings → Billing & licensing → Plans and usage → Actions**. Do not change payment settings as part of this fix.
+- A zero-hosted-minutes local acceptance script is now available at `scripts/run-backroom-windows-acceptance.ps1`. Run it from Windows PowerShell with Node 22, Rust stable `x86_64-pc-windows-msvc`, and Visual Studio C++ Build Tools/Windows SDK installed:
+  `powershell -ExecutionPolicy Bypass -File .\scripts\run-backroom-windows-acceptance.ps1`
+  It runs dependency install, the repository web build/tests, companion WebView build, Rust tests, companion regressions, and an explicit Windows MSVC check, preserving per-step logs and a JSON summary under the user's TEMP directory.
+- The script has been committed but **has not been executed on Windows**. A self-hosted GitHub Actions runner is another no-hosted-minute route, but it must first be installed and registered by the repository owner; the workflow must not be switched to `self-hosted` until a matching runner is actually online.
+
