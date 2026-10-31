@@ -248,6 +248,7 @@ test("Work Profile DPC is a single system-bound receiver with local signer check
   const auth = await read("app/src/main/java/app/rubminds/companion/WorkProfileLaunchCommand.kt");
   const activity = await read("app/src/main/java/app/rubminds/companion/MainActivity.kt");
   const contract = await read("app/src/main/java/app/rubminds/companion/guest/GuestRuntimeContract.kt");
+  const virtualDeviceProbe = await read("app/src/main/java/app/rubminds/companion/guest/AndroidVirtualDeviceCapabilityProbe.kt");
 
   assert.match(manifest, /android:name="\.WorkProfileAdminReceiver"/);
   assert.match(manifest, /android:permission="android\.permission\.BIND_DEVICE_ADMIN"/);
@@ -284,5 +285,11 @@ test("Work Profile DPC is a single system-bound receiver with local signer check
   assert.match(contract, /acceptance_isolation_boundary_mismatch/);
   assert.match(contract, /isDeviceAdminReceiver/);
   assert.match(contract, /unexpected_exported_entrypoint_count/);
+  assert.match(virtualDeviceProbe, /VirtualDeviceManager::class\.java/);
+  assert.match(virtualDeviceProbe, /FEATURE_ACTIVITIES_ON_SECONDARY_DISPLAYS/);
+  assert.match(virtualDeviceProbe, /PLATFORM_PRESENT_BUT_SYSTEM_ROLE_REQUIRED/);
+  assert.match(virtualDeviceProbe, /visibleVirtualDeviceCount/);
+  assert.match(activity, /AndroidVirtualDeviceCapabilityProbe\.read/);
+  assert.doesNotMatch(manifest, /CREATE_VIRTUAL_DEVICE/);
 });
 
