@@ -148,3 +148,40 @@ Decision: **do not build the Phone Frame GUI guest on AVF** unless device/OEM di
 ### Provider decision
 
 No candidate currently passes admission. Keep `GuestRuntimeAdmissionPolicy` fail-closed and keep the Phone Frame's guest-app execution state unavailable rather than launching the host-installed copy or showing a mock. VineOS is the only new candidate worth a controlled follow-up proof once its bootable ROM and no-root path exist; it is not yet technically ready for integration or target-device testing.
+
+
+## Additional provider source audit — 2026-10-31
+
+These are source-manifest and build-configuration audits only. Neither candidate has been built, installed, launched or accepted on the TECNO KL4. Neither is an approved dependency.
+
+### f0restw0w/VirtualApp_16 — reject unchanged
+
+Source: https://github.com/f0restw0w/VirtualApp_16
+
+The README explicitly warns that the fork is highly unstable and not recommended for production. It claims Android 14 compatibility and no-root execution, but its published tested configuration is a Xiaomi Redmi / Snapdragon 695 on Android 14, not the target TECNO handset.
+
+The current application manifest declares 14 permission entries, including:
+- `QUERY_ALL_PACKAGES` and `MANAGE_EXTERNAL_STORAGE`;
+- `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` and `POST_NOTIFICATIONS`;
+- foreground-service permissions for camera, location, microphone, media playback, phone call, connected device and media projection.
+
+The manifest also has additional exported entrypoints beyond the launcher: an app-list activity, an installer activity-alias, and `.dev.CmdReceiver` (the latter is exported without an explicit signature permission). The fork targets SDK 33, compiles against SDK 34, and uses Android Gradle Plugin 7.4.2 with legacy Android Support libraries. Its README says Android 14 support is still unstable and lists limitations around Xposed, signature parsing and scoped storage.
+
+The candidate might be useful as an isolated research reference for the Activity-stub / classloader approach, but it is not admitted as a dependency. A future extraction would need to prove that only the required engine core can remain after removing broad package/storage access, the command receiver, installer/deep-link surfaces, unused foreground-service paths and their transitive manifest contributions. Any such extraction is a new derived implementation requiring a separate source, native-code, dependency, license-notice, API-compatibility and physical-device audit; merely deleting manifest lines is not sufficient.
+
+### josskixg/renjana — reject unchanged
+
+Source: https://github.com/josskixg/renjana
+
+The current README describes per-instance containers and non-root execution, but the current host manifest declares 11 permission entries, including:
+- `MANAGE_EXTERNAL_STORAGE`, legacy external-storage read/write and `QUERY_ALL_PACKAGES`;
+- `REQUEST_INSTALL_PACKAGES` and `SYSTEM_ALERT_WINDOW`;
+- special-use foreground service and notification permissions.
+
+The manifest sets `android:usesCleartextTraffic="true"`. It also exports `.core.InstanceLaunchActivity` and `.core.DeepLinkDispatcherActivity` in addition to its launcher. The Gradle configuration targets SDK 34, below the Rub Minds guest-host admission minimum of 35. Its release signing configuration falls back to the debug signing configuration when a release keystore is not supplied. This is not acceptable for a Rub Minds release artifact or the narrowly scoped host-permission model.
+
+The repository's README and problem log describe non-root hooking, per-instance storage paths and compatibility fixes, but those are upstream claims, not verified test evidence for our target device. It is not admitted. No Renjana source or binary is copied into Rub Minds.
+
+### Candidate decision
+
+Neither candidate resolves the stock Android 14 distribution boundary or passes the current Rub Minds admission policy. Do not bundle either unchanged, silently relax the permission/exported-component policy, or label an ordinary launched app as a guest. The next acceptable experiment is a disposable, separately signed proof of concept that extracts only the smallest necessary virtualization core, proves clean per-instance storage and guest-only rendering on the actual handset, and passes the unchanged manifest/admission gates. If no such extraction works without forbidden host privileges, retain the blocked provider status and investigate OEM/preinstalled distribution or a clearly separate live-streaming product mode.
