@@ -100,7 +100,7 @@ mod windows_impl {
         let rect = element.get_bounding_rectangle()
             .map_err(|_| "Could not verify the selected control bounds".to_string())?;
 
-        if process_id <= 0 || handle == 0 || runtime_id.is_empty() ||
+        if process_id <= 0 || runtime_id.is_empty() ||
            rect.get_right() <= rect.get_left() || rect.get_bottom() <= rect.get_top() {
             return Err("The selected control has incomplete accessibility identity".into());
         }
