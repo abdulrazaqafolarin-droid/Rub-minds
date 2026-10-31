@@ -107,3 +107,20 @@ test("Phone Frame clearly reports hidden app windows and requires second-device 
   assert.match(control, /setSourceVisible\(false\)/);
   assert.match(control, /disabled=\{!viewReady \|\| !sourceVisible/);
 });
+
+test("Android SDP answer publication is atomically single-flight across ICE callbacks", async () => {
+  const service = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  const start = service.indexOf("private fun sendLocalAnswer");
+  const end = service.indexOf("private var pendingOfferCommandId", start);
+  const body = service.slice(start, end);
+  assert.match(body, /val claim = synchronized\(this\)/);
+  assert.match(body, /answerAlreadySent = true/);
+  assert.match(body, /if \(!claim\) return/);
+});
+test("stale browser stop callbacks cannot close a newer Android stream", async () => {
+  const control = await read("src/BackroomAndroidControl.tsx");
+  const start = control.indexOf("const stopRemote");
+  const end = control.indexOf("useEffect(() =>", start);
+  const body = control.slice(start, end);
+  assert.match(body, /sessionRef.current === expectedSession/);
+});

@@ -54,7 +54,10 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   }, []);
 
   const stopRemote = useCallback(async (expectedSession = sessionRef.current) => {
-    if (!supabase || !expectedSession || !device.device_id) { disposePeer(); return; }
+    if (!supabase || !expectedSession || !device.device_id) {
+      if (!expectedSession || sessionRef.current === expectedSession) disposePeer();
+      return;
+    }
     const requestId = uuid();
     try {
       await supabase.functions.invoke('backroom-device', {
@@ -63,7 +66,8 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
           command: 'stop_session', appPackageName: appPackage },
       });
     } catch { /* The server session expires automatically; local media is still stopped. */ }
-    disposePeer();
+    // A delayed event for an older peer must never tear down a newer session.
+    if (sessionRef.current === expectedSession) disposePeer();
   }, [device.device_id, roomId, appPackage, disposePeer]);
 
   useEffect(() => {
@@ -170,7 +174,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
             void stopRemote(nextSessionId);
           }
         });
-        setViewReady(true); setSourceVisible(true); setBusy(false);
+        setViewReady(true); setSourceVisible(stream.getVideoTracks().every(track => !track.muted)); setBusy(false);
         for (const track of stream.getVideoTracks()) {
           track.addEventListener('mute', () => {
             if (streamRef.current !== stream) return;

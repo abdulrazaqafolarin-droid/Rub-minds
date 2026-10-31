@@ -427,10 +427,17 @@ class AndroidScreenShareService : Service() {
     }
 
     private fun sendLocalAnswer(sessionId: String) {
-        if (answerAlreadySent || answeringSessionId != sessionId) return
         val description = peer?.localDescription ?: return
         if (description.type != SessionDescription.Type.ANSWER || description.description.length !in 8..MAX_SDP_CHARS) return
-        answerAlreadySent = true
+        val claim = synchronized(this) {
+            if (answerAlreadySent || answeringSessionId != sessionId || peer?.localDescription !== description) {
+                false
+            } else {
+                answerAlreadySent = true
+                true
+            }
+        }
+        if (!claim) return
         executor.execute {
             try {
                 api?.post(
@@ -528,6 +535,7 @@ class AndroidScreenShareService : Service() {
         })
     }
 
+    @Synchronized
     private fun closePeer() {
         localControlGranted = false
         dataChannel?.unregisterObserver()
@@ -563,6 +571,7 @@ class AndroidScreenShareService : Service() {
         }.start()
     }
 
+    @Synchronized
     private fun stopCapture(reason: String) {
         if (stopping) return
         stopping = true
