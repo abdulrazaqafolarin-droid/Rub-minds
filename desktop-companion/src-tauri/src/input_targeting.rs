@@ -55,7 +55,8 @@ mod windows_impl {
             .map_err(|_| "Windows accessibility tree is unavailable".to_string())?;
         let mut current = element;
         for _ in 0..MAX_PARENT_DEPTH {
-            if current.get_control_type().ok() == Some(ControlType::Edit) {
+            let control_type = current.get_control_type().ok();
+            if control_type == Some(ControlType::Edit) || control_type == Some(ControlType::Document) {
                 return Ok(current);
             }
             current = walker.get_parent(&current)
