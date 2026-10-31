@@ -19,6 +19,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 class AndroidTouchAccessibilityService : AccessibilityService() {
     @Volatile private var boundSessionId: String? = null
     @Volatile private var boundPackageName: String? = null
+    @Volatile private var gestureInFlight = false
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -36,6 +37,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
     }
 
     override fun onInterrupt() {
+        synchronized(this) { gestureInFlight = false }
         AndroidScreenShareService.requestStop(applicationContext, "accessibility_interrupted")
     }
 
@@ -43,6 +45,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         if (instance === this) instance = null
         boundSessionId = null
         boundPackageName = null
+        synchronized(this) { gestureInFlight = false }
         super.onDestroy()
     }
 
@@ -71,7 +74,15 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         val signer = AppIdentity.signingCertificateSha256(this, gesture.appPackageName) ?: return false
         if (AppGrantStore(this).get(gesture.appPackageName, signer) == null) return false
 
-        val root = rootInActiveWindow ?: return false
+        synchronized(this) {
+            if (gestureInFlight) return false
+            gestureInFlight = true
+        }
+        val root = rootInActiveWindow
+        if (root == null) {
+            synchronized(this) { gestureInFlight = false }
+            return false
+        }
         try {
             if (!root.isVisibleToUser || root.packageName?.toString() != gesture.appPackageName) return false
             val bounds = Rect()
@@ -88,13 +99,22 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 RemoteGestureKind.SWIPE -> gesture.durationMillis.coerceIn(120, 1_000)
                 RemoteGestureKind.LONG_PRESS -> gesture.durationMillis.coerceIn(500, 1_500)
             }
-            return dispatchGesture(
+            val accepted = dispatchGesture(
                 GestureDescription.Builder()
                     .addStroke(GestureDescription.StrokeDescription(path, 0, duration.toLong()))
                     .build(),
-                null,
+                object : GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: GestureDescription?) {
+                        synchronized(this@AndroidTouchAccessibilityService) { gestureInFlight = false }
+                    }
+                    override fun onCancelled(gestureDescription: GestureDescription?) {
+                        synchronized(this@AndroidTouchAccessibilityService) { gestureInFlight = false }
+                    }
+                },
                 Handler(Looper.getMainLooper())
             )
+            if (!accepted) synchronized(this) { gestureInFlight = false }
+            return accepted
         } finally {
             root.recycle()
         }

@@ -1,5 +1,6 @@
 package app.rubminds.companion
 
+import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
@@ -7,6 +8,7 @@ import android.content.Intent
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
+import android.content.pm.PackageManager
 import android.provider.Settings
 import android.view.Gravity
 import android.widget.Button
@@ -146,10 +148,41 @@ class AndroidStreamSetupActivity : Activity() {
             return
         }
         pendingTargetPackage = targetPackageName
-        // Android 14+ shows the OS chooser for a single app window or the full display.
-        // The user must choose the intended app window. The selected package is then
-        // launched locally so Accessibility can re-check the foreground identity.
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
+            return
+        }
+        launchProjectionConsent()
+    }
+
+    private fun launchProjectionConsent() {
+        val targetPackageName = pendingTargetPackage
+        if (targetPackageName.isBlank()) return
+        // Android 14+ shows the OS chooser for an app window or the full display.
+        // The user must choose the intended app window, not the whole display.
         startActivityForResult(projectionManager.createScreenCaptureIntent(), REQUEST_CAPTURE)
+    }
+
+    @Deprecated("Uses the platform permission result.")
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQUEST_NOTIFICATIONS) return
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            launchProjectionConsent()
+        } else {
+            AlertDialog.Builder(this)
+                .setTitle("Continue without notifications?")
+                .setMessage("Android can still show the active screen share in its system task manager, but Rub Minds cannot show its stop action in the notification drawer without notification permission. You can still stop sharing from Android's screen-sharing controls.")
+                .setNegativeButton("Cancel") { _, _ -> pendingTargetPackage = "" }
+                .setPositiveButton("Continue") { _, _ -> launchProjectionConsent() }
+                .show()
+        }
     }
 
     @Deprecated("Uses the platform MediaProjection consent result.")
@@ -207,5 +240,6 @@ class AndroidStreamSetupActivity : Activity() {
 
     private companion object {
         const val REQUEST_CAPTURE = 7401
+        const val REQUEST_NOTIFICATIONS = 7402
     }
 }

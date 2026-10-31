@@ -37,6 +37,11 @@ class AndroidTouchPolicyTest {
         assertFalse(AndroidTouchPolicy.validate(tap().copy(durationMillis = 2_000), session, app, true, true))
     }
 
+    @Test fun malformedPackagesAreRejectedBeforeGestureDispatch() {
+        val malformed = tap().copy(appPackageName = "com..notes")
+        assertFalse(AndroidTouchPolicy.validate(malformed, session, "com..notes", true, true))
+    }
+
     @Test fun normalizedCoordinatesMapToWindowBoundsWithoutDisplayOffsetGuessing() {
         val bounds = TouchWindowBounds(24, 80, 1024, 1880)
         assertEquals(24 to 80, AndroidTouchPolicy.map(NormalizedTouchPoint(0f, 0f), bounds))

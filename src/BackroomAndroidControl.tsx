@@ -44,7 +44,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     dataRef.current?.close(); dataRef.current = null;
     streamRef.current?.getTracks().forEach(track => track.stop()); streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
-    sessionRef.current = ''; pointerRef.current = null;
+    sessionRef.current = ''; pointerRef.current = null; pendingControlRequestRef.current = '';
     setSessionId(''); setViewReady(false); setDataReady(false); setControlGranted(false); setBusy(false);
   }, []);
 
@@ -82,7 +82,9 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     });
     channel.on('broadcast', { event: 'response' }, ({ payload }: any) => {
       if (disposed || payload?.deviceId !== device.device_id || payload?.roomId !== roomId ||
-          payload?.sessionId !== sessionRef.current || typeof payload?.requestId !== 'string') return;
+          payload?.sessionId !== sessionRef.current || typeof payload?.requestId !== 'string' ||
+          payload.requestId !== pendingControlRequestRef.current) return;
+      pendingControlRequestRef.current = '';
       if (payload.capability !== 'control') return;
       const granted = payload.ok === true;
       setControlGranted(granted);
@@ -160,6 +162,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         notify('Live app stream connected. Request touch control separately after locally arming it on the phone.');
       };
       peer.onconnectionstatechange = () => {
+        if (peerRef.current !== peer) return;
         if (peer.connectionState === 'failed' || peer.connectionState === 'closed') {
           notify('WebRTC connection failed or closed. Check network/peer connectivity and retry.', true);
           void stopRemote(nextSessionId);
@@ -182,6 +185,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       }, 45_000);
     } catch (error) {
       await stopRemote(nextSessionId);
+      pendingControlRequestRef.current = '';
       notify(error instanceof Error ? error.message : 'Could not start the Android app stream.', true);
     }
   };
