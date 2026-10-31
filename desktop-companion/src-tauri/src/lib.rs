@@ -21,6 +21,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use uuid::Uuid;
 
+mod input_targeting;
+use input_targeting::EditableTargetIdentity;
+
 const VAULT_SERVICE: &str = "com.rubminds.backroom.desktop";
 const MAX_DRAFT_CHARS: usize = 4_000;
 const MAX_TERMINAL_INPUT: usize = 4_000;
@@ -649,6 +652,9 @@ struct DraftTarget {
     y: f64,
     width: f64,
     height: f64,
+    // Never supplied by the remote caller. This is captured locally from UI Automation.
+    #[serde(skip)]
+    identity: Option<EditableTargetIdentity>,
 }
 
 struct PendingDraft {
@@ -886,8 +892,30 @@ fn dispatch_input(state: State<'_, AppState>, session_id: String, event: NativeI
     Ok(())
 }
 
+fn selected_target_point(geometry: &CaptureGeometry, target: &DraftTarget) -> Result<(i32, i32), String> {
+    let center_x = target.x + target.width / 2.0;
+    let center_y = target.y + target.height / 2.0;
+    screen_point(geometry, center_x, center_y)
+}
+
+fn verify_selected_editable_target(
+    geometry: &CaptureGeometry,
+    target: &DraftTarget,
+) -> Result<(EditableTargetIdentity, i32, i32), String> {
+    let expected = target.identity.as_ref().ok_or("Select and verify an accessible text field again")?;
+    let (px, py) = selected_target_point(geometry, target)?;
+    let (current, value) = input_targeting::inspect_at(px, py)?;
+    if &current != expected {
+        return Err("The selected application field changed or moved. Drag-select it again.".into());
+    }
+    if !value.is_empty() {
+        return Err("The selected field is no longer empty. Review it and select an empty field again.".into());
+    }
+    Ok((current, px, py))
+}
+
 #[tauri::command]
-fn select_draft_target(state: State<'_, AppState>, session_id: String, target: DraftTarget) -> Result<(), String> {
+fn select_draft_target(state: State<'_, AppState>, session_id: String, mut target: DraftTarget) -> Result<(), String> {
     control_granted(&state, &session_id)?;
     draft_granted(&state, &session_id)?;
     let geometry = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
@@ -900,6 +928,12 @@ fn select_draft_target(state: State<'_, AppState>, session_id: String, target: D
     if target.width * (geometry.frame_width as f64) < 8.0 || target.height * (geometry.frame_height as f64) < 8.0 {
         return Err("Selected typing area is too small".into());
     }
+    let (px, py) = selected_target_point(&geometry, &target)?;
+    let (identity, value) = input_targeting::inspect_at(px, py)?;
+    if !value.is_empty() {
+        return Err("For safety, drag-select an empty editable field. Existing text will not be overwritten.".into());
+    }
+    target.identity = Some(identity);
     state.draft_targets.lock().map_err(|_| "Draft state unavailable")?.insert(session_id, target);
     Ok(())
 }
@@ -912,7 +946,10 @@ fn stage_draft_request(state: State<'_, AppState>, session_id: String, text: Str
         return Err("Draft must be non-empty, single-line plain text".into());
     }
     let target = state.draft_targets.lock().map_err(|_| "Draft state unavailable")?
-        .get(&session_id).cloned().ok_or("Drag-select a typing area in the live frame first")?;
+        .get(&session_id).cloned().ok_or("Drag-select and verify an empty editable field first")?;
+    if target.identity.is_none() {
+        return Err("The selected text area has no verified accessibility identity. Select it again.".into());
+    }
     let request_id = Uuid::new_v4().to_string();
     let now = Instant::now();
     let mut pending = state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?;
@@ -956,23 +993,46 @@ async fn approve_draft_request(app: AppHandle, state: State<'_, AppState>, reque
     control_granted(&state, &pending.session_id)?;
     draft_granted(&state, &pending.session_id)?;
     check_approval_rate(&state)?;
+
+    // The first check happens before the native approval dialog; no stale
+    // selection is presented as valid to the person approving it.
+    let geometry_before = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
+        .get(&pending.session_id).cloned().ok_or("Live monitor capture is not active")?;
+    verify_selected_editable_target(&geometry_before, &pending.target)?;
+
     require_native_confirmation(&app, "Insert this unsent draft?", &format!(
-        "Insert this exact text into the center of the area you selected? No Enter or Send action will be performed.\\n\\n{}",
+        "Insert this exact text into the verified empty text field you selected? Backroom will recheck the field identity and its empty value before typing. It will not press Enter or Send.\\n\\n{}",
         pending.text
     ))?;
+
+    // Re-check after approval. The app may have moved, closed, changed focus,
+    // or populated the field while the dialog was open.
+    control_granted(&state, &pending.session_id)?;
+    draft_granted(&state, &pending.session_id)?;
     let geometry = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
         .get(&pending.session_id).cloned().ok_or("Live monitor capture is not active")?;
-    let center_x = pending.target.x + pending.target.width / 2.0;
-    let center_y = pending.target.y + pending.target.height / 2.0;
-    let (px, py) = screen_point(&geometry, center_x, center_y)?;
-    // Consume the selection before interacting so an uncertain outcome cannot
-    // be replayed and accidentally duplicate text.
+    let (identity, px, py) = verify_selected_editable_target(&geometry, &pending.target)?;
+
+    // Consume the target before any input. An uncertain result can never be replayed.
     state.draft_targets.lock().map_err(|_| "Draft state unavailable")?.remove(&pending.session_id);
     let mut enigo = Enigo::new(&Settings::default()).map_err(|_| "OS input driver is unavailable".to_string())?;
-    enigo.move_mouse(px, py, Coordinate::Abs).map_err(|_| "Could not focus the selected target".to_string())?;
-    enigo.button(Button::Left, Direction::Click).map_err(|_| "Could not focus the selected target".to_string())?;
-    enigo.text(&pending.text).map_err(|_| "Typing outcome is uncertain; inspect the target before retrying".to_string())?;
-    Ok("Draft typed into the selected area. No Enter or submit action was sent.".into())
+    enigo.move_mouse(px, py, Coordinate::Abs).map_err(|_| "Could not focus the verified text field".to_string())?;
+    enigo.button(Button::Left, Direction::Click).map_err(|_| "Could not focus the verified text field".to_string())?;
+
+    // Confirm that the field receiving keyboard input is the same control the
+    // user selected. UIA readback is mandatory; unsupported apps fail closed.
+    let (focused_identity, focused_value) = input_targeting::inspect_focused()?;
+    if focused_identity != identity || !focused_value.is_empty() {
+        return Err("The focused field does not match the selected empty text field. No text was typed.".into());
+    }
+
+    enigo.text(&pending.text).map_err(|_| "Typing outcome is uncertain; inspect the field before retrying".to_string())?;
+    std::thread::sleep(Duration::from_millis(120));
+    let (after_identity, after_value) = input_targeting::inspect_focused()?;
+    if after_identity != identity || after_value != pending.text {
+        return Err("Text insertion could not be verified by reading back the exact field value. Inspect the field; do not retry automatically.".into());
+    }
+    Ok("Text inserted into the verified editable field and read back exactly. No Enter or Send action was performed.".into())
 }
 
 #[tauri::command]
