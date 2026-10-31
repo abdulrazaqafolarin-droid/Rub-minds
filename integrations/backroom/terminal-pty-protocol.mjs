@@ -70,3 +70,15 @@ export function createTerminalActionRequestGuard(maxRequests = 256) {
     return 'accepted';
   };
 }
+
+/** A terminal-exited notice is scoped to the exact PTY peer and carries no output or command text. */
+export function validateTerminalExitedMessage(message, expectedSessionId) {
+  if (!message || typeof message !== 'object' || Array.isArray(message) ||
+      Object.keys(message).some(key => !['kind', 'sessionId'].includes(key)) ||
+      message.kind !== 'terminal_exited' ||
+      !validSession(expectedSessionId) ||
+      message.sessionId !== expectedSessionId) {
+    return null;
+  }
+  return Object.freeze({ kind: 'terminal_exited', sessionId: expectedSessionId });
+}
