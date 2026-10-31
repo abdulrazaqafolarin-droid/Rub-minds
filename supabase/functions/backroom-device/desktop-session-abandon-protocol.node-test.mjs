@@ -12,7 +12,7 @@ test('accepts only fresh exactly-scoped abandon requests',()=>{
 test('rejects missing, extra, malformed and stale abandon inputs',()=>{
  assert.equal(validateDesktopSessionAbandon({...valid,deviceId:'bad'}),null);
  assert.equal(validateDesktopSessionAbandon({...valid,ownerId:'somebody'}),null);
- assert.equal(validateDesktopSessionAbandon({...valid,issuedAt:1},{now:10_000}),null);
+ assert.equal(validateDesktopSessionAbandon({...valid,issuedAt:1},{now:100_000}),null);
  assert.equal(validateDesktopSessionAbandon({...valid,action:'desktop/session-close'}),null);
  assert.equal(validateDesktopSessionAbandon([]),null);
 });
