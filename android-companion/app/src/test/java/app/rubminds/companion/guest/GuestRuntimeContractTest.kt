@@ -343,3 +343,54 @@ class GuestRuntimeContractTest {
             GuestDraftRequest("draft-2", currentSelection.selectionId, "approved draft", true), 10_000
         ))
     }
+
+
+    @Test fun secondGuestInstanceCannotReuseTheFirstInstancesDataContainer() {
+        val request = GuestAppInstallRequest(
+            packageName = "com.example.chat",
+            signingCertificateSha256 = "a".repeat(64),
+            sourceKind = GuestAppSourceKind.SELECTED_INSTALLED_APK
+        )
+        val first = GuestAppInstance("instance-1", request.packageName, request.signingCertificateSha256, "data-1", true, false)
+        val second = GuestAppInstance("instance-2", request.packageName, request.signingCertificateSha256, "data-1", true, false)
+        val registry = GuestInstanceIsolationRegistry()
+        assertNull(registry.register(first, request))
+        assertEquals("guest_data_container_reused", registry.register(second, request))
+        assertTrue(registry.unregister(first.instanceId))
+        assertNull(registry.register(second, request))
+    }
+
+    @Test fun providerDraftResultMustAttestExactReadbackAndNoSubmit() {
+        assertNull(GuestDraftResultPolicy.validate(GuestDraftResult(inserted = true, submitted = false, readBackMatches = true)))
+        assertEquals(
+            "guest_provider_submitted",
+            GuestDraftResultPolicy.validate(GuestDraftResult(inserted = true, submitted = true, readBackMatches = true))
+        )
+        assertEquals(
+            "guest_draft_readback_mismatch",
+            GuestDraftResultPolicy.validate(GuestDraftResult(inserted = true, submitted = false, readBackMatches = false))
+        )
+        assertEquals(
+            "guest_draft_not_inserted",
+            GuestDraftResultPolicy.validate(GuestDraftResult(inserted = false, submitted = false, readBackMatches = false))
+        )
+    }
+
+    @Test fun invalidNewSelectionRetiresThePreviouslyActiveTarget() {
+        val guard = GuestSelectionGuard()
+        val currentFrame = frame()
+        val currentField = field()
+        val oldSelection = selection()
+        assertNull(guard.activate(currentFrame, currentField, oldSelection, 10_000))
+        assertEquals(
+            "target_frame_is_stale",
+            guard.activate(currentFrame, currentField, selection(id = "new", sequence = 11), 10_000)
+        )
+        assertEquals(
+            "target_selection_not_active",
+            guard.consumeForDraft(
+                currentFrame, currentField, oldSelection,
+                GuestDraftRequest("draft-old", oldSelection.selectionId, "text", true), 10_000
+            )
+        )
+    }
