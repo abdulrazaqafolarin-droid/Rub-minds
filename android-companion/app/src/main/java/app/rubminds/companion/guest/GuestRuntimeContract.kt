@@ -173,7 +173,6 @@ object GuestRuntimeAdmissionPolicy {
     private val requiredCapabilities = GuestRuntimeCapability.values().toSet()
     private val requiredAcceptance = GuestAcceptanceCheck.values().toSet()
     private val sha256Pattern = Regex("^[a-f0-9]{64}$")
-    private val expectedLauncherClass = ".MainActivity"
     private val expectedImeClass = ".DraftInputMethodService"
 
     fun review(
