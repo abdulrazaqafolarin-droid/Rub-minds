@@ -289,7 +289,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
         catch(error){flash('Draft finished, but the target could not be cleared. Stopping this remote session for safety.',true);void stopActivePeer();return;}
         flash(message.ok===true
           ?'Text inserted into the verified editable field and read back. Select a fresh empty field before another draft. No Send or Enter action was triggered.'
-          :'Draft finished without insertion: '+(message.result||'denied on the computer. Select the field again before retrying.'),message.ok!==true);
+          :'Draft was not verified: '+(message.result||'the computer did not confirm the exact insertion. Inspect the field before retrying; no automatic retry was attempted.'),message.ok!==true);
       }
     };
     try{
