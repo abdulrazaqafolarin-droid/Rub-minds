@@ -15,7 +15,9 @@ data class WorkProfileSnapshot(
     val canProvision: Boolean,
     val canRequestAccess: Boolean,
     val canInteract: Boolean,
-    val hasBridgeSecret: Boolean
+    val hasBridgeSecret: Boolean,
+    val profileOwnerConfirmed: Boolean,
+    val crossProfileAllowlistReady: Boolean?
 )
 
 class WorkProfileCoordinator(context: Context) {
@@ -34,7 +36,21 @@ class WorkProfileCoordinator(context: Context) {
         val canProvision = !owner &&
             dpm.isProvisioningAllowed(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE) &&
             setup.resolveActivity(app.packageManager) != null
-        return WorkProfileSnapshot(owner, profiles, canProvision, canRequest, canInteract, secrets.load() != null)
+        val adminState = app.getSharedPreferences("work_profile_admin_state", Context.MODE_PRIVATE)
+        val profileOwnerConfirmed = owner && adminState.getBoolean("profile_owner_confirmed", false)
+        val crossProfileAllowlistReady = if (owner) {
+            adminState.getBoolean("cross_profile_allowlist_ready", false)
+        } else null
+        return WorkProfileSnapshot(
+            isProfileOwner = owner,
+            profileCount = profiles,
+            canProvision = canProvision,
+            canRequestAccess = canRequest,
+            canInteract = canInteract,
+            hasBridgeSecret = secrets.load() != null,
+            profileOwnerConfirmed = profileOwnerConfirmed,
+            crossProfileAllowlistReady = crossProfileAllowlistReady
+        )
     }
 
     fun startProvisioning(activity: Activity): String? {
