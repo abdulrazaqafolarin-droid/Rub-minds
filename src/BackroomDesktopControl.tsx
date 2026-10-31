@@ -322,6 +322,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const pointerDown=(e:PointerEvent<HTMLDivElement>)=>{
     if(selectMode){
       const point=normalized(e.clientX,e.clientY);if(!point)return;
+      setTargetStatus('');setSelection(null);
       dragRef.current={...point,pointerId:e.pointerId};e.currentTarget.setPointerCapture(e.pointerId);return;
     }
     if(!controlGranted)return;
@@ -345,8 +346,8 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       if(!p)return;
       const target={x:Math.min(start.x,p.x),y:Math.min(start.y,p.y),width:Math.abs(p.x-start.x),height:Math.abs(p.y-start.y)};
       if(target.width<0.01||target.height<0.01)return flash('Drag a rectangle over the exact typing area.',true);
-      setSelection(target);
-      try{sendData({kind:'select_target',target});flash('Typing area sent to the computer. The device will require local approval before inserting text.');}
+      setSelection(target);setTargetStatus('Checking the selected area against Windows accessibility…');
+      try{sendData({kind:'select_target',target});flash('Checking that the selected area resolves to one empty editable field.');}
       catch(error){flash(String(error),true);}
       return;
     }
@@ -416,6 +417,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
               <button type="button" onClick={()=>{setTargetStatus('');setSelection(null);setSelectMode(v=>!v);}} disabled={!controlGranted||!draftGranted}>{selectMode?'Cancel area selection':'Drag-select empty text field'}</button>
               <button type="button" onClick={()=>void requestDraftPermission()} disabled={!controlGranted||draftGranted}><TextCursorInput size={13}/> Request typing permission</button>
             </div>
+            {targetStatus&&<div className="br-desktop-caption" role="status">{targetStatus}</div>}
             {targetStatus&&<div className="br-desktop-caption" role="status">{targetStatus}</div>}
             {controlGranted&&draftGranted&&<div className="br-desktop-draft">
               <textarea value={draft} onChange={e=>setDraft(e.target.value)} rows={2} maxLength={4000} placeholder="Write the text to insert in the selected area. It will never press Enter or Send."/>
