@@ -161,7 +161,10 @@ class AndroidScreenShareService : Service() {
 
             override fun onCapturedContentVisibilityChanged(isVisible: Boolean) {
                 capturedContentVisible = isVisible
-                mainHandler.post { videoTrack?.setEnabled(isVisible && !stopping) }
+                mainHandler.post {
+                    videoTrack?.setEnabled(isVisible && !stopping)
+                    dataChannel?.let { sendAppVisibility(it, activeSessionId ?: return@post, isVisible) }
+                }
             }
         })
         capturer = screenCapturer
@@ -487,6 +490,18 @@ class AndroidScreenShareService : Service() {
         } catch (_: Exception) { }
     }
 
+    private fun sendAppVisibility(channel: DataChannel, sessionId: String, visible: Boolean) {
+        if (!UUID_PATTERN.matches(sessionId) || channel.state() != DataChannel.State.OPEN) return
+        val payload = JSONObject()
+            .put("kind", "app_visibility")
+            .put("sessionId", sessionId)
+            .put("visible", visible)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+        try { channel.send(DataChannel.Buffer(ByteBuffer.wrap(payload), false)) }
+        catch (_: Exception) { /* The video track remains the source of truth when available. */ }
+    }
+
     private fun sendTouchAcknowledgement(
         channel: DataChannel,
         sessionId: String,
@@ -567,6 +582,7 @@ class AndroidScreenShareService : Service() {
                 if (!dispatched) sendTouchAcknowledgement(channel, sessionId, gestureId, false)
             }
         })
+        sendAppVisibility(channel, sessionId, capturedContentVisible && !stopping)
     }
 
     @Synchronized

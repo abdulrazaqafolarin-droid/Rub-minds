@@ -160,3 +160,14 @@ test("touch completion callback is wired through the accessibility service entry
   assert.match(touchService, /onResult\(false\)/);
   assert.match(companion, /AndroidTouchAccessibilityService\.dispatch\([\s\S]+?\) \{ completed ->/);
 });
+
+test("Android projection visibility is explicitly relayed over the data channel", async () => {
+  const service = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  const browser = await read("src/BackroomAndroidControl.tsx");
+  assert.match(service, /onCapturedContentVisibilityChanged/);
+  assert.match(service, /"kind", "app_visibility"/);
+  assert.match(service, /sendAppVisibility\(channel, sessionId, capturedContentVisible/);
+  assert.match(browser, /kind === 'app_visibility'/);
+  assert.match(browser, /setSourceVisible\(acknowledgement.visible\)/);
+  assert.match(browser, /setControlGranted\(false\)/);
+});

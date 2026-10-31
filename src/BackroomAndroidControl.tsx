@@ -172,8 +172,18 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       data.onmessage = event => {
         let acknowledgement: any;
         try { acknowledgement = JSON.parse(String(event.data)); } catch { return; }
-        if (!acknowledgement || acknowledgement.kind !== 'touch_ack' ||
-            acknowledgement.sessionId !== nextSessionId ||
+        if (!acknowledgement || acknowledgement.sessionId !== nextSessionId) return;
+        if (acknowledgement.kind === 'app_visibility' && typeof acknowledgement.visible === 'boolean') {
+          setSourceVisible(acknowledgement.visible);
+          if (!acknowledgement.visible) {
+            setControlGranted(false);
+            notify('The selected app window is hidden on the phone. Keep that app in the foreground; video and touch pause until Android reports it visible.');
+          } else {
+            notify('The selected app window is visible again. Request touch control separately after locally arming it on the phone.');
+          }
+          return;
+        }
+        if (acknowledgement.kind !== 'touch_ack' ||
             typeof acknowledgement.gestureId !== 'string' ||
             typeof acknowledgement.accepted !== 'boolean') return;
         const timer = pendingTouchAcksRef.current.get(acknowledgement.gestureId);
