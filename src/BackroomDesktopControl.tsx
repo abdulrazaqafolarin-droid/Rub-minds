@@ -46,6 +46,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const frameRef=useRef<HTMLDivElement|null>(null);
   const dragRef=useRef<{x:number;y:number;pointerId:number}|null>(null);
   const targetAttemptRef=useRef('');
+  const draftAttemptRef=useRef('');
   const devicesRef=useRef<BackroomDevice[]>([]);
   const pendingCandidatesRef=useRef(new Map<string,RTCIceCandidateInit[]>());
   const selectedDevice=devices.find(d=>d.device_id===deviceId);
@@ -278,9 +279,16 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
         if(!ok)setSelection(null);
         flash(ok?'The selected area is a verified empty editable field.':reason,!ok);
       }else if(message.kind==='draft_result'){
+        if(typeof message.requestId!=='string'||message.requestId!==draftAttemptRef.current)return;
+        draftAttemptRef.current='';
+        targetAttemptRef.current='';
+        setSelection(null);
+        setTargetStatus('');
+        try{sendData({kind:'clear_target'});}
+        catch(error){flash('Draft finished, but the target could not be cleared. Stopping this remote session for safety.',true);void stopActivePeer();return;}
         flash(message.ok===true
-          ?'Text inserted into the verified editable field and read back. No Send or Enter action was triggered.'
-          :'Draft was not inserted: '+(message.result||'denied on the computer.'));
+          ?'Text inserted into the verified editable field and read back. Select a fresh empty field before another draft. No Send or Enter action was triggered.'
+          :'Draft finished without insertion: '+(message.result||'denied on the computer. Select the field again before retrying.'),message.ok!==true);
       }
     };
     try{
@@ -337,7 +345,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const pointerDown=(e:PointerEvent<HTMLDivElement>)=>{
     if(selectMode){
       const point=normalized(e.clientX,e.clientY);if(!point)return;
-      setTargetStatus('');setSelection(null);targetAttemptRef.current='';
+      setTargetStatus('');setSelection(null);targetAttemptRef.current='';draftAttemptRef.current='';
       try{sendData({kind:'clear_target'});}
       catch(error){flash('Could not clear the previous typing target. Stopping this remote session for safety.',true);void stopActivePeer();return;}
       dragRef.current={...point,pointerId:e.pointerId};e.currentTarget.setPointerCapture(e.pointerId);return;
@@ -385,9 +393,18 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     try{sendData({kind:'input',event});}catch(error){flash(String(error),true);}
   };
   const requestDraft=()=>{
-    if(!draft.trim()||!draftGranted)return;
-    try{sendData({kind:'draft',text:draft});flash('Draft submitted to the computer for a separate local confirmation. It will not be sent.');}
-    catch(error){flash(String(error),true);}
+    if(!draft.trim()||!draftGranted||!targetStatus.startsWith('Verified editable field ·')||draftAttemptRef.current)return;
+    const requestId=uuid();
+    draftAttemptRef.current=requestId;
+    setTargetStatus('Draft awaiting local approval on the computer…');
+    try{
+      sendData({kind:'draft',requestId,text:draft});
+      flash('Draft submitted to the computer for a separate local confirmation. It will not be sent.');
+    }catch(error){
+      draftAttemptRef.current='';
+      setTargetStatus('Verified editable field · waiting for a draft request');
+      flash(String(error),true);
+    }
   };
   // Full-screen TUIs such as Claude Code and OpenCode receive input via their PTY.
   // Submitting is an independent, explicit choice; selecting screen pixels is not necessary.
