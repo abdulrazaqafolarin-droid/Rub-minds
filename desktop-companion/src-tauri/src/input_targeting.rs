@@ -35,15 +35,19 @@ pub fn validate_window_capture_dimensions(
     Ok(())
 }
 
-pub fn foreground_window_snapshot() -> Result<ForegroundWindowSnapshot, String> {
+pub fn foreground_window_snapshot_for_process(expected_process_id: u32) -> Result<ForegroundWindowSnapshot, String> {
+    if expected_process_id == 0 {
+        return Err("A Backroom-launched application process is required for interactive window capture".into());
+    }
     #[cfg(target_os = "windows")]
     {
-        return thread::spawn(windows_impl::foreground_window_snapshot)
+        return thread::spawn(move || windows_impl::foreground_window_snapshot_for_process(expected_process_id))
             .join()
             .map_err(|_| "Windows foreground-window inspection worker stopped unexpectedly".to_string())?;
     }
     #[cfg(not(target_os = "windows"))]
     {
+        let _ = expected_process_id;
         Err("Window-bound desktop control is currently supported by the Windows accessibility driver only".into())
     }
 }
@@ -297,32 +301,68 @@ mod windows_impl {
         }, value))
     }
 
-    pub fn foreground_window_snapshot() -> Result<super::ForegroundWindowSnapshot, String> {
+    pub fn foreground_window_snapshot_for_process(expected_process_id: u32) -> Result<super::ForegroundWindowSnapshot, String> {
         let automation = UIAutomation::new()
             .map_err(|_| "Windows UI Automation could not be initialized".to_string())?;
+        let walker = automation.get_control_view_walker()
+            .map_err(|_| "Windows accessibility window tree is unavailable".to_string())?;
+        let root = automation.get_root_element()
+            .map_err(|_| "Windows desktop accessibility root is unavailable".to_string())?;
+
+        // Only one visible top-level window for the exact launched process can
+        // be bound to a window capture. Multiple windows are ambiguous.
+        let mut matches = Vec::new();
+        let mut cursor = walker.get_first_child(&root).ok();
+        while let Some(element) = cursor {
+            if element.get_control_type().ok() == Some(ControlType::Window)
+                && element.get_process_id().ok() == Some(expected_process_id)
+                && element.is_offscreen().ok() == Some(false)
+            {
+                let handle = element.get_native_window_handle()
+                    .map_err(|_| "The selected app window has no native Windows handle".to_string())?;
+                let handle_text = handle.to_string();
+                let class_name = element.get_classname()
+                    .map_err(|_| "Windows could not identify the selected app window class".to_string())?;
+                let rect = element.get_bounding_rectangle()
+                    .map_err(|_| "Windows could not read the selected app window bounds".to_string())?;
+                let bounds = [rect.get_left(), rect.get_top(), rect.get_right(), rect.get_bottom()];
+                if handle_text.is_empty() || handle_text == "0" || class_name.trim().is_empty()
+                    || bounds[2] <= bounds[0] || bounds[3] <= bounds[1]
+                {
+                    return Err("The selected app window identity or bounds are incomplete".into());
+                }
+                matches.push(super::ForegroundWindowSnapshot {
+                    process_id: expected_process_id, handle: handle_text, class_name, bounds,
+                });
+            }
+            cursor = walker.get_next_sibling(&element).ok();
+        }
+        if matches.len() != 1 {
+            return Err("Interactive app-window capture requires exactly one visible top-level window for the Backroom-launched app. Close extra windows or choose monitor view.".into());
+        }
+        let selected = matches.remove(0);
+
         let focused = automation.get_focused_element()
-            .map_err(|_| "Windows could not identify the selected application window".to_string())?;
-        let handle = focused.get_native_window_handle()
-            .map_err(|_| "The selected application does not expose a native window handle".to_string())?;
-        let handle_text = handle.to_string();
-        if handle_text.is_empty() || handle_text == "0" {
-            return Err("The selected application window handle is invalid".into());
+            .map_err(|_| "Windows could not identify the foreground app window".to_string())?;
+        let mut focused_window = focused;
+        let mut is_window = false;
+        for _ in 0..16 {
+            if focused_window.get_control_type().ok() == Some(ControlType::Window) {
+                is_window = true;
+                break;
+            }
+            focused_window = walker.get_parent(&focused_window)
+                .map_err(|_| "The foreground control is not inside an accessible app window".to_string())?;
         }
-        let window = automation.element_from_handle(handle)
-            .map_err(|_| "Windows could not resolve the selected application window".to_string())?;
-        let process_id = window.get_process_id()
-            .map_err(|_| "Windows could not identify the selected application process".to_string())?;
-        let class_name = window.get_classname()
-            .map_err(|_| "Windows could not identify the selected application window class".to_string())?;
-        let rect = window.get_bounding_rectangle()
-            .map_err(|_| "Windows could not read the selected application window bounds".to_string())?;
-        let bounds = [rect.get_left(), rect.get_top(), rect.get_right(), rect.get_bottom()];
-        if process_id == 0 || class_name.trim().is_empty()
-            || bounds[2] <= bounds[0] || bounds[3] <= bounds[1]
+        let focused_handle = focused_window.get_native_window_handle()
+            .map(|handle| handle.to_string()).ok();
+        if !is_window
+            || focused_window.get_process_id().ok() != Some(expected_process_id)
+            || focused_handle.as_deref() != Some(selected.handle.as_str())
         {
-            return Err("The selected application window identity or bounds are incomplete".into());
+            return Err("The foreground window is not the unique Backroom-launched application window. Restore that app and retry.".into());
         }
-        Ok(super::ForegroundWindowSnapshot { process_id, handle: handle_text, class_name, bounds })
+        Ok(selected)
     }
 
     pub fn inspect_at(x: i32, y: i32) -> Result<(EditableTargetIdentity, String), String> {
