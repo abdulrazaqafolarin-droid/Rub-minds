@@ -295,7 +295,7 @@ The live app mirror now has a separate remote typing path through the Rub Minds 
 - The typing grant is process-local and is not persisted. Process death or service shutdown clears it; a fresh local confirmation is required.
 - The phone binds remote text to the active screen session and the exact locally selected app package.
 - Each insertion rechecks that the current input editor belongs to that package, the current APK signer still matches, and the app's local allowDraftInsertion grant is present.
-- Password/credential fields are rejected. Text is capped at 4,000 characters. Newlines and tabs are permitted only in a multiline field; single-line fields reject line breaks.
+- Text, ordinary numeric and phone-number editors are supported. Date/time, unknown editor classes and password/credential fields are rejected. Text is capped at 4,000 characters. Newlines and tabs are permitted only in a multiline field; single-line fields reject line breaks.
 - The only write API exposed to the remote path is InputConnection.commitText. It does not read editor contents, send key events, press Enter, run an IME action, or submit a form.
 - Each request has a UUID and is consumed once. The phone acknowledges inserted/rejected outcomes over the active WebRTC data channel. Request IDs are kept in a bounded two-minute replay cache.
 - The phone user can disarm remote typing independently from touch. Stopping the mirror or destroying the service also revokes typing.
