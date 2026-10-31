@@ -440,3 +440,16 @@ test("Phone Frame remote typing is acknowledged, bounded and never auto-submits"
   assert.ok(senderStart >= 0 && senderEnd > senderStart);
   assert.equal(ui.slice(senderStart, senderEnd).includes("supabase.functions.invoke"), false);
 });
+
+test("remote IME field policy supports text, numeric and phone editors but not password or date editors", async () => {
+  const policy = await read("app/src/main/java/app/rubminds/companion/AppGrantPolicy.kt");
+  const junit = await read("app/src/test/java/app/rubminds/companion/AppGrantPolicyTest.kt");
+  assert.ok(policy.includes("InputType.TYPE_CLASS_TEXT"));
+  assert.ok(policy.includes("InputType.TYPE_CLASS_NUMBER"));
+  assert.ok(policy.includes("InputType.TYPE_CLASS_PHONE"));
+  assert.ok(policy.includes("InputType.TYPE_NUMBER_VARIATION_PASSWORD"));
+  assert.ok(policy.includes("InputType.TYPE_TEXT_VARIATION_PASSWORD"));
+  assert.ok(junit.includes("ordinaryTextNumericAndPhoneEditorsAreAllowed"));
+  assert.ok(junit.includes("sensitiveTextVariationsAreAlwaysDenied"));
+  assert.ok(junit.includes("TYPE_CLASS_DATETIME"));
+});
