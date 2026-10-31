@@ -53,7 +53,9 @@ class AndroidScreenShareService : Service() {
     @Volatile private var peer: PeerConnection? = null
     @Volatile private var dataChannel: DataChannel? = null
     @Volatile private var activeSessionId: String? = null
-    @Volatile private var activeAppPackage: String? = null\n    @Volatile private var activeRoomId: String? = null
+    @Volatile private var activeAppPackage: String? = null
+    @Volatile private var activeRoomId: String? = null
+    @Volatile private var locallySelectedPackage: String? = null
     @Volatile private var localControlGranted = false
     @Volatile private var answeringSessionId: String? = null
     @Volatile private var answerAlreadySent = false
@@ -78,14 +80,20 @@ class AndroidScreenShareService : Service() {
                     stopCapture("missing_projection_consent")
                     return START_NOT_STICKY
                 }
-                startCapture(resultData)
+                val targetPackage = intent.getStringExtra(EXTRA_TARGET_PACKAGE).orEmpty()
+                startCapture(resultData, targetPackage)
             }
         }
         return START_NOT_STICKY
     }
 
-    private fun startCapture(resultData: Intent) {
+    private fun startCapture(resultData: Intent, targetPackage: String) {
         try {
+            require(APP_PACKAGE_PATTERN.matches(targetPackage)) { "A locally selected app package is required." }
+            val signer = AppIdentity.signingCertificateSha256(this, targetPackage)
+                ?: error("The selected app signer could not be verified.")
+            require(AppGrantStore(this).get(targetPackage, signer) != null) { "The selected app is not in the saved local allowlist." }
+            locallySelectedPackage = targetPackage
             val vault = DeviceCredentialVault(this)
             deviceToken = vault.token() ?: error("Pair and obtain group-owner approval before streaming.")
             api = CloudDeviceApi()
@@ -175,7 +183,7 @@ class AndroidScreenShareService : Service() {
                 pendingOfferCommandId = commandId
                 pendingOfferRequestId = requestId
                 activeRoomId = roomId
-                val accepted = startPeerAnswer(sessionId, appPackage, offer)
+                val accepted = startPeerAnswer(sessionId, appPackage, offer, roomId)
                 if (!accepted) acknowledge(token, commandId, requestId, sessionId, "app_or_offer_rejected")
             }
             "request_control" -> {
@@ -198,8 +206,9 @@ class AndroidScreenShareService : Service() {
         }
     }
 
-    private fun startPeerAnswer(sessionId: String, appPackage: String, offerSdp: String): Boolean {
+    private fun startPeerAnswer(sessionId: String, appPackage: String, offerSdp: String, roomId: String): Boolean {
         if (!UUID_PATTERN.matches(sessionId) || !APP_PACKAGE_PATTERN.matches(appPackage) ||
+            appPackage != locallySelectedPackage || !UUID_PATTERN.matches(roomId) ||
             offerSdp.length !in 8..MAX_SDP_CHARS || !offerSdp.startsWith("v=0") ||
             AndroidTouchAccessibilityService.currentForegroundPackage() != appPackage
         ) return false
@@ -209,6 +218,7 @@ class AndroidScreenShareService : Service() {
         closePeer()
         activeSessionId = sessionId
         activeAppPackage = appPackage
+        activeRoomId = roomId
         localControlGranted = false
         answerAlreadySent = false
         answeringSessionId = sessionId
@@ -474,6 +484,7 @@ class AndroidScreenShareService : Service() {
         const val ACTION_STOP = "app.rubminds.companion.action.STOP_SCREEN_SHARE"
         const val EXTRA_RESULT_CODE = "media_projection_result_code"
         const val EXTRA_RESULT_DATA = "media_projection_result_data"
+        const val EXTRA_TARGET_PACKAGE = "media_projection_target_package"
         private const val CHANNEL_ID = "backroom-screen-share"
         private const val NOTIFICATION_ID = 7301
         private const val CAPTURE_FPS = 20

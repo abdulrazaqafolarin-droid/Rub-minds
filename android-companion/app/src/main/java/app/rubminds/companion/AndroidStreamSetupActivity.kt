@@ -20,7 +20,7 @@ import android.widget.Toast
  */
 class AndroidStreamSetupActivity : Activity() {
     private lateinit var status: TextView
-    private lateinit var startButton: Button
+    private var pendingTargetPackage = ""
     private lateinit var armButton: Button
     private val projectionManager by lazy {
         getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
@@ -62,11 +62,30 @@ class AndroidStreamSetupActivity : Activity() {
             setOnClickListener { confirmTouchArm() }
         }
         root.addView(armButton)
-        startButton = Button(this).apply {
-            text = "Start app screen sharing"
-            setOnClickListener { requestProjection() }
+        root.addView(TextView(this).apply {
+            text = "Choose one of your saved apps to share"
+            textSize = 14f
+            setTextColor(0xff172033.toInt())
+            setPadding(0, dp(16), 0, dp(6))
+        })
+        val approvedApps = AppGrantStore(this).all()
+        if (approvedApps.isEmpty()) {
+            root.addView(TextView(this).apply {
+                text = "No apps are saved yet. Return to Rub Minds Companion, select an installed app and tap Save and sync selected apps first."
+                textSize = 12f
+                setTextColor(0xff8a4750.toInt())
+            })
+        } else {
+            approvedApps.forEach { grant ->
+                val label = try {
+                    packageManager.getApplicationLabel(packageManager.getApplicationInfo(grant.packageName, 0)).toString()
+                } catch (_: Exception) { grant.packageName }
+                root.addView(Button(this).apply {
+                    text = "Share $label"
+                    setOnClickListener { requestProjection(grant.packageName) }
+                })
+            }
         }
-        root.addView(startButton)
         root.addView(Button(this).apply {
             text = "Stop screen sharing"
             setOnClickListener {
@@ -112,7 +131,7 @@ class AndroidStreamSetupActivity : Activity() {
             .show()
     }
 
-    private fun requestProjection() {
+    private fun requestProjection(targetPackageName: String) {
         if (Build.VERSION.SDK_INT < 34) {
             Toast.makeText(this, "App-window selection requires Android 14 or later on this companion path.", Toast.LENGTH_LONG).show()
             return
@@ -122,8 +141,15 @@ class AndroidStreamSetupActivity : Activity() {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             return
         }
+        val signer = AppIdentity.signingCertificateSha256(this, targetPackageName)
+        if (signer == null || AppGrantStore(this).get(targetPackageName, signer) == null) {
+            Toast.makeText(this, "This app is no longer in your saved local allowlist. Refresh the app list and approve it again.", Toast.LENGTH_LONG).show()
+            return
+        }
+        pendingTargetPackage = targetPackageName
         // Android 14+ shows the OS chooser for a single app window or the full display.
-        // The user must choose only the intended app window for the app-stream workflow.
+        // The user must choose the intended app window. The selected package is then
+        // launched locally so Accessibility can re-check the foreground identity.
         startActivityForResult(projectionManager.createScreenCaptureIntent(), REQUEST_CAPTURE)
     }
 
@@ -135,19 +161,33 @@ class AndroidStreamSetupActivity : Activity() {
             Toast.makeText(this, "Screen sharing was not approved. Nothing was captured.", Toast.LENGTH_LONG).show()
             return
         }
+        val targetPackage = pendingTargetPackage
+        val signer = AppIdentity.signingCertificateSha256(this, targetPackage)
+        val grant = signer?.let { AppGrantStore(this).get(targetPackage, it) }
+        val launchIntent = packageManager.getLaunchIntentForPackage(targetPackage)
+        if (targetPackage.isBlank() || grant == null || launchIntent == null) {
+            Toast.makeText(this, "The approved app is no longer installed or launchable. No screen was shared.", Toast.LENGTH_LONG).show()
+            pendingTargetPackage = ""
+            return
+        }
         val service = Intent(this, AndroidScreenShareService::class.java).apply {
             action = AndroidScreenShareService.ACTION_START
             putExtra(AndroidScreenShareService.EXTRA_RESULT_CODE, resultCode)
             putExtra(AndroidScreenShareService.EXTRA_RESULT_DATA, data)
+            putExtra(AndroidScreenShareService.EXTRA_TARGET_PACKAGE, targetPackage)
         }
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(service) else startService(service)
-            Toast.makeText(this, "Screen sharing started. Open Backroom to request the selected app stream.", Toast.LENGTH_LONG).show()
-            // Return to the app the user had open before the consent/setup activity.
+            launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(launchIntent)
+            Toast.makeText(this, "Screen sharing started. Return to Backroom to request this app stream.", Toast.LENGTH_LONG).show()
             finish()
         } catch (error: Exception) {
             RemoteTouchGate.disarm(this)
+            stopService(Intent(this, AndroidScreenShareService::class.java))
             Toast.makeText(this, error.message ?: "Could not start the screen-share service.", Toast.LENGTH_LONG).show()
+        } finally {
+            pendingTargetPackage = ""
         }
     }
 
@@ -161,7 +201,7 @@ class AndroidStreamSetupActivity : Activity() {
             else -> "Touch service: enabled · screen sharing can be view-only. Remote touch is not armed."
         }
         armButton.isEnabled = enabled
-        startButton.isEnabled = Build.VERSION.SDK_INT >= 34 && enabled
+
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
