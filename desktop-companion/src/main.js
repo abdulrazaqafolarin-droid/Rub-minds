@@ -483,7 +483,20 @@ async function handlePeerData(sessionId,raw){
   if(message.kind==='input'&&message.event){
     try{await invoke('dispatch_input',{sessionId,event:message.event});}catch(error){notify(error.message,'error');}
   } else if(message.kind==='select_target'){
-    try{await invoke('select_draft_target',{sessionId,target:message.target});}catch(error){notify(error.message,'error');}
+    const report=(ok,reason)=>{
+      if(peer.channel?.readyState==='open'){
+        try{peer.channel.send(JSON.stringify({kind:'target_result',ok,reason}));}catch{}
+      }
+    };
+    try{
+      await invoke('select_draft_target',{sessionId,target:message.target});
+      report(true,'Verified an empty, editable Windows text field. Its app identity will be rechecked before typing.');
+      notify('Drag selection matched an accessible empty text field.','success');
+    }catch(error){
+      const reason=error?.message||'The selected area is not a verifiable editable field.';
+      report(false,reason);
+      notify(reason,'error');
+    }
   } else if(message.kind==='draft'){
     try{const id=await invoke('stage_draft_request',{sessionId,text:message.text});await refreshPending();notify('Draft request '+id+' is waiting for approval on this computer.');}catch(error){notify(error.message,'error');}
   } else if(message.kind==='terminal_input'){
