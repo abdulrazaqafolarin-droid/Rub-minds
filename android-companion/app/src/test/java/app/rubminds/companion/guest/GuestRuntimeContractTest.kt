@@ -373,6 +373,40 @@ class GuestRuntimeContractTest {
 
 
 
+
+    @Test fun touchSequenceRejectsOrphanedDuplicateAndOutOfOrderEvents() {
+        val currentFrame = frame()
+        val guard = GuestTouchSequenceGuard()
+        val down = GuestTouchEvent(
+            "session-1", "guest-instance-1", 12, 0, GuestTouchAction.DOWN, 0.5, 0.5, 10_000
+        )
+        assertEquals("touch_pointer_not_active", guard.accept(down.copy(action = GuestTouchAction.MOVE), currentFrame, 10_000))
+        assertNull(guard.accept(down, currentFrame, 10_000))
+        assertEquals("touch_pointer_already_active", guard.accept(down.copy(occurredAtMillis = 10_001), currentFrame, 10_001))
+        assertEquals("touch_event_out_of_order", guard.accept(down.copy(action = GuestTouchAction.MOVE, occurredAtMillis = 9_999), currentFrame, 10_001))
+        assertNull(guard.accept(down.copy(action = GuestTouchAction.MOVE, occurredAtMillis = 10_002), currentFrame, 10_002))
+        assertNull(guard.accept(down.copy(action = GuestTouchAction.UP, occurredAtMillis = 10_003), currentFrame, 10_003))
+        assertEquals("touch_pointer_not_active", guard.accept(down.copy(action = GuestTouchAction.UP, occurredAtMillis = 10_004), currentFrame, 10_004))
+    }
+
+    @Test fun touchSessionStopClearsAllActivePointers() {
+        val currentFrame = frame()
+        val guard = GuestTouchSequenceGuard()
+        val down = GuestTouchEvent(
+            "session-1", "guest-instance-1", 12, 1, GuestTouchAction.DOWN, 0.1, 0.1, 10_000
+        )
+        assertNull(guard.accept(down, currentFrame, 10_000))
+        guard.clearSession("session-1")
+        assertEquals("touch_pointer_not_active", guard.accept(
+            down.copy(action = GuestTouchAction.MOVE, occurredAtMillis = 10_001), currentFrame, 10_001
+        ))
+        assertNull(guard.accept(down, currentFrame, 10_002))
+        guard.clearAll()
+        assertEquals("touch_pointer_not_active", guard.accept(
+            down.copy(action = GuestTouchAction.CANCEL, occurredAtMillis = 10_003), currentFrame, 10_003
+        ))
+    }
+
     @Test fun localApprovalReceiptIsBoundToExactSessionAndSelectionAndCanBeConsumedOnlyOnce() {
         val lease = selection()
         val receipt = approval(lease)
