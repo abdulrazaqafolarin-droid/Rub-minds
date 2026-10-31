@@ -73,3 +73,12 @@ test("Android Phone Frame wires a consented WebRTC stream and a separate touch g
   assert.match(control, /whole display/);
   assert.match(control, /not an isolated virtual copy/);
 });
+
+test("Android touch-control requests have a bounded pending state and exact request correlation", async () => {
+  const control = await read("src/BackroomAndroidControl.tsx");
+  assert.match(control, /pendingControlRequestRef/);
+  assert.match(control, /controlRequestTimerRef/);
+  assert.match(control, /45_000/);
+  assert.match(control, /payload\\.requestId !== pendingControlRequestRef\\.current/);
+  assert.match(control, /pendingControlRequestRef\\.current === requestId/);
+});

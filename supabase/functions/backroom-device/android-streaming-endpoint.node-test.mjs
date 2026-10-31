@@ -54,6 +54,7 @@ test("Android queue and media components do not add an inbound phone listener or
   assert.match(companion, /PEER_DISCONNECT_GRACE_SECONDS = 20L/);
   assert.match(companion, /android_offer_rejected/);
   assert.match(companion, /android\/session-close/);
+  assert.match(companion, /stopCapture\\("android_offer_rejected"\\)/);
   assert.match(companion, /webrtc_peer_disconnected/);
   assert.match(companion, /fun revokeLocalTouch\\(context: Context\\)/);
   assert.match(companion, /localControlGranted = false/);
