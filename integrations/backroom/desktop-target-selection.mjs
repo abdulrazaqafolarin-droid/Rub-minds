@@ -56,3 +56,19 @@ export function isPendingDraftForCurrentSelection(peer, draft) {
     peer.targetSelectionId === draft.selectionId
   );
 }
+
+export function enqueuePeerOperation(peer, operation) {
+  if (!peer || typeof peer !== 'object' || typeof operation !== 'function') {
+    return Promise.reject(new TypeError('A peer and operation function are required.'));
+  }
+  const previous = peer.targetQueue || Promise.resolve();
+  peer.targetOperationsPending = (peer.targetOperationsPending || 0) + 1;
+  const task = Promise.resolve(previous).catch(() => {}).then(operation);
+  const tracked = task.finally(() => {
+    peer.targetOperationsPending = Math.max(0, (peer.targetOperationsPending || 1) - 1);
+  });
+  // The caller receives the real failure. The shared queue always recovers so
+  // one failed revoke/input operation cannot block future target safety work.
+  peer.targetQueue = tracked.catch(() => {});
+  return tracked;
+}
