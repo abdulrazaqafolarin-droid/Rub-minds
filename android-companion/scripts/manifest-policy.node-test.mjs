@@ -136,8 +136,8 @@ test("guest runtime code remains a provider-neutral contract with no bundled vir
   assert.match(contract, /releaseArtifactDebugSigned/);
   assert.match(contract, /releaseArtifactSha256/);
   assert.match(contract, /mergedManifestSha256/);
-  assert.match(contract, /GuestCaptureScope\.GUEST_APP/);
-  assert.match(contract, /GuestCaptureScope\.WHOLE_DEVICE/);
+  assert.match(contract, /enum class GuestCaptureScope \{\s*GUEST_APP,\s*WHOLE_DEVICE\s*\}/);
+  assert.match(contract, /frame\.captureScope != GuestCaptureScope\.GUEST_APP/);
   assert.match(contract, /GuestLocalApprovalReceipt/);
   assert.match(contract, /issueAfterNativeConfirmation/);
   assert.match(contract, /internal fun consume\(/);
@@ -184,8 +184,8 @@ test("guest admission allowlist stays aligned with the real companion manifest a
 
   assert.match(activity, /^package app\.rubminds\.companion$/m);
   assert.match(keyboard, /^package app\.rubminds\.companion$/m);
-  assert.match(contract, /component\.className === "\$\{descriptor\.hostApplicationId\}\.MainActivity"/);
-  assert.match(contract, /component\.className === "\$\{descriptor\.hostApplicationId\}\.DraftInputMethodService"/);
+  assert.match(contract, /component\.className == "\$\{descriptor\.hostApplicationId\}\.MainActivity"/);
+  assert.match(contract, /component\.className == "\$\{descriptor\.hostApplicationId\}\.DraftInputMethodService"/);
 });
 
 test("all guest runtime JUnit methods remain inside their test class", async () => {
