@@ -375,12 +375,23 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       const requestId=uuid();targetAttemptRef.current=requestId;
       setSelection(target);setTargetStatus('Checking the selected area against Windows accessibility…');
       try{sendData({kind:'select_target',requestId,target});flash('Checking that the selected area resolves to one empty editable field or multi-line editor.');}
-      catch(error){flash(String(error),true);}
+      catch(error){
+        targetAttemptRef.current='';setSelection(null);
+        setTargetStatus('Target check could not be sent. Reconnect the computer and drag-select again.');
+        flash(String(error),true);
+      }
       return;
     }
     if(controlGranted){
       const point=normalized(e.clientX,e.clientY);if(point)try{sendData({kind:'input',event:{kind:'click',...point,button:'left'}});}catch(error){flash(String(error),true);}
     }
+  };
+  const pointerCancel=(e:PointerEvent<HTMLDivElement>)=>{
+    if(dragRef.current?.pointerId!==e.pointerId)return;
+    dragRef.current=null;
+    targetAttemptRef.current='';
+    setSelection(null);
+    setTargetStatus('Drag cancelled. No typing target is selected.');
   };
   const keyDown=(e:KeyboardEvent<HTMLDivElement>)=>{
     if(!controlGranted||!dataRef.current||e.ctrlKey||e.metaKey||e.altKey)return;
@@ -447,7 +458,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
         {(screenSession||terminalSession)&&<div className="br-desktop-live">
           <div className="br-desktop-live-title"><b>Active computer session</b><button type="button" onClick={()=>void stop()}><Power size={14}/> Stop session</button></div>
           {screenSession&&<div className="br-desktop-frame-wrap">
-            <div className="br-desktop-video" ref={frameRef} tabIndex={0} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onKeyDown={keyDown}>
+            <div className="br-desktop-video" ref={frameRef} tabIndex={0} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerCancel} onKeyDown={keyDown}>
               <video ref={videoRef} autoPlay muted playsInline/>
               {!videoReady&&<div className="br-desktop-video-empty">Waiting for the computer to approve and share its display…</div>}
               {selection&&<div className="br-desktop-selection" style={selectionOverlayStyle()}/>}
