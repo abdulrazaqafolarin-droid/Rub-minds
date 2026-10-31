@@ -112,3 +112,20 @@ The browser's `getDisplayMedia` API exposes a captured `displaySurface` category
 - The Android guest provider remains absent; the Android admission checklist therefore remains blocking. No user-operable virtual guest app or physical acceptance is claimed.
 
 **Release gate remains closed:** green actionable CI logs, Windows native compilation, real terminal/desktop tests, an admitted Android provider and physical device tests are still required. No production deploy or merge authorized by this checkpoint.
+
+## Terminal TUI draft and submission flow — 2026-10-31
+
+Claude Code and OpenCode full-screen interfaces are PTY applications, not Windows UI Automation Edit/Document controls. The companion cannot reliably infer which TUI widget is focused from terminal output. The user must visually confirm the intended prompt before enabling the separate terminal draft permission.
+
+Implemented in the feature branch:
+- Native terminal draft writes require both the active control grant and a separate, locally confirmed draft-typing grant.
+- Draft payloads are limited to 4,000 Unicode characters and reject blank text, CR/LF, tabs, C0/C1 control characters and Unicode line separators. No draft operation writes Enter.
+- The WebRTC message is bound to the exact PTY session already associated with that peer. The message cannot supply an alternate terminal session.
+- Enter is a separate operation carrying no text. The native host permits it only after a successful draft write in that exact PTY session, consumes that permission once, and expires it after 30 seconds.
+- Manual control revocation, session close and Emergency Stop remove pending Enter permission. The companion UI disables Enter if the user edits the draft after the last successful write; local draft permission expires in the UI slightly before native expiry.
+- Protocol-level Node regression tests cover session binding, malformed IDs, blank/oversized input, all newline/control categories, exact-session Enter and rejection of text bundled with Enter. Rust unit tests cover the native draft validator and one-use/expiry policy.
+
+Important boundary:
+- This is a bounded PTY text-input flow, not semantic focus detection. The same text may be interpreted by the currently focused program, so the person at the computer must verify the Claude Code/OpenCode composer before approving draft typing and before pressing Enter.
+- Do not claim visual drag-select targeting for a TUI. The Windows UIA drag-select path applies only to accessible desktop Edit/Document controls.
+- Build and test gates remain open until the Windows native workflow executes real steps, Rust tests and MSVC compilation pass, and a physical Windows acceptance run verifies the entire path.
