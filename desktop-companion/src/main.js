@@ -495,9 +495,12 @@ async function handlePeerData(sessionId,raw){
   if(message.kind==='clear_target'){
     peer.latestTargetRequestId=null;
     peer.targetVerified=false;
-    await invalidatePendingDraftApprovals(sessionId,'The typing-area selection was cleared; this draft was cancelled.');
+    const invalidation=invalidatePendingDraftApprovals(sessionId,'The typing-area selection was cleared; this draft was cancelled.');
     if(!peer.targetClearPromise){
+      // Enqueue synchronously before yielding so a following drag cannot get
+      // ahead of this clear on the ordered data channel.
       const clearTask=(peer.targetQueue||Promise.resolve()).then(async()=>{
+        await invalidation;
         try{await invoke('clear_draft_target',{sessionId});}
         catch(error){notify(error?.message||'Could not clear the selected typing target. Draft insertion remains disabled.','error');}
         finally{peer.targetVerified=false;}
@@ -520,39 +523,38 @@ async function handlePeerData(sessionId,raw){
     };
     if(!requestId){report(false,'A unique selection-attempt identifier is required.');return;}
 
-    // Every newer drag immediately makes the old target unusable for new drafts.
+    // Newer browser drags revoke draft eligibility immediately, even while the
+    // native accessibility lookup for an older drag is still running.
     peer.latestTargetRequestId=requestId;
     peer.targetVerified=false;
     peer.targetQueueDepth=(peer.targetQueueDepth||0)+1;
+    const invalidation=invalidatePendingDraftApprovals(sessionId,'The selected typing area changed; this draft was cancelled.');
+
     if(peer.targetQueueDepth>4){
       peer.targetQueueDepth-=1;
-      await invalidatePendingDraftApprovals(sessionId,'The selected typing area changed; this draft was cancelled.');
-      // Queue one clear behind already-running native checks. Any subsequent
-      // accepted selection will be queued after this clear. Coalesce bursts.
+      // Queue one clear behind all active checks. Coalescing avoids an
+      // unbounded clear queue if a remote peer floods the data channel.
       if(!peer.targetClearPromise){
         const clearTask=(peer.targetQueue||Promise.resolve()).then(async()=>{
-          try{
-            await invoke('clear_draft_target',{sessionId});
-          }catch(error){
-            notify(error?.message||'Could not clear the previous typing target. Draft insertion remains disabled.','error');
-          }finally{
-            peer.targetVerified=false;
-          }
+          await invalidation;
+          try{await invoke('clear_draft_target',{sessionId});}
+          catch(error){notify(error?.message||'Could not clear the previous typing target. Draft insertion remains disabled.','error');}
+          finally{peer.targetVerified=false;}
         });
         const tracked=clearTask.finally(()=>{if(peer.targetClearPromise===tracked)peer.targetClearPromise=null;});
         peer.targetClearPromise=tracked;
         peer.targetQueue=tracked;
       }
-      report(false,'Too many target checks are pending. The previous target is being cleared; wait and drag-select again.');
+      report(false,'Too many target checks are pending. The previous target was cleared; wait and drag-select again.');
       await peer.targetClearPromise;
       return;
     }
 
-    // UIA calls may take different amounts of time. Serialize per peer and
-    // discard queued attempts superseded by a newer browser drag.
+    // Queue in message-arrival order before awaiting local approval-card
+    // invalidation. This preserves the ordered data channel's clear/drag order.
     peer.targetQueue=(peer.targetQueue||Promise.resolve()).then(async()=>{
       try{
-        await invalidatePendingDraftApprovals(sessionId,'The selected typing area changed; this draft was cancelled.');
+        await invalidation;
         if(requestId!==peer.latestTargetRequestId){
           report(false,'This selection was superseded by a newer drag.');
           return;
