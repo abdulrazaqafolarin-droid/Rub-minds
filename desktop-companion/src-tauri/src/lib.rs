@@ -984,6 +984,8 @@ fn clear_draft_target(state: State<'_, AppState>, session_id: String) -> Result<
     control_granted(&state, &session_id)?;
     draft_granted(&state, &session_id)?;
     state.draft_targets.lock().map_err(|_| "Draft state unavailable")?.remove(&session_id);
+    state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?
+        .retain(|_, draft| draft.session_id != session_id);
     Ok(())
 }
 
