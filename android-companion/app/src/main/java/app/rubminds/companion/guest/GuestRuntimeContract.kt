@@ -85,7 +85,7 @@ data class GuestRuntimeReview(
 
 object GuestRuntimeAdmissionPolicy {
     private const val MIN_TARGET_SDK = 35
-    private const val MAX_FRAME_PIXELS = 33_554_432L
+    const val MAX_FRAME_PIXELS = 33_554_432L
 
     private val allowedLicenses = setOf("Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause")
 
@@ -120,7 +120,9 @@ object GuestRuntimeAdmissionPolicy {
         "READ_CALENDAR",
         "WRITE_CALENDAR",
         "BLUETOOTH_SCAN",
-        "BLUETOOTH_ADVERTISE"
+        "BLUETOOTH_ADVERTISE",
+        "FOREGROUND_SERVICE_CAMERA",
+        "FOREGROUND_SERVICE_MICROPHONE"
     )
 
     private val requiredCapabilities = GuestRuntimeCapability.values().toSet()
