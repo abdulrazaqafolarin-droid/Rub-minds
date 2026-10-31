@@ -210,7 +210,9 @@ androidComponents {
                     "The approved launcher must retain MAIN/LAUNCHER intent filters."
                 }
 
-                val inputMethod = exported.single { it.type == "service" }
+                val inputMethod = exported.single {
+                    it.type == "service" && it.className == "$expectedAppId.DraftInputMethodService"
+                }
                 require(inputMethod.className == "$expectedAppId.DraftInputMethodService") {
                     "The only exported service must be the exact Rub Minds draft input method."
                 }
@@ -219,6 +221,24 @@ androidComponents {
                 }
                 require(hasIntent(inputMethod, "android.view.InputMethod")) {
                     "The approved input method must retain android.view.InputMethod."
+                }
+
+                val accessibilityService = exported.single {
+                    it.type == "service" && it.className == "$expectedAppId.AndroidTouchAccessibilityService"
+                }
+                require(accessibilityService.permission == "android.permission.BIND_ACCESSIBILITY_SERVICE") {
+                    "The touch service must remain OS-bound by BIND_ACCESSIBILITY_SERVICE."
+                }
+                require(hasIntent(accessibilityService, "android.accessibilityservice.AccessibilityService")) {
+                    "The touch service must retain the Android AccessibilityService intent."
+                }
+                val hasTouchServiceMetadata = childElements(accessibilityService.element).any { metadata ->
+                    metadata.tagName == "meta-data" &&
+                        metadata.androidAttribute("name") == "android.accessibilityservice" &&
+                        metadata.androidAttribute("resource") == "@xml/backroom_touch_accessibility"
+                }
+                require(hasTouchServiceMetadata) {
+                    "The touch service must reference its explicit accessibility-service configuration."
                 }
 
                 val adminReceiver = exported.single { it.type == "receiver" }

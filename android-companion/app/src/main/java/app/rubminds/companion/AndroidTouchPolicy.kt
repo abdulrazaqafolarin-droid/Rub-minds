@@ -40,9 +40,12 @@ object AndroidTouchPolicy {
 
     fun map(point: NormalizedTouchPoint, bounds: TouchWindowBounds): Pair<Int, Int>? {
         if (!validPoint(point) || bounds.right <= bounds.left || bounds.bottom <= bounds.top) return null
-        val x = (bounds.left + point.x * (bounds.right - bounds.left)).toInt()
-        val y = (bounds.top + point.y * (bounds.bottom - bounds.top)).toInt()
-        if (x !in bounds.left..bounds.right || y !in bounds.top..bounds.bottom) return null
+        val maxX = bounds.right - 1
+        val maxY = bounds.bottom - 1
+        if (maxX < bounds.left || maxY < bounds.top) return null
+        val x = (bounds.left + point.x * (maxX - bounds.left)).toInt()
+        val y = (bounds.top + point.y * (maxY - bounds.top)).toInt()
+        if (x !in bounds.left..maxX || y !in bounds.top..maxY) return null
         return x to y
     }
 
@@ -51,5 +54,5 @@ object AndroidTouchPolicy {
             point.x in 0f..1f && point.y in 0f..1f
 
     private fun distance(a: NormalizedTouchPoint, b: NormalizedTouchPoint): Float =
-        kotlin.math.hypot(a.x - b.x, a.y - b.y)
+        kotlin.math.sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y))
 }

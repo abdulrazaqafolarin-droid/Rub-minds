@@ -15,10 +15,15 @@ on:
       - 'android-companion/**'\n      - 'supabase/functions/backroom-device/**'\n      - 'integrations/backroom/android-touch-policy.*'\n      - 'src/BackroomAndroidControl.tsx'\n      - 'src/BackroomDevicesApp.tsx'\n      - 'src/backroom-cloud.css'
       - 'docs/BACKROOM_ANDROID_GUEST_RUNTIME_ACCEPTANCE.md'
   push:
-    branches: [main, feat/backroom-virtualized-execution]
+    branches: [main, feat/backroom-virtualized-execution, feat/backroom-android-live-app-stream]
     paths:
       - '.github/workflows/backroom-android-companion.yml'
       - 'android-companion/**'
+      - 'supabase/functions/backroom-device/**'
+      - 'integrations/backroom/android-touch-policy.*'
+      - 'src/BackroomAndroidControl.tsx'
+      - 'src/BackroomDevicesApp.tsx'
+      - 'src/backroom-cloud.css'
       - 'docs/BACKROOM_ANDROID_GUEST_RUNTIME_ACCEPTANCE.md'
   workflow_dispatch:
 

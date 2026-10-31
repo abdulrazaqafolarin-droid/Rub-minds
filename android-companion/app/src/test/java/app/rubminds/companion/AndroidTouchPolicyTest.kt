@@ -40,7 +40,7 @@ class AndroidTouchPolicyTest {
     @Test fun normalizedCoordinatesMapToWindowBoundsWithoutDisplayOffsetGuessing() {
         val bounds = TouchWindowBounds(24, 80, 1024, 1880)
         assertEquals(24 to 80, AndroidTouchPolicy.map(NormalizedTouchPoint(0f, 0f), bounds))
-        assertEquals(1024 to 1880, AndroidTouchPolicy.map(NormalizedTouchPoint(1f, 1f), bounds))
+        assertEquals(1023 to 1879, AndroidTouchPolicy.map(NormalizedTouchPoint(1f, 1f), bounds))
         assertEquals(524 to 980, AndroidTouchPolicy.map(NormalizedTouchPoint(0.5f, 0.5f), bounds))
         assertNull(AndroidTouchPolicy.map(NormalizedTouchPoint(0.5f, 0.5f), TouchWindowBounds(20, 20, 20, 100)))
     }

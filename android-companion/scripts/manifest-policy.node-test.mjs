@@ -12,7 +12,6 @@ test("companion requests only HTTPS and approved profile handoff permissions", a
     "android.permission.MANAGE_EXTERNAL_STORAGE",
     "android.permission.QUERY_ALL_PACKAGES",
     "android.permission.SYSTEM_ALERT_WINDOW",
-    "android.permission.BIND_ACCESSIBILITY_SERVICE",
     "android.permission.RECEIVE_BOOT_COMPLETED",
     "android.permission.PACKAGE_USAGE_STATS",
     "android.permission.REQUEST_INSTALL_PACKAGES",
@@ -22,7 +21,7 @@ test("companion requests only HTTPS and approved profile handoff permissions", a
   ];
   for (const permission of forbidden) assert.equal(manifest.includes(permission), false, "Unexpected permission: " + permission);
   assert.match(manifest, /android.permission.INTERACT_ACROSS_PROFILES/);
-  assert.equal((manifest.match(/<uses-permission\b/g) ?? []).length, 2);
+  assert.equal((manifest.match(/<uses-permission\b/g) ?? []).length, 5);
   assert.match(manifest, /android:usesCleartextTraffic="false"/);
   assert.match(manifest, /android.permission.BIND_INPUT_METHOD/);
   assert.match(manifest, /android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION/);
