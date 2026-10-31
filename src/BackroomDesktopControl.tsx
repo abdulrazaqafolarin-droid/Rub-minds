@@ -3,6 +3,7 @@ import { Monitor, Play, Power, RefreshCw, ShieldCheck, SquareTerminal, TextCurso
 import { supabase } from './supabase';
 import { buildScopedDeviceMessage, classifyDeviceResponse, validateDeviceSignal, queueIceCandidate, takeIceCandidates } from '../integrations/backroom/desktop-realtime-protocol.mjs';
 import { waitForIceGatheringComplete } from '../integrations/backroom/ice-gathering.mjs';
+import { validateTerminalExitedMessage } from '../integrations/backroom/terminal-pty-protocol.mjs';
 import { getContainedVideoRect, mapVideoSelectionToFrame, normalizeClientPointToVideo, createNormalizedDragSelection } from '../integrations/backroom/video-selection-overlay.mjs';
 import { listBackroomDevices, type BackroomDevice } from './backroomCloudDevices';
 import './backroomDesktopControl.css';
@@ -305,6 +306,13 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       const data=pc.createDataChannel('backroom-terminal',{ordered:true});dataRef.current=data;peerRef.current=pc;screenSessionRef.current=peerId;setTerminalPeerId(peerId);terminalPeerRef.current=peerId;setTerminalText('Waiting for local terminal approval…\\n');
       data.onmessage=event=>{
         let message:any;try{message=JSON.parse(event.data);}catch{return;}
+        const terminalExit=validateTerminalExitedMessage(message,terminalPeerRef.current);
+        if(terminalExit){
+          setTerminalText(old=>(old+'\\n[Native terminal process exited]\\n').slice(-30000));
+          flash('The native terminal process exited. Its Backroom session is stopping.',true);
+          void stopActivePeer();
+          return;
+        }
         if(message.kind==='terminal_output'){
           const output=new TextDecoder().decode(new Uint8Array(message.data||[]));
           setTerminalText(old=>(old+output).slice(-30000));
