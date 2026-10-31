@@ -48,12 +48,16 @@ class AppGrantPolicyTest {
         }
     }
 
-    @Test fun ordinaryTextEditorsAreAllowedButNumericEditorsAreDeferred() {
+    @Test fun ordinaryTextNumericAndPhoneEditorsAreAllowed() {
+        val phoneInput = InputType.TYPE_CLASS_PHONE
         assertFalse(AppGrantPolicy.isSensitiveInput(normalTextInput))
         assertFalse(AppGrantPolicy.isSensitiveInput(normalNumberInput))
+        assertTrue(AppGrantPolicy.isSupportedInputType(normalTextInput))
+        assertTrue(AppGrantPolicy.isSupportedInputType(normalNumberInput))
+        assertTrue(AppGrantPolicy.isSupportedInputType(phoneInput))
         assertTrue(AppGrantPolicy.canInsertDraft(selectedGrant, "com.example.chat", signingDigest, normalTextInput))
-        assertFalse(AppGrantPolicy.isSupportedInputType(normalNumberInput))
-        assertFalse(AppGrantPolicy.canInsertDraft(selectedGrant, "com.example.chat", signingDigest, normalNumberInput))
+        assertTrue(AppGrantPolicy.canInsertDraft(selectedGrant, "com.example.chat", signingDigest, normalNumberInput))
+        assertTrue(AppGrantPolicy.canInsertDraft(selectedGrant, "com.example.chat", signingDigest, phoneInput))
     }
 
     @Test fun packageAndSigningIdentifiersMustBeWellFormed() {
