@@ -545,7 +545,7 @@ async function handlePeerData(sessionId,raw){
     }
     try{await invoke('dispatch_input',{sessionId,event:message.event});}catch(error){notify(error.message,'error');}
   } else if(message.kind==='select_target'){
-    const requestId=typeof message.requestId==='string'&&message.requestId.length>0&&message.requestId.length<=80?message.requestId:null;
+    const requestId=typeof message.requestId==='string'&&UUID_PATTERN.test(message.requestId)?message.requestId:null;
     const report=(ok,reason)=>{
       if(peer.channel?.readyState==='open'){
         try{peer.channel.send(JSON.stringify({kind:'target_result',requestId,ok,reason}));}catch{}
@@ -581,6 +581,7 @@ async function handlePeerData(sessionId,raw){
       }
       report(false,'Too many target checks are pending. The previous target was cleared; wait and drag-select again.');
       await peer.targetClearPromise;
+      rejectTargetSelection(peer,requestId);
       return;
     }
 
