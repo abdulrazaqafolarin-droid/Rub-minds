@@ -388,6 +388,10 @@ object GuestInstallPolicy {
  * this map alone is not a durable isolation store.
  */
 class GuestInstanceIsolationRegistry {
+    companion object {
+        const val MAX_GUEST_INSTANCES = 8
+    }
+
     private val containerOwners = linkedMapOf<String, String>()
     private val instanceContainers = linkedMapOf<String, String>()
 
@@ -397,6 +401,7 @@ class GuestInstanceIsolationRegistry {
         if (validation != null) return validation
         if (instance.instanceId in instanceContainers) return "guest_instance_id_already_registered"
         if (instance.dataContainerId in containerOwners) return "guest_data_container_reused"
+        if (instanceContainers.size >= MAX_GUEST_INSTANCES) return "guest_instance_limit_reached"
         instanceContainers[instance.instanceId] = instance.dataContainerId
         containerOwners[instance.dataContainerId] = instance.instanceId
         return null
@@ -584,42 +589,44 @@ object GuestTouchPolicy {
  * backwards in time. Clear the session on stop/revoke.
  */
 class GuestTouchSequenceGuard {
+    companion object {
+        const val MAX_ACTIVE_POINTERS_PER_SESSION = 10
+    }
+
     private val activePointers = linkedMapOf<String, MutableMap<Int, Long>>()
 
     @Synchronized
     fun accept(event: GuestTouchEvent, frame: GuestFrame, nowMillis: Long): String? {
         val error = GuestTouchPolicy.validate(event, frame, nowMillis)
         if (error != null) return error
-        val pointers = activePointers.getOrPut(event.sessionId) { linkedMapOf() }
-        val previousAt = pointers[event.pointerId]
+        val pointers = activePointers[event.sessionId]
         return when (event.action) {
             GuestTouchAction.DOWN -> {
-                if (previousAt != null) "touch_pointer_already_active"
-                else {
-                    pointers[event.pointerId] = event.occurredAtMillis
-                    null
+                val active = pointers ?: linkedMapOf()
+                when {
+                    event.pointerId in active -> "touch_pointer_already_active"
+                    active.size >= MAX_ACTIVE_POINTERS_PER_SESSION -> "touch_pointer_limit_reached"
+                    else -> {
+                        active[event.pointerId] = event.occurredAtMillis
+                        activePointers[event.sessionId] = active
+                        null
+                    }
                 }
             }
             GuestTouchAction.MOVE -> {
-                when {
-                    previousAt == null -> "touch_pointer_not_active"
-                    event.occurredAtMillis < previousAt -> "touch_event_out_of_order"
-                    else -> {
-                        pointers[event.pointerId] = event.occurredAtMillis
-                        null
-                    }
-                }
+                val active = pointers ?: return "touch_pointer_not_active"
+                val previousAt = active[event.pointerId] ?: return "touch_pointer_not_active"
+                if (event.occurredAtMillis < previousAt) return "touch_event_out_of_order"
+                active[event.pointerId] = event.occurredAtMillis
+                null
             }
             GuestTouchAction.UP, GuestTouchAction.CANCEL -> {
-                when {
-                    previousAt == null -> "touch_pointer_not_active"
-                    event.occurredAtMillis < previousAt -> "touch_event_out_of_order"
-                    else -> {
-                        pointers.remove(event.pointerId)
-                        if (pointers.isEmpty()) activePointers.remove(event.sessionId)
-                        null
-                    }
-                }
+                val active = pointers ?: return "touch_pointer_not_active"
+                val previousAt = active[event.pointerId] ?: return "touch_pointer_not_active"
+                if (event.occurredAtMillis < previousAt) return "touch_event_out_of_order"
+                active.remove(event.pointerId)
+                if (active.isEmpty()) activePointers.remove(event.sessionId)
+                null
             }
         }
     }
@@ -641,6 +648,10 @@ class GuestTouchSequenceGuard {
  * therefore require a fresh drag instead of a blind retry.
  */
 class GuestSelectionGuard {
+    companion object {
+        const val MAX_RETIRED_SELECTION_IDS_PER_SESSION = 1_024
+    }
+
     private var activeSelectionId: String? = null
     private val consumedSelectionIds = linkedSetOf<String>()
 
@@ -656,6 +667,7 @@ class GuestSelectionGuard {
         val error = GuestTargetPolicy.validateSelection(frame, field, selection, nowMillis)
         if (error != null) return error
         if (selection.selectionId in consumedSelectionIds) return "target_selection_already_used"
+        if (consumedSelectionIds.size >= MAX_RETIRED_SELECTION_IDS_PER_SESSION) return "target_selection_capacity_reached"
         activeSelectionId = selection.selectionId
         return null
     }
