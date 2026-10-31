@@ -21,8 +21,10 @@ function validCommandDetails(action,details){
  if(!details||typeof details!=='object'||Array.isArray(details))return false;
  if(action==='launch_app')return isUuid(details.appId);
  if(action==='terminal_start'||action==='view_offer'){
-  return isUuid(details.sessionId)&&details.offer&&typeof details.offer==='object'&&
-    typeof details.offer.sdp==='string'&&details.offer.sdp.length>0&&details.offer.sdp.length<=65_536;
+  if(!isUuid(details.sessionId)||!details.offer||typeof details.offer!=='object'||
+    typeof details.offer.sdp!=='string'||details.offer.sdp.length===0||details.offer.sdp.length>65_536)return false;
+  if(action==='view_offer')return details.appId===undefined||isUuid(details.appId);
+  return true;
  }
  if(action==='request_control'||action==='request_draft_permission')return isUuid(details.sessionId);
  if(action==='stop_session')return isUuid(details.sessionId)&&
