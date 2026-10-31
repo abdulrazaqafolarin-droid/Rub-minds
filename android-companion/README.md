@@ -111,3 +111,19 @@ Android references:
 - Source-policy tests cover the DPC receiver/export allowlist, only the approved profile permission, HMAC command path, local signer recheck and profile-local grant.
 - The final merged-manifest audit includes the DPC receiver metadata and provisioning filters.
 - **Not yet verified here:** Android Gradle/JUnit execution, actual DPC provisioning on the TECNO KL4, system consent, cross-profile launch, app availability in the profile, or removal/recovery behavior. Those remain physical-device acceptance steps. Work Profile success does not make the GuestRuntimeProvider READY and does not satisfy live Phone Frame rendering/touch acceptance.
+
+
+## Android VirtualDevice capability probe (read-only)
+
+The companion now checks whether the handset exposes Android's VirtualDeviceManager service and the secondary-display activity feature. This is the platform direction for a real app-streaming virtual display, but availability is OEM-configured: Android may return no service when the firmware has not enabled config_enableVirtualDeviceManager.
+
+The probe does not create a virtual device or request CREATE_VIRTUAL_DEVICE. The creation API is restricted to system apps with specific roles, and the request requires a Companion Device Manager association ID. An ordinary side-loaded companion cannot treat a visible service as authority to create or control a guest device. The public SDK surface used here only checks Android API level, the secondary-display feature, service availability and the count of visible existing virtual devices.
+
+The UI reports one of four states: Android below API 34; no secondary-display feature; VirtualDeviceManager not enabled by firmware; or platform service present but OEM/system-role authorization still required. A positive service probe is not a working guest runtime.
+
+The Work Profile bridge remains a distinct OS-managed data-isolation and local launch option. It does not provide a virtual display or Phone Frame rendering. Neither capability state makes GuestRuntimeProvider READY; guest-only frames, touch, accessibility targeting, safe draft insertion, Emergency Stop and physical acceptance remain mandatory.
+
+Platform references:
+- https://developer.android.com/reference/android/companion/virtual/VirtualDeviceManager
+- https://developer.android.com/reference/android/content/pm/PackageManager#FEATURE_ACTIVITIES_ON_SECONDARY_DISPLAYS
+- https://android.googlesource.com/platform/frameworks/base/+/refs/heads/master/core/java/android/companion/virtual/VirtualDeviceManager.java
