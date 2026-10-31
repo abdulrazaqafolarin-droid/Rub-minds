@@ -154,3 +154,19 @@ test('invalid queue arguments reject without mutating peer queue state', async (
   assert.equal(value.targetOperationsPending, undefined);
   assert.equal(value.targetQueue, undefined);
 });
+
+
+test('a duplicate successful acknowledgement cannot replace the selected native field', () => {
+  const value = peer();
+  assert.equal(beginTargetSelection(value, 'drag-once'), true);
+  assert.equal(confirmTargetSelection(value, 'drag-once', {
+    message: 'verified', selectionId: 'native-original',
+  }), true);
+  assert.equal(value.latestTargetRequestId, null);
+  assert.equal(confirmTargetSelection(value, 'drag-once', {
+    message: 'replayed', selectionId: 'native-replay',
+  }), false);
+  assert.equal(value.targetSelectionId, 'native-original');
+  assert.equal(canStageDraftForCurrentSelection(value), true);
+  assert.equal(rejectTargetSelection(value, 'drag-once'), false);
+});
