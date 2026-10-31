@@ -27,7 +27,7 @@ object AndroidTouchPolicy {
     ): Boolean {
         if (!localTouchArmed || !accessibilityEnabled) return false
         if (activeSessionId == null || !uuid.matches(activeSessionId) || gesture.sessionId != activeSessionId) return false
-        if (!packageName.matches(gesture.appPackageName) || activePackageName != gesture.appPackageName) return false
+        if (!AppGrantPolicy.isValidPackageName(gesture.appPackageName) || activePackageName != gesture.appPackageName) return false
         if (!validPoint(gesture.from) || !validPoint(gesture.to)) return false
         if (gesture.durationMillis !in 40..1_500) return false
         return when (gesture.kind) {

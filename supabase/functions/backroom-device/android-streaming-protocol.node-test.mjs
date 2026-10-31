@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   validateAndroidSessionStart, validateAndroidDeviceCommand,
-  validateAndroidSignal, validateAndroidCommandAck, validateAndroidSessionClose
+  validateAndroidSignal, validateAndroidCommandAck, validateAndroidSessionClose, mapAndroidQueuedCommand
 } from "./android-streaming-protocol.mjs";
 
 const deviceId = "123e4567-e89b-42d3-a456-426614174000";
@@ -58,4 +58,19 @@ test("device session close is explicitly scoped to the valid room and session", 
   assert.ok(validateAndroidSessionClose({ roomId, sessionId }));
   assert.equal(validateAndroidSessionClose({ roomId: "bad", sessionId }), null);
   assert.equal(validateAndroidSessionClose({ roomId, sessionId, deviceId }), null);
+});
+
+test("queued Android commands expose the action field consumed by the companion", () => {
+  const row = {
+    id: commandId, device_id: deviceId, room_id: roomId, session_id: sessionId,
+    request_id: requestId,
+    command: { deviceId, roomId, sessionId, requestId, issuedAt: now,
+      command: "request_control", appPackageName },
+  };
+  const mapped = mapAndroidQueuedCommand(row);
+  assert.equal(mapped?.action, "request_control");
+  assert.equal(mapped?.command, "request_control");
+  assert.equal(mapped?.commandId, commandId);
+  assert.equal(mapAndroidQueuedCommand({ ...row, command: { ...row.command, requestId: commandId } }), null);
+  assert.equal(mapAndroidQueuedCommand({ ...row, command: { ...row.command, appPackageName: "com..notes" } }), null);
 });

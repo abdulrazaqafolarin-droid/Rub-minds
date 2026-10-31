@@ -11,6 +11,7 @@ const base = {
 
 test("tap is accepted only for the exact active session, selected app and granted control", () => {
   assert.ok(validateAndroidTouchMessage(base, { sessionId, appPackageName, controlGranted: true }));
+  assert.equal(validateAndroidTouchMessage({ ...base, appPackageName: "com..notes" }, { sessionId, appPackageName: "com..notes", controlGranted: true }), null);
   assert.equal(validateAndroidTouchMessage(base, { sessionId, appPackageName, controlGranted: false }), null);
   assert.equal(validateAndroidTouchMessage(base, { sessionId, appPackageName: "com.other.app", controlGranted: true }), null);
   assert.equal(validateAndroidTouchMessage({ ...base, sessionId: "123e4567-e89b-42d3-a456-426614174004" }, { sessionId, appPackageName, controlGranted: true }), null);
@@ -27,7 +28,7 @@ test("swipes and long presses reject malformed or out-of-frame coordinates", () 
 
 test("normalized points map to the actual accessibility window bounds", () => {
   assert.deepEqual(mapNormalizedAndroidPoint({ x: 0, y: 0 }, { left: 20, top: 40, right: 1020, bottom: 1840 }), { x: 20, y: 40 });
-  assert.deepEqual(mapNormalizedAndroidPoint({ x: 1, y: 1 }, { left: 20, top: 40, right: 1020, bottom: 1840 }), { x: 1020, y: 1840 });
-  assert.deepEqual(mapNormalizedAndroidPoint({ x: 0.5, y: 0.5 }, { left: 20, top: 40, right: 1020, bottom: 1840 }), { x: 520, y: 940 });
+  assert.deepEqual(mapNormalizedAndroidPoint({ x: 1, y: 1 }, { left: 20, top: 40, right: 1020, bottom: 1840 }), { x: 1019, y: 1839 });
+  assert.deepEqual(mapNormalizedAndroidPoint({ x: 0.5, y: 0.5 }, { left: 20, top: 40, right: 1020, bottom: 1840 }), { x: 519, y: 939 });
   assert.equal(mapNormalizedAndroidPoint({ x: 2, y: 0.5 }, { left: 0, top: 0, right: 10, bottom: 10 }), null);
 });

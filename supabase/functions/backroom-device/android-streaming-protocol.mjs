@@ -57,3 +57,25 @@ export function validateAndroidSessionClose(value) {
   if (!exactKeys(value, ["roomId", "sessionId"]) || !isUuid(value.roomId) || !isUuid(value.sessionId)) return null;
   return Object.freeze({ roomId: value.roomId, sessionId: value.sessionId });
 }
+
+export function mapAndroidQueuedCommand(row) {
+  if (!row || typeof row !== "object" || Array.isArray(row) ||
+      !isUuid(row.id) || !isUuid(row.request_id) || !isUuid(row.session_id) ||
+      !isUuid(row.device_id) || !isUuid(row.room_id) ||
+      !row.command || typeof row.command !== "object" || Array.isArray(row.command)) return null;
+  const command = row.command;
+  const action = command.action ?? command.command;
+  if (!["view_offer", "request_control", "stop_session"].includes(action) ||
+      command.deviceId !== row.device_id || command.roomId !== row.room_id ||
+      command.sessionId !== row.session_id || !isUuid(command.requestId) ||
+      command.requestId !== row.request_id || typeof command.appPackageName !== "string" ||
+      !PACKAGE.test(command.appPackageName)) return null;
+  if (action === "view_offer" && (!exactKeys(command.offer, ["sdp"]) || !validSdp(command.offer.sdp))) return null;
+  return Object.freeze({
+    ...command,
+    action,
+    commandId: row.id,
+    requestId: row.request_id,
+    sessionId: row.session_id,
+  });
+}

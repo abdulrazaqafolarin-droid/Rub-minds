@@ -21,8 +21,11 @@ export function mapNormalizedAndroidPoint(point, bounds) {
   if (!point || !bounds || ![point.x, point.y, bounds.left, bounds.top, bounds.right, bounds.bottom].every(Number.isFinite) ||
       point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1 ||
       bounds.right <= bounds.left || bounds.bottom <= bounds.top) return null;
+  const maxX = bounds.right - 1;
+  const maxY = bounds.bottom - 1;
+  if (maxX < bounds.left || maxY < bounds.top) return null;
   return Object.freeze({
-    x: Math.round(bounds.left + point.x * (bounds.right - bounds.left)),
-    y: Math.round(bounds.top + point.y * (bounds.bottom - bounds.top))
+    x: Math.floor(bounds.left + point.x * (maxX - bounds.left)),
+    y: Math.floor(bounds.top + point.y * (maxY - bounds.top))
   });
 }

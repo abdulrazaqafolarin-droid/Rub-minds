@@ -27,11 +27,8 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val target = boundPackageName ?: return
-        val eventPackage = event?.packageName?.toString() ?: return
-        if (eventPackage == target) return
-
-        // Fail closed when focus leaves the approved app. This also stops a full-display
-        // capture if the user switches away from the selected app.
+        // Re-check the actual active window on every window transition, including
+        // events with a null or stale event.packageName.
         val activePackage = currentRootPackage()
         if (activePackage != target) {
             AndroidScreenShareService.requestStop(applicationContext, "foreground_app_changed")

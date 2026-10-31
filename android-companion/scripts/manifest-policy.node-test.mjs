@@ -213,6 +213,8 @@ test("Gradle APK build audits the final merged host manifest and records its dig
   assert.match(gradle, /disallow-doctype-decl/);
   assert.match(gradle, /allowedPermissions = setOf\(/);
   assert.match(gradle, /actualExported == expectedExported/);
+  assert.match(gradle, /AndroidTouchAccessibilityService/);
+  assert.match(gradle, /hasTouchServiceMetadata/);
   assert.match(gradle, /duplicateComponents\.isEmpty\(\)/);
   assert.match(gradle, /Component \$className must declare android:exported explicitly/);
   assert.match(gradle, /android\.intent\.action\.MAIN/);

@@ -11,7 +11,7 @@ import { validateDesktopApps } from './desktop-app-protocol.mjs';
 import { validateDesktopCommand, validateDesktopSignal } from './desktop-command-protocol.mjs';
 import { validateDesktopSessionClose } from './desktop-session-close-protocol.mjs';
 import { validateDesktopSessionAbandon } from './desktop-session-abandon-protocol.mjs';
-import { validateAndroidSessionStart, validateAndroidDeviceCommand, validateAndroidSignal, validateAndroidCommandAck, validateAndroidSessionClose } from './android-streaming-protocol.mjs';
+import { validateAndroidSessionStart, validateAndroidDeviceCommand, validateAndroidSignal, validateAndroidCommandAck, validateAndroidSessionClose, mapAndroidQueuedCommand } from './android-streaming-protocol.mjs';
 import { broadcastPrivateDeviceEvent } from './realtime-broadcast.mjs';
 
 const url = Deno.env.get('SUPABASE_URL');
@@ -506,7 +506,7 @@ Deno.serve(async req => {
       const { error: queueError } = await db.from('backroom_android_commands').insert({
         device_id: command.deviceId, room_id: command.roomId, session_id: command.sessionId,
         request_id: command.requestId,
-        command: { ...command }, status: 'pending',
+        command: { ...command, action: command.command }, status: 'pending',
         expires_at: new Date(Date.now() + 2 * 60 * 1000).toISOString(),
       });
       if (queueError) return json(409, fail('android_command_id_conflict'), origin);
@@ -534,6 +534,10 @@ Deno.serve(async req => {
       if (!current) return json(401, fail('device_not_approved'), origin);
       if (current.platform !== 'android') return json(409, fail('android_device_required'), origin);
       const now = new Date().toISOString();
+      const retentionCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      const { error: cleanupError } = await db.from('backroom_android_commands').delete()
+        .eq('device_id', current.device_id).lt('created_at', retentionCutoff);
+      if (cleanupError) return json(503, fail('android_command_cleanup_failed'), origin);
       await db.from('backroom_android_commands').delete()
         .eq('device_id', current.device_id).lt('expires_at', now).in('status', ['pending','leased']);
       const leased = [];
@@ -558,7 +562,10 @@ Deno.serve(async req => {
           .is('lease_until', null).select('id');
         if (error) return json(503, fail('android_command_lease_failed'), origin);
         if (Array.isArray(data) && data.length === 1) {
-          leased.push({ ...row.command, commandId: row.id, requestId: row.request_id, sessionId: row.session_id });
+          const mapped = mapAndroidQueuedCommand(row);
+          if (mapped) leased.push(mapped);
+          else await db.from('backroom_android_commands').update({ status: 'rejected', result: 'invalid_command_payload' })
+            .eq('id', row.id).eq('device_id', current.device_id).eq('status', 'leased');
         }
       }
       const { data: expiredLeases, error: leaseError } = await db.from('backroom_android_commands')
