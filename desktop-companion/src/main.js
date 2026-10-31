@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { validateDeviceCommand, validateDeviceSignal, queueIceCandidate, takeIceCandidates } from '../../integrations/backroom/desktop-realtime-protocol.mjs';
 import { waitForIceGatheringComplete } from '../../integrations/backroom/ice-gathering.mjs';
 import { validatePeerHeartbeat } from '../../integrations/backroom/peer-heartbeat.mjs';
-import { beginTargetSelection, confirmTargetSelection, invalidateTargetSelection, rejectTargetSelection, canStageDraftForCurrentSelection, isPendingDraftForCurrentSelection } from '../../integrations/backroom/desktop-target-selection.mjs';
+import { beginTargetSelection, confirmTargetSelection, invalidateTargetSelection, rejectTargetSelection, canStageDraftForCurrentSelection, isPendingDraftForCurrentSelection, enqueuePeerOperation } from '../../integrations/backroom/desktop-target-selection.mjs';
 import './style.css';
 
 const app = document.querySelector('#app');
@@ -482,18 +482,6 @@ async function invalidatePendingDraftApprovals(sessionId,reason){
     }catch{}
   }
   renderPending();
-}
-function enqueuePeerOperation(peer,operation){
-  const previous=peer.targetQueue||Promise.resolve();
-  peer.targetOperationsPending=(peer.targetOperationsPending||0)+1;
-  const task=previous.catch(()=>{}).then(operation);
-  const tracked=task.finally(()=>{
-    peer.targetOperationsPending=Math.max(0,(peer.targetOperationsPending||1)-1);
-  });
-  // Keep the serial queue alive after a failed native command. The returned
-  // promise still carries the error to the caller for safe user feedback.
-  peer.targetQueue=tracked.catch(()=>{});
-  return tracked;
 }
 function enqueueTargetClear(peer,sessionId,reason,afterClear){
   // Invalidate browser eligibility immediately. The native clear is queued
