@@ -358,10 +358,16 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     try{sendData({kind:'draft',text:draft});flash('Draft submitted to the computer for a separate local confirmation. It will not be sent.');}
     catch(error){flash(String(error),true);}
   };
-  const terminalSend=()=>{
-    if(!terminalSession||!terminalInput)return;
-    try{sendData({kind:'terminal_input',sessionId:terminalSession,data:terminalInput+'\r'});setTerminalInput('');}
-    catch(error){flash(String(error),true);}
+  // Full-screen TUIs such as Claude Code and OpenCode receive input via their PTY.
+  // Submitting is an independent, explicit choice; selecting screen pixels is not necessary.
+  const terminalSend=(submit=false)=>{
+    if(!terminalSession||!controlGranted||!terminalInput)return;
+    if (/[\\x00-\\x1f\\x7f]/.test(terminalInput))return flash('Control characters are not allowed in terminal input.',true);
+    try {
+      sendData({kind:'terminal_input',sessionId:terminalSession,data:terminalInput+(submit?'\\r':'')});
+      setTerminalInput('');
+      flash(submit?'Terminal input sent with Enter.':'Text typed without Enter. Verify the active terminal composer before submitting.');
+    } catch(error){flash(String(error),true);}
   };
   const selectedIsWindows=selectedDevice?.platform==='windows';
 
@@ -412,7 +418,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
           {(terminalSession||terminalPeerId)&&<div className="br-terminal-remote">
             <div className="br-terminal-remote-head"><SquareTerminal size={15}/> Native terminal · actual computer</div>
             <pre>{terminalText||'Waiting for terminal output…'}</pre>
-            <div className="br-terminal-input"><input value={terminalInput} onChange={e=>setTerminalInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')terminalSend();}} placeholder={controlGranted?'Enter a terminal command…':'Request control on the terminal session first'} disabled={!controlGranted}/><button type="button" onClick={terminalSend} disabled={!controlGranted||!terminalInput}>Run</button></div>
+            <div className="br-terminal-input"><input value={terminalInput} onChange={e=>setTerminalInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();terminalSend(false);}}} placeholder={controlGranted?'Type at the active Claude Code, OpenCode or shell cursor…':'Request terminal control first'} disabled={!controlGranted}/><button type="button" onClick={()=>terminalSend(false)} disabled={!controlGranted||!terminalInput}>Type only</button><button type="button" onClick={()=>terminalSend(true)} disabled={!controlGranted||!terminalInput}>Type + Enter</button></div><p className="br-desktop-caption">Terminal apps own their cursor. Type only writes through the scoped PTY without Enter. Confirm the terminal's active input before choosing Type + Enter.</p>
             {!controlGranted&&terminalSession&&<button type="button" onClick={()=>void sendCommand('request_control',{sessionId:terminalSession,peerSessionId:terminalPeerId})}>Request terminal control</button>}
           </div>}
         </div>}
