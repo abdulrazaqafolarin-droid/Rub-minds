@@ -38,6 +38,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {
         synchronized(this) { gestureInFlight = false }
+        AndroidScreenShareService.revokeLocalTouch(applicationContext)
         AndroidScreenShareService.requestStop(applicationContext, "accessibility_interrupted")
     }
 
@@ -46,6 +47,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         boundSessionId = null
         boundPackageName = null
         synchronized(this) { gestureInFlight = false }
+        AndroidScreenShareService.revokeLocalTouch(applicationContext)
         super.onDestroy()
     }
 

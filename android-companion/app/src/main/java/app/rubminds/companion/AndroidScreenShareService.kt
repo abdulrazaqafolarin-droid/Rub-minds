@@ -68,6 +68,11 @@ class AndroidScreenShareService : Service() {
     @Volatile private var serverCloseSent = false
     @Volatile private var stopping = false
 
+    override fun onCreate() {
+        super.onCreate()
+        instance = this
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -542,6 +547,7 @@ class AndroidScreenShareService : Service() {
     }
 
     override fun onDestroy() {
+        if (instance === this) instance = null
         notifyServerSessionClosed()
         RemoteTouchGate.disarm(this)
         AndroidTouchAccessibilityService.clearActiveSession()
