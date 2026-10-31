@@ -196,3 +196,19 @@ test("all guest runtime JUnit methods remain inside their test class", async () 
   assert.equal(source.split("\n").filter(line => line === "}").length, 1, "The test class must have only its final top-level closing brace.");
   assert.match(source, /\n}\s*$/);
 });
+
+test("Gradle APK build audits the final merged host manifest and records its digest", async () => {
+  const gradle = await read("app/build.gradle.kts");
+  const workflow = await read("../.github/workflows/ci.yml");
+  const readme = await read("README.md");
+  assert.match(gradle, /SingleArtifact\.MERGED_MANIFEST/);
+  assert.match(gradle, /audit\$\{variantTitle\}GuestHostManifest/);
+  assert.match(gradle, /ACCESS_EXTERNAL_DTD/);
+  assert.match(gradle, /disallow-doctype-decl/);
+  assert.match(gradle, /allowedPermissions = setOf\("android\.permission\.INTERNET"\)/);
+  assert.match(gradle, /actualExported == expectedExported/);
+  assert.match(gradle, /manifestSha256=/);
+  assert.match(gradle, /dependsOn\(auditTask\)/);
+  assert.match(workflow, /:app:auditDebugGuestHostManifest/);
+  assert.match(readme, /actual merged manifest/);
+});

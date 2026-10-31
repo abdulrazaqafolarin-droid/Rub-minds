@@ -21,10 +21,16 @@ Requirements: JDK 17, Android SDK Platform 35, Android Gradle Plugin 8.8.2 and G
 Provide the Supabase project URL and **publishable/anon key only** at build time (never a service-role key):
 
 ```sh
-gradle -PSUPABASE_URL=https://YOUR_PROJECT.supabase.co -PSUPABASE_PUBLISHABLE_KEY=YOUR_PUBLISHABLE_KEY :app:testDebugUnitTest :app:assembleDebug
+gradle -PSUPABASE_URL=https://YOUR_PROJECT.supabase.co -PSUPABASE_PUBLISHABLE_KEY=YOUR_PUBLISHABLE_KEY :app:testDebugUnitTest :app:auditDebugGuestHostManifest :app:assembleDebug
 ```
 
 You can also set `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` in the build environment. Values are generated into `BuildConfig` and are not committed to this repository. The URL is validated at runtime as an HTTPS Supabase project endpoint.
+
+## Merged-manifest build gate
+
+Every debug/release APK or AAB build runs a Gradle audit against the **actual merged manifest**. It rejects any host permission beyond `INTERNET`, any exported component beyond the exact launcher and OS-bound draft keyboard, duplicate declarations, missing explicit `android:exported` values, or changed launcher/input-method intent filters. The task writes the merged-manifest SHA-256 and approved component/permission inventory to `app/build/reports/guest-host-manifest/`. A future engine dependency must pass this same gate before an APK can be produced.
+
+Run the audit directly with `gradle :app:auditDebugGuestHostManifest`, or let `:app:assembleDebug` run it automatically.
 
 ## Pairing flow
 

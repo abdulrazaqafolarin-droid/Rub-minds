@@ -354,7 +354,7 @@ jobs:
           gradle --no-daemon \
             -PSUPABASE_URL=https://rubminds-ci.supabase.co \
             -PSUPABASE_PUBLISHABLE_KEY=sb_publishable_ci_placeholder \
-            :app:testDebugUnitTest :app:assembleDebug
+:app:testDebugUnitTest :app:auditDebugGuestHostManifest :app:assembleDebug
 
   local-supabase-stack:
     # Run validation on draft PRs as well; draft status does not imply a pass.

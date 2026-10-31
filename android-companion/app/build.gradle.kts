@@ -1,3 +1,11 @@
+
+import com.android.build.api.artifact.SingleArtifact
+import org.w3c.dom.Element
+import javax.xml.XMLConstants
+import javax.xml.parsers.DocumentBuilderFactory
+import java.security.MessageDigest
+import java.util.Locale
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -33,3 +41,201 @@ android {
 }
 
 dependencies { testImplementation("junit:junit:4.13.2") }
+
+
+// Audit the final merged manifest, not just the app's source manifest. This
+// catches permissions and exported components contributed by future libraries.
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        val variantTitle = variant.name.replaceFirstChar { it.titlecase(Locale.ROOT) }
+        val mergedManifest = variant.artifacts.get(SingleArtifact.MERGED_MANIFEST)
+        val appId = variant.applicationId
+        val reportFile = layout.buildDirectory.file(
+            "reports/guest-host-manifest/\${variant.name}.txt"
+        )
+        val auditTask = tasks.register("audit\${variantTitle}GuestHostManifest") {
+            group = "verification"
+            description = "Fail closed unless the merged Android host manifest matches the Rub Minds guest-runtime allowlist."
+            inputs.file(mergedManifest)
+            inputs.property("expectedApplicationId", appId)
+            outputs.file(reportFile)
+
+            doLast {
+                val manifestFile = mergedManifest.get().asFile
+                val expectedAppId = appId.get()
+                require(manifestFile.isFile) {
+                    "Merged manifest is missing: \${manifestFile.absolutePath}"
+                }
+
+                val factory = DocumentBuilderFactory.newInstance().apply {
+                    isNamespaceAware = true
+                    isXIncludeAware = false
+                    isExpandEntityReferences = false
+                    setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+                    setFeature("http://xml.org/sax/features/external-general-entities", false)
+                    setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+                    setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "")
+                    setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "")
+                }
+                val document = factory.newDocumentBuilder().parse(manifestFile)
+                val root = document.documentElement
+                require(root.tagName == "manifest") {
+                    "Unexpected merged manifest root: \${root.tagName}"
+                }
+
+                val androidNamespace = "http://schemas.android.com/apk/res/android"
+                fun Element.androidAttribute(name: String): String =
+                    getAttributeNS(androidNamespace, name).ifBlank { getAttribute("android:\$name") }
+
+                fun childElements(parent: Element): List<Element> {
+                    val result = mutableListOf<Element>()
+                    val children = parent.childNodes
+                    for (index in 0 until children.length) {
+                        val node = children.item(index)
+                        if (node is Element) result += node
+                    }
+                    return result
+                }
+
+                val permissions = childElements(root)
+                    .filter { it.tagName.startsWith("uses-permission") }
+                    .map { element ->
+                        element.androidAttribute("name").also { name ->
+                            require(name.isNotBlank()) {
+                                "Merged manifest contains a permission declaration without android:name."
+                            }
+                        }
+                    }
+                    .toSet()
+                val allowedPermissions = setOf("android.permission.INTERNET")
+                require(permissions == allowedPermissions) {
+                    "Guest host manifest permission allowlist mismatch. " +
+                        "Expected \${allowedPermissions.sorted()}, found \${permissions.sorted()}."
+                }
+
+                val application = childElements(root).singleOrNull { it.tagName == "application" }
+                    ?: error("Merged manifest must contain exactly one application element.")
+                val componentTags = setOf("activity", "activity-alias", "service", "receiver", "provider")
+                data class ComponentRecord(
+                    val type: String,
+                    val className: String,
+                    val exported: Boolean,
+                    val permission: String,
+                    val element: Element
+                )
+
+                fun resolveClassName(rawName: String): String {
+                    require(rawName.isNotBlank()) { "Merged component is missing android:name." }
+                    val replaced = rawName.replace("\${'$'}{applicationId}", expectedAppId)
+                    return when {
+                        replaced.startsWith(".") -> expectedAppId + replaced
+                        '.' !in replaced -> "\$expectedAppId.\$replaced"
+                        else -> replaced
+                    }
+                }
+
+                val components = childElements(application)
+                    .filter { it.tagName in componentTags }
+                    .map { element ->
+                        val className = resolveClassName(element.androidAttribute("name"))
+                        val exportedValue = element.androidAttribute("exported")
+                        require(exportedValue == "true" || exportedValue == "false") {
+                            "Component \$className must declare android:exported explicitly in the merged manifest."
+                        }
+                        ComponentRecord(
+                            type = element.tagName,
+                            className = className,
+                            exported = exportedValue == "true",
+                            permission = element.androidAttribute("permission"),
+                            element = element
+                        )
+                    }
+
+                val duplicateComponents = components
+                    .groupBy { it.type to it.className }
+                    .filterValues { it.size != 1 }
+                    .keys
+                require(duplicateComponents.isEmpty()) {
+                    "Duplicate component declarations: \$duplicateComponents"
+                }
+
+                val exported = components.filter { it.exported }
+                val expectedExported = setOf(
+                    "activity:\$expectedAppId.MainActivity",
+                    "service:\$expectedAppId.DraftInputMethodService"
+                )
+                val actualExported = exported.map { "\${it.type}:\${it.className}" }.toSet()
+                require(actualExported == expectedExported && exported.size == 2) {
+                    "Guest host exported-component allowlist mismatch. " +
+                        "Expected \${expectedExported.sorted()}, found \${actualExported.sorted()}."
+                }
+
+                fun hasIntent(
+                    component: ComponentRecord,
+                    action: String,
+                    category: String? = null
+                ): Boolean = childElements(component.element)
+                    .filter { it.tagName == "intent-filter" }
+                    .any { filter ->
+                        val entries = childElements(filter)
+                        val hasAction = entries.any {
+                            it.tagName == "action" && it.androidAttribute("name") == action
+                        }
+                        val hasCategory = category == null || entries.any {
+                            it.tagName == "category" && it.androidAttribute("name") == category
+                        }
+                        hasAction && hasCategory
+                    }
+
+                val launcher = exported.single { it.type == "activity" }
+                require(launcher.className == "\$expectedAppId.MainActivity") {
+                    "The only exported activity must be the exact Rub Minds launcher."
+                }
+                require(launcher.permission.isBlank()) {
+                    "The launcher must not introduce an unexpected component permission."
+                }
+                require(hasIntent(launcher, "android.intent.action.MAIN", "android.intent.category.LAUNCHER")) {
+                    "The approved launcher must retain MAIN/LAUNCHER intent filters."
+                }
+
+                val inputMethod = exported.single { it.type == "service" }
+                require(inputMethod.className == "\$expectedAppId.DraftInputMethodService") {
+                    "The only exported service must be the exact Rub Minds draft input method."
+                }
+                require(inputMethod.permission == "android.permission.BIND_INPUT_METHOD") {
+                    "The draft input method must remain OS-bound by BIND_INPUT_METHOD."
+                }
+                require(hasIntent(inputMethod, "android.view.InputMethod")) {
+                    "The approved input method must retain android.view.InputMethod."
+                }
+
+                val digest = MessageDigest.getInstance("SHA-256")
+                    .digest(manifestFile.readBytes())
+                    .joinToString("") { byte -> "%02x".format(Locale.ROOT, byte.toInt() and 0xff) }
+                val report = reportFile.get().asFile
+                report.parentFile.mkdirs()
+                report.writeText(
+                    buildString {
+                        appendLine("applicationId=\$expectedAppId")
+                        appendLine("manifestSha256=\$digest")
+                        appendLine("permissions=\${permissions.sorted().joinToString(",")}")
+                        appendLine("exportedComponents=\${actualExported.sorted().joinToString(",")}")
+                        appendLine("componentCount=\${components.size}")
+                    }
+                )
+                logger.lifecycle(
+                    "Guest host manifest audit passed for \${variant.name}: " +
+                        "sha256=\$digest, components=\${components.size}, exported=\${exported.size}."
+                )
+            }
+        }
+
+        // Make an APK/AAB build impossible to complete without its merged
+        // manifest passing this audit.
+        tasks.matching {
+            it.name == "assemble\${variantTitle}" || it.name == "bundle\${variantTitle}"
+        }.configureEach {
+            dependsOn(auditTask)
+        }
+    }
+}
