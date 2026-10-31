@@ -1356,8 +1356,24 @@ async fn start_terminal(app: AppHandle, state: State<'_, AppState>, session_id: 
 
 #[tauri::command]
 fn write_terminal(state: State<'_, AppState>, session_id: String, data: String) -> Result<(), String> {
-    control_granted(&state, &session_id)?;
-    draft_granted(&state, &session_id)?;
+    if !valid_session_id(&session_id) {
+        return Err("Invalid control session".into());
+    }
+    // Hold both grants through the actual PTY write. This prevents a concurrent
+    // revoke from passing the preflight check and still allowing later input.
+    let now = Instant::now();
+    let mut _control_grants = state.control_grants.lock()
+        .map_err(|_| "Control state unavailable")?;
+    if !matches!(_control_grants.get(&session_id), Some(expires_at) if *expires_at > now) {
+        _control_grants.remove(&session_id);
+        return Err("Local computer-control approval is required".into());
+    }
+    let mut _draft_grants = state.draft_grants.lock()
+        .map_err(|_| "Draft state unavailable")?;
+    if !matches!(_draft_grants.get(&session_id), Some(expires_at) if *expires_at > now) {
+        _draft_grants.remove(&session_id);
+        return Err("Local typing approval is required".into());
+    }
     // Any new authorized attempt supersedes the last Enter lease, even when
     // validation or the subsequent PTY write fails. A rejected retry must not
     // leave stale terminal content eligible for submission.
