@@ -45,7 +45,7 @@ The phone keeps the raw device credential locally; the database stores its diges
 
 ## Physical-device acceptance plan
 
-Use [the Android guest runtime acceptance matrix](../docs/BACKROOM_ANDROID_GUEST_RUNTIME_ACCEPTANCE.md) for the handset POC, app-by-app compatibility checks, exact artifact/manifest evidence, and release gates. The target device's API level, ABI and display geometry must be read from the actual handset during the test.
+Use [the Android live-stream acceptance matrix](../docs/BACKROOM_ANDROID_LIVE_STREAM_ACCEPTANCE.md) for MediaProjection, WebRTC, touch and phone-keyboard acceptance on the handset. Use [the Android guest runtime acceptance matrix](../docs/BACKROOM_ANDROID_GUEST_RUNTIME_ACCEPTANCE.md) separately for virtualization-provider admission and guest-only frame/data-isolation checks. The target device's API level, ABI and display geometry must be read from the actual handset during the test.
 
 ## Guest runtime integration gate
 
@@ -79,7 +79,7 @@ See [`docs/architecture/backroom-app-execution-engine.md`](../docs/architecture/
 - The final merged-manifest audit passed. SHA-256: `029cd32a4f972d980c0e9d4ce5bf7d2e9bce2b5921fa992ab51315448963a2d0`. It contains 5 declared permissions and 4 explicitly exported components.
 - Debug APK assembled and verified with `apksigner`. Size: 49,967,179 bytes. SHA-256: `2cc2ba30789ff111ee49acf779871298023d0a28378212ecff7b1f4a4eee40f5`. Debug signer certificate SHA-256: `6765d5a3cbed165ed9b18f45f5742bf313966c4c8cfb0106f2f94d0e75deced0`.
 
-**Not yet accepted:** no physical Android handset/ADB device was attached to the remote runner. The TECNO KL4 still needs APK installation, confirmation of the Android 14 QPR2 app-window picker, pairing against an explicitly approved staging backend, WebRTC video, real tap/swipe/long-press, local disarm, app-switch and projection/network revocation checks. A debug APK build is not a production release signature.
+**Not yet accepted:** no physical Android handset/ADB device was attached to the remote runner. The TECNO KL4 still needs APK installation, confirmation of the Android 14 QPR2 app-window picker, pairing against an explicitly approved staging backend, WebRTC video, real tap/swipe/long-press, local disarm, app-switch and projection/network revocation checks, and the phone-keyboard acceptance path (enable/select Rub Minds IME, arm locally, insert into a focused ordinary field, receive ACK, test rejection and revoke). Follow [the live-stream acceptance matrix](../docs/BACKROOM_ANDROID_LIVE_STREAM_ACCEPTANCE.md). A debug APK build is not a production release signature.
 
 The GitHub Actions jobs on this branch continue to terminate before runner allocation (`runner_id=0`, no steps executed); that is a GitHub runner-availability failure, not a test result. The checks above were executed directly in the isolated Android SDK runner against the PR source. The migration and Edge Function remain committed source only: they have **not** been applied or deployed. Production Supabase and production Vercel were not changed.
 
