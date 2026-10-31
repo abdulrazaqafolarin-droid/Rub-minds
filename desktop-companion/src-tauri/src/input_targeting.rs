@@ -4,7 +4,6 @@
 use std::thread;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ForegroundWindowSnapshot {
     pub process_id: u32,
     pub handle: String,
@@ -49,6 +48,7 @@ pub fn foreground_window_snapshot() -> Result<ForegroundWindowSnapshot, String> 
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EditableTargetIdentity {
     pub process_id: u32,
     pub runtime_id: Vec<i32>,

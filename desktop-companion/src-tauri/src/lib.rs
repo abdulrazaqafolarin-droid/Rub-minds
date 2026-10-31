@@ -936,16 +936,18 @@ fn dispatch_input(state: State<'_, AppState>, session_id: String, event: NativeI
     check_input_rate(&state)?;
     let geometry = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
         .get(&session_id).cloned().ok_or("Live screen capture is not active")?;
-    // Re-check the exact app window before every remote input.
-    let _ = capture_bounds(&geometry)?;
+    // Resolve the capture identity once per action. Window sessions re-check
+    // foreground HWND/process/class here; both pointer mapping and dispatch use
+    // that same verified geometry snapshot.
+    let bounds = capture_bounds(&geometry)?;
     let mut enigo = Enigo::new(&Settings::default()).map_err(|_| "OS input driver is unavailable. Check accessibility permissions.".to_string())?;
     match event {
         NativeInput::Move { x, y } => {
-            let (px, py) = screen_point(&geometry, x, y)?;
+            let (px, py) = map_normalized_point(bounds, x, y)?;
             enigo.move_mouse(px, py, Coordinate::Abs).map_err(|_| "Could not move the desktop pointer".to_string())?;
         }
         NativeInput::Click { x, y, button } => {
-            let (px, py) = screen_point(&geometry, x, y)?;
+            let (px, py) = map_normalized_point(bounds, x, y)?;
             enigo.move_mouse(px, py, Coordinate::Abs).map_err(|_| "Could not move the desktop pointer".to_string())?;
             let button = match button.as_str() {
                 "left" => Button::Left, "right" => Button::Right, "middle" => Button::Middle,
@@ -1021,7 +1023,7 @@ fn select_draft_target(state: State<'_, AppState>, session_id: String, mut targe
     state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?
         .retain(|_, draft| draft.session_id != session_id);
     let geometry = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
-        .get(&session_id).cloned().ok_or("Live monitor capture is not active")?;
+        .get(&session_id).cloned().ok_or("Live screen capture is not active")?;
     if !target.x.is_finite() || !target.y.is_finite() || !target.width.is_finite() || !target.height.is_finite() ||
        target.x < 0.0 || target.y < 0.0 || target.width < 0.01 || target.height < 0.01 ||
        target.x + target.width > 1.0 || target.y + target.height > 1.0 {
@@ -1161,7 +1163,7 @@ async fn approve_draft_request(app: AppHandle, state: State<'_, AppState>, reque
     // The first check happens before the native approval dialog; no stale
     // selection is presented as valid to the person approving it.
     let geometry_before = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
-        .get(&pending.session_id).cloned().ok_or("Live monitor capture is not active")?;
+        .get(&pending.session_id).cloned().ok_or("Live screen capture is not active")?;
     verify_selected_editable_target(&geometry_before, &pending.target)?;
     verify_current_draft_selection(&state, &pending)?;
 
@@ -1180,7 +1182,7 @@ async fn approve_draft_request(app: AppHandle, state: State<'_, AppState>, reque
     control_granted(&state, &pending.session_id)?;
     draft_granted(&state, &pending.session_id)?;
     let geometry = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
-        .get(&pending.session_id).cloned().ok_or("Live monitor capture is not active")?;
+        .get(&pending.session_id).cloned().ok_or("Live screen capture is not active")?;
     let (identity, px, py) = verify_selected_editable_target(&geometry, &pending.target)?;
     verify_current_draft_selection(&state, &pending)?;
 
