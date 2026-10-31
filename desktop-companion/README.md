@@ -14,7 +14,7 @@ The desktop companion runs selected applications and a native terminal **on the 
 - Windows PowerShell, macOS zsh and Linux bash native PTY sessions using portable-pty.
 - Monitor capture uses the operating system display picker (getDisplayMedia) and WebRTC. Coordinate-based input is enabled only after the user shares an entire monitor and capture geometry matches the companion display.
 - Pointer/keyboard input, terminal control, and exact draft insertion are separate expiring grants. The final privileged Rust commands show a native OS Yes/No confirmation; an in-WebView card alone is not sufficient to grant control.
-- Drag-select chooses a normalized target rectangle. Draft insertion clicks its center, types the exact approved single-line text, and does not send Enter or submit. It is coordinate-based and does not verify that the rectangle corresponds to a semantically accessible text field; protected/password fields may reject input.
+- Drag-select chooses a normalized target rectangle. On Windows, the native host resolves its centre through UI Automation to one visible, enabled, writable `Edit` or `Document` control, rejects password/protected controls, requires a readable Value pattern and an empty starting value, and records the process/runtime identity plus control bounds. That identity and empty value are checked again after the native approval dialog and before focus; keyboard focus is checked against the same control, and the exact resulting value is read back after typing. It never sends Enter or submits. If the app exposes no reliable UI Automation value readback, insertion is refused. macOS/Linux do not yet have equivalent accessibility target drivers.
 - Emergency stop clears grants and draft state, kills tracked terminal and Backroom-launched direct-child processes, and stops browser-side media tracks.
 - Revocation and repeated device-status failure stop active sessions locally and clear stored device credentials.
 - Resource bounds: maximum 24 tracked Backroom-launched apps, 4 PTYs, 32 pending drafts, 32 pending UI approvals, 16 buffered ICE sessions / 64 candidates per session, input throttling and terminal output backpressure.
@@ -80,7 +80,7 @@ From the repository root:
 - A command session has a maximum 12-hour server expiry; local one-time approval grants expire much sooner and cannot be upgraded from view to control.
 - Live media is peer-to-peer and STUN-only; TURN relay / restrictive-network fallback remains unimplemented.
 - Windows app enumeration is explicit picker-only, not a full installed-app catalog. Linux/macOS app launch is not implemented.
-- Screen capture/control must be tested on actual devices and with OS accessibility / screen-recording permission states.
+- Windows UI Automation targeting must be tested with real Notepad, Electron/Chromium, and representative added apps; controls without a writable/readable UIA value pattern are deliberately unsupported. macOS/Linux accessibility target adapters remain unimplemented. Screen capture/control and OS permission states still require physical-device acceptance.
 - Emergency stop kills tracked direct-child processes and PTYs; it does not guarantee termination of every helper process an application may spawn.
 - A real Windows build, installer launch, PowerShell control, screen share, native confirmation and drag-select draft flow are release gates. Passing Node protocol tests is not a substitute for this device-level test.
 
