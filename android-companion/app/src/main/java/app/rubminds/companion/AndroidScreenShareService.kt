@@ -324,7 +324,7 @@ class AndroidScreenShareService : Service() {
                     override fun onCreateSuccess(description: SessionDescription) {
                         connection.setLocalDescription(object : SdpObserver {
                             override fun onCreateSuccess(value: SessionDescription) = Unit
-                            override fun onSetSuccess() = sendLocalAnswer(sessionId)
+                            override fun onSetSuccess() {\n                                if (connection.iceGatheringState() == PeerConnection.IceGatheringState.COMPLETE) {\n                                    sendLocalAnswer(sessionId)\n                                }\n                            }
                             override fun onCreateFailure(error: String) = stopCapture("answer_create_failed")
                             override fun onSetFailure(error: String) = stopCapture("answer_set_failed")
                         }, description)
