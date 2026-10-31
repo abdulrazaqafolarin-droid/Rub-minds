@@ -15,7 +15,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 const state = {
   client: null, user: null, session: null, deviceId: null, roomId: null, deviceTokenSaved: false,
-  channel: null, apps: [], pending: [], peers: new Map(), streams: new Map(), terminals: new Map(), launchedApps: new Map(), pendingCandidates: new Map(), draftCorrelations: new Map(),
+  channel: null, apps: [], pending: [], peers: new Map(), streams: new Map(), terminals: new Map(), pendingCandidates: new Map(), draftCorrelations: new Map(),
   seenCommands: new Map(), heartbeat: null, heartbeatMisses: 0, peerWatchdog: null,
   status: 'Not connected', terminalOutput: '', unlisten: [],
 };
@@ -158,7 +158,7 @@ async function revokeDevice(){
     await invoke('emergency_stop');
     const session=await currentSession();
     await invoke('revoke_desktop_device',{supabaseUrl:cfg.url,publishableKey:cfg.key,accessToken:session.access_token,roomId:state.roomId});
-    state.deviceTokenSaved=false;state.deviceId=null;state.roomId=null;state.apps=[];state.pending=[];state.terminals.clear();state.launchedApps.clear();
+    state.deviceTokenSaved=false;state.deviceId=null;state.roomId=null;state.apps=[];state.pending=[];state.terminals.clear();
     if(state.channel){await state.client.removeChannel(state.channel);state.channel=null;}
     document.querySelector('#device-state').textContent='Revoked';
     document.querySelector('#revoke-device').classList.add('hidden');
@@ -202,7 +202,6 @@ async function syncApps(){
 async function localLaunch(appItem){
   const card=await createApproval('launch',appItem.label+' will open on this computer. Approve only if you recognize this application.',async()=>{
     const pid=await invoke('launch_registered_app',{appId:appItem.id});
-    state.launchedApps.set(appItem.id,pid);
     await publish('response',{requestId:card.requestId,ok:true,pid});
     notify('Launched '+appItem.label+' on this computer.','success');
   });
@@ -277,7 +276,7 @@ async function handleDeviceRevoked(payload){
   try{await invoke('desktop_device_status',{supabaseUrl:cfg.url,publishableKey:cfg.key});}
   catch{try{await invoke('emergency_stop');}catch{}}
   if(state.channel){const channel=state.channel;state.channel=null;try{await state.client.removeChannel(channel);}catch{}}
-  state.deviceTokenSaved=false;state.deviceId=null;state.roomId=null;state.pending=[];state.terminals.clear();state.launchedApps.clear();state.apps=[];renderApps();
+  state.deviceTokenSaved=false;state.deviceId=null;state.roomId=null;state.pending=[];state.terminals.clear();state.apps=[];renderApps();
   setConnected(false,'Computer authorization revoked');
   const stateNode=document.querySelector('#device-state');if(stateNode)stateNode.textContent='Revoked';
   document.querySelector('#revoke-device')?.classList.add('hidden');
@@ -340,8 +339,7 @@ async function handleCommand(payload){
     if(!appItem){await publish('response',{requestId,ok:false,reason:'app_not_selected'});return;}
     createApproval('launch_app','Open '+appItem.label+' on this actual computer?',async()=>{
       const pid=await invoke('launch_registered_app',{appId:appItem.id});
-      state.launchedApps.set(appItem.id,pid);
-      await publish('response',{requestId,ok:true,pid});
+        await publish('response',{requestId,ok:true,pid});
     },{requestId,remote:true,actorDisplayName:payload.actorDisplayName,capability:'launch'});
     return;
   }
@@ -425,7 +423,6 @@ async function startViewSession(payload){
   if(!track){stream.getTracks().forEach(t=>t.stop());throw new Error('The selected monitor did not provide a video stream.');}
   const settings=track.getSettings();
   const appId=typeof payload.appId==='string'?payload.appId:null;
-  const expectedProcessId=appId?state.launchedApps.get(appId):null;
   let canControl=false;
   try{
     await invoke('set_capture_geometry',{
@@ -433,7 +430,6 @@ async function startViewSession(payload){
       screenWidthCss:screen.width,screenHeightCss:screen.height,
       deviceScaleFactor:devicePixelRatio,originXCss:screen.availLeft||0,originYCss:screen.availTop||0,
       displaySurface:settings.displaySurface||'unknown',
-      expectedProcessId:Number.isSafeInteger(expectedProcessId)?expectedProcessId:null,
       appId
     });
     canControl=true;
@@ -801,7 +797,7 @@ async function emergencyStop(){
     await stopAllPeerSessions();
     await invoke('emergency_stop');
     if(state.channel){await state.client.removeChannel(state.channel);state.channel=null;}
-    state.pending=[];state.draftCorrelations.clear();state.launchedApps.clear();renderPending();setConnected(false,'Emergency stop · disconnected');
+    state.pending=[];state.draftCorrelations.clear();renderPending();setConnected(false,'Emergency stop · disconnected');
     notify('Emergency stop complete. Local permissions and Backroom-launched sessions were stopped. Reopen the companion to reconnect.','success');
   }catch(error){notify('Emergency stop needs attention: '+error.message,'error');}
 }
@@ -809,7 +805,7 @@ async function disconnect(){
   stopHeartbeat();
   await stopAllPeerSessions();
   try{await invoke('emergency_stop');}catch{}
-  state.launchedApps.clear();
+  
   if(state.channel){const channel=state.channel;state.channel=null;try{await state.client.removeChannel(channel);}catch{}}
   setConnected(false,'Disconnected from device channel');
 }

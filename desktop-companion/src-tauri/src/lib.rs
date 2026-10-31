@@ -803,7 +803,6 @@ fn set_capture_geometry(
     origin_x_css: i32,
     origin_y_css: i32,
     display_surface: String,
-    expected_process_id: Option<u32>,
     app_id: Option<String>,
 ) -> Result<(), String> {
     if !valid_session_id(&session_id)
@@ -814,13 +813,12 @@ fn set_capture_geometry(
     }
 
     if display_surface == "window" {
-        // The browser's process ID is only a hint; the native allowlist is authoritative.
+        // Resolve the process exclusively from the native allowlist. No browser PID is accepted.
         let selected_app_id = app_id.ok_or("Select a Backroom-launched app before interactive window capture")?;
         let registered_pid = state.launched_app_ids.lock().map_err(|_| "App identity registry unavailable")?
             .get(&selected_app_id).copied()
             .ok_or("The selected app was not launched by this companion")?;
-        let expected_pid = expected_process_id.filter(|pid| *pid == registered_pid)
-            .ok_or("The selected process does not match the native app launch record")?;
+        let expected_pid = registered_pid;
         let mut processes = state.desktop_processes.lock().map_err(|_| "Desktop process registry unavailable")?;
         let tracked_child = processes.get_mut(&expected_pid).ok_or("The selected launched process is no longer tracked")?;
         if tracked_child.try_wait().map_err(|_| "Could not inspect the launched app")?.is_some() {

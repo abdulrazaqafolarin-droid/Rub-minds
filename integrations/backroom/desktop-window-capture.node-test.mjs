@@ -38,14 +38,15 @@ test('window capture requires native identity and matching geometry', () => {
 });
 
 test('window capture never controls the companion window or a different app process', () => {
-  assert.match(native, /expected_process_id: Option<u32>/);
+  assert.doesNotMatch(native, /expected_process_id: Option<u32>/);
   assert.match(native, /app_id: Option<String>/);
   assert.match(native, /launched_app_ids: Mutex<HashMap<String, u32>>/);
   assert.match(native, /registered_pid/);
   assert.match(native, /current_pid != Some\(binding\.process_id\)/);
   assert.match(native, /child\.try_wait\(\)/);
   assert.match(native, /app_id: selected_app_id/);
-  assert.match(companion, /expectedProcessId:Number\.isSafeInteger\(expectedProcessId\)\?expectedProcessId:null,\s*appId/);
+  assert.match(companion, /displaySurface:settings\.displaySurface\|\|'unknown',\s*appId/);
+  assert.doesNotMatch(companion, /expectedProcessId/);
   assert.match(native, /target\.process_id != expected_pid/);
   assert.match(native, /identity\.process_id != binding\.process_id/);
   assert.match(native, /current\.process_id == binding\.process_id/);
