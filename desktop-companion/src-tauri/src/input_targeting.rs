@@ -62,6 +62,31 @@ pub fn validate_target_properties(
     Ok(())
 }
 
+/// Require the drag rectangle to lie predominantly inside one actual editable
+/// control. A centre-point hit alone is not enough when the rectangle spans
+/// multiple nearby controls or surrounding panels.
+pub fn validate_drag_coverage(
+    selection: [i32; 4],
+    field: [i32; 4],
+) -> Result<(), &'static str> {
+    let [sl, st, sr, sb] = selection;
+    let [fl, ft, fr, fb] = field;
+    if sr <= sl || sb <= st || fr <= fl || fb <= ft {
+        return Err("invalid_drag_or_field_bounds");
+    }
+    let overlap_width = (sr.min(fr) - sl.max(fl)).max(0) as f64;
+    let overlap_height = (sb.min(fb) - st.max(ft)).max(0) as f64;
+    let selected_area = (sr - sl) as f64 * (sb - st) as f64;
+    if selected_area <= 0.0 {
+        return Err("invalid_drag_or_field_bounds");
+    }
+    let coverage = overlap_width * overlap_height / selected_area;
+    if coverage < 0.65 {
+        return Err("drag_must_stay_inside_one_editable_field");
+    }
+    Ok(())
+}
+
 pub fn set_value_exact(
     x: i32,
     y: i32,
@@ -309,6 +334,16 @@ mod tests {
             access_mode: "value".into(),
             bounds: [10, 20, 300, 80],
         }
+    }
+
+    #[test]
+    fn drag_rectangle_must_be_mostly_inside_one_editable_control() {
+        use super::validate_drag_coverage as validate;
+        assert!(validate([20, 20, 80, 40], [10, 10, 100, 60]).is_ok());
+        assert!(validate([15, 15, 105, 55], [10, 10, 110, 60]).is_ok());
+        assert_eq!(validate([10, 10, 190, 90], [10, 10, 100, 60]), Err("drag_must_stay_inside_one_editable_field"));
+        assert_eq!(validate([10, 10, 30, 30], [40, 40, 80, 80]), Err("drag_must_stay_inside_one_editable_field"));
+        assert_eq!(validate([10, 10, 10, 30], [0, 0, 40, 40]), Err("invalid_drag_or_field_bounds"));
     }
 
     #[test]
