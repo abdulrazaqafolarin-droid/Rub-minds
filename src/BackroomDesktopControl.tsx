@@ -306,6 +306,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     catch(error){flash(error instanceof Error?error.message:'Could not request control.',true);}
   };
   const requestDraftPermission=async()=>{
+    if(!selectedIsWindows)return flash('Verified desktop drag-select typing is currently available on Windows only.',true);
     if(!controlGranted||!screenSession)return;
     try{await sendCommand('request_draft_permission',{sessionId:screenSession});flash('Separate typing permission requested. Approve it on the computer.');}
     catch(error){flash(error instanceof Error?error.message:'Could not request typing permission.',true);}
@@ -454,13 +455,14 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
             <div className="br-desktop-toolbar">
               <span>{videoReady?'Live computer display':'View request pending'}{coordinateControl?' · full-monitor geometry verified':' · view-only unless full monitor selected'}</span>
               <button type="button" onClick={()=>void requestControl()} disabled={!videoReady||!coordinateControl||controlGranted}>Request control</button>
-              <button type="button" onClick={()=>{setTargetStatus('');setSelection(null);targetAttemptRef.current='';try{sendData({kind:'clear_target'});}catch(error){flash('Could not clear the previous typing target. Stopping this remote session for safety.',true);void stopActivePeer();}setSelectMode(v=>!v);}} disabled={!controlGranted||!draftGranted}>{selectMode?'Cancel area selection':'Drag-select typing area'}</button>
-              <button type="button" onClick={()=>void requestDraftPermission()} disabled={!controlGranted||draftGranted}><TextCursorInput size={13}/> Request typing permission</button>
+              <button type="button" onClick={()=>{setTargetStatus('');setSelection(null);targetAttemptRef.current='';try{sendData({kind:'clear_target'});}catch(error){flash('Could not clear the previous typing target. Stopping this remote session for safety.',true);void stopActivePeer();}setSelectMode(v=>!v);}} disabled={!controlGranted||!draftGranted||!selectedIsWindows}>{selectMode?'Cancel area selection':selectedIsWindows?'Drag-select typing area':'Typing-area targeting unavailable on this OS'}</button>
+              <button type="button" onClick={()=>void requestDraftPermission()} disabled={!controlGranted||draftGranted||!selectedIsWindows}><TextCursorInput size={13}/> Request typing permission</button>
             </div>
+            {!selectedIsWindows&&<div className="br-desktop-caption" role="status">This computer can still use supported desktop and terminal features, but verified drag-select text targeting is not implemented for this operating system yet. Windows UI Automation targeting is currently supported.</div>}
             {targetStatus&&<div className="br-desktop-caption" role="status">{targetStatus}</div>}
             {controlGranted&&draftGranted&&<div className="br-desktop-draft">
               <textarea value={draft} onChange={e=>setDraft(e.target.value)} rows={2} maxLength={4000} placeholder="Write the text to insert in the selected area. It will never press Enter or Send."/>
-              <button type="button" onClick={requestDraft} disabled={!selection||!targetStatus.startsWith('Verified editable field ·')||!draft.trim()}>Request draft insertion</button>
+              <button type="button" onClick={requestDraft} disabled={!selectedIsWindows||!selection||!targetStatus.startsWith('Verified editable field ·')||!draft.trim()}>Request draft insertion</button>
             </div>}
             {controlGranted&&<div className="br-desktop-caption">Computer control is locally approved for a limited time. The user at the computer can revoke it immediately. Draft typing has a second independent approval and never sends or submits.</div>}
           </div>}
