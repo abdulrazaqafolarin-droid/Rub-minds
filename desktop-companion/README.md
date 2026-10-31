@@ -27,7 +27,7 @@ The desktop companion runs selected applications and a native terminal **on the 
 | App discovery / launch | Explicit EXE picker, SHA-256 recheck, local launch | Not implemented | Not implemented |
 | Native terminal | PowerShell PTY | zsh PTY | bash PTY |
 | Screen share | OS display picker | OS display picker (OS permission/policy applies) | OS display picker (desktop portal/compositor support applies) |
-| Coordinate input | Full-monitor geometry match + native input permission | Depends on OS accessibility permission | Depends on compositor / input permission |
+| Coordinate input | Full-monitor geometry or verified single-window binding + native input permission | Depends on OS accessibility permission | Depends on compositor / input permission |
 
 Protected or secure windows may deny display capture or input. On Windows, single-window control is enabled only when the selected capture matches the exact foreground window identity and bounds; mismatches remain view-only. Full-monitor capture retains its geometry check. Some corporate security policies can block the OS input driver.
 

@@ -69,3 +69,29 @@ Also verify whole-monitor capture geometry at 100%, 125%, 150% and 200% display 
 - Claude Code/OpenCode terminals are PTY targets, not UIA text fields. Terminal text-only input and explicit Enter remain separate actions and do not use this desktop drag-select path.
 
 No production migration, merge to `main`, or deployment is part of this acceptance checklist.
+
+
+## Single-application window capture — 2026-10-31
+
+A Windows window capture may be interactive only when all of these conditions hold:
+
+- The OS capture picker reports `displaySurface=window`; an unknown/missing surface type remains view-only rather than being guessed as a window.
+- The companion obtains a valid foreground UI Automation window identity (HWND, process ID and window class), and the companion's own process is rejected.
+- The captured frame dimensions match that window's native bounds within the strict geometry tolerance.
+- Before each remote input action, the companion re-resolves the foreground window and requires the same HWND, process and class, with compatible bounds. A focus change, window replacement or incompatible resize rejects input.
+- Drag-select and draft insertion additionally require the selected UIA text field to belong to the captured window's process and pass the existing empty-field, non-password, exact-identity and exact-readback checks.
+
+### Manual window-capture acceptance (not yet executed)
+
+| Scenario | Required result |
+|---|---|
+| Notepad / Chromium / Electron selected in OS window picker | Correct live window frame; native identity and dimensions must match before enabling control |
+| The companion window is selected accidentally | Reject control |
+| Two same-size windows are open | Verify that only the intended foreground window is treated as target; reject if identity is ambiguous |
+| Captured window loses foreground focus | Control action rejected; restore target and re-establish capture |
+| Captured window moves, resizes or is replaced | Control action rejected until capture geometry is revalidated |
+| A drag rectangle lands on another process | Reject target; no draft staged |
+| Capture surface type is missing or unknown | Keep stream view-only |
+| User selects whole monitor | Existing full-monitor geometry path remains available |
+
+The native source tests cover the pure geometry and window-identity checks. They do not replace Windows compilation or this physical acceptance matrix. No claim that single-window interaction is physically verified is made.
