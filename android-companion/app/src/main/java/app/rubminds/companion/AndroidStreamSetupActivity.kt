@@ -40,7 +40,7 @@ class AndroidStreamSetupActivity : Activity() {
             setTextColor(0xff172033.toInt())
         })
         root.addView(TextView(this).apply {
-            text = "1. Enable the Rub Minds touch service below. 2. Optionally arm touch locally for 15 minutes. 3. Choose one of the apps saved in your local allowlist. 4. Approve Android's screen-sharing prompt and choose that same app window (not the whole display). 5. The companion brings that app to the foreground so Backroom can verify the package before accepting a stream."
+            text = "1. Choose one of the apps saved in your local allowlist. 2. Approve Android's screen-sharing prompt and choose that same app window (not the whole display). 3. The companion brings that app to the foreground. 4. View streaming works without Accessibility; enable the optional touch service and arm touch locally only when you also want remote taps and swipes."
             textSize = 13f
             setTextColor(0xff405070.toInt())
             setPadding(0, dp(12), 0, dp(12))
@@ -136,10 +136,9 @@ class AndroidStreamSetupActivity : Activity() {
             Toast.makeText(this, "App-window selection requires Android 14 or later on this companion path.", Toast.LENGTH_LONG).show()
             return
         }
-        if (!AndroidTouchAccessibilityService.isServiceEnabled(this)) {
-            Toast.makeText(this, "Enable the Rub Minds accessibility service first so Backroom can verify which app is in the foreground.", Toast.LENGTH_LONG).show()
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            return
+        val accessibilityReady = AndroidTouchAccessibilityService.isServiceEnabled(this)
+        if (!accessibilityReady) {
+            Toast.makeText(this, "View-only sharing will work. Enable Accessibility and arm touch later if you also want remote taps and swipes.", Toast.LENGTH_LONG).show()
         }
         val signer = AppIdentity.signingCertificateSha256(this, targetPackageName)
         if (signer == null || AppGrantStore(this).get(targetPackageName, signer) == null) {

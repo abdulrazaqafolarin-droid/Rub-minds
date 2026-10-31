@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.Rect
 import android.media.projection.MediaProjection
 import android.os.Build
@@ -74,7 +75,15 @@ class AndroidScreenShareService : Service() {
             }
             ACTION_START -> {
                 if (pollingStarted) return START_NOT_STICKY
-                startForeground(NOTIFICATION_ID, buildNotification())
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    startForeground(
+                        NOTIFICATION_ID,
+                        buildNotification(),
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                    )
+                } else {
+                    startForeground(NOTIFICATION_ID, buildNotification())
+                }
                 val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
                 @Suppress("DEPRECATION")
                 val resultData = intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
@@ -218,9 +227,11 @@ class AndroidScreenShareService : Service() {
     private fun startPeerAnswer(sessionId: String, appPackage: String, offerSdp: String, roomId: String): Boolean {
         if (!UUID_PATTERN.matches(sessionId) || !APP_PACKAGE_PATTERN.matches(appPackage) ||
             appPackage != locallySelectedPackage || !UUID_PATTERN.matches(roomId) ||
-            offerSdp.length !in 8..MAX_SDP_CHARS || !offerSdp.startsWith("v=0") ||
-            AndroidTouchAccessibilityService.currentForegroundPackage() != appPackage
+            offerSdp.length !in 8..MAX_SDP_CHARS || !offerSdp.startsWith("v=0")
         ) return false
+        val accessibilityEnabled = AndroidTouchAccessibilityService.isServiceEnabled(this)
+        val foregroundPackage = AndroidTouchAccessibilityService.currentForegroundPackage()
+        if (accessibilityEnabled && foregroundPackage != null && foregroundPackage != appPackage) return false
         val signer = AppIdentity.signingCertificateSha256(this, appPackage) ?: return false
         if (AppGrantStore(this).get(appPackage, signer) == null) return false
 
@@ -231,11 +242,10 @@ class AndroidScreenShareService : Service() {
         localControlGranted = false
         answerAlreadySent = false
         answeringSessionId = sessionId
-        if (!AndroidTouchAccessibilityService.bindActiveSession(sessionId, appPackage)) {
-            // The accessibility service is the foreground-package verifier even for view-only mode.
-            closePeer()
-            return false
-        }
+        // Accessibility is not required for view-only capture. If the service is enabled,
+        // bind it to this locally selected app so it can monitor app switches and later
+        // authorise touch. If unavailable, the stream remains view-only.
+        if (accessibilityEnabled) AndroidTouchAccessibilityService.bindActiveSession(sessionId, appPackage)
 
         val factory = peerFactory ?: run { closePeer(); return false }
         val iceServers = listOf(
