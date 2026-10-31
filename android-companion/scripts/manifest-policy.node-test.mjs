@@ -183,7 +183,7 @@ test("guest admission allowlist stays aligned with the real companion manifest a
   assert.match(launcher, /android:exported="true"/);
   assert.doesNotMatch(launcher, /android:permission=/);
 
-  const inputMethod = manifest.match(/<service\b[^>]*>/)?.[0] ?? "";
+  const inputMethod = manifest.match(/<service\b[^>]*android:name="\.DraftInputMethodService"[^>]*>/)?.[0] ?? "";
   assert.match(inputMethod, /android:name="\.DraftInputMethodService"/);
   assert.match(inputMethod, /android:exported="true"/);
   assert.match(inputMethod, /android:permission="android\.permission\.BIND_INPUT_METHOD"/);
