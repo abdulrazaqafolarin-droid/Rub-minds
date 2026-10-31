@@ -32,10 +32,8 @@ class WorkProfileCoordinator(context: Context) {
         val profiles = if (Build.VERSION.SDK_INT >= 30) try { crossProfileService()?.targetUserProfiles?.size ?: 0 } catch (_: Exception) { 0 } else 0
         val canInteract = if (Build.VERSION.SDK_INT >= 30 && !owner) try { crossProfileService()?.canInteractAcrossProfiles() == true } catch (_: Exception) { false } else false
         val canRequest = if (Build.VERSION.SDK_INT >= 30 && !owner) try { crossProfileService()?.canRequestInteractAcrossProfiles() == true } catch (_: Exception) { false } else false
-        val setup = Intent(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE).addCategory(Intent.CATEGORY_DEFAULT)
         val canProvision = !owner &&
-            dpm.isProvisioningAllowed(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE) &&
-            setup.resolveActivity(app.packageManager) != null
+            dpm.isProvisioningAllowed(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE)
         val adminState = app.getSharedPreferences("work_profile_admin_state", Context.MODE_PRIVATE)
         val profileOwnerConfirmed = owner && adminState.getBoolean("profile_owner_confirmed", false)
         val crossProfileAllowlistReady = if (owner) {
@@ -59,8 +57,8 @@ class WorkProfileCoordinator(context: Context) {
         if (!dpm.isProvisioningAllowed(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE)) {
             return "Android or the device administrator does not allow Work Profile provisioning."
         }
-        val intent = Intent(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE).addCategory(Intent.CATEGORY_DEFAULT)
-        if (intent.resolveActivity(activity.packageManager) == null) return "Android Work Profile setup is unavailable."
+        val intent = Intent(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE)
+            .addCategory(Intent.CATEGORY_DEFAULT)
         val encodedSecret = secrets.createAndSave() ?: return "Could not prepare the local Work Profile link."
         val admin = ComponentName(activity, WorkProfileAdminReceiver::class.java)
         intent.putExtra(DevicePolicyManager.EXTRA_PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME, admin)
