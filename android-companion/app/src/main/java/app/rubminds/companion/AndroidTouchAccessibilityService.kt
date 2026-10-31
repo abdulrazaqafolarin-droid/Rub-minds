@@ -60,7 +60,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         return true
     }
 
-    fun dispatchRemoteGesture(gesture: RemoteTouchGesture, onCompleted: (Boolean) -> Unit): Boolean {
+    fun dispatchRemoteGesture(gesture: RemoteTouchGesture, onResult: (Boolean) -> Unit): Boolean {
         val expectedSession = boundSessionId
         val expectedPackage = boundPackageName
         if (!AndroidTouchPolicy.validate(
@@ -105,11 +105,11 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                     object : GestureResultCallback() {
                         override fun onCompleted(gestureDescription: GestureDescription?) {
                             synchronized(this@AndroidTouchAccessibilityService) { gestureInFlight = false }
-                            onCompleted(true)
+                            onResult(true)
                         }
                         override fun onCancelled(gestureDescription: GestureDescription?) {
                             synchronized(this@AndroidTouchAccessibilityService) { gestureInFlight = false }
-                            onCompleted(false)
+                            onResult(false)
                         }
                     },
                     Handler(Looper.getMainLooper())
@@ -145,8 +145,9 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
 
         fun dispatch(
             context: Context,
-            gesture: RemoteTouchGesture
-        ): Boolean = instance?.dispatchRemoteGesture(gesture) == true
+            gesture: RemoteTouchGesture,
+            onResult: (Boolean) -> Unit
+        ): Boolean = instance?.dispatchRemoteGesture(gesture, onResult) == true
 
         fun clearActiveSession(sessionId: String? = null) {
             val current = instance ?: return
