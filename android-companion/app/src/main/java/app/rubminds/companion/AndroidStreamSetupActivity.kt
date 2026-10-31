@@ -94,6 +94,10 @@ class AndroidStreamSetupActivity : Activity() {
             setPadding(0, 0, 0, dp(8))
         })
         root.addView(Button(this).apply {
+            text = "Enable Rub Minds keyboard in Android Settings"
+            setOnClickListener { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
+        })
+        root.addView(Button(this).apply {
             text = "Choose Rub Minds phone keyboard"
             setOnClickListener {
                 val manager = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager
@@ -144,6 +148,7 @@ class AndroidStreamSetupActivity : Activity() {
             text = "Stop screen sharing"
             setOnClickListener {
                 RemoteTouchGate.disarm(this@AndroidStreamSetupActivity)
+                RemoteKeyboardGate.disarm()
                 stopService(Intent(this@AndroidStreamSetupActivity, AndroidScreenShareService::class.java)
                     .setAction(AndroidScreenShareService.ACTION_STOP))
                 refreshStatus()
@@ -289,6 +294,7 @@ class AndroidStreamSetupActivity : Activity() {
             finish()
         } catch (error: Exception) {
             RemoteTouchGate.disarm(this)
+            RemoteKeyboardGate.disarm()
             stopService(Intent(this, AndroidScreenShareService::class.java))
             Toast.makeText(this, error.message ?: "Could not start the screen-share service.", Toast.LENGTH_LONG).show()
         } finally {
