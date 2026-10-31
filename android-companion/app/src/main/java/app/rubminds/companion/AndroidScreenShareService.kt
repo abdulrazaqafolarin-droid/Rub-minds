@@ -462,7 +462,9 @@ class AndroidScreenShareService : Service() {
                 val bytes = ByteArray(buffer.data.remaining())
                 buffer.data.get(bytes)
                 val input = try { JSONObject(String(bytes, Charsets.UTF_8)) } catch (_: Exception) { return }
-                if (input.optString("kind") != "touch" ||
+                val allowedKeys = setOf("kind", "sessionId", "appPackageName", "gesture", "from", "to", "durationMs")
+                if (input.keys().asSequence().toSet() != allowedKeys ||
+                    input.optString("kind") != "touch" ||
                     input.optString("sessionId") != sessionId ||
                     input.optString("appPackageName") != appPackage ||
                     !localControlGranted || !RemoteTouchGate.isArmed(this@AndroidScreenShareService)
@@ -475,13 +477,23 @@ class AndroidScreenShareService : Service() {
                 }
                 val from = input.optJSONObject("from") ?: return
                 val to = input.optJSONObject("to") ?: return
+                if (from.keys().asSequence().toSet() != setOf("x", "y") ||
+                    to.keys().asSequence().toSet() != setOf("x", "y")) return
+                val fromX = from.opt("x") as? Number ?: return
+                val fromY = from.opt("y") as? Number ?: return
+                val toX = to.opt("x") as? Number ?: return
+                val toY = to.opt("y") as? Number ?: return
+                val durationValue = input.opt("durationMs") as? Number ?: return
+                if (durationValue.toDouble() % 1.0 != 0.0) return
+                val durationMillis = durationValue.toInt()
+                if (durationMillis !in 40..1_500) return
                 val gesture = RemoteTouchGesture(
                     sessionId = sessionId,
                     appPackageName = appPackage,
                     kind = kind,
-                    from = NormalizedTouchPoint(from.optDouble("x", Double.NaN).toFloat(), from.optDouble("y", Double.NaN).toFloat()),
-                    to = NormalizedTouchPoint(to.optDouble("x", Double.NaN).toFloat(), to.optDouble("y", Double.NaN).toFloat()),
-                    durationMillis = input.optInt("durationMs", 0)
+                    from = NormalizedTouchPoint(fromX.toFloat(), fromY.toFloat()),
+                    to = NormalizedTouchPoint(toX.toFloat(), toY.toFloat()),
+                    durationMillis = durationMillis
                 )
                 AndroidTouchAccessibilityService.dispatch(this@AndroidScreenShareService, gesture)
             }
@@ -602,6 +614,13 @@ class AndroidScreenShareService : Service() {
     private var stopping = false
 
     companion object {
+        @Volatile private var instance: AndroidScreenShareService? = null
+
+        fun revokeLocalTouch(context: Context) {
+            RemoteTouchGate.disarm(context)
+            instance?.localControlGranted = false
+        }
+
         const val ACTION_START = "app.rubminds.companion.action.START_SCREEN_SHARE"
         const val ACTION_STOP = "app.rubminds.companion.action.STOP_SCREEN_SHARE"
         const val EXTRA_RESULT_CODE = "media_projection_result_code"
