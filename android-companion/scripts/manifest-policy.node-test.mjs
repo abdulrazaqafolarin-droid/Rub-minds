@@ -204,7 +204,7 @@ test("Gradle APK build audits the final merged host manifest and records its dig
   const readme = await read("README.md");
   assert.match(gradle, /SingleArtifact\.MERGED_MANIFEST/);
   assert.match(gradle, /audit\$\{variantTitle\}GuestHostManifest/);
-  assert.match(gradle, /ACCESS_EXTERNAL_DTD/);
+  assert.match(gradle, /accessExternalDTD/);
   assert.match(gradle, /disallow-doctype-decl/);
   assert.match(gradle, /allowedPermissions = setOf\(/);
   assert.match(gradle, /actualExported == expectedExported/);
@@ -214,7 +214,7 @@ test("Gradle APK build audits the final merged host manifest and records its dig
   assert.match(gradle, /android\.intent\.category\.LAUNCHER/);
   assert.match(gradle, /android\.view\.InputMethod/);
   assert.match(gradle, /android\.permission\.BIND_INPUT_METHOD/);
-  assert.match(gradle, /ACCESS_EXTERNAL_SCHEMA/);
+  assert.match(gradle, /accessExternalSchema/);
   assert.match(gradle, /joinToString\(\)/);
   assert.match(gradle, /manifestSha256=/);
   assert.match(gradle, /dependsOn\(auditTask\)/);
@@ -273,7 +273,7 @@ test("Work Profile DPC is a single system-bound receiver with local signer check
   assert.match(auth, /MessageDigest\.isEqual/);
   assert.match(auth, /MAX_AGE_MILLIS = 60_000L/);
   assert.match(activity, /WorkProfileLaunchAuthenticator\.verify/);
-  assert.match(activity, /usedNonces/);
+  assert.match(activity, /nonceAlreadyUsed/);
   assert.match(activity, /cross_profile_allowlist_ready/);
   assert.match(activity, /liveEntries\.size >= 2_048/);
   assert.match(activity, /AppIdentity\.signingCertificateSha256/);
