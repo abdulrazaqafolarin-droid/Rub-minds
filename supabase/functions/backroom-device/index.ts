@@ -10,7 +10,8 @@ import { validateDesktopRegistration } from './desktop-device-protocol.mjs';
 import { validateDesktopApps } from './desktop-app-protocol.mjs';
 import { validateDesktopCommand, validateDesktopSignal } from './desktop-command-protocol.mjs';
 import { validateDesktopSessionClose } from './desktop-session-close-protocol.mjs';
-import { validateDesktopSessionAbandon } from './desktop-session-abandon-protocol.mjs';\nimport { validateAndroidSessionStart, validateAndroidDeviceCommand, validateAndroidSignal, validateAndroidCommandAck, validateAndroidSessionClose } from './android-streaming-protocol.mjs';
+import { validateDesktopSessionAbandon } from './desktop-session-abandon-protocol.mjs';
+import { validateAndroidSessionStart, validateAndroidDeviceCommand, validateAndroidSignal, validateAndroidCommandAck, validateAndroidSessionClose } from './android-streaming-protocol.mjs';
 import { broadcastPrivateDeviceEvent } from './realtime-broadcast.mjs';
 
 const url = Deno.env.get('SUPABASE_URL');

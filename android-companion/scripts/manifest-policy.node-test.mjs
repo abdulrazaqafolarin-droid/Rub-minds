@@ -260,6 +260,8 @@ test("Work Profile DPC is a single system-bound receiver with local signer check
   assert.match(manifest, /android:name="android\.app\.device_admin"/);
   assert.match(gradle, /receiver:\$expectedAppId\.WorkProfileAdminReceiver/);
   assert.match(gradle, /expectedExported && exported\\.size == 4/);
+  assert.match(gradle, /AndroidTouchAccessibilityService/);
+  assert.match(gradle, /hasTouchServiceMetadata/);
   assert.match(gradle, /PROFILE_PROVISIONING_COMPLETE/);
   assert.match(receiver, /setCrossProfilePackages/);
   assert.match(receiver, /getCrossProfilePackages/);

@@ -50,8 +50,25 @@ test("Device Frame shows one selected phone at a time", async () => {
 test("Device Frame never claims inventory is a running virtual app", async () => {
   const devices = await read("src/BackroomDevicesApp.tsx");
   assert.match(devices, /Separate app data \/ virtualization/);
-  assert.match(devices, /Live screen and touch control/);
+  assert.match(devices, /Live app stream and tap\\/swipe control/);
+  assert.match(devices, /<BackroomAndroidControl/);
   assert.match(devices, /Desktop runtime not connected/);
   assert.match(devices, /Terminal runtime not connected/);
   assert.match(devices, /selected app metadata is synced/);
+});
+
+test("Android Phone Frame wires a consented WebRTC stream and a separate touch grant", async () => {
+  const control = await read("src/BackroomAndroidControl.tsx");
+  const phone = await read("src/BackroomDevicesApp.tsx");
+  assert.match(phone, /import BackroomAndroidControl/);
+  assert.match(phone, /<BackroomAndroidControl device=\{activeDevice\} roomId=\{roomId\} \/>/);
+  assert.match(control, /RTCPeerConnection/);
+  assert.match(control, /android\/session-start/);
+  assert.match(control, /android\/command/);
+  assert.match(control, /request_control/);
+  assert.match(control, /kind: 'touch'/);
+  assert.match(control, /gesture, from:/);
+  assert.match(control, /waitForIceGatheringComplete/);
+  assert.match(control, /whole display/);
+  assert.match(control, /not an isolated virtual copy/);
 });
