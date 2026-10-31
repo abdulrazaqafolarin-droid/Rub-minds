@@ -171,6 +171,8 @@ class AndroidScreenShareService : Service() {
         when (action) {
             "view_offer" -> {
                 val offer = command.optJSONObject("offer")?.optString("sdp").orEmpty()
+                pendingOfferCommandId = commandId
+                pendingOfferRequestId = requestId
                 val accepted = startPeerAnswer(sessionId, appPackage, offer)
                 if (!accepted) acknowledge(token, commandId, requestId, sessionId, "app_or_offer_rejected")
             }
@@ -480,13 +482,8 @@ class AndroidScreenShareService : Service() {
         private val APP_PACKAGE_PATTERN = Regex("^[A-Za-z][A-Za-z0-9_]*(?:\\\\.[A-Za-z][A-Za-z0-9_]*)+$")
 
         fun requestStop(context: Context, reason: String) {
-            val intent = Intent(context, AndroidScreenShareService::class.java).setAction(ACTION_STOP)
-            try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent)
-                else context.startService(intent)
-            } catch (_: Exception) {
-                context.stopService(Intent(context, AndroidScreenShareService::class.java))
-            }
+            // Do not start a new foreground service just to issue a local stop.
+            context.stopService(Intent(context, AndroidScreenShareService::class.java))
         }
     }
 }

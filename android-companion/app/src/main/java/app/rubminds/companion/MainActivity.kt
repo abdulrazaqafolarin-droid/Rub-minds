@@ -191,6 +191,10 @@ class MainActivity : Activity() {
         cloudCard.addView(cloudStatus)
         root.addView(cloudCard)
         buildWorkProfileCard(root)
+        root.addView(Button(this).apply {
+            text = "Configure Backroom app streaming"
+            setOnClickListener { startActivity(Intent(this@MainActivity, AndroidStreamSetupActivity::class.java)) }
+        })
 
         val scopeNote = TextView(this).apply {
             text = "Privacy boundary: Backroom syncs only the apps you select, with their package names, labels, signer fingerprints and version names. It does not upload app data, login sessions, files, messages or passwords."

@@ -25,6 +25,10 @@ test("companion requests only HTTPS and approved profile handoff permissions", a
   assert.equal((manifest.match(/<uses-permission\b/g) ?? []).length, 2);
   assert.match(manifest, /android:usesCleartextTraffic="false"/);
   assert.match(manifest, /android.permission.BIND_INPUT_METHOD/);
+  assert.match(manifest, /android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION/);
+  assert.match(manifest, /android.permission.BIND_ACCESSIBILITY_SERVICE/);
+  assert.match(manifest, /android.accessibilityservice.AccessibilityService/);
+  assert.match(manifest, /android:foregroundServiceType="mediaProjection"/);
 });
 
 test("package visibility is limited to launcher activities", async () => {
@@ -102,6 +106,8 @@ test("guest runtime code remains a provider-neutral contract with no bundled vir
   assert.match(contract, /hostApplicationId/);
   assert.match(contract, /BIND_ACCESSIBILITY_SERVICE/);
   assert.match(contract, /GuestRuntimeDescriptor/);
+  assert.match(contract, /isAccessibilityService/);
+  assert.match(contract, /AndroidTouchAccessibilityService/);
   assert.match(contract, /GuestLocalApprovalReceipt/);
   assert.match(contract, /draftSha256/);
   assert.match(contract, /guestDraftSha256/);

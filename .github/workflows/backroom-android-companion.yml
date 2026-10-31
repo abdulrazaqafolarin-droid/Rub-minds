@@ -12,7 +12,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - '.github/workflows/backroom-android-companion.yml'
-      - 'android-companion/**'
+      - 'android-companion/**'\n      - 'supabase/functions/backroom-device/**'\n      - 'integrations/backroom/android-touch-policy.*'\n      - 'src/BackroomAndroidControl.tsx'\n      - 'src/BackroomDevicesApp.tsx'\n      - 'src/backroom-cloud.css'
       - 'docs/BACKROOM_ANDROID_GUEST_RUNTIME_ACCEPTANCE.md'
   push:
     branches: [main, feat/backroom-virtualized-execution]
@@ -44,8 +44,8 @@ jobs:
         with:
           gradle-version: '8.10.2'
           cache-provider: basic
-      - name: Verify Android manifest policy source checks
-        run: node --test android-companion/scripts/manifest-policy.node-test.mjs
+      - name: Verify Android, streaming and touch policy tests
+        run: node --test android-companion/scripts/manifest-policy.node-test.mjs supabase/functions/backroom-device/android-streaming-protocol.node-test.mjs integrations/backroom/android-touch-policy.node-test.mjs
       - name: Run Android unit tests and merged-manifest gate
         working-directory: android-companion
         run: gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:auditDebugGuestHostManifest
