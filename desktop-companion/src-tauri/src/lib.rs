@@ -1417,7 +1417,7 @@ mod native_input_tests {
 
     #[test]
     fn window_binding_requires_same_process_handle_and_class() {
-        let binding = WindowCaptureBinding { process_id: 42, handle: "0x1234".into(), class_name: "Chrome_WidgetWin_1".into() };
+        let binding = WindowCaptureBinding { app_id: "123e4567-e89b-42d3-a456-426614174003".into(), process_id: 42, handle: "0x1234".into(), class_name: "Chrome_WidgetWin_1".into() };
         let same = input_targeting::ForegroundWindowSnapshot {
             process_id: 42, handle: "0x1234".into(), class_name: "Chrome_WidgetWin_1".into(), bounds: [10, 20, 810, 620],
         };
