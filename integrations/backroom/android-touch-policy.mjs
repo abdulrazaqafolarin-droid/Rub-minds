@@ -1,11 +1,13 @@
-const PACKAGE = /^[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z][A-Za-z0-9_]*)+$/;
+const isPackageName = value => typeof value === "string" && value.length <= 255 &&
+  value.split(".").length >= 2 &&
+  value.split(".").every(part => /^[A-Za-z][A-Za-z0-9_]*$/.test(part));
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function validateAndroidTouchMessage(value, { sessionId, appPackageName, controlGranted }) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   if (Object.keys(value).some(key => !["kind", "sessionId", "appPackageName", "gesture", "from", "to", "durationMs"].includes(key))) return null;
   if (value.kind !== "touch" || !UUID.test(sessionId ?? "") || value.sessionId !== sessionId ||
-      !PACKAGE.test(appPackageName ?? "") || value.appPackageName !== appPackageName || controlGranted !== true) return null;
+      !isPackageName(appPackageName) || value.appPackageName !== appPackageName || controlGranted !== true) return null;
   if (!["tap", "swipe", "long_press"].includes(value.gesture)) return null;
   const point = item => item && typeof item === "object" && Number.isFinite(item.x) && Number.isFinite(item.y) &&
     item.x >= 0 && item.x <= 1 && item.y >= 0 && item.y <= 1 &&

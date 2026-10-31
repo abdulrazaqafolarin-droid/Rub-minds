@@ -100,7 +100,7 @@ class AndroidScreenShareService : Service() {
 
     private fun startCapture(resultData: Intent, targetPackage: String) {
         try {
-            require(APP_PACKAGE_PATTERN.matches(targetPackage)) { "A locally selected app package is required." }
+            require(AppGrantPolicy.isValidPackageName(targetPackage)) { "A locally selected app package is required." }
             val signer = AppIdentity.signingCertificateSha256(this, targetPackage)
                 ?: error("The selected app signer could not be verified.")
             require(AppGrantStore(this).get(targetPackage, signer) != null) { "The selected app is not in the saved local allowlist." }
@@ -225,7 +225,7 @@ class AndroidScreenShareService : Service() {
     }
 
     private fun startPeerAnswer(sessionId: String, appPackage: String, offerSdp: String, roomId: String): Boolean {
-        if (!UUID_PATTERN.matches(sessionId) || !APP_PACKAGE_PATTERN.matches(appPackage) ||
+        if (!UUID_PATTERN.matches(sessionId) || !AppGrantPolicy.isValidPackageName(appPackage) ||
             appPackage != locallySelectedPackage || !UUID_PATTERN.matches(roomId) ||
             offerSdp.length !in 8..MAX_SDP_CHARS || !offerSdp.startsWith("v=0")
         ) return false
@@ -530,7 +530,6 @@ class AndroidScreenShareService : Service() {
         private const val MAX_WAIT_WITHOUT_SESSION_MS = 5 * 60 * 1000L
         private const val MAX_SDP_CHARS = 65_536
         private val UUID_PATTERN = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", RegexOption.IGNORE_CASE)
-        private val APP_PACKAGE_PATTERN = Regex("^[A-Za-z][A-Za-z0-9_]*(?:\\\\.[A-Za-z][A-Za-z0-9_]*)+$")
 
         fun requestStop(context: Context, reason: String) {
             // Do not start a new foreground service just to issue a local stop.

@@ -1,9 +1,11 @@
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const PACKAGE = /^[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z][A-Za-z0-9_]*)+$/;
 const MAX_SDP_CHARS = 65_536;
 const MAX_REQUEST_AGE_MS = 30_000;
 
 const isUuid = value => typeof value === "string" && UUID.test(value);
+const isPackageName = value => typeof value === "string" && value.length <= 255 &&
+  value.split(".").length >= 2 &&
+  value.split(".").every(part => /^[A-Za-z][A-Za-z0-9_]*$/.test(part));
 const exactKeys = (value, allowed, required = allowed) =>
   !!value && typeof value === "object" && !Array.isArray(value) &&
   Object.keys(value).every(key => allowed.includes(key)) &&
@@ -20,7 +22,7 @@ export function validateAndroidSessionStart(value, { now = Date.now() } = {}) {
       !isUuid(value.requestId) || !isUuid(value.sessionId) ||
       !Number.isSafeInteger(value.issuedAt) || !Number.isSafeInteger(now) ||
       Math.abs(now - value.issuedAt) > MAX_REQUEST_AGE_MS ||
-      typeof value.appPackageName !== "string" || !PACKAGE.test(value.appPackageName) ||
+      typeof value.appPackageName !== "string" || !isPackageName(value.appPackageName) ||
       !exactKeys(value.offer, ["sdp"]) || !validSdp(value.offer.sdp)) return null;
   return Object.freeze({ ...value, offer: Object.freeze({ ...value.offer }) });
 }
@@ -32,7 +34,7 @@ export function validateAndroidDeviceCommand(value, { now = Date.now() } = {}) {
       !Number.isSafeInteger(value.issuedAt) || !Number.isSafeInteger(now) ||
       Math.abs(now - value.issuedAt) > MAX_REQUEST_AGE_MS ||
       !["request_control", "stop_session"].includes(value.command) ||
-      typeof value.appPackageName !== "string" || !PACKAGE.test(value.appPackageName)) return null;
+      typeof value.appPackageName !== "string" || !isPackageName(value.appPackageName)) return null;
   return Object.freeze({ ...value });
 }
 
@@ -69,7 +71,7 @@ export function mapAndroidQueuedCommand(row) {
       command.deviceId !== row.device_id || command.roomId !== row.room_id ||
       command.sessionId !== row.session_id || !isUuid(command.requestId) ||
       command.requestId !== row.request_id || typeof command.appPackageName !== "string" ||
-      !PACKAGE.test(command.appPackageName)) return null;
+      !isPackageName(command.appPackageName)) return null;
   if (action === "view_offer" && (!exactKeys(command.offer, ["sdp"]) || !validSdp(command.offer.sdp))) return null;
   return Object.freeze({
     ...command,
