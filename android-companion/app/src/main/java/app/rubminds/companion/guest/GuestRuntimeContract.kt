@@ -519,9 +519,22 @@ data class GuestSelectionLease(
  * The private constructor prevents network/deserialized request data from setting
  * a trusted boolean. The provider must consume it exactly once.
  */
+private fun guestDraftSha256(text: String): String =
+    java.security.MessageDigest.getInstance("SHA-256")
+        .digest(text.toByteArray(Charsets.UTF_8))
+        .joinToString("") { it.toUByte().toString(16).padStart(2, '0') }
+
+/**
+ * Opaque receipt issued only after the local native confirmation dialog succeeds.
+ * It is bound to the exact session, selection, request ID and SHA-256 of the text
+ * shown in that dialog. The private constructor prevents network/deserialized
+ * request data from fabricating an approval flag.
+ */
 class GuestLocalApprovalReceipt private constructor(
     val sessionId: String,
     val selectionId: String,
+    val requestId: String,
+    val draftSha256: String,
     val issuedAtMillis: Long,
     val expiresAtMillis: Long,
     private val nonce: String
@@ -529,33 +542,58 @@ class GuestLocalApprovalReceipt private constructor(
     private var consumed = false
 
     @Synchronized
-    internal fun consume(sessionId: String, selectionId: String, nowMillis: Long): Boolean {
-        if (consumed || this.sessionId != sessionId || this.selectionId != selectionId) return false
-        if (nowMillis >= expiresAtMillis || issuedAtMillis > nowMillis + 2_000L ||
-            expiresAtMillis <= issuedAtMillis || expiresAtMillis - issuedAtMillis > 60_000L) return false
+    internal fun consume(
+        sessionId: String,
+        selectionId: String,
+        requestId: String,
+        text: String,
+        nowMillis: Long
+    ): Boolean {
+        if (consumed || !matches(sessionId, selectionId, requestId, text, nowMillis)) return false
         consumed = true
         return true
     }
 
     @Synchronized
-    internal fun isUsableFor(sessionId: String, selectionId: String, nowMillis: Long): Boolean =
-        !consumed && this.sessionId == sessionId && this.selectionId == selectionId &&
-            nowMillis < expiresAtMillis && issuedAtMillis <= nowMillis + 2_000L &&
-            expiresAtMillis > issuedAtMillis && expiresAtMillis - issuedAtMillis <= 60_000L
+    internal fun isUsableFor(
+        sessionId: String,
+        selectionId: String,
+        requestId: String,
+        text: String,
+        nowMillis: Long
+    ): Boolean = !consumed && matches(sessionId, selectionId, requestId, text, nowMillis)
+
+    private fun matches(
+        sessionId: String,
+        selectionId: String,
+        requestId: String,
+        text: String,
+        nowMillis: Long
+    ): Boolean =
+        this.sessionId == sessionId && this.selectionId == selectionId &&
+            this.requestId == requestId && draftSha256 == guestDraftSha256(text) &&
+            nonce.isNotBlank() && nowMillis < expiresAtMillis &&
+            issuedAtMillis <= nowMillis + 2_000L && expiresAtMillis > issuedAtMillis &&
+            expiresAtMillis - issuedAtMillis <= 60_000L
 
     companion object {
         /** Call only on the affirmative result from an OS/native local confirmation UI. */
         internal fun issueAfterNativeConfirmation(
             sessionId: String,
             selectionId: String,
+            requestId: String,
+            draftText: String,
             issuedAtMillis: Long,
             expiresAtMillis: Long
         ): GuestLocalApprovalReceipt? {
-            if (sessionId.isBlank() || selectionId.isBlank() || expiresAtMillis <= issuedAtMillis ||
-                expiresAtMillis - issuedAtMillis > 60_000L) return null
+            if (sessionId.isBlank() || selectionId.isBlank() || requestId.isBlank() ||
+                draftText.isBlank() || draftText.length > 4_000 || draftText.any { it.isISOControl() } ||
+                expiresAtMillis <= issuedAtMillis || expiresAtMillis - issuedAtMillis > 60_000L) return null
             return GuestLocalApprovalReceipt(
                 sessionId = sessionId,
                 selectionId = selectionId,
+                requestId = requestId,
+                draftSha256 = guestDraftSha256(draftText),
                 issuedAtMillis = issuedAtMillis,
                 expiresAtMillis = expiresAtMillis,
                 nonce = java.util.UUID.randomUUID().toString()
@@ -712,7 +750,7 @@ class GuestSelectionGuard {
             return error
         }
         val approval = request.approval
-        if (approval == null || !approval.consume(selection.sessionId, selection.selectionId, nowMillis)) {
+        if (approval == null || !approval.consume(selection.sessionId, selection.selectionId, request.requestId, request.text, nowMillis)) {
             activeSelectionId = null
             return "local_approval_invalid_or_expired"
         }
@@ -771,11 +809,11 @@ object GuestTargetPolicy {
         val selectionError = validateSelection(frame, field, selection, nowMillis)
         if (selectionError != null) return selectionError
         if (!uuidPattern.matches(request.requestId) || request.selectionId != selection.selectionId) return "draft_selection_mismatch"
-        val approval = request.approval ?: return "local_approval_required"
-        if (!approval.isUsableFor(selection.sessionId, selection.selectionId, nowMillis)) return "local_approval_invalid_or_expired"
-        if (request.submit) return "submit_not_supported"
         if (request.text.isBlank() || request.text.length > MAX_DRAFT_CHARS ||
             request.text.any { it.isISOControl() }) return "draft_text_invalid"
+        if (request.submit) return "submit_not_supported"
+        val approval = request.approval ?: return "local_approval_required"
+        if (!approval.isUsableFor(selection.sessionId, selection.selectionId, request.requestId, request.text, nowMillis)) return "local_approval_invalid_or_expired"
         return null
     }
 }
