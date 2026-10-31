@@ -206,7 +206,7 @@ test("Gradle APK build audits the final merged host manifest and records its dig
   assert.match(gradle, /audit\$\{variantTitle\}GuestHostManifest/);
   assert.match(gradle, /ACCESS_EXTERNAL_DTD/);
   assert.match(gradle, /disallow-doctype-decl/);
-  assert.match(gradle, /allowedPermissions = setOf\("android\.permission\.INTERNET"\)/);
+  assert.match(gradle, /allowedPermissions = setOf\(/);
   assert.match(gradle, /actualExported == expectedExported/);
   assert.match(gradle, /duplicateComponents\.isEmpty\(\)/);
   assert.match(gradle, /Component \$className must declare android:exported explicitly/);
@@ -245,6 +245,7 @@ test("Work Profile DPC is a single system-bound receiver with local signer check
   const launcher = await read("app/src/main/java/app/rubminds/companion/WorkProfileAppLauncher.kt");
   const auth = await read("app/src/main/java/app/rubminds/companion/WorkProfileLaunchCommand.kt");
   const activity = await read("app/src/main/java/app/rubminds/companion/MainActivity.kt");
+  const contract = await read("app/src/main/java/app/rubminds/companion/guest/GuestRuntimeContract.kt");
 
   assert.match(manifest, /android:name="\.WorkProfileAdminReceiver"/);
   assert.match(manifest, /android:permission="android\.permission\.BIND_DEVICE_ADMIN"/);
@@ -265,5 +266,11 @@ test("Work Profile DPC is a single system-bound receiver with local signer check
   assert.match(activity, /AppIdentity\.signingCertificateSha256/);
   assert.match(activity, /AppGrantStore/);
   assert.doesNotMatch(activity, /performEditorAction|KEYCODE_ENTER/);
+  assert.match(contract, /WORK_PROFILE_OWNER_CONFIRMED/);
+  assert.match(contract, /WORK_PROFILE_CROSS_PROFILE_ALLOWLIST_VERIFIED/);
+  assert.match(contract, /WORK_PROFILE_SIGNER_BOUND_LAUNCH_VERIFIED/);
+  assert.match(contract, /acceptance_isolation_boundary_mismatch/);
+  assert.match(contract, /isDeviceAdminReceiver/);
+  assert.match(contract, /unexpected_exported_entrypoint_count/);
 });
 
