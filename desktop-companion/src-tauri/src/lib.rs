@@ -1019,6 +1019,7 @@ struct PendingDraftSummary {
     text: String,
     session_id: String,
     expires_in_seconds: u64,
+    target_label: String,
 }
 
 #[tauri::command]
@@ -1026,9 +1027,16 @@ fn list_pending_drafts(state: State<'_, AppState>) -> Result<Vec<PendingDraftSum
     let now = Instant::now();
     let mut pending = state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?;
     pending.retain(|_, draft| draft.expires_at > now);
-    Ok(pending.iter().map(|(id, draft)| PendingDraftSummary {
-        request_id: id.clone(), text: draft.text.clone(), session_id: draft.session_id.clone(),
-        expires_in_seconds: draft.expires_at.saturating_duration_since(now).as_secs().min(60),
+    Ok(pending.iter().map(|(id, draft)| {
+        let target_label = draft.target.identity.as_ref().map(|identity| format!(
+            "Windows process {} · {} · {} · {}-pattern",
+            identity.process_id, identity.control_type, identity.class_name, identity.access_mode,
+        )).unwrap_or_else(|| "Unverified desktop target".into());
+        PendingDraftSummary {
+            request_id: id.clone(), text: draft.text.clone(), session_id: draft.session_id.clone(),
+            expires_in_seconds: draft.expires_at.saturating_duration_since(now).as_secs().min(60),
+            target_label,
+        }
     }).collect())
 }
 
@@ -1050,9 +1058,14 @@ async fn approve_draft_request(app: AppHandle, state: State<'_, AppState>, reque
     verify_selected_editable_target(&geometry_before, &pending.target)?;
     verify_current_draft_selection(&state, &pending)?;
 
+    let identity = pending.target.identity.as_ref().ok_or("The saved draft has no verified target identity")?;
+    let target_label = format!(
+        "Destination: Windows process {} · {} control · {} · {}-pattern access",
+        identity.process_id, identity.control_type, identity.class_name, identity.access_mode,
+    );
     require_native_confirmation(&app, "Insert this unsent draft?", &format!(
-        "Insert this exact text into the verified empty text field you selected? Backroom will recheck the field identity and its empty value before typing. It will not press Enter or Send.\\n\\n{}",
-        pending.text
+        "{}\\n\\nInsert this exact text into that verified empty field? Backroom will recheck the field identity and empty value before writing. It will not press Enter or Send.\\n\\n{}",
+        target_label, pending.text
     ))?;
 
     // Re-check after approval. The app may have moved, closed or populated
