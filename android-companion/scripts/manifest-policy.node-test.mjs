@@ -264,6 +264,7 @@ test("Work Profile DPC is a single system-bound receiver with local signer check
   assert.match(receiver, /setProfileEnabled/);
   assert.match(coordinator, /PersistableBundle/);
   assert.match(coordinator, /EXTRA_PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME, admin/);
+  assert.doesNotMatch(coordinator, /resolveActivity/);
   assert.match(secretStore, /hasSecret\(\)/);
   assert.match(secretStore, /secret\.fill\(0\)/);
   assert.match(launcher, /canInteractAcrossProfiles/);
