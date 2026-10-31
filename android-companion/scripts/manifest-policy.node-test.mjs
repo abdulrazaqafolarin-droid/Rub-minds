@@ -266,6 +266,8 @@ test("Work Profile DPC is a single system-bound receiver with local signer check
   assert.match(auth, /MAX_AGE_MILLIS = 60_000L/);
   assert.match(activity, /WorkProfileLaunchAuthenticator\.verify/);
   assert.match(activity, /usedNonces/);
+  assert.match(activity, /cross_profile_allowlist_ready/);
+  assert.match(activity, /liveEntries\.size >= 2_048/);
   assert.match(activity, /AppIdentity\.signingCertificateSha256/);
   assert.match(activity, /AppGrantStore/);
   assert.doesNotMatch(activity, /performEditorAction|KEYCODE_ENTER/);
