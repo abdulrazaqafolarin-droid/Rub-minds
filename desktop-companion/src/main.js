@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { validateDeviceCommand, validateDeviceSignal, queueIceCandidate, takeIceCandidates } from '../../integrations/backroom/desktop-realtime-protocol.mjs';
 import { waitForIceGatheringComplete } from '../../integrations/backroom/ice-gathering.mjs';
 import { validatePeerHeartbeat } from '../../integrations/backroom/peer-heartbeat.mjs';
+import { beginTargetSelection, confirmTargetSelection, invalidateTargetSelection, rejectTargetSelection, canStageDraftForCurrentSelection, isPendingDraftForCurrentSelection } from '../../integrations/backroom/desktop-target-selection.mjs';
 import './style.css';
 
 const app = document.querySelector('#app');
@@ -493,9 +494,7 @@ async function handlePeerData(sessionId,raw){
   }
   peer.lastHeartbeat=Date.now();
   if(message.kind==='clear_target'){
-    peer.latestTargetRequestId=null;
-    peer.targetSelectionId=null;
-    peer.targetVerified=false;
+    invalidateTargetSelection(peer);
     const invalidation=invalidatePendingDraftApprovals(sessionId,'The typing-area selection was cleared; this draft was cancelled.');
     if(!peer.targetClearPromise){
       // Enqueue synchronously before yielding so a following drag cannot get
@@ -524,9 +523,7 @@ async function handlePeerData(sessionId,raw){
       peer.targetVerified===true||peer.latestTargetRequestId||
       peer.targetClearPromise||peer.targetQueueDepth>0
     )){
-      peer.latestTargetRequestId=null;
-      peer.targetSelectionId=null;
-      peer.targetVerified=false;
+      invalidateTargetSelection(peer);
       const invalidation=invalidatePendingDraftApprovals(
         sessionId,'Manual computer interaction changed the target; this draft was cancelled.'
       );
@@ -534,8 +531,7 @@ async function handlePeerData(sessionId,raw){
         const clearTask=(peer.targetQueue||Promise.resolve()).then(async()=>{
           await invalidation;
           await invoke('clear_draft_target',{sessionId});
-          peer.targetSelectionId=null;
-          peer.targetVerified=false;
+          invalidateTargetSelection(peer);
         });
         const tracked=clearTask.finally(()=>{if(peer.targetClearPromise===tracked)peer.targetClearPromise=null;});
         peer.targetClearPromise=tracked;
@@ -559,9 +555,10 @@ async function handlePeerData(sessionId,raw){
 
     // Newer browser drags revoke draft eligibility immediately, even while the
     // native accessibility lookup for an older drag is still running.
-    peer.latestTargetRequestId=requestId;
-    peer.targetSelectionId=null;
-    peer.targetVerified=false;
+    if(!beginTargetSelection(peer,requestId)){
+      report(false,'The selection-attempt identifier is invalid.');
+      return;
+    }
     peer.targetQueueDepth=(peer.targetQueueDepth||0)+1;
     const invalidation=invalidatePendingDraftApprovals(sessionId,'The selected typing area changed; this draft was cancelled.');
 
@@ -604,23 +601,17 @@ async function handlePeerData(sessionId,raw){
           report(false,'This selection was superseded by a newer drag.');
           return;
         }
-        if(!modeMessage||typeof modeMessage.message!=='string'||
-           typeof modeMessage.selectionId!=='string'||!modeMessage.selectionId){
-          throw new Error('The computer did not return a valid native selection identity.');
+        if(!confirmTargetSelection(peer,requestId,modeMessage)){
+          throw new Error('The computer did not return a current, valid native selection identity.');
         }
         const status=modeMessage.message.length<=240
           ?modeMessage.message
           :'Windows verified an empty editable text field. Its identity will be rechecked before insertion.';
-        peer.targetSelectionId=modeMessage.selectionId;
-        peer.targetVerified=true;
         report(true,status);
         notify(status,'success');
       }catch(error){
         const reason=error?.message||'The selected area is not a verifiable editable field.';
-        if(requestId===peer.latestTargetRequestId){
-          peer.targetSelectionId=null;
-          peer.targetVerified=false;
-        }
+        rejectTargetSelection(peer,requestId);
         report(false,reason);
         notify(reason,'error');
       }finally{
@@ -628,14 +619,14 @@ async function handlePeerData(sessionId,raw){
       }
     });
   } else if(message.kind==='draft'){
-    if(peer.targetVerified!==true||peer.targetClearPromise){
+    if(!canStageDraftForCurrentSelection(peer)||peer.targetClearPromise){
       const reason='Drag-select and verify the current text field again before requesting draft insertion.';
       try{peer.channel?.send(JSON.stringify({kind:'draft_result',ok:false,result:reason}));}catch{}
       notify(reason,'error');
       return;
     }
     const stageTask=(peer.targetQueue||Promise.resolve()).then(async()=>{
-      if(peer.targetVerified!==true||peer.targetClearPromise)
+      if(!canStageDraftForCurrentSelection(peer)||peer.targetClearPromise)
         throw new Error('The verified typing target changed. Drag-select it again before staging a draft.');
       const id=await invoke('stage_draft_request',{sessionId,text:message.text});
       await refreshPending();
@@ -668,9 +659,7 @@ async function refreshPending(){
   for(const draft of drafts){
     const peer=state.peers.get(draft.sessionId);
     // A delayed list response must not resurrect an approval for a previous drag.
-    if(!peer||peer.targetVerified!==true||peer.targetClearPromise||
-       typeof draft.selectionId!=='string'||!draft.selectionId||
-       peer.targetSelectionId!==draft.selectionId)continue;
+    if(!isPendingDraftForCurrentSelection(peer,draft))continue;
     if(state.pending.some(item=>item.requestId===draft.requestId))continue;
     const sendDraftResult=(ok,result)=>{
       const peer=state.peers.get(draft.sessionId);
