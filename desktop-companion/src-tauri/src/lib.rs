@@ -1067,10 +1067,10 @@ async fn approve_draft_request(app: AppHandle, state: State<'_, AppState>, reque
     let (identity, px, py) = verify_selected_editable_target(&geometry, &pending.target)?;
     verify_current_draft_selection(&state, &pending)?;
 
-    // Consume before the one-shot UIA ValuePattern operation. The native driver
-    // re-resolves the exact element, verifies it is still empty, writes directly
-    // to that element and reads the exact value back. No global click/keyboard
-    // injection, Enter, Send, or automatic retry is involved.
+    // Consume before the one-shot UIA write. The native driver re-resolves
+    // the exact element and empty value, uses ValuePattern or focus-bound
+    // TextPattern input as appropriate, and reads the exact result back.
+    // No coordinate click, Enter, Send, or automatic retry is involved.
     state.draft_targets.lock().map_err(|_| "Draft state unavailable")?.remove(&pending.session_id);
     input_targeting::set_value_exact(px, py, &identity, &pending.text)?;
     Ok("Text inserted into the verified editable field and read back exactly. No Enter or Send action was performed.".into())
