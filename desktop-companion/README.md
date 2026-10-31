@@ -80,7 +80,7 @@ From the repository root:
 - A command session has a maximum 12-hour server expiry; local one-time approval grants expire much sooner and cannot be upgraded from view to control.
 - Live media is peer-to-peer and STUN-only; TURN relay / restrictive-network fallback remains unimplemented.
 - Windows app enumeration is explicit picker-only, not a full installed-app catalog. Linux/macOS app launch is not implemented.
-- Windows UI Automation targeting must be tested with real Notepad, Electron/Chromium, and representative added apps; controls without a writable/readable UIA value pattern are deliberately unsupported. macOS/Linux accessibility target adapters remain unimplemented. Screen capture/control and OS permission states still require physical-device acceptance.
+- Windows UI Automation targeting must be tested with real Notepad, Electron/Chromium, and representative added apps; controls without supported writable/readable UIA Value access or readable Text access plus keyboard focus are deliberately unsupported. macOS/Linux accessibility target adapters remain unimplemented. Screen capture/control and OS permission states still require physical-device acceptance.
 - Emergency stop kills tracked direct-child processes and PTYs; it does not guarantee termination of every helper process an application may spawn.
 - A real Windows build, installer launch, PowerShell control, screen share, native confirmation and drag-select draft flow are release gates. Passing Node protocol tests is not a substitute for this device-level test.
 
