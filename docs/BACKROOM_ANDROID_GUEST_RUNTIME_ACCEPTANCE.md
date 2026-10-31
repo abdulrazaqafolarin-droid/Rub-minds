@@ -250,3 +250,25 @@ Do not mark these physical checks passed from source tests. Record actual handse
 This runs ordinary Android Activities inside a separate Android-managed user/profile. It does **not** create a virtual display, render the other profile's native app inside Backroom, capture guest-only frames, route remote touch, expose a guest accessibility tree, or implement drag-select insertion. It is a valid OS data-isolation bridge, but not the requested in-frame Android guest runtime.
 
 The three Work Profile-specific evidence fields (profile owner confirmed, cross-profile allowlist verified, signer-bound launch verified) are required only for ANDROID_MANAGED_PROFILE descriptors. They do not waive the common guest-frame, touch, accessibility, draft-only and Emergency Stop checks required before GuestRuntimeDecision.READY.
+
+
+## VirtualDevice firmware capability probe — read-only (2026-10-31)
+
+The companion reads the public VirtualDeviceManager service (API 34+) and PackageManager's secondary-display activity feature. It does not create a virtual device, invoke hidden APIs, request CREATE_VIRTUAL_DEVICE, or infer that the app has the system role needed to create one.
+
+| Check | Evidence | Interpretation |
+|---|---|---|
+| Android API | Read Build.VERSION.SDK_INT | Below API 34: this VirtualDevice path is unavailable |
+| Secondary display feature | PackageManager.FEATURE_ACTIVITIES_ON_SECONDARY_DISPLAYS | Missing feature: do not claim this firmware supports app activities on secondary displays |
+| VirtualDeviceManager service | getSystemService(VirtualDeviceManager::class.java) | Null: OEM firmware has not exposed/configured the framework service |
+| Visible virtual devices | Public manager.virtualDevices list | A nonzero count means existing devices are visible to this caller; it does not grant creation authority |
+| Creation authority | OEM/system-role and Companion Device Manager association review | Requires the platform role and association; the ordinary companion APK must not bypass this boundary |
+
+The status surfaced in the app distinguishes unsupported Android, missing secondary-display feature, missing OEM service and platform-present-but-system-role-required. Record this output on the TECNO KL4 along with its exact API level and firmware build. Do not mark the probe passed on the basis of an emulator or a different phone.
+
+Even when firmware capability is present, Backroom still needs an authorized system/OEM provider that can create/manage the virtual device, install/launch the guest, stream only its virtual display into Phone Frame, map touch and keyboard input, expose guest accessibility targets, and enforce draft-only insertion and Emergency Stop. The Work Profile path does not replace those capabilities and does not qualify as in-frame execution.
+
+References:
+- https://developer.android.com/reference/android/companion/virtual/VirtualDeviceManager
+- https://developer.android.com/reference/android/content/pm/PackageManager#FEATURE_ACTIVITIES_ON_SECONDARY_DISPLAYS
+- https://android.googlesource.com/platform/frameworks/base/+/refs/heads/master/core/java/android/companion/virtual/VirtualDeviceManager.java
