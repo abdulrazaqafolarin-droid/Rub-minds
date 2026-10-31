@@ -567,7 +567,7 @@ class AndroidScreenShareService : Service() {
     private fun claimRemoteTextRequest(requestId: String): Boolean = synchronized(remoteTextRequestIds) {
         val cutoff = System.currentTimeMillis() - REMOTE_TEXT_REPLAY_WINDOW_MS
         val expired = remoteTextRequestIds.filterValues { it < cutoff }.keys.toList()
-        expired.forEach(remoteTextRequestIds::remove)
+        expired.forEach { remoteTextRequestIds.remove(it) }
         if (remoteTextRequestIds.containsKey(requestId) ||
             remoteTextRequestIds.size >= MAX_REMOTE_TEXT_REQUEST_IDS
         ) return@synchronized false
