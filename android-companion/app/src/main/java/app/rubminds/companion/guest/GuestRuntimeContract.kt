@@ -296,6 +296,50 @@ object GuestInstallPolicy {
     }
 }
 
+/**
+ * Prevents two logical guest instances from sharing a private data directory.
+ * The provider must register every prepared instance and unregister it only
+ * after that guest container has been destroyed.
+ */
+class GuestInstanceIsolationRegistry {
+    private val containerOwners = linkedMapOf<String, String>()
+    private val instanceContainers = linkedMapOf<String, String>()
+
+    @Synchronized
+    fun register(instance: GuestAppInstance, request: GuestAppInstallRequest): String? {
+        val validation = GuestInstallPolicy.validate(instance, request)
+        if (validation != null) return validation
+        if (instance.instanceId in instanceContainers) return "guest_instance_id_already_registered"
+        if (instance.dataContainerId in containerOwners) return "guest_data_container_reused"
+        instanceContainers[instance.instanceId] = instance.dataContainerId
+        containerOwners[instance.dataContainerId] = instance.instanceId
+        return null
+    }
+
+    @Synchronized
+    fun unregister(instanceId: String): Boolean {
+        val containerId = instanceContainers.remove(instanceId) ?: return false
+        containerOwners.remove(containerId)
+        return true
+    }
+
+    @Synchronized
+    fun resetAfterProviderShutdown() {
+        instanceContainers.clear()
+        containerOwners.clear()
+    }
+}
+
+object GuestDraftResultPolicy {
+    /** Never report success unless the provider attests to exact read-back and no submission. */
+    fun validate(result: GuestDraftResult): String? {
+        if (result.submitted) return "guest_provider_submitted"
+        if (!result.inserted) return "guest_draft_not_inserted"
+        if (!result.readBackMatches) return "guest_draft_readback_mismatch"
+        return null
+    }
+}
+
 enum class GuestCaptureScope {
     GUEST_APP,
     WHOLE_DEVICE
@@ -414,6 +458,8 @@ class GuestSelectionGuard {
         selection: GuestSelectionLease,
         nowMillis: Long
     ): String? {
+        // A new drag supersedes the previous target even when the new drag is invalid.
+        activeSelectionId = null
         val error = GuestTargetPolicy.validateSelection(frame, field, selection, nowMillis)
         if (error != null) return error
         if (selection.selectionId in consumedSelectionIds) return "target_selection_already_used"
@@ -434,7 +480,11 @@ class GuestSelectionGuard {
             return "target_selection_not_active"
         }
         val error = GuestTargetPolicy.validateDraft(frame, field, selection, request, nowMillis)
-        if (error != null) return error
+        if (error != null) {
+            if (error != "local_approval_required" && error != "draft_text_invalid" &&
+                error != "draft_selection_mismatch") activeSelectionId = null
+            return error
+        }
         consumedSelectionIds += selection.selectionId
         activeSelectionId = null
         return null
