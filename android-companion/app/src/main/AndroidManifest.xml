@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- User-approved, admin-allowlisted app handoff between personal and managed profiles. -->
+    <uses-permission android:name="android.permission.INTERACT_ACROSS_PROFILES" />
     <!-- Discover only apps Android exposes through the declared launcher-intent query. -->
     <queries>
         <intent>
@@ -27,5 +29,20 @@
             <intent-filter><action android:name="android.view.InputMethod" /></intent-filter>
             <meta-data android:name="android.view.im" android:resource="@xml/method" />
         </service>
+        <!-- The system binds this OS administration receiver only during an explicitly user-approved Work Profile flow. -->
+        <receiver
+            android:name=".WorkProfileAdminReceiver"
+            android:description="Rub Minds managed Work Profile setup"
+            android:exported="true"
+            android:label="Rub Minds Work Profile administrator"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/work_profile_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+                <action android:name="android.app.action.PROFILE_PROVISIONING_COMPLETE" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>
