@@ -322,7 +322,10 @@ mod windows_impl {
                 // UIElement::send_text focuses this exact UIA element before
                 // emitting literal characters. It does not interpret Enter or
                 // other control keys; those are excluded by the input validator.
-                element.send_text(text, 0)
+                // The crate documents that a too-low interval can drop
+                // characters in long text. Use a small non-zero cadence, then
+                // require an exact read-back before reporting success.
+                element.send_text(text, 8)
                     .map_err(|_| "Multi-line text input could not be delivered; inspect the editor before retrying".to_string())?;
             }
             _ => return Err("The selected editor uses an unsupported accessibility write mode".into()),
