@@ -500,9 +500,12 @@ async function handlePeerData(sessionId,raw){
     // earlier, slow drag cannot overwrite the most recent target selection.
     peer.targetQueue=(peer.targetQueue||Promise.resolve()).then(async()=>{
       try{
-        await invoke('select_draft_target',{sessionId,target:message.target});
-        report(true,'Verified an empty, editable Windows text field. Its app identity will be rechecked before insertion.');
-        notify('Drag selection matched an accessible empty text field.','success');
+        const modeMessage=await invoke('select_draft_target',{sessionId,target:message.target});
+        const status=typeof modeMessage==='string'&&modeMessage.length<=240
+          ?modeMessage
+          :'Windows verified an empty editable text field. Its identity will be rechecked before insertion.';
+        report(true,status);
+        notify(status,'success');
       }catch(error){
         const reason=error?.message||'The selected area is not a verifiable editable field.';
         report(false,reason);
