@@ -217,3 +217,17 @@ Platform references:
 - https://developer.android.com/reference/android/app/admin/DevicePolicyManager#ACTION_PROVISION_MANAGED_PROFILE
 - https://developer.android.com/reference/android/content/pm/CrossProfileApps
 - https://developer.android.com/reference/android/app/admin/DevicePolicyManager#setCrossProfilePackages(android.content.ComponentName,java.util.Set)
+
+
+## OEM VirtualDevice route — probe only, no ordinary-app creation (2026-10-31)
+
+The Android companion now performs a read-only capability probe for the public VirtualDeviceManager service and the secondary-display activity feature. Android may expose no manager when the OEM has not enabled its config flag. The existence of the service or visible virtual devices is not a grant to create a new device.
+
+VirtualDevice creation is a restricted platform API: the caller needs the system role/permission path and a Companion Device Manager association. The side-loaded Rub Minds companion does not have those privileges and intentionally does not request CREATE_VIRTUAL_DEVICE, use reflection, or call hidden APIs. The probe only reports Android version, secondary-display feature, service availability and visible virtual-device count.
+
+This is the most direct architectural path for an in-frame Android guest, but it requires a supported OEM/system-role integration. A positive probe must be followed by an authorized provider that can create and own the virtual device, install/launch the guest, capture its virtual display only, forward input, and implement guest accessibility/draft/Emergency Stop boundaries. A Work Profile remains useful OS-managed data isolation, but it is not a virtual display and does not embed its apps in Backroom.
+
+Platform API references:
+- https://developer.android.com/reference/android/companion/virtual/VirtualDeviceManager
+- https://developer.android.com/reference/android/content/pm/PackageManager#FEATURE_ACTIVITIES_ON_SECONDARY_DISPLAYS
+- https://android.googlesource.com/platform/frameworks/base/+/refs/heads/master/core/java/android/companion/virtual/VirtualDeviceManager.java
