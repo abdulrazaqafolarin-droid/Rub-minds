@@ -155,3 +155,41 @@ test("phone frame target contract rejects stale, occupied, protected and non-gue
   assert.match(contract, /MAX_DRAFT_CHARS = 4_000/);
   assert.match(contract, /it\.isISOControl\(\)/);
 });
+
+test("guest admission allowlist stays aligned with the real companion manifest and package", async () => {
+  const manifest = await read("app/src/main/AndroidManifest.xml");
+  const gradle = await read("app/build.gradle.kts");
+  const activity = await read("app/src/main/java/app/rubminds/companion/MainActivity.kt");
+  const keyboard = await read("app/src/main/java/app/rubminds/companion/DraftInputMethodService.kt");
+  const contract = await read("app/src/main/java/app/rubminds/companion/guest/GuestRuntimeContract.kt");
+
+  assert.match(gradle, /namespace = "app\\.rubminds\\.companion"/);
+  assert.match(gradle, /applicationId = "app\\.rubminds\\.companion"/);
+  assert.match(gradle, /targetSdk = 35/);
+  assert.match(manifest, /<activity\\b/);
+  assert.match(manifest, /<service\\b/);
+
+  const launcher = manifest.match(/<activity\\b[^>]*>/)?.[0] ?? "";
+  assert.match(launcher, /android:name="\\.MainActivity"/);
+  assert.match(launcher, /android:exported="true"/);
+  assert.doesNotMatch(launcher, /android:permission=/);
+
+  const inputMethod = manifest.match(/<service\\b[^>]*>/)?.[0] ?? "";
+  assert.match(inputMethod, /android:name="\\.DraftInputMethodService"/);
+  assert.match(inputMethod, /android:exported="true"/);
+  assert.match(inputMethod, /android:permission="android\\.permission\\.BIND_INPUT_METHOD"/);
+
+  assert.match(activity, /^package app\\.rubminds\\.companion$/m);
+  assert.match(keyboard, /^package app\\.rubminds\\.companion$/m);
+  assert.match(contract, /component\\.className === "\\$\\{descriptor\\.hostApplicationId\\}\\.MainActivity"/);
+  assert.match(contract, /component\\.className === "\\$\\{descriptor\\.hostApplicationId\\}\\.DraftInputMethodService"/);
+});
+
+test("all guest runtime JUnit methods remain inside their test class", async () => {
+  const source = await read("app/src/test/java/app/rubminds/companion/guest/GuestRuntimeContractTest.kt");
+  const testMethods = source.match(/^.*@Test fun /gm) ?? [];
+  assert.ok(testMethods.length >= 20, "Expected the guest runtime safety tests to remain present.");
+  assert.ok(testMethods.every(line => /^    @Test fun /.test(line)), "JUnit tests must remain class members.");
+  assert.equal(source.split("\\n").filter(line => line === "}").length, 1, "The test class must have only its final top-level closing brace.");
+  assert.match(source, /\\n}\\s*$/);
+});
