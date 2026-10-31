@@ -43,7 +43,7 @@ mod windows_impl {
     use super::EditableTargetIdentity;
     use uiautomation::{
         actions::Value,
-        controls::{ControlType, EditControl},
+        controls::{ControlType, DocumentControl, EditControl},
         types::Point,
         UIAutomation, UIElement,
     };
@@ -65,8 +65,10 @@ mod windows_impl {
     }
 
     fn inspect_element(element: &UIElement) -> Result<(EditableTargetIdentity, String), String> {
-        if element.get_control_type().map_err(|_| "Could not identify the selected UI control".to_string())? != ControlType::Edit {
-            return Err("Select an actual editable text field, not its surrounding panel".into());
+        let control_type = element.get_control_type()
+            .map_err(|_| "Could not identify the selected UI control".to_string())?;
+        if control_type != ControlType::Edit && control_type != ControlType::Document {
+            return Err("Select an actual editable text field or document, not its surrounding panel".into());
         }
         if !element.is_enabled().map_err(|_| "Could not verify whether the text field is enabled".to_string())? {
             return Err("The selected text field is disabled".into());
@@ -78,15 +80,27 @@ mod windows_impl {
             return Err("Password and protected fields cannot be targeted".into());
         }
 
-        let edit = EditControl::try_from(element.clone())
-            .map_err(|_| "The selected control does not expose a supported editable value".to_string())?;
-        if edit.is_readonly().map_err(|_| "Could not verify whether the field is read-only".to_string())? {
-            return Err("The selected text field is read-only".into());
-        }
-        // Readback is mandatory. If an app does not expose UIA ValuePattern,
-        // Backroom refuses to type rather than treating a coordinate click as proof.
-        let value = edit.get_value()
-            .map_err(|_| "The selected field does not support reliable accessibility readback".to_string())?;
+        // Support native Edit fields and Document controls only when they expose
+        // a writable ValuePattern. Rich/custom controls without readback fail closed.
+        let value = match control_type {
+            ControlType::Edit => {
+                let edit = EditControl::try_from(element.clone())
+                    .map_err(|_| "The selected control does not expose a supported editable value".to_string())?;
+                if edit.is_readonly().map_err(|_| "Could not verify whether the field is read-only".to_string())? {
+                    return Err("The selected text field is read-only".into());
+                }
+                edit.get_value()
+            }
+            ControlType::Document => {
+                let document = DocumentControl::try_from(element.clone())
+                    .map_err(|_| "The selected document does not expose an editable value".to_string())?;
+                if document.is_readonly().map_err(|_| "Could not verify whether the document is read-only".to_string())? {
+                    return Err("The selected document is read-only".into());
+                }
+                document.get_value()
+            }
+            _ => unreachable!(),
+        }.map_err(|_| "The selected field does not support reliable accessibility readback".to_string())?;
 
         let process_id = element.get_process_id()
             .map_err(|_| "Could not identify the application process".to_string())?;
