@@ -72,7 +72,8 @@ The final acceptance record must include:
 - test-run ID, date and test operator;
 - each acceptance check with pass/fail, evidence and any app-specific limitation;
 - installed APK size, guest startup-to-first-frame latency, memory usage, CPU/battery observations and crash/process-death recovery;
-- the final permission and exported-component inventory.
+- the final permission and exported-component inventory;
+- the generated `app/build/reports/guest-host-manifest/<variant>.txt` report from `:app:auditDebugGuestHostManifest` or the release-variant equivalent, containing the exact merged-manifest SHA-256 and approved component/permission inventory. This digest must match the artifact under test.
 
 The record is represented by `GuestDeviceAcceptanceEvidence`. A result for a different build, merged manifest or handset profile must not set the provider to READY.
 
