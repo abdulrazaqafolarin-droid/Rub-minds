@@ -34,7 +34,7 @@ test('draft-only PTY transport never forwards Enter, control keys, or ANSI escap
  const writes=[];
  const pty={spawn:()=>({onData:()=>({dispose(){}}),write:s=>writes.push(s),resize(){},kill(){}})};
  const term=await createNativePtyAdapter({pty,platform:'linux'})({shell:'/bin/sh',onData:()=>{}});
- for(const value of ['x\\r','x\\n','\\u001b[31m','x\\u007f','x\\u2028','x\\u0085','', '   ']){
+ for(const value of ['x\r','x\n','\u001b[31m','x\u007f','x\u2028','x\u0085','', '   ']){
    assert.throws(()=>term.writeDraft(value),/draft-only/);
  }
  term.writeDraft('Claude Code prompt only');
