@@ -375,7 +375,11 @@ async function handleCommand(payload){
   }
   if(payload.action==='request_draft_permission'){
     const sessionId=payload.sessionId;if(typeof sessionId!=='string')return;
-    createApproval('draft_typing','Allow separately approved draft typing into the exact area you select for up to 60 seconds? This never presses Enter or Send.',async()=>{
+    const terminal=state.terminals.has(sessionId);
+    const description=terminal
+      ?'Allow Backroom to type plain text into this terminal PTY for up to 60 seconds? This goes to the terminal program currently receiving input. The companion cannot inspect which Claude Code/OpenCode TUI field is focused; check the visible terminal prompt yourself. This permission never presses Enter.'
+      :'Allow separately approved draft typing into the exact editable area you drag-select for up to 60 seconds? This permission never presses Enter or Send.';
+    createApproval('draft_typing',description,async()=>{
       await invoke('grant_draft_typing',{sessionId,seconds:60});
       await publish('response',{requestId,ok:true,sessionId,capability:'draft',expiresSeconds:60});
     },{requestId,sessionId,remote:true,actorDisplayName:payload.actorDisplayName,capability:'draft'});return;
@@ -682,7 +686,8 @@ async function handlePeerData(sessionId,raw){
       notify(reason,'error');
     }
   } else if(message.kind==='terminal_resize'){
-    const terminalId=message.sessionId||peer.terminalId;if(!terminalId)return;
+    const terminalId=peer.terminalId;
+    if(!terminalId||message.sessionId!==terminalId)return;
     try{await invoke('resize_terminal',{sessionId:terminalId,cols:message.cols,rows:message.rows});}catch(error){notify(error.message,'error');}
   } else if(message.kind==='terminal_start'){
     if(!state.terminals.has(sessionId)){
