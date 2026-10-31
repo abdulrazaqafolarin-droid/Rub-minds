@@ -11,7 +11,15 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
-    branches: [main]
+    branches: [main, feat/backroom-virtualized-execution]
+    paths:
+      - '.github/workflows/backroom-desktop-companion.yml'
+      - 'desktop-companion/**'
+      - 'src/BackroomDesktopControl.tsx'
+      - 'src/BackroomDevicesApp.tsx'
+      - 'src/backroom-cloud.css'
+      - 'package.json'
+      - 'package-lock.json'
 
 jobs:
   windows-native:
@@ -31,6 +39,8 @@ jobs:
           targets: x86_64-pc-windows-msvc
       - name: Install locked JavaScript dependencies
         run: npm ci
+      - name: Run full web tests and production build
+        run: npm run build
       - name: Build the bundled companion WebView
         run: npm run build:desktop-companion
       - name: Run native companion unit tests
