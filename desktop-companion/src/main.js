@@ -899,11 +899,14 @@ async function setupTerminalEvents(){
     if(typeof terminalId!=='string'||!UUID_PATTERN.test(terminalId))return;
     const peers=[...state.peers.entries()].filter(([,peer])=>peer.terminalId===terminalId);
     const wasTracked=state.terminals.has(terminalId);
-    // stopPeer() retires the record before deliberately killing a PTY.
-    // Ignore that expected EOF; only surface an exit that still owns a live record.
-    if(!wasTracked&&!peers.length)return;
+    // Remember every EOF briefly, including a shell that exits before the
+    // start_terminal invoke resolves and before JS registers its peer. A fresh
+    // peer checks this set before it can report a dead PTY as connected.
     state.exitedTerminals.add(terminalId);
     if(state.exitedTerminals.size>128)state.exitedTerminals.delete(state.exitedTerminals.values().next().value);
+    // stopPeer() retires the record before deliberately killing a PTY.
+    // Ignore that expected EOF after retaining its tombstone for the startup race.
+    if(!wasTracked&&!peers.length)return;
     const pre=document.querySelector('#terminal-output');
     if(pre){pre.textContent=(pre.textContent+'\\n[Native terminal process exited]\\n').slice(-30000);pre.scrollTop=pre.scrollHeight;}
     for(const [peerSessionId,peer] of peers){
