@@ -37,6 +37,10 @@ You can also set `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` in the build envi
 
 The phone keeps the raw device credential locally; the database stores its digest only. No service-role key or AI/provider credential is embedded in the APK.
 
+## Physical-device acceptance plan
+
+Use [the Android guest runtime acceptance matrix](../docs/BACKROOM_ANDROID_GUEST_RUNTIME_ACCEPTANCE.md) for the handset POC, app-by-app compatibility checks, exact artifact/manifest evidence, and release gates. The target device's API level, ABI and display geometry must be read from the actual handset during the test.
+
 ## Guest runtime integration gate
 
 The companion currently has **no app virtualization provider**. The code under `app/src/main/java/app/rubminds/companion/guest/` defines the future integration boundary only. It deliberately has no BlackBox, VirtualApp or NewBlackbox dependency.
