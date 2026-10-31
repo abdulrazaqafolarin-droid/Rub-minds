@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { validateDeviceCommand, validateDeviceSignal, queueIceCandidate, takeIceCandidates } from '../../integrations/backroom/desktop-realtime-protocol.mjs';
-import { validateTerminalDraftMessage, validateTerminalSubmitMessage } from '../../integrations/backroom/terminal-pty-protocol.mjs';
+import { validateTerminalDraftMessage, validateTerminalSubmitMessage, createTerminalActionRequestGuard } from '../../integrations/backroom/terminal-pty-protocol.mjs';
 import { waitForIceGatheringComplete } from '../../integrations/backroom/ice-gathering.mjs';
 import { validatePeerHeartbeat } from '../../integrations/backroom/peer-heartbeat.mjs';
 import { beginTargetSelection, confirmTargetSelection, invalidateTargetSelection, rejectTargetSelection, canStageDraftForCurrentSelection, isPendingDraftForCurrentSelection, enqueuePeerOperation } from '../../integrations/backroom/desktop-target-selection.mjs';
@@ -407,7 +407,7 @@ async function startTerminalPeer(payload,term){
   const peerSessionId=payload.sessionId;
   if(!peerSessionId||!payload.offer?.sdp)throw new Error('Invalid terminal WebRTC offer');
   const pc=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun.cloudflare.com:3478']}]});
-  state.peers.set(peerSessionId,{pc,stream:null,channel:null,canControl:false,terminalId:term.sessionId,createdAt:Date.now(),lastHeartbeat:Date.now()});
+  state.peers.set(peerSessionId,{pc,stream:null,channel:null,canControl:false,terminalId:term.sessionId,terminalActionRequestGuard:createTerminalActionRequestGuard(),createdAt:Date.now(),lastHeartbeat:Date.now()});
   startPeerWatchdog();
   pc.ondatachannel=event=>{
     const data=event.channel;state.peers.get(peerSessionId).channel=data;
@@ -660,6 +660,10 @@ async function handlePeerData(sessionId,raw){
         try{peer.channel.send(JSON.stringify({kind:'terminal_action_result',requestId,action:'draft',ok,reason}));}catch{}
       }
     };
+    if(!peer.terminalActionRequestGuard?.(requestId)){
+      respond(false,'This terminal action request was already used or the session action limit was reached. Reconnect the terminal to start a fresh action sequence.');
+      return;
+    }
     try{
       await invoke('write_terminal',{sessionId,data});
       respond(true);
@@ -677,6 +681,10 @@ async function handlePeerData(sessionId,raw){
         try{peer.channel.send(JSON.stringify({kind:'terminal_action_result',requestId,action:'submit',ok,reason}));}catch{}
       }
     };
+    if(!peer.terminalActionRequestGuard?.(requestId)){
+      respond(false,'This terminal action request was already used or the session action limit was reached. Reconnect the terminal to start a fresh action sequence.');
+      return;
+    }
     try{
       await invoke('submit_terminal_input',{sessionId});
       respond(true);
