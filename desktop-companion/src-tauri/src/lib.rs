@@ -932,17 +932,14 @@ fn verify_selected_editable_target(
 
 #[tauri::command]
 fn select_draft_target(state: State<'_, AppState>, session_id: String, mut target: DraftTarget) -> Result<String, String> {
-    // A fresh drag supersedes all older selections and drafts for this session,
-    // even when this new selection later fails accessibility validation.
+    control_granted(&state, &session_id)?;
+    draft_granted(&state, &session_id)?;
+
+    // An authorized fresh drag supersedes all older selections and pending
+    // drafts for this session, even when the new target later fails validation.
     state.draft_targets.lock().map_err(|_| "Draft state unavailable")?.remove(&session_id);
     state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?
         .retain(|_, draft| draft.session_id != session_id);
-
-    control_granted(&state, &session_id)?;
-    draft_granted(&state, &session_id)?;
-    // Invalidate the previous target before validating a new selection. A failed
-    // or superseded drag must never leave an earlier field eligible for staging.
-    state.draft_targets.lock().map_err(|_| "Draft state unavailable")?.remove(&session_id);
     let geometry = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
         .get(&session_id).cloned().ok_or("Live monitor capture is not active")?;
     if !target.x.is_finite() || !target.y.is_finite() || !target.width.is_finite() || !target.height.is_finite() ||
