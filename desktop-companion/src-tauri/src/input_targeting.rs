@@ -24,13 +24,19 @@ pub fn inspect_at(x: i32, y: i32) -> Result<(EditableTargetIdentity, String), St
     }
 }
 
-/// Pure fail-closed gate so input-safety rules can be unit-tested on every host.
-pub fn validate_target_properties(control_type: &str, enabled: bool, offscreen: bool, password: bool, read_only: bool, value: &str) -> Result<(), &'static str> {
+/// Pure safety gate for control metadata, independent of the current value.
+pub fn validate_target_metadata(control_type: &str, enabled: bool, offscreen: bool, password: bool, read_only: bool) -> Result<(), &'static str> {
     if control_type != "Edit" && control_type != "Document" { return Err("not_editable_control"); }
     if !enabled { return Err("disabled_control"); }
     if offscreen { return Err("offscreen_control"); }
     if password { return Err("protected_control"); }
     if read_only { return Err("readonly_control"); }
+    Ok(())
+}
+
+/// A new target is eligible only while its current value is empty.
+pub fn validate_target_properties(control_type: &str, enabled: bool, offscreen: bool, password: bool, read_only: bool, value: &str) -> Result<(), &'static str> {
+    validate_target_metadata(control_type, enabled, offscreen, password, read_only)?;
     if !value.is_empty() { return Err("nonempty_control"); }
     Ok(())
 }
@@ -77,7 +83,7 @@ mod windows_impl {
         Err("No editable text control was found at the selected point".into())
     }
 
-    fn inspect_element(element: &UIElement) -> Result<(EditableTargetIdentity, String), String> {
+    fn inspect_element(element: &UIElement, require_empty: bool) -> Result<(EditableTargetIdentity, String), String> {
         let control_type = element.get_control_type()
             .map_err(|_| "Could not identify the selected UI control".to_string())?;
         let control_type_label = match control_type {
@@ -108,8 +114,13 @@ mod windows_impl {
             }
             _ => unreachable!(),
         };
-        validate_target_properties(control_type_label, enabled, offscreen, password, read_only, &value)
-            .map_err(str::to_string)?;
+        if require_empty {
+            validate_target_properties(control_type_label, enabled, offscreen, password, read_only, &value)
+                .map_err(str::to_string)?;
+        } else {
+            validate_target_metadata(control_type_label, enabled, offscreen, password, read_only)
+                .map_err(str::to_string)?;
+        }
 
         let process_id = element.get_process_id()
             .map_err(|_| "Could not identify the application process".to_string())?;
@@ -139,7 +150,7 @@ mod windows_impl {
         let hit = automation.element_from_point(Point::new(x, y))
             .map_err(|_| "Windows could not inspect the selected screen point".to_string())?;
         let edit = editable_ancestor(&automation, hit)?;
-        let (identity, value) = inspect_element(&edit)?;
+        let (identity, value) = inspect_element(&edit, true)?;
         let [left, top, right, bottom] = identity.bounds;
         if x < left || x >= right || y < top || y >= bottom {
             return Err("The drag-selection centre is outside the editable field".into());
@@ -161,7 +172,7 @@ mod windows_impl {
         let hit = automation.element_from_point(Point::new(x, y))
             .map_err(|_| "Windows could not inspect the selected screen point".to_string())?;
         let element = editable_ancestor(&automation, hit)?;
-        let (identity, current_value) = inspect_element(&element)?;
+        let (identity, current_value) = inspect_element(&element, true)?;
         if &identity != expected {
             return Err("The selected application field changed or moved. Drag-select it again.".into());
         }
@@ -186,21 +197,13 @@ mod windows_impl {
             _ => return Err("The selected control is no longer an editable field".into()),
         }
 
-        let (after_identity, after_value) = inspect_element(&element)?;
+        let (after_identity, after_value) = inspect_element(&element, false)?;
         if &after_identity != expected || after_value != text {
             return Err("Text insertion could not be verified by reading back the exact value. Inspect the field; do not retry automatically.".into());
         }
         Ok(())
     }
 
-    pub fn inspect_focused() -> Result<(EditableTargetIdentity, String), String> {
-        let automation = UIAutomation::new()
-            .map_err(|_| "Windows UI Automation could not be initialized".to_string())?;
-        let focused = automation.get_focused_element()
-            .map_err(|_| "Windows could not verify the focused text field".to_string())?;
-        let edit = editable_ancestor(&automation, focused)?;
-        inspect_element(&edit)
-    }
 }
 
 #[cfg(test)]
@@ -242,5 +245,7 @@ mod tests {
         assert_eq!(validate("Edit", true, false, true, false, ""), Err("protected_control"));
         assert_eq!(validate("Edit", true, false, false, true, ""), Err("readonly_control"));
         assert_eq!(validate("Edit", true, false, false, false, "already typed"), Err("nonempty_control"));
+        assert!(super::validate_target_metadata("Edit", true, false, false, false).is_ok());
+        assert!(super::validate_target_metadata("Document", true, false, false, false).is_ok());
     }
 }
