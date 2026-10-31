@@ -126,7 +126,7 @@ androidComponents {
 
                 fun resolveClassName(rawName: String): String {
                     require(rawName.isNotBlank()) { "Merged component is missing android:name." }
-                    val replaced = rawName.replace("\${'$'}{applicationId}", expectedAppId)
+                    val replaced = rawName.replace("\${applicationId}", expectedAppId)
                     return when {
                         replaced.startsWith(".") -> expectedAppId + replaced
                         '.' !in replaced -> "$expectedAppId.$replaced"
@@ -218,8 +218,8 @@ androidComponents {
                     buildString {
                         appendLine("applicationId=$expectedAppId")
                         appendLine("manifestSha256=$digest")
-                        appendLine("permissions=${permissions.sorted().joinToString(separator = \",")}");
-                        appendLine("exportedComponents=${actualExported.sorted().joinToString(separator = \",")}");
+                        appendLine("permissions=${permissions.sorted().joinToString()}")
+                        appendLine("exportedComponents=${actualExported.sorted().joinToString()}")
                         appendLine("componentCount=${components.size}")
                     }
                 )
