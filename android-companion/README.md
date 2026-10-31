@@ -73,3 +73,7 @@ See [`docs/architecture/backroom-app-execution-engine.md`](../docs/architecture/
 - Kotlin/JUnit tests cover the existing per-app draft-insertion policy and the guest runtime admission/frame/touch/target/one-shot lease safety contract.
 - Node source-contract tests verify that no virtualization dependency or broad permission has been added to the companion.
 - **Not yet verified here:** Android Gradle compilation, APK installation, cloud function deployment, migration execution, pairing against a live backend, or physical-device behavior. A real Android build and phone acceptance test are mandatory before release.
+
+## Local app launch (2026-10-31)
+
+The companion shows **Open on this phone** next to discovered applications. This is an explicit local Android action only. The selected app must first be saved in the device-local allowlist, and its Android signing certificate must still match. The companion asks for a local confirmation and revalidates the saved grant and signer after confirmation. It then uses Android's normal launcher intent. It does not send a cloud command or transmit a screen. An app that is not installed or visible under the Android user profile cannot be opened. Remote app execution and virtualization remain separate, unimplemented capabilities.

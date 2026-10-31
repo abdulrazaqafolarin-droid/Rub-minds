@@ -220,3 +220,15 @@ test("Gradle APK build audits the final merged host manifest and records its dig
   assert.match(workflow, /:app:auditDebugGuestHostManifest/);
   assert.match(readme, /actual merged manifest/);
 });
+
+test('local Android launch requires persisted signer-bound approval before and after a system-local confirmation', async () => {
+  const fs = await import('node:fs/promises');
+  const source = await fs.readFile(new URL('../app/src/main/java/app/rubminds/companion/MainActivity.kt', import.meta.url), 'utf8');
+  assert.match(source, /text = "Open on this phone"/);
+  assert.match(source, /store\.get\(packageName, it\)/);
+  assert.match(source, /AppGrantPolicy\.canLaunch\(grant, digest\)/);
+  assert.match(source, /AppGrantPolicy\.canLaunch\(currentGrant, currentDigest\)/);
+  assert.match(source, /getLaunchIntentForPackage\(packageName\)/);
+  assert.match(source, /setPositiveButton\("Open"\)/);
+  assert.doesNotMatch(source, /fun openSelectedAppLocally[\s\S]*?private fun saveChoices[\s\S]*?sendCommand\(/);
+});

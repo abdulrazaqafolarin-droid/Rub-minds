@@ -91,7 +91,7 @@ class MainActivity : Activity() {
             setTextColor(0xff172033.toInt())
         })
         root.addView(TextView(this).apply {
-            text = "Select installed apps to add to your group's Backroom inventory. Pairing uses an outbound HTTPS connection; this phone does not open a local server or network port."
+            text = "Select apps for your group's Backroom inventory. You can also open a saved, approved app locally on this phone. Remote app control and isolated virtualization are not enabled. Pairing uses outbound HTTPS; this phone opens no local network port."
             textSize = 13f
             setTextColor(0xff4b5563.toInt())
             setPadding(0, dp(7), 0, dp(12))
@@ -320,6 +320,13 @@ class MainActivity : Activity() {
                 }
             }
             row.addView(draft)
+            row.addView(Button(this).apply {
+                text = "Open on this phone"
+                // This is a deliberate local action, never a cloud-issued
+                // remote launch. Saving app selections is a separate step.
+                isEnabled = selected
+                setOnClickListener { openSelectedAppLocally(app.packageName) }
+            })
             row.addView(TextView(this).apply {
                 text = "Version " + app.versionName + " · " + app.storageLabel + if (digest == null) " · signer unavailable" else ""
                 textSize = 10f
@@ -330,6 +337,45 @@ class MainActivity : Activity() {
             appList.addView(row)
             appRows[app.packageName] = add to draft
         }
+    }
+
+    private fun openSelectedAppLocally(packageName: String) {
+        // Use only persisted (saved) grants. A checked box that has not been
+        // saved cannot authorize opening an application.
+        val digest = AppIdentity.signingCertificateSha256(this, packageName)
+        val grant = digest?.let { store.get(packageName, it) }
+        if (!AppGrantPolicy.canLaunch(grant, digest)) {
+            Toast.makeText(this, "Save the selected app first. Its signing identity must still match.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val launch = packageManager.getLaunchIntentForPackage(packageName)
+        if (launch == null) {
+            Toast.makeText(this, "Android cannot open this app from this user profile.", Toast.LENGTH_LONG).show()
+            return
+        }
+        // The launched application is a normal local Android activity. No
+        // background service, remote intent, screen capture or guest VM.
+        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Open selected app?")
+            .setMessage("Open ${packageName} locally on this phone? Rub Minds will not share or control its screen.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Open") { _, _ ->
+                // Recheck after the dialog in case the app was replaced while
+                // approval was visible.
+                val currentDigest = AppIdentity.signingCertificateSha256(this, packageName)
+                val currentGrant = currentDigest?.let { store.get(packageName, it) }
+                if (!AppGrantPolicy.canLaunch(currentGrant, currentDigest)) {
+                    Toast.makeText(this, "App identity changed. Save the app again.", Toast.LENGTH_LONG).show()
+                    return@setPositiveButton
+                }
+                try {
+                    startActivity(launch)
+                } catch (_: Exception) {
+                    Toast.makeText(this, "Android could not open this application.", Toast.LENGTH_LONG).show()
+                }
+            }
+            .show()
     }
 
     private fun saveChoices() {
