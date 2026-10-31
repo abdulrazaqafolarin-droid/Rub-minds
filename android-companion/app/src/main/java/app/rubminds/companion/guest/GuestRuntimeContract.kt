@@ -79,6 +79,7 @@ data class GuestHostComponent(
 )
 
 data class GuestRuntimeDescriptor(
+    val hostApplicationId: String,
     val engineId: String,
     val engineVersion: String,
     val licenseId: String,
@@ -173,7 +174,6 @@ object GuestRuntimeAdmissionPolicy {
     private val requiredCapabilities = GuestRuntimeCapability.values().toSet()
     private val requiredAcceptance = GuestAcceptanceCheck.values().toSet()
     private val sha256Pattern = Regex("^[a-f0-9]{64}$")
-    private val expectedImeClass = ".DraftInputMethodService"
 
     fun review(
         descriptor: GuestRuntimeDescriptor,
@@ -182,6 +182,9 @@ object GuestRuntimeAdmissionPolicy {
     ): GuestRuntimeReview {
         val blockers = linkedSetOf<String>()
 
+        if (!descriptor.hostApplicationId.matches(Regex("^[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z][A-Za-z0-9_]*)+$")) ||
+            descriptor.hostApplicationId.startsWith("android.") ||
+            descriptor.hostApplicationId.startsWith("java.")) blockers += "host_application_id_invalid"
         if (!descriptor.engineId.matches(Regex("^[a-z0-9][a-z0-9._-]{1,79}$"))) blockers += "invalid_engine_id"
         if (descriptor.engineVersion.isBlank()) blockers += "engine_version_missing"
         if (descriptor.licenseId !in allowedLicenses) blockers += "license_not_allowlisted"
@@ -206,12 +209,12 @@ object GuestRuntimeAdmissionPolicy {
         val unsafeComponents = descriptor.mergedHostComponents.filter { component ->
             if (!component.exported) return@filter false
             val isExpectedLauncher = component.type == GuestHostComponentType.ACTIVITY &&
-                component.isLauncherActivity && component.className.endsWith(".MainActivity") &&
+                component.isLauncherActivity && component.className == "${descriptor.hostApplicationId}.MainActivity" &&
                 component.permission == null
             val permissionAtom = component.permission?.substringAfterLast('.')?.uppercase()
             val permissionIsExplicitlyBlocked = permissionAtom in blockedPermissionAtoms
             val isExpectedInputMethod = component.type == GuestHostComponentType.SERVICE &&
-                component.isSystemBoundInputMethod && component.className.endsWith(expectedImeClass) &&
+                component.isSystemBoundInputMethod && component.className == "${descriptor.hostApplicationId}.DraftInputMethodService" &&
                 component.permission == "android.permission.BIND_INPUT_METHOD" &&
                 component.permissionProtection == GuestPermissionProtection.SIGNATURE
             val protectedInternalComponent = component.permissionProtection == GuestPermissionProtection.SIGNATURE &&
