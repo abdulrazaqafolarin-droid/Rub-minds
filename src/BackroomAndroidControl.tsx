@@ -20,6 +20,9 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const sourceVisibilityRef = useRef<boolean | null>(null);
   const [dataReady, setDataReady] = useState(false);
   const [controlGranted, setControlGranted] = useState(false);
+  const [remoteText, setRemoteText] = useState('');
+  const [remoteTextBusy, setRemoteTextBusy] = useState(false);
+  const [remoteTextStatus, setRemoteTextStatus] = useState('Focus a normal text field in the phone app, then type here.');
   const [message, setMessage] = useState('Choose an app added on the phone, then start a view session.');
   const [messageError, setMessageError] = useState(false);
   const peerRef = useRef<RTCPeerConnection | null>(null);
@@ -31,6 +34,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const pointerRef = useRef<PointerStart | null>(null);
   const pendingTouchAcksRef = useRef<Map<string, number>>(new Map());
   const pendingNavigationAcksRef = useRef<Map<string, number>>(new Map());
+  const pendingRemoteTextAcksRef = useRef<Map<string, number>>(new Map());
   const controlExpiryRef = useRef<number | null>(null);
   const startTimerRef = useRef<number | null>(null);
   const disconnectTimerRef = useRef<number | null>(null);
@@ -54,11 +58,13 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     pendingTouchAcksRef.current.clear();
     for (const timer of pendingNavigationAcksRef.current.values()) window.clearTimeout(timer);
     pendingNavigationAcksRef.current.clear();
+    for (const timer of pendingRemoteTextAcksRef.current.values()) window.clearTimeout(timer);
+    pendingRemoteTextAcksRef.current.clear();
     streamRef.current?.getTracks().forEach(track => track.stop()); streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     sessionRef.current = ''; pointerRef.current = null; pendingControlRequestRef.current = '';
     sourceVisibilityRef.current = null;
-    setSessionId(''); setViewReady(false); setSourceVisible(false); setDataReady(false); setControlGranted(false); setBusy(false);
+    setSessionId(''); setViewReady(false); setSourceVisible(false); setDataReady(false); setControlGranted(false); setRemoteTextBusy(false); setRemoteTextStatus('Focus a normal text field in the phone app, then type here.'); setBusy(false);
   }, []);
 
   const stopRemote = useCallback(async (expectedSession = sessionRef.current) => {
@@ -136,6 +142,8 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       if (startTimerRef.current !== null) window.clearTimeout(startTimerRef.current);
       if (disconnectTimerRef.current !== null) window.clearTimeout(disconnectTimerRef.current);
       if (controlRequestTimerRef.current !== null) window.clearTimeout(controlRequestTimerRef.current);
+      for (const timer of pendingRemoteTextAcksRef.current.values()) window.clearTimeout(timer);
+      pendingRemoteTextAcksRef.current.clear();
       peerRef.current?.close(); dataRef.current?.close();
       streamRef.current?.getTracks().forEach(track => track.stop());
       if (videoRef.current) videoRef.current.srcObject = null;
@@ -173,11 +181,39 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         setDataReady(false);
         for (const timer of pendingTouchAcksRef.current.values()) window.clearTimeout(timer);
         pendingTouchAcksRef.current.clear();
+        for (const timer of pendingRemoteTextAcksRef.current.values()) window.clearTimeout(timer);
+        pendingRemoteTextAcksRef.current.clear();
+        setRemoteTextBusy(false);
       };
       data.onmessage = event => {
         let acknowledgement: any;
         try { acknowledgement = JSON.parse(String(event.data)); } catch { return; }
         if (!acknowledgement || acknowledgement.sessionId !== nextSessionId) return;
+        if (acknowledgement.kind === 'remote_keyboard_revoked') {
+          for (const timer of pendingRemoteTextAcksRef.current.values()) window.clearTimeout(timer);
+          pendingRemoteTextAcksRef.current.clear();
+          setRemoteTextBusy(false);
+          setRemoteTextStatus('The phone user revoked remote typing.');
+          return;
+        }
+        if (acknowledgement.kind === 'remote_text_ack' &&
+            typeof acknowledgement.requestId === 'string' &&
+            typeof acknowledgement.accepted === 'boolean' &&
+            typeof acknowledgement.result === 'string') {
+          const textTimer = pendingRemoteTextAcksRef.current.get(acknowledgement.requestId);
+          if (textTimer === undefined) return;
+          window.clearTimeout(textTimer);
+          pendingRemoteTextAcksRef.current.delete(acknowledgement.requestId);
+          setRemoteTextBusy(false);
+          if (acknowledgement.accepted) {
+            setRemoteText('');
+            setRemoteTextStatus('Text inserted into the focused phone field. Nothing was submitted.');
+          } else {
+            const reason = acknowledgement.result.replaceAll('_', ' ');
+            setRemoteTextStatus('Phone declined text: ' + reason + '. Check keyboard selection, local permission, focused field and app approval.');
+          }
+          return;
+        }
         if (acknowledgement.kind === 'navigation_ack' &&
             typeof acknowledgement.navigationId === 'string' &&
             acknowledgement.action === 'back' && typeof acknowledgement.accepted === 'boolean') {
@@ -376,6 +412,39 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     }
   };
 
+  const sendRemoteText = () => {
+    const channel = dataRef.current;
+    const text = remoteText;
+    if (!viewReady || !sourceVisible || !dataReady || !channel || channel.readyState !== 'open') {
+      setRemoteTextStatus('Wait for the selected phone app and data channel to be live.');
+      return;
+    }
+    if (!text.trim() || text.length > 4_000 || /[\u0000-\u001f\u007f]/.test(text)) {
+      setRemoteTextStatus('Enter 1–4,000 characters without Enter/newline or control characters.');
+      return;
+    }
+    if (remoteTextBusy) return;
+    const requestId = uuid();
+    const timeout = window.setTimeout(() => {
+      pendingRemoteTextAcksRef.current.delete(requestId);
+      setRemoteTextBusy(false);
+      setRemoteTextStatus('No phone-keyboard acknowledgement arrived. Confirm the Rub Minds keyboard is active and the phone field is focused.');
+    }, 6_000);
+    pendingRemoteTextAcksRef.current.set(requestId, timeout);
+    setRemoteTextBusy(true);
+    setRemoteTextStatus('Sending text to the focused phone field…');
+    try {
+      channel.send(JSON.stringify({
+        kind: 'remote_text', requestId, sessionId: sessionRef.current, appPackageName, text,
+      }));
+    } catch {
+      window.clearTimeout(timeout);
+      pendingRemoteTextAcksRef.current.delete(requestId);
+      setRemoteTextBusy(false);
+      setRemoteTextStatus('The phone data channel rejected the typing request. Reconnect the app view before retrying.');
+    }
+  };
+
   const contentPoint = (event: PointerEvent<HTMLDivElement>) => {
     const video = videoRef.current;
     if (!video || video.videoWidth <= 0 || video.videoHeight <= 0) return null;
@@ -443,6 +512,22 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       </div> : null}
       {viewReady && controlGranted ? <div className="br-android-touch-hint"><Hand size={13}/> Tap · swipe · long press</div> : null}
     </div>
+    {sessionId ? <div className="br-android-keyboard">
+      <label htmlFor="br-android-remote-text">Type into the focused phone field</label>
+      <textarea id="br-android-remote-text" value={remoteText} maxLength={4_000}
+        onChange={event => setRemoteText(event.target.value)}
+        placeholder="Tap a normal text field in the phone app, then type here…"
+        rows={3} disabled={!viewReady || !sourceVisible || !dataReady || remoteTextBusy}/>
+      <div className="br-android-keyboard-actions">
+        <span>{remoteText.length.toLocaleString()}/4,000</span>
+        <button type="button" onClick={sendRemoteText}
+          disabled={!viewReady || !sourceVisible || !dataReady || remoteTextBusy || !remoteText.trim()}>
+          {remoteTextBusy ? 'Sending…' : 'Insert text on phone'}
+        </button>
+      </div>
+      <p role="status">{remoteTextStatus}</p>
+      <small>The phone must have the Rub Minds keyboard selected and remote typing locally armed. This inserts text only; it does not press Enter or submit.</small>
+    </div> : null}
     <div className="br-android-stream-actions">
       {!sessionId
         ? <button type="button" disabled={!channelReady || !device.apps.length || busy} onClick={() => void startView()}><MonitorPlay size={14}/> Start app view</button>
