@@ -76,7 +76,7 @@ No production migration, merge to `main`, or deployment is part of this acceptan
 A Windows window capture may be interactive only when all of these conditions hold:
 
 - The OS capture picker reports `displaySurface=window`; an unknown/missing surface type remains view-only rather than being guessed as a window.
-- The companion obtains a valid foreground UI Automation window identity (HWND, process ID and window class), and the companion's own process is rejected.
+- The selected window must belong to the exact process ID returned when Backroom launched the chosen executable. The native companion finds exactly one visible top-level UIA window for that PID, rejects the companion process, and confirms the focused HWND is that unique window.
 - The captured frame dimensions match that window's native bounds within the strict geometry tolerance.
 - Before each remote input action, the companion re-resolves the foreground window and requires the same HWND, process and class, with compatible bounds. A focus change, window replacement or incompatible resize rejects input.
 - Drag-select and draft insertion additionally require the selected UIA text field to belong to the captured window's process and pass the existing empty-field, non-password, exact-identity and exact-readback checks.
@@ -87,7 +87,7 @@ A Windows window capture may be interactive only when all of these conditions ho
 |---|---|
 | Notepad / Chromium / Electron selected in OS window picker | Correct live window frame; native identity and dimensions must match before enabling control |
 | The companion window is selected accidentally | Reject control |
-| Two same-size windows are open | Verify that only the intended foreground window is treated as target; reject if identity is ambiguous |
+| Two top-level windows from the same launched process are visible | Reject interactive app-window binding as ambiguous; offer monitor view or view-only instead |
 | Captured window loses foreground focus | Control action rejected; restore target and re-establish capture |
 | Captured window moves, resizes or is replaced | Control action rejected until capture geometry is revalidated |
 | A drag rectangle lands on another process | Reject target; no draft staged |
