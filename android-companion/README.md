@@ -12,6 +12,7 @@ This standalone Android app is the native endpoint for the Backroom device archi
 - Syncs only selected app metadata (package name, display label, signer fingerprint, version, and the separate draft-keyboard flag) after approval.
 - Uses HTTPS only, disables cleartext traffic and redirects, and sends the device bearer only in the Authorization header.
 - The optional input method remains a separate, user-controlled draft-only feature. It never presses Enter or submits a form.
+- A provider-neutral guest-runtime contract and acceptance gate now define what a future isolated app engine must prove. This is not a bundled virtualization engine and does not enable guest app launch or screen streaming.
 
 ## Build configuration
 
@@ -36,6 +37,14 @@ You can also set `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` in the build envi
 
 The phone keeps the raw device credential locally; the database stores its digest only. No service-role key or AI/provider credential is embedded in the APK.
 
+## Guest runtime integration gate
+
+The companion currently has **no app virtualization provider**. The code under `app/src/main/java/app/rubminds/companion/guest/` defines the future integration boundary only. It deliberately has no BlackBox, VirtualApp or NewBlackbox dependency.
+
+A provider must pass `GuestRuntimeAdmissionPolicy` and a physical-device acceptance record for the same engine version and device profile before it can be advertised as ready. In particular, the final merged host APK manifest must be reviewed; a library's manifest alone is not sufficient. Broad package visibility, all-files access, overlays, SMS/call-log/contacts, camera/microphone/location and package-installation host permissions are not accepted by the current gate.
+
+The contract requires true per-app guest data isolation, guest-only frames, session-bound touch and accessibility targets, empty-field-only draft insertion, explicit local approval and emergency stop. It rejects whole-device screenshots as guest frames and rejects Enter/Send. A complete provider must still be implemented and tested on a physical phone.
+
 ## Explicit capability boundaries
 
 This slice supports **app discovery and selected-app inventory only**. It does not clone or virtualize application code, copy another app's private data, embed native apps, capture the screen, or perform remote taps/swipes/typing. Opening a normal installed app is still an Android activity outside a Backroom isolated instance; the companion does not claim otherwise.
@@ -46,10 +55,11 @@ Package inventory is restricted to launchable apps visible under the declared `<
 
 ## Virtualization engine decision
 
-See [`docs/architecture/backroom-app-execution-engine.md`](../docs/architecture/backroom-app-execution-engine.md) for the explicit proof-of-concept gate. No virtualization library has been integrated into the companion yet; dependency selection is blocked on manifest, licensing, compatibility and physical-device testing.
+See [`docs/architecture/backroom-app-execution-engine.md`](../docs/architecture/backroom-app-execution-engine.md) for the explicit proof-of-concept gate and current engine review. NewBlackbox was re-audited and is rejected unchanged: its Bcore source manifest has 323 permission entries (249 unique), with broad host privileges. No virtualization library has been integrated.
 
 ## Verification status
 
 - Repository Node tests statically verify permissions, HTTPS-only transport, lack of inbound localhost listeners, credential handling, and package query scope.
-- Kotlin/JUnit tests cover the existing per-app draft-insertion policy.
+- Kotlin/JUnit tests cover the existing per-app draft-insertion policy and the new guest runtime admission/frame/target safety contract.
+- Node source-contract tests verify that no virtualization dependency or broad permission has been added to the companion.
 - **Not yet verified here:** Android Gradle compilation, APK installation, cloud function deployment, migration execution, pairing against a live backend, or physical-device behavior. A real Android build and phone acceptance test are mandatory before release.
