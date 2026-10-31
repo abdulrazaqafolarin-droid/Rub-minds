@@ -102,3 +102,13 @@ The companion now records the app ID and child process ID in Rust when the appro
 ## Capture source identity safety correction — 2026-10-31
 
 The browser's `getDisplayMedia` API exposes a captured `displaySurface` category and dimensions, but not the native HWND selected in the OS picker. Matching an app's PID, focused window and dimensions does **not** prove the video stream comes from that HWND. Consequently, **single-window streams are now view-only**; the native `set_capture_geometry` command rejects interactive window input. Previously proposed single-window control scenarios above are superseded. Whole-monitor sharing remains the supported separate-approval control path. Interactive single-window support requires native capture and input bound to one verifiable HWND.
+
+## Verification checkpoint — 2026-10-31 (PTY safety and latest CI)
+
+- Desktop selection acknowledgement is now one-shot: a successful native selection response consumes its drag request ID. A replayed acknowledgement cannot replace the verified native selection; the branch contains a matching regression test.
+- The optional native PTY transport exposes a distinct `writeDraft` method rejecting Enter, line breaks, ANSI/control sequences, blank drafts and oversized text. A test for the method is committed. This is only a transport safety primitive: a production Claude Code/OpenCode integration must still resolve and attest a specific focused assistant composer and empty buffer, and must actually call this safe method rather than the unrestricted manual `write` path.
+- GitHub Actions commit `0e177ac339b0f552307e180802ad74f6428359df`: Windows desktop companion run `41189213324` and durable wake SQL run `41189213269` both reported failure. Their returned jobs had zero steps; downloading job logs returned `404 BlobNotFound`. Neither build failure root cause nor test pass is established. Do not override the failed checks or assert compiler success.
+- The running environment could not reach github.com through git transport, so a full local checkout/build was not possible. The changes were written using the GitHub connector and independently re-read where noted.
+- The Android guest provider remains absent; the Android admission checklist therefore remains blocking. No user-operable virtual guest app or physical acceptance is claimed.
+
+**Release gate remains closed:** green actionable CI logs, Windows native compilation, real terminal/desktop tests, an admitted Android provider and physical device tests are still required. No production deploy or merge authorized by this checkpoint.
