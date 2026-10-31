@@ -32,6 +32,8 @@ test("Android stream Edge actions keep human auth, device bearer and platform bo
   assert.match(migration, /r\\.id=b\\.room_id and r\\.owner_id=\\(select auth\\.uid\\(\\)\\)/);
   assert.match(endpoint, /ANDROID_SESSION_LEASE_MS/);
   assert.match(endpoint, /android_session_heartbeat_failed/);
+  assert.match(endpoint, /android_ack_binding_check_failed/);
+  assert.match(endpoint, /android_ack_room_binding_revoked/);
   assert.match(endpoint, /android_session_binding_check_failed/);
   assert.match(endpoint, /device_room_binding_revoked/);
   assert.match(endpoint, /stopSessionIds/);

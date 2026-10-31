@@ -740,6 +740,15 @@ Deno.serve(async req => {
         .eq('session_id', ack.sessionId).eq('request_id', ack.requestId).maybeSingle();
       if (lookupError) return json(503, fail('android_ack_lookup_failed'), origin);
       if (!row) return json(404, fail('android_command_not_found'), origin);
+      const ackBinding = await verifyActiveDeviceRoomBinding(current.device_id, row.room_id);
+      if (!ackBinding.ok || ackBinding.platform !== 'android') {
+        if (!ackBinding.ok && ackBinding.status === 503) return json(503, fail('android_ack_binding_check_failed'), origin);
+        await db.from('backroom_android_commands')
+          .update({ status: 'rejected', result: 'device_room_binding_revoked', lease_until: null })
+          .eq('id', ack.commandId).eq('device_id', current.device_id)
+          .eq('status', 'leased');
+        return json(403, fail('android_ack_room_binding_revoked'), origin);
+      }
       const { data, error } = await db.from('backroom_android_commands')
         .update({ status: 'acked', result: ack.result, acked_at: new Date().toISOString(), lease_until: null })
         .eq('id', ack.commandId).eq('device_id', current.device_id)
