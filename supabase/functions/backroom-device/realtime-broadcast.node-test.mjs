@@ -11,8 +11,8 @@ test('sends one event to a correctly scoped private Realtime topic using server 
   deviceId,event:'command',payload,fetchImpl:async(url,init)=>(called={url,init},{ok:true,status:202})
  });
  assert.equal(result.sent,true);
- assert.match(called.url,/realtime\\/v1\\/api\\/broadcast\\/backroom-device%3A/);
- assert.match(called.url,/events\\/command\\?private=true$/);
+ assert.match(called.url,/realtime\/v1\/api\/broadcast\/backroom-device%3A/);
+ assert.match(called.url,/events\/command\?private=true$/);
  assert.equal(called.init.method,'POST');
  assert.equal(called.init.headers.apikey,'server-key-long-enough');
  assert.equal(called.init.headers.Authorization,undefined);
