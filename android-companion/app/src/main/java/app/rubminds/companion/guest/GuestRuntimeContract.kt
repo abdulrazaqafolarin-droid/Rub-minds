@@ -316,6 +316,11 @@ object GuestInstallPolicy {
  * The provider must register every prepared instance and unregister it only
  * after that guest container has been destroyed.
  */
+/**
+ * In-memory enforcement helper for one provider process. A production provider
+ * must persist equivalent instance/container ownership across process death;
+ * this map alone is not a durable isolation store.
+ */
 class GuestInstanceIsolationRegistry {
     private val containerOwners = linkedMapOf<String, String>()
     private val instanceContainers = linkedMapOf<String, String>()
@@ -339,7 +344,7 @@ class GuestInstanceIsolationRegistry {
     }
 
     @Synchronized
-    fun resetAfterProviderShutdown() {
+    fun clearAfterAllGuestContainersDestroyed() {
         instanceContainers.clear()
         containerOwners.clear()
     }
