@@ -376,10 +376,6 @@ class GuestRuntimeContractTest {
             frame(), target, lease, valid.copy(text = " ".repeat(4_001)), 10_000
         ))
     }
-}
-
-
-
 
     @Test fun touchSequenceRejectsOrphanedDuplicateAndOutOfOrderEvents() {
         val currentFrame = frame()
@@ -667,3 +663,4 @@ class GuestRuntimeContractTest {
             )
         )
     }
+}
