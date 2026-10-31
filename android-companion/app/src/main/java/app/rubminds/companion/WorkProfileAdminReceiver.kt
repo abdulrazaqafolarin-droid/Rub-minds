@@ -6,6 +6,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.PersistableBundle
 
 /**
  * Minimal DPC entry point used only when the device owner explicitly provisions
@@ -16,7 +17,7 @@ class WorkProfileAdminReceiver : DeviceAdminReceiver() {
         super.onProfileProvisioningComplete(context, intent)
         val admin = ComponentName(context, WorkProfileAdminReceiver::class.java)
         val manager = context.getSystemService(DevicePolicyManager::class.java)
-        val extras = intent.getBundleExtra(DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE)
+        val extras = intent.getParcelableExtra<PersistableBundle>(DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE)
         val encodedSecret = extras?.getString(WorkProfileContract.ADMIN_EXTRA_SECRET)
         val secretSaved = WorkProfileBridgeSecretStore(context).saveEncoded(encodedSecret)
 
