@@ -35,6 +35,8 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const [terminalPeerId,setTerminalPeerId] = useState('');
   const [terminalText,setTerminalText] = useState('');
   const [terminalInput,setTerminalInput] = useState('');
+  const [terminalDraftReady,setTerminalDraftReady] = useState(false);
+  const [terminalDraftSending,setTerminalDraftSending] = useState(false);
   const channelRef=useRef<any>(null);
   const screenSessionRef=useRef('');
   const terminalPeerRef=useRef('');
@@ -49,6 +51,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const dragRef=useRef<{x:number;y:number;pointerId:number}|null>(null);
   const targetAttemptRef=useRef('');
   const draftAttemptRef=useRef('');
+  const terminalActionRef=useRef<{requestId:string;action:'draft'|'submit';text?:string}|null>(null);
   const devicesRef=useRef<BackroomDevice[]>([]);
   const pendingCandidatesRef=useRef(new Map<string,RTCIceCandidateInit[]>());
   const selectedDevice=devices.find(d=>d.device_id===deviceId);
@@ -238,6 +241,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       catch{try{await abandonSession(peerId);}catch{}}
     }
     await closePeer();setTerminalSession('');setTerminalPeerId('');terminalPeerRef.current='';setTerminalText('');
+    terminalActionRef.current=null;setTerminalDraftReady(false);setTerminalDraftSending(false);setTerminalInput('');
   },[sendCommand,abandonSession,clearSessionStartTimers,closePeer]);
 
   const launchApp=async()=>{
@@ -247,10 +251,36 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   };
   const startTerminal=async()=>{
     if(peerRef.current)await stopActivePeer();
+    setDraftGranted(false);setTerminalDraftReady(false);setTerminalDraftSending(false);
+    terminalActionRef.current=null;
     try{
       const peerId=uuid();const pc=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun.cloudflare.com:3478']}]});
       const data=pc.createDataChannel('backroom-terminal',{ordered:true});dataRef.current=data;peerRef.current=pc;screenSessionRef.current=peerId;setTerminalPeerId(peerId);terminalPeerRef.current=peerId;setTerminalText('Waiting for local terminal approval…\\n');
-      data.onmessage=event=>{let message:any;try{message=JSON.parse(event.data);}catch{return;}if(message.kind==='terminal_output'){const output=new TextDecoder().decode(new Uint8Array(message.data||[]));setTerminalText(old=>(old+output).slice(-30000));}};
+      data.onmessage=event=>{
+        let message:any;try{message=JSON.parse(event.data);}catch{return;}
+        if(message.kind==='terminal_output'){
+          const output=new TextDecoder().decode(new Uint8Array(message.data||[]));
+          setTerminalText(old=>(old+output).slice(-30000));
+          return;
+        }
+        if(message.kind==='terminal_action_result'){
+          const pending=terminalActionRef.current;
+          if(!pending||pending.requestId!==message.requestId||pending.action!==message.action)return;
+          terminalActionRef.current=null;
+          setTerminalDraftSending(false);
+          if(message.ok===true&&message.action==='draft'){
+            setTerminalInput(current=>current===pending.text?'':current);
+            setTerminalDraftReady(true);
+            flash('Draft text was written to the active PTY. Check the Claude Code/OpenCode prompt; Enter has not been sent.');
+          }else if(message.ok===true&&message.action==='submit'){
+            setTerminalDraftReady(false);
+            flash('Enter was sent to the active terminal session.');
+          }else{
+            if(message.action==='submit')setTerminalDraftReady(true);
+            flash(typeof message.reason==='string'?message.reason:'The terminal action was rejected.',true);
+          }
+        }
+      };
       pc.onconnectionstatechange=()=>{
         if(pc.connectionState==='failed'||pc.connectionState==='disconnected'){
           flash('Terminal data connection interrupted. The local terminal will be stopped.',true);
@@ -334,6 +364,15 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     if(!controlGranted||!screenSession)return;
     try{await sendCommand('request_draft_permission',{sessionId:screenSession});flash('Separate typing permission requested. Approve it on the computer.');}
     catch(error){flash(error instanceof Error?error.message:'Could not request typing permission.',true);}
+  };
+  const requestTerminalDraftPermission=async()=>{
+    if(!controlGranted||!terminalSession)return;
+    try{
+      await sendCommand('request_draft_permission',{sessionId:terminalSession});
+      flash('Separate terminal draft-typing permission requested. Approve it on the computer.');
+    }catch(error){
+      flash(error instanceof Error?error.message:'Could not request terminal draft permission.',true);
+    }
   };
   const stop=async()=>{await stopActivePeer();};
 
@@ -454,16 +493,34 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       flash(String(error),true);
     }
   };
-  // Full-screen TUIs such as Claude Code and OpenCode receive input via their PTY.
-  // Submitting is an independent, explicit choice; selecting screen pixels is not necessary.
-  const terminalSend=(submit=false)=>{
-    if(!terminalSession||!controlGranted||!terminalInput)return;
-    if (/[\x00-\x1f\x7f]/.test(terminalInput))return flash('Control characters are not allowed in terminal input.',true);
-    try {
-      sendData({kind:'terminal_input',sessionId:terminalSession,data:terminalInput+(submit?'\\r':'')});
-      setTerminalInput('');
-      flash(submit?'Terminal input sent with Enter.':'Text typed without Enter. Verify the active terminal composer before submitting.');
-    } catch(error){flash(String(error),true);}
+  // A terminal TUI is not a Windows UIA text control. Backroom writes to the
+  // exact active PTY session; the human must verify Claude Code/OpenCode focus.
+  // Text and Enter are separate acknowledged, one-shot actions.
+  const terminalTypeDraft=()=>{
+    if(!terminalSession||!controlGranted||!draftGranted||!terminalInput.trim()||terminalDraftSending)return;
+    if(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/u.test(terminalInput))
+      return flash('Terminal drafts cannot contain Enter or terminal control characters.',true);
+    const requestId=uuid();
+    terminalActionRef.current={requestId,action:'draft',text:terminalInput};
+    setTerminalDraftSending(true);
+    try{
+      sendData({kind:'terminal_draft',requestId,sessionId:terminalSession,data:terminalInput});
+    }catch(error){
+      terminalActionRef.current=null;setTerminalDraftSending(false);
+      flash(error instanceof Error?error.message:'Could not send the terminal draft.',true);
+    }
+  };
+  const terminalSubmit=()=>{
+    if(!terminalSession||!controlGranted||!terminalDraftReady||terminalDraftSending)return;
+    const requestId=uuid();
+    terminalActionRef.current={requestId,action:'submit'};
+    setTerminalDraftSending(true);
+    try{
+      sendData({kind:'terminal_submit',requestId,sessionId:terminalSession});
+    }catch(error){
+      terminalActionRef.current=null;setTerminalDraftSending(false);
+      flash(error instanceof Error?error.message:'Could not send Enter to the terminal.',true);
+    }
   };
   const selectedIsWindows=selectedDevice?.platform==='windows';
 
@@ -516,7 +573,15 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
           {(terminalSession||terminalPeerId)&&<div className="br-terminal-remote">
             <div className="br-terminal-remote-head"><SquareTerminal size={15}/> Native terminal · actual computer</div>
             <pre>{terminalText||'Waiting for terminal output…'}</pre>
-            <div className="br-terminal-input"><input value={terminalInput} onChange={e=>setTerminalInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();terminalSend(false);}}} placeholder={controlGranted?'Type at the active Claude Code, OpenCode or shell cursor…':'Request terminal control first'} disabled={!controlGranted}/><button type="button" onClick={()=>terminalSend(false)} disabled={!controlGranted||!terminalInput}>Type only</button><button type="button" onClick={()=>terminalSend(true)} disabled={!controlGranted||!terminalInput}>Type + Enter</button></div><p className="br-desktop-caption">Terminal apps own their cursor. Type only writes through the scoped PTY without Enter. Confirm the terminal's active input before choosing Type + Enter.</p>
+            <div className="br-terminal-input">
+              <input value={terminalInput} onChange={e=>setTerminalInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();terminalTypeDraft();}}} placeholder={!controlGranted?'Request terminal control first':!draftGranted?'Approve terminal draft typing first':'Text for the focused Claude Code/OpenCode prompt…'} disabled={!controlGranted||!draftGranted||terminalDraftSending}/>
+              {controlGranted&&!draftGranted&&<button type="button" onClick={()=>void requestTerminalDraftPermission()}>Request draft permission</button>}
+              <button type="button" onClick={terminalTypeDraft} disabled={!controlGranted||!draftGranted||!terminalInput.trim()||terminalDraftSending}>Type only</button>
+              <button type="button" onClick={terminalSubmit} disabled={!controlGranted||!terminalDraftReady||terminalDraftSending}>Press Enter</button>
+            </div>
+            <p className="br-desktop-caption">
+              Terminal draft typing requires separate approval on the computer. Type only writes plain text to the active PTY and never submits it. Backroom cannot inspect which TUI widget is focused, so verify the Claude Code/OpenCode prompt yourself. Press Enter is a separate, one-use action available only after a successful draft write.
+            </p>
             {!controlGranted&&terminalSession&&<button type="button" onClick={()=>void sendCommand('request_control',{sessionId:terminalSession,peerSessionId:terminalPeerId})}>Request terminal control</button>}
           </div>}
         </div>}
