@@ -316,14 +316,16 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     try{
       const offer=await pc.createOffer();await pc.setLocalDescription(offer);
       await waitForIceGatheringComplete(pc);
-      await sendCommand('view_offer',{sessionId,offer:{sdp:pc.localDescription?.sdp}});
-      flash('View request sent. The companion must approve it and you must choose a monitor in the operating-system picker.');
+      await sendCommand('view_offer',{sessionId,...(selectedApp?{appId:selectedApp}:{}),offer:{sdp:pc.localDescription?.sdp}});
+      flash(selectedApp
+        ?'View request sent. Approve it on the computer, then choose the launched application window for app-bound control or a monitor for desktop-wide control.'
+        :'View request sent. Approve it on the computer, then choose a monitor for desktop-wide control. A window without a Backroom-launched app identity remains view-only.');
     }catch(error){await closePeer();flash(error instanceof Error?error.message:'Could not create the screen-share request.',true);}
   };
 
   const requestControl=async()=>{
     if(!screenSession)return flash('Start a live view first.',true);
-    if(!coordinateControl)return flash('The computer selected a window or capture dimensions did not match. Choose the entire monitor for coordinate-safe input.',true);
+    if(!coordinateControl)return flash('The selected capture could not be securely bound to the expected app window or monitor. Re-share the launched app window or choose the entire monitor.',true);
     try{await sendCommand('request_control',{sessionId:screenSession});flash('Control request sent. Approve it locally on the computer.');}
     catch(error){flash(error instanceof Error?error.message:'Could not request control.',true);}
   };
