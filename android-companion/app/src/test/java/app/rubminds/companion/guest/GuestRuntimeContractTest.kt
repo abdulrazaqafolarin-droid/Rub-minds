@@ -239,3 +239,107 @@ class GuestRuntimeContractTest {
         ))
     }
 }
+
+
+    @Test fun guestInstallMustUseAValidSignerAndFreshEmptyDataContainer() {
+        val request = GuestAppInstallRequest(
+            packageName = "com.example.chat",
+            signingCertificateSha256 = "a".repeat(64),
+            sourceKind = GuestAppSourceKind.SELECTED_INSTALLED_APK
+        )
+        assertNull(GuestInstallPolicy.validate(request))
+        assertEquals(
+            "private_app_data_import_forbidden",
+            GuestInstallPolicy.validate(request.copy(importPrivateData = true))
+        )
+        assertEquals(
+            "fresh_guest_data_required",
+            GuestInstallPolicy.validate(request.copy(requireFreshDataContainer = false))
+        )
+        val instance = GuestAppInstance(
+            instanceId = "guest-1",
+            packageName = request.packageName,
+            signingCertificateSha256 = request.signingCertificateSha256,
+            dataContainerId = "container-1",
+            freshDataContainer = true,
+            privateDataImported = false
+        )
+        assertNull(GuestInstallPolicy.validate(instance, request))
+        assertEquals(
+            "guest_data_container_not_fresh",
+            GuestInstallPolicy.validate(instance.copy(freshDataContainer = false), request)
+        )
+    }
+
+    @Test fun touchEventsMustMatchTheCurrentGuestFrameAndNormalizedCoordinates() {
+        val currentFrame = frame()
+        val valid = GuestTouchEvent(
+            sessionId = "session-1", guestInstanceId = "guest-instance-1",
+            frameSequence = 12, pointerId = 0, action = GuestTouchAction.DOWN,
+            x = 0.5, y = 0.7, occurredAtMillis = 10_000
+        )
+        assertNull(GuestTouchPolicy.validate(valid, currentFrame, 10_000))
+        assertEquals(
+            "touch_session_mismatch",
+            GuestTouchPolicy.validate(valid.copy(sessionId = "other"), currentFrame, 10_000)
+        )
+        assertEquals(
+            "touch_frame_is_stale",
+            GuestTouchPolicy.validate(valid.copy(frameSequence = 11), currentFrame, 10_000)
+        )
+        assertEquals(
+            "touch_coordinates_invalid",
+            GuestTouchPolicy.validate(valid.copy(x = 1.01), currentFrame, 10_000)
+        )
+        assertEquals(
+            "touch_event_stale",
+            GuestTouchPolicy.validate(valid.copy(occurredAtMillis = 1_000), currentFrame, 10_000)
+        )
+    }
+
+    @Test fun selectionLeaseIsConsumedBeforeWriteAndCannotBeReplayed() {
+        val guard = GuestSelectionGuard()
+        val currentFrame = frame()
+        val currentField = field()
+        val currentSelection = selection()
+        val draft = GuestDraftRequest("draft-1", currentSelection.selectionId, "one-shot draft", true)
+        assertNull(guard.activate(currentFrame, currentField, currentSelection, 10_000))
+        assertNull(guard.consumeForDraft(currentFrame, currentField, currentSelection, draft, 10_000))
+        assertEquals(
+            "target_selection_not_active",
+            guard.consumeForDraft(currentFrame, currentField, currentSelection, draft, 10_000)
+        )
+        assertEquals(
+            "target_selection_already_used",
+            guard.activate(currentFrame, currentField, currentSelection, 10_000)
+        )
+        val nextSelection = selection(id = "selection-2")
+        assertNull(guard.activate(currentFrame, currentField, nextSelection, 10_000))
+        guard.clearActive()
+        assertEquals(
+            "target_selection_not_active",
+            guard.consumeForDraft(
+                currentFrame, currentField, nextSelection,
+                GuestDraftRequest("draft-2", nextSelection.selectionId, "text", true), 10_000
+            )
+        )
+    }
+
+    @Test fun invalidDraftDoesNotConsumeTheCurrentSelectionLease() {
+        val guard = GuestSelectionGuard()
+        val currentFrame = frame()
+        val currentField = field()
+        val currentSelection = selection()
+        assertNull(guard.activate(currentFrame, currentField, currentSelection, 10_000))
+        assertEquals(
+            "local_approval_required",
+            guard.consumeForDraft(
+                currentFrame, currentField, currentSelection,
+                GuestDraftRequest("draft-1", currentSelection.selectionId, "draft", false), 10_000
+            )
+        )
+        assertNull(guard.consumeForDraft(
+            currentFrame, currentField, currentSelection,
+            GuestDraftRequest("draft-2", currentSelection.selectionId, "approved draft", true), 10_000
+        ))
+    }
