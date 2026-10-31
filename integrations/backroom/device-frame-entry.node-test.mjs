@@ -50,7 +50,7 @@ test("Device Frame shows one selected phone at a time", async () => {
 test("Device Frame never claims inventory is a running virtual app", async () => {
   const devices = await read("src/BackroomDevicesApp.tsx");
   assert.match(devices, /Separate app data \/ virtualization/);
-  assert.match(devices, /Live app stream and tap\\/swipe control/);
+  assert.ok(devices.includes("Live app stream and tap/swipe control"));
   assert.match(devices, /<BackroomAndroidControl/);
   assert.match(devices, /Desktop runtime not connected/);
   assert.match(devices, /Terminal runtime not connected/);
@@ -79,6 +79,6 @@ test("Android touch-control requests have a bounded pending state and exact requ
   assert.match(control, /pendingControlRequestRef/);
   assert.match(control, /controlRequestTimerRef/);
   assert.match(control, /45_000/);
-  assert.match(control, /payload\\.requestId !== pendingControlRequestRef\\.current/);
-  assert.match(control, /pendingControlRequestRef\\.current === requestId/);
+  assert.ok(control.includes("payload.requestId !== pendingControlRequestRef.current"));
+  assert.ok(control.includes("pendingControlRequestRef.current === requestId"));
 });
