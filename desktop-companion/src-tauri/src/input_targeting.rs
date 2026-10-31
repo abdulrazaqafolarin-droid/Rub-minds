@@ -81,12 +81,18 @@ pub fn validate_drag_coverage(
     if sr <= sl || sb <= st || fr <= fl || fb <= ft {
         return Err("invalid_drag_or_field_bounds");
     }
-    let overlap_width = (sr.min(fr) - sl.max(fl)).max(0) as f64;
-    let overlap_height = (sb.min(fb) - st.max(ft)).max(0) as f64;
-    let selected_area = (sr - sl) as f64 * (sb - st) as f64;
-    if selected_area <= 0.0 {
+    let selected_width = i64::from(sr) - i64::from(sl);
+    let selected_height = i64::from(sb) - i64::from(st);
+    if selected_width <= 0 || selected_height <= 0 {
         return Err("invalid_drag_or_field_bounds");
     }
+    let overlap_width = (
+        i64::from(sr.min(fr)) - i64::from(sl.max(fl))
+    ).max(0) as f64;
+    let overlap_height = (
+        i64::from(sb.min(fb)) - i64::from(st.max(ft))
+    ).max(0) as f64;
+    let selected_area = selected_width as f64 * selected_height as f64;
     let coverage = overlap_width * overlap_height / selected_area;
     if coverage < 0.65 {
         return Err("drag_must_stay_inside_one_editable_field");
@@ -361,6 +367,8 @@ mod tests {
         use super::validate_drag_coverage as validate;
         assert!(validate([20, 20, 80, 40], [10, 10, 100, 60]).is_ok());
         assert!(validate([15, 15, 105, 55], [10, 10, 110, 60]).is_ok());
+        assert!(validate([0, 0, 100, 100], [0, 0, 65, 100]).is_ok());
+        assert_eq!(validate([0, 0, 100, 100], [0, 0, 64, 100]), Err("drag_must_stay_inside_one_editable_field"));
         assert_eq!(validate([10, 10, 190, 90], [10, 10, 100, 60]), Err("drag_must_stay_inside_one_editable_field"));
         assert_eq!(validate([10, 10, 30, 30], [40, 40, 80, 80]), Err("drag_must_stay_inside_one_editable_field"));
         assert_eq!(validate([10, 10, 10, 30], [0, 0, 40, 40]), Err("invalid_drag_or_field_bounds"));
