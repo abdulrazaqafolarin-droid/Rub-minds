@@ -362,7 +362,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   // Submitting is an independent, explicit choice; selecting screen pixels is not necessary.
   const terminalSend=(submit=false)=>{
     if(!terminalSession||!controlGranted||!terminalInput)return;
-    if (/[\\x00-\\x1f\\x7f]/.test(terminalInput))return flash('Control characters are not allowed in terminal input.',true);
+    if (/[\x00-\x1f\x7f]/.test(terminalInput))return flash('Control characters are not allowed in terminal input.',true);
     try {
       sendData({kind:'terminal_input',sessionId:terminalSession,data:terminalInput+(submit?'\\r':'')});
       setTerminalInput('');
