@@ -60,7 +60,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         return true
     }
 
-    fun dispatchRemoteGesture(gesture: RemoteTouchGesture): Boolean {
+    fun dispatchRemoteGesture(gesture: RemoteTouchGesture, onCompleted: (Boolean) -> Unit): Boolean {
         val expectedSession = boundSessionId
         val expectedPackage = boundPackageName
         if (!AndroidTouchPolicy.validate(
@@ -105,9 +105,11 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                     object : GestureResultCallback() {
                         override fun onCompleted(gestureDescription: GestureDescription?) {
                             synchronized(this@AndroidTouchAccessibilityService) { gestureInFlight = false }
+                            onCompleted(true)
                         }
                         override fun onCancelled(gestureDescription: GestureDescription?) {
                             synchronized(this@AndroidTouchAccessibilityService) { gestureInFlight = false }
+                            onCompleted(false)
                         }
                     },
                     Handler(Looper.getMainLooper())

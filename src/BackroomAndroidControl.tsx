@@ -28,6 +28,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const sessionRef = useRef('');
   const pendingControlRequestRef = useRef('');
   const pointerRef = useRef<PointerStart | null>(null);
+  const pendingTouchAcksRef = useRef<Map<string, number>>(new Map());
   const controlExpiryRef = useRef<number | null>(null);
   const startTimerRef = useRef<number | null>(null);
   const disconnectTimerRef = useRef<number | null>(null);
@@ -47,6 +48,8 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     if (peer) { peer.ontrack = null; peer.onconnectionstatechange = null; peer.close(); }
     peerRef.current = null;
     dataRef.current?.close(); dataRef.current = null;
+    for (const timer of pendingTouchAcksRef.current.values()) window.clearTimeout(timer);
+    pendingTouchAcksRef.current.clear();
     streamRef.current?.getTracks().forEach(track => track.stop()); streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     sessionRef.current = ''; pointerRef.current = null; pendingControlRequestRef.current = '';
@@ -161,7 +164,26 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       const data = peer.createDataChannel('backroom-input', { ordered: true });
       dataRef.current = data;
       data.onopen = () => setDataReady(true);
-      data.onclose = () => setDataReady(false);
+      data.onclose = () => {
+        setDataReady(false);
+        for (const timer of pendingTouchAcksRef.current.values()) window.clearTimeout(timer);
+        pendingTouchAcksRef.current.clear();
+      };
+      data.onmessage = event => {
+        let acknowledgement: any;
+        try { acknowledgement = JSON.parse(String(event.data)); } catch { return; }
+        if (!acknowledgement || acknowledgement.kind !== 'touch_ack' ||
+            acknowledgement.sessionId !== nextSessionId ||
+            typeof acknowledgement.gestureId !== 'string' ||
+            typeof acknowledgement.accepted !== 'boolean') return;
+        const timer = pendingTouchAcksRef.current.get(acknowledgement.gestureId);
+        if (timer === undefined) return;
+        window.clearTimeout(timer);
+        pendingTouchAcksRef.current.delete(acknowledgement.gestureId);
+        notify(acknowledgement.accepted
+          ? 'Android completed the tap/swipe gesture.'
+          : 'Android rejected the gesture. Check that the selected app is still foreground and local touch is armed.', !acknowledgement.accepted);
+      };
       peer.ontrack = event => {
         if (peerRef.current !== peer || sessionRef.current !== nextSessionId) return;
         const stream = event.streams[0] ?? new MediaStream([event.track]);
@@ -294,8 +316,20 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     const durationMs = Math.min(1_500, Math.max(40, Date.now() - start.startedAt));
     const gesture = distance >= 0.02 ? 'swipe' : durationMs >= 500 ? 'long_press' : 'tap';
     const to = gesture === 'swipe' ? end : start;
-    channel.send(JSON.stringify({ kind: 'touch', sessionId: sessionRef.current, appPackageName,
-      gesture, from: { x: start.x, y: start.y }, to: { x: to.x, y: to.y }, durationMs }));
+    const gestureId = uuid();
+    const timeout = window.setTimeout(() => {
+      pendingTouchAcksRef.current.delete(gestureId);
+      notify('No acknowledgement arrived for that gesture. The phone may be offline or the touch service may have stopped.', true);
+    }, 4_000);
+    pendingTouchAcksRef.current.set(gestureId, timeout);
+    try {
+      channel.send(JSON.stringify({ kind: 'touch', gestureId, sessionId: sessionRef.current, appPackageName,
+        gesture, from: { x: start.x, y: start.y }, to: { x: to.x, y: to.y }, durationMs }));
+    } catch {
+      window.clearTimeout(timeout);
+      pendingTouchAcksRef.current.delete(gestureId);
+      notify('The touch data channel rejected the gesture. Reconnect the stream before retrying.', true);
+    }
   };
   const pointerCancel = (event: PointerEvent<HTMLDivElement>) => {
     if (pointerRef.current?.pointerId === event.pointerId) pointerRef.current = null;

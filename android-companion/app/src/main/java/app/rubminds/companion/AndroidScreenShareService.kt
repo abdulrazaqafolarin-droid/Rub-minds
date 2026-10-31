@@ -487,6 +487,28 @@ class AndroidScreenShareService : Service() {
         } catch (_: Exception) { }
     }
 
+    private fun sendTouchAcknowledgement(
+        channel: DataChannel,
+        sessionId: String,
+        gestureId: String,
+        accepted: Boolean
+    ) {
+        if (!UUID_PATTERN.matches(sessionId) || !UUID_PATTERN.matches(gestureId) ||
+            channel.state() != DataChannel.State.OPEN) return
+        val payload = JSONObject()
+            .put("kind", "touch_ack")
+            .put("sessionId", sessionId)
+            .put("gestureId", gestureId)
+            .put("accepted", accepted)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+        try {
+            channel.send(DataChannel.Buffer(ByteBuffer.wrap(payload), false))
+        } catch (_: Exception) {
+            // The browser reports a missing acknowledgement and can safely retry the gesture.
+        }
+    }
+
     private fun observeInputChannel(channel: DataChannel, sessionId: String, appPackage: String) {
         channel.registerObserver(object : DataChannel.Observer {
             override fun onBufferedAmountChange(previousAmount: Long) = Unit
@@ -498,13 +520,18 @@ class AndroidScreenShareService : Service() {
                 val bytes = ByteArray(buffer.data.remaining())
                 buffer.data.get(bytes)
                 val input = try { JSONObject(String(bytes, Charsets.UTF_8)) } catch (_: Exception) { return }
-                val allowedKeys = setOf("kind", "sessionId", "appPackageName", "gesture", "from", "to", "durationMs")
+                val allowedKeys = setOf("kind", "gestureId", "sessionId", "appPackageName", "gesture", "from", "to", "durationMs")
+                val gestureId = input.optString("gestureId")
                 if (input.keys().asSequence().toSet() != allowedKeys ||
                     input.optString("kind") != "touch" ||
+                    !UUID_PATTERN.matches(gestureId) ||
                     input.optString("sessionId") != sessionId ||
-                    input.optString("appPackageName") != appPackage ||
-                    !localControlGranted || !RemoteTouchGate.isArmed(this@AndroidScreenShareService)
+                    input.optString("appPackageName") != appPackage
                 ) return
+                if (!localControlGranted || !RemoteTouchGate.isArmed(this@AndroidScreenShareService)) {
+                    sendTouchAcknowledgement(channel, sessionId, gestureId, false)
+                    return
+                }
                 val kind = when (input.optString("gesture")) {
                     "tap" -> RemoteGestureKind.TAP
                     "swipe" -> RemoteGestureKind.SWIPE
@@ -531,7 +558,13 @@ class AndroidScreenShareService : Service() {
                     to = NormalizedTouchPoint(toX.toFloat(), toY.toFloat()),
                     durationMillis = durationMillis
                 )
-                AndroidTouchAccessibilityService.dispatch(this@AndroidScreenShareService, gesture)
+                val dispatched = AndroidTouchAccessibilityService.dispatch(
+                    this@AndroidScreenShareService,
+                    gesture
+                ) { completed ->
+                    sendTouchAcknowledgement(channel, sessionId, gestureId, completed)
+                }
+                if (!dispatched) sendTouchAcknowledgement(channel, sessionId, gestureId, false)
             }
         })
     }

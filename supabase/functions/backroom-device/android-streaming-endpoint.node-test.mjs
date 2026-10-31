@@ -136,3 +136,17 @@ test("native setup explicitly explains second-device viewing", async () => {
   assert.match(setup, /Open Backroom on your Windows laptop or another device/);
   assert.match(setup, /cannot be on this same phone/);
 });
+
+test("Android touch dispatch validates unique gesture IDs and returns completion acknowledgements", async () => {
+  const service = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  const touchService = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidTouchAccessibilityService.kt");
+  const browser = await read("src/BackroomAndroidControl.tsx");
+  assert.match(service, /"gestureId"/);
+  assert.match(service, /sendTouchAcknowledgement\(channel, sessionId, gestureId, false\)/);
+  assert.match(service, /"kind", "touch_ack"/);
+  assert.match(touchService, /onCompleted\(true\)/);
+  assert.match(touchService, /onCompleted\(false\)/);
+  assert.match(browser, /kind: 'touch_ack'/);
+  assert.match(browser, /pendingTouchAcksRef/);
+  assert.match(browser, /Android completed the tap\/swipe gesture/);
+});
