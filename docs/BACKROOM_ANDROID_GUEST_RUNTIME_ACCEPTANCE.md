@@ -106,3 +106,45 @@ The reviewed alternatives still do not pass admission. BlackBox Reborn's Bcore m
 AVF/Microdroid is a system VM facility, not an ordinary-app SDK: its APIs are `@SystemApi`, and `MANAGE_VIRTUAL_MACHINE` is declared with restricted `signature|preinstalled|development` protection. The development grant supports controlled adb tests, not production use by a normally installed third-party app. AVF would require a preinstalled/OEM/system-app distribution arrangement.
 
 **No Android guest provider has been selected or integrated.** Keep all candidates blocked until a disposable POC has an audited final merged manifest, consistent licensing, non-debug release signing, API/ABI compatibility and completed physical-device evidence.
+
+## Provider re-audit — 2026-10-31 (current source review)
+
+### VineOS — promising architecture, not admitted
+
+Repository: https://github.com/Hexadecinull/VineOS
+
+The current README describes a full Android-on-Android guest and lists framebuffer rendering and single-touch forwarding as implemented. However, it explicitly lists the first bootable Android 7.1.2 ROM as unfinished; later ROM images remain planned. Its no-root phase has only a Shizuku privilege probe checked off; the proot fallback and AVF backend are still unchecked. The app currently declares storage/media, network, foreground-service/special-use, notifications, wake-lock and vibration permissions, and has an exported Shizuku provider protected by `INTERACT_ACROSS_USERS_FULL`. The project is GPL-3.0. These facts do not prove it can launch a GUI Android guest on the target TECNO device today.
+
+Decision: **research lead only; do not integrate or label as a provider**. It needs a first bootable guest image, a no-root execution path that works on stock Android 14 without ADB/host privileges, manifest/component remediation or an explicit security exception, license review for distribution, and physical proof of guest-only frame + touch + lifecycle + independent writable /data before reconsideration.
+
+### NEXTVM — rejected unchanged
+
+Repository: https://github.com/TanvirHossain2/NEXTVM
+
+The public README identifies the project as alpha and advertises device identity spoofing and anti-detection features. Its current host manifest includes `MANAGE_EXTERNAL_STORAGE`, `QUERY_ALL_PACKAGES`, legacy external storage, `REQUEST_INSTALL_PACKAGES`, boot/foreground-service and additional permissions. That exceeds Backroom's least-privilege host policy and introduces capabilities the Backroom guest does not need.
+
+Decision: **reject unchanged**. Do not import its anti-detection, identity-spoofing or broad host-permission behavior.
+
+### VirtualApp Android 14 forks — rejected unchanged
+
+Repositories:
+- https://github.com/ISEKHON/VirtualApp
+- https://github.com/f0restw0w/VirtualApp_16
+
+ISEKHON's own README warns that the fork is highly unstable and not recommended for production use. Its core library manifest declares `QUERY_ALL_PACKAGES` plus a large legacy permission footprint including account, location, contacts, SMS/call, storage, camera and other protected/device permissions; its library Gradle config still targets SDK 22 and compiles against SDK 30. The VirtualApp_16 repository is a fork of that same codebase, not independent evidence of a production-ready Android 14 guest runtime.
+
+Decision: **reject unchanged**. A fork's Android 14 claim does not satisfy our final-host-manifest, no-private-data-import, target-SDK, compatibility or physical-acceptance gates.
+
+### Official Android Virtualization Framework — not a GUI guest-app route for this host
+
+The official AVF Java APIs are `@SystemApi` and require restricted `MANAGE_VIRTUAL_MACHINE`; they are not available to ordinary third-party apps. The official Microdroid documentation describes a minimal, headless environment without system server, HALs or GUI, intended for headless/native workloads. That is not an embeddable full Android application desktop for Backroom on a stock TECNO device.
+
+Sources:
+- https://android.googlesource.com/platform/packages/modules/Virtualization/+/HEAD/libs/framework-virtualization/README.md
+- https://android.googlesource.com/platform/packages/modules/Virtualization/+/HEAD/build/microdroid/README.md
+
+Decision: **do not build the Phone Frame GUI guest on AVF** unless device/OEM distribution privileges and a different graphical guest architecture are explicitly established. It is not an ordinary-app workaround.
+
+### Provider decision
+
+No candidate currently passes admission. Keep `GuestRuntimeAdmissionPolicy` fail-closed and keep the Phone Frame's guest-app execution state unavailable rather than launching the host-installed copy or showing a mock. VineOS is the only new candidate worth a controlled follow-up proof once its bootable ROM and no-root path exist; it is not yet technically ready for integration or target-device testing.
