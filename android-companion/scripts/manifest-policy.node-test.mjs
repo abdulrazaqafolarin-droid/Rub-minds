@@ -307,7 +307,7 @@ test("Work Profile DPC is a single system-bound receiver with local signer check
 
 
 test("Android stream answer callback contains real Kotlin lines, not escaped newline text", async () => {
-  const service = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  const service = await read("app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
   assert.match(service, /override fun onSetSuccess\(\) \{\s+if \(connection\.iceGatheringState\(\)/);
   assert.equal(service.includes("\\n"), false, "Kotlin source must not contain literal backslash-n sequences from templated edits.");
 });
