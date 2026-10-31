@@ -419,8 +419,8 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       setRemoteTextStatus('Wait for the selected phone app and data channel to be live.');
       return;
     }
-    if (!text.trim() || text.length > 4_000 || /[\u0000-\u001f\u007f]/.test(text)) {
-      setRemoteTextStatus('Enter 1–4,000 characters without Enter/newline or control characters.');
+    if (!text.trim() || text.length > 4_000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text)) {
+      setRemoteTextStatus('Enter up to 4,000 characters. Line breaks are accepted only by multiline phone fields; no Enter action is sent.');
       return;
     }
     if (remoteTextBusy) return;
@@ -526,7 +526,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         </button>
       </div>
       <p role="status">{remoteTextStatus}</p>
-      <small>The phone must have the Rub Minds keyboard selected and remote typing locally armed. This inserts text only; it does not press Enter or submit.</small>
+      <small>The phone must have the Rub Minds keyboard selected and remote typing locally armed. Line breaks go only into multiline fields; no Enter key or submit action is sent.</small>
     </div> : null}
     <div className="br-android-stream-actions">
       {!sessionId
