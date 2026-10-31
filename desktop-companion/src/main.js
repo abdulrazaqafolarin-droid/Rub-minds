@@ -513,6 +513,33 @@ async function handlePeerData(sessionId,raw){
     return;
   }
   if(message.kind==='input'&&message.event){
+    // Mouse/keyboard activity outside drag-select supersedes the saved typing
+    // destination. Pointer-move telemetry alone does not change the target.
+    if(message.event.kind!=='move'&&(
+      peer.targetVerified===true||peer.latestTargetRequestId||
+      peer.targetClearPromise||peer.targetQueueDepth>0
+    )){
+      peer.latestTargetRequestId=null;
+      peer.targetVerified=false;
+      const invalidation=invalidatePendingDraftApprovals(
+        sessionId,'Manual computer interaction changed the target; this draft was cancelled.'
+      );
+      if(!peer.targetClearPromise){
+        const clearTask=(peer.targetQueue||Promise.resolve()).then(async()=>{
+          await invalidation;
+          await invoke('clear_draft_target',{sessionId});
+          peer.targetVerified=false;
+        });
+        const tracked=clearTask.finally(()=>{if(peer.targetClearPromise===tracked)peer.targetClearPromise=null;});
+        peer.targetClearPromise=tracked;
+        peer.targetQueue=tracked;
+      }
+      try{await peer.targetClearPromise;}
+      catch(error){
+        notify(error?.message||'Could not clear the previous typing target. Manual input was stopped for safety.','error');
+        return;
+      }
+    }
     try{await invoke('dispatch_input',{sessionId,event:message.event});}catch(error){notify(error.message,'error');}
   } else if(message.kind==='select_target'){
     const requestId=typeof message.requestId==='string'&&message.requestId.length>0&&message.requestId.length<=80?message.requestId:null;
