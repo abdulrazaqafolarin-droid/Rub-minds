@@ -708,6 +708,9 @@ function startPeerWatchdog(){
 }
 async function stopPeer(sessionId,{closeServer=true}={}){
   const peer=state.peers.get(sessionId);
+  // Cancel target-bound drafts while the peer channel still exists so the
+  // browser receives an explicit result before the native session is revoked.
+  await invalidatePendingDraftApprovals(sessionId,'The desktop session ended; this draft was cancelled.');
   // Remove ownership before close() emits state changes, making teardown idempotent.
   state.peers.delete(sessionId);state.streams.delete(sessionId);state.pendingCandidates.delete(sessionId);
   if(state.peers.size===0&&state.peerWatchdog!==null){clearInterval(state.peerWatchdog);state.peerWatchdog=null;}
