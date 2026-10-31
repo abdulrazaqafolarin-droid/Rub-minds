@@ -517,6 +517,14 @@ class MainActivity : Activity() {
             Toast.makeText(this, "Cross-profile launch was rejected outside the managed Work Profile.", Toast.LENGTH_LONG).show()
             return
         }
+        val adminState = getSharedPreferences("work_profile_admin_state", MODE_PRIVATE)
+        if (!adminState.getBoolean("profile_owner_confirmed", false) ||
+            !adminState.getBoolean("bridge_secret_saved", false) ||
+            !adminState.getBoolean("cross_profile_allowlist_ready", false)
+        ) {
+            Toast.makeText(this, "Work Profile provisioning or its cross-profile allowlist is not verified. No app was opened.", Toast.LENGTH_LONG).show()
+            return
+        }
         val command = WorkProfileLaunchCommand(
             packageName = incoming.getStringExtra(WorkProfileContract.EXTRA_PACKAGE).orEmpty(),
             signerSha256 = incoming.getStringExtra(WorkProfileContract.EXTRA_SIGNER).orEmpty(),
