@@ -255,6 +255,9 @@ test("Work Profile DPC is a single system-bound receiver with local signer check
   assert.match(gradle, /PROFILE_PROVISIONING_COMPLETE/);
   assert.match(receiver, /setCrossProfilePackages/);
   assert.match(receiver, /getCrossProfilePackages/);
+  assert.match(receiver, /profile_owner_confirmed/);
+  assert.match(coordinator, /PersistableBundle/);
+  assert.match(coordinator, /EXTRA_PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME, admin/);
   assert.match(launcher, /canInteractAcrossProfiles/);
   assert.match(launcher, /targetUserProfiles/);
   assert.match(launcher, /startActivity/);
