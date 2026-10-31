@@ -122,3 +122,82 @@ A second pass checked newer public forks and the platform-supported VM route. No
 - **asLody/VirtualApp** remains useful historical research, but its public source is stale and is not a maintained, production-ready integration target for current Android releases.
 
 **Decision:** no candidate passes the existing manifest, signing, licensing, isolation and device-proof gates. Keep the provider interface only. Do not lower the admission policy or bundle a fork just to produce a visual “guest app” frame. The next acceptable POC is a separately signed, disposable host build for an audited candidate after its host manifest has been stripped and the provider's runtime dependencies and limitations have been documented; it must pass the handset matrix before the companion advertises guest execution.
+
+
+## Third provider audit — 2026-10-31
+
+This audit checked the source/build/manifest files for three newer approaches. **None is approved for the normal Rub Minds companion APK.** The decision is intentionally not to vendor any engine or enable Phone Frame guest execution.
+
+### josskixg/renjana — Apache-2.0; reject unchanged
+
+Reviewed source files: root `LICENSE`, `README.md`, `app/build.gradle`, `app/src/main/AndroidManifest.xml`, `docs/CREATE_INSTANCE.md`, `PROBLEM.md`, and `CHANGELOG.md`.
+
+Positive findings:
+- The checked-in root license is Apache-2.0.
+- The code describes user-space subprocesses, stub activities, package-specific data paths and split-APK loading.
+- The advertised minimum API is 29 and supported architectures include ARM64 and ARMv7.
+
+Blocking findings:
+- Its app targets SDK 34, below this companion's SDK 35 admission floor.
+- Its host manifest requests `MANAGE_EXTERNAL_STORAGE`, `QUERY_ALL_PACKAGES`, `REQUEST_INSTALL_PACKAGES`, `SYSTEM_ALERT_WINDOW`, legacy external-storage permissions, and foreground-service / special-use service permissions. It also sets `usesCleartextTraffic=true`.
+- The release build falls back to the debug signing configuration when a release keystore is absent.
+- The README and changelog advertise anti-detection, device fingerprint randomization, signature spoofing and Play Integrity / root-detection evasion. These are outside Backroom's required app-execution scope and must not be imported.
+- The documented `WrapperActivity` / `StubActivity_0..9` architecture uses guest-like Activities in host-owned processes/tasks. The reviewed source does not establish that these surfaces can be embedded as a guest-only render target inside the existing Phone Frame, nor does it establish kernel-enforced per-guest UID/SELinux isolation.
+- The source's own `PROBLEM.md` describes framework lifecycle and resource compatibility patches. These claims require independent reproducible testing.
+
+**Decision:** useful research material only. Do not import its manifest, app shell, spoofing hooks, or binary. Any future clean-room experiment must first isolate only the minimum guest lifecycle code, remove all anti-detection / spoofing features, avoid broad permissions and cleartext, produce a non-debug-signed artifact, prove an embeddable guest-only surface, and demonstrate an OS-enforced security boundary. A license file alone is not engine approval.
+
+### ISEKHON/VirtualApp — Apache-2.0; reject unchanged
+
+Reviewed source files: root `LICENSE`, `README.md`, `app/build.gradle`, `app/src/main/AndroidManifest.xml`, `docs/ARCHITECTURE.md`, and `docs/KNOWN-ISSUES.md`.
+
+Blocking findings:
+- The app targets SDK 33 and uses an old Android Gradle Plugin 7.4.2 / Gradle 7.5 build.
+- The host manifest requests broad package visibility, all-files access, ignore-battery-optimizations and multiple foreground-service types, including camera, location, microphone, phone call and media projection.
+- It declares an exported command receiver and an exported installer alias in addition to the launcher and share bridge.
+- The project's own known-issues document says hidden-API bypass may fail on Android 15–16 and documents root as a workaround for complete operation on affected devices.
+- The project itself warns that it is highly unstable and not recommended for production.
+
+**Decision:** reject unchanged. Its permissive license does not offset the compatibility, permission, exported-surface and reliability problems.
+
+### Hexadecinull/VineOS — GPL-3.0; research-only / not boot-proven
+
+Reviewed source files: README, LICENSE, `app/build.gradle.kts`, and version catalog.
+
+VineOS is conceptually closer to a full guest OS than an app-hooking container and is worth monitoring. However, its own project status says the container engine has booted a test ROM but **no real Android system image has booted inside VineOS yet**. It also depends on Shizuku components and uses GPL-3.0, which is not in the companion's current license allowlist.
+
+**Decision:** do not integrate. Revisit only after the upstream project demonstrates a bootable Android image on an unrooted physical handset, provides a documented least-privilege mode and an embed-capable display/input API, and the product/legal review approves its licensing model.
+
+### OS-backed alternatives and the real platform boundary
+
+Android's official companion app-streaming architecture provides a more defensible virtual display and input path, but AOSP states that the `COMPANION_DEVICE_APP_STREAMING` role is limited to preinstalled privileged apps. The role grants `CREATE_VIRTUAL_DEVICE`; it is not available to the current ordinary sideloaded Rub Minds companion.
+
+AVF/Microdroid likewise uses restricted system APIs. It is not an ordinary third-party app embedding SDK.
+
+A managed/work profile provides Android-managed profile separation, but its apps remain OS-managed activities; it does not provide a general API to composite arbitrary profile activities as a child surface inside Rub Minds.
+
+Android 14 MediaProjection can capture a user-selected single app window after per-session user consent. This is a legitimate **live app mirror** option, not an isolated guest runtime: it captures an existing app window and does not create a cloned package, a fresh guest data container or a guest process identity. It must be a separately labelled mode and must not satisfy `GuestRuntimeProvider` readiness.
+
+### Implementation decision
+
+No reviewed candidate satisfies all of the following simultaneously:
+1. rootless operation on the target retail handset;
+2. permissive, auditable licensing and complete source/dependency provenance;
+3. least-privilege merged host manifest and non-debug release signing;
+4. per-guest OS-level security isolation, not just an in-process/fake UID identity;
+5. guest-only embeddable surface, touch routing and accessibility tree;
+6. fresh persistent data containers and safe lifecycle/recovery;
+7. exact-build physical-device evidence on the target handset.
+
+Therefore the current correct implementation is a **fail-closed provider gate**, not a guessed engine adapter. Keep the Android Phone Frame inventory-only until an engine or OS-level distribution path satisfies the above. Do not set `GuestRuntimeDecision.READY`, display a simulated app surface as live, enable touch injection, or claim virtualization on static capability declarations alone.
+
+Potentially useful non-virtualized fallback: a separate, explicitly consented Android 14+ MediaProjection single-app mirror. It must show a persistent `LIVE MIRROR — NOT ISOLATED` label, have an obvious stop/revoke control, never claim private-data separation, and never turn on remote input unless a separately approved input method is available and tested.
+
+### Source references
+
+- Renjana: https://github.com/josskixg/renjana
+- ISEKHON VirtualApp: https://github.com/ISEKHON/VirtualApp
+- VineOS: https://github.com/Hexadecinull/VineOS
+- AOSP companion app streaming role: https://source.android.com/docs/core/permissions/app-streaming
+- Android MediaProjection single-app capture: https://developer.android.com/media/grow/media-projection
+- AVF/Microdroid API privilege note: https://android.googlesource.com/platform/packages/modules/Virtualization/+/HEAD/libs/framework-virtualization/README.md
