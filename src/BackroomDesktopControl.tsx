@@ -317,6 +317,19 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     if(x<0||x>1||y<0||y>1)return null;
     return {x,y};
   };
+  // Selection coordinates are normalized to the actual video content, not
+  // the 16:9 letterbox wrapper. Map them back into the wrapper for the overlay.
+  const selectionOverlayStyle=()=>{
+    if(!selection)return undefined;
+    const content=videoContentRect(),frame=frameRef.current?.getBoundingClientRect();
+    if(!content||!frame||frame.width<=0||frame.height<=0)return undefined;
+    return {
+      left:((content.left-frame.left+selection.x*content.width)/frame.width*100)+'%',
+      top:((content.top-frame.top+selection.y*content.height)/frame.height*100)+'%',
+      width:(selection.width*content.width/frame.width*100)+'%',
+      height:(selection.height*content.height/frame.height*100)+'%',
+    };
+  };
   const sendData=(message:Record<string,unknown>)=>{
     const data=dataRef.current;if(!data||data.readyState!=='open')throw new Error('Interactive data channel is not ready.');
     data.send(JSON.stringify(message));
@@ -419,7 +432,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
             <div className="br-desktop-video" ref={frameRef} tabIndex={0} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onKeyDown={keyDown}>
               <video ref={videoRef} autoPlay muted playsInline/>
               {!videoReady&&<div className="br-desktop-video-empty">Waiting for the computer to approve and share its display…</div>}
-              {selection&&<div className="br-desktop-selection" style={{left:(selection.x*100)+'%',top:(selection.y*100)+'%',width:(selection.width*100)+'%',height:(selection.height*100)+'%'}}/>}
+              {selection&&<div className="br-desktop-selection" style={selectionOverlayStyle()}/>}
             </div>
             <div className="br-desktop-toolbar">
               <span>{videoReady?'Live computer display':'View request pending'}{coordinateControl?' · full-monitor geometry verified':' · view-only unless full monitor selected'}</span>
