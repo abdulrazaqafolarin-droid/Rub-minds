@@ -5,7 +5,7 @@ use std::thread;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EditableTargetIdentity {
-    pub process_id: u32,
+    pub process_id: i32,
     pub runtime_id: Vec<i32>,
     pub class_name: String,
     pub control_type: String,
