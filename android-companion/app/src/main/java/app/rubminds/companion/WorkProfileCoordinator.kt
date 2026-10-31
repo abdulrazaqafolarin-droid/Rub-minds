@@ -47,7 +47,7 @@ class WorkProfileCoordinator(context: Context) {
         if (intent.resolveActivity(activity.packageManager) == null) return "Android Work Profile setup is unavailable."
         val encodedSecret = secrets.createAndSave() ?: return "Could not prepare the local Work Profile link."
         val admin = ComponentName(activity, WorkProfileAdminReceiver::class.java)
-        intent.putExtra(DevicePolicyManager.EXTRA_PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME, admin)
+        intent.putExtra(DevicePolicyManager.EXTRA_PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME, admin.flattenToString())
         intent.putExtra(
             DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE,
             Bundle().apply { putString(WorkProfileContract.ADMIN_EXTRA_SECRET, encodedSecret) }
