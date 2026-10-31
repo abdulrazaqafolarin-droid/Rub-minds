@@ -29,3 +29,16 @@ test('unsupported platform, invalid native binding and PTY parameters are reject
  const create=createNativePtyAdapter({pty:{spawn(){throw new Error('should not run')}},platform:'linux'});
  await assert.rejects(create({shell:'/bin/bash',cols:0,onData:()=>{}}),/Invalid/);
 });
+
+test('draft-only PTY transport never forwards Enter, control keys, or ANSI escapes',async()=>{
+ const writes=[];
+ const pty={spawn:()=>({onData:()=>({dispose(){}}),write:s=>writes.push(s),resize(){},kill(){}})};
+ const term=await createNativePtyAdapter({pty,platform:'linux'})({shell:'/bin/sh',onData:()=>{}});
+ for(const value of ['x\\r','x\\n','\\u001b[31m','x\\u007f','x\\u2028','x\\u0085','', '   ']){
+   assert.throws(()=>term.writeDraft(value),/draft-only/);
+ }
+ term.writeDraft('Claude Code prompt only');
+ assert.deepEqual(writes,['Claude Code prompt only']);
+ term.kill();
+ assert.throws(()=>term.writeDraft('another'),/stopped/);
+});
