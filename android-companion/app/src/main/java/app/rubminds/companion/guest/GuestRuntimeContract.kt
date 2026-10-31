@@ -52,6 +52,32 @@ data class GuestDeviceProfile(
     val localProfileId: String
 )
 
+enum class GuestHostComponentType {
+    ACTIVITY,
+    SERVICE,
+    RECEIVER,
+    PROVIDER
+}
+
+enum class GuestPermissionProtection {
+    NONE,
+    NORMAL,
+    DANGEROUS,
+    SIGNATURE,
+    SYSTEM
+}
+
+/** Facts extracted from the final merged host manifest, not source library manifests. */
+data class GuestHostComponent(
+    val className: String,
+    val type: GuestHostComponentType,
+    val exported: Boolean,
+    val permission: String? = null,
+    val permissionProtection: GuestPermissionProtection = GuestPermissionProtection.NONE,
+    val isLauncherActivity: Boolean = false,
+    val isSystemBoundInputMethod: Boolean = false
+)
+
 data class GuestRuntimeDescriptor(
     val engineId: String,
     val engineVersion: String,
@@ -67,6 +93,7 @@ data class GuestRuntimeDescriptor(
     val capabilities: Set<GuestRuntimeCapability>,
     /** Permissions in the final merged host APK manifest, not just a library manifest. */
     val mergedHostPermissions: Set<String>,
+    val mergedHostComponents: List<GuestHostComponent>,
     val mergedManifestAudited: Boolean,
     val releaseArtifactDebugSigned: Boolean
 )
@@ -128,7 +155,19 @@ object GuestRuntimeAdmissionPolicy {
         "BLUETOOTH_SCAN",
         "BLUETOOTH_ADVERTISE",
         "FOREGROUND_SERVICE_CAMERA",
-        "FOREGROUND_SERVICE_MICROPHONE"
+        "FOREGROUND_SERVICE_MICROPHONE",
+        "WRITE_SECURE_SETTINGS",
+        "READ_LOGS",
+        "WRITE_SETTINGS",
+        "PACKAGE_USAGE_STATS",
+        "MANAGE_APP_OPS_MODES",
+        "READ_PRIVILEGED_PHONE_STATE",
+        "INTERACT_ACROSS_USERS",
+        "INTERACT_ACROSS_USERS_FULL",
+        "DUMP",
+        "CAPTURE_VIDEO_OUTPUT",
+        "CAPTURE_SECURE_VIDEO_OUTPUT",
+        "BIND_ACCESSIBILITY_SERVICE"
     )
 
     private val requiredCapabilities = GuestRuntimeCapability.values().toSet()
@@ -162,6 +201,23 @@ object GuestRuntimeAdmissionPolicy {
             permission.substringAfterLast('.').uppercase() in blockedPermissionAtoms
         }
         if (blockedPermissions.isNotEmpty()) blockers += "unapproved_host_permissions:${blockedPermissions.sorted().joinToString(",")}"
+
+        val unsafeComponents = descriptor.mergedHostComponents.filter { component ->
+            if (!component.exported) return@filter false
+            val isExpectedLauncher = component.type == GuestHostComponentType.ACTIVITY &&
+                component.isLauncherActivity && component.className.endsWith(".MainActivity") &&
+                component.permission == null
+            val isExpectedInputMethod = component.type == GuestHostComponentType.SERVICE &&
+                component.isSystemBoundInputMethod && component.className.endsWith(".DraftInputMethodService") &&
+                component.permission == "android.permission.BIND_INPUT_METHOD" &&
+                component.permissionProtection == GuestPermissionProtection.SYSTEM
+            val protectedInternalComponent = component.permissionProtection == GuestPermissionProtection.SIGNATURE &&
+                !component.permission.isNullOrBlank()
+            !(isExpectedLauncher || isExpectedInputMethod || protectedInternalComponent)
+        }
+        if (unsafeComponents.isNotEmpty()) {
+            blockers += "unapproved_exported_components:${unsafeComponents.map { it.className }.sorted().joinToString(",")}"
+        }
 
         if (blockers.isNotEmpty()) {
             return GuestRuntimeReview(GuestRuntimeDecision.BLOCKED, blockers.toList(), requiredAcceptance.toList())
