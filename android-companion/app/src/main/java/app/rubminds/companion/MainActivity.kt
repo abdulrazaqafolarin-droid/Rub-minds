@@ -520,11 +520,21 @@ class MainActivity : Activity() {
             Toast.makeText(this, "The Work Profile does not have its setup secret. Recreate the managed profile.", Toast.LENGTH_LONG).show()
             return
         }
+        val now = System.currentTimeMillis()
         val prefs = getSharedPreferences("work_profile_launch_nonces", MODE_PRIVATE)
-        val used = prefs.getStringSet("used", emptySet()).orEmpty()
-        val usedNonces = used.toSet()
+        // Keep nonce records for the full command-validity window. Never evict an
+        // unexpired nonce just to make space; a full ledger fails closed instead.
+        val liveEntries = prefs.getStringSet("used", emptySet()).orEmpty().mapNotNull { entry ->
+            val separator = entry.lastIndexOf(':')
+            if (separator <= 0) return@mapNotNull null
+            val issuedAt = entry.substring(separator + 1).toLongOrNull() ?: return@mapNotNull null
+            if (now - issuedAt > WorkProfileLaunchAuthenticator.MAX_AGE_MILLIS) return@mapNotNull null
+            if (issuedAt > now + WorkProfileLaunchAuthenticator.MAX_FUTURE_SKEW_MILLIS) return@mapNotNull null
+            entry
+        }.toSet()
+        val nonceAlreadyUsed = liveEntries.any { it.substringBeforeLast(':') == command.nonce }
         val failure = try {
-            WorkProfileLaunchAuthenticator.verify(secret, command, System.currentTimeMillis(), command.nonce in usedNonces)
+            WorkProfileLaunchAuthenticator.verify(secret, command, now, nonceAlreadyUsed)
         } finally {
             secret.fill(0)
         }
@@ -547,7 +557,11 @@ class MainActivity : Activity() {
             Toast.makeText(this, "Install this app inside the Work Profile first, then select it in Rub Minds Companion there.", Toast.LENGTH_LONG).show()
             return
         }
-        val nextNonces = (usedNonces + command.nonce).takeLast(512).toSet()
+        if (liveEntries.size >= 2_048) {
+            Toast.makeText(this, "The one-use launch guard is full. No app was opened; retry after expired requests are cleared.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val nextNonces = liveEntries + "${command.nonce}:${command.issuedAtMillis}"
         if (!prefs.edit().putStringSet("used", nextNonces).commit()) {
             Toast.makeText(this, "Could not persist the one-use launch guard. No app was opened.", Toast.LENGTH_LONG).show()
             return
