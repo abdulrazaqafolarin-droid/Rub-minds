@@ -591,7 +591,7 @@ class AndroidScreenShareService : Service() {
         )
         return if (Build.VERSION.SDK_INT >= 26) {
             Notification.Builder(this, CHANNEL_ID)
-                .setSmallIcon(android.R.drawable.presence_video_online)
+                .setSmallIcon(android.R.drawable.ic_menu_view)
                 .setContentTitle("Backroom screen sharing is active")
                 .setContentText("The selected Android screen is available to your approved group session.")
                 .setOngoing(true)
@@ -600,7 +600,7 @@ class AndroidScreenShareService : Service() {
         } else {
             @Suppress("DEPRECATION")
             Notification.Builder(this)
-                .setSmallIcon(android.R.drawable.presence_video_online)
+                .setSmallIcon(android.R.drawable.ic_menu_view)
                 .setContentTitle("Backroom screen sharing is active")
                 .setOngoing(true)
                 .addAction(android.R.drawable.ic_media_pause, "Stop", stop)

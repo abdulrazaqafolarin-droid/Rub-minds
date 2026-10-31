@@ -14,6 +14,7 @@ on:
       - '.github/workflows/backroom-android-companion.yml'
       - 'android-companion/**'
       - 'supabase/functions/backroom-device/**'
+      - 'supabase/migrations/20261031183000_backroom_android_streaming_commands.sql'
       - 'integrations/backroom/android-touch-policy.*'
       - 'src/BackroomAndroidControl.tsx'
       - 'src/BackroomDevicesApp.tsx'
