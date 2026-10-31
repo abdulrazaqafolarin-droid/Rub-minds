@@ -117,6 +117,7 @@ data class GuestRuntimeDescriptor(
 data class GuestDeviceAcceptanceEvidence(
     val engineId: String,
     val engineVersion: String,
+    val isolationBoundary: GuestIsolationBoundary,
     val deviceProfileId: String,
     val apiLevel: Int,
     val abi: String,
@@ -261,6 +262,9 @@ object GuestRuntimeAdmissionPolicy {
         } else {
             if (evidence.engineId != descriptor.engineId || evidence.engineVersion != descriptor.engineVersion) {
                 evidenceBlockers += "acceptance_engine_identity_mismatch"
+            }
+            if (evidence.isolationBoundary != descriptor.isolationBoundary) {
+                evidenceBlockers += "acceptance_isolation_boundary_mismatch"
             }
             if (evidence.deviceProfileId != device.localProfileId ||
                 evidence.apiLevel != device.apiLevel || evidence.abi != device.abi) {
