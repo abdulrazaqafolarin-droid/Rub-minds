@@ -751,6 +751,10 @@ fn consume_terminal_submit_ready(
     matches!(pending.remove(session_id), Some(expires_at) if expires_at > now)
 }
 
+fn retire_terminal_submit_ready(pending: &mut HashMap<String, Instant>, session_id: &str) {
+    pending.remove(session_id);
+}
+
 fn check_input_rate(state: &AppState) -> Result<(), String> {
     let now = Instant::now();
     let mut events = state.input_events.lock().map_err(|_| "Input state unavailable")?;
@@ -1311,6 +1315,14 @@ async fn start_terminal(app: AppHandle, state: State<'_, AppState>, session_id: 
 fn write_terminal(state: State<'_, AppState>, session_id: String, data: String) -> Result<(), String> {
     control_granted(&state, &session_id)?;
     draft_granted(&state, &session_id)?;
+    // Any new authorized attempt supersedes the last Enter lease, even when
+    // validation or the subsequent PTY write fails. A rejected retry must not
+    // leave stale terminal content eligible for submission.
+    {
+        let mut pending = state.terminal_submit_ready.lock()
+            .map_err(|_| "Terminal submit state unavailable")?;
+        retire_terminal_submit_ready(&mut pending, &session_id);
+    }
     check_input_rate(&state)?;
     validate_terminal_draft_text(&data).map_err(|_| {
         "Terminal drafts must contain 1-4000 characters of plain text, without Enter or control characters".to_string()
@@ -1574,6 +1586,16 @@ mod native_input_tests {
         }
         assert!(validate_terminal_draft_text(&"x".repeat(MAX_TERMINAL_INPUT)).is_ok());
         assert!(validate_terminal_draft_text(&"x".repeat(MAX_TERMINAL_INPUT + 1)).is_err());
+    }
+
+    #[test]
+    fn a_new_terminal_draft_attempt_retires_the_previous_enter_permission() {
+        let now = Instant::now();
+        let mut pending = HashMap::new();
+        pending.insert("session-a".to_string(), now + Duration::from_secs(30));
+        retire_terminal_submit_ready(&mut pending, "session-a");
+        assert!(!consume_terminal_submit_ready(&mut pending, "session-a", now));
+        assert!(pending.is_empty());
     }
 
     #[test]
