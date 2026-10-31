@@ -207,6 +207,14 @@ test("Gradle APK build audits the final merged host manifest and records its dig
   assert.match(gradle, /disallow-doctype-decl/);
   assert.match(gradle, /allowedPermissions = setOf\("android\.permission\.INTERNET"\)/);
   assert.match(gradle, /actualExported == expectedExported/);
+  assert.match(gradle, /duplicateComponents\.isEmpty\(\)/);
+  assert.match(gradle, /Component \$className must declare android:exported explicitly/);
+  assert.match(gradle, /android\.intent\.action\.MAIN/);
+  assert.match(gradle, /android\.intent\.category\.LAUNCHER/);
+  assert.match(gradle, /android\.view\.InputMethod/);
+  assert.match(gradle, /android\.permission\.BIND_INPUT_METHOD/);
+  assert.match(gradle, /ACCESS_EXTERNAL_SCHEMA/);
+  assert.match(gradle, /joinToString\(\)/);
   assert.match(gradle, /manifestSha256=/);
   assert.match(gradle, /dependsOn\(auditTask\)/);
   assert.match(workflow, /:app:auditDebugGuestHostManifest/);
