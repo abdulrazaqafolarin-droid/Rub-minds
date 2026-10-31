@@ -323,3 +323,20 @@ test("local touch revocation remains fail-closed when preference persistence fai
   assert.match(service, /localControlGranted = false[\s\S]*AndroidTouchAccessibilityService\.clearActiveSession\(activeSessionId\)[\s\S]*RemoteTouchGate\.disarm\(this\)[\s\S]*runCatching \{ closePeer\(\) \}/);
   assert.match(service, /fun revokeLocalTouch\(context: Context\)[\s\S]*AndroidTouchAccessibilityService\.clearActiveSession\(\)/);
 });
+
+
+test("Android acknowledges malformed touch gestures with an explicit rejection", async () => {
+  const service = await read("app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  const start = service.indexOf('val gestureId = input.optString("gestureId")');
+  const end = service.indexOf("val gesture = RemoteTouchGesture(", start);
+  assert.ok(start >= 0 && end > start, "touch parser and dispatch boundary must remain present");
+  const parser = service.slice(start, end);
+  assert.match(parser, /input\.optString\("kind"\) != "touch"[\s\S]*!UUID_PATTERN\.matches\(gestureId\)[\s\S]*input\.optString\("sessionId"\) != sessionId[\s\S]*input\.optString\("appPackageName"\) != appPackage/);
+  assert.match(parser, /val rejectGesture = \{ sendTouchAcknowledgement\(channel, sessionId, gestureId, false\) \}/);
+  assert.match(parser, /input\.keys\(\)[\s\S]*rejectGesture\(\)/);
+  assert.match(parser, /else \{[\s\S]*rejectGesture\(\)[\s\S]*return/);
+  assert.match(parser, /optJSONObject\("from"\)[\s\S]*rejectGesture\(\)/);
+  assert.match(parser, /optJSONObject\("to"\)[\s\S]*rejectGesture\(\)/);
+  assert.match(parser, /durationValue\.toDouble\(\) % 1\.0 != 0\.0[\s\S]*rejectGesture\(\)/);
+  assert.match(parser, /durationMillis !in 40\.\.1_500[\s\S]*rejectGesture\(\)/);
+});
