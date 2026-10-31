@@ -201,3 +201,19 @@ Potentially useful non-virtualized fallback: a separate, explicitly consented An
 - AOSP companion app streaming role: https://source.android.com/docs/core/permissions/app-streaming
 - Android MediaProjection single-app capture: https://developer.android.com/media/grow/media-projection
 - AVF/Microdroid API privilege note: https://android.googlesource.com/platform/packages/modules/Virtualization/+/HEAD/libs/framework-virtualization/README.md
+
+
+## Managed Work Profile execution bridge — implemented locally, not in-frame virtualization (2026-10-31)
+
+The Android companion now has a deliberately separate Work Profile bridge. It uses Android's standard managed-profile provisioning flow and makes the companion a profile owner only inside the new Work Profile. The DPC uses no device-wide policies; it saves a profile-local Keystore secret and allowlists only the companion package for cross-profile communication. The parent profile must separately obtain the user's Android cross-profile consent.
+
+A personal-profile user can request a local launch of a package in the one managed profile. The request is HMAC-SHA256 authenticated, bound to package + signer digest + issue time + UUID nonce, expires after 60 seconds and is consumed once. The Work Profile app re-reads the package signer and checks a distinct profile-local saved grant before opening its copy. A missing app, mismatched signer, unapproved profile-local grant, missing secret, denied system consent, replay or ambiguous multiple-profile result fails closed. No app data, cookies, account state or login is copied between the two profiles. No cloud/AI action can invoke this path.
+
+This is an **interim OS-isolated execution bridge** only. It demonstrates a supported data-separation boundary and local cross-profile launch on a compatible Android build. It does not create a virtual display, stream the Work Profile app into the Phone Frame, route touch, expose the app's accessibility tree or support drag-select text insertion. The app remains a normal Android Activity outside the Backroom canvas. Do not set GuestRuntimeDecision.READY based on Work Profile provisioning or launch success alone; common guest-frame, touch, accessibility, draft and emergency-stop evidence is still required.
+
+The merged-manifest build gate now permits exactly two host permissions (INTERNET and INTERACT_ACROSS_PROFILES) and exactly three exported components (MainActivity, DraftInputMethodService and the exact WorkProfileAdminReceiver). The DPC receiver must be protected by BIND_DEVICE_ADMIN and retain its device-admin metadata and provisioning actions. Every other exported component and every other permission continues to fail the build/admission gate.
+
+Platform references:
+- https://developer.android.com/reference/android/app/admin/DevicePolicyManager#ACTION_PROVISION_MANAGED_PROFILE
+- https://developer.android.com/reference/android/content/pm/CrossProfileApps
+- https://developer.android.com/reference/android/app/admin/DevicePolicyManager#setCrossProfilePackages(android.content.ComponentName,java.util.Set)
