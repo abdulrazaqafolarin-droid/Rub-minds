@@ -1551,6 +1551,10 @@ fn emergency_stop(state: State<'_, AppState>) -> Result<(), String> {
     state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?.clear();
     state.terminal_submit_ready.lock().map_err(|_| "Terminal submit state unavailable")?.clear();
     let sessions = std::mem::take(&mut *state.terminals.lock().map_err(|_| "Terminal registry unavailable")?);
+    // A control grant dialog may have completed between the initial grant clear
+    // and terminal-registry shutdown. Re-clear after the sessions are removed;
+    // grant_control rechecks liveness under the same control lock.
+    state.control_grants.lock().map_err(|_| "Control state unavailable")?.clear();
     for (_, session) in sessions {
         let _ = session.child.lock().map(|mut child| child.kill());
     }
