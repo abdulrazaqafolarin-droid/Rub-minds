@@ -17,6 +17,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const [sessionId, setSessionId] = useState('');
   const [viewReady, setViewReady] = useState(false);
   const [sourceVisible, setSourceVisible] = useState(false);
+  const sourceVisibilityRef = useRef<boolean | null>(null);
   const [dataReady, setDataReady] = useState(false);
   const [controlGranted, setControlGranted] = useState(false);
   const [message, setMessage] = useState('Choose an app added on the phone, then start a view session.');
@@ -53,6 +54,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     streamRef.current?.getTracks().forEach(track => track.stop()); streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     sessionRef.current = ''; pointerRef.current = null; pendingControlRequestRef.current = '';
+    sourceVisibilityRef.current = null;
     setSessionId(''); setViewReady(false); setSourceVisible(false); setDataReady(false); setControlGranted(false); setBusy(false);
   }, []);
 
@@ -152,7 +154,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     setBusy(true); setControlGranted(false); setViewReady(false); setDataReady(false);
     notify('Creating a secure screen session…');
     const nextSessionId = uuid(), requestId = uuid();
-    sessionRef.current = nextSessionId; setSessionId(nextSessionId);
+    sessionRef.current = nextSessionId; sourceVisibilityRef.current = null; setSessionId(nextSessionId);
     try {
       const peer = new RTCPeerConnection({ iceServers: [
         { urls: ['stun:stun.l.google.com:19302'] }, { urls: ['stun:stun.cloudflare.com:3478'] },
@@ -184,9 +186,15 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
           return;
         }
         if (acknowledgement.kind === 'app_visibility' && typeof acknowledgement.visible === 'boolean') {
+          sourceVisibilityRef.current = acknowledgement.visible;
           setSourceVisible(acknowledgement.visible);
           if (!acknowledgement.visible) {
             setControlGranted(false);
+            pendingControlRequestRef.current = '';
+            if (controlExpiryRef.current !== null) window.clearTimeout(controlExpiryRef.current);
+            if (controlRequestTimerRef.current !== null) window.clearTimeout(controlRequestTimerRef.current);
+            controlExpiryRef.current = null;
+            controlRequestTimerRef.current = null;
             notify('The selected app window is hidden on the phone. Keep that app in the foreground; video and touch pause until Android reports it visible.');
           } else {
             notify('The selected app window is visible again. Request touch control separately after locally arming it on the phone.');
@@ -216,16 +224,25 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
             void stopRemote(nextSessionId);
           }
         });
-        setViewReady(true); setSourceVisible(stream.getVideoTracks().every(track => !track.muted)); setBusy(false);
+        setViewReady(true);
+        setSourceVisible(sourceVisibilityRef.current ?? stream.getVideoTracks().every(track => !track.muted));
+        setBusy(false);
         for (const track of stream.getVideoTracks()) {
           track.addEventListener('mute', () => {
             if (streamRef.current !== stream) return;
+            sourceVisibilityRef.current = false;
             setSourceVisible(false);
             setControlGranted(false);
+            if (controlExpiryRef.current !== null) window.clearTimeout(controlExpiryRef.current);
+            if (controlRequestTimerRef.current !== null) window.clearTimeout(controlRequestTimerRef.current);
+            controlExpiryRef.current = null;
+            controlRequestTimerRef.current = null;
+            pendingControlRequestRef.current = '';
             notify('The selected app window is hidden on the phone. Keep that app in the foreground; the stream will resume when it is visible.');
           });
           track.addEventListener('unmute', () => {
             if (streamRef.current !== stream) return;
+            sourceVisibilityRef.current = true;
             setSourceVisible(true);
             notify('The selected app window is visible again. Request touch control separately after locally arming it on the phone.');
           });

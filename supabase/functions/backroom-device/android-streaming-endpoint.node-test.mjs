@@ -244,3 +244,14 @@ test("Android app-window sharing UI names the QPR2 compatibility boundary and pr
   assert.match(setup, /Build\.DISPLAY/);
   assert.match(setup, /Build\.VERSION\.INCREMENTAL/);
 });
+
+test("Phone Frame preserves the latest Android visibility message across first video-track delivery", async () => {
+  const control = await read("src/BackroomAndroidControl.tsx");
+  assert.match(control, /sourceVisibilityRef = useRef<boolean \| null>\(null\)/);
+  assert.match(control, /sourceVisibilityRef\.current = acknowledgement\.visible/);
+  assert.match(control, /sourceVisibilityRef\.current \?\? stream\.getVideoTracks\(\)\.every/);
+  assert.match(control, /sourceVisibilityRef\.current = null/);
+  const hidden = control.slice(control.indexOf("if (!acknowledgement.visible)"), control.indexOf("} else {", control.indexOf("if (!acknowledgement.visible)")));
+  assert.match(hidden, /pendingControlRequestRef\.current = ''/);
+  assert.match(hidden, /clearTimeout\(controlExpiryRef\.current\)/);
+});
