@@ -545,43 +545,67 @@ Deno.serve(async req => {
     }
 
     if (action === 'android/commands') {
-      if (!exactKeys(input, ['action'])) return json(400, fail('invalid_android_command_poll'), origin);
+      const hasSessionId = Object.hasOwn(input, 'sessionId');
+      const hasRoomId = Object.hasOwn(input, 'roomId');
+      if (hasSessionId !== hasRoomId ||
+          !exactKeys(input, hasSessionId ? ['action','sessionId','roomId'] : ['action']) ||
+          (hasSessionId && (!UUID.test(input.sessionId) || !UUID.test(input.roomId)))) {
+        return json(400, fail('invalid_android_command_poll'), origin);
+      }
       const current = await device(req);
       if (!current) return json(401, fail('device_not_approved'), origin);
       if (current.platform !== 'android') return json(409, fail('android_device_required'), origin);
       const now = new Date().toISOString();
       const nextSessionExpiry = new Date(Date.now() + ANDROID_SESSION_LEASE_MS).toISOString();
       const stopSessionIds: string[] = [];
-      const { data: activeScreenSessions, error: sessionLookupError } = await db.from('backroom_desktop_sessions')
-        .select('session_id,room_id')
-        .eq('device_id', current.device_id).eq('session_type', 'screen').eq('status', 'active')
-        .gt('expires_at', now);
-      if (sessionLookupError) return json(503, fail('android_session_heartbeat_lookup_failed'), origin);
-      for (const activeSession of activeScreenSessions ?? []) {
-        const binding = await verifyActiveDeviceRoomBinding(current.device_id, activeSession.room_id);
-        if (!binding.ok && binding.status === 503) {
-          return json(503, fail('android_session_binding_check_failed'), origin);
+
+      // Heartbeat only the exact session the handset says it currently owns.
+      // This prevents an otherwise-active device from renewing a different room's
+      // session after that room binding has been revoked or its session was stopped.
+      if (hasSessionId) {
+        const { data: activeSessionRow, error: activeSessionError } = await db.from('backroom_desktop_sessions')
+          .select('session_id,room_id,session_type,status,expires_at')
+          .eq('session_id', input.sessionId).eq('device_id', current.device_id)
+          .eq('room_id', input.roomId).maybeSingle();
+        if (activeSessionError) return json(503, fail('android_session_heartbeat_lookup_failed'), origin);
+        if (!activeSessionRow || activeSessionRow.session_type !== 'screen' ||
+            activeSessionRow.status !== 'active' || activeSessionRow.expires_at <= now) {
+          if (activeSessionRow?.status === 'active') {
+            const status = activeSessionRow.expires_at <= now ? 'expired' : 'revoked';
+            const { error } = await db.from('backroom_desktop_sessions')
+              .update({ status, stopped_at: new Date().toISOString() })
+              .eq('session_id', input.sessionId).eq('device_id', current.device_id)
+              .eq('room_id', input.roomId).eq('status', 'active');
+            if (error) return json(503, fail('android_session_revoke_failed'), origin);
+          }
+          stopSessionIds.push(input.sessionId);
+        } else {
+          const binding = await verifyActiveDeviceRoomBinding(current.device_id, input.roomId);
+          if (!binding.ok && binding.status === 503) {
+            return json(503, fail('android_session_binding_check_failed'), origin);
+          }
+          if (!binding.ok || binding.platform !== 'android') {
+            const { error: revokeError } = await db.from('backroom_desktop_sessions')
+              .update({ status: 'revoked', stopped_at: new Date().toISOString() })
+              .eq('session_id', input.sessionId).eq('device_id', current.device_id)
+              .eq('room_id', input.roomId).eq('status', 'active');
+            if (revokeError) return json(503, fail('android_session_revoke_failed'), origin);
+            const { error: commandRevokeError } = await db.from('backroom_android_commands')
+              .update({ status: 'rejected', result: 'device_room_binding_revoked', lease_until: null })
+              .eq('device_id', current.device_id).eq('room_id', input.roomId)
+              .eq('session_id', input.sessionId).in('status', ['pending','leased']);
+            if (commandRevokeError) return json(503, fail('android_session_command_revoke_failed'), origin);
+            stopSessionIds.push(input.sessionId);
+          } else {
+            const { error: heartbeatError } = await db.from('backroom_desktop_sessions')
+              .update({ expires_at: nextSessionExpiry })
+              .eq('session_id', input.sessionId).eq('device_id', current.device_id)
+              .eq('room_id', input.roomId).eq('status', 'active').gt('expires_at', now);
+            if (heartbeatError) return json(503, fail('android_session_heartbeat_failed'), origin);
+          }
         }
-        if (!binding.ok || binding.platform !== 'android') {
-          const { error: revokeError } = await db.from('backroom_desktop_sessions')
-            .update({ status: 'revoked', stopped_at: new Date().toISOString() })
-            .eq('session_id', activeSession.session_id).eq('device_id', current.device_id)
-            .eq('room_id', activeSession.room_id).eq('status', 'active');
-          if (revokeError) return json(503, fail('android_session_revoke_failed'), origin);
-          const { error: commandRevokeError } = await db.from('backroom_android_commands')
-            .update({ status: 'rejected', result: 'device_room_binding_revoked', lease_until: null })
-            .eq('device_id', current.device_id).eq('room_id', activeSession.room_id)
-            .eq('session_id', activeSession.session_id).in('status', ['pending','leased']);
-          if (commandRevokeError) return json(503, fail('android_session_command_revoke_failed'), origin);
-          stopSessionIds.push(activeSession.session_id);
-          continue;
-        }
-        const { error: heartbeatError } = await db.from('backroom_desktop_sessions')
-          .update({ expires_at: nextSessionExpiry })
-          .eq('session_id', activeSession.session_id).eq('device_id', current.device_id)
-          .eq('room_id', activeSession.room_id).eq('status', 'active').gt('expires_at', now);
-        if (heartbeatError) return json(503, fail('android_session_heartbeat_failed'), origin);
       }
+
       const retentionCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
       const { error: cleanupError } = await db.from('backroom_android_commands').delete()
         .eq('device_id', current.device_id).lt('created_at', retentionCutoff);
@@ -639,7 +663,7 @@ Deno.serve(async req => {
           }
           const session = await activeDesktopSession(row.session_id, current.device_id, row.room_id);
           if (!session.ok) {
-            await db.from('backroom_android_commands').update({ status: 'expired', result: 'session_not_active' })
+            await db.from('backroom_android_commands').update({ status: 'expired', result: 'session_not_active', lease_until: null })
               .eq('id', row.id).eq('device_id', current.device_id).eq('status', 'leased');
             continue;
           }
@@ -649,10 +673,13 @@ Deno.serve(async req => {
           .update({ lease_until: leaseUntil })
           .eq('id', row.id).eq('device_id', current.device_id)
           .eq('status', 'leased').eq('lease_until', row.lease_until)
-          .select('id');
+          .gt('expires_at', new Date().toISOString()).select('id');
         if (error) return json(503, fail('android_command_lease_failed'), origin);
         if (Array.isArray(data) && data.length === 1) {
-          leased.push({ ...row.command, commandId: row.id, requestId: row.request_id, sessionId: row.session_id });
+          const mapped = mapAndroidQueuedCommand(row);
+          if (mapped) leased.push(mapped);
+          else await db.from('backroom_android_commands').update({ status: 'rejected', result: 'invalid_command_payload', lease_until: null })
+            .eq('id', row.id).eq('device_id', current.device_id).eq('status', 'leased');
         }
       }
       await db.from('backroom_devices').update({ last_seen_at: new Date().toISOString() }).eq('device_id', current.device_id);

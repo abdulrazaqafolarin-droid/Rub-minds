@@ -198,7 +198,15 @@ class AndroidScreenShareService : Service() {
     private fun pollDeviceCommands() {
         val token = deviceToken ?: return stopCapture("device_credential_missing")
         try {
-            val result = api?.post("android/commands", token) ?: throw IllegalStateException("Cloud command response missing.")
+            val pollFields = JSONObject()
+            val sessionId = activeSessionId
+            val roomId = activeRoomId
+            if (sessionId != null && roomId != null) {
+                pollFields.put("sessionId", sessionId)
+                pollFields.put("roomId", roomId)
+            }
+            val result = api?.post("android/commands", token, pollFields)
+                ?: throw IllegalStateException("Cloud command response missing.")
             consecutivePollFailures = 0
             val stopSessions = result.optJSONArray("stopSessionIds")
             if (stopSessions != null && (0 until stopSessions.length()).any { stopSessions.optString(it) == activeSessionId }) {
