@@ -5,6 +5,16 @@ import javax.xml.parsers.DocumentBuilderFactory
 import java.security.MessageDigest
 import java.util.Locale
 
+// Keep this record at script scope. A local data class inside Gradle's
+// nested task action triggers a Kotlin DSL IR code-generation failure.
+data class GuestManifestGuestManifestComponentRecord(
+    val type: String,
+    val className: String,
+    val exported: Boolean,
+    val permission: String,
+    val element: Element
+)
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -115,14 +125,6 @@ androidComponents {
                 val application = childElements(root).singleOrNull { it.tagName == "application" }
                     ?: error("Merged manifest must contain exactly one application element.")
                 val componentTags = setOf("activity", "activity-alias", "service", "receiver", "provider")
-                data class ComponentRecord(
-                    val type: String,
-                    val className: String,
-                    val exported: Boolean,
-                    val permission: String,
-                    val element: Element
-                )
-
                 fun resolveClassName(rawName: String): String {
                     require(rawName.isNotBlank()) { "Merged component is missing android:name." }
                     val replaced = rawName.replace("\${applicationId}", expectedAppId)
@@ -141,7 +143,7 @@ androidComponents {
                         require(exportedValue == "true" || exportedValue == "false") {
                             "Component $className must declare android:exported explicitly in the merged manifest."
                         }
-                        ComponentRecord(
+                        GuestManifestComponentRecord(
                             type = element.tagName,
                             className = className,
                             exported = exportedValue == "true",
