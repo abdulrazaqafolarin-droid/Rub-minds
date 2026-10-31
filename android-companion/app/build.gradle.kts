@@ -49,7 +49,10 @@ android {
     kotlinOptions { jvmTarget = "17" }
 }
 
-dependencies { testImplementation("junit:junit:4.13.2") }
+dependencies {
+    testImplementation("junit:junit:4.13.2")
+    implementation("io.github.webrtc-sdk:android:150.7871.01")
+}
 
 
 // Audit the final merged manifest, not just the app's source manifest. This
@@ -118,7 +121,10 @@ androidComponents {
                     .toSet()
                 val allowedPermissions = setOf(
                     "android.permission.INTERNET",
-                    "android.permission.INTERACT_ACROSS_PROFILES"
+                    "android.permission.INTERACT_ACROSS_PROFILES",
+                    "android.permission.FOREGROUND_SERVICE",
+                    "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION",
+                    "android.permission.POST_NOTIFICATIONS"
                 )
                 require(permissions == allowedPermissions) {
                     "Guest host manifest permission allowlist mismatch. " +
@@ -167,10 +173,11 @@ androidComponents {
                 val expectedExported = setOf(
                     "activity:$expectedAppId.MainActivity",
                     "service:$expectedAppId.DraftInputMethodService",
-                    "receiver:$expectedAppId.WorkProfileAdminReceiver"
+                    "receiver:$expectedAppId.WorkProfileAdminReceiver",
+                    "service:$expectedAppId.AndroidTouchAccessibilityService"
                 )
                 val actualExported = exported.map { "${it.type}:${it.className}" }.toSet()
-                require(actualExported == expectedExported && exported.size == 3) {
+                require(actualExported == expectedExported && exported.size == 4) {
                     "Guest host exported-component allowlist mismatch. " +
                         "Expected ${expectedExported.sorted()}, found ${actualExported.sorted()}."
                 }
