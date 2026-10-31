@@ -51,9 +51,9 @@ androidComponents {
         val mergedManifest = variant.artifacts.get(SingleArtifact.MERGED_MANIFEST)
         val appId = variant.applicationId
         val reportFile = layout.buildDirectory.file(
-            "reports/guest-host-manifest/\${variant.name}.txt"
+            "reports/guest-host-manifest/${variant.name}.txt"
         )
-        val auditTask = tasks.register("audit\${variantTitle}GuestHostManifest") {
+        val auditTask = tasks.register("audit${variantTitle}GuestHostManifest") {
             group = "verification"
             description = "Fail closed unless the merged Android host manifest matches the Rub Minds guest-runtime allowlist."
             inputs.file(mergedManifest)
@@ -64,7 +64,7 @@ androidComponents {
                 val manifestFile = mergedManifest.get().asFile
                 val expectedAppId = appId.get()
                 require(manifestFile.isFile) {
-                    "Merged manifest is missing: \${manifestFile.absolutePath}"
+                    "Merged manifest is missing: ${manifestFile.absolutePath}"
                 }
 
                 val factory = DocumentBuilderFactory.newInstance().apply {
@@ -80,12 +80,12 @@ androidComponents {
                 val document = factory.newDocumentBuilder().parse(manifestFile)
                 val root = document.documentElement
                 require(root.tagName == "manifest") {
-                    "Unexpected merged manifest root: \${root.tagName}"
+                    "Unexpected merged manifest root: ${root.tagName}"
                 }
 
                 val androidNamespace = "http://schemas.android.com/apk/res/android"
                 fun Element.androidAttribute(name: String): String =
-                    getAttributeNS(androidNamespace, name).ifBlank { getAttribute("android:\$name") }
+                    getAttributeNS(androidNamespace, name).ifBlank { getAttribute("android:$name") }
 
                 fun childElements(parent: Element): List<Element> {
                     val result = mutableListOf<Element>()
@@ -110,7 +110,7 @@ androidComponents {
                 val allowedPermissions = setOf("android.permission.INTERNET")
                 require(permissions == allowedPermissions) {
                     "Guest host manifest permission allowlist mismatch. " +
-                        "Expected \${allowedPermissions.sorted()}, found \${permissions.sorted()}."
+                        "Expected ${allowedPermissions.sorted()}, found ${permissions.sorted()}."
                 }
 
                 val application = childElements(root).singleOrNull { it.tagName == "application" }
@@ -129,7 +129,7 @@ androidComponents {
                     val replaced = rawName.replace("\${'$'}{applicationId}", expectedAppId)
                     return when {
                         replaced.startsWith(".") -> expectedAppId + replaced
-                        '.' !in replaced -> "\$expectedAppId.\$replaced"
+                        '.' !in replaced -> "$expectedAppId.$replaced"
                         else -> replaced
                     }
                 }
@@ -140,7 +140,7 @@ androidComponents {
                         val className = resolveClassName(element.androidAttribute("name"))
                         val exportedValue = element.androidAttribute("exported")
                         require(exportedValue == "true" || exportedValue == "false") {
-                            "Component \$className must declare android:exported explicitly in the merged manifest."
+                            "Component $className must declare android:exported explicitly in the merged manifest."
                         }
                         ComponentRecord(
                             type = element.tagName,
@@ -156,18 +156,18 @@ androidComponents {
                     .filterValues { it.size != 1 }
                     .keys
                 require(duplicateComponents.isEmpty()) {
-                    "Duplicate component declarations: \$duplicateComponents"
+                    "Duplicate component declarations: $duplicateComponents"
                 }
 
                 val exported = components.filter { it.exported }
                 val expectedExported = setOf(
-                    "activity:\$expectedAppId.MainActivity",
-                    "service:\$expectedAppId.DraftInputMethodService"
+                    "activity:$expectedAppId.MainActivity",
+                    "service:$expectedAppId.DraftInputMethodService"
                 )
-                val actualExported = exported.map { "\${it.type}:\${it.className}" }.toSet()
+                val actualExported = exported.map { "${it.type}:${it.className}" }.toSet()
                 require(actualExported == expectedExported && exported.size == 2) {
                     "Guest host exported-component allowlist mismatch. " +
-                        "Expected \${expectedExported.sorted()}, found \${actualExported.sorted()}."
+                        "Expected ${expectedExported.sorted()}, found ${actualExported.sorted()}."
                 }
 
                 fun hasIntent(
@@ -188,7 +188,7 @@ androidComponents {
                     }
 
                 val launcher = exported.single { it.type == "activity" }
-                require(launcher.className == "\$expectedAppId.MainActivity") {
+                require(launcher.className == "$expectedAppId.MainActivity") {
                     "The only exported activity must be the exact Rub Minds launcher."
                 }
                 require(launcher.permission.isBlank()) {
@@ -199,7 +199,7 @@ androidComponents {
                 }
 
                 val inputMethod = exported.single { it.type == "service" }
-                require(inputMethod.className == "\$expectedAppId.DraftInputMethodService") {
+                require(inputMethod.className == "$expectedAppId.DraftInputMethodService") {
                     "The only exported service must be the exact Rub Minds draft input method."
                 }
                 require(inputMethod.permission == "android.permission.BIND_INPUT_METHOD") {
@@ -216,16 +216,16 @@ androidComponents {
                 report.parentFile.mkdirs()
                 report.writeText(
                     buildString {
-                        appendLine("applicationId=\$expectedAppId")
-                        appendLine("manifestSha256=\$digest")
-                        appendLine("permissions=\${permissions.sorted().joinToString(",")}")
-                        appendLine("exportedComponents=\${actualExported.sorted().joinToString(",")}")
-                        appendLine("componentCount=\${components.size}")
+                        appendLine("applicationId=$expectedAppId")
+                        appendLine("manifestSha256=$digest")
+                        appendLine("permissions=${permissions.sorted().joinToString(")
+                        appendLine("exportedComponents=${actualExported.sorted().joinToString(")
+                        appendLine("componentCount=${components.size}")
                     }
                 )
                 logger.lifecycle(
-                    "Guest host manifest audit passed for \${variant.name}: " +
-                        "sha256=\$digest, components=\${components.size}, exported=\${exported.size}."
+                    "Guest host manifest audit passed for ${variant.name}: " +
+                        "sha256=$digest, components=${components.size}, exported=${exported.size}."
                 )
             }
         }
@@ -233,7 +233,7 @@ androidComponents {
         // Make an APK/AAB build impossible to complete without its merged
         // manifest passing this audit.
         tasks.matching {
-            it.name == "assemble\${variantTitle}" || it.name == "bundle\${variantTitle}"
+            it.name == "assemble${variantTitle}" || it.name == "bundle${variantTitle}"
         }.configureEach {
             dependsOn(auditTask)
         }
