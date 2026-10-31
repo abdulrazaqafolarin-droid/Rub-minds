@@ -236,7 +236,14 @@ class AndroidScreenShareService : Service() {
                     acknowledge(token, commandId, requestId, sessionId, "app_or_offer_rejected")
                     pendingOfferCommandId = ""
                     pendingOfferRequestId = ""
-                    closePeer()
+                    try {
+                        api?.post("android/session-close", token, JSONObject()
+                            .put("roomId", roomId)
+                            .put("sessionId", sessionId))
+                    } catch (_: Exception) {
+                        // The session expires on its short server heartbeat lease if close cannot be delivered.
+                    }
+                    stopCapture("android_offer_rejected")
                 }
             }
             "request_control" -> {

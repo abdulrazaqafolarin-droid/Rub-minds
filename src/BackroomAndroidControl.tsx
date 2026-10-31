@@ -30,6 +30,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const controlExpiryRef = useRef<number | null>(null);
   const startTimerRef = useRef<number | null>(null);
   const disconnectTimerRef = useRef<number | null>(null);
+  const controlRequestTimerRef = useRef<number | null>(null);
 
   const notify = useCallback((text: string, error = false) => {
     setMessage(text); setMessageError(error);
@@ -39,7 +40,8 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     if (controlExpiryRef.current !== null) window.clearTimeout(controlExpiryRef.current);
     if (startTimerRef.current !== null) window.clearTimeout(startTimerRef.current);
     if (disconnectTimerRef.current !== null) window.clearTimeout(disconnectTimerRef.current);
-    controlExpiryRef.current = null; startTimerRef.current = null; disconnectTimerRef.current = null;
+    if (controlRequestTimerRef.current !== null) window.clearTimeout(controlRequestTimerRef.current);
+    controlExpiryRef.current = null; startTimerRef.current = null; disconnectTimerRef.current = null; controlRequestTimerRef.current = null;
     const peer = peerRef.current;
     if (peer) { peer.ontrack = null; peer.onconnectionstatechange = null; peer.close(); }
     peerRef.current = null;
@@ -87,6 +89,8 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
           payload?.sessionId !== sessionRef.current || typeof payload?.requestId !== 'string' ||
           payload.requestId !== pendingControlRequestRef.current) return;
       pendingControlRequestRef.current = '';
+      if (controlRequestTimerRef.current !== null) window.clearTimeout(controlRequestTimerRef.current);
+      controlRequestTimerRef.current = null;
       if (payload.capability !== 'control') return;
       const granted = payload.ok === true;
       setControlGranted(granted);
@@ -118,6 +122,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       if (controlExpiryRef.current !== null) window.clearTimeout(controlExpiryRef.current);
       if (startTimerRef.current !== null) window.clearTimeout(startTimerRef.current);
       if (disconnectTimerRef.current !== null) window.clearTimeout(disconnectTimerRef.current);
+      if (controlRequestTimerRef.current !== null) window.clearTimeout(controlRequestTimerRef.current);
       peerRef.current?.close(); dataRef.current?.close();
       streamRef.current?.getTracks().forEach(track => track.stop());
       if (videoRef.current) videoRef.current.srcObject = null;
@@ -222,11 +227,26 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
           command, appPackageName: appPackage },
       });
       if (error || !data?.ok) throw new Error(data?.reason?.replaceAll('_', ' ') || error?.message || 'Phone rejected the command.');
-      if (command === 'request_control') { setBusy(false); notify('Touch permission requested. Confirm that local touch is armed on the phone.'); }
-      else { notify('Stopping the phone session…'); disposePeer(); }
+      if (command === 'request_control') {
+        setBusy(false);
+        if (pendingControlRequestRef.current === requestId) {
+          notify('Touch permission requested. Waiting for the phone to confirm its local permission.');
+          if (controlRequestTimerRef.current !== null) window.clearTimeout(controlRequestTimerRef.current);
+          controlRequestTimerRef.current = window.setTimeout(() => {
+            controlRequestTimerRef.current = null;
+            if (pendingControlRequestRef.current === requestId) {
+              pendingControlRequestRef.current = '';
+              setControlGranted(false);
+              notify('The phone did not confirm touch control in time. Check that the companion is connected and locally armed, then request again.', true);
+            }
+          }, 45_000);
+        }
+      } else { notify('Stopping the phone session…'); disposePeer(); }
     } catch (error) {
       if (command === 'request_control' && pendingControlRequestRef.current === requestId) {
         pendingControlRequestRef.current = '';
+        if (controlRequestTimerRef.current !== null) window.clearTimeout(controlRequestTimerRef.current);
+        controlRequestTimerRef.current = null;
       }
       setBusy(false);
       notify(error instanceof Error ? error.message : 'Could not send the phone command.', true);
