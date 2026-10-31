@@ -37,6 +37,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const [terminalInput,setTerminalInput] = useState('');
   const [terminalDraftReady,setTerminalDraftReady] = useState(false);
   const [terminalDraftSending,setTerminalDraftSending] = useState(false);
+  const [terminalActionUncertain,setTerminalActionUncertain] = useState(false);
   const channelRef=useRef<any>(null);
   const screenSessionRef=useRef('');
   const terminalPeerRef=useRef('');
@@ -53,6 +54,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const draftAttemptRef=useRef('');
   const terminalActionRef=useRef<{requestId:string;action:'draft'|'submit';text?:string}|null>(null);
   const draftGrantTimerRef=useRef<number|null>(null);
+  const terminalActionTimerRef=useRef<number|null>(null);
   const devicesRef=useRef<BackroomDevice[]>([]);
   const pendingCandidatesRef=useRef(new Map<string,RTCIceCandidateInit[]>());
   const selectedDevice=devices.find(d=>d.device_id===deviceId);
@@ -142,7 +144,30 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     }
   },[publish,abandonSession,clearSessionStartTimers,flash]);
 
+  const armTerminalActionTimeout=(requestId:string,action:'draft'|'submit')=>{
+    if(terminalActionTimerRef.current!==null)window.clearTimeout(terminalActionTimerRef.current);
+    terminalActionTimerRef.current=window.setTimeout(()=>{
+      terminalActionTimerRef.current=null;
+      const pending=terminalActionRef.current;
+      if(!pending||pending.requestId!==requestId||pending.action!==action)return;
+      // The request may have reached the computer even though its acknowledgement
+      // was lost. Lock this PTY UI rather than risk typing a duplicate draft or
+      // sending a second Enter. Stop/restart the session after inspecting it.
+      terminalActionRef.current=null;
+      setTerminalDraftSending(false);
+      setTerminalDraftReady(false);
+      setTerminalActionUncertain(true);
+      flash(action==='submit'
+        ?'No acknowledgement arrived for Enter. It may already have been sent. Inspect the computer; stop and restart this terminal before any retry.'
+        :'No acknowledgement arrived for terminal typing. The text may already be present. Inspect the computer; stop and restart this terminal before retrying.',true);
+    },15_000);
+  };
+
   const closePeer=useCallback(async()=>{
+    if(terminalActionTimerRef.current!==null){
+      window.clearTimeout(terminalActionTimerRef.current);
+      terminalActionTimerRef.current=null;
+    }
     if(draftGrantTimerRef.current!==null){
       window.clearTimeout(draftGrantTimerRef.current);
       draftGrantTimerRef.current=null;
@@ -154,6 +179,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     incomingStreamRef.current=null;
     if(videoRef.current)videoRef.current.srcObject=null;
     setVideoReady(false);setScreenSession('');screenSessionRef.current='';terminalPeerRef.current='';setControlGranted(false);setDraftGranted(false);
+    terminalActionRef.current=null;setTerminalDraftSending(false);setTerminalDraftReady(false);setTerminalActionUncertain(false);
     setCoordinateControl(false);setSelectMode(false);setSelection(null);setTargetStatus('');dragRef.current=null;targetAttemptRef.current='';draftAttemptRef.current='';
   },[]);
 
@@ -270,8 +296,9 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   };
   const startTerminal=async()=>{
     if(peerRef.current)await stopActivePeer();
-    setDraftGranted(false);setTerminalDraftReady(false);setTerminalDraftSending(false);
+    setDraftGranted(false);setTerminalDraftReady(false);setTerminalDraftSending(false);setTerminalActionUncertain(false);
     if(draftGrantTimerRef.current!==null){window.clearTimeout(draftGrantTimerRef.current);draftGrantTimerRef.current=null;}
+    if(terminalActionTimerRef.current!==null){window.clearTimeout(terminalActionTimerRef.current);terminalActionTimerRef.current=null;}
     terminalActionRef.current=null;
     try{
       const peerId=uuid();const pc=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun.cloudflare.com:3478']}]});
@@ -287,6 +314,10 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
           const pending=terminalActionRef.current;
           if(!pending||pending.requestId!==message.requestId||pending.action!==message.action)return;
           terminalActionRef.current=null;
+          if(terminalActionTimerRef.current!==null){
+            window.clearTimeout(terminalActionTimerRef.current);
+            terminalActionTimerRef.current=null;
+          }
           setTerminalDraftSending(false);
           if(message.ok===true&&message.action==='draft'){
             setTerminalInput(current=>current===pending.text?'':current);
@@ -529,9 +560,11 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       return flash('Terminal drafts cannot contain Enter or terminal control characters.',true);
     const requestId=uuid();
     terminalActionRef.current={requestId,action:'draft',text:terminalInput};
+    setTerminalDraftReady(false);
     setTerminalDraftSending(true);
     try{
       sendData({kind:'terminal_draft',requestId,sessionId:terminalSession,data:terminalInput});
+      armTerminalActionTimeout(requestId,'draft');
     }catch(error){
       terminalActionRef.current=null;setTerminalDraftSending(false);
       flash(error instanceof Error?error.message:'Could not send the terminal draft.',true);
@@ -544,6 +577,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     setTerminalDraftSending(true);
     try{
       sendData({kind:'terminal_submit',requestId,sessionId:terminalSession});
+      armTerminalActionTimeout(requestId,'submit');
     }catch(error){
       terminalActionRef.current=null;setTerminalDraftSending(false);
       flash(error instanceof Error?error.message:'Could not send Enter to the terminal.',true);
@@ -601,11 +635,12 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
             <div className="br-terminal-remote-head"><SquareTerminal size={15}/> Native terminal · actual computer</div>
             <pre>{terminalText||'Waiting for terminal output…'}</pre>
             <div className="br-terminal-input">
-              <input value={terminalInput} onChange={e=>{setTerminalInput(e.target.value);setTerminalDraftReady(false);}} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();terminalTypeDraft();}}} placeholder={!controlGranted?'Request terminal control first':!draftGranted?'Approve terminal draft typing first':'Text for the focused Claude Code/OpenCode prompt…'} disabled={!controlGranted||!draftGranted||terminalDraftSending}/>
-              {controlGranted&&!draftGranted&&<button type="button" onClick={()=>void requestTerminalDraftPermission()}>Request draft permission</button>}
-              <button type="button" onClick={terminalTypeDraft} disabled={!controlGranted||!draftGranted||!terminalInput.trim()||terminalDraftSending}>Type only</button>
-              <button type="button" onClick={terminalSubmit} disabled={!controlGranted||!terminalDraftReady||terminalDraftSending}>Press Enter</button>
+              <input value={terminalInput} onChange={e=>{setTerminalInput(e.target.value);setTerminalDraftReady(false);}} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();terminalTypeDraft();}}} placeholder={!controlGranted?'Request terminal control first':!draftGranted?'Approve terminal draft typing first':'Text for the focused Claude Code/OpenCode prompt…'} disabled={!controlGranted||!draftGranted||terminalDraftSending||terminalActionUncertain}/>
+              {controlGranted&&!draftGranted&&!terminalActionUncertain&&<button type="button" onClick={()=>void requestTerminalDraftPermission()}>Request draft permission</button>}
+              <button type="button" onClick={terminalTypeDraft} disabled={!controlGranted||!draftGranted||!terminalInput.trim()||terminalDraftSending||terminalActionUncertain}>Type only</button>
+              <button type="button" onClick={terminalSubmit} disabled={!controlGranted||!terminalDraftReady||terminalDraftSending||terminalActionUncertain}>Press Enter</button>
             </div>
+            {terminalActionUncertain&&<div className="br-desktop-caption" role="alert">Terminal action outcome is unknown. Input is locked to prevent duplicate typing or submission. Inspect the actual computer, then stop and start a fresh terminal session before continuing.</div>}
             <p className="br-desktop-caption">
               Terminal draft typing requires separate approval on the computer. Type only writes plain text to the active PTY and never submits it. Backroom cannot inspect which TUI widget is focused, so verify the Claude Code/OpenCode prompt yourself. Press Enter is a separate, one-use action available only after a successful draft write.
             </p>
