@@ -206,3 +206,47 @@ The admission contract also requires the `GUEST_OS_SANDBOX_ISOLATION` capability
 For a profile/VM provider, record the actual process/user identity and independently test that guest code cannot read a random host-private sentinel or another guest's sentinel. Run the check again after process death/restart. Keep the sentinel values local to the test; never upload them to the cloud.
 
 This deliberately blocks ordinary hook-based VirtualApp/BlackBox/Renjana-style candidates unless a separately reviewed OS-enforced isolation boundary is actually demonstrated. Even after the isolation gate passes, the engine must still prove that its guest surface can be rendered inside the Phone Frame with guest-only frames, correct touch mapping and accessibility-backed targeting. A safe app runtime that only opens a separate Android Activity is not yet a Backroom in-frame guest runtime.
+
+
+## Managed Work Profile bridge — implementation slice (2026-10-31)
+
+The Android companion now includes an optional, local-only managed Work Profile bridge. This is an **OS-managed app-data separation and launch handoff**, not a complete Backroom guest runtime.
+
+### Current behavior
+
+- Starts Android's ACTION_PROVISION_MANAGED_PROFILE flow only after the user confirms in Rub Minds.
+- Declares one Work Profile DeviceAdminReceiver protected by BIND_DEVICE_ADMIN, with an empty device-admin policy set.
+- On provisioning completion, the DPC checks profile-owner status, stores a fresh bridge secret in that profile's Android Keystore, and allowlists only the Rub Minds companion package with DevicePolicyManager.setCrossProfilePackages.
+- The personal-profile copy requests cross-profile consent through Android's CrossProfileApps system UI. It enables the launch button only when Android reports cross-profile interaction is actually allowed.
+- The personal-profile button is a local user action. It creates an HMAC-SHA256 command bound to package name, installed signer digest, timestamp and UUID nonce. Commands expire after 60 seconds; future timestamps beyond five seconds are rejected.
+- The Work Profile copy accepts only the explicit handoff action while running as profile owner. It verifies the MAC, validates and retires the nonce, re-reads the target app signer in that profile, checks that profile's local AppGrantStore, and opens the app using that profile's own PackageManager.
+- The bridge secret is separately encrypted with Android Keystore in each profile. The nonce ledger keeps every still-valid entry and fails closed at 2,048 entries instead of evicting an unexpired replay guard.
+- The target app must already be installed and separately selected/saved inside the Work Profile. Accounts, cookies, logins and private app data are not copied from the personal profile.
+
+### Physical-device acceptance specific to this bridge
+
+| Check | Action | Pass condition |
+|---|---|---|
+| Provision preflight | Inspect setup on the personal profile | Enabled only when Android reports provisioning is allowed and a system setup activity is available |
+| Cancel | Start setup and cancel | No profile-owner status is claimed; pending personal-profile secret is cleared |
+| Profile owner | Complete setup and open companion in Work Profile | DPM confirms this companion is profile owner; local DPC status is visible |
+| Secret isolation | Compare the two profile stores | Each profile has an independently encrypted secret in its own Android Keystore; no secret is uploaded |
+| DPC allowlist | Inspect Work Profile DPC state | setCrossProfilePackages contains only the Rub Minds companion package |
+| User consent | Use the handoff action and Android's own consent page | Handoff becomes available only after user consent and DPC/OEM allowlisting |
+| Denial | Deny or revoke OS cross-profile access | Launch remains disabled or is rejected before opening an app |
+| Missing app | Request a package not installed in Work Profile | Target profile rejects it; personal-profile copy is not used as a fallback |
+| Signer mismatch | Install a same-package test app with a different signing certificate | Target profile rejects the request |
+| Missing local grant | Leave the app unselected in Work Profile | Launch is rejected until a profile-local grant exists |
+| Valid handoff | Approve same-signer app in both profiles and launch from personal profile | Only the Work Profile copy is opened after target-side MAC, signer and grant checks |
+| Replay | Replay the exact nonce within 60 seconds | Second launch is rejected |
+| Tampering | Change package, signer, time, nonce or MAC | Request is rejected |
+| Ledger capacity | Fill the unexpired nonce ledger in a test build | New launches fail closed; live entries are not evicted |
+| Profile removal | Remove Work Profile in Android Settings | Parent detects no target profile; no personal-profile fallback occurs |
+
+Do not mark these physical checks passed from source tests. Record actual handset API level, ABI, test date, OS consent results and the exact signed APK/merged-manifest hashes.
+
+### Strict feature boundary
+
+This runs ordinary Android Activities inside a separate Android-managed user/profile. It does **not** create a virtual display, render the other profile's native app inside Backroom, capture guest-only frames, route remote touch, expose a guest accessibility tree, or implement drag-select insertion. It is a valid OS data-isolation bridge, but not the requested in-frame Android guest runtime.
+
+The three Work Profile-specific evidence fields (profile owner confirmed, cross-profile allowlist verified, signer-bound launch verified) are required only for ANDROID_MANAGED_PROFILE descriptors. They do not waive the common guest-frame, touch, accessibility, draft-only and Emergency Stop checks required before GuestRuntimeDecision.READY.
