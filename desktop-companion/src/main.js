@@ -492,6 +492,23 @@ async function handlePeerData(sessionId,raw){
     return;
   }
   peer.lastHeartbeat=Date.now();
+  if(message.kind==='clear_target'){
+    peer.latestTargetRequestId=null;
+    peer.targetVerified=false;
+    await invalidatePendingDraftApprovals(sessionId,'The typing-area selection was cleared; this draft was cancelled.');
+    if(!peer.targetClearPromise){
+      const clearTask=(peer.targetQueue||Promise.resolve()).then(async()=>{
+        try{await invoke('clear_draft_target',{sessionId});}
+        catch(error){notify(error?.message||'Could not clear the selected typing target. Draft insertion remains disabled.','error');}
+        finally{peer.targetVerified=false;}
+      });
+      const tracked=clearTask.finally(()=>{if(peer.targetClearPromise===tracked)peer.targetClearPromise=null;});
+      peer.targetClearPromise=tracked;
+      peer.targetQueue=tracked;
+    }
+    await peer.targetClearPromise;
+    return;
+  }
   if(message.kind==='input'&&message.event){
     try{await invoke('dispatch_input',{sessionId,event:message.event});}catch(error){notify(error.message,'error');}
   } else if(message.kind==='select_target'){
@@ -522,8 +539,9 @@ async function handlePeerData(sessionId,raw){
             peer.targetVerified=false;
           }
         });
-        peer.targetClearPromise=clearTask.finally(()=>{peer.targetClearPromise=null;});
-        peer.targetQueue=peer.targetClearPromise;
+        const tracked=clearTask.finally(()=>{if(peer.targetClearPromise===tracked)peer.targetClearPromise=null;});
+        peer.targetClearPromise=tracked;
+        peer.targetQueue=tracked;
       }
       report(false,'Too many target checks are pending. The previous target is being cleared; wait and drag-select again.');
       await peer.targetClearPromise;
