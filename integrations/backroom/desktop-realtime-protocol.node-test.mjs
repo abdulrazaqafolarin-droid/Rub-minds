@@ -48,6 +48,14 @@ test('ICE candidates are bounded per session and globally and are drained once',
  assert.equal(queueIceCandidate(queue,roomId,{candidate:'too-many-sessions'}),false);
 });
 
+test('view offers may carry only a valid selected application ID',()=>{
+ const appId='123e4567-e89b-42d3-a456-426614174003';
+ const valid=createDeviceCommand('view_offer',{sessionId:requestId,appId,offer:{sdp:'v=0\\r\\n'}},{deviceId,roomId,now:10_000,requestId});
+ assert.equal(validateDeviceCommand(valid,{deviceId,roomId,now:10_000}),true);
+ assert.throws(()=>createDeviceCommand('view_offer',{sessionId:requestId,appId:'bad',offer:{sdp:'v=0\\r\\n'}},{deviceId,roomId}),/Invalid/);
+ assert.equal(validateDeviceCommand({...valid,appId:'bad'},{deviceId,roomId,now:10_000}),false);
+});
+
 test('rejects invalid app IDs, missing session IDs and oversized WebRTC SDP',()=>{
  assert.throws(()=>createDeviceCommand('launch_app',{appId:'not-a-uuid'},{deviceId,roomId}),/Invalid/);
  assert.throws(()=>createDeviceCommand('terminal_start',{sessionId:requestId,offer:{sdp:''}},{deviceId,roomId}),/Invalid/);
