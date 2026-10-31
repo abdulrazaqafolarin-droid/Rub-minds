@@ -57,6 +57,7 @@ test('malformed acknowledgements and failed current checks never enable draft st
 
   beginTargetSelection(value, 'drag-2');
   assert.equal(rejectTargetSelection(value, 'drag-2'), true);
+  assert.equal(value.latestTargetRequestId, null);
   assert.equal(canStageDraftForCurrentSelection(value), false);
 });
 
