@@ -44,3 +44,5 @@ No production migration, merge, or deployment is part of this acceptance checkli
 - The local native approval dialog runs only after the target has been resolved and rechecked.
 - After approval, the companion re-resolves the exact target and uses its own UI Automation Value pattern to write the text. It does not click the target centre or use global keyboard injection for this draft action.
 - The final pass re-reads the same UIA element and confirms the exact text, while retaining the enabled/visible/non-password/writable checks. Empty-value is required before insertion, not after it.
+
+- The pre-write validator must reject any non-empty field; the post-write validator must allow only a non-empty exact match to the submitted text while still enforcing enabled, visible, non-password and writable metadata.
