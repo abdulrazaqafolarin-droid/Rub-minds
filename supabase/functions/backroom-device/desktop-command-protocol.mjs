@@ -34,12 +34,14 @@ export function validateDesktopCommand(value,{now=Date.now(),maxAgeMs=30_000}={}
     !value.details||typeof value.details!=='object'||Array.isArray(value.details))return null;
  const d=value.details;
  const required=KEYS[value.command];
- const allowed=value.command==='request_control'?[...required,'peerSessionId']:required;
+ const allowed=value.command==='request_control'?[...required,'peerSessionId']:
+  value.command==='view_offer'?[...required,'appId']:required;
  const detailKeys=Object.keys(d);
  if(!required.every(key=>Object.hasOwn(d,key))||detailKeys.some(key=>!allowed.includes(key)))return null;
  if(value.command==='launch_app'&&!isUuid(d.appId))return null;
  if(value.command==='terminal_start'||value.command==='view_offer'){
   if(!isUuid(d.sessionId)||!validOffer(d.offer))return null;
+  if(value.command==='view_offer'&&d.appId!==undefined&&!isUuid(d.appId))return null;
  }
  if(value.command==='request_control'||value.command==='request_draft_permission'||value.command==='stop_session'){
   if(!isUuid(d.sessionId))return null;
