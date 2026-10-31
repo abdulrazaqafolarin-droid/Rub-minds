@@ -537,11 +537,19 @@ Deno.serve(async req => {
         .eq('device_id', current.device_id).lt('expires_at', now).in('status', ['pending','leased']);
       const leased = [];
       const { data: pending, error: pendingError } = await db.from('backroom_android_commands')
-        .select('id,request_id,session_id,command,status')
+        .select('id,request_id,session_id,room_id,command,status')
         .eq('device_id', current.device_id).eq('status', 'pending')
         .gt('expires_at', now).order('created_at', { ascending: true }).limit(8);
       if (pendingError) return json(503, fail('android_command_poll_failed'), origin);
       for (const row of pending ?? []) {
+        if (row.command?.command !== 'stop_session') {
+          const session = await activeDesktopSession(row.session_id, current.device_id, row.room_id);
+          if (!session.ok) {
+            await db.from('backroom_android_commands').update({ status: 'expired', result: 'session_not_active' })
+              .eq('id', row.id).eq('device_id', current.device_id).eq('status', 'pending');
+            continue;
+          }
+        }
         const leaseUntil = new Date(Date.now() + 15_000).toISOString();
         const { data, error } = await db.from('backroom_android_commands')
           .update({ status: 'leased', lease_until: leaseUntil })
@@ -553,11 +561,19 @@ Deno.serve(async req => {
         }
       }
       const { data: expiredLeases, error: leaseError } = await db.from('backroom_android_commands')
-        .select('id,request_id,session_id,command,lease_until')
+        .select('id,request_id,session_id,room_id,command,lease_until')
         .eq('device_id', current.device_id).eq('status', 'leased')
         .lt('lease_until', now).gt('expires_at', now).order('created_at', { ascending: true }).limit(8 - leased.length);
       if (leaseError) return json(503, fail('android_command_poll_failed'), origin);
       for (const row of expiredLeases ?? []) {
+        if (row.command?.command !== 'stop_session') {
+          const session = await activeDesktopSession(row.session_id, current.device_id, row.room_id);
+          if (!session.ok) {
+            await db.from('backroom_android_commands').update({ status: 'expired', result: 'session_not_active' })
+              .eq('id', row.id).eq('device_id', current.device_id).eq('status', 'leased');
+            continue;
+          }
+        }
         const leaseUntil = new Date(Date.now() + 15_000).toISOString();
         const { data, error } = await db.from('backroom_android_commands')
           .update({ lease_until: leaseUntil })

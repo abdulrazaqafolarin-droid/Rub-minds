@@ -147,6 +147,8 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         if (peerRef.current !== peer || sessionRef.current !== nextSessionId) return;
         const stream = event.streams[0] ?? new MediaStream([event.track]);
         streamRef.current = stream;
+        if (startTimerRef.current !== null) window.clearTimeout(startTimerRef.current);
+        startTimerRef.current = null;
         for (const track of stream.getVideoTracks()) track.addEventListener('ended', () => {
           if (streamRef.current === stream) { notify('Android screen sharing ended.', true); disposePeer(); }
         });

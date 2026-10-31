@@ -188,7 +188,12 @@ class AndroidScreenShareService : Service() {
                 pendingOfferRequestId = requestId
                 activeRoomId = roomId
                 val accepted = startPeerAnswer(sessionId, appPackage, offer, roomId)
-                if (!accepted) acknowledge(token, commandId, requestId, sessionId, "app_or_offer_rejected")
+                if (!accepted) {
+                    acknowledge(token, commandId, requestId, sessionId, "app_or_offer_rejected")
+                    pendingOfferCommandId = ""
+                    pendingOfferRequestId = ""
+                    closePeer()
+                }
             }
             "request_control" -> {
                 val sameSession = activeSessionId == sessionId && activeAppPackage == appPackage
@@ -228,12 +233,11 @@ class AndroidScreenShareService : Service() {
         answeringSessionId = sessionId
         if (!AndroidTouchAccessibilityService.bindActiveSession(sessionId, appPackage)) {
             // The accessibility service is the foreground-package verifier even for view-only mode.
-            activeSessionId = null
-            activeAppPackage = null
+            closePeer()
             return false
         }
 
-        val factory = peerFactory ?: return false
+        val factory = peerFactory ?: run { closePeer(); return false }
         val iceServers = listOf(
             PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
             PeerConnection.IceServer.builder("stun:stun.cloudflare.com:3478").createIceServer()
@@ -269,7 +273,7 @@ class AndroidScreenShareService : Service() {
                 ) stopCapture("webrtc_connection_failed")
             }
         }
-        val connection = factory.createPeerConnection(rtcConfig, observer) ?: return false
+        val connection = factory.createPeerConnection(rtcConfig, observer) ?: run { closePeer(); return false }
         peer = connection
         videoTrack?.let { connection.addTrack(it, listOf("backroom-android-screen")) }
 

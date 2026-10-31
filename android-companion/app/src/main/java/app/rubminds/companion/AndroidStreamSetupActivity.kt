@@ -40,7 +40,7 @@ class AndroidStreamSetupActivity : Activity() {
             setTextColor(0xff172033.toInt())
         })
         root.addView(TextView(this).apply {
-            text = "1. Enable the Rub Minds touch service below. 2. Open the app you intend to share. 3. Start sharing and choose that app window in Android's system picker (not the whole display). 4. Return to Backroom and start the stream. The app must remain in the foreground while streamed."
+            text = "1. Enable the Rub Minds touch service below. 2. Optionally arm touch locally for 15 minutes. 3. Choose one of the apps saved in your local allowlist. 4. Approve Android's screen-sharing prompt and choose that same app window (not the whole display). 5. The companion brings that app to the foreground so Backroom can verify the package before accepting a stream."
             textSize = 13f
             setTextColor(0xff405070.toInt())
             setPadding(0, dp(12), 0, dp(12))
