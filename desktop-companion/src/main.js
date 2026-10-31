@@ -503,7 +503,10 @@ async function handlePeerData(sessionId,raw){
         await invalidation;
         try{await invoke('clear_draft_target',{sessionId});}
         catch(error){notify(error?.message||'Could not clear the selected typing target. Draft insertion remains disabled.','error');}
-        finally{peer.targetVerified=false;}
+        // Catch approval cards that were created while the first invalidation
+        // was awaiting a native command.
+        await invalidatePendingDraftApprovals(sessionId,'The typing-area selection was cleared; this draft was cancelled.');
+        peer.targetVerified=false;
       });
       const tracked=clearTask.finally(()=>{if(peer.targetClearPromise===tracked)peer.targetClearPromise=null;});
       peer.targetClearPromise=tracked;
@@ -566,7 +569,8 @@ async function handlePeerData(sessionId,raw){
           await invalidation;
           try{await invoke('clear_draft_target',{sessionId});}
           catch(error){notify(error?.message||'Could not clear the previous typing target. Draft insertion remains disabled.','error');}
-          finally{peer.targetVerified=false;}
+          await invalidatePendingDraftApprovals(sessionId,'The typing-area selection was cleared; this draft was cancelled.');
+          peer.targetVerified=false;
         });
         const tracked=clearTask.finally(()=>{if(peer.targetClearPromise===tracked)peer.targetClearPromise=null;});
         peer.targetClearPromise=tracked;
@@ -587,6 +591,9 @@ async function handlePeerData(sessionId,raw){
           return;
         }
         const modeMessage=await invoke('select_draft_target',{sessionId,target:message.target});
+        // A draft could have finished staging while the UIA lookup was running.
+        // Invalidate it before exposing this newly selected target as ready.
+        await invalidatePendingDraftApprovals(sessionId,'The selected typing area changed; this draft was cancelled.');
         if(requestId!==peer.latestTargetRequestId){
           report(false,'This selection was superseded by a newer drag.');
           return;
@@ -613,12 +620,20 @@ async function handlePeerData(sessionId,raw){
       notify(reason,'error');
       return;
     }
-    try{const id=await invoke('stage_draft_request',{sessionId,text:message.text});await refreshPending();notify('Draft request '+id+' is waiting for approval on this computer.');}
-    catch(error){
+    const stageTask=(peer.targetQueue||Promise.resolve()).then(async()=>{
+      if(peer.targetVerified!==true||peer.targetClearPromise)
+        throw new Error('The verified typing target changed. Drag-select it again before staging a draft.');
+      const id=await invoke('stage_draft_request',{sessionId,text:message.text});
+      await refreshPending();
+      notify('Draft request '+id+' is waiting for approval on this computer.');
+    });
+    const tracked=stageTask.catch(error=>{
       const reason=error?.message||'Could not stage the draft for this target.';
       try{peer.channel?.send(JSON.stringify({kind:'draft_result',ok:false,result:reason}));}catch{}
       notify(reason,'error');
-    }
+    });
+    peer.targetQueue=tracked;
+    await tracked;
   } else if(message.kind==='terminal_input'){
     const terminalId=message.sessionId||peer.terminalId;
     if(!terminalId)return;
