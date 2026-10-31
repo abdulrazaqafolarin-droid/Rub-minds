@@ -636,6 +636,13 @@ struct TerminalSession {
 }
 
 #[derive(Clone)]
+struct WindowCaptureBinding {
+    process_id: u32,
+    handle: String,
+    class_name: String,
+}
+
+#[derive(Clone)]
 struct CaptureGeometry {
     frame_width: u32,
     frame_height: u32,
@@ -643,6 +650,7 @@ struct CaptureGeometry {
     screen_height: u32,
     origin_x: i32,
     origin_y: i32,
+    window_binding: Option<WindowCaptureBinding>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -792,12 +800,44 @@ fn set_capture_geometry(
     origin_y_css: i32,
     display_surface: String,
 ) -> Result<(), String> {
-    if !valid_session_id(&session_id) || display_surface != "monitor" ||
-       !(320..=16_384).contains(&frame_width) || !(200..=16_384).contains(&frame_height) ||
-       !(320..=8_192).contains(&screen_width_css) || !(200..=8_192).contains(&screen_height_css) ||
-       !device_scale_factor.is_finite() || !(0.5..=4.0).contains(&device_scale_factor) ||
-       origin_x_css.unsigned_abs() > 16_384 || origin_y_css.unsigned_abs() > 16_384 {
-        return Err("For safe input mapping, share an entire monitor instead of a single window".into());
+    if !valid_session_id(&session_id)
+        || !(320..=16_384).contains(&frame_width)
+        || !(200..=16_384).contains(&frame_height)
+    {
+        return Err("Invalid screen capture session or dimensions".into());
+    }
+
+    if display_surface == "window" {
+        let target = input_targeting::foreground_window_snapshot()?;
+        if target.process_id == std::process::id() {
+            return Err("Select the actual application window, not the Rub Minds companion window".into());
+        }
+        input_targeting::validate_window_capture_dimensions(frame_width, frame_height, target.bounds)
+            .map_err(|_| "The selected app window does not match the captured frame bounds. This session remains view-only; reselect the app window and try again.".to_string())?;
+        let [left, top, right, bottom] = target.bounds;
+        let screen_width = right.saturating_sub(left) as u32;
+        let screen_height = bottom.saturating_sub(top) as u32;
+        state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?.insert(session_id, CaptureGeometry {
+            frame_width, frame_height, screen_width, screen_height,
+            origin_x: left, origin_y: top,
+            window_binding: Some(WindowCaptureBinding {
+                process_id: target.process_id,
+                handle: target.handle,
+                class_name: target.class_name,
+            }),
+        });
+        return Ok(());
+    }
+
+    if display_surface != "monitor"
+        || !(320..=8_192).contains(&screen_width_css)
+        || !(200..=8_192).contains(&screen_height_css)
+        || !device_scale_factor.is_finite()
+        || !(0.5..=4.0).contains(&device_scale_factor)
+        || origin_x_css.unsigned_abs() > 16_384
+        || origin_y_css.unsigned_abs() > 16_384
+    {
+        return Err("Unsupported or invalid capture geometry".into());
     }
     let screen_width = (screen_width_css as f64 * device_scale_factor).round() as u32;
     let screen_height = (screen_height_css as f64 * device_scale_factor).round() as u32;
@@ -810,21 +850,54 @@ fn set_capture_geometry(
         frame_width, frame_height, screen_width, screen_height,
         origin_x: (origin_x_css as f64 * device_scale_factor).round() as i32,
         origin_y: (origin_y_css as f64 * device_scale_factor).round() as i32,
+        window_binding: None,
     });
     Ok(())
 }
 
-fn screen_point(geometry: &CaptureGeometry, x: f64, y: f64) -> Result<(i32, i32), String> {
-    if !x.is_finite() || !y.is_finite() || !(0.0..=1.0).contains(&x) || !(0.0..=1.0).contains(&y) {
-        return Err("Pointer coordinates are outside the shared monitor".into());
+fn window_binding_matches(
+    binding: &WindowCaptureBinding,
+    current: &input_targeting::ForegroundWindowSnapshot,
+) -> bool {
+    current.process_id == binding.process_id
+        && current.handle == binding.handle
+        && current.class_name == binding.class_name
+}
+
+fn capture_bounds(geometry: &CaptureGeometry) -> Result<(i32, i32, u32, u32), String> {
+    if let Some(binding) = &geometry.window_binding {
+        let current = input_targeting::foreground_window_snapshot()?;
+        if !window_binding_matches(binding, &current) {
+            return Err("The captured application window is no longer the verified foreground window. Restore it and restart the screen session before controlling it.".into());
+        }
+        input_targeting::validate_window_capture_dimensions(
+            geometry.frame_width, geometry.frame_height, current.bounds,
+        ).map_err(|_| "The captured application window moved or resized incompatibly. Restart the screen session before controlling it.".to_string())?;
+        let [left, top, right, bottom] = current.bounds;
+        return Ok((left, top, right.saturating_sub(left) as u32, bottom.saturating_sub(top) as u32));
     }
-    // Normalized 1.0 represents the last visible pixel, not the first
-    // coordinate beyond the monitor bounds.
-    let max_x = geometry.screen_width.saturating_sub(1) as f64;
-    let max_y = geometry.screen_height.saturating_sub(1) as f64;
-    let px = geometry.origin_x + (x * max_x).round() as i32;
-    let py = geometry.origin_y + (y * max_y).round() as i32;
-    Ok((px, py))
+    Ok((geometry.origin_x, geometry.origin_y, geometry.screen_width, geometry.screen_height))
+}
+
+fn map_normalized_point(
+    bounds: (i32, i32, u32, u32),
+    x: f64,
+    y: f64,
+) -> Result<(i32, i32), String> {
+    if !x.is_finite() || !y.is_finite() || !(0.0..=1.0).contains(&x) || !(0.0..=1.0).contains(&y) {
+        return Err("Pointer coordinates are outside the shared capture".into());
+    }
+    let (origin_x, origin_y, width, height) = bounds;
+    if width == 0 || height == 0 {
+        return Err("The shared capture has invalid dimensions".into());
+    }
+    let max_x = width.saturating_sub(1) as f64;
+    let max_y = height.saturating_sub(1) as f64;
+    Ok((origin_x + (x * max_x).round() as i32, origin_y + (y * max_y).round() as i32))
+}
+
+fn screen_point(geometry: &CaptureGeometry, x: f64, y: f64) -> Result<(i32, i32), String> {
+    map_normalized_point(capture_bounds(geometry)?, x, y)
 }
 
 #[derive(Deserialize)]
@@ -862,7 +935,9 @@ fn dispatch_input(state: State<'_, AppState>, session_id: String, event: NativeI
     control_granted(&state, &session_id)?;
     check_input_rate(&state)?;
     let geometry = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
-        .get(&session_id).cloned().ok_or("Live monitor capture is not active")?;
+        .get(&session_id).cloned().ok_or("Live screen capture is not active")?;
+    // Re-check the exact app window before every remote input.
+    let _ = capture_bounds(&geometry)?;
     let mut enigo = Enigo::new(&Settings::default()).map_err(|_| "OS input driver is unavailable. Check accessibility permissions.".to_string())?;
     match event {
         NativeInput::Move { x, y } => {
@@ -921,6 +996,11 @@ fn verify_selected_editable_target(
     let expected = target.identity.as_ref().ok_or("Select and verify an accessible text field again")?;
     let (px, py) = selected_target_point(geometry, target)?;
     let (current, value) = input_targeting::inspect_at(px, py)?;
+    if let Some(binding) = &geometry.window_binding {
+        if current.process_id != binding.process_id {
+            return Err("The selected text field is not inside the captured application window.".into());
+        }
+    }
     if &current != expected {
         return Err("The selected application field changed or moved. Drag-select it again.".into());
     }
@@ -952,6 +1032,11 @@ fn select_draft_target(state: State<'_, AppState>, session_id: String, mut targe
     }
     let (px, py) = selected_target_point(&geometry, &target)?;
     let (identity, value) = input_targeting::inspect_at(px, py)?;
+    if let Some(binding) = &geometry.window_binding {
+        if identity.process_id != binding.process_id {
+            return Err("Drag-select a field inside the captured application window, not another desktop window.".into());
+        }
+    }
     if !value.is_empty() {
         return Err("For safety, drag-select an empty editable field. Existing text will not be overwritten.".into());
     }
@@ -1279,7 +1364,32 @@ mod native_input_tests {
             screen_height: 1080,
             origin_x: 0,
             origin_y: 0,
+            window_binding: None,
         }
+    }
+
+    #[test]
+    fn normalized_coordinates_map_to_window_origin_and_last_pixel() {
+        assert_eq!(map_normalized_point((-800, 120, 800, 600), 0.0, 0.0).unwrap(), (-800, 120));
+        assert_eq!(map_normalized_point((-800, 120, 800, 600), 1.0, 1.0).unwrap(), (-1, 719));
+        assert_eq!(map_normalized_point((100, 200, 640, 480), 0.5, 0.5).unwrap(), (420, 440));
+        assert!(map_normalized_point((0, 0, 640, 480), f64::NAN, 0.5).is_err());
+        assert!(map_normalized_point((0, 0, 640, 480), 1.01, 0.5).is_err());
+    }
+
+    #[test]
+    fn window_binding_requires_same_process_handle_and_class() {
+        let binding = WindowCaptureBinding { process_id: 42, handle: "0x1234".into(), class_name: "Chrome_WidgetWin_1".into() };
+        let same = input_targeting::ForegroundWindowSnapshot {
+            process_id: 42, handle: "0x1234".into(), class_name: "Chrome_WidgetWin_1".into(), bounds: [10, 20, 810, 620],
+        };
+        assert!(window_binding_matches(&binding, &same));
+        let mut changed = same.clone(); changed.handle = "0x5678".into();
+        assert!(!window_binding_matches(&binding, &changed));
+        let mut changed = same.clone(); changed.process_id += 1;
+        assert!(!window_binding_matches(&binding, &changed));
+        let mut changed = same.clone(); changed.class_name = "OtherWindow".into();
+        assert!(!window_binding_matches(&binding, &changed));
     }
 
     #[test]

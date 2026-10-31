@@ -6,6 +6,23 @@ Status: **decision pending a device-backed proof of concept**. This is an archit
 
 Backroom should eventually offer one group-visible Device Frame with four surfaces: Android apps in an isolated phone-shaped space, managed browser sessions/tabs, desktop apps in a desktop window, and terminals in a terminal surface. A human or authorized AI may request launch, close, restart, switch, tap, swipe, type, press keys, or run commands. Every accepted, rejected, and completed action must be attributed to its human/AI actor and appended to the group's durable activity log.
 
+## Android app execution platform boundary — 2026-10-31
+
+A normal third-party Rub Minds companion APK cannot create the Android virtual-device app-streaming environment that would run another installed app in a separate Backroom-owned virtual display with remote input:
+
+- Android's `VirtualDeviceManager#createVirtualDevice` requires restricted `CREATE_VIRTUAL_DEVICE`. AOSP documents that this permission is granted to system apps holding the `COMPANION_DEVICE_APP_STREAMING` role; only preinstalled privileged apps can hold that role.
+- Android Virtualization Framework / Microdroid is separate: its APIs are `@SystemApi` and require restricted `MANAGE_VIRTUAL_MACHINE`, unavailable to an ordinary sideloaded app.
+- Android 14+ MediaProjection can let a user share one selected app window, but that captures the existing app window; it does not create an isolated guest instance or separate app-private data.
+- An AccessibilityService can inspect accessible controls and dispatch gestures only after the user enables it in Android Settings. It is a powerful system-wide capability, not ordinary app access. Its distribution/policy eligibility must be established before remote automation is enabled.
+
+**Decision:** keep the Android guest provider unimplemented and fail closed rather than ship a fake simulator or import an unsafe virtualization engine. A device-owned single-app MediaProjection session may be built as a clearly labelled *live app streaming* mode, but it must not be marketed as isolated virtualization and must have separate consent/input gates. True isolated app streaming with OS virtual input requires OEM/preinstalled privileged-role distribution or a separately audited engine that passes the full Android 14 handset acceptance matrix.
+
+Primary platform references:
+- Android app screen sharing / MediaProjection: https://developer.android.com/media/grow/media-projection
+- AOSP companion app streaming role: https://source.android.com/docs/core/permissions/app-streaming
+- Android Virtualization Framework privilege boundary: https://android.googlesource.com/platform/packages/modules/Virtualization/+/HEAD/libs/framework-virtualization/README.md
+- AccessibilityService intended use and capabilities: https://developer.android.com/reference/android/accessibilityservice/AccessibilityService
+
 ## Android constraint
 
 The current Android companion only discovers launcher-visible packages and syncs selected metadata through outbound HTTPS. It does not clone package code, copy private app data, render an app inside Backroom, or remotely operate the device. Broad storage access does not grant access to another app's private sandbox. Do not market this slice as a DualSpace equivalent.

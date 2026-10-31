@@ -498,7 +498,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
               {selection&&<div className="br-desktop-selection" style={selectionOverlayStyle()}/>}
             </div>
             <div className="br-desktop-toolbar">
-              <span>{videoReady?'Live computer display':'View request pending'}{coordinateControl?' · full-monitor geometry verified':' · view-only unless full monitor selected'}</span>
+              <span>{videoReady?'Live computer display':'View request pending'}{coordinateControl?' · selected window/monitor geometry verified':' · view-only until capture geometry is verified'}</span>
               <button type="button" onClick={()=>void requestControl()} disabled={!videoReady||!coordinateControl||controlGranted}>Request control</button>
               <button type="button" onClick={()=>{setTargetStatus('');setSelection(null);dragRef.current=null;targetAttemptRef.current='';draftAttemptRef.current='';try{sendData({kind:'clear_target'});}catch(error){flash('Could not clear the previous typing target. Stopping this remote session for safety.',true);void stopActivePeer();}setSelectMode(v=>!v);}} disabled={!controlGranted||!draftGranted||!selectedIsWindows||!videoReady}>{selectMode?'Cancel area selection':selectedIsWindows?'Drag-select typing area':'Typing-area targeting unavailable on this OS'}</button>
               <button type="button" onClick={()=>void requestDraftPermission()} disabled={!controlGranted||draftGranted||!selectedIsWindows}><TextCursorInput size={13}/> Request typing permission</button>

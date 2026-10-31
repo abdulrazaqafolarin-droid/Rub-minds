@@ -4,6 +4,51 @@
 use std::thread;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ForegroundWindowSnapshot {
+    pub process_id: u32,
+    pub handle: String,
+    pub class_name: String,
+    pub bounds: [i32; 4],
+}
+
+pub fn validate_window_capture_dimensions(
+    frame_width: u32,
+    frame_height: u32,
+    bounds: [i32; 4],
+) -> Result<(), &'static str> {
+    if !(320..=16_384).contains(&frame_width) || !(200..=16_384).contains(&frame_height) {
+        return Err("invalid_capture_dimensions");
+    }
+    let width = bounds[2].saturating_sub(bounds[0]);
+    let height = bounds[3].saturating_sub(bounds[1]);
+    if width < 320 || height < 200 {
+        return Err("invalid_window_bounds");
+    }
+    // Strict tolerance: a title-bar/client-area mismatch remains view-only.
+    let tolerance_x = (width as f64 * 0.01).ceil().max(4.0) as i32;
+    let tolerance_y = (height as f64 * 0.01).ceil().max(4.0) as i32;
+    if frame_width.abs_diff(width as u32) > tolerance_x as u32
+        || frame_height.abs_diff(height as u32) > tolerance_y as u32
+    {
+        return Err("captured_window_geometry_mismatch");
+    }
+    Ok(())
+}
+
+pub fn foreground_window_snapshot() -> Result<ForegroundWindowSnapshot, String> {
+    #[cfg(target_os = "windows")]
+    {
+        return thread::spawn(windows_impl::foreground_window_snapshot)
+            .join()
+            .map_err(|_| "Windows foreground-window inspection worker stopped unexpectedly".to_string())?;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("Window-bound desktop control is currently supported by the Windows accessibility driver only".into())
+    }
+}
+
 pub struct EditableTargetIdentity {
     pub process_id: u32,
     pub runtime_id: Vec<i32>,
@@ -252,6 +297,34 @@ mod windows_impl {
         }, value))
     }
 
+    pub fn foreground_window_snapshot() -> Result<super::ForegroundWindowSnapshot, String> {
+        let automation = UIAutomation::new()
+            .map_err(|_| "Windows UI Automation could not be initialized".to_string())?;
+        let focused = automation.get_focused_element()
+            .map_err(|_| "Windows could not identify the selected application window".to_string())?;
+        let handle = focused.get_native_window_handle()
+            .map_err(|_| "The selected application does not expose a native window handle".to_string())?;
+        let handle_text = handle.to_string();
+        if handle_text.is_empty() || handle_text == "0" {
+            return Err("The selected application window handle is invalid".into());
+        }
+        let window = automation.element_from_handle(handle)
+            .map_err(|_| "Windows could not resolve the selected application window".to_string())?;
+        let process_id = window.get_process_id()
+            .map_err(|_| "Windows could not identify the selected application process".to_string())?;
+        let class_name = window.get_classname()
+            .map_err(|_| "Windows could not identify the selected application window class".to_string())?;
+        let rect = window.get_bounding_rectangle()
+            .map_err(|_| "Windows could not read the selected application window bounds".to_string())?;
+        let bounds = [rect.get_left(), rect.get_top(), rect.get_right(), rect.get_bottom()];
+        if process_id == 0 || class_name.trim().is_empty()
+            || bounds[2] <= bounds[0] || bounds[3] <= bounds[1]
+        {
+            return Err("The selected application window identity or bounds are incomplete".into());
+        }
+        Ok(super::ForegroundWindowSnapshot { process_id, handle: handle_text, class_name, bounds })
+    }
+
     pub fn inspect_at(x: i32, y: i32) -> Result<(EditableTargetIdentity, String), String> {
         let automation = UIAutomation::new()
             .map_err(|_| "Windows UI Automation could not be initialized".to_string())?;
@@ -354,6 +427,17 @@ mod tests {
             access_mode: "value".into(),
             bounds: [10, 20, 300, 80],
         }
+    }
+
+    #[test]
+    fn window_capture_dimensions_reject_mismatched_or_invalid_bounds() {
+        use super::validate_window_capture_dimensions as validate;
+        assert!(validate(1280, 720, [100, 50, 1380, 770]).is_ok());
+        assert!(validate(1280, 720, [100, 50, 1383, 773]).is_ok());
+        assert_eq!(validate(1280, 720, [100, 50, 1600, 770]), Err("captured_window_geometry_mismatch"));
+        assert_eq!(validate(1280, 720, [100, 50, 1380, 900]), Err("captured_window_geometry_mismatch"));
+        assert_eq!(validate(200, 720, [0, 0, 200, 720]), Err("invalid_capture_dimensions"));
+        assert_eq!(validate(1280, 720, [10, 10, 10, 100]), Err("invalid_window_bounds"));
     }
 
     #[test]

@@ -381,7 +381,7 @@ async function handleCommand(payload){
   }
   if(payload.action==='view_offer'){
     if(typeof payload.sessionId!=='string'||!payload.offer?.sdp)return;
-    createApproval('view_offer','Share your entire monitor with this Backroom session. Windows will show its screen-sharing picker. Choosing a single window keeps the frame view-only.',async()=>{
+    createApproval('view_offer','Share the selected application window or an entire monitor with this Backroom session. Windows will show its screen-sharing picker. A single application window can be controlled only when the companion verifies its exact foreground window and capture geometry; otherwise it stays view-only.',async()=>{
       try{await startViewSession(payload);}
       catch(error){await stopPeer(payload.sessionId);throw error;}
     },{requestId,sessionId:payload.sessionId,remote:true,actorDisplayName:payload.actorDisplayName,capability:'view',onDeny:()=>stopPeer(payload.sessionId)});return;
@@ -428,7 +428,7 @@ async function startViewSession(payload){
       displaySurface:settings.displaySurface||'window'
     });
     canControl=true;
-  }catch(error){notify('The screen is visible, but desktop input is disabled: '+error.message,'error');}
+  }catch(error){notify('The screen is visible, but input is view-only because the selected capture could not be bound safely: '+error.message,'error');}
   const pc=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun.cloudflare.com:3478']}]});
   state.peers.set(sessionId,{pc,stream,channel:null,canControl,terminalId:null,createdAt:Date.now(),lastHeartbeat:Date.now()});
   startPeerWatchdog();

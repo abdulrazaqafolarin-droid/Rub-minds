@@ -55,7 +55,7 @@ Backroom web client
 
 ### Screen, input, and drag-select
 
-- Screen share uses the operating-system display picker and WebRTC. Window-only capture is view-only; the user must share the whole monitor for coordinate-based input mapping.
+- Screen share uses the operating-system display picker and WebRTC. Windows can bind either a selected application window or a monitor to native coordinates. A window is interactive only when the companion confirms the foreground HWND/process/class and captured dimensions match; it rechecks that identity before every input and fails closed on focus/window changes. Unsupported or mismatched capture stays view-only.
 - Control is separately approved after capture geometry is matched. Pointer/keyboard events are bounded and rate-limited in native code.
 - Drag-select sends a normalized rectangle to the companion. Draft insertion targets the selected region's center, types the exact approved single-line draft, reads the result where supported, and does not press Enter or Send.
 - **Important limitation:** the current overlay is coordinate-based; it does not prove that the rectangle encloses a specific accessible text-field element or detect all protected/password fields. A successful typing call is not a claim of semantic input-field verification.
