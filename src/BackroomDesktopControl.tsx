@@ -3,7 +3,7 @@ import { Activity, Monitor, Play, Power, RefreshCw, ShieldCheck, SquareTerminal,
 import { supabase } from './supabase';
 import { buildScopedDeviceMessage, classifyDeviceResponse, validateDeviceSignal, queueIceCandidate, takeIceCandidates } from '../integrations/backroom/desktop-realtime-protocol.mjs';
 import { waitForIceGatheringComplete } from '../integrations/backroom/ice-gathering.mjs';
-import { getContainedVideoRect, mapVideoSelectionToFrame } from '../integrations/backroom/video-selection-overlay.mjs';
+import { getContainedVideoRect, mapVideoSelectionToFrame, normalizeClientPointToVideo, createNormalizedDragSelection } from '../integrations/backroom/video-selection-overlay.mjs';
 import { listBackroomDevices, type BackroomDevice } from './backroomCloudDevices';
 import './backroomDesktopControl.css';
 
@@ -162,7 +162,6 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
         try{
           await pc.setRemoteDescription(signal.answer);
           for(const candidate of takeIceCandidates(pendingCandidatesRef.current,signal.sessionId)){try{await pc.addIceCandidate(candidate);}catch{/* stale ICE candidate */}}
-          setVideoReady(true);
         }catch{flash('The computer returned an invalid screen-share answer.',true);}
       }
       if(typeof signal.canControl==='boolean')setCoordinateControl(signal.canControl);
@@ -260,7 +259,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     const pc=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun.cloudflare.com:3478']}]});
     const data=pc.createDataChannel('backroom-input',{ordered:true});
     dataRef.current=data;peerRef.current=pc;setScreenSession(sessionId);setTerminalPeerId('');
-    pc.ontrack=event=>{if(videoRef.current)videoRef.current.srcObject=event.streams[0];setVideoReady(true);};
+    pc.ontrack=event=>{if(videoRef.current)videoRef.current.srcObject=event.streams[0];};
     pc.onconnectionstatechange=()=>{
       if(pc.connectionState==='failed'||pc.connectionState==='disconnected'){
         flash('Screen connection interrupted. The local stream will be stopped.',true);
@@ -315,15 +314,12 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const stop=async()=>{await stopActivePeer();};
 
   const videoContentRect=()=>{
-    const el=videoRef.current;if(!el)return null;
+    const el=videoRef.current;if(!el||el.videoWidth<=0||el.videoHeight<=0)return null;
     const box=el.getBoundingClientRect();
-    return getContainedVideoRect(box,el.videoWidth||box.width,el.videoHeight||box.height);
+    return getContainedVideoRect(box,el.videoWidth,el.videoHeight);
   };
   const normalized=(clientX:number,clientY:number)=>{
-    const rect=videoContentRect();if(!rect)return null;
-    const x=(clientX-rect.left)/rect.width,y=(clientY-rect.top)/rect.height;
-    if(x<0||x>1||y<0||y>1)return null;
-    return {x,y};
+    return normalizeClientPointToVideo(videoContentRect(),clientX,clientY);
   };
   // Selection coordinates are normalized to the actual video content, not
   // the 16:9 letterbox wrapper. Map them back into the wrapper for the overlay.
@@ -350,7 +346,10 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   );
   const pointerDown=(e:PointerEvent<HTMLDivElement>)=>{
     if(selectMode){
-      const point=normalized(e.clientX,e.clientY);if(!point)return;
+      if(e.button!==0)return;
+      e.preventDefault();
+      const point=normalized(e.clientX,e.clientY);
+      if(!point)return flash('Wait for the live display to finish loading, then drag inside the visible screen.',true);
       setTargetStatus('');setSelection(null);targetAttemptRef.current='';draftAttemptRef.current='';
       try{sendData({kind:'clear_target'});}
       catch(error){flash('Could not clear the previous typing target. Stopping this remote session for safety.',true);void stopActivePeer();return;}
@@ -381,9 +380,9 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const pointerUp=(e:PointerEvent<HTMLDivElement>)=>{
     if(selectMode&&dragRef.current?.pointerId===e.pointerId){
       const p=normalized(e.clientX,e.clientY);const start=dragRef.current;dragRef.current=null;
-      if(!p)return;
-      const target={x:Math.min(start.x,p.x),y:Math.min(start.y,p.y),width:Math.abs(p.x-start.x),height:Math.abs(p.y-start.y)};
-      if(target.width<0.01||target.height<0.01)return flash('Drag a rectangle over the exact typing area.',true);
+      if(!p){setSelection(null);setTargetStatus('Drag ended outside the live display. No typing target is selected.');return;}
+      const target=createNormalizedDragSelection(start,p);
+      if(!target){setSelection(null);setTargetStatus('');return flash('Drag a larger rectangle over the exact typing area.',true);}
       const requestId=uuid();targetAttemptRef.current=requestId;
       setSelection(target);setTargetStatus('Checking the selected area against Windows accessibility…');
       try{sendData({kind:'select_target',requestId,target});flash('Checking that the selected area resolves to one empty editable field or multi-line editor.');}
@@ -472,14 +471,14 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
           <div className="br-desktop-live-title"><b>Active computer session</b><button type="button" onClick={()=>void stop()}><Power size={14}/> Stop session</button></div>
           {screenSession&&<div className="br-desktop-frame-wrap">
             <div className="br-desktop-video" ref={frameRef} tabIndex={0} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerCancel} onKeyDown={keyDown}>
-              <video ref={videoRef} autoPlay muted playsInline/>
+              <video ref={videoRef} autoPlay muted playsInline onLoadedMetadata={()=>setVideoReady(Boolean(videoRef.current?.videoWidth&&videoRef.current?.videoHeight))} onEmptied={()=>setVideoReady(false)} onError={()=>setVideoReady(false)}/>
               {!videoReady&&<div className="br-desktop-video-empty">Waiting for the computer to approve and share its display…</div>}
               {selection&&<div className="br-desktop-selection" style={selectionOverlayStyle()}/>}
             </div>
             <div className="br-desktop-toolbar">
               <span>{videoReady?'Live computer display':'View request pending'}{coordinateControl?' · full-monitor geometry verified':' · view-only unless full monitor selected'}</span>
               <button type="button" onClick={()=>void requestControl()} disabled={!videoReady||!coordinateControl||controlGranted}>Request control</button>
-              <button type="button" onClick={()=>{setTargetStatus('');setSelection(null);targetAttemptRef.current='';try{sendData({kind:'clear_target'});}catch(error){flash('Could not clear the previous typing target. Stopping this remote session for safety.',true);void stopActivePeer();}setSelectMode(v=>!v);}} disabled={!controlGranted||!draftGranted||!selectedIsWindows}>{selectMode?'Cancel area selection':selectedIsWindows?'Drag-select typing area':'Typing-area targeting unavailable on this OS'}</button>
+              <button type="button" onClick={()=>{setTargetStatus('');setSelection(null);targetAttemptRef.current='';try{sendData({kind:'clear_target'});}catch(error){flash('Could not clear the previous typing target. Stopping this remote session for safety.',true);void stopActivePeer();}setSelectMode(v=>!v);}} disabled={!controlGranted||!draftGranted||!selectedIsWindows||!videoReady}>{selectMode?'Cancel area selection':selectedIsWindows?'Drag-select typing area':'Typing-area targeting unavailable on this OS'}</button>
               <button type="button" onClick={()=>void requestDraftPermission()} disabled={!controlGranted||draftGranted||!selectedIsWindows}><TextCursorInput size={13}/> Request typing permission</button>
             </div>
             {!selectedIsWindows&&<div className="br-desktop-caption" role="status">This computer can still use supported desktop and terminal features, but verified drag-select text targeting is not implemented for this operating system yet. Windows UI Automation targeting is currently supported.</div>}
