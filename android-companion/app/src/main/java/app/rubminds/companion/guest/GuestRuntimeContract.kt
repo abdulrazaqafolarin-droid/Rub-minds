@@ -291,6 +291,8 @@ data class GuestAppInstallRequest(
     val packageName: String,
     val signingCertificateSha256: String,
     val sourceKind: GuestAppSourceKind,
+    /** User-selected APK URI; only content:// document grants are accepted. */
+    val selectedApkDocumentUri: String? = null,
     /** Must create a new empty guest data container; never import the source app's private data. */
     val requireFreshDataContainer: Boolean = true,
     val importPrivateData: Boolean = false
@@ -341,11 +343,26 @@ data class GuestDraftResult(
 interface GuestRuntimeProvider {
     val descriptor: GuestRuntimeDescriptor
 
+    /** Re-parse the selected package/APK and verify package + signer; never import its private data. */
     suspend fun prepare(request: GuestAppInstallRequest): GuestAppInstance
     suspend fun launch(instanceId: String): GuestAppSession
     suspend fun captureFrame(sessionId: String): GuestFrame?
     suspend fun dispatchTouch(event: GuestTouchEvent): GuestOperationResult
-    suspend fun inspectTextTarget(sessionId: String, selection: GuestSelectionLease): GuestTextFieldTarget?
+    /**
+     * Resolve the drag against the latest guest accessibility tree and return the
+     * actual field identity. The caller creates the lease only after validation.
+     */
+    suspend fun inspectTextTarget(
+        sessionId: String,
+        guestInstanceId: String,
+        frameSequence: Long,
+        selectedBounds: NormalizedGuestRect
+    ): GuestTextFieldTarget?
+    /**
+     * Re-resolve the same guest field and atomically re-check that it is empty
+     * immediately before writing. Return success only after exact read-back.
+     * Never press Enter/Send; an ambiguous write must not be retried.
+     */
     suspend fun insertDraft(
         sessionId: String,
         selection: GuestSelectionLease,
@@ -362,6 +379,10 @@ object GuestInstallPolicy {
     fun validate(request: GuestAppInstallRequest): String? {
         if (!packageNamePattern.matches(request.packageName)) return "guest_package_name_invalid"
         if (!digestPattern.matches(request.signingCertificateSha256)) return "guest_signer_invalid"
+        if (request.sourceKind == GuestAppSourceKind.USER_SELECTED_APK_DOCUMENT &&
+            request.selectedApkDocumentUri?.startsWith("content://") != true) return "user_selected_apk_content_uri_required"
+        if (request.sourceKind == GuestAppSourceKind.SELECTED_INSTALLED_APK &&
+            request.selectedApkDocumentUri != null) return "installed_apk_must_not_supply_document_uri"
         if (!request.requireFreshDataContainer) return "fresh_guest_data_required"
         if (request.importPrivateData) return "private_app_data_import_forbidden"
         return null
