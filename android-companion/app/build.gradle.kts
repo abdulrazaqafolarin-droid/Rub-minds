@@ -170,7 +170,7 @@ androidComponents {
                     "receiver:$expectedAppId.WorkProfileAdminReceiver"
                 )
                 val actualExported = exported.map { "${it.type}:${it.className}" }.toSet()
-                require(actualExported == expectedExported && exported.size == 2) {
+                require(actualExported == expectedExported && exported.size == 3) {
                     "Guest host exported-component allowlist mismatch. " +
                         "Expected ${expectedExported.sorted()}, found ${actualExported.sorted()}."
                 }
