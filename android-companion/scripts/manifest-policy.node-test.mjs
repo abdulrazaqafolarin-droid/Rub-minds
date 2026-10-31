@@ -331,16 +331,22 @@ test("Android acknowledges malformed touch gestures with an explicit rejection",
   const end = service.indexOf("val gesture = RemoteTouchGesture(", start);
   assert.ok(start >= 0 && end > start, "touch parser and dispatch boundary must remain present");
   const parser = service.slice(start, end);
-  assert.match(parser, /input\.optString\("kind"\) != "touch"[\s\S]*!UUID_PATTERN\.matches\(gestureId\)[\s\S]*input\.optString\("sessionId"\) != sessionId[\s\S]*input\.optString\("appPackageName"\) != appPackage/);
-  assert.ok(parser.includes("val rejectGesture = { sendTouchAcknowledgement(channel, sessionId, gestureId, false) }"));
-  assert.match(parser, /input\.keys\(\)[\s\S]*rejectGesture\(\)/);
-  assert.ok(parser.includes("else -> {") && parser.includes("rejectGesture()") && parser.includes("return"));
-  assert.match(parser, /optJSONObject\("from"\)[\s\S]*rejectGesture\(\)/);
-  assert.match(parser, /optJSONObject\("to"\)[\s\S]*rejectGesture\(\)/);
-  assert.ok(parser.includes("durationValue.toDouble() % 1.0 != 0.0") && parser.includes("rejectGesture()"));
-  assert.ok(parser.includes("durationMillis !in 40..1_500") && parser.includes("rejectGesture()"));
+  for (const expected of [
+    'input.optString("kind") != "touch"',
+    "UUID_PATTERN.matches(gestureId)",
+    'input.optString("sessionId") != sessionId',
+    'input.optString("appPackageName") != appPackage',
+    "val rejectGesture = { sendTouchAcknowledgement(channel, sessionId, gestureId, false) }",
+    "input.keys().asSequence().toSet() != allowedKeys",
+    'optJSONObject("from")',
+    'optJSONObject("to")',
+    "else -> {",
+    "durationValue.toDouble() % 1.0 != 0.0",
+    "durationMillis !in 40..1_500"
+  ]) assert.ok(parser.includes(expected), "Malformed touch rejection missing: " + expected);
+  assert.ok(parser.includes("rejectGesture()"));
+  assert.ok(parser.includes("return"));
 });
-
 
 test("remote typing is process-local, locally armed and limited to the focused approved phone field", async () => {
   const gate = await read("app/src/main/java/app/rubminds/companion/RemoteKeyboardGate.kt");
