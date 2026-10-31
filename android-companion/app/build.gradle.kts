@@ -116,7 +116,10 @@ androidComponents {
                         }
                     }
                     .toSet()
-                val allowedPermissions = setOf("android.permission.INTERNET")
+                val allowedPermissions = setOf(
+                    "android.permission.INTERNET",
+                    "android.permission.INTERACT_ACROSS_PROFILES"
+                )
                 require(permissions == allowedPermissions) {
                     "Guest host manifest permission allowlist mismatch. " +
                         "Expected ${allowedPermissions.sorted()}, found ${permissions.sorted()}."
@@ -163,7 +166,8 @@ androidComponents {
                 val exported = components.filter { it.exported }
                 val expectedExported = setOf(
                     "activity:$expectedAppId.MainActivity",
-                    "service:$expectedAppId.DraftInputMethodService"
+                    "service:$expectedAppId.DraftInputMethodService",
+                    "receiver:$expectedAppId.WorkProfileAdminReceiver"
                 )
                 val actualExported = exported.map { "${it.type}:${it.className}" }.toSet()
                 require(actualExported == expectedExported && exported.size == 2) {
@@ -208,6 +212,28 @@ androidComponents {
                 }
                 require(hasIntent(inputMethod, "android.view.InputMethod")) {
                     "The approved input method must retain android.view.InputMethod."
+                }
+
+                val adminReceiver = exported.single { it.type == "receiver" }
+                require(adminReceiver.className == "$expectedAppId.WorkProfileAdminReceiver") {
+                    "The only exported receiver must be the exact Rub Minds Work Profile DPC receiver."
+                }
+                require(adminReceiver.permission == "android.permission.BIND_DEVICE_ADMIN") {
+                    "The Work Profile DPC receiver must remain protected by BIND_DEVICE_ADMIN."
+                }
+                require(hasIntent(adminReceiver, "android.app.action.DEVICE_ADMIN_ENABLED")) {
+                    "The Work Profile DPC receiver must retain DEVICE_ADMIN_ENABLED."
+                }
+                require(hasIntent(adminReceiver, "android.app.action.PROFILE_PROVISIONING_COMPLETE")) {
+                    "The Work Profile DPC receiver must receive profile provisioning completion."
+                }
+                val hasDeviceAdminMetadata = childElements(adminReceiver.element).any { metadata ->
+                    metadata.tagName == "meta-data" &&
+                        metadata.androidAttribute("name") == "android.app.device_admin" &&
+                        metadata.androidAttribute("resource") == "@xml/work_profile_admin"
+                }
+                require(hasDeviceAdminMetadata) {
+                    "The Work Profile DPC receiver must reference its minimal device-admin policy metadata."
                 }
 
                 val digest = MessageDigest.getInstance("SHA-256")
