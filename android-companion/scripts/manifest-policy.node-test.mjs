@@ -103,6 +103,9 @@ test("guest runtime code remains a provider-neutral contract with no bundled vir
   assert.match(contract, /GuestRuntimeDescriptor/);
   assert.match(contract, /GuestLocalApprovalReceipt/);
   assert.match(contract, /GuestRuntimeProvider/);
+  assert.match(contract, /selectedApkDocumentUri/);
+  assert.match(contract, /user_selected_apk_content_uri_required/);
+  assert.match(contract, /selectedBounds: NormalizedGuestRect/);
   assert.match(contract, /GuestInstanceIsolationRegistry/);
   assert.match(contract, /GuestDraftResultPolicy/);
   assert.match(contract, /GuestSelectionGuard/);
