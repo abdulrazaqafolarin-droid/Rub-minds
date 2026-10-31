@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.content.pm.PackageManager
 import android.provider.Settings
 import android.view.Gravity
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -79,6 +80,42 @@ class AndroidStreamSetupActivity : Activity() {
                 Toast.makeText(this@AndroidStreamSetupActivity, "Remote touch revoked. View-only sharing can continue.", Toast.LENGTH_LONG).show()
             }
         })
+
+        root.addView(TextView(this).apply {
+            text = "Remote typing (optional)"
+            textSize = 14f
+            setTextColor(0xff172033.toInt())
+            setPadding(0, dp(16), 0, dp(4))
+        })
+        root.addView(TextView(this).apply {
+            text = "Choose Rub Minds as the phone keyboard, then locally allow Backroom typing. While the selected app is visible, focus a normal text field on the phone. You can then type from the Backroom control device into that field. Password fields are blocked and text is inserted only; nothing is submitted."
+            textSize = 12f
+            setTextColor(0xff405070.toInt())
+            setPadding(0, 0, 0, dp(8))
+        })
+        root.addView(Button(this).apply {
+            text = "Choose Rub Minds phone keyboard"
+            setOnClickListener {
+                val manager = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager
+                if (manager == null) {
+                    Toast.makeText(this@AndroidStreamSetupActivity, "Android keyboard settings are unavailable.", Toast.LENGTH_LONG).show()
+                } else {
+                    manager.showInputMethodPicker()
+                }
+            }
+        })
+        root.addView(Button(this).apply {
+            text = "Allow Backroom typing for 15 minutes"
+            setOnClickListener { confirmRemoteKeyboardArm() }
+        })
+        root.addView(Button(this).apply {
+            text = "Disarm remote typing now"
+            setOnClickListener {
+                AndroidScreenShareService.revokeRemoteKeyboard()
+                refreshStatus()
+                Toast.makeText(this@AndroidStreamSetupActivity, "Remote typing revoked.", Toast.LENGTH_LONG).show()
+            }
+        })
         root.addView(TextView(this).apply {
             text = "Choose one of your saved apps to share"
             textSize = 14f
@@ -143,6 +180,27 @@ class AndroidStreamSetupActivity : Activity() {
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Arm touch for 15 minutes") { _, _ ->
                 RemoteTouchGate.armFromLocalConfirmation(this)
+                refreshStatus()
+            }
+            .show()
+    }
+
+    private fun confirmRemoteKeyboardArm() {
+        if (!DraftInputMethodService.isEnabledAndSelected(this)) {
+            Toast.makeText(
+                this,
+                "Enable Rub Minds keyboard in Android settings, then select it as the active keyboard.",
+                Toast.LENGTH_LONG
+            ).show()
+            (getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager)?.showInputMethodPicker()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Allow Backroom to type into the phone?")
+            .setMessage("For up to 15 minutes, the active Backroom session may insert text into a focused, locally approved app field through the Rub Minds keyboard. Text is never read back. Password fields, other apps, stale sessions and unapproved fields are blocked. This does not press Enter or submit anything. Stopping screen sharing or this permission revokes remote typing.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Allow typing for 15 minutes") { _, _ ->
+                RemoteKeyboardGate.armFromLocalConfirmation()
                 refreshStatus()
             }
             .show()
@@ -242,11 +300,20 @@ class AndroidStreamSetupActivity : Activity() {
         if (!::status.isInitialized) return
         val enabled = AndroidTouchAccessibilityService.isServiceEnabled(this)
         val armed = RemoteTouchGate.isArmed(this)
-        status.text = when {
+        val touchStatus = when {
             !enabled -> "Touch service: not enabled. Streaming stays unavailable until you enable it in Android Settings."
             armed -> "Touch service: enabled · remote touch is locally armed for up to 15 minutes."
             else -> "Touch service: enabled · screen sharing can be view-only. Remote touch is not armed."
         }
+        val keyboardStatus = when {
+            !DraftInputMethodService.isEnabledAndSelected(this) ->
+                "Phone keyboard: Rub Minds keyboard is not selected. Remote typing is unavailable."
+            RemoteKeyboardGate.isArmed() ->
+                "Phone keyboard: selected · Backroom typing is locally armed for up to 15 minutes."
+            else ->
+                "Phone keyboard: selected · remote typing is off until you allow it here."
+        }
+        status.text = "$touchStatus\\n$keyboardStatus"
         armButton.isEnabled = enabled
 
     }
