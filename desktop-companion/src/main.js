@@ -384,7 +384,7 @@ async function handleCommand(payload){
     if(payload.appId!==undefined&&(!UUID_PATTERN.test(payload.appId)||!state.apps.some(app=>app.id===payload.appId))){
       await publish('response',{requestId,ok:false,reason:'app_not_selected'});return;
     }
-    createApproval('view_offer','Share the selected application window or an entire monitor with this Backroom session. For interactive app-window capture, Backroom must have launched the selected app and Windows must expose exactly one visible top-level window for it. Otherwise choose monitor view or stay view-only.',async()=>{
+    createApproval('view_offer','Share the selected application window or an entire monitor with this Backroom session. A single-app window is view-only because the operating-system picker does not disclose its native window ID. Share an entire monitor to request mouse, keyboard and draft control.',async()=>{
       try{await startViewSession(payload);}
       catch(error){await stopPeer(payload.sessionId);throw error;}
     },{requestId,sessionId:payload.sessionId,remote:true,actorDisplayName:payload.actorDisplayName,capability:'view',onDeny:()=>stopPeer(payload.sessionId)});return;

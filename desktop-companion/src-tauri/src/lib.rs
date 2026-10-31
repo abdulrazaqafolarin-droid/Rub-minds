@@ -812,42 +812,12 @@ fn set_capture_geometry(
         return Err("Invalid screen capture session or dimensions".into());
     }
 
+    // The web capture picker reports a surface type, not the selected HWND.
+    // A matching process, foreground window and resolution do not prove that
+    // the browser actually captured that same window. Never route OS input to
+    // an unproven capture source. Native HWND-bound capture is required.
     if display_surface == "window" {
-        // Resolve the process exclusively from the native allowlist. No browser PID is accepted.
-        let selected_app_id = app_id.ok_or("Select a Backroom-launched app before interactive window capture")?;
-        let registered_pid = state.launched_app_ids.lock().map_err(|_| "App identity registry unavailable")?
-            .get(&selected_app_id).copied()
-            .ok_or("The selected app was not launched by this companion")?;
-        let expected_pid = registered_pid;
-        let mut processes = state.desktop_processes.lock().map_err(|_| "Desktop process registry unavailable")?;
-        let tracked_child = processes.get_mut(&expected_pid).ok_or("The selected launched process is no longer tracked")?;
-        if tracked_child.try_wait().map_err(|_| "Could not inspect the launched app")?.is_some() {
-            return Err("The selected launched app has already exited".into());
-        }
-        drop(processes);
-        if expected_pid == std::process::id() {
-            return Err("The companion cannot be used as the application window target".into());
-        }
-        let target = input_targeting::foreground_window_snapshot_for_process(expected_pid)?;
-        if target.process_id != expected_pid {
-            return Err("The selected window does not belong to the Backroom-launched app".into());
-        }
-        input_targeting::validate_window_capture_dimensions(frame_width, frame_height, target.bounds)
-            .map_err(|_| "The selected app window does not match the captured frame bounds. This session remains view-only; reselect the app window and try again.".to_string())?;
-        let [left, top, right, bottom] = target.bounds;
-        let screen_width = right.saturating_sub(left) as u32;
-        let screen_height = bottom.saturating_sub(top) as u32;
-        state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?.insert(session_id, CaptureGeometry {
-            frame_width, frame_height, screen_width, screen_height,
-            origin_x: left, origin_y: top,
-            window_binding: Some(WindowCaptureBinding {
-                app_id: selected_app_id,
-                process_id: target.process_id,
-                handle: target.handle,
-                class_name: target.class_name,
-            }),
-        });
-        return Ok(());
+        return Err("Single-window capture is view-only because its native HWND cannot be verified. Share an entire monitor for interactive input.".into());
     }
 
     if display_surface != "monitor"

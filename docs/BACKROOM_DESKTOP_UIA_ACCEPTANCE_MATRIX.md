@@ -98,3 +98,7 @@ The native source tests cover the pure geometry and window-identity checks. They
 
 ### Native app identity revalidation (2026-10-31)
 The companion now records the app ID and child process ID in Rust when the approved executable starts. The browser-supplied PID is checked against that native record; it is not sufficient by itself. On every interactive action and draft targeting check, the native companion verifies that the app ID still maps to the original process, the child process is still live, and its unique window identity/focus remain valid. A browser request cannot register an arbitrary PID through the window-capture API. Native compilation and physical Windows interaction remain unverified.
+
+## Capture source identity safety correction — 2026-10-31
+
+The browser's `getDisplayMedia` API exposes a captured `displaySurface` category and dimensions, but not the native HWND selected in the OS picker. Matching an app's PID, focused window and dimensions does **not** prove the video stream comes from that HWND. Consequently, **single-window streams are now view-only**; the native `set_capture_geometry` command rejects interactive window input. Previously proposed single-window control scenarios above are superseded. Whole-monitor sharing remains the supported separate-approval control path. Interactive single-window support requires native capture and input bound to one verifiable HWND.

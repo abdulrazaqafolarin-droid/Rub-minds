@@ -318,14 +318,14 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       await waitForIceGatheringComplete(pc);
       await sendCommand('view_offer',{sessionId,...(selectedApp?{appId:selectedApp}:{}),offer:{sdp:pc.localDescription?.sdp}});
       flash(selectedApp
-        ?'View request sent. Approve it on the computer, then choose the launched application window for app-bound control or a monitor for desktop-wide control.'
+        ?'View request sent. Approve it on the computer, then choose a monitor for interactive control (or a single app window for viewing only).'
         :'View request sent. Approve it on the computer, then choose a monitor for desktop-wide control. A window without a Backroom-launched app identity remains view-only.');
     }catch(error){await closePeer();flash(error instanceof Error?error.message:'Could not create the screen-share request.',true);}
   };
 
   const requestControl=async()=>{
     if(!screenSession)return flash('Start a live view first.',true);
-    if(!coordinateControl)return flash('The selected capture could not be securely bound to the expected app window or monitor. Re-share the launched app window or choose the entire monitor.',true);
+    if(!coordinateControl)return flash('The selected capture could not be securely bound to the expected app window or monitor. Choose the entire monitor for interactive control. Single-window capture is view-only.',true);
     try{await sendCommand('request_control',{sessionId:screenSession});flash('Control request sent. Approve it locally on the computer.');}
     catch(error){flash(error instanceof Error?error.message:'Could not request control.',true);}
   };
@@ -500,7 +500,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
               {selection&&<div className="br-desktop-selection" style={selectionOverlayStyle()}/>}
             </div>
             <div className="br-desktop-toolbar">
-              <span>{videoReady?'Live computer display':'View request pending'}{coordinateControl?' · selected window/monitor geometry verified':' · view-only until capture geometry is verified'}</span>
+              <span>{videoReady?'Live computer display':'View request pending'}{coordinateControl?' · monitor geometry verified':' · view-only until capture geometry is verified'}</span>
               <button type="button" onClick={()=>void requestControl()} disabled={!videoReady||!coordinateControl||controlGranted}>Request control</button>
               <button type="button" onClick={()=>{setTargetStatus('');setSelection(null);dragRef.current=null;targetAttemptRef.current='';draftAttemptRef.current='';try{sendData({kind:'clear_target'});}catch(error){flash('Could not clear the previous typing target. Stopping this remote session for safety.',true);void stopActivePeer();}setSelectMode(v=>!v);}} disabled={!controlGranted||!draftGranted||!selectedIsWindows||!videoReady}>{selectMode?'Cancel area selection':selectedIsWindows?'Drag-select typing area':'Typing-area targeting unavailable on this OS'}</button>
               <button type="button" onClick={()=>void requestDraftPermission()} disabled={!controlGranted||draftGranted||!selectedIsWindows}><TextCursorInput size={13}/> Request typing permission</button>
