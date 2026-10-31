@@ -90,10 +90,12 @@ test('client pointer mapping uses real video bounds and rejects letterbox/outsid
 });
 
 test('drag selection normalizes reverse drags and rejects tiny or invalid regions', () => {
-  assert.deepEqual(
-    createNormalizedDragSelection({ x: 0.8, y: 0.9 }, { x: 0.2, y: 0.1 }),
-    { x: 0.2, y: 0.1, width: 0.6, height: 0.8 },
-  );
+  const reverse = createNormalizedDragSelection({ x: 0.8, y: 0.9 }, { x: 0.2, y: 0.1 });
+  assert.ok(reverse);
+  assert.equal(reverse.x, 0.2);
+  assert.equal(reverse.y, 0.1);
+  assert.ok(Math.abs(reverse.width - 0.6) < 1e-12);
+  assert.equal(reverse.height, 0.8);
   assert.equal(createNormalizedDragSelection({ x: 0.2, y: 0.2 }, { x: 0.205, y: 0.8 }), null);
   assert.equal(createNormalizedDragSelection({ x: 0.2, y: 0.2 }, { x: 1.01, y: 0.8 }), null);
   assert.equal(createNormalizedDragSelection({ x: 0, y: 0 }, { x: 1, y: 1 }, 0), null);
