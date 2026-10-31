@@ -21,7 +21,7 @@ This is a debug-signed acceptance artifact, not a production release. The Androi
 2. Install the exact debug APK on the phone. Record the installed package version and signing-certificate digest; compare them with the artifact evidence above.
 3. Record the actual handset values from the running app: Android release, SDK, ABI, build/display/incremental identifiers, display dimensions and density. Do not infer ABI or QPR2 support from the model name.
 4. Use an isolated staging Rub Minds project and a dedicated test group/account. The PR migration and Edge Function are source-only until a separately approved staging deployment. Do not apply them to production as part of this test.
-5. Pair the phone, approve it as the group owner and confirm only locally selected, signer-approved app metadata is synced.
+5. Before pairing, install the staging-configured APK (not the backend-unconfigured compile-verification APK above) after the staging migration and Edge Function have been separately applied/deployed to the isolated staging project. Pair the phone, approve it as the group owner and confirm only locally selected, signer-approved app metadata is synced.
 
 ## Live app window and video
 
