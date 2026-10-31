@@ -98,6 +98,13 @@ test("guest runtime code remains a provider-neutral contract with no bundled vir
   assert.doesNotMatch(gradle, /Bcore|BlackBox|VirtualApp|NewBlackbox/i);
   assert.doesNotMatch(companion, /BlackBoxCore|VirtualApp|Bcore/i);
   assert.match(contract, /GuestRuntimeAdmissionPolicy/);
+  assert.match(contract, /GuestRuntimeProvider/);
+  assert.match(contract, /GuestInstanceIsolationRegistry/);
+  assert.match(contract, /GuestDraftResultPolicy/);
+  assert.match(contract, /GuestSelectionGuard/);
+  assert.match(contract, /GuestInstallPolicy/);
+  assert.match(contract, /GuestTouchPolicy/);
+
   assert.match(contract, /GuestRuntimeDecision\.BLOCKED/);
   assert.match(contract, /mergedHostPermissions/);
   assert.match(contract, /releaseArtifactDebugSigned/);
