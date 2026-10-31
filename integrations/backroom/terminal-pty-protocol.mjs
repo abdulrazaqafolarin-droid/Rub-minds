@@ -63,8 +63,10 @@ export function createTerminalActionRequestGuard(maxRequests = 256) {
   }
   const seen = new Set();
   return requestId => {
-    if (!validSession(requestId) || seen.has(requestId) || seen.size >= maxRequests) return false;
+    if (!validSession(requestId)) return 'invalid';
+    if (seen.has(requestId)) return 'duplicate';
+    if (seen.size >= maxRequests) return 'limit';
     seen.add(requestId);
-    return true;
+    return 'accepted';
   };
 }
