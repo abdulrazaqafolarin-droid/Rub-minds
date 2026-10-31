@@ -72,13 +72,13 @@ test('terminal Enter is separate, exact-session, and carries no text payload', (
 
 test('terminal action request IDs are one-use across drafts and Enter and fail closed at capacity', () => {
   const guard = createTerminalActionRequestGuard(2);
-  assert.equal(guard(requestId), true);
-  assert.equal(guard(requestId), false);
+  assert.equal(guard(requestId), 'accepted');
+  assert.equal(guard(requestId), 'duplicate');
   const second = '123e4567-e89b-42d3-a456-426614174002';
-  assert.equal(guard(second), true);
+  assert.equal(guard(second), 'accepted');
   const third = '123e4567-e89b-42d3-a456-426614174003';
-  assert.equal(guard(third), false);
-  assert.equal(guard('not-a-uuid'), false);
+  assert.equal(guard(third), 'limit');
+  assert.equal(guard('not-a-uuid'), 'invalid');
 });
 
 test('terminal action replay guard rejects invalid limits', () => {
