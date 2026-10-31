@@ -1,7 +1,6 @@
 
 import com.android.build.api.artifact.SingleArtifact
 import org.w3c.dom.Element
-import javax.xml.XMLConstants
 import javax.xml.parsers.DocumentBuilderFactory
 import java.security.MessageDigest
 import java.util.Locale
@@ -74,8 +73,8 @@ androidComponents {
                     setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
                     setFeature("http://xml.org/sax/features/external-general-entities", false)
                     setFeature("http://xml.org/sax/features/external-parameter-entities", false)
-                    setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "")
-                    setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "")
+                    setAttribute("http://javax.xml.XMLConstants/property/accessExternalDTD", "")
+                    setAttribute("http://javax.xml.XMLConstants/property/accessExternalSchema", "")
                 }
                 val document = factory.newDocumentBuilder().parse(manifestFile)
                 val root = document.documentElement
