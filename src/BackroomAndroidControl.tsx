@@ -145,6 +145,9 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         { urls: ['stun:stun.l.google.com:19302'] }, { urls: ['stun:stun.cloudflare.com:3478'] },
       ] });
       peerRef.current = peer;
+      // The offer must include a video m-line; the phone answers it with its
+      // MediaProjection track. A data-channel-only offer cannot carry video.
+      peer.addTransceiver('video', { direction: 'recvonly' });
       const data = peer.createDataChannel('backroom-input', { ordered: true });
       dataRef.current = data;
       data.onopen = () => setDataReady(true);
