@@ -128,6 +128,25 @@ class GuestRuntimeContractTest {
         }
     }
 
+    @Test fun physicalEvidenceCannotBeReusedForADifferentIsolationBoundary() {
+        val evidence = GuestDeviceAcceptanceEvidence(
+            engineId = descriptor.engineId,
+            engineVersion = descriptor.engineVersion,
+            isolationBoundary = descriptor.isolationBoundary,
+            deviceProfileId = device.localProfileId,
+            apiLevel = device.apiLevel,
+            abi = device.abi,
+            testRunId = "poc-run-2026-10-31",
+            releaseArtifactSha256 = artifactSha256,
+            mergedManifestSha256 = manifestSha256,
+            passedChecks = checks
+        )
+        val changed = descriptor.copy(isolationBoundary = GuestIsolationBoundary.ANDROID_MANAGED_PROFILE)
+        val review = GuestRuntimeAdmissionPolicy.review(changed, device, evidence)
+        assertEquals(GuestRuntimeDecision.DEVICE_POC_REQUIRED, review.decision)
+        assertTrue(review.blockers.contains("acceptance_isolation_boundary_mismatch"))
+    }
+
     @Test fun guestOsIsolationCapabilityIsRequiredIndependently() {
         val candidate = descriptor.copy(
             capabilities = descriptor.capabilities - GuestRuntimeCapability.GUEST_OS_SANDBOX_ISOLATION
@@ -147,6 +166,7 @@ class GuestRuntimeContractTest {
         val evidence = GuestDeviceAcceptanceEvidence(
             engineId = descriptor.engineId,
             engineVersion = descriptor.engineVersion,
+            isolationBoundary = descriptor.isolationBoundary,
             deviceProfileId = device.localProfileId,
             apiLevel = device.apiLevel,
             abi = device.abi,
@@ -166,6 +186,7 @@ class GuestRuntimeContractTest {
     @Test fun physicalAcceptanceCannotBeReusedForDifferentReleaseArtifactOrMergedManifest() {
         val evidence = GuestDeviceAcceptanceEvidence(
             engineId = descriptor.engineId, engineVersion = descriptor.engineVersion,
+            isolationBoundary = descriptor.isolationBoundary,
             deviceProfileId = device.localProfileId, apiLevel = device.apiLevel, abi = device.abi,
             testRunId = "poc-run-2026-10-31",
             releaseArtifactSha256 = artifactSha256,
