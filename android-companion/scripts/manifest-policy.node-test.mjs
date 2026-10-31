@@ -141,7 +141,6 @@ test("guest runtime code remains a provider-neutral contract with no bundled vir
   assert.match(contract, /private constructor/);
   assert.doesNotMatch(contract, /approvedLocally/);
   assert.match(contract, /submit_not_supported/);
-  assert.doesNotMatch(contract, /approvedLocally/);
   assert.match(contract, /uuidPattern/);
   assert.match(contract, /digestPattern/);
 });
