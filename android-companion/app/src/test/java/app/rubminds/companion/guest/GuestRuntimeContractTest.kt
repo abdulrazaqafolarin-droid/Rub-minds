@@ -26,7 +26,10 @@ class GuestRuntimeContractTest {
         capabilities = GuestRuntimeCapability.values().toSet(),
         mergedHostPermissions = setOf(
             "android.permission.INTERNET",
-            "android.permission.INTERACT_ACROSS_PROFILES"
+            "android.permission.INTERACT_ACROSS_PROFILES",
+            "android.permission.FOREGROUND_SERVICE",
+            "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION",
+            "android.permission.POST_NOTIFICATIONS"
         ),
         mergedHostComponents = listOf(
             GuestHostComponent(
@@ -42,6 +45,14 @@ class GuestRuntimeContractTest {
                 permission = "android.permission.BIND_INPUT_METHOD",
                 permissionProtection = GuestPermissionProtection.SIGNATURE,
                 isSystemBoundInputMethod = true
+            ),
+            GuestHostComponent(
+                className = "app.rubminds.companion.AndroidTouchAccessibilityService",
+                type = GuestHostComponentType.SERVICE,
+                exported = true,
+                permission = "android.permission.BIND_ACCESSIBILITY_SERVICE",
+                permissionProtection = GuestPermissionProtection.SIGNATURE,
+                isAccessibilityService = true
             ),
             GuestHostComponent(
                 className = "app.rubminds.companion.WorkProfileAdminReceiver",
