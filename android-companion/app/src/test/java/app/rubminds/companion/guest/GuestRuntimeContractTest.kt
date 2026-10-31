@@ -447,7 +447,7 @@ class GuestRuntimeContractTest {
         )
         assertNull(guard.consumeForDraft(
             currentFrame, currentField, currentSelection,
-            GuestDraftRequest("draft-2", currentSelection.selectionId, "approved draft", true), 10_000
+            GuestDraftRequest("draft-2", currentSelection.selectionId, "approved draft", approval(currentSelection)), 10_000
         ))
     }
 
