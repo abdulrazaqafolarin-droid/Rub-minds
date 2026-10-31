@@ -42,7 +42,7 @@ class AndroidStreamSetupActivity : Activity() {
             setTextColor(0xff172033.toInt())
         })
         root.addView(TextView(this).apply {
-            text = "1. Choose one of the apps saved in your local allowlist. 2. Approve Android's screen-sharing prompt and choose that same app window (not the whole display). 3. The companion brings that app to the foreground. 4. View streaming works without Accessibility; enable the optional touch service and arm touch locally only when you also want remote taps and swipes."
+            text = "1. Choose one of the apps saved in your local allowlist. 2. Approve Android's screen-sharing prompt and choose that same app window (not the whole display). 3. The companion brings that app to the foreground. 4. Open Backroom on your Windows laptop or another device; this phone must keep the selected app in the foreground, so the Backroom control page cannot be on this same phone while that app is being shared. 5. View streaming works without Accessibility; enable the optional touch service and arm touch locally only when you also want remote taps and swipes."
             textSize = 13f
             setTextColor(0xff405070.toInt())
             setPadding(0, dp(12), 0, dp(12))

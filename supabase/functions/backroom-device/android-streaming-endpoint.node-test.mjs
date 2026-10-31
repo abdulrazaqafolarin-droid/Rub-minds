@@ -124,3 +124,15 @@ test("stale browser stop callbacks cannot close a newer Android stream", async (
   const body = control.slice(start, end);
   assert.match(body, /sessionRef.current === expectedSession/);
 });
+
+test("MediaProjection starts the track and then follows OS app-window visibility", async () => {
+  const service = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  assert.match(service, /capturedContentVisible = true/);
+  assert.match(service, /onCapturedContentVisibilityChanged/);
+  assert.match(service, /setEnabled\(isVisible && !stopping\)/);
+});
+test("native setup explicitly explains second-device viewing", async () => {
+  const setup = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidStreamSetupActivity.kt");
+  assert.match(setup, /Open Backroom on your Windows laptop or another device/);
+  assert.match(setup, /cannot be on this same phone/);
+});

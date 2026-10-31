@@ -144,7 +144,7 @@ class AndroidScreenShareService : Service() {
         videoSource = source
         val helper = SurfaceTextureHelper.create("BackroomAndroidScreenCapture", egl.eglBaseContext)
         textureHelper = helper
-        capturedContentVisible = false
+        capturedContentVisible = true
         val screenCapturer = ScreenCapturerAndroid(resultData, object : MediaProjection.Callback() {
             override fun onStop() {
                 stopCapture("android_projection_revoked")
@@ -427,10 +427,11 @@ class AndroidScreenShareService : Service() {
     }
 
     private fun sendLocalAnswer(sessionId: String) {
-        val description = peer?.localDescription ?: return
+        val activePeer = peer ?: return
+        val description = activePeer.localDescription ?: return
         if (description.type != SessionDescription.Type.ANSWER || description.description.length !in 8..MAX_SDP_CHARS) return
         val claim = synchronized(this) {
-            if (answerAlreadySent || answeringSessionId != sessionId || peer?.localDescription !== description) {
+            if (answerAlreadySent || answeringSessionId != sessionId || peer !== activePeer) {
                 false
             } else {
                 answerAlreadySent = true

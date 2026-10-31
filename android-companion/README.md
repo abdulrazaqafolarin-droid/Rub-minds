@@ -140,3 +140,6 @@ The Android screen-sharing picker can offer one app window or the entire display
 **Still not delivered:** isolated/virtual Android guest instances, separate app-private data, guest-only virtual display rendering, accessibility-backed field discovery in the Phone Frame, drag-select target binding, draft insertion/readback, app-specific keyboard input, or a production Emergency Stop for an isolated guest. The current stream is a mirror of an ordinary app installation and must not be labelled virtualization.
 
 The command protocol and touch policy have Node source-contract regression tests; native :app:testDebugUnitTest, merged-manifest audit and :app:assembleDebug are configured in GitHub Actions. Those commands still need a green run. No live migration or Edge Function deployment is implied by committed source.
+
+
+**Viewing topology:** the phone is the capture source and must keep the selected app window foreground. Open the Backroom Phone Frame control page on a separate device (for example a Windows laptop). Opening the control page on the same phone causes the selected app window to become hidden; Android pauses that app-window capture and Backroom shows a hidden-source state. This path is not an on-device overlay or same-phone virtual display.
