@@ -122,6 +122,9 @@ object GuestRuntimeAdmissionPolicy {
     const val MAX_FRAME_PIXELS = 33_554_432L
 
     private val allowedLicenses = setOf("Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause")
+    // The current host needs outbound HTTPS and no other declared permission.
+    // Any future permission requires an explicit policy change and security review.
+    private val allowedHostPermissions = setOf("android.permission.INTERNET")
 
     // A guest engine should not add these permissions to the companion's host
     // manifest. Guest-app permissions must be mediated inside the guest instead.
@@ -201,10 +204,10 @@ object GuestRuntimeAdmissionPolicy {
         val missingCapabilities = requiredCapabilities - descriptor.capabilities
         missingCapabilities.forEach { blockers += "capability_missing_${it.name.lowercase()}" }
 
-        val blockedPermissions = descriptor.mergedHostPermissions.filter { permission ->
-            permission.substringAfterLast('.').uppercase() in blockedPermissionAtoms
+        val unapprovedHostPermissions = descriptor.mergedHostPermissions.filterNot { it in allowedHostPermissions }
+        if (unapprovedHostPermissions.isNotEmpty()) {
+            blockers += "unapproved_host_permissions:${unapprovedHostPermissions.sorted().joinToString(",")}"
         }
-        if (blockedPermissions.isNotEmpty()) blockers += "unapproved_host_permissions:${blockedPermissions.sorted().joinToString(",")}"
 
         val unsafeComponents = descriptor.mergedHostComponents.filter { component ->
             if (!component.exported) return@filter false
@@ -217,9 +220,7 @@ object GuestRuntimeAdmissionPolicy {
                 component.isSystemBoundInputMethod && component.className == "${descriptor.hostApplicationId}.DraftInputMethodService" &&
                 component.permission == "android.permission.BIND_INPUT_METHOD" &&
                 component.permissionProtection == GuestPermissionProtection.SIGNATURE
-            val protectedInternalComponent = component.permissionProtection == GuestPermissionProtection.SIGNATURE &&
-                !component.permission.isNullOrBlank()
-            permissionIsExplicitlyBlocked || !(isExpectedLauncher || isExpectedInputMethod || protectedInternalComponent)
+            permissionIsExplicitlyBlocked || !(isExpectedLauncher || isExpectedInputMethod)
         }
         if (unsafeComponents.isNotEmpty()) {
             blockers += "unapproved_exported_components:${unsafeComponents.map { it.className }.sorted().joinToString(",")}"

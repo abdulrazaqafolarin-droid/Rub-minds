@@ -18,9 +18,10 @@ This document is the execution gate for a separate Android physical-device proof
 The current NewBlackbox candidate is **rejected unchanged**. Its current Bcore manifest contains 323 permission entries (249 unique names), including broad package visibility, all-files access, overlay, location, camera, microphone, contacts, phone/SMS and installation permissions. Its app release build uses the debug signing config and targets SDK 28. The README says JDK 17 while the Gradle modules use Java 21 / NDK 29, and the user guide says root is recommended for full functionality. A new candidate must be audited from source and final merged host manifest before a disposable POC.
 
 No candidate is permitted to add:
+- any host `<uses-permission>` beyond the companion's current `android.permission.INTERNET`; any additional permission requires a separate security review and an explicit allowlist change;
+- any exported host activity, service, receiver or provider beyond the exact existing launcher activity and OS-bound draft-input-method service; a signature permission is not a generic exception;
 - `QUERY_ALL_PACKAGES`, `MANAGE_EXTERNAL_STORAGE`, `SYSTEM_ALERT_WINDOW`, accessibility-service exports, or package-installation host permissions;
-- camera, microphone, location, SMS, contacts, call-log, phone-state, calendar, account-management or privileged settings/log permissions unless an independent, specifically required product feature has an approved separate design;
-- unprotected exported activities, services, receivers or providers;
+- camera, microphone, location, SMS, contacts, call-log, phone-state, calendar, account-management or privileged settings/log permissions;
 - an inbound localhost listener or an ADB bridge;
 - root requirements or host access to another app's private data.
 

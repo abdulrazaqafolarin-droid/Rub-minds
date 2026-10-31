@@ -122,6 +122,9 @@ test("guest runtime code remains a provider-neutral contract with no bundled vir
   assert.match(contract, /MAX_RETIRED_SELECTION_IDS_PER_SESSION = 1_024/);
   assert.match(contract, /touch_event_out_of_order/);
 
+  assert.match(contract, /allowedHostPermissions = setOf\("android\.permission\.INTERNET"\)/);
+  assert.match(contract, /filterNot \{ it in allowedHostPermissions \}/);
+  assert.doesNotMatch(contract, /protectedInternalComponent/);
   assert.match(contract, /GuestRuntimeDecision\.BLOCKED/);
   assert.match(contract, /mergedHostPermissions/);
   assert.match(contract, /mergedHostComponents/);

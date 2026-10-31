@@ -23,7 +23,7 @@ class GuestRuntimeContractTest {
         releaseArtifactSha256 = artifactSha256,
         mergedManifestSha256 = manifestSha256,
         capabilities = GuestRuntimeCapability.values().toSet(),
-        mergedHostPermissions = setOf("android.permission.INTERNET", "android.permission.FOREGROUND_SERVICE"),
+        mergedHostPermissions = setOf("android.permission.INTERNET"),
         mergedHostComponents = listOf(
             GuestHostComponent(
                 className = "app.rubminds.companion.MainActivity",
@@ -185,7 +185,17 @@ class GuestRuntimeContractTest {
     }
 
 
-    @Test fun onlyTheKnownLauncherAndSystemBoundInputMethodMayBeUnprotectedExportedComponents() {
+    @Test fun anyUnreviewedHostPermissionIsRejectedEvenWhenNotOnTheSensitiveList() {
+        val candidate = descriptor.copy(mergedHostPermissions = setOf(
+            "android.permission.INTERNET",
+            "android.permission.ACCESS_NETWORK_STATE"
+        ))
+        val review = GuestRuntimeAdmissionPolicy.review(candidate, device)
+        assertEquals(GuestRuntimeDecision.BLOCKED, review.decision)
+        assertNotNull(review.blockers.firstOrNull { it.startsWith("unapproved_host_permissions:") })
+    }
+
+    @Test fun onlyTheKnownLauncherAndSystemBoundInputMethodMayBeExported() {
         val bad = descriptor.copy(mergedHostComponents = descriptor.mergedHostComponents + GuestHostComponent(
             className = "com.blackbox.BridgeService",
             type = GuestHostComponentType.SERVICE,
@@ -222,17 +232,27 @@ class GuestRuntimeContractTest {
         assertEquals(GuestRuntimeDecision.BLOCKED, GuestRuntimeAdmissionPolicy.review(bad, device).decision)
     }
 
-    @Test fun exportedInternalComponentRequiresSignatureProtection() {
-        val safe = descriptor.copy(mergedHostComponents = descriptor.mergedHostComponents + GuestHostComponent(
+    @Test fun unlistedExportedComponentIsRejectedEvenWhenSignatureProtected() {
+        val unsafe = descriptor.copy(mergedHostComponents = descriptor.mergedHostComponents + GuestHostComponent(
             className = "com.example.InternalProvider",
             type = GuestHostComponentType.PROVIDER,
             exported = true,
             permission = "com.example.INTERNAL_ACCESS",
             permissionProtection = GuestPermissionProtection.SIGNATURE
         ))
-        assertEquals(GuestRuntimeDecision.DEVICE_POC_REQUIRED, GuestRuntimeAdmissionPolicy.review(safe, device).decision)
+        val review = GuestRuntimeAdmissionPolicy.review(unsafe, device)
+        assertEquals(GuestRuntimeDecision.BLOCKED, review.decision)
+        assertNotNull(review.blockers.firstOrNull { it.startsWith("unapproved_exported_components:") })
     }
 
+    @Test fun nonExportedEngineComponentsDoNotExpandHostEntryPoints() {
+        val safe = descriptor.copy(mergedHostComponents = descriptor.mergedHostComponents + GuestHostComponent(
+            className = "com.example.InternalService",
+            type = GuestHostComponentType.SERVICE,
+            exported = false
+        ))
+        assertEquals(GuestRuntimeDecision.DEVICE_POC_REQUIRED, GuestRuntimeAdmissionPolicy.review(safe, device).decision)
+    }
     @Test fun accessibilityAndPrivilegedHostPermissionAtomsAreDenied() {
         val bad = descriptor.copy(mergedHostPermissions = setOf(
             "android.permission.INTERNET",
