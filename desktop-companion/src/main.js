@@ -483,6 +483,36 @@ async function invalidatePendingDraftApprovals(sessionId,reason){
   }
   renderPending();
 }
+function enqueuePeerOperation(peer,operation){
+  const previous=peer.targetQueue||Promise.resolve();
+  peer.targetOperationsPending=(peer.targetOperationsPending||0)+1;
+  const task=previous.catch(()=>{}).then(operation);
+  const tracked=task.finally(()=>{
+    peer.targetOperationsPending=Math.max(0,(peer.targetOperationsPending||1)-1);
+  });
+  // Keep the serial queue alive after a failed native command. The returned
+  // promise still carries the error to the caller for safe user feedback.
+  peer.targetQueue=tracked.catch(()=>{});
+  return tracked;
+}
+function enqueueTargetClear(peer,sessionId,reason,afterClear){
+  // Invalidate browser eligibility immediately. The native clear is queued
+  // after every earlier selection/staging task, and any following drag/input
+  // operation is queued after this complete clear action.
+  invalidateTargetSelection(peer);
+  const invalidation=invalidatePendingDraftApprovals(sessionId,reason);
+  const task=enqueuePeerOperation(peer,async()=>{
+    await invalidation;
+    await invoke('clear_draft_target',{sessionId});
+    await invalidatePendingDraftApprovals(sessionId,reason);
+    if(afterClear)await afterClear();
+  });
+  const tracked=task.finally(()=>{
+    if(peer.targetClearPromise===tracked)peer.targetClearPromise=null;
+  });
+  peer.targetClearPromise=tracked;
+  return tracked;
+}
 async function handlePeerData(sessionId,raw){
   const peer=state.peers.get(sessionId);if(!peer)return;
   let message;try{message=JSON.parse(raw);}catch{return;}
@@ -494,56 +524,41 @@ async function handlePeerData(sessionId,raw){
   }
   peer.lastHeartbeat=Date.now();
   if(message.kind==='clear_target'){
-    invalidateTargetSelection(peer);
-    const invalidation=invalidatePendingDraftApprovals(sessionId,'The typing-area selection was cleared; this draft was cancelled.');
-    if(!peer.targetClearPromise){
-      // Enqueue synchronously before yielding so a following drag cannot get
-      // ahead of this clear on the ordered data channel.
-      const clearTask=(peer.targetQueue||Promise.resolve()).then(async()=>{
-        await invalidation;
-        try{await invoke('clear_draft_target',{sessionId});}
-        catch(error){notify(error?.message||'Could not clear the selected typing target. Draft insertion remains disabled.','error');}
-        // Catch approval cards that were created while the first invalidation
-        // was awaiting a native command.
-        await invalidatePendingDraftApprovals(sessionId,'The typing-area selection was cleared; this draft was cancelled.');
-        peer.targetSelectionId=null;
-        peer.targetVerified=false;
-      });
-      const tracked=clearTask.finally(()=>{if(peer.targetClearPromise===tracked)peer.targetClearPromise=null;});
-      peer.targetClearPromise=tracked;
-      peer.targetQueue=tracked;
+    try{
+      await enqueueTargetClear(peer,sessionId,'The typing-area selection was cleared; this draft was cancelled.');
+    }catch(error){
+      notify(error?.message||'Could not clear the selected typing target. Draft insertion remains disabled.','error');
     }
-    await peer.targetClearPromise;
     return;
   }
   if(message.kind==='input'&&message.event){
-    // Mouse/keyboard activity outside drag-select supersedes the saved typing
-    // destination. Pointer-move telemetry alone does not change the target.
-    if(message.event.kind!=='move'&&(
+    const event=message.event;
+    // Mouse/keyboard activity outside drag-select supersedes the selected
+    // target. Pointer-move telemetry does not change a text-entry destination.
+    const mustClear=event.kind!=='move'&&(
       peer.targetVerified===true||peer.latestTargetRequestId||
-      peer.targetClearPromise||peer.targetQueueDepth>0
-    )){
-      invalidateTargetSelection(peer);
-      const invalidation=invalidatePendingDraftApprovals(
-        sessionId,'Manual computer interaction changed the target; this draft was cancelled.'
-      );
-      if(!peer.targetClearPromise){
-        const clearTask=(peer.targetQueue||Promise.resolve()).then(async()=>{
-          await invalidation;
-          await invoke('clear_draft_target',{sessionId});
-          invalidateTargetSelection(peer);
-        });
-        const tracked=clearTask.finally(()=>{if(peer.targetClearPromise===tracked)peer.targetClearPromise=null;});
-        peer.targetClearPromise=tracked;
-        peer.targetQueue=tracked;
+      peer.targetSelectionId||peer.targetQueueDepth>0
+    );
+    if(mustClear){
+      try{
+        await enqueueTargetClear(
+          peer,sessionId,
+          'Manual computer interaction changed the target; this draft was cancelled.',
+          ()=>invoke('dispatch_input',{sessionId,event}),
+        );
+      }catch(error){
+        notify(error?.message||'Could not revoke the previous typing target. Manual input was stopped for safety.','error');
       }
-      try{await peer.targetClearPromise;}
-      catch(error){
-        notify(error?.message||'Could not clear the previous typing target. Manual input was stopped for safety.','error');
-        return;
-      }
+      return;
     }
-    try{await invoke('dispatch_input',{sessionId,event:message.event});}catch(error){notify(error.message,'error');}
+    // Preserve order behind an explicit clear or another native operation,
+    // without repeatedly clearing the target for every character in a key burst.
+    if(event.kind!=='move'&&(peer.targetClearPromise||peer.targetOperationsPending>0)){
+      try{await enqueuePeerOperation(peer,()=>invoke('dispatch_input',{sessionId,event}));}
+      catch(error){notify(error?.message||'Could not deliver the local input event.','error');}
+      return;
+    }
+    try{await invoke('dispatch_input',{sessionId,event});}catch(error){notify(error.message,'error');}
   } else if(message.kind==='select_target'){
     const requestId=typeof message.requestId==='string'&&UUID_PATTERN.test(message.requestId)?message.requestId:null;
     const report=(ok,reason)=>{
@@ -564,30 +579,21 @@ async function handlePeerData(sessionId,raw){
 
     if(peer.targetQueueDepth>4){
       peer.targetQueueDepth-=1;
-      // Queue one clear behind all active checks. Coalescing avoids an
-      // unbounded clear queue if a remote peer floods the data channel.
-      if(!peer.targetClearPromise){
-        const clearTask=(peer.targetQueue||Promise.resolve()).then(async()=>{
-          await invalidation;
-          try{await invoke('clear_draft_target',{sessionId});}
-          catch(error){notify(error?.message||'Could not clear the previous typing target. Draft insertion remains disabled.','error');}
-          await invalidatePendingDraftApprovals(sessionId,'The typing-area selection was cleared; this draft was cancelled.');
-          peer.targetSelectionId=null;
-          peer.targetVerified=false;
-        });
-        const tracked=clearTask.finally(()=>{if(peer.targetClearPromise===tracked)peer.targetClearPromise=null;});
-        peer.targetClearPromise=tracked;
-        peer.targetQueue=tracked;
-      }
-      report(false,'Too many target checks are pending. The previous target was cleared; wait and drag-select again.');
-      await peer.targetClearPromise;
       rejectTargetSelection(peer,requestId);
+      report(false,'Too many target checks are pending. The previous target is being cleared; wait and drag-select again.');
+      try{
+        await enqueueTargetClear(
+          peer,sessionId,'The typing-area selection changed; this draft was cancelled.',
+        );
+      }catch(error){
+        notify(error?.message||'Could not clear the previous typing target. Draft insertion remains disabled.','error');
+      }
       return;
     }
 
     // Queue in message-arrival order before awaiting local approval-card
     // invalidation. This preserves the ordered data channel's clear/drag order.
-    peer.targetQueue=(peer.targetQueue||Promise.resolve()).then(async()=>{
+    peer.targetQueue=(peer.targetQueue||Promise.resolve()).catch(()=>{}).then(async()=>{
       try{
         await invalidation;
         if(requestId!==peer.latestTargetRequestId){
