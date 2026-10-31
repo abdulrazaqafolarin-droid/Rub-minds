@@ -245,10 +245,10 @@ class DraftInputMethodService : InputMethodService() {
         if (activePackage != packageName || liveEditor.packageName != packageName) return "phone_text_field_wrong_app"
         if (AppGrantPolicy.isSensitiveInput(liveEditor.inputType)) return "sensitive_field_blocked"
         val multiline = liveEditor.inputType and InputType.TYPE_TEXT_FLAG_MULTI_LINE != 0
-        if (text.any { Character.isISOControl(it) && !(multiline && (it == '\\n' || it == '\\t')) }) {
+        if (text.any { Character.isISOControl(it) && !(multiline && (it == '\n' || it == '\t')) }) {
             return "text_contains_unsupported_control_character"
         }
-        if (!multiline && (text.contains('\\n') || text.contains('\\r'))) return "line_break_requires_multiline_field"
+        if (!multiline && (text.contains('\n') || text.contains('\r'))) return "line_break_requires_multiline_field"
         if (!isInsertAllowed(verifyCurrentSigner = true)) return "app_or_field_not_approved"
         val connection = currentInputConnection ?: return "phone_keyboard_not_active"
         return if (connection.commitText(text, 1)) "inserted" else "phone_editor_rejected_text"
