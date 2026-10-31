@@ -24,6 +24,9 @@ export function confirmTargetSelection(peer, requestId, summary) {
     peer.targetVerified = false;
     return false;
   }
+  // A successful native acknowledgement is single-use. A duplicated or replayed
+  // reply must not replace the active verified target with another selection ID.
+  peer.latestTargetRequestId = null;
   peer.targetSelectionId = summary.selectionId;
   peer.targetVerified = true;
   return true;
