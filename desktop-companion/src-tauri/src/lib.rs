@@ -915,7 +915,7 @@ fn verify_selected_editable_target(
 }
 
 #[tauri::command]
-fn select_draft_target(state: State<'_, AppState>, session_id: String, mut target: DraftTarget) -> Result<(), String> {
+fn select_draft_target(state: State<'_, AppState>, session_id: String, mut target: DraftTarget) -> Result<String, String> {
     control_granted(&state, &session_id)?;
     draft_granted(&state, &session_id)?;
     let geometry = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
@@ -933,9 +933,14 @@ fn select_draft_target(state: State<'_, AppState>, session_id: String, mut targe
     if !value.is_empty() {
         return Err("For safety, drag-select an empty editable field. Existing text will not be overwritten.".into());
     }
+    let mode_message = match identity.access_mode.as_str() {
+        "value" => "Windows verified an empty editable field. Direct Value-pattern insertion will be used.",
+        "text" => "Windows verified an empty multi-line editor. Focus-bound Text-pattern typing and exact readback will be used.",
+        _ => return Err("The selected editor exposes an unsupported accessibility write mode".into()),
+    };
     target.identity = Some(identity);
     state.draft_targets.lock().map_err(|_| "Draft state unavailable")?.insert(session_id, target);
-    Ok(())
+    Ok(mode_message.to_string())
 }
 
 #[tauri::command]
