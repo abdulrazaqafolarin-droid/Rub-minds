@@ -15,7 +15,8 @@ test('foreground window identity is a fully comparable native value', () => {
   assert.match(targeting, /#\[derive\(Clone, Debug, Eq, PartialEq\)\]\s*pub struct ForegroundWindowSnapshot/);
   assert.match(targeting, /#\[derive\(Clone, Debug, Eq, PartialEq\)\]\s*pub struct EditableTargetIdentity/);
   assert.match(targeting, /get_native_window_handle\(\)/);
-  assert.match(targeting, /element_from_handle\(handle\)/);
+  assert.match(targeting, /foreground_window_snapshot_for_process\(expected_process_id\)/);
+  assert.match(targeting, /matches\.len\(\) != 1/);
   assert.match(targeting, /get_process_id\(\)/);
   assert.match(targeting, /get_classname\(\)/);
   assert.match(targeting, /get_bounding_rectangle\(\)/);
@@ -37,7 +38,8 @@ test('window capture requires native identity and matching geometry', () => {
 });
 
 test('window capture never controls the companion window or a different app process', () => {
-  assert.match(native, /target\.process_id == std::process::id\(\)/);
+  assert.match(native, /expected_process_id: Option<u32>/);
+  assert.match(native, /target\.process_id != expected_pid/);
   assert.match(native, /identity\.process_id != binding\.process_id/);
   assert.match(native, /current\.process_id == binding\.process_id/);
   assert.match(native, /current\.handle == binding\.handle/);
