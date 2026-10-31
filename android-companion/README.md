@@ -41,9 +41,9 @@ The phone keeps the raw device credential locally; the database stores its diges
 
 The companion currently has **no app virtualization provider**. The code under `app/src/main/java/app/rubminds/companion/guest/` defines the future integration boundary only. It deliberately has no BlackBox, VirtualApp or NewBlackbox dependency.
 
-A provider must pass `GuestRuntimeAdmissionPolicy` and a physical-device acceptance record for the same engine version and device profile before it can be advertised as ready. In particular, the final merged host APK manifest must be reviewed; a library's manifest alone is not sufficient. Broad package visibility, all-files access, overlays, SMS/call-log/contacts, camera/microphone/location and package-installation host permissions are not accepted by the current gate.
+A provider must pass `GuestRuntimeAdmissionPolicy` and a physical-device acceptance record for the same engine version, signed release-artifact SHA-256, merged-manifest SHA-256 and device profile before it can be advertised as ready. In particular, the final merged host APK manifest must be reviewed; a library's manifest alone is not sufficient. Broad package visibility, all-files access, overlays, SMS/call-log/contacts, camera/microphone/location and package-installation host permissions are not accepted by the current gate.
 
-The contract requires true per-app guest data isolation, guest-only frames, session-bound touch and accessibility targets, empty-field-only draft insertion, explicit local approval and emergency stop. It rejects whole-device screenshots as guest frames and rejects Enter/Send. A complete provider must still be implemented and tested on a physical phone.
+The contract requires true per-app guest data isolation, guest-only frames, session-bound touch and accessibility targets, empty-field-only draft insertion, explicit local approval and emergency stop. It rejects whole-device screenshots as guest frames and rejects Enter/Send. A selection lease is consumed before writing; failed or ambiguous writes require a fresh selection. The included instance/container registry is process-local helper code; a production provider must persist this mapping across process death. A complete provider must still be implemented and tested on a physical phone.
 
 ## Explicit capability boundaries
 
@@ -60,6 +60,6 @@ See [`docs/architecture/backroom-app-execution-engine.md`](../docs/architecture/
 ## Verification status
 
 - Repository Node tests statically verify permissions, HTTPS-only transport, lack of inbound localhost listeners, credential handling, and package query scope.
-- Kotlin/JUnit tests cover the existing per-app draft-insertion policy and the new guest runtime admission/frame/target safety contract.
+- Kotlin/JUnit tests cover the existing per-app draft-insertion policy and the guest runtime admission/frame/touch/target/one-shot lease safety contract.
 - Node source-contract tests verify that no virtualization dependency or broad permission has been added to the companion.
 - **Not yet verified here:** Android Gradle compilation, APK installation, cloud function deployment, migration execution, pairing against a live backend, or physical-device behavior. A real Android build and phone acceptance test are mandatory before release.
