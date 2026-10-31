@@ -17,10 +17,12 @@ test("Android stream Edge actions keep human auth, device bearer and platform bo
   assert.match(endpoint, /binding\.platform !== 'android'/);
   assert.match(endpoint, /activeDesktopSession\(/); 
   assert.match(endpoint, /android_screen_session_already_active/);
+  assert.match(endpoint, /android_expired_session_cleanup_failed/);
   assert.match(endpoint, /select\\('session_id'\\)\\.eq\\('device_id', start\\.deviceId\\)/);
   assert.match(endpoint, /backroom_device_apps/);
   assert.match(endpoint, /backroom_android_commands/);
   assert.match(endpoint, /one_active_screen_per_device/);
+  assert.match(endpoint, /row_number\\(\\) over \\(partition by device_id/);
   assert.match(endpoint, /mapAndroidQueuedCommand/);
   assert.match(endpoint, /ANDROID_SESSION_LEASE_MS/);
   assert.match(endpoint, /android_session_heartbeat_failed/);

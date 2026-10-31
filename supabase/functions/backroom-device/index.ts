@@ -452,10 +452,16 @@ Deno.serve(async req => {
       if (appError) return json(503, fail('android_app_inventory_unavailable'), origin);
       if (!app) return json(403, fail('app_not_selected_on_device'), origin);
 
+      const now = new Date().toISOString();
+      const { error: expireError } = await db.from('backroom_desktop_sessions')
+        .update({ status: 'expired', stopped_at: now })
+        .eq('device_id', start.deviceId).eq('session_type', 'screen')
+        .eq('status', 'active').lt('expires_at', now);
+      if (expireError) return json(503, fail('android_expired_session_cleanup_failed'), origin);
       const { data: existingSession, error: existingSessionError } = await db.from('backroom_desktop_sessions')
         .select('session_id').eq('device_id', start.deviceId)
         .eq('session_type', 'screen').eq('status', 'active')
-        .gt('expires_at', new Date().toISOString()).limit(1);
+        .gt('expires_at', now).limit(1);
       if (existingSessionError) return json(503, fail('android_session_lookup_failed'), origin);
       if (Array.isArray(existingSession) && existingSession.length > 0) {
         return json(409, fail('android_screen_session_already_active'), origin);

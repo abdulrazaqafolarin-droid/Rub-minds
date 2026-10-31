@@ -44,6 +44,20 @@ set status = 'expired', stopped_at = coalesce(stopped_at, pg_catalog.clock_times
 where session_type = 'screen' and status = 'active'
   and expires_at <= pg_catalog.clock_timestamp();
 
+-- If a prior client produced overlapping sessions for the same device, keep
+-- the newest active record and retire the older records before adding the
+-- uniqueness guarantee. The new runtime supports one screen peer per device.
+with ranked as (
+  select session_id,
+         row_number() over (partition by device_id order by created_at desc, session_id) as position
+  from public.backroom_desktop_sessions
+  where session_type = 'screen' and status = 'active'
+)
+update public.backroom_desktop_sessions s
+set status = 'expired', stopped_at = coalesce(s.stopped_at, pg_catalog.clock_timestamp())
+from ranked r
+where s.session_id = r.session_id and r.position > 1;
+
 create unique index if not exists backroom_desktop_sessions_one_active_screen_per_device_idx
   on public.backroom_desktop_sessions(device_id)
   where session_type = 'screen' and status = 'active';
