@@ -233,7 +233,7 @@ mod windows_impl {
             class_name,
             control_type: control_type_label.into(),
             access_mode: access_mode.into(),
-            bounds: [rect.get_left(), rect.get_top(), rect.get_right(), rect.get_bottom()],
+            // UIA rectangles expose inclusive right/bottom pixels. Store half-open bounds\n            // so normalized drag rectangles and overlap calculations use one convention.\n            bounds: [rect.get_left(), rect.get_top(), rect.get_right().saturating_add(1), rect.get_bottom().saturating_add(1)],
         }, value))
     }
 
