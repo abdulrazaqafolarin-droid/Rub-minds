@@ -37,9 +37,13 @@ class WorkProfileAdminReceiver : DeviceAdminReceiver() {
 
         try {
             manager.setOrganizationName(admin, "Rub Minds")
+        } catch (_: SecurityException) {
+            // The profile can still function without organization branding.
+        }
+        try {
             manager.setProfileEnabled(admin)
         } catch (_: SecurityException) {
-            // Provisioning has completed; surface the missing capability in the UI.
+            // The companion reports the profile state and never assumes it is enabled.
         }
 
         context.getSharedPreferences("work_profile_admin_state", Context.MODE_PRIVATE)
