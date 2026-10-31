@@ -210,7 +210,7 @@ object GuestRuntimeAdmissionPolicy {
             val isExpectedInputMethod = component.type == GuestHostComponentType.SERVICE &&
                 component.isSystemBoundInputMethod && component.className.endsWith(".DraftInputMethodService") &&
                 component.permission == "android.permission.BIND_INPUT_METHOD" &&
-                component.permissionProtection == GuestPermissionProtection.SYSTEM
+                component.permissionProtection == GuestPermissionProtection.SIGNATURE
             val protectedInternalComponent = component.permissionProtection == GuestPermissionProtection.SIGNATURE &&
                 !component.permission.isNullOrBlank()
             !(isExpectedLauncher || isExpectedInputMethod || protectedInternalComponent)
