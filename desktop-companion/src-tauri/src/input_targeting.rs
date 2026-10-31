@@ -7,6 +7,7 @@ pub struct EditableTargetIdentity {
     pub process_id: i32,
     pub runtime_id: Vec<i32>,
     pub class_name: String,
+    pub control_type: String,
     pub bounds: [i32; 4],
 }
 
@@ -140,6 +141,7 @@ mod windows_impl {
             process_id,
             runtime_id,
             class_name,
+            control_type: control_type_label.into(),
             bounds: [rect.get_left(), rect.get_top(), rect.get_right(), rect.get_bottom()],
         }, value))
     }
@@ -215,6 +217,7 @@ mod tests {
             process_id: 42,
             runtime_id: vec![1, 2, 3],
             class_name: "Edit".into(),
+            control_type: "Edit".into(),
             bounds: [10, 20, 300, 80],
         }
     }
