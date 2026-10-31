@@ -65,6 +65,13 @@ pub fn validate_target_properties(
 /// Require the drag rectangle to lie predominantly inside one actual editable
 /// control. A centre-point hit alone is not enough when the rectangle spans
 /// multiple nearby controls or surrounding panels.
+/// Confirms the read-back value exactly matches the one-shot draft.
+pub fn validate_post_write_value(expected: &str, actual: &str) -> Result<(), &'static str> {
+    if expected.is_empty() { return Err("empty_expected_value"); }
+    if actual != expected { return Err("readback_mismatch"); }
+    Ok(())
+}
+
 pub fn validate_drag_coverage(
     selection: [i32; 4],
     field: [i32; 4],
@@ -314,9 +321,11 @@ mod windows_impl {
         }
 
         let (after_identity, after_value) = inspect_element(&element, false)?;
-        if &after_identity != expected || after_value != text {
-            return Err("Text insertion could not be verified by reading back the exact value. Inspect the field; do not retry automatically.".into());
+        if &after_identity != expected {
+            return Err("The editable control identity changed during insertion. Inspect the field; do not retry automatically.".into());
         }
+        validate_post_write_value(text, &after_value)
+            .map_err(|_| "Text insertion could not be verified by reading back the exact value. Inspect the field; do not retry automatically.".to_string())?;
         Ok(())
     }
 }
@@ -334,6 +343,15 @@ mod tests {
             access_mode: "value".into(),
             bounds: [10, 20, 300, 80],
         }
+    }
+
+    #[test]
+    fn post_write_readback_requires_the_exact_nonempty_draft() {
+        use super::validate_post_write_value as validate;
+        assert!(validate("exact draft", "exact draft").is_ok());
+        assert_eq!(validate("", ""), Err("empty_expected_value"));
+        assert_eq!(validate("expected", "different"), Err("readback_mismatch"));
+        assert_eq!(validate("expected", "expected extra"), Err("readback_mismatch"));
     }
 
     #[test]
