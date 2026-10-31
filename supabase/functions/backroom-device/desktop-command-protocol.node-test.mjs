@@ -19,6 +19,8 @@ test('validates selected app launch and rejects extra or malformed properties',(
 });
 test('validates screen and terminal offer sessions with bounded SDP',()=>{
  assert.equal(check('view_offer',{sessionId,offer}).details.sessionId,sessionId);
+ assert.equal(check('view_offer',{sessionId,appId,offer}).details.appId,appId);
+ assert.equal(check('view_offer',{sessionId,appId:'bad',offer}),null);
  assert.equal(check('terminal_start',{sessionId,offer}).command,'terminal_start');
  assert.equal(check('view_offer',{sessionId,offer:{sdp:'x'}}),null);
  assert.equal(check('view_offer',{sessionId,offer:{sdp:'v=0'+'.'.repeat(70_000)}}),null);
