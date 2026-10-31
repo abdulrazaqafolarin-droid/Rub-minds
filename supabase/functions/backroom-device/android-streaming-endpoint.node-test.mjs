@@ -21,13 +21,13 @@ test("Android stream Edge actions keep human auth, device bearer and platform bo
   assert.ok(endpoint.includes(".select('session_id').eq('device_id', start.deviceId)"));
   assert.match(endpoint, /backroom_device_apps/);
   assert.match(endpoint, /backroom_android_commands/);
-  assert.match(endpoint, /one_active_screen_per_device/);
-  assert.ok(migration.includes("one_active_screen_per_device"));
+  assert.ok(migration.includes("backroom_desktop_sessions_one_active_screen_per_device_idx"));
   assert.match(endpoint, /mapAndroidQueuedCommand/);
   const migration = await read("supabase/migrations/20261031183000_backroom_android_streaming_commands.sql");
   assert.match(migration, /can_access_backroom_android_realtime_topic/);
   assert.match(migration, /backroom-android:'\|\|d.device_id::text\|\|':'\|\|b.room_id::text/);
   assert.match(migration, /backroom_android_room_member_receive_private_broadcast/);
+  assert.ok(migration.includes("backroom_desktop_sessions_one_active_screen_per_device_idx"));
   assert.match(migration, /p\\.room_id=b\\.room_id/);
   assert.match(migration, /r\\.id=b\\.room_id and r\\.owner_id=\\(select auth\\.uid\\(\\)\\)/);
   assert.match(endpoint, /ANDROID_SESSION_LEASE_MS/);
@@ -69,11 +69,11 @@ test("Android queue and media components do not add an inbound phone listener or
   assert.match(companion, /android\/session-close/);
   assert.ok(companion.includes('stopCapture("android_offer_rejected")'));
   assert.match(companion, /webrtc_peer_disconnected/);
-  assert.match(companion, /fun revokeLocalTouch\\(context: Context\\)/);
+  assert.ok(companion.includes("fun revokeLocalTouch(context: Context)"));
   assert.match(companion, /localControlGranted = false/);
   assert.match(companion, /val allowedKeys = setOf/);
-  assert.match(companion, /durationMillis !in 40\\.\\.1_500/);
-  assert.match(companion, /fun revokeLocalTouch\\(context: Context\\)/);
+  assert.ok(companion.includes("durationMillis !in 40..1_500"));
+  assert.ok(companion.includes("fun revokeLocalTouch(context: Context)"));
   assert.match(companion, /localControlGranted = false/);
   assert.match(setup, /createScreenCaptureIntent\(\)/);
   assert.match(setup, /startForegroundService\(service\)/);
@@ -146,7 +146,7 @@ test("Android touch dispatch validates unique gesture IDs and returns completion
   assert.match(service, /"kind", "touch_ack"/);
   assert.match(touchService, /onResult\(true\)/);
   assert.match(touchService, /onResult\(false\)/);
-  assert.match(browser, /kind: 'touch_ack'/);
+  assert.ok(browser.includes("acknowledgement.kind !== 'touch_ack'"));
   assert.match(browser, /pendingTouchAcksRef/);
   assert.match(browser, /Android completed the tap\/swipe gesture/);
 });
@@ -280,7 +280,7 @@ test("Phone Frame Back action is OS-dispatched only with the same local touch an
   assert.match(accessibility, /boundSessionId != sessionId \|\| boundPackageName != packageName/);
   assert.match(accessibility, /AppGrantStore\(this\)\.get\(packageName, signer\)/);
   assert.match(browser, /sendNavigationAction\('back'\)/);
-  assert.match(browser, /kind !== 'navigation_ack'/);
+  assert.ok(browser.includes("acknowledgement.kind === 'navigation_ack'"));
   assert.match(browser, /Android dispatched Back in the selected app/);
 });
 
@@ -289,6 +289,6 @@ test("Phone Frame renders the gated Back action only when the local touch grant 
   assert.match(browser, /<ArrowLeft size=\{14\}\/\> Back/);
   assert.match(browser, /disabled=\{!sourceVisible \|\| !dataReady \|\| busy\} onClick=\{\(\) => sendNavigationAction\('back'\)\}/);
   assert.match(browser, /: <>[\s\S]*?Touch enabled temporarily[\s\S]*?sendNavigationAction\('back'\)/);
-  assert.match(browser, /kind !== 'navigation_ack'/);
+  assert.ok(browser.includes("acknowledgement.kind === 'navigation_ack'"));
   assert.match(browser, /Android dispatched Back in the selected app/);
 });
