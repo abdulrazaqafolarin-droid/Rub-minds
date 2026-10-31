@@ -75,7 +75,7 @@ The final acceptance record must include:
 - the final permission and exported-component inventory;
 - the generated `app/build/reports/guest-host-manifest/<variant>.txt` report from `:app:auditDebugGuestHostManifest` or the release-variant equivalent, containing the exact merged-manifest SHA-256 and approved component/permission inventory. This digest must match the artifact under test.
 
-The record is represented by `GuestDeviceAcceptanceEvidence`. A result for a different build, merged manifest or handset profile must not set the provider to READY.
+The record is represented by `GuestDeviceAcceptanceEvidence`. A result for a different build, merged manifest, declared isolation boundary or handset profile must not set the provider to READY. Missing any of the three guest OS-sandbox/sentinel checks must leave the provider at `DEVICE_POC_REQUIRED`.
 
 ## Current implementation boundary
 
@@ -198,7 +198,7 @@ A guest provider must now declare an explicit `GuestIsolationBoundary`:
 
 A list of subprocess names, a rewritten `ApplicationInfo.uid`, a virtual filesystem path, ART/Binder hooks or separate directories does not establish an Android OS security boundary. A process that shares the companion's Linux UID must be treated as potentially able to access the companion's private files and other same-UID guest state if an escape or hook bypass occurs.
 
-The admission contract also requires the `GUEST_OS_SANDBOX_ISOLATION` capability. Physical evidence must include all of:
+The admission contract also requires the `GUEST_OS_SANDBOX_ISOLATION` capability. `GuestDeviceAcceptanceEvidence` is cryptographically/build bound to the engine ID, immutable version, declared isolation-boundary enum, device API/ABI/profile, signed release-artifact SHA-256 and merged-manifest SHA-256. Evidence from a different isolation boundary is rejected even when the APK hashes happen to match. Physical evidence must include all of:
 - `GUEST_OS_SANDBOX_BOUNDARY_VERIFIED`;
 - `GUEST_CANNOT_READ_COMPANION_PRIVATE_DATA`;
 - `GUEST_CANNOT_READ_OTHER_GUEST_DATA`.
