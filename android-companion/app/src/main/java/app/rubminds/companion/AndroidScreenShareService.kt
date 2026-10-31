@@ -637,7 +637,8 @@ class AndroidScreenShareService : Service() {
                     }
                     val text = input.optString("text")
                     mainHandler.post {
-                        val result = if (stopping || activeSessionId != sessionId || activeAppPackage != appPackage) {
+                        val result = if (stopping || !capturedContentVisible ||
+                            activeSessionId != sessionId || activeAppPackage != appPackage) {
                             "session_not_active"
                         } else {
                             DraftInputMethodService.insertRemoteText(sessionId, appPackage, text)
