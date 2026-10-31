@@ -172,7 +172,7 @@ androidComponents {
                 }
 
                 fun hasIntent(
-                    component: ComponentRecord,
+                    component: GuestManifestComponentRecord,
                     action: String,
                     category: String? = null
                 ): Boolean = childElements(component.element)
