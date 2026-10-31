@@ -2,7 +2,6 @@
 //! A dragged rectangle is only a visual hint. The native host resolves its centre
 //! to a real Edit/Document control and fingerprints that control before any write.
 use std::thread;
-use std::time::Duration;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EditableTargetIdentity {
@@ -89,7 +88,6 @@ mod windows_impl {
     use super::{
         validate_target_metadata, validate_target_properties, EditableTargetIdentity,
     };
-    use enigo::{Enigo, Keyboard, Settings};
     use uiautomation::{
         actions::{Text, Value},
         controls::{ControlType, DocumentControl, EditControl},
@@ -281,11 +279,11 @@ mod windows_impl {
                 if focused_identity != identity || !focused_value.is_empty() {
                     return Err("The focused editor does not match the selected empty text area. No text was typed.".into());
                 }
-                let mut enigo = Enigo::new(&Settings::default())
-                    .map_err(|_| "The native keyboard input driver is unavailable".to_string())?;
-                enigo.text(text)
+                // UIElement::send_text focuses this exact UIA element before
+                // emitting literal characters. It does not interpret Enter or
+                // other control keys; those are excluded by the input validator.
+                element.send_text(text, 0)
                     .map_err(|_| "Multi-line text input could not be delivered; inspect the editor before retrying".to_string())?;
-                thread::sleep(Duration::from_millis(150));
             }
             _ => return Err("The selected editor uses an unsupported accessibility write mode".into()),
         }
