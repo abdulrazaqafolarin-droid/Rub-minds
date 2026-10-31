@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 const root = new URL("../", import.meta.url);
 const read = path => readFile(new URL(path, root), "utf8");
 
-test("companion requests Internet only for the outbound cloud API", async () => {
+test("companion requests only HTTPS and approved profile handoff permissions", async () => {
   const manifest = await read("app/src/main/AndroidManifest.xml");
   assert.match(manifest, /<uses-permission android:name="android.permission.INTERNET"\s*\/>/);
   const forbidden = [
@@ -21,7 +21,7 @@ test("companion requests Internet only for the outbound cloud API", async () => 
     "android.permission.REQUEST_INSTALL_PACKAGES"
   ];
   for (const permission of forbidden) assert.equal(manifest.includes(permission), false, "Unexpected permission: " + permission);
-  assert.equal((manifest.match(/<uses-permission\b/g) ?? []).length, 1);
+  assert.match(manifest, /INTERACT_ALL_PROFILES/);\n  assert.equal((manifest.match(/<uses-permission\b/g) ?? []).length, 2);
   assert.match(manifest, /android:usesCleartextTraffic="false"/);
   assert.match(manifest, /android.permission.BIND_INPUT_METHOD/);
 });
