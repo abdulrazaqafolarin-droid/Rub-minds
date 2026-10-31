@@ -89,7 +89,7 @@ class AndroidScreenShareService : Service() {
                 val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
                 @Suppress("DEPRECATION")
                 val resultData = intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
-                if (resultCode != RESULT_OK || resultData == null) {
+                if (resultCode != android.app.Activity.RESULT_OK || resultData == null) {
                     stopCapture("missing_projection_consent")
                     return START_NOT_STICKY
                 }
