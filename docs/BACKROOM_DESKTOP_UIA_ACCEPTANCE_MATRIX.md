@@ -186,3 +186,34 @@ Latest inspected PR check suite for commit `58da34e85308ac70eee05703f77da6c0aa0a
 - Emergency Stop clears control grants again after taking the terminal registry, closing a grant-dialog completion race during teardown. PTY input itself holds the control, typing and one-shot submit locks through the write.
 - The remote terminal UI now has a 15-second acknowledgement deadline for draft and Enter actions. If the data channel does not return an acknowledgement, the action might already have reached the computer; the UI locks further terminal input and asks the user to inspect and restart that PTY session instead of risking a duplicate.
 - Current branch CI jobs have been reported as failed with no runner allocated, no job steps and no downloadable logs. This is a runner/dispatch-level failure signal, not evidence that any code step failed. A clean Windows native run is still required for acceptance.
+
+## Vercel Sandbox verification checkpoint — 2026-10-31
+
+### Exact revision and method
+
+- PR: #56, branch `feat/backroom-virtualized-execution`, tested commit: `2942ae340f39c17e19bbbef2366c2014ea42b88d`.
+- Source: private-branch files were fetched through the connected GitHub repository integration and copied into two fresh, short-lived Vercel Sandbox sessions. The private repository was not cloned, no GitHub token was put in the sandbox, and no application deployment was created.
+- Both sandboxes used one vCPU / 2 GB RAM, a 5-minute hard timeout, `persistent:false`, and `networkPolicy: deny-all`. They were stopped after the test runs.
+- Package scripts were read from the exact tested branch's `package.json`. No dependencies were installed or downloaded.
+
+### Results
+
+| Branch package script | Test files | Passed | Failed | Exit |
+|---|---:|---:|---:|---:|
+| `npm run test:companion` | 19 | 92 | 0 | 0 |
+| `npm run test:multi-surface` | 3 | 31 | 0 | 0 |
+| **Combined** | **22** | **123** | **0** | **0** |
+
+The companion suite was executed from the branch's actual `npm run test:companion` script under Node v24.22.1. The multi-surface suite was executed from the branch's actual `npm run test:multi-surface` script in a second Vercel Sandbox using the Node 22 runtime.
+
+The multi-surface cases explicitly exercise `desktop_app`, `windows_app`, `android_app`, and `terminal` draft adapters; local approval; exact app/session/window/PTY identity; stale target rejection; occupied-field protection; user-typing races; no automatic submit; and ambiguous write results returning `needs_review` rather than inviting an unsafe retry.
+
+### What this proves — and does not prove
+
+- It proves that the listed JavaScript/Node tests from this exact PR branch pass in a clean Linux Vercel Sandbox.
+- It verifies helper/protocol logic and mocked adapter behavior. It does **not** execute actual Windows UI Automation, a real ConPTY process, a Claude Code/OpenCode TUI, Android Accessibility Services, or an Android guest VM.
+- The Vercel sandbox image did not contain `rustc`, `cargo`, `clippy`, or `rustfmt`. The native Rust/Tauri crate and its native unit tests therefore remain uncompiled/unexecuted.
+- The test suite does not replace a Windows host build, physical desktop/terminal acceptance, Android handset tests, or the full repository build.
+- The two GitHub Actions jobs previously returned failure before allocating a runner (empty runner name, zero steps, and unavailable logs). The Vercel test results provide a successful independent Node regression result; they do not turn those GitHub checks green or remove the Windows-native release gate.
+
+**Release gate remains closed:** keep PR #56 as draft and do not merge or deploy until native Windows compilation, Rust tests, and physical Windows/Android acceptance are completed.
