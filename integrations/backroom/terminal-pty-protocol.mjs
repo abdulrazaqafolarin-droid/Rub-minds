@@ -1,5 +1,12 @@
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const TERMINAL_CONTROL = /[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]/u;
+function hasTerminalControl(value) {
+  for (const character of value) {
+    const code = character.codePointAt(0);
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f) ||
+        code === 0x2028 || code === 0x2029) return true;
+  }
+  return false;
+}
 const MAX_TERMINAL_DRAFT_CHARS = 4_000;
 
 function validSession(value) {
@@ -19,7 +26,7 @@ export function validateTerminalDraftMessage(message, expectedSessionId) {
       typeof message.data !== 'string' ||
       !message.data.trim() ||
       [...message.data].length > MAX_TERMINAL_DRAFT_CHARS ||
-      TERMINAL_CONTROL.test(message.data)) {
+      hasTerminalControl(message.data)) {
     return null;
   }
   return Object.freeze({
