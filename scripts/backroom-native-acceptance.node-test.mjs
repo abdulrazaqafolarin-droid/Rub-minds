@@ -30,6 +30,6 @@ test("Android acceptance runner builds only the current companion and verifies m
   assert.match(script, /:app:auditDebugGuestHostManifest/);
   assert.match(script, /:app:assembleDebug/);
   assert.match(script, /Get-FileHash.*SHA256/s);
-  assert.match(script, /no guest runtime provider/);
+  assert.match(script, /No provider currently implements guest app launch or rendering/);
   assert.doesNotMatch(script, /adb\s+install|vercel\s+deploy|supabase\s+db\s+push/i);
 });
