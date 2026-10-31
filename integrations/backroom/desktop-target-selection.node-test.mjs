@@ -99,10 +99,13 @@ test('native target, clear, manual input and the next drag stay in arrival order
   const value = peer();
   const events = [];
   let releaseFirst;
+  let announceFirstStarted;
   const firstGate = new Promise(resolve => { releaseFirst = resolve; });
+  const firstStarted = new Promise(resolve => { announceFirstStarted = resolve; });
 
   const firstTarget = enqueuePeerOperation(value, async () => {
     events.push('target-start');
+    announceFirstStarted();
     await firstGate;
     events.push('target-finish');
   });
@@ -110,6 +113,7 @@ test('native target, clear, manual input and the next drag stay in arrival order
   const manualInput = enqueuePeerOperation(value, async () => { events.push('manual-input'); });
   const nextTarget = enqueuePeerOperation(value, async () => { events.push('next-target'); });
 
+  await firstStarted;
   assert.deepEqual(events, ['target-start']);
   assert.equal(value.targetOperationsPending, 4);
   releaseFirst();
