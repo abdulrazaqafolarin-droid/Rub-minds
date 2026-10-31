@@ -53,7 +53,7 @@ class AndroidScreenShareService : Service() {
     @Volatile private var peer: PeerConnection? = null
     @Volatile private var dataChannel: DataChannel? = null
     @Volatile private var activeSessionId: String? = null
-    @Volatile private var activeAppPackage: String? = null
+    @Volatile private var activeAppPackage: String? = null\n    @Volatile private var activeRoomId: String? = null
     @Volatile private var localControlGranted = false
     @Volatile private var answeringSessionId: String? = null
     @Volatile private var answerAlreadySent = false
@@ -168,11 +168,13 @@ class AndroidScreenShareService : Service() {
         val sessionId = command.optString("sessionId")
         val action = command.optString("action")
         val appPackage = command.optString("appPackageName")
+        val roomId = command.optString("roomId")
         when (action) {
             "view_offer" -> {
                 val offer = command.optJSONObject("offer")?.optString("sdp").orEmpty()
                 pendingOfferCommandId = commandId
                 pendingOfferRequestId = requestId
+                activeRoomId = roomId
                 val accepted = startPeerAnswer(sessionId, appPackage, offer)
                 if (!accepted) acknowledge(token, commandId, requestId, sessionId, "app_or_offer_rejected")
             }
@@ -296,6 +298,7 @@ class AndroidScreenShareService : Service() {
                     "android/signal",
                     deviceToken,
                     JSONObject()
+                        .put("roomId", activeRoomId ?: return@execute)
                         .put("sessionId", sessionId)
                         .put("answer", JSONObject().put("type", "answer").put("sdp", description.description))
                         .put("canControl", false)

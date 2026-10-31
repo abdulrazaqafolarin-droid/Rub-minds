@@ -495,13 +495,9 @@ Deno.serve(async req => {
       if (binding.platform !== 'android') return json(409, fail('android_device_required'), origin);
       if (!session.ok) return json(session.status, fail(session.reason), origin);
       if (session.session.session_type !== 'screen') return json(409, fail('android_screen_session_required'), origin);
-      const { data: ownedSession, error: ownerError } = await db.from('backroom_desktop_sessions')
-        .select('session_id,requested_by').eq('session_id', command.sessionId)
-        .eq('device_id', command.deviceId).eq('room_id', command.roomId).maybeSingle();
-      if (ownerError) return json(503, fail('android_session_lookup_failed'), origin);
-      if (!ownedSession || (ownedSession.requested_by !== userId && ownedSession.requested_by !== actor.userId)) {
-        return json(403, fail('android_session_actor_mismatch'), origin);
-      }
+      // Any current human group member may request control of an existing active
+      // screen session; the session's originating actor remains recorded in DB.
+      // A removed/revoked member fails authorizeRoomActor above.
       const { data: app } = await db.from('backroom_device_apps').select('package_name')
         .eq('device_id', command.deviceId).eq('package_name', command.appPackageName).maybeSingle();
       if (!app) return json(403, fail('app_not_selected_on_device'), origin);
