@@ -341,6 +341,7 @@ class AndroidScreenShareService : Service() {
         activeSessionId = sessionId
         activeAppPackage = appPackage
         activeRoomId = roomId
+        DraftInputMethodService.bindRemoteSession(sessionId, appPackage)
         localControlGranted = false
         answerAlreadySent = false
         answeringSessionId = sessionId
@@ -549,6 +550,27 @@ class AndroidScreenShareService : Service() {
         catch (_: Exception) { /* The browser reports a missing navigation acknowledgement. */ }
     }
 
+    private fun sendRemoteTextAcknowledgement(
+        channel: DataChannel,
+        sessionId: String,
+        requestId: String,
+        result: String
+    ) {
+        if (!UUID_PATTERN.matches(sessionId) || !UUID_PATTERN.matches(requestId) ||
+            channel.state() != DataChannel.State.OPEN || activeSessionId != sessionId ||
+            dataChannel !== channel
+        ) return
+        val payload = JSONObject()
+            .put("kind", "remote_text_ack")
+            .put("sessionId", sessionId)
+            .put("requestId", requestId)
+            .put("accepted", result == "inserted")
+            .put("result", result)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+        runCatching { channel.send(DataChannel.Buffer(ByteBuffer.wrap(payload), false)) }
+    }
+
     private fun sendTouchAcknowledgement(
         channel: DataChannel,
         sessionId: String,
@@ -586,10 +608,32 @@ class AndroidScreenShareService : Service() {
                 }
             }
             override fun onMessage(buffer: DataChannel.Buffer) {
-                if (buffer.binary || buffer.data.remaining() !in 1..4_096) return
+                if (buffer.binary || buffer.data.remaining() !in 1..16_384) return
                 val bytes = ByteArray(buffer.data.remaining())
                 buffer.data.get(bytes)
                 val input = try { JSONObject(String(bytes, Charsets.UTF_8)) } catch (_: Exception) { return }
+                if (input.optString("kind") == "remote_text") {
+                    val requestId = input.optString("requestId")
+                    if (!UUID_PATTERN.matches(requestId) ||
+                        input.optString("sessionId") != sessionId ||
+                        input.optString("appPackageName") != appPackage
+                    ) return
+                    val allowedTextKeys = setOf("kind", "requestId", "sessionId", "appPackageName", "text")
+                    if (input.keys().asSequence().toSet() != allowedTextKeys) {
+                        sendRemoteTextAcknowledgement(channel, sessionId, requestId, "invalid_request")
+                        return
+                    }
+                    val text = input.optString("text")
+                    mainHandler.post {
+                        val result = if (stopping || activeSessionId != sessionId || activeAppPackage != appPackage) {
+                            "session_not_active"
+                        } else {
+                            DraftInputMethodService.insertRemoteText(sessionId, appPackage, text)
+                        }
+                        sendRemoteTextAcknowledgement(channel, sessionId, requestId, result)
+                    }
+                    return
+                }
                 if (input.optString("kind") == "navigation") {
                     val allowedNavigationKeys = setOf("kind", "navigationId", "sessionId", "appPackageName", "action")
                     val navigationId = input.optString("navigationId")
@@ -687,6 +731,7 @@ class AndroidScreenShareService : Service() {
         closingPeer?.close()
         closingPeer?.dispose()
         activeSessionId?.let(AndroidTouchAccessibilityService::clearActiveSession)
+        DraftInputMethodService.clearRemoteSession(activeSessionId)
         activeSessionId = null
         activeAppPackage = null
         activeRoomId = null
@@ -722,6 +767,7 @@ class AndroidScreenShareService : Service() {
         localControlGranted = false
         AndroidTouchAccessibilityService.clearActiveSession(activeSessionId)
         RemoteTouchGate.disarm(this)
+        RemoteKeyboardGate.disarm()
 
         // Native WebRTC/media teardown is best-effort per resource so one
         // failing dispose() cannot prevent the remaining capture resources
@@ -753,6 +799,7 @@ class AndroidScreenShareService : Service() {
         localControlGranted = false
         AndroidTouchAccessibilityService.clearActiveSession(activeSessionId)
         RemoteTouchGate.disarm(this)
+        RemoteKeyboardGate.disarm()
         runCatching { closePeer() }
         runCatching { capturer?.stopCapture() }
         runCatching { capturer?.dispose() }
