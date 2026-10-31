@@ -63,6 +63,25 @@ From the repository root:
 - cargo check --manifest-path desktop-companion/src-tauri/Cargo.toml — compile the native crate.
 - node scripts/local-backroom-device-e2e.mjs — full disposable local Supabase registration, desktop inventory and revoke flow. Requires a local Supabase stack; do not point this destructive test at staging or production.
 
+
+## One-command local acceptance runners
+
+From the repository root, use **native Windows PowerShell** (not WSL) for the Windows build checks:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\backroom-windows-acceptance.ps1
+```
+
+Open an x64 Visual Studio Developer PowerShell first so `cl.exe` and `link.exe` are available. The script checks Node.js 22, the `x86_64-pc-windows-msvc` Rust target and the MSVC linker, then runs the locked web regression/production build, companion WebView build, Rust formatting/tests, Windows MSVC check and release binary build. Add `-BuildInstallers` when the Tauri CLI is installed and MSI/NSIS packaging should also be checked. A transcript is saved in the Windows temporary directory.
+
+For the Android companion baseline (JDK 17, Gradle 8.10.2 and Android SDK 35/build-tools 35.0.0 required):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\backroom-android-acceptance.ps1
+```
+
+It runs the source/manifest policy tests, Kotlin unit tests, the actual merged-host-manifest gate and a debug APK build, then prints the APK SHA-256 and audit report path. **This does not test or imply guest virtualization**; the current Android companion still has no guest runtime provider.
+
 ## Enrollment and use
 
 1. Sign in with the same Rub Minds account that owns the group.
