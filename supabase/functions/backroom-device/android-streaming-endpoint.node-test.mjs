@@ -41,7 +41,6 @@ test("Android stream Edge actions keep human auth, device bearer and platform bo
   assert.match(endpoint, /Date\.parse\(activeSessionRow\.expires_at\)/);
   assert.match(endpoint, /activeSessionRow\?\.session_type === 'screen'/);
   assert.match(endpoint, /input.sessionId/);
-  assert.match(companion, /pollFields.put\("sessionId", sessionId\)/);
   assert.match(endpoint, /nextSessionExpiry/);
   assert.match(endpoint, /ANDROID_SESSION_LEASE_MS/);
   assert.match(endpoint, /action: command.command/);
@@ -59,6 +58,7 @@ test("Android stream Edge actions keep human auth, device bearer and platform bo
 test("Android queue and media components do not add an inbound phone listener or cloud-start capture action", async () => {
   const companion = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
   const setup = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidStreamSetupActivity.kt");
+  assert.match(companion, /pollFields.put\("sessionId", sessionId\)/);
   assert.match(companion, /HttpsURLConnection|CloudDeviceApi/);
   assert.match(companion, /ACTION_START/);
   assert.match(companion, /PEER_DISCONNECT_GRACE_SECONDS = 20L/);
