@@ -59,3 +59,12 @@ No production migration, merge, or deployment is part of this acceptance checkli
 - Each drag is tagged with a unique attempt ID; the browser ignores any reply for an older selection.
 - The native driver uses half-open pixel rectangles for the drag area and UIA field bounds; the selected rectangle must be at least 65% covered by the one resolved editable control.
 - The final read-back helper must match the exact non-empty submitted draft and reject truncation, extra content or an empty expected value.
+
+
+## Current selection and approval lifecycle
+
+- Every accepted native drag gets a locally generated selection ID that is not accepted from the browser payload.
+- A fresh, authorized drag clears the prior target and pending drafts for that session before the new target is validated.
+- Draft approval rechecks that the active selection ID and full UIA control identity still match the pending draft both before and after the native Yes/No dialog.
+- The local approval card and native dialog display the destination process ID, control type/class and whether Value or Text access will be used.
+- Changing the selection removes obsolete local approval cards and returns a cancellation result to the browser session.
