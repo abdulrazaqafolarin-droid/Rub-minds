@@ -5,7 +5,6 @@
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EditableTargetIdentity {
     pub process_id: i32,
-    pub window_handle: isize,
     pub runtime_id: Vec<i32>,
     pub class_name: String,
     pub bounds: [i32; 4],
@@ -105,9 +104,6 @@ mod windows_impl {
 
         let process_id = element.get_process_id()
             .map_err(|_| "Could not identify the application process".to_string())?;
-        let handle: isize = element.get_native_window_handle()
-            .map_err(|_| "Could not identify the owning application window".to_string())?
-            .into();
         let runtime_id = element.get_runtime_id()
             .map_err(|_| "Could not create a stable accessibility identity".to_string())?;
         let class_name = element.get_classname()
@@ -122,7 +118,6 @@ mod windows_impl {
 
         Ok((EditableTargetIdentity {
             process_id,
-            window_handle: handle,
             runtime_id,
             class_name,
             bounds: [rect.get_left(), rect.get_top(), rect.get_right(), rect.get_bottom()],
@@ -160,7 +155,6 @@ mod tests {
     fn identity() -> EditableTargetIdentity {
         EditableTargetIdentity {
             process_id: 42,
-            window_handle: 100,
             runtime_id: vec![1, 2, 3],
             class_name: "Edit".into(),
             bounds: [10, 20, 300, 80],
