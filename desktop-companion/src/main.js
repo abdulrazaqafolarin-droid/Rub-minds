@@ -470,6 +470,18 @@ async function handleSignal(payload){
   if(signal.canControl===true)notify('Full-monitor geometry was verified. Control still requires separate approval.','success');
   if(signal.stop){await stopPeer(signal.sessionId);}
 }
+async function invalidatePendingDraftApprovals(sessionId,reason){
+  const stale=state.pending.filter(item=>item.kind==='draft_text'&&item.extra?.sessionId===sessionId);
+  if(!stale.length)return;
+  state.pending=state.pending.filter(item=>!stale.includes(item));
+  for(const item of stale){
+    try{
+      if(item.onInvalidate)await item.onInvalidate(reason);
+      else await item.onDeny?.();
+    }catch{}
+  }
+  renderPending();
+}
 async function handlePeerData(sessionId,raw){
   const peer=state.peers.get(sessionId);if(!peer)return;
   let message;try{message=JSON.parse(raw);}catch{return;}
@@ -495,6 +507,7 @@ async function handlePeerData(sessionId,raw){
       peer.targetQueueDepth-=1;
       // A rejected newer drag must also revoke any previously selected target,
       // otherwise a remote draft could still be staged against the stale field.
+      await invalidatePendingDraftApprovals(sessionId,'The selected typing area changed; this draft was cancelled.');
       try{await invoke('clear_draft_target',{sessionId});}catch{}
       report(false,'Too many target checks are pending. The previous target was cleared; wait and select again.');
       return;
@@ -503,6 +516,7 @@ async function handlePeerData(sessionId,raw){
     // earlier, slow drag cannot overwrite the most recent target selection.
     peer.targetQueue=(peer.targetQueue||Promise.resolve()).then(async()=>{
       try{
+        await invalidatePendingDraftApprovals(sessionId,'The selected typing area changed; this draft was cancelled.');
         const modeMessage=await invoke('select_draft_target',{sessionId,target:message.target});
         const status=typeof modeMessage==='string'&&modeMessage.length<=240
           ?modeMessage
@@ -555,7 +569,8 @@ async function refreshPending(){
           throw error;
         }
       },
-      onDeny:async()=>{await invoke('deny_draft_request',{requestId:draft.requestId});sendDraftResult(false,'Draft insertion was denied on this computer.');}});
+      onDeny:async()=>{await invoke('deny_draft_request',{requestId:draft.requestId});sendDraftResult(false,'Draft insertion was denied on this computer.');},
+      onInvalidate:async(reason)=>{await invoke('deny_draft_request',{requestId:draft.requestId});sendDraftResult(false,reason);}});
   }
   renderPending();
 }
