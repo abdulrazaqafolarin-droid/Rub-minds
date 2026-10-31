@@ -1085,7 +1085,7 @@ async fn approve_draft_request(app: AppHandle, state: State<'_, AppState>, reque
         identity.process_id, identity.control_type, identity.class_name, identity.access_mode,
     );
     require_native_confirmation(&app, "Insert this unsent draft?", &format!(
-        "{}\\n\\nInsert this exact text into that verified empty field? Backroom will recheck the field identity and empty value before writing. It will not press Enter or Send.\\n\\n{}",
+        "{}\n\nInsert this exact text into that verified empty field? Backroom will recheck the field identity and empty value before writing. It will not press Enter or Send.\n\n{}",
         target_label, pending.text
     ))?;
 
