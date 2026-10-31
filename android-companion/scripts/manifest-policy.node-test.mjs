@@ -89,3 +89,31 @@ test("installed apps on external storage are labelled without requesting file ac
   assert.doesNotMatch(activity, /"SD card"/);
   assert.doesNotMatch(manifest, /MANAGE_EXTERNAL_STORAGE|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE/);
 });
+
+
+test("guest runtime code remains a provider-neutral contract with no bundled virtualization engine", async () => {
+  const gradle = await read("app/build.gradle.kts");
+  const companion = await read("app/src/main/java/app/rubminds/companion/MainActivity.kt");
+  const contract = await read("app/src/main/java/app/rubminds/companion/guest/GuestRuntimeContract.kt");
+  assert.doesNotMatch(gradle, /Bcore|BlackBox|VirtualApp|NewBlackbox/i);
+  assert.doesNotMatch(companion, /BlackBoxCore|VirtualApp|Bcore/i);
+  assert.match(contract, /GuestRuntimeAdmissionPolicy/);
+  assert.match(contract, /GuestRuntimeDecision\.BLOCKED/);
+  assert.match(contract, /mergedHostPermissions/);
+  assert.match(contract, /releaseArtifactDebugSigned/);
+  assert.match(contract, /GuestCaptureScope\.GUEST_APP/);
+  assert.match(contract, /GuestCaptureScope\.WHOLE_DEVICE/);
+  assert.match(contract, /approvedLocally/);
+  assert.match(contract, /submit_not_supported/);
+});
+
+test("phone frame target contract rejects stale, occupied, protected and non-guest targets", async () => {
+  const contract = await read("app/src/main/java/app/rubminds/companion/guest/GuestRuntimeContract.kt");
+  assert.match(contract, /frame\.sequence/);
+  assert.match(contract, /field\.currentText\.isNotEmpty\(\)/);
+  assert.match(contract, /field\.password/);
+  assert.match(contract, /field\.readOnly/);
+  assert.match(contract, /MIN_SELECTION_COVERAGE = 0\.65/);
+  assert.match(contract, /MAX_DRAFT_CHARS = 4_000/);
+  assert.match(contract, /it\.isISOControl\(\)/);
+});
