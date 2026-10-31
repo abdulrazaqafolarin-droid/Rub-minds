@@ -173,6 +173,13 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         let acknowledgement: any;
         try { acknowledgement = JSON.parse(String(event.data)); } catch { return; }
         if (!acknowledgement || acknowledgement.sessionId !== nextSessionId) return;
+        if (acknowledgement.kind === 'touch_control_revoked') {
+          setControlGranted(false);
+          if (controlExpiryRef.current !== null) window.clearTimeout(controlExpiryRef.current);
+          controlExpiryRef.current = null;
+          notify('The phone user disarmed remote touch. The live app view continues without input control.');
+          return;
+        }
         if (acknowledgement.kind === 'app_visibility' && typeof acknowledgement.visible === 'boolean') {
           setSourceVisible(acknowledgement.visible);
           if (!acknowledgement.visible) {

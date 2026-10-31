@@ -490,6 +490,19 @@ class AndroidScreenShareService : Service() {
         } catch (_: Exception) { }
     }
 
+    private fun sendTouchControlRevoked() {
+        val channel = dataChannel ?: return
+        val sessionId = activeSessionId ?: return
+        if (channel.state() != DataChannel.State.OPEN || !UUID_PATTERN.matches(sessionId)) return
+        val payload = JSONObject()
+            .put("kind", "touch_control_revoked")
+            .put("sessionId", sessionId)
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+        try { channel.send(DataChannel.Buffer(ByteBuffer.wrap(payload), false)) }
+        catch (_: Exception) { /* Local gate remains authoritative if the peer is disconnected. */ }
+    }
+
     private fun sendAppVisibility(channel: DataChannel, sessionId: String, visible: Boolean) {
         if (!UUID_PATTERN.matches(sessionId) || channel.state() != DataChannel.State.OPEN) return
         val payload = JSONObject()
@@ -715,7 +728,10 @@ class AndroidScreenShareService : Service() {
 
         fun revokeLocalTouch(context: Context) {
             RemoteTouchGate.disarm(context)
-            instance?.localControlGranted = false
+            instance?.let { service ->
+                service.localControlGranted = false
+                service.sendTouchControlRevoked()
+            }
         }
 
         const val ACTION_START = "app.rubminds.companion.action.START_SCREEN_SHARE"

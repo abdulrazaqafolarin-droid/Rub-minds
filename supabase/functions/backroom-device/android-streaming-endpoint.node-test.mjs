@@ -190,3 +190,14 @@ test("Android provides a separate local touch-disarm control without stopping vi
   assert.match(service, /fun revokeLocalTouch\(context: Context\)/);
   assert.match(service, /instance\?\.localControlGranted = false/);
 });
+
+test("local touch revocation is sent to the browser without ending the view session", async () => {
+  const service = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  const browser = await read("src/BackroomAndroidControl.tsx");
+  assert.match(service, /"kind", "touch_control_revoked"/);
+  assert.match(service, /fun revokeLocalTouch\(context: Context\)/);
+  assert.match(service, /service\.sendTouchControlRevoked\(\)/);
+  assert.match(browser, /kind === 'touch_control_revoked'/);
+  assert.match(browser, /live app view continues without input control/);
+  assert.doesNotMatch(service.slice(service.indexOf("private fun sendTouchControlRevoked"),service.indexOf("private fun sendAppVisibility")), /stopCapture/);
+});
