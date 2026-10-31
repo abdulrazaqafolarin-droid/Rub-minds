@@ -283,3 +283,12 @@ test("Phone Frame Back action is OS-dispatched only with the same local touch an
   assert.match(browser, /kind !== 'navigation_ack'/);
   assert.match(browser, /Android dispatched Back in the selected app/);
 });
+
+test("Phone Frame renders the gated Back action only when the local touch grant is active", async () => {
+  const browser = await read("src/BackroomAndroidControl.tsx");
+  assert.match(browser, /<ArrowLeft size=\{14\}\/\> Back/);
+  assert.match(browser, /disabled=\{!sourceVisible \|\| !dataReady \|\| busy\} onClick=\{\(\) => sendNavigationAction\('back'\)\}/);
+  assert.match(browser, /: <>[\s\S]*?Touch enabled temporarily[\s\S]*?sendNavigationAction\('back'\)/);
+  assert.match(browser, /kind !== 'navigation_ack'/);
+  assert.match(browser, /Android dispatched Back in the selected app/);
+});

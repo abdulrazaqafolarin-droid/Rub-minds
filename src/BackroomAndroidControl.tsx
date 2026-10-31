@@ -449,7 +449,10 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         : <>
           {!controlGranted
             ? <button type="button" disabled={!viewReady || !sourceVisible || !dataReady || busy} onClick={() => void sendDeviceCommand('request_control')}><Hand size={14}/> Request touch control</button>
-            : <span className="br-android-control-grant"><ShieldCheck size={14}/> Touch enabled temporarily</span>}
+            : <>
+              <span className="br-android-control-grant"><ShieldCheck size={14}/> Touch enabled temporarily</span>
+              <button type="button" disabled={!sourceVisible || !dataReady || busy} onClick={() => sendNavigationAction('back')}><ArrowLeft size={14}/> Back</button>
+            </>}
           <button type="button" className="stop" disabled={busy} onClick={() => void sendDeviceCommand('stop_session')}><Power size={14}/> Stop session</button>
         </>}
     </div>
