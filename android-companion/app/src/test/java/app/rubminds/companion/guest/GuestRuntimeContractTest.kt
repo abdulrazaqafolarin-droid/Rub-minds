@@ -442,7 +442,10 @@ class GuestRuntimeContractTest {
             )
             assertNull(registry.register(instance, request))
         }
-        val request = GuestAppInstallRequest("com.example.extra", "a".repeat(64), GuestAppSourceKind.USER_SELECTED_APK_DOCUMENT)
+        val request = GuestAppInstallRequest(
+            "com.example.extra", "a".repeat(64), GuestAppSourceKind.USER_SELECTED_APK_DOCUMENT,
+            selectedApkDocumentUri = "content://com.android.providers.downloads.documents/document/extra.apk"
+        )
         val extra = GuestAppInstance("instance-extra", request.packageName, request.signingCertificateSha256, "container-extra", true, false)
         assertEquals("guest_instance_limit_reached", registry.register(extra, request))
     }
