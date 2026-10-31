@@ -407,6 +407,63 @@ class GuestRuntimeContractTest {
         ))
     }
 
+
+    @Test fun touchGuardCapsConcurrentPointersPerGuestSession() {
+        val guard = GuestTouchSequenceGuard()
+        val currentFrame = frame()
+        for (pointer in 0 until GuestTouchSequenceGuard.MAX_ACTIVE_POINTERS_PER_SESSION) {
+            val event = GuestTouchEvent(
+                "session-1", "guest-instance-1", 12, pointer,
+                GuestTouchAction.DOWN, 0.1, 0.1, 10_000L + pointer
+            )
+            assertNull(guard.accept(event, currentFrame, 10_000L + pointer))
+        }
+        val extra = GuestTouchEvent(
+            "session-1", "guest-instance-1", 12, 99,
+            GuestTouchAction.DOWN, 0.2, 0.2, 10_100
+        )
+        assertEquals("touch_pointer_limit_reached", guard.accept(extra, currentFrame, 10_100))
+        guard.clearSession("session-1")
+        assertNull(guard.accept(extra, currentFrame, 10_101))
+    }
+
+    @Test fun guestInstanceRegistryCapsConcurrentContainers() {
+        val registry = GuestInstanceIsolationRegistry()
+        for (index in 0 until GuestInstanceIsolationRegistry.MAX_GUEST_INSTANCES) {
+            val request = GuestAppInstallRequest(
+                packageName = "com.example.app$index",
+                signingCertificateSha256 = "a".repeat(64),
+                sourceKind = GuestAppSourceKind.USER_SELECTED_APK_DOCUMENT
+            )
+            val instance = GuestAppInstance(
+                "instance-$index", request.packageName, request.signingCertificateSha256,
+                "container-$index", true, false
+            )
+            assertNull(registry.register(instance, request))
+        }
+        val request = GuestAppInstallRequest("com.example.extra", "a".repeat(64), GuestAppSourceKind.USER_SELECTED_APK_DOCUMENT)
+        val extra = GuestAppInstance("instance-extra", request.packageName, request.signingCertificateSha256, "container-extra", true, false)
+        assertEquals("guest_instance_limit_reached", registry.register(extra, request))
+    }
+
+    @Test fun retiredSelectionLedgerIsBoundedAndRequiresAFreshSessionAfterItsLimit() {
+        val guard = GuestSelectionGuard()
+        val currentFrame = frame()
+        val currentField = field()
+        for (index in 0 until GuestSelectionGuard.MAX_RETIRED_SELECTION_IDS_PER_SESSION) {
+            val lease = selection(id = "bulk-$index")
+            assertNull(guard.activate(currentFrame, currentField, lease, 10_000))
+            val draft = GuestDraftRequest(requestId("bulk-draft-$index"), lease.selectionId, "draft", approval(lease))
+            assertNull(guard.consumeForDraft(currentFrame, currentField, lease, draft, 10_000))
+        }
+        assertEquals(
+            "target_selection_capacity_reached",
+            guard.activate(currentFrame, currentField, selection(id = "after-limit"), 10_000)
+        )
+        guard.resetForNewSession()
+        assertNull(guard.activate(currentFrame, currentField, selection(id = "new-session"), 10_000))
+    }
+
     @Test fun localApprovalReceiptIsBoundToExactSessionAndSelectionAndCanBeConsumedOnlyOnce() {
         val lease = selection()
         val receipt = approval(lease)
