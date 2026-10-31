@@ -16,6 +16,19 @@ Status: Windows UI Automation targeting is implemented in the feature branch. Ph
 - [x] 4 video overlay geometry tests, including portrait monitor letterboxing, landscape full-frame mapping, vertical letterboxing and invalid geometry rejection.
 - These 12 tests were run with Node 22 against local copies whose Git blob hashes match the current repository helper/test files. They do not replace the full repository test suite or a Windows-native compile.
 
+## Live video overlay regression — 2026-10-31
+
+- The browser now waits for actual decoded video data and non-zero intrinsic dimensions before enabling drag targeting. An SDP answer alone does not make the frame targetable.
+- Incoming WebRTC video is retained if its track arrives before React mounts the conditional video element. Stale peer tracks are ignored; ended, stalled, waiting, emptied or errored video disables targeting.
+- Pointer coordinates are normalized against the real `object-fit: contain` video rectangle, not the surrounding frame. Letterbox/outside points and tiny or malformed drags are rejected; an outside release clears the visible selection.
+- Cancelling the overlay or closing the peer retires both target and draft request IDs so delayed results cannot be mistaken for the active selection.
+- Six geometry/pointer cases now exist in the repository test file (four original geometry cases plus two pointer/drag cases). An isolated Node 22 scratch harness exercising these six cases and the eight target-selection/queue cases passed **14/14**. This was not the full repository `npm run test:companion` or a TypeScript/native build.
+
+## Current CI limitation — 2026-10-31
+
+- The latest PR checks are marked failed, but every returned job has an empty step list and the job-log endpoint returns `BlobNotFound`. There is no executable compiler or test output to classify as a code failure or success.
+- Full repository tests/build, Tauri bundle build, Windows native compile and physical Windows acceptance remain release gates.
+
 ## Manual Windows acceptance
 
 Run on a real Windows 10/11 desktop with the installed Backroom companion, paired owner account, and a disposable Rub Minds group.
