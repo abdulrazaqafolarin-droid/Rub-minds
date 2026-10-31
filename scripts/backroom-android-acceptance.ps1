@@ -40,12 +40,12 @@ try {
     Require-Command 'java' 'Install JDK 17 and configure JAVA_HOME.'
 
     $javaOutput = (& java -version 2>&1 | Out-String)
-    if ($LASTEXITCODE -ne 0 -or $javaOutput -notmatch 'version "17(?:\.|")') {
+    if ($LASTEXITCODE -ne 0 -or -not $javaOutput.Contains('version "17')) {
         throw "JDK 17 is required. Detected: $javaOutput"
     }
 
     $gradleOutput = (& gradle --version 2>&1 | Out-String)
-    if ($LASTEXITCODE -ne 0 -or $gradleOutput -notmatch '(?m)^Gradle 8\.10\.2\s*$') {
+    if ($LASTEXITCODE -ne 0 -or -not $gradleOutput.Contains('Gradle 8.10.2')) {
         throw "Gradle 8.10.2 is required. Detected output: $gradleOutput"
     }
 
