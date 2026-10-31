@@ -15,7 +15,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 const state = {
   client: null, user: null, session: null, deviceId: null, roomId: null, deviceTokenSaved: false,
-  channel: null, apps: [], pending: [], peers: new Map(), streams: new Map(), terminals: new Map(), pendingCandidates: new Map(),
+  channel: null, apps: [], pending: [], peers: new Map(), streams: new Map(), terminals: new Map(), pendingCandidates: new Map(), draftCorrelations: new Map(),
   seenCommands: new Map(), heartbeat: null, heartbeatMisses: 0, peerWatchdog: null,
   status: 'Not connected', terminalOutput: '', unlisten: [],
 };
@@ -626,22 +626,29 @@ async function handlePeerData(sessionId,raw){
       }
     });
   } else if(message.kind==='draft'){
+    const clientRequestId=typeof message.requestId==='string'&&UUID_PATTERN.test(message.requestId)
+      ?message.requestId:null;
+    if(!clientRequestId){
+      try{peer.channel?.send(JSON.stringify({kind:'draft_result',ok:false,result:'A valid one-use draft request ID is required.'}));}catch{}
+      return;
+    }
     if(!canStageDraftForCurrentSelection(peer)||peer.targetClearPromise){
       const reason='Drag-select and verify the current text field again before requesting draft insertion.';
-      try{peer.channel?.send(JSON.stringify({kind:'draft_result',ok:false,result:reason}));}catch{}
+      try{peer.channel?.send(JSON.stringify({kind:'draft_result',requestId:clientRequestId,ok:false,result:reason}));}catch{}
       notify(reason,'error');
       return;
     }
-    const stageTask=(peer.targetQueue||Promise.resolve()).then(async()=>{
+    const stageTask=(peer.targetQueue||Promise.resolve()).catch(()=>{}).then(async()=>{
       if(!canStageDraftForCurrentSelection(peer)||peer.targetClearPromise)
         throw new Error('The verified typing target changed. Drag-select it again before staging a draft.');
       const id=await invoke('stage_draft_request',{sessionId,text:message.text});
+      state.draftCorrelations.set(id,clientRequestId);
       await refreshPending();
       notify('Draft request '+id+' is waiting for approval on this computer.');
     });
     const tracked=stageTask.catch(error=>{
       const reason=error?.message||'Could not stage the draft for this target.';
-      try{peer.channel?.send(JSON.stringify({kind:'draft_result',ok:false,result:reason}));}catch{}
+      try{peer.channel?.send(JSON.stringify({kind:'draft_result',requestId:clientRequestId,ok:false,result:reason}));}catch{}
       notify(reason,'error');
     });
     peer.targetQueue=tracked;
@@ -668,22 +675,19 @@ async function refreshPending(){
     // A delayed list response must not resurrect an approval for a previous drag.
     if(!isPendingDraftForCurrentSelection(peer,draft))continue;
     if(state.pending.some(item=>item.requestId===draft.requestId))continue;
+    const clientRequestId=state.draftCorrelations.get(draft.requestId)||draft.requestId;
     const sendDraftResult=(ok,result)=>{
       const peer=state.peers.get(draft.sessionId);
       if(peer?.channel?.readyState==='open'){
-        try{peer.channel.send(JSON.stringify({kind:'draft_result',requestId:draft.requestId,ok,result}));}catch{}
+        try{peer.channel.send(JSON.stringify({kind:'draft_result',requestId:clientRequestId,ok,result}));}catch{}
       }
+      state.draftCorrelations.delete(draft.requestId);
     };
     state.pending.push({kind:'draft_text',description:'Insert this exact unsent draft?\n\nDestination: '+(draft.targetLabel||'Verified desktop field')+'\n\n'+draft.text,
       requestId:draft.requestId,extra:{sessionId:draft.sessionId},
       onApprove:async()=>{
-        try{
-          const result=await invoke('approve_draft_request',{requestId:draft.requestId});
-          sendDraftResult(true,result);notify(result,'success');
-        }catch(error){
-          sendDraftResult(false,error?.message||'Draft insertion was denied or failed on this computer.');
-          throw error;
-        }
+        const result=await invoke('approve_draft_request',{requestId:draft.requestId});
+        sendDraftResult(true,result);notify(result,'success');
       },
       onDeny:async()=>{await invoke('deny_draft_request',{requestId:draft.requestId});sendDraftResult(false,'Draft insertion was denied on this computer.');},
       onInvalidate:async(reason)=>{await invoke('deny_draft_request',{requestId:draft.requestId});sendDraftResult(false,reason);}});
