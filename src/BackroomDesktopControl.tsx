@@ -28,6 +28,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const [coordinateControl,setCoordinateControl] = useState(false);
   const [selectMode,setSelectMode] = useState(false);
   const [selection,setSelection] = useState<DragRect|null>(null);
+  const [targetStatus,setTargetStatus] = useState('');
   const [draft,setDraft] = useState('');
   const [terminalSession,setTerminalSession] = useState('');
   const [terminalPeerId,setTerminalPeerId] = useState('');
@@ -140,7 +141,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     pendingCandidatesRef.current.clear();
     if(videoRef.current)videoRef.current.srcObject=null;
     setVideoReady(false);setScreenSession('');screenSessionRef.current='';terminalPeerRef.current='';setControlGranted(false);setDraftGranted(false);
-    setCoordinateControl(false);setSelectMode(false);setSelection(null);
+    setCoordinateControl(false);setSelectMode(false);setSelection(null);setTargetStatus('');
   },[]);
 
   useEffect(()=>{
@@ -268,9 +269,15 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       if(message.kind==='terminal_output'){
         const text=new TextDecoder().decode(new Uint8Array(message.data||[]));
         setTerminalText(old=>(old+text).slice(-30000));
+      }else if(message.kind==='target_result'){
+        const ok=message.ok===true;
+        const reason=typeof message.reason==='string'?message.reason:'The selected area could not be verified.';
+        setTargetStatus(ok?'Verified editable field · '+reason:'Target rejected · '+reason);
+        if(!ok)setSelection(null);
+        flash(ok?'The selected area is a verified empty editable field.':reason,!ok);
       }else if(message.kind==='draft_result'){
         flash(message.ok===true
-          ?'Draft inserted into the selected area on the computer. No Send or Enter action was triggered.'
+          ?'Text inserted into the verified editable field and read back. No Send or Enter action was triggered.'
           :'Draft was not inserted: '+(message.result||'denied on the computer.'));
       }
     };
@@ -406,9 +413,10 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
             <div className="br-desktop-toolbar">
               <span>{videoReady?'Live computer display':'View request pending'}{coordinateControl?' · full-monitor geometry verified':' · view-only unless full monitor selected'}</span>
               <button type="button" onClick={()=>void requestControl()} disabled={!videoReady||!coordinateControl||controlGranted}>Request control</button>
-              <button type="button" onClick={()=>setSelectMode(v=>!v)} disabled={!controlGranted||!draftGranted}>{selectMode?'Cancel area selection':'Drag-select typing area'}</button>
+              <button type="button" onClick={()=>{setTargetStatus('');setSelection(null);setSelectMode(v=>!v);}} disabled={!controlGranted||!draftGranted}>{selectMode?'Cancel area selection':'Drag-select empty text field'}</button>
               <button type="button" onClick={()=>void requestDraftPermission()} disabled={!controlGranted||draftGranted}><TextCursorInput size={13}/> Request typing permission</button>
             </div>
+            {targetStatus&&<div className="br-desktop-caption" role="status">{targetStatus}</div>}
             {controlGranted&&draftGranted&&<div className="br-desktop-draft">
               <textarea value={draft} onChange={e=>setDraft(e.target.value)} rows={2} maxLength={4000} placeholder="Write the text to insert in the selected area. It will never press Enter or Send."/>
               <button type="button" onClick={requestDraft} disabled={!selection||!draft.trim()}>Request draft insertion</button>
