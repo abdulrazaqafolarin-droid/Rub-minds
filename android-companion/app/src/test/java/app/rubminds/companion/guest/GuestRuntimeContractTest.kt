@@ -93,12 +93,18 @@ class GuestRuntimeContractTest {
         sessionId = "session-1",
         guestInstanceId = "guest-instance-1",
         frameSequence = sequence,
-        selectionId = id,
+        selectionId = selectionId(id),
         fieldId = "composer-1",
         selectedBounds = bounds,
         createdAtMillis = 10_000,
         expiresAtMillis = expiresAt
     )
+
+    private fun selectionId(label: String) =
+        java.util.UUID.nameUUIDFromBytes(label.toByteArray()).toString()
+
+    private fun requestId(label: String) =
+        java.util.UUID.nameUUIDFromBytes(label.toByteArray()).toString()
 
     private fun approval(
         lease: GuestSelectionLease,
@@ -185,6 +191,18 @@ class GuestRuntimeContractTest {
         val review = GuestRuntimeAdmissionPolicy.review(bad, device)
         assertEquals(GuestRuntimeDecision.BLOCKED, review.decision)
         assertNotNull(review.blockers.firstOrNull { it.startsWith("unapproved_exported_components:") })
+    }
+
+
+    @Test fun exportedAccessibilityServiceAndItsPermissionAreAlwaysRejected() {
+        val bad = descriptor.copy(mergedHostComponents = descriptor.mergedHostComponents + GuestHostComponent(
+            className = "com.engine.ObserverService",
+            type = GuestHostComponentType.SERVICE,
+            exported = true,
+            permission = "android.permission.BIND_ACCESSIBILITY_SERVICE",
+            permissionProtection = GuestPermissionProtection.SIGNATURE
+        ))
+        assertEquals(GuestRuntimeDecision.BLOCKED, GuestRuntimeAdmissionPolicy.review(bad, device).decision)
     }
 
     @Test fun exportedInternalComponentRequiresSignatureProtection() {
@@ -283,6 +301,7 @@ class GuestRuntimeContractTest {
         assertEquals("target_frame_is_stale", GuestTargetPolicy.validateSelection(frame(sequence = 13), field(), selection(), 10_000))
         assertEquals("target_guest_instance_mismatch", GuestTargetPolicy.validateSelection(frame(), field(), selection().copy(guestInstanceId = "other-instance"), 10_000))
         assertEquals("target_identity_invalid", GuestTargetPolicy.validateSelection(frame(), field(), selection().copy(fieldId = "other-field"), 10_000))
+        assertEquals("target_identity_invalid", GuestTargetPolicy.validateSelection(frame(), field(), selection().copy(selectionId = "not-a-uuid"), 10_000))
     }
 
     @Test fun passwordReadOnlyOccupiedDisabledAndUnverifiedControlsAreRejected() {
@@ -314,7 +333,7 @@ class GuestRuntimeContractTest {
     @Test fun draftRequiresMatchingSelectionLocalApprovalAndPlainTextWithoutSubmit() {
         val lease = selection()
         val target = field()
-        val valid = GuestDraftRequest("draft-1", lease.selectionId, "Review this answer", approval(lease))
+        val valid = GuestDraftRequest(requestId("draft-1"), lease.selectionId, "Review this answer", approval(lease))
         assertNull(GuestTargetPolicy.validateDraft(frame(), target, lease, valid, 10_000))
         assertEquals("local_approval_required", GuestTargetPolicy.validateDraft(
             frame(), target, lease, valid.copy(approval = null), 10_000
@@ -355,6 +374,7 @@ class GuestRuntimeContractTest {
             sourceKind = GuestAppSourceKind.SELECTED_INSTALLED_APK
         )
         assertNull(GuestInstallPolicy.validate(request))
+        assertNull(GuestInstallPolicy.validate(request.copy(signingCertificateSha256 = "a".repeat(64) + "." + "b".repeat(64))))
         assertEquals(
             "private_app_data_import_forbidden",
             GuestInstallPolicy.validate(request.copy(importPrivateData = true))
@@ -427,7 +447,7 @@ class GuestRuntimeContractTest {
             "target_selection_not_active",
             guard.consumeForDraft(
                 currentFrame, currentField, nextSelection,
-                GuestDraftRequest("draft-2", nextSelection.selectionId, "text", approval(nextSelection)), 10_000
+                GuestDraftRequest(requestId("draft-2"), nextSelection.selectionId, "text", approval(nextSelection)), 10_000
             )
         )
     }
@@ -497,7 +517,7 @@ class GuestRuntimeContractTest {
             "target_selection_not_active",
             guard.consumeForDraft(
                 currentFrame, currentField, oldSelection,
-                GuestDraftRequest("draft-old", oldSelection.selectionId, "text", approval(oldSelection)), 10_000
+                GuestDraftRequest(requestId("draft-old"), oldSelection.selectionId, "text", approval(oldSelection)), 10_000
             )
         )
     }
