@@ -296,7 +296,14 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
             setTerminalDraftReady(false);
             flash('Enter was sent to the active terminal session.');
           }else{
-            if(message.action==='submit')setTerminalDraftReady(true);
+            // Only a local OS-dialog denial restores the previous one-use Enter
+            // readiness. Expiry, revocation, stale state or I/O failure requires
+            // a fresh text-only draft; never leave a stale submit button enabled.
+            if(message.action==='submit'){
+              setTerminalDraftReady(
+                typeof message.reason==='string'&&message.reason.includes('not approved on the computer')
+              );
+            }
             flash(typeof message.reason==='string'?message.reason:'The terminal action was rejected.',true);
           }
         }
