@@ -826,9 +826,20 @@ async fn grant_control(app: AppHandle, state: State<'_, AppState>, session_id: S
         "Allow this group to control local session {} for up to {} seconds? Pointer, keyboard, and terminal input may reach the selected application.",
         session_id, seconds.clamp(30, 600)
     ))?;
+
+    // Revalidate after the user has answered the OS prompt. Hold the control
+    // lock while checking liveness so a competing revoke/stop cannot install a
+    // fresh grant for a session that has already been stopped.
+    let mut control = state.control_grants.lock().map_err(|_| "Control state unavailable")?;
+    let has_live_capture = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
+        .contains_key(&session_id);
+    let has_live_terminal = state.terminals.lock().map_err(|_| "Terminal state unavailable")?
+        .contains_key(&session_id);
+    if !has_live_capture && !has_live_terminal {
+        return Err("The Backroom session ended before control could be granted.".into());
+    }
     let ttl = seconds.clamp(30, 600);
-    state.control_grants.lock().map_err(|_| "Control state unavailable")?
-        .insert(session_id, Instant::now() + Duration::from_secs(ttl));
+    control.insert(session_id, Instant::now() + Duration::from_secs(ttl));
     Ok(())
 }
 
@@ -863,6 +874,25 @@ async fn grant_draft_typing(app: AppHandle, state: State<'_, AppState>, session_
     require_native_confirmation(&app, "Allow unsent draft typing?", &format!(
         "{}\n\nPermission expires after {} seconds.", approval_message, seconds.clamp(30, 120)
     ))?;
+
+    // The screen/terminal could be stopped or its control grant revoked while
+    // the native approval dialog was open. Serialize the final recheck and
+    // draft-grant insert against revoke_control/stop_terminal.
+    let mut control = state.control_grants.lock().map_err(|_| "Control state unavailable")?;
+    match control.get(&session_id) {
+        Some(expires_at) if *expires_at > Instant::now() => {}
+        _ => {
+            control.remove(&session_id);
+            return Err("Computer-control permission expired before typing could be granted.".into());
+        }
+    }
+    let has_live_capture = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
+        .contains_key(&session_id);
+    let has_live_terminal = state.terminals.lock().map_err(|_| "Terminal state unavailable")?
+        .contains_key(&session_id);
+    if !has_live_capture && !has_live_terminal {
+        return Err("The Backroom session ended before typing could be granted.".into());
+    }
     let ttl = seconds.clamp(30, 120);
     state.draft_grants.lock().map_err(|_| "Draft state unavailable")?
         .insert(session_id, Instant::now() + Duration::from_secs(ttl));
@@ -1494,6 +1524,10 @@ fn stop_terminal(state: State<'_, AppState>, session_id: String) -> Result<(), S
     revoke_control_inner(&state, &session_id)?;
     let session = state.terminals.lock().map_err(|_| "Terminal registry unavailable")?
         .remove(&session_id).ok_or("Terminal session is already closed")?;
+    // Close the race where a native approval dialog completed after the first
+    // revocation but before the PTY was removed. The post-removal revoke is
+    // serialized with grant_control/grant_draft_typing and cannot be renewed.
+    revoke_control_inner(&state, &session_id)?;
     session.child.lock().map_err(|_| "Terminal process state unavailable")?
         .kill().map_err(|_| "Could not stop the terminal shell".to_string())
 }
