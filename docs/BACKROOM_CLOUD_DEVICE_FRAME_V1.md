@@ -96,3 +96,12 @@ The owner-revoke transaction marks the device and room binding revoked, appends 
 ## Browser workspace access
 
 After sign-in, Backroom exposes two workspace routes. **Device Frame** is the default route and shows cloud-connected device inventory. **Browser runtime** mounts the existing managed Playwright/Chromium implementation from `src/BackroomSimulatorApp.tsx`. The browser route is selected by `?backroom=1&browser=1`; the group selector preserves this query route when the group changes. The browser host is still paired locally with the computer running Chromium, so this route does not turn that desktop runtime into a phone-hosted/cloud browser and must not be described as a cross-device control connection.
+
+
+## Desktop drag-select target verification — implementation update
+
+The Windows native companion now resolves the centre of the Backroom drag rectangle through Windows UI Automation. It accepts only a visible, enabled `Edit` or `Document` control with a writable and readable Value pattern, rejects password/protected fields, and requires the field to be empty. The companion captures the selected control's process ID, UIA runtime ID, class, window handle (when exposed) and bounds. It rechecks the same identity and empty value after the native approval dialog, verifies that keyboard focus is on that same control, types once, and reads back the exact value. The target is consumed before typing so uncertain outcomes cannot be replayed. Apps that do not expose reliable UIA value readback are rejected; the Windows implementation has not yet been physically accepted against the target app matrix.
+
+## Android Phone Frame input-targeting boundary
+
+The Phone Frame continues to show selected-app inventory only. No virtual guest app is rendered there, and the Android companion does not currently expose a MediaProjection screen stream or an AccessibilityService for remote guest control. The optional Android draft keyboard acts only inside the real foreground app when the user enables/selects it locally; it is not an overlay in the cloud Phone Frame. Therefore drag-select overlay targeting for Android apps is **not implemented**. It must be built on top of an approved virtual-app runtime, live guest display, per-instance package identity, an explicit device-side permission grant, foreground guest identity validation, and a target-specific insertion/readback acknowledgement. Do not translate phone-frame drag coordinates into remote taps until those components exist.
