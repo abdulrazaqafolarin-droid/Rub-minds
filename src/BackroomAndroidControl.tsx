@@ -175,8 +175,11 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         if (!acknowledgement || acknowledgement.sessionId !== nextSessionId) return;
         if (acknowledgement.kind === 'touch_control_revoked') {
           setControlGranted(false);
+          pendingControlRequestRef.current = '';
           if (controlExpiryRef.current !== null) window.clearTimeout(controlExpiryRef.current);
+          if (controlRequestTimerRef.current !== null) window.clearTimeout(controlRequestTimerRef.current);
           controlExpiryRef.current = null;
+          controlRequestTimerRef.current = null;
           notify('The phone user disarmed remote touch. The live app view continues without input control.');
           return;
         }

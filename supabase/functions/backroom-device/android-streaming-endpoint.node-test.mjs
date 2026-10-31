@@ -224,3 +224,14 @@ test("Android screen service declares a single volatile stop flag and aborts a p
   assert.match(service, /for \(index in 0 until commands\.length\(\)\) \{\s+if \(stopping\) break/);
   assert.match(service, /private fun processCommand\(token: String, command: JSONObject\) \{\s+if \(stopping\) return/);
 });
+
+test("local touch revoke invalidates a late pending control grant response", async () => {
+  const browser = await read("src/BackroomAndroidControl.tsx");
+  const start = browser.indexOf("acknowledgement.kind === 'touch_control_revoked'");
+  const end = browser.indexOf("acknowledgement.kind === 'app_visibility'", start);
+  const handler = browser.slice(start, end);
+  assert.match(handler, /pendingControlRequestRef\.current = ''/);
+  assert.match(handler, /clearTimeout\(controlRequestTimerRef\.current\)/);
+  const response = browser.slice(browser.indexOf("channel.on('broadcast', { event: 'android_response'"), browser.indexOf("channel.subscribe"));
+  assert.match(response, /payload.requestId !== pendingControlRequestRef.current/);
+});
