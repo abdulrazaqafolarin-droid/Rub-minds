@@ -129,3 +129,12 @@ Important boundary:
 - This is a bounded PTY text-input flow, not semantic focus detection. The same text may be interpreted by the currently focused program, so the person at the computer must verify the Claude Code/OpenCode composer before approving draft typing and before pressing Enter.
 - Do not claim visual drag-select targeting for a TUI. The Windows UIA drag-select path applies only to accessible desktop Edit/Document controls.
 - Build and test gates remain open until the Windows native workflow executes real steps, Rust tests and MSVC compilation pass, and a physical Windows acceptance run verifies the entire path.
+
+### Focused terminal regression checkpoint — 2026-10-31
+
+- Node 22 isolated harness: **7/7 passed** — 3 PTY transport tests and 4 strict terminal-message protocol tests. Cases include actual CR/LF, tab, ESC/ANSI, NUL, DEL, C1 controls, Unicode line separators, blank/oversized drafts, stale/mismatched session IDs, malformed request IDs, Enter carrying text, and write attempts after PTY shutdown.
+- The Node test file is included in `npm run test:companion` so the repository's Windows workflow will execute it when a runner actually starts.
+- This was an isolated harness built from the current helper/test source, not the full repository test suite or Tauri WebView build.
+- Rust unit tests were added to the native crate for the same validator and one-use submit marker, but **were not executed**: this environment has no `rustc` or `cargo`.
+- Physical Windows validation with an actual Claude Code/OpenCode process remains unperformed. The native host cannot infer the focused TUI widget from PTY output; local approval is required for text-only drafts, and Enter is a separate explicit button action.
+
