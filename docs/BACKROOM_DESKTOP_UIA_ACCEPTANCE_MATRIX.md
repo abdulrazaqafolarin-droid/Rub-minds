@@ -33,9 +33,9 @@ Also verify whole-monitor capture geometry at 100%, 125%, 150% and 200% display 
 ## Safety and lifecycle guarantees
 
 - The drag rectangle must be at least 65% covered by one resolved editable control. A centre-point hit with a rectangle spanning neighbouring controls is rejected.
-- Each accepted native drag gets a locally generated selection ID; the browser cannot supply or override it.
-- Every browser drag carries a separate request ID. The companion serializes up to four checks per session, and the Device Frame ignores replies for superseded drags.
-- A fresh, authorized drag clears the previous target and pending drafts for that session before validating the new target. A queue-overflow rejection clears the previous target too.
+- Each accepted native drag gets a native-generated selection ID only after accessibility validation; the browser cannot supply or override it. Pending-draft summaries carry that exact ID, and delayed list responses are ignored unless it still matches the active field.
+- Every browser drag carries a UUID request ID. The companion serializes up to four checks per session, and the Device Frame ignores replies for superseded drags. Rejected/overflowed attempts are retired and cannot later be confirmed.
+- A fresh, authorized drag clears the previous target and pending drafts for that session before validating the new target. A queue-overflow rejection clears and retires its attempt ID too. Ordinary remote click/key input and peer-session teardown also invalidate the target and cancel local approval cards. Only one pending draft is permitted per selected field.
 - Draft approval rechecks the active selection ID and complete UIA identity both before and after the native Yes/No confirmation dialog.
 - The local approval card and native dialog show the destination process ID, control type/class and Value-vs-Text write mode.
 - ValuePattern is used for single-line fields. Multi-line editors with readable TextPattern use the exact UIA element's focused `send_text` operation, then read back the exact value.
