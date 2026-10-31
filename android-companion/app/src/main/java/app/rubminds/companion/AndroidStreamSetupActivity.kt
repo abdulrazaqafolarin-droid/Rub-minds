@@ -319,7 +319,7 @@ class AndroidStreamSetupActivity : Activity() {
             else ->
                 "Phone keyboard: selected · remote typing is off until you allow it here."
         }
-        status.text = "$touchStatus\\n$keyboardStatus"
+        status.text = "$touchStatus\n$keyboardStatus"
         armButton.isEnabled = enabled
 
     }
