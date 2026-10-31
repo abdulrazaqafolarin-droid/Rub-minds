@@ -272,3 +272,12 @@ References:
 - https://developer.android.com/reference/android/companion/virtual/VirtualDeviceManager
 - https://developer.android.com/reference/android/content/pm/PackageManager#FEATURE_ACTIVITIES_ON_SECONDARY_DISPLAYS
 - https://android.googlesource.com/platform/frameworks/base/+/refs/heads/master/core/java/android/companion/virtual/VirtualDeviceManager.java
+
+
+## Live Android app mirror — separate from the guest-runtime acceptance gate
+
+A source implementation now offers a MediaProjection/WebRTC mirror of a user-selected, saved app in the Phone Frame. It is the real app process installed in the user's Android profile, not an isolated clone. The optional AccessibilityService is for foreground-window checks and touch dispatch only; the local touch grant expires after 15 minutes. The Android screen picker itself is the capture consent authority and must be used each time.
+
+This mirror does **not** satisfy GuestRuntimeDecision.READY: there is no guest-only virtual display, separate app data, accessibility field targeting, drag-select typing or draft insertion/readback. Do not use the mirror to claim that Android apps run inside the isolated Phone Frame.
+
+Before calling the mirror tested, build/install the exact companion APK, apply the migration and deploy the Edge Function to a disposable staging project, pair/approve the TECNO KL4, select one app window in Android's system picker, validate video negotiation, revoke screen permission, switch away from the app, test taps/swipes with Accessibility off/on, stop from both phone and web, and verify that the server session/queue state closes. Record firmware/API/ABI, app signer and merged-manifest hash. Production stays unchanged until those checks and an explicit rollout decision.

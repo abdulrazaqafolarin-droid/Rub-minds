@@ -28,7 +28,7 @@ You can also set `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` in the build envi
 
 ## Merged-manifest build gate
 
-Every debug/release APK or AAB build runs a Gradle audit against the **actual merged manifest**. It rejects any host permission beyond `INTERNET`, any exported component beyond the exact launcher and OS-bound draft keyboard, duplicate declarations, missing explicit `android:exported` values, or changed launcher/input-method intent filters. The task writes the merged-manifest SHA-256 and approved component/permission inventory to `app/build/reports/guest-host-manifest/`. A future engine dependency must pass this same gate before an APK can be produced.
+Every debug/release APK or AAB build runs a Gradle audit against the **actual merged manifest**. It rejects any host permission beyond `INTERNET`, any exported component beyond the exact launcher, OS-bound draft keyboard and OS-bound touch accessibility service, duplicate declarations, missing explicit `android:exported` values, or changed launcher/input-method/accessibility-service intent filters. The task writes the merged-manifest SHA-256 and approved component/permission inventory to `app/build/reports/guest-host-manifest/`. A future engine dependency must pass this same gate before an APK can be produced.
 
 Run the audit directly with `gradle :app:auditDebugGuestHostManifest`, or let `:app:assembleDebug` run it automatically.
 
@@ -57,7 +57,7 @@ The contract requires true per-app guest data isolation, guest-only frames, sess
 
 ## Explicit capability boundaries
 
-This slice supports **app discovery and selected-app inventory only**. It does not clone or virtualize application code, copy another app's private data, embed native apps, capture the screen, or perform remote taps/swipes/typing. Opening a normal installed app is still an Android activity outside a Backroom isolated instance; the companion does not claim otherwise.
+This slice supports app discovery and selected-app inventory, plus an optional user-consented **live mirror of a real foreground app** on Android 14+. The user selects a locally approved app, approves Android's MediaProjection picker, and returns that app to the foreground. Backroom negotiates a WebRTC video session through the device-authenticated command queue. When Accessibility is separately enabled and touch is locally armed for 15 minutes, Backroom may send taps, swipes and long presses; every gesture is rechecked against the session, selected package, signer grant and current app window. This is remote interaction with the real installed app, not a virtualized copy or isolated guest process.
 
 `MANAGE_EXTERNAL_STORAGE` is deliberately not requested. It grants broad access to shared storage, not another app's private sandbox (`/data/user/0/<package>` or another app's `Android/data` directory). Existing private logins and app databases cannot be copied by an ordinary app. A future virtualization engine must create a fresh, isolated data container and pass app-specific compatibility tests; the user signs into that instance separately.
 
@@ -72,7 +72,7 @@ See [`docs/architecture/backroom-app-execution-engine.md`](../docs/architecture/
 - Repository Node tests statically verify permissions, HTTPS-only transport, lack of inbound localhost listeners, credential handling, and package query scope.
 - Kotlin/JUnit tests cover the existing per-app draft-insertion policy and the guest runtime admission/frame/touch/target/one-shot lease safety contract.
 - Node source-contract tests verify that no virtualization dependency or broad permission has been added to the companion.
-- **Not yet verified here:** Android Gradle compilation, APK installation, cloud function deployment, migration execution, pairing against a live backend, or physical-device behavior. A real Android build and phone acceptance test are mandatory before release.
+- **Not yet verified here:** Android Gradle compilation, APK installation, WebRTC device-to-browser negotiation, MediaProjection consent on the TECNO KL4, real touch dispatch, cloud function deployment, migration execution, migration application, or pairing against a live backend. A successful Android build and physical-device acceptance are mandatory before release.
 
 ## Local app launch (2026-10-31)
 
@@ -127,3 +127,16 @@ Platform references:
 - https://developer.android.com/reference/android/companion/virtual/VirtualDeviceManager
 - https://developer.android.com/reference/android/content/pm/PackageManager#FEATURE_ACTIVITIES_ON_SECONDARY_DISPLAYS
 - https://android.googlesource.com/platform/frameworks/base/+/refs/heads/master/core/java/android/companion/virtual/VirtualDeviceManager.java
+
+
+## Live Android app mirror and touch (2026-10-31)
+
+The companion now includes a foreground MediaProjection + WebRTC sender and a Backroom Phone Frame control surface. It does not join Supabase Realtime as a fake user: the phone authenticates each poll/answer/ack with its enrolled device bearer; human users use their real Rub Minds JWT for group authorization; the server publishes the answer to the private device channel. Commands are session- and room-bound, leased for 15 seconds and expired after two minutes. Old queue rows are pruned after seven days.
+
+View-only streaming does not require Accessibility. Accessibility is a separate OS permission. When enabled, it checks the current active window and dispatches touch gestures only to the locally selected app whose signer still matches the saved app grant. Remote touch must also be explicitly armed by the user on the phone for up to 15 minutes. App/window switches, projection revocation, stop commands, device revocation or peer failure close the session. No accessibility tree or app text is sent to the cloud.
+
+The Android screen-sharing picker can offer one app window or the entire display. The companion cannot independently inspect Android's selected capture target, so the user must choose the intended app window; choosing the whole display will expose the whole display. WebRTC currently uses public STUN servers only, so restrictive NAT/firewall networks may not connect. No TURN relay is configured.
+
+**Still not delivered:** isolated/virtual Android guest instances, separate app-private data, guest-only virtual display rendering, accessibility-backed field discovery in the Phone Frame, drag-select target binding, draft insertion/readback, app-specific keyboard input, or a production Emergency Stop for an isolated guest. The current stream is a mirror of an ordinary app installation and must not be labelled virtualization.
+
+The command protocol and touch policy have Node source-contract regression tests; native :app:testDebugUnitTest, merged-manifest audit and :app:assembleDebug are configured in GitHub Actions. Those commands still need a green run. No live migration or Edge Function deployment is implied by committed source.
