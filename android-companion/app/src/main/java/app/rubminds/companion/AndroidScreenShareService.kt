@@ -474,6 +474,8 @@ class AndroidScreenShareService : Service() {
         }
     }
 
+    private val remoteTextRequestIds = LinkedHashMap<String, Long>()
+
     private var pendingOfferCommandId = ""
     private var pendingOfferRequestId = ""
 
@@ -562,6 +564,17 @@ class AndroidScreenShareService : Service() {
         catch (_: Exception) { /* The browser reports a missing navigation acknowledgement. */ }
     }
 
+    private fun claimRemoteTextRequest(requestId: String): Boolean = synchronized(remoteTextRequestIds) {
+        val cutoff = System.currentTimeMillis() - REMOTE_TEXT_REPLAY_WINDOW_MS
+        val expired = remoteTextRequestIds.filterValues { it < cutoff }.keys.toList()
+        expired.forEach(remoteTextRequestIds::remove)
+        if (remoteTextRequestIds.containsKey(requestId) ||
+            remoteTextRequestIds.size >= MAX_REMOTE_TEXT_REQUEST_IDS
+        ) return@synchronized false
+        remoteTextRequestIds[requestId] = System.currentTimeMillis()
+        true
+    }
+
     private fun sendRemoteTextAcknowledgement(
         channel: DataChannel,
         sessionId: String,
@@ -635,7 +648,15 @@ class AndroidScreenShareService : Service() {
                         sendRemoteTextAcknowledgement(channel, sessionId, requestId, "invalid_request")
                         return
                     }
-                    val text = input.optString("text")
+                    if (!claimRemoteTextRequest(requestId)) {
+                        sendRemoteTextAcknowledgement(channel, sessionId, requestId, "request_replayed_or_rate_limited")
+                        return
+                    }
+                    val text = input.opt("text") as? String
+                    if (text == null || text.length > 4_000) {
+                        sendRemoteTextAcknowledgement(channel, sessionId, requestId, "text_invalid_or_too_long")
+                        return
+                    }
                     mainHandler.post {
                         val result = if (stopping || !capturedContentVisible ||
                             activeSessionId != sessionId || activeAppPackage != appPackage) {
@@ -745,6 +766,7 @@ class AndroidScreenShareService : Service() {
         closingPeer?.dispose()
         activeSessionId?.let(AndroidTouchAccessibilityService::clearActiveSession)
         DraftInputMethodService.clearRemoteSession(activeSessionId)
+        synchronized(remoteTextRequestIds) { remoteTextRequestIds.clear() }
         activeSessionId = null
         activeAppPackage = null
         activeRoomId = null
@@ -900,6 +922,8 @@ class AndroidScreenShareService : Service() {
         private const val MAX_POLL_FAILURES = 12
         private const val MAX_WAIT_WITHOUT_SESSION_MS = 5 * 60 * 1000L
         private const val MAX_SDP_CHARS = 65_536
+        private const val MAX_REMOTE_TEXT_REQUEST_IDS = 128
+        private const val REMOTE_TEXT_REPLAY_WINDOW_MS = 2 * 60 * 1000L
         private val UUID_PATTERN = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", RegexOption.IGNORE_CASE)
 
         fun requestStop(context: Context, reason: String) {
