@@ -799,6 +799,7 @@ fn set_capture_geometry(
     origin_x_css: i32,
     origin_y_css: i32,
     display_surface: String,
+    expected_process_id: Option<u32>,
 ) -> Result<(), String> {
     if !valid_session_id(&session_id)
         || !(320..=16_384).contains(&frame_width)
@@ -808,9 +809,15 @@ fn set_capture_geometry(
     }
 
     if display_surface == "window" {
-        let target = input_targeting::foreground_window_snapshot()?;
-        if target.process_id == std::process::id() {
-            return Err("Select the actual application window, not the Rub Minds companion window".into());
+        let expected_pid = expected_process_id.ok_or(
+            "Interactive app-window capture requires an application launched by this Backroom companion."
+        )?;
+        if expected_pid == std::process::id() {
+            return Err("The companion cannot be used as the application window target".into());
+        }
+        let target = input_targeting::foreground_window_snapshot_for_process(expected_pid)?;
+        if target.process_id != expected_pid {
+            return Err("The selected window does not belong to the Backroom-launched app".into());
         }
         input_targeting::validate_window_capture_dimensions(frame_width, frame_height, target.bounds)
             .map_err(|_| "The selected app window does not match the captured frame bounds. This session remains view-only; reselect the app window and try again.".to_string())?;
@@ -866,7 +873,7 @@ fn window_binding_matches(
 
 fn capture_bounds(geometry: &CaptureGeometry) -> Result<(i32, i32, u32, u32), String> {
     if let Some(binding) = &geometry.window_binding {
-        let current = input_targeting::foreground_window_snapshot()?;
+        let current = input_targeting::foreground_window_snapshot_for_process(binding.process_id)?;
         if !window_binding_matches(binding, &current) {
             return Err("The captured application window is no longer the verified foreground window. Restore it and restart the screen session before controlling it.".into());
         }
