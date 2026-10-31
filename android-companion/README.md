@@ -147,3 +147,11 @@ The command protocol and touch policy have Node source-contract regression tests
 The Android stream setup screen also exposes **Disarm remote touch now**. It clears the local 15-minute gate and clears the service's active touch grant without stopping the view-only screen stream.
 
 Platform note: Android's official documentation states that app-window sharing was introduced in Android 14 QPR2. The presence of API level 34 alone does not prove that a particular Android 14 firmware has received the QPR2 user-facing picker feature. Confirm that the device chooser exposes the intended app window before proceeding; cancel if it only offers full display.
+
+## Remote typing into a focused phone app field
+
+The app mirror's Phone Frame includes a **Type into the focused phone field** composer. On the phone, enable **Rub Minds keyboard** in Android Settings, select it in the input-method picker, then open Backroom app streaming and confirm **Allow Backroom typing for 15 minutes**. Keep the selected app visible and focus an ordinary text field in it. Text typed in the Backroom composer is committed by the Rub Minds IME into that focused field.
+
+Remote typing is a separate local permission from touch. It is session/package/signer-bound, requires the app's local draft-insertion grant, rejects password fields, and expires after 15 minutes or process/service shutdown. It uses InputConnection.commitText only: no editor text is read, no Enter key is sent and no form/message is submitted. Multiline text is accepted only by multiline editors. Each request is acknowledged and protected against replay.
+
+Android app-window sharing excludes system UI, so the phone's soft-keyboard surface is not expected to be visible in the video preview. The Backroom composer is the remote text-entry control; the phone's selected keyboard remains available for local typing. The feature is implemented in source but still requires the exact APK build and physical-device acceptance described in the guest-runtime acceptance document.
