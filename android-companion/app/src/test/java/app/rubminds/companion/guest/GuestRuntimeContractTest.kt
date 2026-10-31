@@ -444,7 +444,7 @@ class GuestRuntimeContractTest {
         val currentFrame = frame()
         val currentField = field()
         val currentSelection = selection()
-        val draft = GuestDraftRequest("draft-1", currentSelection.selectionId, "one-shot draft", approval(currentSelection))
+        val draft = GuestDraftRequest(requestId("draft-1"), currentSelection.selectionId, "one-shot draft", approval(currentSelection))
         assertNull(guard.activate(currentFrame, currentField, currentSelection, 10_000))
         assertNull(guard.consumeForDraft(currentFrame, currentField, currentSelection, draft, 10_000))
         assertEquals(
@@ -477,12 +477,12 @@ class GuestRuntimeContractTest {
             "local_approval_required",
             guard.consumeForDraft(
                 currentFrame, currentField, currentSelection,
-                GuestDraftRequest("draft-1", currentSelection.selectionId, "draft", null), 10_000
+                GuestDraftRequest(requestId("draft-1"), currentSelection.selectionId, "draft", null), 10_000
             )
         )
         assertNull(guard.consumeForDraft(
             currentFrame, currentField, currentSelection,
-            GuestDraftRequest("draft-2", currentSelection.selectionId, "approved draft", approval(currentSelection)), 10_000
+            GuestDraftRequest(requestId("draft-2"), currentSelection.selectionId, "approved draft", approval(currentSelection)), 10_000
         ))
     }
 
