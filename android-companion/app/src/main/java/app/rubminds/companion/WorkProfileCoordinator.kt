@@ -21,14 +21,15 @@ data class WorkProfileSnapshot(
 class WorkProfileCoordinator(context: Context) {
     private val app = context.applicationContext
     private val dpm = app.getSystemService(DevicePolicyManager::class.java)
-    private val crossProfiles = app.getSystemService(CrossProfileApps::class.java)
+    private fun crossProfileService(): CrossProfileApps? =
+        if (Build.VERSION.SDK_INT >= 30) app.getSystemService(CrossProfileApps::class.java) else null
     private val secrets = WorkProfileBridgeSecretStore(app)
 
     fun snapshot(): WorkProfileSnapshot {
         val owner = dpm.isProfileOwnerApp(app.packageName)
-        val profiles = if (Build.VERSION.SDK_INT >= 30) try { crossProfiles.targetUserProfiles.size } catch (_: Exception) { 0 } else 0
-        val canInteract = if (Build.VERSION.SDK_INT >= 30 && !owner) try { crossProfiles.canInteractAcrossProfiles() } catch (_: Exception) { false } else false
-        val canRequest = if (Build.VERSION.SDK_INT >= 30 && !owner) try { crossProfiles.canRequestInteractAcrossProfiles() } catch (_: Exception) { false } else false
+        val profiles = if (Build.VERSION.SDK_INT >= 30) try { crossProfileService()?.targetUserProfiles?.size ?: 0 } catch (_: Exception) { 0 } else 0
+        val canInteract = if (Build.VERSION.SDK_INT >= 30 && !owner) try { crossProfileService()?.canInteractAcrossProfiles() == true } catch (_: Exception) { false } else false
+        val canRequest = if (Build.VERSION.SDK_INT >= 30 && !owner) try { crossProfileService()?.canRequestInteractAcrossProfiles() == true } catch (_: Exception) { false } else false
         val setup = Intent(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE).addCategory(Intent.CATEGORY_DEFAULT)
         val canProvision = !owner &&
             dpm.isProvisioningAllowed(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE) &&
@@ -64,10 +65,10 @@ class WorkProfileCoordinator(context: Context) {
         if (Build.VERSION.SDK_INT < 30) return "Cross-profile launch requires Android 11 or later."
         return try {
             when {
-                crossProfiles.canInteractAcrossProfiles() -> null
-                crossProfiles.canRequestInteractAcrossProfiles() -> {
+                crossProfileService()?.canInteractAcrossProfiles() == true -> null
+                crossProfileService()?.canRequestInteractAcrossProfiles() == true -> {
                     activity.startActivityForResult(
-                        crossProfiles.createRequestInteractAcrossProfilesIntent(),
+                        crossProfileService()!!.createRequestInteractAcrossProfilesIntent(),
                         REQUEST_CROSS_PROFILE_ACCESS
                     )
                     null
