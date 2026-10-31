@@ -156,3 +156,11 @@ Important boundary:
 - A new authorized draft attempt retires the previous Enter lease before validation and writing. If the new draft is invalid or write fails, the old text cannot be submitted with a stale approval.
 - Native Rust unit tests were added for reserve/confirm/deny/consume transitions, duplicate confirmation rejection, session binding, expiry and attempts to modify text during confirmation. These Rust tests are not yet executed in this environment because Cargo is unavailable.
 - The React UI preserves Enter readiness only after an explicit local OS-dialog denial. Expiry, revocation, stale authorization and PTY I/O failures disable the button and require a fresh draft.
+
+### Terminal request replay protection and latest focused tests — 2026-10-31
+
+- Each native terminal WebRTC peer now owns a bounded request-ID guard shared by draft and Enter messages. An action request UUID can be claimed only once; duplicate IDs are ignored without sending a duplicate correlated response, avoiding races with the original request acknowledgement. The set is capped at 256 unique requests per PTY peer; reaching the cap fails closed and requires reconnecting that terminal session.
+- The guard distinguishes accepted, duplicate, invalid and capacity-exceeded results. The guard unit tests cover cross-action one-use semantics and the capacity boundary.
+- The updated isolated Node 22 helper/test harness now passes **24/24**: nine desktop target selection/queue/replay cases, three PTY transport cases, six terminal protocol/replay cases, and six video pointer/geometry cases.
+- This is still an isolated Node harness based on the checked-in helper/test sources. It is **not** the complete repository test suite, Vite/TypeScript build, Rust/Cargo test run, Windows MSVC compile, or physical Windows/Claude Code/OpenCode acceptance.
+- Native terminal Enter now has a mandatory second physical-computer Yes/No dialog. A remote DataChannel message or browser UI state cannot authorize Enter without that native dialog and an unexpired, session-bound one-use draft lease.
