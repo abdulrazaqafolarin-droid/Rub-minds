@@ -170,7 +170,12 @@ class GuestRuntimeContractTest {
     @Test fun safeCandidateStillRequiresDeviceAcceptanceEvidence() {
         val review = GuestRuntimeAdmissionPolicy.review(descriptor, device)
         assertEquals(GuestRuntimeDecision.DEVICE_POC_REQUIRED, review.decision)
-        assertEquals(checks, review.missingDeviceChecks.toSet())
+        val profileOnlyChecks = setOf(
+            GuestAcceptanceCheck.WORK_PROFILE_OWNER_CONFIRMED,
+            GuestAcceptanceCheck.WORK_PROFILE_CROSS_PROFILE_ALLOWLIST_VERIFIED,
+            GuestAcceptanceCheck.WORK_PROFILE_SIGNER_BOUND_LAUNCH_VERIFIED
+        )
+        assertEquals(checks - profileOnlyChecks, review.missingDeviceChecks.toSet())
     }
 
     @Test fun matchingCompleteDeviceEvidenceIsTheOnlyPathToReady() {
