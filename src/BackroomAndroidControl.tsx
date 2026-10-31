@@ -224,8 +224,10 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
             void stopRemote(nextSessionId);
           }
         });
+        const initiallyVisible = sourceVisibilityRef.current ?? stream.getVideoTracks().every(track => !track.muted);
+        sourceVisibilityRef.current = initiallyVisible;
         setViewReady(true);
-        setSourceVisible(sourceVisibilityRef.current ?? stream.getVideoTracks().every(track => !track.muted));
+        setSourceVisible(initiallyVisible);
         setBusy(false);
         for (const track of stream.getVideoTracks()) {
           track.addEventListener('mute', () => {
@@ -247,7 +249,9 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
             notify('The selected app window is visible again. Request touch control separately after locally arming it on the phone.');
           });
         }
-        notify('Live app stream connected. Keep the selected app visible on the phone. Request touch control separately after locally arming it.');
+        notify(initiallyVisible
+          ? 'Live app stream connected. Keep the selected app visible on the phone. Request touch control separately after locally arming it.'
+          : 'The selected app window is hidden on the phone. Bring it to the foreground to resume the stream.');
       };
       peer.onconnectionstatechange = () => {
         if (peerRef.current !== peer) return;

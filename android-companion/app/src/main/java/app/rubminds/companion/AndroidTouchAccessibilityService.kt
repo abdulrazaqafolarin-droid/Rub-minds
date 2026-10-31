@@ -31,7 +31,10 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         // Re-check the actual active window on every window transition, including
         // events with a null or stale event.packageName.
         val activePackage = currentRootPackage()
-        if (activePackage != target) {
+        // A null root can be a transient window-transition/OS-protected surface.
+        // Touch still fails closed when the active root is unknown; stop only when
+        // Android positively identifies a different foreground package.
+        if (activePackage != null && activePackage != target) {
             AndroidScreenShareService.requestStop(applicationContext, "foreground_app_changed")
         }
     }

@@ -255,3 +255,16 @@ test("Phone Frame preserves the latest Android visibility message across first v
   assert.match(hidden, /pendingControlRequestRef\.current = ''/);
   assert.match(hidden, /clearTimeout\(controlExpiryRef\.current\)/);
 });
+
+test("Android ignores transient null foreground roots but still stops on a known app switch", async () => {
+  const accessibility = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidTouchAccessibilityService.kt");
+  const event = accessibility.slice(accessibility.indexOf("override fun onAccessibilityEvent"), accessibility.indexOf("override fun onInterrupt"));
+  assert.match(event, /activePackage != null && activePackage != target/);
+  assert.match(accessibility, /activePackageName = currentRootPackage\(\)/);
+});
+test("Phone Frame preserves hidden status if app-visibility message precedes first video track", async () => {
+  const control = await read("src/BackroomAndroidControl.tsx");
+  assert.match(control, /const initiallyVisible = sourceVisibilityRef\.current \?\? stream\.getVideoTracks\(\)\.every/);
+  assert.match(control, /notify\(initiallyVisible\s*\?/);
+  assert.match(control, /Bring it to the foreground to resume the stream/);
+});
