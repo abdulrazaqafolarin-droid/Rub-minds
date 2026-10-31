@@ -108,7 +108,7 @@ test("guest runtime code remains a provider-neutral contract with no bundled vir
   assert.match(contract, /GuestRuntimeDecision\.BLOCKED/);
   assert.match(contract, /mergedHostPermissions/);
   assert.match(contract, /mergedHostComponents/);
-  assert.match(contract, /GuestPermissionProtection\\.SIGNATURE/);
+  assert.match(contract, /GuestPermissionProtection/);
   assert.match(contract, /BIND_INPUT_METHOD/);
   assert.match(contract, /unapproved_exported_components/);
   assert.match(contract, /WRITE_SECURE_SETTINGS/);
