@@ -579,6 +579,63 @@ object GuestTouchPolicy {
 }
 
 /**
+ * Tracks pointer lifecycles per guest session. Only DOWN may introduce a pointer;
+ * MOVE/UP/CANCEL must belong to an active pointer and events cannot travel
+ * backwards in time. Clear the session on stop/revoke.
+ */
+class GuestTouchSequenceGuard {
+    private val activePointers = linkedMapOf<String, MutableMap<Int, Long>>()
+
+    @Synchronized
+    fun accept(event: GuestTouchEvent, frame: GuestFrame, nowMillis: Long): String? {
+        val error = GuestTouchPolicy.validate(event, frame, nowMillis)
+        if (error != null) return error
+        val pointers = activePointers.getOrPut(event.sessionId) { linkedMapOf() }
+        val previousAt = pointers[event.pointerId]
+        return when (event.action) {
+            GuestTouchAction.DOWN -> {
+                if (previousAt != null) "touch_pointer_already_active"
+                else {
+                    pointers[event.pointerId] = event.occurredAtMillis
+                    null
+                }
+            }
+            GuestTouchAction.MOVE -> {
+                when {
+                    previousAt == null -> "touch_pointer_not_active"
+                    event.occurredAtMillis < previousAt -> "touch_event_out_of_order"
+                    else -> {
+                        pointers[event.pointerId] = event.occurredAtMillis
+                        null
+                    }
+                }
+            }
+            GuestTouchAction.UP, GuestTouchAction.CANCEL -> {
+                when {
+                    previousAt == null -> "touch_pointer_not_active"
+                    event.occurredAtMillis < previousAt -> "touch_event_out_of_order"
+                    else -> {
+                        pointers.remove(event.pointerId)
+                        if (pointers.isEmpty()) activePointers.remove(event.sessionId)
+                        null
+                    }
+                }
+            }
+        }
+    }
+
+    @Synchronized
+    fun clearSession(sessionId: String) {
+        activePointers.remove(sessionId)
+    }
+
+    @Synchronized
+    fun clearAll() {
+        activePointers.clear()
+    }
+}
+
+/**
  * One-shot, session-local selection lease. The active lease is consumed before
  * the provider receives an insertion request. A failed/ambiguous write must
  * therefore require a fresh drag instead of a blind retry.
