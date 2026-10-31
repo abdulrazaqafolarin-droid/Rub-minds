@@ -655,6 +655,9 @@ struct DraftTarget {
     // Never supplied by the remote caller. This is captured locally from UI Automation.
     #[serde(skip)]
     identity: Option<EditableTargetIdentity>,
+    // Locally generated for each drag. Never accepted from the browser caller.
+    #[serde(skip)]
+    selection_id: Option<String>,
 }
 
 struct PendingDraft {
@@ -898,6 +901,19 @@ fn selected_target_point(geometry: &CaptureGeometry, target: &DraftTarget) -> Re
     screen_point(geometry, center_x, center_y)
 }
 
+fn verify_current_draft_selection(state: &AppState, pending: &PendingDraft) -> Result<(), String> {
+    let active = state.draft_targets.lock().map_err(|_| "Draft state unavailable")?
+        .get(&pending.session_id).cloned()
+        .ok_or("The selected typing area was replaced or cleared. Select it again.")?;
+    if active.selection_id.is_none()
+        || active.selection_id != pending.target.selection_id
+        || active.identity != pending.target.identity
+    {
+        return Err("The selected typing area changed while this draft was waiting. Select it again.".into());
+    }
+    Ok(())
+}
+
 fn verify_selected_editable_target(
     geometry: &CaptureGeometry,
     target: &DraftTarget,
@@ -916,6 +932,12 @@ fn verify_selected_editable_target(
 
 #[tauri::command]
 fn select_draft_target(state: State<'_, AppState>, session_id: String, mut target: DraftTarget) -> Result<String, String> {
+    // A fresh drag supersedes all older selections and drafts for this session,
+    // even when this new selection later fails accessibility validation.
+    state.draft_targets.lock().map_err(|_| "Draft state unavailable")?.remove(&session_id);
+    state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?
+        .retain(|_, draft| draft.session_id != session_id);
+
     control_granted(&state, &session_id)?;
     draft_granted(&state, &session_id)?;
     let geometry = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
@@ -951,6 +973,7 @@ fn select_draft_target(state: State<'_, AppState>, session_id: String, mut targe
         _ => return Err("The selected editor exposes an unsupported accessibility write mode".into()),
     };
     target.identity = Some(identity);
+    target.selection_id = Some(Uuid::new_v4().to_string());
     state.draft_targets.lock().map_err(|_| "Draft state unavailable")?.insert(session_id, target);
     Ok(mode_message.to_string())
 }
@@ -964,8 +987,8 @@ fn stage_draft_request(state: State<'_, AppState>, session_id: String, text: Str
     }
     let target = state.draft_targets.lock().map_err(|_| "Draft state unavailable")?
         .get(&session_id).cloned().ok_or("Drag-select and verify an empty editable field first")?;
-    if target.identity.is_none() {
-        return Err("The selected text area has no verified accessibility identity. Select it again.".into());
+    if target.identity.is_none() || target.selection_id.is_none() {
+        return Err("The selected text area has no current verified accessibility identity. Select it again.".into());
     }
     let request_id = Uuid::new_v4().to_string();
     let now = Instant::now();
@@ -1016,6 +1039,7 @@ async fn approve_draft_request(app: AppHandle, state: State<'_, AppState>, reque
     let geometry_before = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
         .get(&pending.session_id).cloned().ok_or("Live monitor capture is not active")?;
     verify_selected_editable_target(&geometry_before, &pending.target)?;
+    verify_current_draft_selection(&state, &pending)?;
 
     require_native_confirmation(&app, "Insert this unsent draft?", &format!(
         "Insert this exact text into the verified empty text field you selected? Backroom will recheck the field identity and its empty value before typing. It will not press Enter or Send.\\n\\n{}",
@@ -1029,6 +1053,7 @@ async fn approve_draft_request(app: AppHandle, state: State<'_, AppState>, reque
     let geometry = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
         .get(&pending.session_id).cloned().ok_or("Live monitor capture is not active")?;
     let (identity, px, py) = verify_selected_editable_target(&geometry, &pending.target)?;
+    verify_current_draft_selection(&state, &pending)?;
 
     // Consume before the one-shot UIA ValuePattern operation. The native driver
     // re-resolves the exact element, verifies it is still empty, writes directly
