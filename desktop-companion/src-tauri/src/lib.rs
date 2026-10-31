@@ -626,6 +626,9 @@ struct AppState {
     draft_targets: Mutex<HashMap<String, DraftTarget>>,
     pending_drafts: Mutex<HashMap<String, PendingDraft>>,
     terminals: Mutex<HashMap<String, Arc<TerminalSession>>>,
+    // A remote Enter is permitted only immediately after a successful, approved
+    // text-only draft in this exact PTY session. The marker is one-use and expires.
+    terminal_submit_ready: Mutex<HashMap<String, Instant>>,
     desktop_processes: Mutex<HashMap<u32, NativeChild>>,
     launched_app_ids: Mutex<HashMap<String, u32>>,
     input_events: Mutex<VecDeque<Instant>>,
@@ -729,6 +732,25 @@ fn check_approval_rate(state: &AppState) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_terminal_draft_text(text: &str) -> Result<(), &'static str> {
+    if text.trim().is_empty() { return Err("empty_terminal_draft"); }
+    if text.chars().count() > MAX_TERMINAL_INPUT { return Err("terminal_draft_too_long"); }
+    if text.chars().any(|character| {
+        character.is_control() || matches!(character, '\u{2028}' | '\u{2029}')
+    }) {
+        return Err("terminal_draft_contains_control_characters");
+    }
+    Ok(())
+}
+
+fn consume_terminal_submit_ready(
+    pending: &mut HashMap<String, Instant>,
+    session_id: &str,
+    now: Instant,
+) -> bool {
+    matches!(pending.remove(session_id), Some(expires_at) if expires_at > now)
+}
+
 fn check_input_rate(state: &AppState) -> Result<(), String> {
     let now = Instant::now();
     let mut events = state.input_events.lock().map_err(|_| "Input state unavailable")?;
@@ -767,6 +789,7 @@ async fn grant_control(app: AppHandle, state: State<'_, AppState>, session_id: S
 fn revoke_control(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
     state.control_grants.lock().map_err(|_| "Control state unavailable")?.remove(&session_id);
     state.draft_grants.lock().map_err(|_| "Draft state unavailable")?.remove(&session_id);
+    state.terminal_submit_ready.lock().map_err(|_| "Terminal submit state unavailable")?.remove(&session_id);
     state.draft_targets.lock().map_err(|_| "Draft state unavailable")?.remove(&session_id);
     state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?.remove(&session_id);
     let mut drafts = state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?;
@@ -777,13 +800,21 @@ fn revoke_control(state: State<'_, AppState>, session_id: String) -> Result<(), 
 #[tauri::command]
 async fn grant_draft_typing(app: AppHandle, state: State<'_, AppState>, session_id: String, seconds: u64) -> Result<(), String> {
     control_granted(&state, &session_id)?;
-    if !state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?.contains_key(&session_id) {
-        return Err("Draft typing is available only in an active screen session".into());
+    let has_live_capture = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
+        .contains_key(&session_id);
+    let has_live_terminal = state.terminals.lock().map_err(|_| "Terminal state unavailable")?
+        .contains_key(&session_id);
+    if !has_live_capture && !has_live_terminal {
+        return Err("Draft typing requires a live Backroom screen or terminal session".into());
     }
     check_approval_rate(&state)?;
+    let approval_message = if has_live_terminal && !has_live_capture {
+        "Allow Backroom to type plain text into this terminal session for up to the approved period? This writes to the active PTY program. Backroom cannot verify which TUI field has focus; check the Claude Code/OpenCode prompt yourself. It will not press Enter."
+    } else {
+        "Allow Backroom to type only into a drag-selected area of this live screen? It will not press Enter or Send."
+    };
     require_native_confirmation(&app, "Allow unsent draft typing?", &format!(
-        "Allow Backroom to type only into a drag-selected area of this live screen for up to {} seconds? It will not press Enter or Send.",
-        seconds.clamp(30, 120)
+        "{}\n\nPermission expires after {} seconds.", approval_message, seconds.clamp(30, 120)
     ))?;
     let ttl = seconds.clamp(30, 120);
     state.draft_grants.lock().map_err(|_| "Draft state unavailable")?
@@ -1279,15 +1310,40 @@ async fn start_terminal(app: AppHandle, state: State<'_, AppState>, session_id: 
 #[tauri::command]
 fn write_terminal(state: State<'_, AppState>, session_id: String, data: String) -> Result<(), String> {
     control_granted(&state, &session_id)?;
+    draft_granted(&state, &session_id)?;
     check_input_rate(&state)?;
-    if data.is_empty() || data.len() > MAX_TERMINAL_INPUT || data.contains('\0') {
-        return Err("Terminal input is empty or exceeds the 4000-character limit".into());
+    validate_terminal_draft_text(&data).map_err(|_| {
+        "Terminal drafts must contain 1-4000 characters of plain text, without Enter or control characters".to_string()
+    })?;
+    let sessions = state.terminals.lock().map_err(|_| "Terminal registry unavailable")?;
+    let session = sessions.get(&session_id).ok_or("Terminal session is closed")?;
+    let mut writer = session.writer.lock().map_err(|_| "Terminal writer unavailable")?;
+    writer.write_all(data.as_bytes()).map_err(|_| "Terminal draft input failed")?;
+    writer.flush().map_err(|_| "Terminal draft input failed")?;
+    drop(writer);
+    drop(sessions);
+    state.terminal_submit_ready.lock().map_err(|_| "Terminal submit state unavailable")?
+        .insert(session_id, Instant::now() + Duration::from_secs(30));
+    Ok(())
+}
+
+#[tauri::command]
+fn submit_terminal_input(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+    control_granted(&state, &session_id)?;
+    check_input_rate(&state)?;
+    let ready = {
+        let mut pending = state.terminal_submit_ready.lock()
+            .map_err(|_| "Terminal submit state unavailable")?;
+        consume_terminal_submit_ready(&mut pending, &session_id, Instant::now())
+    };
+    if !ready {
+        return Err("Type a new approved terminal draft before pressing Enter. The previous Enter permission is consumed or expired.".into());
     }
     let sessions = state.terminals.lock().map_err(|_| "Terminal registry unavailable")?;
     let session = sessions.get(&session_id).ok_or("Terminal session is closed")?;
     let mut writer = session.writer.lock().map_err(|_| "Terminal writer unavailable")?;
-    writer.write_all(data.as_bytes()).map_err(|_| "Terminal input failed")?;
-    writer.flush().map_err(|_| "Terminal input failed")
+    writer.write_all(b"\r").map_err(|_| "Terminal Enter key could not be delivered")?;
+    writer.flush().map_err(|_| "Terminal Enter key could not be delivered")
 }
 
 #[tauri::command]
@@ -1318,6 +1374,7 @@ fn revoke_control_inner(state: &AppState, session_id: &str) -> Result<(), String
     state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?.remove(session_id);
     state.draft_targets.lock().map_err(|_| "Draft state unavailable")?.remove(session_id);
     state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?.retain(|_, draft| draft.session_id != session_id);
+    state.terminal_submit_ready.lock().map_err(|_| "Terminal submit state unavailable")?.remove(session_id);
     Ok(())
 }
 
@@ -1328,6 +1385,7 @@ fn emergency_stop(state: State<'_, AppState>) -> Result<(), String> {
     state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?.clear();
     state.draft_targets.lock().map_err(|_| "Draft state unavailable")?.clear();
     state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?.clear();
+    state.terminal_submit_ready.lock().map_err(|_| "Terminal submit state unavailable")?.clear();
     let sessions = std::mem::take(&mut *state.terminals.lock().map_err(|_| "Terminal registry unavailable")?);
     for (_, session) in sessions {
         let _ = session.child.lock().map(|mut child| child.kill());
@@ -1350,7 +1408,7 @@ pub fn run() {
             pick_and_register_app, list_registered_apps, launch_registered_app, stop_registered_app,
             grant_control, revoke_control, grant_draft_typing, set_capture_geometry,
             dispatch_input, select_draft_target, clear_draft_target, stage_draft_request, list_pending_drafts,
-            approve_draft_request, deny_draft_request, start_terminal, write_terminal,
+            approve_draft_request, deny_draft_request, start_terminal, write_terminal, submit_terminal_input,
             resize_terminal, stop_terminal, emergency_stop
         ])
         .run(tauri::generate_context!())
@@ -1505,6 +1563,33 @@ mod native_input_tests {
         assert!(valid_session_id(&Uuid::new_v4().to_string()));
         assert!(!valid_session_id(""));
         assert!(!valid_session_id("../other-session"));
+    }
+
+    #[test]
+    fn terminal_drafts_reject_empty_controls_and_line_separators() {
+        assert!(validate_terminal_draft_text("Claude Code prompt").is_ok());
+        assert!(validate_terminal_draft_text("OpenCode prompt with spaces").is_ok());
+        for unsafe_text in ["", "   ", "line\nbreak", "line\rbreak", "tab\tchar", "escape\u{1b}[31m", "nul\0", "delete\u{7f}", "next\u{2028}line", "next\u{2029}line"] {
+            assert!(validate_terminal_draft_text(unsafe_text).is_err(), "accepted {unsafe_text:?}");
+        }
+        assert!(validate_terminal_draft_text(&"x".repeat(MAX_TERMINAL_INPUT)).is_ok());
+        assert!(validate_terminal_draft_text(&"x".repeat(MAX_TERMINAL_INPUT + 1)).is_err());
+    }
+
+    #[test]
+    fn terminal_enter_permission_is_session_bound_one_use_and_expires() {
+        let now = Instant::now();
+        let mut pending = HashMap::new();
+        pending.insert("session-a".to_string(), now + Duration::from_secs(30));
+        assert!(consume_terminal_submit_ready(&mut pending, "session-a", now));
+        assert!(!consume_terminal_submit_ready(&mut pending, "session-a", now));
+
+        pending.insert("session-a".to_string(), now + Duration::from_secs(30));
+        assert!(!consume_terminal_submit_ready(&mut pending, "session-b", now));
+        assert!(pending.contains_key("session-a"));
+
+        pending.insert("session-expired".to_string(), now);
+        assert!(!consume_terminal_submit_ready(&mut pending, "session-expired", now));
     }
 
     #[test]
