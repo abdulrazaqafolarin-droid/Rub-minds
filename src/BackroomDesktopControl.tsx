@@ -142,7 +142,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     pendingCandidatesRef.current.clear();
     if(videoRef.current)videoRef.current.srcObject=null;
     setVideoReady(false);setScreenSession('');screenSessionRef.current='';terminalPeerRef.current='';setControlGranted(false);setDraftGranted(false);
-    setCoordinateControl(false);setSelectMode(false);setSelection(null);setTargetStatus('');
+    setCoordinateControl(false);setSelectMode(false);setSelection(null);setTargetStatus('');targetAttemptRef.current='';
   },[]);
 
   useEffect(()=>{
