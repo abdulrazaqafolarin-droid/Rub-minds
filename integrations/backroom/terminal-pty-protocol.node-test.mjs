@@ -4,6 +4,7 @@ import {
   validateTerminalDraftMessage,
   validateTerminalSubmitMessage,
   createTerminalActionRequestGuard,
+  validateTerminalExitedMessage,
 } from './terminal-pty-protocol.mjs';
 
 const sessionId = '123e4567-e89b-42d3-a456-426614174000';
@@ -84,4 +85,21 @@ test('terminal action request IDs are one-use across drafts and Enter and fail c
 test('terminal action replay guard rejects invalid limits', () => {
   assert.throws(() => createTerminalActionRequestGuard(0), /between 1 and 4096/);
   assert.throws(() => createTerminalActionRequestGuard(1.5), /between 1 and 4096/);
+});
+
+test('terminal exit notice is exact-session scoped and cannot carry injected content', () => {
+  const notice = { kind: 'terminal_exited', sessionId };
+  assert.deepEqual(validateTerminalExitedMessage(notice, sessionId), notice);
+  assert.equal(Object.isFrozen(validateTerminalExitedMessage(notice, sessionId)), true);
+  for (const invalid of [
+    null,
+    [],
+    { ...notice, kind: 'terminal_output' },
+    { ...notice, sessionId: '123e4567-e89b-42d3-a456-426614174099' },
+    { ...notice, text: 'execute this' },
+    { ...notice, output: [1, 2, 3] },
+  ]) {
+    assert.equal(validateTerminalExitedMessage(invalid, sessionId), null);
+  }
+  assert.equal(validateTerminalExitedMessage(notice, 'not-a-uuid'), null);
 });
