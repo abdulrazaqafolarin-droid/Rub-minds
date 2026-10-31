@@ -183,6 +183,29 @@ class GuestRuntimeContractTest {
 
 
 
+    @Test fun guestCannotReachReadyWithoutBothPrivateDataIsolationProofs() {
+        val requiredIsolationEvidence = setOf(
+            GuestAcceptanceCheck.GUEST_OS_SANDBOX_BOUNDARY_VERIFIED,
+            GuestAcceptanceCheck.GUEST_CANNOT_READ_COMPANION_PRIVATE_DATA,
+            GuestAcceptanceCheck.GUEST_CANNOT_READ_OTHER_GUEST_DATA
+        )
+        val evidence = GuestDeviceAcceptanceEvidence(
+            engineId = descriptor.engineId,
+            engineVersion = descriptor.engineVersion,
+            isolationBoundary = descriptor.isolationBoundary,
+            deviceProfileId = device.localProfileId,
+            apiLevel = device.apiLevel,
+            abi = device.abi,
+            testRunId = "poc-run-2026-10-31",
+            releaseArtifactSha256 = artifactSha256,
+            mergedManifestSha256 = manifestSha256,
+            passedChecks = checks - requiredIsolationEvidence
+        )
+        val review = GuestRuntimeAdmissionPolicy.review(descriptor, device, evidence)
+        assertEquals(GuestRuntimeDecision.DEVICE_POC_REQUIRED, review.decision)
+        assertEquals(requiredIsolationEvidence, review.missingDeviceChecks.toSet())
+    }
+
     @Test fun physicalAcceptanceCannotBeReusedForDifferentReleaseArtifactOrMergedManifest() {
         val evidence = GuestDeviceAcceptanceEvidence(
             engineId = descriptor.engineId, engineVersion = descriptor.engineVersion,
