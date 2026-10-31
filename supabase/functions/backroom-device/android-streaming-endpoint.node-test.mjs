@@ -144,8 +144,8 @@ test("Android touch dispatch validates unique gesture IDs and returns completion
   assert.match(service, /"gestureId"/);
   assert.match(service, /sendTouchAcknowledgement\(channel, sessionId, gestureId, false\)/);
   assert.match(service, /"kind", "touch_ack"/);
-  assert.match(touchService, /onCompleted\(true\)/);
-  assert.match(touchService, /onCompleted\(false\)/);
+  assert.match(touchService, /onResult\(true\)/);
+  assert.match(touchService, /onResult\(false\)/);
   assert.match(browser, /kind: 'touch_ack'/);
   assert.match(browser, /pendingTouchAcksRef/);
   assert.match(browser, /Android completed the tap\/swipe gesture/);
@@ -155,6 +155,7 @@ test("touch completion callback is wired through the accessibility service entry
   const touchService = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidTouchAccessibilityService.kt");
   const companion = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
   assert.match(touchService, /fun dispatchRemoteGesture\(gesture: RemoteTouchGesture, onResult: \(Boolean\) -> Unit\)/);
+  assert.match(touchService, /fun dispatch\([\s\S]+?onResult: \(Boolean\) -> Unit[\s\S]+?dispatchRemoteGesture\(gesture, onResult\)/);
   assert.match(touchService, /dispatchRemoteGesture\(gesture, onResult\)/);
   assert.match(touchService, /onResult\(true\)/);
   assert.match(touchService, /onResult\(false\)/);
