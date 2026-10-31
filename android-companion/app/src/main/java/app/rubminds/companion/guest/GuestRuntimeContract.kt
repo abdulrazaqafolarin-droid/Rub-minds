@@ -226,7 +226,8 @@ object GuestRuntimeAdmissionPolicy {
             blockers += "unapproved_exported_components:${unsafeComponents.map { it.className }.sorted().joinToString(",")}"
         }
         val launcherCount = descriptor.mergedHostComponents.count { it.exported && it.isLauncherActivity }
-        if (launcherCount != 1 || descriptor.mergedHostComponents.count { it.exported && it.isSystemBoundInputMethod } > 1) {
+        val inputMethodCount = descriptor.mergedHostComponents.count { it.exported && it.isSystemBoundInputMethod }
+        if (launcherCount != 1 || inputMethodCount != 1) {
             blockers += "unexpected_exported_entrypoint_count"
         }
 

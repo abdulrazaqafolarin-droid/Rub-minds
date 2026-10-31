@@ -96,3 +96,12 @@ Not implemented or verified:
 - no Android Gradle build, APK install, physical acceptance or provider performance test has passed in this session.
 
 **Do not mark Android virtualized app execution complete until the provider is implemented and every required handset check passes.**
+
+
+## Provider feasibility re-audit (2026-10-31)
+
+The reviewed alternatives still do not pass admission. BlackBox Reborn's Bcore manifest has 323 permission entries (249 unique); its application manifest requests `QUERY_ALL_PACKAGES` and broad external-storage access, its build targets SDK 28 and signs the release variant with the debug key, and its README license badge conflicts with the Apache-2.0 LICENSE file. TeguFy's BlackBox fork retains the same 323/249 core-manifest permission footprint and broad application-manifest permissions. ZENINXOP/BlackBox did not expose source, build files, a manifest or a license in the repository snapshot reviewed, so its claims are unverified.
+
+AVF/Microdroid is a system VM facility, not an ordinary-app SDK: its APIs are `@SystemApi`, and `MANAGE_VIRTUAL_MACHINE` is declared with restricted `signature|preinstalled|development` protection. The development grant supports controlled adb tests, not production use by a normally installed third-party app. AVF would require a preinstalled/OEM/system-app distribution arrangement.
+
+**No Android guest provider has been selected or integrated.** Keep all candidates blocked until a disposable POC has an audited final merged manifest, consistent licensing, non-debug release signing, API/ABI compatibility and completed physical-device evidence.

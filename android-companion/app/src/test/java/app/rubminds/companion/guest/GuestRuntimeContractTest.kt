@@ -208,6 +208,19 @@ class GuestRuntimeContractTest {
 
 
 
+    @Test fun missingOrDuplicateApprovedExportedEntrypointsAreRejected() {
+        val withoutKeyboard = descriptor.copy(mergedHostComponents = descriptor.mergedHostComponents.dropLast(1))
+        assertEquals(GuestRuntimeDecision.BLOCKED, GuestRuntimeAdmissionPolicy.review(withoutKeyboard, device).decision)
+
+        val duplicateKeyboard = descriptor.copy(
+            mergedHostComponents = descriptor.mergedHostComponents + descriptor.mergedHostComponents.last()
+        )
+        assertEquals(GuestRuntimeDecision.BLOCKED, GuestRuntimeAdmissionPolicy.review(duplicateKeyboard, device).decision)
+
+        val withoutLauncher = descriptor.copy(mergedHostComponents = descriptor.mergedHostComponents.drop(1))
+        assertEquals(GuestRuntimeDecision.BLOCKED, GuestRuntimeAdmissionPolicy.review(withoutLauncher, device).decision)
+    }
+
     @Test fun launcherExceptionDoesNotApplyToThirdPartyClassWithSameSuffix() {
         val bad = descriptor.copy(mergedHostComponents = listOf(
             GuestHostComponent(
