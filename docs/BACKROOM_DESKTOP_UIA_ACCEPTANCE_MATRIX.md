@@ -10,6 +10,12 @@ Status: Windows UI Automation targeting is implemented in the feature branch. Ph
 - [ ] Windows x86_64 MSVC compile with the pinned `uiautomation = 0.25.1` dependency.
 - [ ] Companion protocol and authorization regression tests.
 
+## Focused local validation completed
+
+- [x] 8 desktop target-selection tests, including stale acknowledgement rejection, selection-ID binding, serialization order, queue recovery after a failed native operation, and invalid queue arguments.
+- [x] 4 video overlay geometry tests, including portrait monitor letterboxing, landscape full-frame mapping, vertical letterboxing and invalid geometry rejection.
+- These 12 tests were run with Node 22 against local copies whose Git blob hashes match the current repository helper/test files. They do not replace the full repository test suite or a Windows-native compile.
+
 ## Manual Windows acceptance
 
 Run on a real Windows 10/11 desktop with the installed Backroom companion, paired owner account, and a disposable Rub Minds group.
