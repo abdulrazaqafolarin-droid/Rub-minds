@@ -27,6 +27,16 @@ export function createNativePtyAdapter({pty,platform=process.platform}={}){
        if(typeof data!=='string'||data.length>4000||data.includes('\0'))throw new TypeError('Invalid PTY input');
        session.write(data);
      },
+     /** Draft-only PTY input; the caller must still verify an actual assistant
+      * composer and its empty buffer before invoking this transport operation.
+      * Never allow a control sequence, Enter, or terminal paste escape here. */
+     writeDraft(data){
+       if(killed)throw new Error('PTY stopped');
+       if(typeof data!=='string'||!data.trim()||[...data].length>4000||
+          [...data].some(ch=>{const cp=ch.codePointAt(0);return cp<=31||(cp>=127&&cp<=159)||cp===0x2028||cp===0x2029;}))
+         throw new TypeError('Invalid draft-only PTY input');
+       session.write(data);
+     },
      resize(columns,lines){
        if(killed)throw new Error('PTY stopped');
        if(!Number.isInteger(columns)||columns<20||columns>500||
