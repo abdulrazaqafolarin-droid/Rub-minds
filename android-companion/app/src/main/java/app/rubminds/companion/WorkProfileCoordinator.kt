@@ -1,0 +1,90 @@
+package app.rubminds.companion
+
+import android.app.Activity
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.pm.CrossProfileApps
+import android.os.Build
+import android.os.Bundle
+
+data class WorkProfileSnapshot(
+    val isProfileOwner: Boolean,
+    val profileCount: Int,
+    val canProvision: Boolean,
+    val canRequestAccess: Boolean,
+    val canInteract: Boolean,
+    val hasBridgeSecret: Boolean
+)
+
+class WorkProfileCoordinator(context: Context) {
+    private val app = context.applicationContext
+    private val dpm = app.getSystemService(DevicePolicyManager::class.java)
+    private val crossProfiles = app.getSystemService(CrossProfileApps::class.java)
+    private val secrets = WorkProfileBridgeSecretStore(app)
+
+    fun snapshot(): WorkProfileSnapshot {
+        val owner = dpm.isProfileOwnerApp(app.packageName)
+        val profiles = if (Build.VERSION.SDK_INT >= 30) try { crossProfiles.targetUserProfiles.size } catch (_: Exception) { 0 } else 0
+        val canInteract = if (Build.VERSION.SDK_INT >= 30 && !owner) try { crossProfiles.canInteractAcrossProfiles() } catch (_: Exception) { false } else false
+        val canRequest = if (Build.VERSION.SDK_INT >= 30 && !owner) try { crossProfiles.canRequestInteractAcrossProfiles() } catch (_: Exception) { false } else false
+        val setup = Intent(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE).addCategory(Intent.CATEGORY_DEFAULT)
+        val canProvision = !owner &&
+            dpm.isProvisioningAllowed(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE) &&
+            setup.resolveActivity(app.packageManager) != null
+        return WorkProfileSnapshot(owner, profiles, canProvision, canRequest, canInteract, secrets.load() != null)
+    }
+
+    fun startProvisioning(activity: Activity): String? {
+        if (Build.VERSION.SDK_INT < 24) return "Android version does not support the managed-profile check."
+        if (dpm.isProfileOwnerApp(app.packageName)) return "This companion is already running as the Work Profile owner."
+        if (!dpm.isProvisioningAllowed(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE)) {
+            return "Android or the device administrator does not allow Work Profile provisioning."
+        }
+        val intent = Intent(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE).addCategory(Intent.CATEGORY_DEFAULT)
+        if (intent.resolveActivity(activity.packageManager) == null) return "Android Work Profile setup is unavailable."
+        val encodedSecret = secrets.createAndSave() ?: return "Could not prepare the local Work Profile link."
+        val admin = ComponentName(activity, WorkProfileAdminReceiver::class.java)
+        intent.putExtra(DevicePolicyManager.EXTRA_PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME, admin)
+        intent.putExtra(
+            DevicePolicyManager.EXTRA_PROVISIONING_ADMIN_EXTRAS_BUNDLE,
+            Bundle().apply { putString(WorkProfileContract.ADMIN_EXTRA_SECRET, encodedSecret) }
+        )
+        return try {
+            activity.startActivityForResult(intent, REQUEST_MANAGED_PROFILE)
+            null
+        } catch (_: Exception) {
+            secrets.clear()
+            "Android could not start Work Profile setup."
+        }
+    }
+
+    fun requestAccess(activity: Activity): String? {
+        if (Build.VERSION.SDK_INT < 30) return "Cross-profile launch requires Android 11 or later."
+        return try {
+            when {
+                crossProfiles.canInteractAcrossProfiles() -> null
+                crossProfiles.canRequestInteractAcrossProfiles() -> {
+                    activity.startActivityForResult(
+                        crossProfiles.createRequestInteractAcrossProfilesIntent(),
+                        REQUEST_CROSS_PROFILE_ACCESS
+                    )
+                    null
+                }
+                else -> "The Work Profile administrator does not allow this app to request cross-profile access."
+            }
+        } catch (_: Exception) {
+            "Android did not allow cross-profile access to be requested."
+        }
+    }
+
+    fun onActivityResult(requestCode: Int, resultCode: Int) {
+        if (requestCode == REQUEST_MANAGED_PROFILE && resultCode != Activity.RESULT_OK) secrets.clear()
+    }
+
+    companion object {
+        const val REQUEST_MANAGED_PROFILE = 7301
+        const val REQUEST_CROSS_PROFILE_ACCESS = 7302
+    }
+}
