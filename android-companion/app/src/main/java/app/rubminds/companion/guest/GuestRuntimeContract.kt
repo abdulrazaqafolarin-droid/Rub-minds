@@ -13,6 +13,7 @@ enum class GuestRuntimeCapability {
     ROOTLESS_EXECUTION,
     FRESH_PER_APP_DATA_CONTAINER,
     GUEST_PROCESS_ISOLATION,
+    GUEST_OS_SANDBOX_ISOLATION,
     GUEST_ONLY_FRAME_CAPTURE,
     TOUCH_INPUT,
     ACCESSIBILITY_FIELD_TARGETING,
@@ -42,6 +43,9 @@ enum class GuestAcceptanceCheck {
     SESSION_REVOCATION_STOPS_GUEST,
     EMERGENCY_STOP_KILLS_GUEST,
     PROCESS_DEATH_RECOVERS_WITHOUT_CROSS_APP_DATA,
+    GUEST_OS_SANDBOX_BOUNDARY_VERIFIED,
+    GUEST_CANNOT_READ_COMPANION_PRIVATE_DATA,
+    GUEST_CANNOT_READ_OTHER_GUEST_DATA,
     NO_UNAPPROVED_HOST_PERMISSION_PROMPTS
 }
 
@@ -67,6 +71,15 @@ enum class GuestPermissionProtection {
     SYSTEM
 }
 
+/** A declared security boundary, not a marketing claim about process names or fake UIDs. */
+enum class GuestIsolationBoundary {
+    ANDROID_MANAGED_PROFILE,
+    PRIVILEGED_VIRTUAL_DEVICE,
+    MICRODROID_VM,
+    SAME_HOST_UID_HOOKS,
+    UNVERIFIED
+}
+
 /** Facts extracted from the final merged host manifest, not source library manifests. */
 data class GuestHostComponent(
     val className: String,
@@ -83,6 +96,8 @@ data class GuestRuntimeDescriptor(
     val engineId: String,
     val engineVersion: String,
     val licenseId: String,
+    /** Must be enforced by Android's OS/user/VM boundary, not only framework hooks. */
+    val isolationBoundary: GuestIsolationBoundary = GuestIsolationBoundary.UNVERIFIED,
     val minApiLevel: Int,
     val maxApiLevel: Int,
     val supportedAbis: Set<String>,
@@ -191,6 +206,11 @@ object GuestRuntimeAdmissionPolicy {
         if (!descriptor.engineId.matches(Regex("^[a-z0-9][a-z0-9._-]{1,79}$"))) blockers += "invalid_engine_id"
         if (descriptor.engineVersion.isBlank()) blockers += "engine_version_missing"
         if (descriptor.licenseId !in allowedLicenses) blockers += "license_not_allowlisted"
+        if (descriptor.isolationBoundary !in setOf(
+                GuestIsolationBoundary.ANDROID_MANAGED_PROFILE,
+                GuestIsolationBoundary.PRIVILEGED_VIRTUAL_DEVICE,
+                GuestIsolationBoundary.MICRODROID_VM
+            )) blockers += "guest_os_sandbox_isolation_not_enforced"
         if (descriptor.minApiLevel < 26 || descriptor.maxApiLevel < descriptor.minApiLevel) blockers += "invalid_android_api_range"
         if (device.apiLevel !in descriptor.minApiLevel..descriptor.maxApiLevel) blockers += "device_api_not_supported"
         if (device.abi !in descriptor.supportedAbis) blockers += "device_abi_not_supported"
