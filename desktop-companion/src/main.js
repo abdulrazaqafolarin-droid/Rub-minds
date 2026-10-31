@@ -646,10 +646,44 @@ async function handlePeerData(sessionId,raw){
     });
     peer.targetQueue=tracked;
     await tracked;
-  } else if(message.kind==='terminal_input'){
-    const terminalId=message.sessionId||peer.terminalId;
-    if(!terminalId)return;
-    try{await invoke('write_terminal',{sessionId:terminalId,data:message.data});}catch(error){notify(error.message,'error');}
+  } else if(message.kind==='terminal_draft'){
+    const terminalId=peer.terminalId;
+    const requestId=message.requestId;
+    if(!terminalId||message.sessionId!==terminalId||typeof requestId!=='string'||!UUID_PATTERN.test(requestId))return;
+    const respond=(ok,reason)=>{
+      if(peer.channel?.readyState==='open'){
+        try{peer.channel.send(JSON.stringify({kind:'terminal_action_result',requestId,action:'draft',ok,reason}));}catch{}
+      }
+    };
+    if(typeof message.data!=='string'){
+      respond(false,'Terminal draft text is invalid.');
+      return;
+    }
+    try{
+      await invoke('write_terminal',{sessionId:terminalId,data:message.data});
+      respond(true);
+    }catch(error){
+      const reason=error?.message||'Terminal draft could not be typed.';
+      respond(false,reason);
+      notify(reason,'error');
+    }
+  } else if(message.kind==='terminal_submit'){
+    const terminalId=peer.terminalId;
+    const requestId=message.requestId;
+    if(!terminalId||message.sessionId!==terminalId||typeof requestId!=='string'||!UUID_PATTERN.test(requestId))return;
+    const respond=(ok,reason)=>{
+      if(peer.channel?.readyState==='open'){
+        try{peer.channel.send(JSON.stringify({kind:'terminal_action_result',requestId,action:'submit',ok,reason}));}catch{}
+      }
+    };
+    try{
+      await invoke('submit_terminal_input',{sessionId:terminalId});
+      respond(true);
+    }catch(error){
+      const reason=error?.message||'Terminal Enter could not be sent.';
+      respond(false,reason);
+      notify(reason,'error');
+    }
   } else if(message.kind==='terminal_resize'){
     const terminalId=message.sessionId||peer.terminalId;if(!terminalId)return;
     try{await invoke('resize_terminal',{sessionId:terminalId,cols:message.cols,rows:message.rows});}catch(error){notify(error.message,'error');}
