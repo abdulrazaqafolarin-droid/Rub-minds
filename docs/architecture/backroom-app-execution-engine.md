@@ -59,15 +59,17 @@ The Android companion now defines a provider boundary in `android-companion/app/
 
 An engine is blocked unless its reviewed final host manifest is narrow, the release artifact is not debug-signed, its license is allowlisted, it does not require root or an inbound listener, and it declares all required capabilities: a fresh per-app data container, process isolation, guest-only frame capture, touch input, accessibility-backed field targeting, draft-only insertion, emergency stop and no private-data import.
 
-Static capability declarations are not sufficient to make the engine ready. `GuestRuntimeAdmissionPolicy` remains at `DEVICE_POC_REQUIRED` until acceptance evidence matches the exact engine version and local device profile and all required checks pass.
+Static capability declarations are not sufficient to make the engine ready. `GuestRuntimeAdmissionPolicy` remains at `DEVICE_POC_REQUIRED` until acceptance evidence matches the exact engine version, release artifact SHA-256, merged-manifest SHA-256 and local device profile and all required checks pass.
 
 Frame and target rules are fail-closed:
 - A frame must be tagged `GUEST_APP`, belong to the active session and guest instance, have a strictly positive sequence, valid dimensions/MIME type, a bounded payload and a recent capture timestamp. Whole-device capture cannot masquerade as an app frame.
 - A text target must be accessibility-backed, enabled, editable, non-password, non-read-only and empty. Its identity and frame sequence must match the active guest instance.
 - The drag rectangle must cover at least 65% of that single field. A selection expires after 60 seconds and cannot cross a guest restart or a newer frame.
-- Draft insertion requires separate local approval, the exact current selection ID, single-line plain text (maximum 4,000 characters), and an explicit no-submit operation. Enter/Send is not part of this interface.
+- A new drag immediately supersedes the previous selection; invalid drags also retire the old target. A valid selection lease is consumed before a write attempt, so an ambiguous result requires a fresh drag rather than an automatic retry.
+- Each guest instance must have its own fresh data-container ID. The included registry is process-local test/helper code; a production provider must persist that ownership mapping across app-process death and prove it in the acceptance run.
+- Draft insertion requires separate local approval, the exact current selection ID, single-line plain text (maximum 4,000 characters), exact read-back and an explicit no-submit result. Enter/Send is not part of this interface.
 
-This contract creates the integration point for a future provider; it does not yet implement app installation, guest process creation, video capture, touch injection or real accessibility queries.
+This contract creates the integration point for a future provider; it does not yet implement app installation, guest process creation, video capture, touch injection or real accessibility queries. No current Android provider implements `GuestRuntimeProvider`, and no guest frame is available to the Phone Frame.
 
 ## Permission UX
 
