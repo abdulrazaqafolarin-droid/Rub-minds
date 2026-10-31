@@ -5,7 +5,7 @@ use std::thread;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EditableTargetIdentity {
-    pub process_id: i32,
+    pub process_id: u32,
     pub runtime_id: Vec<i32>,
     pub class_name: String,
     pub control_type: String,
@@ -220,7 +220,7 @@ mod windows_impl {
         let rect = element.get_bounding_rectangle()
             .map_err(|_| "Could not verify the selected control bounds".to_string())?;
 
-        if process_id <= 0 || runtime_id.is_empty()
+        if process_id == 0 || runtime_id.is_empty()
             || rect.get_right() <= rect.get_left()
             || rect.get_bottom() <= rect.get_top()
         {
