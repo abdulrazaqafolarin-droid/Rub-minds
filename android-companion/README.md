@@ -131,7 +131,7 @@ Platform references:
 
 ## Live Android app mirror and touch (2026-10-31)
 
-The companion now includes a foreground MediaProjection + WebRTC sender and a Backroom Phone Frame control surface. It does not join Supabase Realtime as a fake user: the phone authenticates each poll/answer/ack with its enrolled device bearer; human users use their real Rub Minds JWT for group authorization; the server publishes the answer to the private device channel. Commands are session- and room-bound, leased for 15 seconds and expired after two minutes. Old queue rows are pruned after seven days.
+The companion now includes a foreground MediaProjection + WebRTC sender and a Backroom Phone Frame control surface. It does not join Supabase Realtime as a fake user: the phone authenticates each poll/answer/ack with its enrolled device bearer; human users use their real Rub Minds JWT for group authorization; the server publishes the answer to the private device channel. Commands are session- and room-bound, leased for 60 seconds and expired after two minutes. Old queue rows are pruned after seven days.
 
 View-only streaming does not require Accessibility. Accessibility is a separate OS permission. When enabled, it checks the current active window and dispatches touch gestures only to the locally selected app whose signer still matches the saved app grant. Remote touch must also be explicitly armed by the user on the phone for up to 15 minutes. App/window switches, projection revocation, stop commands, device revocation or peer failure close the session. No accessibility tree or app text is sent to the cloud.
 

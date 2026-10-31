@@ -451,6 +451,15 @@ Deno.serve(async req => {
       if (appError) return json(503, fail('android_app_inventory_unavailable'), origin);
       if (!app) return json(403, fail('app_not_selected_on_device'), origin);
 
+      const { data: existingSession, error: existingSessionError } = await db.from('backroom_desktop_sessions')
+        .select('session_id').eq('device_id', start.deviceId).eq('room_id', start.roomId)
+        .eq('session_type', 'screen').eq('status', 'active')
+        .gt('expires_at', new Date().toISOString()).limit(1);
+      if (existingSessionError) return json(503, fail('android_session_lookup_failed'), origin);
+      if (Array.isArray(existingSession) && existingSession.length > 0) {
+        return json(409, fail('android_screen_session_already_active'), origin);
+      }
+
       const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
       const { error: sessionError } = await db.from('backroom_desktop_sessions').insert({
         session_id: start.sessionId, device_id: start.deviceId, room_id: start.roomId,
@@ -555,11 +564,11 @@ Deno.serve(async req => {
             continue;
           }
         }
-        const leaseUntil = new Date(Date.now() + 15_000).toISOString();
+        const leaseUntil = new Date(Date.now() + 60_000).toISOString();
         const { data, error } = await db.from('backroom_android_commands')
           .update({ status: 'leased', lease_until: leaseUntil })
           .eq('id', row.id).eq('device_id', current.device_id).eq('status', 'pending')
-          .is('lease_until', null).select('id');
+          .is('lease_until', null).gt('expires_at', new Date().toISOString()).select('id');
         if (error) return json(503, fail('android_command_lease_failed'), origin);
         if (Array.isArray(data) && data.length === 1) {
           const mapped = mapAndroidQueuedCommand(row);
@@ -582,7 +591,7 @@ Deno.serve(async req => {
             continue;
           }
         }
-        const leaseUntil = new Date(Date.now() + 15_000).toISOString();
+        const leaseUntil = new Date(Date.now() + 60_000).toISOString();
         const { data, error } = await db.from('backroom_android_commands')
           .update({ lease_until: leaseUntil })
           .eq('id', row.id).eq('device_id', current.device_id)
