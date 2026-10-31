@@ -465,3 +465,13 @@ test("phone data-channel disconnect warns about ambiguous text insertion before 
   assert.ok(closeHandler.includes("Check the phone field before retrying"));
   assert.ok(closeHandler.includes("text may already have been inserted"));
 });
+
+test("Android IME manifest metadata and subtype label resolve to packaged resources", async () => {
+  const manifest = await read("app/src/main/AndroidManifest.xml");
+  const method = await read("app/src/main/res/xml/method.xml");
+  const strings = await read("app/src/main/res/values/strings.xml");
+  assert.ok(manifest.includes('android:name="android.view.im" android:resource="@xml/method"'));
+  assert.ok(method.includes('<input-method'));
+  assert.ok(method.includes('android:label="@string/keyboard_subtype"'));
+  assert.ok(strings.includes('<string name="keyboard_subtype">English (US)</string>'));
+});
