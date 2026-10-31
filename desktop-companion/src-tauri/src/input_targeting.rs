@@ -177,8 +177,8 @@ mod windows_impl {
     };
     use uiautomation::{
         actions::{Text, Value},
-        controls::{ControlType, DocumentControl, EditControl},
-        types::{Point, TextAttribute},
+        controls::{DocumentControl, EditControl},
+        types::{ControlType, Point, TextAttribute},
         UIAutomation, UIElement,
     };
 
