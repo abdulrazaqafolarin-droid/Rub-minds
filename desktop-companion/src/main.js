@@ -886,9 +886,13 @@ async function setupTerminalEvents(){
   const offExit=await listen('backroom-terminal-exited',event=>{
     const terminalId=event.payload?.sessionId;
     if(typeof terminalId!=='string'||!UUID_PATTERN.test(terminalId))return;
+    const peers=[...state.peers.entries()].filter(([,peer])=>peer.terminalId===terminalId);
+    const wasTracked=state.terminals.has(terminalId);
+    // stopPeer() removes the registry entry before deliberately killing a PTY.
+    // Ignore that expected EOF; only surface an exit that still owns a live record.
+    if(!wasTracked&&!peers.length)return;
     const pre=document.querySelector('#terminal-output');
     if(pre){pre.textContent=(pre.textContent+'\\n[Native terminal process exited]\\n').slice(-30000);pre.scrollTop=pre.scrollHeight;}
-    const peers=[...state.peers.entries()].filter(([,peer])=>peer.terminalId===terminalId);
     for(const [peerSessionId,peer] of peers){
       if(peer.channel?.readyState==='open'){
         try{peer.channel.send(JSON.stringify({kind:'terminal_exited',sessionId:terminalId}));}catch{}
