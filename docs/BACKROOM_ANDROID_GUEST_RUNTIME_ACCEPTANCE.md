@@ -185,3 +185,24 @@ The repository's README and problem log describe non-root hooking, per-instance 
 ### Candidate decision
 
 Neither candidate resolves the stock Android 14 distribution boundary or passes the current Rub Minds admission policy. Do not bundle either unchanged, silently relax the permission/exported-component policy, or label an ordinary launched app as a guest. The next acceptable experiment is a disposable, separately signed proof of concept that extracts only the smallest necessary virtualization core, proves clean per-instance storage and guest-only rendering on the actual handset, and passes the unchanged manifest/admission gates. If no such extraction works without forbidden host privileges, retain the blocked provider status and investigate OEM/preinstalled distribution or a clearly separate live-streaming product mode.
+
+
+## OS-enforced isolation gate — 2026-10-31
+
+A guest provider must now declare an explicit `GuestIsolationBoundary`:
+
+- `ANDROID_MANAGED_PROFILE`: app runs as a separately provisioned Android user/profile with OS-owned per-package UID and data isolation.
+- `PRIVILEGED_VIRTUAL_DEVICE`: app runs on an Android VirtualDevice created by an authorized system/preinstalled role holder.
+- `MICRODROID_VM`: guest runs behind the platform VM boundary.
+- `SAME_HOST_UID_HOOKS` and `UNVERIFIED`: **always blocked**.
+
+A list of subprocess names, a rewritten `ApplicationInfo.uid`, a virtual filesystem path, ART/Binder hooks or separate directories does not establish an Android OS security boundary. A process that shares the companion's Linux UID must be treated as potentially able to access the companion's private files and other same-UID guest state if an escape or hook bypass occurs.
+
+The admission contract also requires the `GUEST_OS_SANDBOX_ISOLATION` capability. Physical evidence must include all of:
+- `GUEST_OS_SANDBOX_BOUNDARY_VERIFIED`;
+- `GUEST_CANNOT_READ_COMPANION_PRIVATE_DATA`;
+- `GUEST_CANNOT_READ_OTHER_GUEST_DATA`.
+
+For a profile/VM provider, record the actual process/user identity and independently test that guest code cannot read a random host-private sentinel or another guest's sentinel. Run the check again after process death/restart. Keep the sentinel values local to the test; never upload them to the cloud.
+
+This deliberately blocks ordinary hook-based VirtualApp/BlackBox/Renjana-style candidates unless a separately reviewed OS-enforced isolation boundary is actually demonstrated. Even after the isolation gate passes, the engine must still prove that its guest surface can be rendered inside the Phone Frame with guest-only frames, correct touch mapping and accessibility-backed targeting. A safe app runtime that only opens a separate Android Activity is not yet a Backroom in-frame guest runtime.
