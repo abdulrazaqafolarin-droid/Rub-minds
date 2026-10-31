@@ -883,7 +883,28 @@ async function setupTerminalEvents(){
       peer.channel.send(JSON.stringify({kind:'terminal_output',sessionId:terminalId,data:Array.from(data)}));
     }
   });
-  state.unlisten.push(off);
+  const offExit=await listen('backroom-terminal-exited',event=>{
+    const terminalId=event.payload?.sessionId;
+    if(typeof terminalId!=='string'||!UUID_PATTERN.test(terminalId))return;
+    const pre=document.querySelector('#terminal-output');
+    if(pre){pre.textContent=(pre.textContent+'\\n[Native terminal process exited]\\n').slice(-30000);pre.scrollTop=pre.scrollHeight;}
+    const peers=[...state.peers.entries()].filter(([,peer])=>peer.terminalId===terminalId);
+    for(const [peerSessionId,peer] of peers){
+      if(peer.channel?.readyState==='open'){
+        try{peer.channel.send(JSON.stringify({kind:'terminal_exited',sessionId:terminalId}));}catch{}
+      }
+      // Give the ordered data channel a moment to deliver the exit notice.
+      // If the browser is already gone, this still releases the native peer,
+      // PTY registry entry and all session-scoped approvals.
+      setTimeout(()=>{if(state.peers.has(peerSessionId))void stopPeer(peerSessionId);},1_000);
+    }
+    state.terminals.delete(terminalId);
+    if(!peers.length){
+      void invoke('stop_terminal',{sessionId:terminalId}).catch(()=>{});
+      notify('The local native terminal process exited.','error');
+    }
+  });
+  state.unlisten.push(off,offExit);
 }
 async function boot(){
   shell();
