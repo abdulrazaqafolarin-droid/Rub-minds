@@ -46,8 +46,8 @@ test("device answer is one bounded SDP answer and always declares touch grant st
 });
 
 test("command acknowledgements are bounded, exact and session-bound", () => {
-  const valid = { commandId, requestId, sessionId, result: "accepted" };
-  assert.ok(validateAndroidCommandAck(valid));
+  const valid = { commandId, requestId, sessionId, result: "accepted", canControl: false };
+  assert.ok(validateAndroidCommandAck(valid));\n  assert.equal(validateAndroidCommandAck({ ...valid, canControl: "yes" }), null);
   assert.equal(validateAndroidCommandAck({ ...valid, result: "x".repeat(81) }), null);
   assert.equal(validateAndroidCommandAck({ ...valid, sessionId: "bad" }), null);
   assert.equal(validateAndroidCommandAck({ ...valid, ignored: 1 }), null);

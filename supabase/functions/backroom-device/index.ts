@@ -10,7 +10,7 @@ import { validateDesktopRegistration } from './desktop-device-protocol.mjs';
 import { validateDesktopApps } from './desktop-app-protocol.mjs';
 import { validateDesktopCommand, validateDesktopSignal } from './desktop-command-protocol.mjs';
 import { validateDesktopSessionClose } from './desktop-session-close-protocol.mjs';
-import { validateDesktopSessionAbandon } from './desktop-session-abandon-protocol.mjs';
+import { validateDesktopSessionAbandon } from './desktop-session-abandon-protocol.mjs';\nimport { validateAndroidSessionStart, validateAndroidDeviceCommand, validateAndroidSignal, validateAndroidCommandAck } from './android-streaming-protocol.mjs';
 import { broadcastPrivateDeviceEvent } from './realtime-broadcast.mjs';
 
 const url = Deno.env.get('SUPABASE_URL');
@@ -53,7 +53,7 @@ async function device(req: Request, allowPending = false, allowRevoked = false) 
   if (!token) return null;
   const digest = await sha256(token);
   const { data, error } = await db.from('backroom_devices')
-    .select('device_id,owner_id,device_label,status,capabilities')
+    .select('device_id,owner_id,device_label,status,capabilities,platform')
     .eq('token_digest', digest).maybeSingle();
   if (error || !data || (!allowRevoked && data.status === 'revoked') || (!allowPending && data.status !== 'active')) return null;
   return data;
@@ -81,7 +81,7 @@ async function authorizeRoomActor(roomId: string, userId: string) {
 }
 async function verifyActiveDeviceRoomBinding(deviceId: string, roomId: string) {
   const [{ data: deviceRow, error: deviceError }, { data: binding, error: bindingError }] = await Promise.all([
-    db.from('backroom_devices').select('device_id,status').eq('device_id', deviceId).eq('status', 'active').maybeSingle(),
+    db.from('backroom_devices').select('device_id,status,platform').eq('device_id', deviceId).eq('status', 'active').maybeSingle(),
     db.from('backroom_device_room_bindings').select('device_id,room_id')
       .eq('device_id', deviceId).eq('room_id', roomId).is('revoked_at', null).maybeSingle(),
   ]);
@@ -424,6 +424,222 @@ Deno.serve(async req => {
       await db.from('backroom_devices').update({ last_seen_at: new Date().toISOString() }).eq('device_id', current.device_id);
       return json(200, { ok: true, deviceId: current.device_id, status: current.status,
         capabilities: current.capabilities }, origin);
+    }
+
+    if (action === 'android/session-start') {
+      const userId = await owner(req);
+      if (!userId) return json(401, fail('owner_auth_required'), origin);
+      const start = validateAndroidSessionStart({
+        deviceId: input.deviceId, roomId: input.roomId, requestId: input.requestId,
+        issuedAt: input.issuedAt, sessionId: input.sessionId,
+        appPackageName: input.appPackageName, offer: input.offer,
+      });
+      if (!start || !exactKeys(input, ['action','deviceId','roomId','requestId','issuedAt','sessionId','appPackageName','offer'])) {
+        return json(400, fail('invalid_android_session_start'), origin);
+      }
+      const [actor, binding] = await Promise.all([
+        authorizeRoomActor(start.roomId, userId),
+        verifyActiveDeviceRoomBinding(start.deviceId, start.roomId),
+      ]);
+      if (!actor.ok) return json(actor.status, fail(actor.reason), origin);
+      if (!binding.ok) return json(binding.status, fail(binding.reason), origin);
+      if (binding.platform !== 'android') return json(409, fail('android_device_required'), origin);
+      const { data: app, error: appError } = await db.from('backroom_device_apps')
+        .select('package_name').eq('device_id', start.deviceId)
+        .eq('package_name', start.appPackageName).maybeSingle();
+      if (appError) return json(503, fail('android_app_inventory_unavailable'), origin);
+      if (!app) return json(403, fail('app_not_selected_on_device'), origin);
+
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      const { error: sessionError } = await db.from('backroom_desktop_sessions').insert({
+        session_id: start.sessionId, device_id: start.deviceId, room_id: start.roomId,
+        requested_by: userId, session_type: 'screen', status: 'active', expires_at: expiresAt,
+      });
+      if (sessionError) return json(409, fail('android_session_id_conflict'), origin);
+      const command = {
+        action: 'view_offer', deviceId: start.deviceId, roomId: start.roomId,
+        requestId: start.requestId, issuedAt: start.issuedAt, sessionId: start.sessionId,
+        appPackageName: start.appPackageName, offer: start.offer,
+      };
+      const { error: queueError } = await db.from('backroom_android_commands').insert({
+        device_id: start.deviceId, room_id: start.roomId, session_id: start.sessionId,
+        request_id: start.requestId, command,
+        status: 'pending', expires_at: new Date(Date.now() + 2 * 60 * 1000).toISOString(),
+      });
+      if (queueError) {
+        await db.from('backroom_desktop_sessions').update({ status: 'stopped', stopped_at: new Date().toISOString() })
+          .eq('session_id', start.sessionId).eq('device_id', start.deviceId);
+        return json(503, fail('android_command_queue_unavailable'), origin);
+      }
+      return json(202, { ok: true, sessionId: start.sessionId, status: 'queued' }, origin);
+    }
+
+    if (action === 'android/command') {
+      const userId = await owner(req);
+      if (!userId) return json(401, fail('owner_auth_required'), origin);
+      const command = validateAndroidDeviceCommand({
+        deviceId: input.deviceId, roomId: input.roomId, requestId: input.requestId,
+        issuedAt: input.issuedAt, sessionId: input.sessionId,
+        command: input.command, appPackageName: input.appPackageName,
+      });
+      if (!command || !exactKeys(input, ['action','deviceId','roomId','requestId','issuedAt','sessionId','command','appPackageName'])) {
+        return json(400, fail('invalid_android_command'), origin);
+      }
+      const [actor, binding, session] = await Promise.all([
+        authorizeRoomActor(command.roomId, userId),
+        verifyActiveDeviceRoomBinding(command.deviceId, command.roomId),
+        activeDesktopSession(command.sessionId, command.deviceId, command.roomId),
+      ]);
+      if (!actor.ok) return json(actor.status, fail(actor.reason), origin);
+      if (!binding.ok) return json(binding.status, fail(binding.reason), origin);
+      if (binding.platform !== 'android') return json(409, fail('android_device_required'), origin);
+      if (!session.ok) return json(session.status, fail(session.reason), origin);
+      if (session.session.session_type !== 'screen') return json(409, fail('android_screen_session_required'), origin);
+      const { data: ownedSession, error: ownerError } = await db.from('backroom_desktop_sessions')
+        .select('session_id,requested_by').eq('session_id', command.sessionId)
+        .eq('device_id', command.deviceId).eq('room_id', command.roomId).maybeSingle();
+      if (ownerError) return json(503, fail('android_session_lookup_failed'), origin);
+      if (!ownedSession || (ownedSession.requested_by !== userId && ownedSession.requested_by !== actor.userId)) {
+        return json(403, fail('android_session_actor_mismatch'), origin);
+      }
+      const { data: app } = await db.from('backroom_device_apps').select('package_name')
+        .eq('device_id', command.deviceId).eq('package_name', command.appPackageName).maybeSingle();
+      if (!app) return json(403, fail('app_not_selected_on_device'), origin);
+
+      const { error: queueError } = await db.from('backroom_android_commands').insert({
+        device_id: command.deviceId, room_id: command.roomId, session_id: command.sessionId,
+        request_id: command.requestId,
+        command: { ...command }, status: 'pending',
+        expires_at: new Date(Date.now() + 2 * 60 * 1000).toISOString(),
+      });
+      if (queueError) return json(409, fail('android_command_id_conflict'), origin);
+      if (command.command === 'stop_session') {
+        try {
+          await broadcastPrivateDeviceEvent({
+            projectUrl: url, apiKey: serviceKey, deviceId: command.deviceId, event: 'signal',
+            payload: { deviceId: command.deviceId, roomId: command.roomId,
+              sessionId: command.sessionId, issuedAt: Date.now(), stop: true,
+              actorUserId: actor.userId, actorDisplayName: actor.displayName },
+          });
+        } catch { /* device queue and local timeout remain authoritative */ }
+      }
+      return json(202, { ok: true, requestId: command.requestId, command: command.command }, origin);
+    }
+
+    if (action === 'android/commands') {
+      if (!exactKeys(input, ['action'])) return json(400, fail('invalid_android_command_poll'), origin);
+      const current = await device(req);
+      if (!current) return json(401, fail('device_not_approved'), origin);
+      if (current.platform !== 'android') return json(409, fail('android_device_required'), origin);
+      const now = new Date().toISOString();
+      await db.from('backroom_android_commands').delete()
+        .eq('device_id', current.device_id).lt('expires_at', now).in('status', ['pending','leased']);
+      const leased = [];
+      const { data: pending, error: pendingError } = await db.from('backroom_android_commands')
+        .select('id,request_id,session_id,command,status')
+        .eq('device_id', current.device_id).eq('status', 'pending')
+        .gt('expires_at', now).order('created_at', { ascending: true }).limit(8);
+      if (pendingError) return json(503, fail('android_command_poll_failed'), origin);
+      for (const row of pending ?? []) {
+        const leaseUntil = new Date(Date.now() + 15_000).toISOString();
+        const { data, error } = await db.from('backroom_android_commands')
+          .update({ status: 'leased', lease_until: leaseUntil })
+          .eq('id', row.id).eq('device_id', current.device_id).eq('status', 'pending')
+          .is('lease_until', null).select('id');
+        if (error) return json(503, fail('android_command_lease_failed'), origin);
+        if (Array.isArray(data) && data.length === 1) {
+          leased.push({ ...row.command, commandId: row.id, requestId: row.request_id, sessionId: row.session_id });
+        }
+      }
+      const { data: expiredLeases, error: leaseError } = await db.from('backroom_android_commands')
+        .select('id,request_id,session_id,command,lease_until')
+        .eq('device_id', current.device_id).eq('status', 'leased')
+        .lt('lease_until', now).gt('expires_at', now).order('created_at', { ascending: true }).limit(8 - leased.length);
+      if (leaseError) return json(503, fail('android_command_poll_failed'), origin);
+      for (const row of expiredLeases ?? []) {
+        const leaseUntil = new Date(Date.now() + 15_000).toISOString();
+        const { data, error } = await db.from('backroom_android_commands')
+          .update({ lease_until: leaseUntil })
+          .eq('id', row.id).eq('device_id', current.device_id)
+          .eq('status', 'leased').eq('lease_until', row.lease_until)
+          .select('id');
+        if (error) return json(503, fail('android_command_lease_failed'), origin);
+        if (Array.isArray(data) && data.length === 1) {
+          leased.push({ ...row.command, commandId: row.id, requestId: row.request_id, sessionId: row.session_id });
+        }
+      }
+      await db.from('backroom_devices').update({ last_seen_at: new Date().toISOString() }).eq('device_id', current.device_id);
+      return json(200, { ok: true, commands: leased }, origin);
+    }
+
+    if (action === 'android/signal') {
+      const current = await device(req);
+      if (!current) return json(401, fail('device_not_approved'), origin);
+      if (current.platform !== 'android') return json(409, fail('android_device_required'), origin);
+      const signal = validateAndroidSignal({
+        sessionId: input.sessionId, answer: input.answer, canControl: input.canControl,
+      });
+      if (!signal || !exactKeys(input, ['action','sessionId','roomId','answer','canControl']) ||
+          typeof input.roomId !== 'string' || !UUID.test(input.roomId)) {
+        return json(400, fail('invalid_android_signal'), origin);
+      }
+      const binding = await verifyActiveDeviceRoomBinding(current.device_id, input.roomId);
+      if (!binding.ok) return json(binding.status, fail(binding.reason), origin);
+      if (binding.platform !== 'android') return json(409, fail('android_device_required'), origin);
+      const session = await activeDesktopSession(signal.sessionId, current.device_id, input.roomId);
+      if (!session.ok) return json(session.status, fail(session.reason), origin);
+      if (session.session.session_type !== 'screen') return json(409, fail('android_screen_session_required'), origin);
+      try {
+        await broadcastPrivateDeviceEvent({
+          projectUrl: url, apiKey: serviceKey, deviceId: current.device_id, event: 'signal',
+          payload: { deviceId: current.device_id, roomId: input.roomId,
+            sessionId: signal.sessionId, issuedAt: Date.now(),
+            answer: signal.answer, canControl: signal.canControl },
+        });
+      } catch {
+        return json(503, fail('android_signal_delivery_failed'), origin);
+      }
+      return json(202, { ok: true, sessionId: signal.sessionId }, origin);
+    }
+
+    if (action === 'android/ack') {
+      const current = await device(req);
+      if (!current) return json(401, fail('device_not_approved'), origin);
+      if (current.platform !== 'android') return json(409, fail('android_device_required'), origin);
+      const ack = validateAndroidCommandAck({
+        commandId: input.commandId, requestId: input.requestId, sessionId: input.sessionId,
+        result: input.result, ...(input.canControl !== undefined ? { canControl: input.canControl } : {}),
+      });
+      if (!ack || !exactKeys(input, ['action','commandId','requestId','sessionId','result','canControl'], ['action','commandId','requestId','sessionId','result'])) {
+        return json(400, fail('invalid_android_ack'), origin);
+      }
+      const { data: row, error: lookupError } = await db.from('backroom_android_commands')
+        .select('id,device_id,room_id,session_id,request_id,command')
+        .eq('id', ack.commandId).eq('device_id', current.device_id)
+        .eq('session_id', ack.sessionId).eq('request_id', ack.requestId).maybeSingle();
+      if (lookupError) return json(503, fail('android_ack_lookup_failed'), origin);
+      if (!row) return json(404, fail('android_command_not_found'), origin);
+      const { data, error } = await db.from('backroom_android_commands')
+        .update({ status: 'acked', result: ack.result, acked_at: new Date().toISOString(), lease_until: null })
+        .eq('id', ack.commandId).eq('device_id', current.device_id)
+        .eq('status', 'leased').select('id');
+      if (error) return json(503, fail('android_ack_failed'), origin);
+      if (!Array.isArray(data) || data.length !== 1) return json(409, fail('android_command_lease_expired'), origin);
+      if (row.command?.action === 'request_control') {
+        const canControl = ack.canControl === true && ack.result === 'control_granted';
+        await broadcastPrivateDeviceEvent({
+          projectUrl: url, apiKey: serviceKey, deviceId: current.device_id, event: 'response',
+          payload: { deviceId: current.device_id, roomId: row.room_id,
+            requestId: ack.requestId, sessionId: ack.sessionId, ok: canControl,
+            capability: 'control', ...(canControl ? {} : { reason: 'local_touch_permission_missing' }) },
+        });
+      }
+      if (row.command?.action === 'stop_session') {
+        await db.from('backroom_desktop_sessions').update({ status: 'stopped', stopped_at: new Date().toISOString() })
+          .eq('session_id', ack.sessionId).eq('device_id', current.device_id)
+          .eq('room_id', row.room_id).eq('status', 'active');
+      }
+      return json(200, { ok: true, acked: true }, origin);
     }
 
     if (action === 'desktop/inventory') {

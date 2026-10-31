@@ -23,6 +23,14 @@ test('rejects payloads that escape their topic or invalid private event types',a
  await assert.rejects(broadcastPrivateDeviceEvent({projectUrl:'https://example.supabase.co',apiKey:'x'.repeat(20),deviceId,event:'something',payload}),/Invalid/);
  await assert.rejects(broadcastPrivateDeviceEvent({projectUrl:'https://example.supabase.co',apiKey:'x'.repeat(20),deviceId,event:'command',payload:{...payload,roomId:'bad'}}),/Invalid/);
 });
+test('accepts a device-scoped response event for a private channel',async()=>{
+ const result=await broadcastPrivateDeviceEvent({
+  projectUrl:'https://example-project.supabase.co',apiKey:'server-key-long-enough',
+  deviceId,event:'response',payload:{deviceId,roomId,requestId,ok:true,capability:'control',sessionId:requestId},
+  fetchImpl:async()=>({ok:true,status:202})
+ });
+ assert.equal(result.event,'response');
+});
 test('rejects attacker URLs, credentials in URL, paths, and unsupported protocols',async()=>{
  for(const projectUrl of ['https://evil.example','https://user:pass@evil.example','https://project.supabase.co.attacker.com','https://project.supabase.co/path','http://project.supabase.co','https://project.supabase.co?token=secret']){
   await assert.rejects(broadcastPrivateDeviceEvent({projectUrl,apiKey:'x'.repeat(20),deviceId,event:'command',payload}),/Supabase|HTTPS|URL/);

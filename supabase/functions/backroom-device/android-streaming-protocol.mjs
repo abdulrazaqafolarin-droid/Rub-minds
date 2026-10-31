@@ -46,8 +46,9 @@ export function validateAndroidSignal(value) {
 
 export function validateAndroidCommandAck(value) {
   if (!value || typeof value !== "object" || Array.isArray(value) ||
-      !exactKeys(value, ["commandId", "requestId", "sessionId", "result"], ["commandId", "requestId", "sessionId", "result"]) ||
+      !exactKeys(value, ["commandId", "requestId", "sessionId", "result", "canControl"], ["commandId", "requestId", "sessionId", "result"]) ||
       !isUuid(value.commandId) || !isUuid(value.requestId) || !isUuid(value.sessionId) ||
-      typeof value.result !== "string" || value.result.length < 1 || value.result.length > 80) return null;
+      typeof value.result !== "string" || value.result.length < 1 || value.result.length > 80 ||
+      (value.canControl !== undefined && typeof value.canControl !== "boolean")) return null;
   return Object.freeze({ ...value });
 }
