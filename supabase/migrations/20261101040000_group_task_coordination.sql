@@ -1369,16 +1369,3 @@ comment on table public.room_task_submissions is
   'Versioned task deliverables submitted by the assigned participant through the authenticated MCP service.';
 comment on table public.room_task_reviews is
   'Human approval or revision decisions for a specific task submission.';
-),
-  created_at timestamptz not null default pg_catalog.clock_timestamp(),
-  updated_at timestamptz not null default pg_catalog.clock_timestamp(),
-  version integer not null default 1 check (version > 0)
-);
-
-create index if not exists room_tasks_room_status_priority_idx
-  on public.room_tasks(room_id, status, priority, created_at);
-create index if not exists room_tasks_assignee_status_idx
-  on public.room_tasks(assigned_to_participant_id, status, updated_at desc);
-create unique index if not exists room_tasks_creator_idempotency_idx
-  on public.room_tasks(created_by_participant_id, idempotency_key)
-  where idempotency_key is not null;
