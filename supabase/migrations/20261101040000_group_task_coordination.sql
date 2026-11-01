@@ -78,6 +78,20 @@ create table if not exists public.room_task_reviews (
 create index if not exists room_task_reviews_task_created_idx
   on public.room_task_reviews(task_id, created_at desc);
 
+-- Cover the new task foreign keys and retain efficient room-scoped joins.
+create index if not exists room_task_dependencies_room_task_fk_idx
+  on public.room_task_dependencies(room_id, task_id);
+create index if not exists room_task_dependencies_creator_fk_idx
+  on public.room_task_dependencies(created_by_participant_id);
+create index if not exists room_task_submissions_room_task_fk_idx
+  on public.room_task_submissions(room_id, task_id);
+create index if not exists room_task_submissions_submitter_fk_idx
+  on public.room_task_submissions(submitted_by_participant_id);
+create index if not exists room_task_reviews_room_task_fk_idx
+  on public.room_task_reviews(room_id, task_id);
+create index if not exists room_task_reviews_reviewer_fk_idx
+  on public.room_task_reviews(reviewer_participant_id);
+
 -- Exposed tables are protected by RLS. AI operations use the already trusted
 -- MCP Edge Function; service_role is never exposed to browser clients.
 alter table public.room_tasks enable row level security;
