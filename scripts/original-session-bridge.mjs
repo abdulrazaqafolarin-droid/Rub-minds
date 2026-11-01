@@ -7,6 +7,7 @@
 import { chmod, lstat, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout, stderr } from "node:process";
 import { createOriginalSessionAdapter } from "../integrations/playwright/original-session-adapters.mjs";
@@ -59,7 +60,7 @@ export function parseRunnerArgs(argv = []) {
   return Object.freeze({ provider, conversationUrl, maxReplies });
 }
 
-export function validateRunnerEnvironment(env = {}) {
+export function validateRunnerEnvironment(env = {}, provider = "chatgpt") {
   let endpoint;
   try {
     endpoint = new URL(env.RUB_MINDS_MCP_ENDPOINT);
@@ -78,9 +79,10 @@ export function validateRunnerEnvironment(env = {}) {
   if (typeof participantId !== "string" || !UUID_RE.test(participantId)) {
     fail("Set RUB_MINDS_PARTICIPANT_ID to the AI participant UUID returned by the authorized join.");
   }
+  if (!Object.hasOwn(PROVIDERS, provider)) fail("Unsupported provider.");
   const profileDirectory = resolve(
     env.RUB_MINDS_BROWSER_PROFILE_DIR ||
-    join(homedir(), ".rub-minds", "original-session-profiles", "default"),
+    join(homedir(), ".rub-minds", "original-session-profiles", provider),
   );
   return Object.freeze({
     endpoint: endpoint.toString(),
@@ -100,7 +102,7 @@ export function conversationKey(provider, value) {
     fail("The conversation URL is invalid.");
   }
   if (url.protocol !== "https:" || !providerConfig.hosts.has(url.hostname) ||
-      !providerConfig.path.test(url.pathname) || url.username || url.password) {
+      !providerConfig.path.test(url.pathname) || url.username || url.password || url.search || url.hash) {
     fail("The conversation URL must point to an existing " + provider + " conversation.");
   }
   return url.origin + url.pathname;
@@ -121,24 +123,23 @@ export async function preparePrivateBrowserProfile(profileDirectory) {
   return directory;
 }
 
+export function isExactConversationPage(page, provider, conversationUrl) {
+  const expectedKey = conversationKey(provider, conversationUrl);
+  try {
+    const current = new URL(page.url());
+    return current.protocol === "https:" && current.origin + current.pathname === expectedKey;
+  } catch {
+    return false;
+  }
+}
+
 export async function openExistingConversationPage(context, provider, conversationUrl) {
   if (!context || typeof context.pages !== "function" || typeof context.newPage !== "function") {
     fail("Persistent browser context is unavailable.");
   }
-  const expectedKey = conversationKey(provider, conversationUrl);
-  const matches = [];
-  for (const page of context.pages()) {
-    if (page.isClosed()) continue;
-    let pageUrl;
-    try {
-      pageUrl = new URL(page.url());
-    } catch {
-      continue;
-    }
-    if (pageUrl.protocol === "https:" && pageUrl.origin + pageUrl.pathname === expectedKey) {
-      matches.push(page);
-    }
-  }
+  const matches = context.pages().filter(page =>
+    !page.isClosed() && isExactConversationPage(page, provider, conversationUrl)
+  );
   if (matches.length > 1) {
     fail("More than one open tab matches that conversation. Close duplicates and retry.");
   }
@@ -149,16 +150,8 @@ export async function openExistingConversationPage(context, provider, conversati
     !candidate.isClosed() && ["about:blank", "chrome://newtab/"].includes(candidate.url())
   ) || await context.newPage();
   await page.goto(conversationUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
-  let actualKey = "";
-  try {
-    const current = new URL(page.url());
-    actualKey = current.origin + current.pathname;
-  } catch {
-    // Fail closed below.
-  }
-  if (actualKey !== expectedKey) {
-    fail("The provider redirected away from the requested conversation. Complete sign-in manually in this private profile, open the exact conversation, then rerun the command.");
-  }
+  // A first run may redirect to sign-in. Keep the profile open for a human to
+  // authenticate; the caller must verify the exact conversation before starting.
   return page;
 }
 
@@ -183,7 +176,7 @@ export async function runOriginalSessionBridge({
 } = {}) {
   if (!input.isTTY || !output.isTTY) fail("An interactive terminal is required so startup and every provider submission require explicit approval.");
   const options = parseRunnerArgs(argv);
-  const config = validateRunnerEnvironment(env);
+  const config = validateRunnerEnvironment(env, options.provider);
   const rl = createInterface({ input, output });
   let context;
   let runtime;
@@ -220,6 +213,17 @@ export async function runOriginalSessionBridge({
       viewport: null,
     });
     const page = await openExistingConversationPage(context, options.provider, options.conversationUrl);
+    if (!isExactConversationPage(page, options.provider, options.conversationUrl)) {
+      output.write("The provider requires sign-in or redirected this dedicated profile away from the requested thread.\\n");
+      output.write("Complete sign-in manually, then navigate this window to the exact conversation URL shown above.\\n");
+      if (!(await prompt(rl, "When the exact conversation is open and visible, type READY: ", "READY", controller.signal))) {
+        output.write("The original-session runner was not started.\\n");
+        return { status: "not_started", replies: 0 };
+      }
+      if (!isExactConversationPage(page, options.provider, options.conversationUrl)) {
+        fail("The open page still does not match the exact approved conversation URL; no group messages were read or sent.");
+      }
+    }
 
     const adapter = createOriginalSessionAdapter(options.provider, {
       approval: async ({ messageId, senderName, senderKind, prompt: groupPrompt, signal }) => {
@@ -265,7 +269,7 @@ export async function runOriginalSessionBridge({
   }
 }
 
-if (process.argv[1] && import.meta.url === new URL("file://" + resolve(process.argv[1]).replace(/\\/g, "/")).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   runOriginalSessionBridge().catch(error => {
     stderr.write("Original-session bridge stopped safely: " + preview(error?.message || "unexpected error", 500) + "\n");
     process.exitCode = 1;
