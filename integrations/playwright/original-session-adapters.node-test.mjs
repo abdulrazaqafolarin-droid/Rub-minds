@@ -41,6 +41,7 @@ function makeChatGPTPage(state) {
         await new Promise(resolve => setTimeout(resolve, 10));
       }
       if (!state.assistantVisible) throw new Error("response did not appear");
+      state.onResponseVisible?.();
     },
     innerText: async () => state.text,
   };
@@ -167,6 +168,25 @@ test("refuses to send when the owner switches threads during approval", async ()
     error => error?.submissionState === "not_submitted" && /conversation changed/.test(error.message),
   );
   assert.equal(state.submittedPrompt, undefined, "the composer must not be touched after thread identity changes");
+});
+
+test("does not return a streamed reply after the owner switches conversations", async () => {
+  const state = { assistantVisible: false, text: "", generating: false };
+  state.onSend = () => {
+    setTimeout(() => { state.text = "Complete answer from prior thread"; }, 350);
+    setTimeout(() => { state.generating = false; }, 650);
+  };
+  state.onResponseVisible = () => {
+    state.url = "https://chatgpt.com/c/a-different-thread";
+  };
+  const adapter = createOriginalSessionAdapter("chatgpt", {
+    approval: async () => true,
+    timeoutMs: 5000,
+  });
+  await assert.rejects(
+    adapter.ask(makeChatGPTPage(state), "approved group message"),
+    error => error?.submissionState === "unknown" && /conversation changed/.test(error.message),
+  );
 });
 
 test("rechecks the original thread immediately before sending", async () => {
