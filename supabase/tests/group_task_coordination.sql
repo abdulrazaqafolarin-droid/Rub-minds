@@ -201,6 +201,28 @@ begin
     v_conflict := true;
   end;
   if not v_conflict then raise exception 'Unmet acceptance criteria must block approval'; end if;
+  v_conflict := false;
+  begin
+    perform public.review_room_task(
+      v_room,v_human_task,'approved','Missing met decision',
+      '[{"criterion":"Tests pass","evidence":"CI run 123 passed"},{"criterion":"Evidence attached","met":true,"evidence":"Artifact attached"}]'::jsonb
+    );
+  exception when others then
+    if sqlerrm not like 'Each criterion requires its exact text, a met/not-met decision%' then raise; end if;
+    v_conflict := true;
+  end;
+  if not v_conflict then raise exception 'Missing criterion met decision must be rejected'; end if;
+  v_conflict := false;
+  begin
+    perform public.review_room_task(
+      v_room,v_human_task,'approved','Null met decision',
+      '[{"criterion":"Tests pass","met":null,"evidence":"CI run 123 passed"},{"criterion":"Evidence attached","met":true,"evidence":"Artifact attached"}]'::jsonb
+    );
+  exception when others then
+    if sqlerrm not like 'Each criterion requires its exact text, a met/not-met decision%' then raise; end if;
+    v_conflict := true;
+  end;
+  if not v_conflict then raise exception 'Null criterion met decision must be rejected'; end if;
   if (select status from public.room_tasks where id=v_human_task)<>'review' then
     raise exception 'Rejected reviews must leave the task awaiting review';
   end if;
