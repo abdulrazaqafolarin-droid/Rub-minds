@@ -32,7 +32,7 @@ test("parses only bounded provider, conversation and reply options", () => {
     maxReplies: 3,
   });
   assert.equal(parseRunnerArgs(["--provider", "claude", "--conversation-url", CLAUDE_URL]).maxReplies, 5);
-  assert.throws(() => parseRunnerArgs(["--provider", "unknown", "--conversation-url", CHATGPT_URL]), /chatgpt or claude/);
+  assert.throws(() => parseRunnerArgs(["--provider", "unknown", "--conversation-url", CHATGPT_URL]), /Choose --provider chatgpt or --provider claude/);
   assert.throws(() => parseRunnerArgs(["--provider", "chatgpt"]), /conversation-url/);
   assert.throws(() => parseRunnerArgs(["--provider", "chatgpt", "--conversation-url", CHATGPT_URL, "--max-replies", "21"]), /1 to 20/);
   assert.throws(() => parseRunnerArgs(["--provider", "chatgpt", "--provider", "claude", "--conversation-url", CHATGPT_URL]), /duplicate/);
