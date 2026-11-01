@@ -86,7 +86,7 @@ alter table public.room_task_submissions enable row level security;
 alter table public.room_task_reviews enable row level security;
 
 revoke all on table public.room_tasks, public.room_task_dependencies,
-  public.room_task_submissions, public.room_task_reviews from public, anon;
+  public.room_task_submissions, public.room_task_reviews from public, anon, authenticated;
 grant select on table public.room_tasks, public.room_task_dependencies to authenticated;
 -- Human lifecycle transitions are exposed only through narrowly scoped RPCs.
 -- Clients cannot set status, assignee, review outcome or submission rows directly.
