@@ -110,9 +110,40 @@ begin
     where n.nspname = 'public'
       and p.proname = 'enforce_rub_minds_mcp_bridge_state_binding'
       and p.prosecdef
-      and coalesce(array_to_string(p.proconfig, ','), '') like '%search_path=%'
+      and p.proconfig @> array['search_path=""']::text[]
   ) then
-    raise exception 'Bridge-state trigger must be SECURITY DEFINER with a pinned search_path';
+    raise exception 'Bridge-state trigger must be SECURITY DEFINER with an empty pinned search_path';
+  end if;
+
+  if pg_catalog.to_regprocedure('public.load_rub_minds_mcp_bridge_state(text,uuid,uuid)') is null
+     or pg_catalog.to_regprocedure('public.save_rub_minds_mcp_bridge_state(text,uuid,uuid,bigint,timestamp with time zone,uuid,uuid,timestamp with time zone,text,uuid,text)') is null then
+    raise exception 'Parent-first bridge-state RPC functions are missing';
+  end if;
+
+  if not exists (
+    select 1
+    from pg_catalog.pg_proc p
+    where p.oid = pg_catalog.to_regprocedure('public.load_rub_minds_mcp_bridge_state(text,uuid,uuid)')
+      and p.prosecdef
+      and p.proconfig @> array['search_path=""']::text[]
+      and not pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE')
+      and not pg_catalog.has_function_privilege('authenticated', p.oid, 'EXECUTE')
+      and pg_catalog.has_function_privilege('service_role', p.oid, 'EXECUTE')
+  ) then
+    raise exception 'Bridge-state load RPC must be service-role-only SECURITY DEFINER with empty search_path';
+  end if;
+
+  if not exists (
+    select 1
+    from pg_catalog.pg_proc p
+    where p.oid = pg_catalog.to_regprocedure('public.save_rub_minds_mcp_bridge_state(text,uuid,uuid,bigint,timestamp with time zone,uuid,uuid,timestamp with time zone,text,uuid,text)')
+      and p.prosecdef
+      and p.proconfig @> array['search_path=""']::text[]
+      and not pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE')
+      and not pg_catalog.has_function_privilege('authenticated', p.oid, 'EXECUTE')
+      and pg_catalog.has_function_privilege('service_role', p.oid, 'EXECUTE')
+  ) then
+    raise exception 'Bridge-state save RPC must be service-role-only SECURITY DEFINER with empty search_path';
   end if;
 end;
 $bridge_state_security$;

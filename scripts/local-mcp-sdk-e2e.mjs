@@ -1100,7 +1100,7 @@ try {
   // Race leave against an idempotent retry of the same join. Either the retry
   // observes the active join before leave wins, or it is rejected as revoked;
   // the invariant is that the old handle must be unusable after both finish.
-  const [left, racingJoin, racingBridgeStateLoad] = await Promise.all([
+  const [left, racingJoin, racingBridgeStateLoad, racingBridgeStateSave] = await Promise.all([
     first.callTool({
       name: "leave_group",
       arguments: { session_handle: one.session_handle, confirm_leave: true },
@@ -1118,12 +1118,32 @@ try {
       name: "load_original_session_bridge_state",
       arguments: { session_handle: one.session_handle },
     }),
+    first.callTool({
+      name: "save_original_session_bridge_state",
+      arguments: {
+        session_handle: one.session_handle,
+        expected_revision: bridgeSave.structuredContent.revision,
+        cursor_created_at: stateMessage.created_at,
+        cursor_message_id: stateMessage.id,
+        pending_message_id: null,
+        pending_message_created_at: null,
+        pending_response: null,
+        blocked_message_id: null,
+        blocked_reason: null,
+      },
+    }),
   ]);
   assert.notEqual(left.isError, true, "official SDK client could not leave and revoke its session: " + JSON.stringify(left));
   assert.ok(
     racingBridgeStateLoad.isError === true ||
       Number.isSafeInteger(racingBridgeStateLoad.structuredContent?.revision),
     "a bridge-state load racing with leave must either finish before termination or be rejected after tombstoning",
+  );
+  assert.ok(
+    racingBridgeStateSave.isError === true ||
+      racingBridgeStateSave.structuredContent?.saved === true ||
+      racingBridgeStateSave.structuredContent?.conflict === true,
+    "a bridge-state save racing with leave must either complete before termination, return a CAS conflict, or fail after tombstoning",
   );
   assert.ok(
     racingJoin.isError === true || racingJoin.structuredContent?.joined === true,

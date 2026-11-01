@@ -423,57 +423,30 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     }
 
     if (name === "load_original_session_bridge_state") {
-      const { error: seedError } = await db.from("rub_minds_mcp_bridge_state").upsert({
-        session_digest: sessionDigest,
-        room_id: connection.room_id,
-        participant_id: connection.participant_id,
-      }, { onConflict: "session_digest", ignoreDuplicates: true });
-      if (seedError) throw new Error("Could not initialize original-session bridge state.");
-      const { data: state, error } = await db.from("rub_minds_mcp_bridge_state")
-        .select("room_id, participant_id, cursor_created_at, cursor_message_id, pending_message_id, pending_message_created_at, pending_response, blocked_message_id, blocked_reason, revision, updated_at")
-        .eq("session_digest", sessionDigest).maybeSingle();
-      if (error || !state) throw new Error("Could not load original-session bridge state.");
-      if (state.room_id !== connection.room_id || state.participant_id !== connection.participant_id) {
-        throw new Error("Stored original-session bridge state does not match this joined group.");
-      }
-      return {
-        revision: Number(state.revision),
-        cursor: state.cursor_created_at && state.cursor_message_id
-          ? { after_created_at: state.cursor_created_at, after_message_id: state.cursor_message_id }
-          : null,
-        pending_response: state.pending_message_id && state.pending_message_created_at && state.pending_response
-          ? { source_message_id: state.pending_message_id, message_created_at: state.pending_message_created_at, body: state.pending_response }
-          : null,
-        blocked_message: state.blocked_message_id && state.blocked_reason
-          ? { message_id: state.blocked_message_id, reason: state.blocked_reason }
-          : null,
-        updated_at: state.updated_at,
-      };
+      const { data, error } = await db.rpc("load_rub_minds_mcp_bridge_state", {
+        p_session_digest: sessionDigest,
+        p_room_id: connection.room_id,
+        p_participant_id: connection.participant_id,
+      });
+      if (error || !isRecord(data)) throw new Error("Could not load original-session bridge state.");
+      return data;
     }
 
-    const expectedRevision = args.expected_revision as number;
-    const { data: saved, error: saveError } = await db.from("rub_minds_mcp_bridge_state").update({
-      cursor_created_at: args.cursor_created_at,
-      cursor_message_id: args.cursor_message_id,
-      pending_message_id: args.pending_message_id,
-      pending_message_created_at: args.pending_message_created_at,
-      pending_response: args.pending_response,
-      blocked_message_id: args.blocked_message_id,
-      blocked_reason: args.blocked_reason,
-      revision: expectedRevision + 1,
-      updated_at: new Date().toISOString(),
-    }).eq("session_digest", sessionDigest)
-      .eq("room_id", connection.room_id)
-      .eq("participant_id", connection.participant_id)
-      .eq("revision", expectedRevision)
-      .select("revision").maybeSingle();
-    if (saveError) throw new Error("Could not save original-session bridge state.");
-    if (!saved) {
-      const { data: current } = await db.from("rub_minds_mcp_bridge_state")
-        .select("revision").eq("session_digest", sessionDigest).maybeSingle();
-      return { saved: false, conflict: true, revision: current ? Number(current.revision) : null };
-    }
-    return { saved: true, conflict: false, revision: Number(saved.revision) };
+    const { data, error } = await db.rpc("save_rub_minds_mcp_bridge_state", {
+      p_session_digest: sessionDigest,
+      p_room_id: connection.room_id,
+      p_participant_id: connection.participant_id,
+      p_expected_revision: args.expected_revision,
+      p_cursor_created_at: args.cursor_created_at,
+      p_cursor_message_id: args.cursor_message_id,
+      p_pending_message_id: args.pending_message_id,
+      p_pending_message_created_at: args.pending_message_created_at,
+      p_pending_response: args.pending_response,
+      p_blocked_message_id: args.blocked_message_id,
+      p_blocked_reason: args.blocked_reason,
+    });
+    if (error || !isRecord(data)) throw new Error("Could not save original-session bridge state.");
+    return data;
   }
 
   await invokeAgent(credential, "read");
