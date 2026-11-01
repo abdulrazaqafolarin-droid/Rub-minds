@@ -3,12 +3,12 @@ import { ArrowLeft, Hand, MonitorPlay, Power, ShieldCheck, Smartphone } from 'lu
 import { supabase } from './supabase';
 import { type BackroomDevice } from './backroomCloudDevices';
 import { validateDeviceSignal } from '../integrations/backroom/desktop-realtime-protocol.mjs';
-import { getContainedVideoRect, normalizeClientPointToVideo } from '../integrations/backroom/video-selection-overlay.mjs';
+import { createNormalizedDragSelection, getContainedVideoRect, normalizeClientPointToVideo } from '../integrations/backroom/video-selection-overlay.mjs';
 import { waitForIceGatheringComplete } from '../integrations/backroom/ice-gathering.mjs';
 
 const uuid = () => crypto.randomUUID();
 type Point = { x: number; y: number };
-type PointerStart = Point & { pointerId: number; startedAt: number };
+type PointerStart = Point & { pointerId: number; startedAt: number; mode: 'touch' | 'composer' };
 
 export default function BackroomAndroidControl({ device, roomId }: { device: BackroomDevice; roomId: string }) {
   const [appPackage, setAppPackage] = useState(device.apps[0]?.package_name ?? '');
@@ -21,6 +21,9 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const [dataReady, setDataReady] = useState(false);
   const [controlGranted, setControlGranted] = useState(false);
   const [remoteText, setRemoteText] = useState('');
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [composerTargetId, setComposerTargetId] = useState('');
+  const [selectionPreview, setSelectionPreview] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const [remoteTextBusy, setRemoteTextBusy] = useState(false);
   const [remoteTextStatus, setRemoteTextStatus] = useState('Focus a normal text field in the phone app, then type here.');
   const [message, setMessage] = useState('Choose an app added on the phone, then start a view session.');
@@ -35,6 +38,8 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const pendingTouchAcksRef = useRef<Map<string, number>>(new Map());
   const pendingNavigationAcksRef = useRef<Map<string, number>>(new Map());
   const pendingRemoteTextAcksRef = useRef<Map<string, number>>(new Map());
+  const pendingComposerSelectionAcksRef = useRef<Map<string, number>>(new Map());
+  const composerTargetRef = useRef('');
   const controlExpiryRef = useRef<number | null>(null);
   const startTimerRef = useRef<number | null>(null);
   const disconnectTimerRef = useRef<number | null>(null);
@@ -43,6 +48,26 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const notify = useCallback((text: string, error = false) => {
     setMessage(text); setMessageError(error);
   }, []);
+
+  const clearComposerTarget = useCallback((notifyPhone = true) => {
+    const channel = dataRef.current;
+    const activeSession = sessionRef.current;
+    if (notifyPhone && channel && channel.readyState === 'open' && activeSession) {
+      try {
+        channel.send(JSON.stringify({
+          kind: 'clear_composer_target',
+          selectionId: uuid(),
+          sessionId: activeSession,
+          appPackageName: appPackage,
+        }));
+      } catch { /* Local UI state is cleared even if the peer is disconnected. */ }
+    }
+    composerTargetRef.current = '';
+    setComposerTargetId('');
+    setSelectionPreview(null);
+    setSelectionMode(false);
+  }, [appPackage]);
+
 
   const disposePeer = useCallback(() => {
     if (controlExpiryRef.current !== null) window.clearTimeout(controlExpiryRef.current);
@@ -60,11 +85,14 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     pendingNavigationAcksRef.current.clear();
     for (const timer of pendingRemoteTextAcksRef.current.values()) window.clearTimeout(timer);
     pendingRemoteTextAcksRef.current.clear();
+    for (const timer of pendingComposerSelectionAcksRef.current.values()) window.clearTimeout(timer);
+    pendingComposerSelectionAcksRef.current.clear();
+    composerTargetRef.current = '';
     streamRef.current?.getTracks().forEach(track => track.stop()); streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     sessionRef.current = ''; pointerRef.current = null; pendingControlRequestRef.current = '';
     sourceVisibilityRef.current = null;
-    setSessionId(''); setViewReady(false); setSourceVisible(false); setDataReady(false); setControlGranted(false); setRemoteText(''); setRemoteTextBusy(false); setRemoteTextStatus('Focus a normal text field in the phone app, then type here.'); setBusy(false);
+    setSessionId(''); setViewReady(false); setSourceVisible(false); setDataReady(false); setControlGranted(false); setRemoteText(''); setRemoteTextBusy(false); setSelectionMode(false); setComposerTargetId(''); setSelectionPreview(null); setRemoteTextStatus('Select the actual composer in the streamed app before inserting text.'); setBusy(false);
   }, []);
 
   const stopRemote = useCallback(async (expectedSession = sessionRef.current) => {
@@ -183,6 +211,10 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         pendingTouchAcksRef.current.clear();
         for (const timer of pendingRemoteTextAcksRef.current.values()) window.clearTimeout(timer);
         pendingRemoteTextAcksRef.current.clear();
+        for (const timer of pendingComposerSelectionAcksRef.current.values()) window.clearTimeout(timer);
+        pendingComposerSelectionAcksRef.current.clear();
+        composerTargetRef.current = '';
+        setComposerTargetId(''); setSelectionPreview(null); setSelectionMode(false);
         setRemoteTextBusy(false);
         setRemoteTextStatus('Phone data channel closed before acknowledgement. Check the phone field before retrying; the text may already have been inserted.');
       };
@@ -194,7 +226,31 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
           for (const timer of pendingRemoteTextAcksRef.current.values()) window.clearTimeout(timer);
           pendingRemoteTextAcksRef.current.clear();
           setRemoteTextBusy(false);
+          clearComposerTarget(false);
           setRemoteTextStatus('The phone user revoked remote typing.');
+          return;
+        }
+        if (acknowledgement.kind === 'composer_target_ack' &&
+            typeof acknowledgement.selectionId === 'string' &&
+            typeof acknowledgement.selected === 'boolean' &&
+            typeof acknowledgement.reason === 'string') {
+          const selectionTimer = pendingComposerSelectionAcksRef.current.get(acknowledgement.selectionId);
+          if (selectionTimer === undefined) return;
+          window.clearTimeout(selectionTimer);
+          pendingComposerSelectionAcksRef.current.delete(acknowledgement.selectionId);
+          if (acknowledgement.selected && typeof acknowledgement.targetId === 'string' &&
+              /^[a-f0-9]{64}$/.test(acknowledgement.targetId)) {
+            composerTargetRef.current = acknowledgement.targetId;
+            setComposerTargetId(acknowledgement.targetId);
+            setSelectionPreview(null);
+            setSelectionMode(false);
+            setRemoteTextStatus('Composer selected. Tap that exact field on the phone so it is focused, then insert a draft.');
+            notify('Android selected one real editable composer in the approved app. Focus that exact field on the phone before inserting a draft.');
+          } else {
+            clearComposerTarget(false);
+            setRemoteTextStatus('Composer selection rejected: ' + acknowledgement.reason.replaceAll('_', ' ') + '. Drag over exactly one visible, editable, non-password field.');
+            notify('Android could not verify one unique editable composer. Select one field, not a broad area or multiple controls.', true);
+          }
           return;
         }
         if (acknowledgement.kind === 'remote_text_ack' &&
@@ -243,6 +299,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
           sourceVisibilityRef.current = acknowledgement.visible;
           setSourceVisible(acknowledgement.visible);
           if (!acknowledgement.visible) {
+            clearComposerTarget();
             setControlGranted(false);
             pendingControlRequestRef.current = '';
             if (controlExpiryRef.current !== null) window.clearTimeout(controlExpiryRef.current);
@@ -425,18 +482,23 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       return;
     }
     if (remoteTextBusy) return;
+    const selectedTargetId = composerTargetRef.current;
+    if (!/^[a-f0-9]{64}$/.test(selectedTargetId)) {
+      setRemoteTextStatus('Select one real composer in the phone app first.');
+      return;
+    }
     const requestId = uuid();
     const timeout = window.setTimeout(() => {
       pendingRemoteTextAcksRef.current.delete(requestId);
       setRemoteTextBusy(false);
-      setRemoteTextStatus('No phone-keyboard acknowledgement arrived. Confirm the Rub Minds keyboard is active and the phone field is focused.');
+      setRemoteTextStatus('No phone-keyboard acknowledgement arrived. Do not retry blindly; check the selected app field for the draft before sending another insertion.');
     }, 6_000);
     pendingRemoteTextAcksRef.current.set(requestId, timeout);
     setRemoteTextBusy(true);
     setRemoteTextStatus('Sending text to the focused phone field…');
     try {
       channel.send(JSON.stringify({
-        kind: 'remote_text', requestId, sessionId: sessionRef.current, appPackageName: appPackage, text,
+        kind: 'remote_text', requestId, sessionId: sessionRef.current, appPackageName: appPackage, targetId: selectedTargetId, text,
       }));
     } catch {
       window.clearTimeout(timeout);
@@ -453,18 +515,74 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     return normalizeClientPointToVideo(getContainedVideoRect(box, video.videoWidth, video.videoHeight), event.clientX, event.clientY);
   };
   const pointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    if (!controlGranted || !sourceVisible || busy || event.button !== 0) return;
+    const mode = selectionMode ? 'composer' : controlGranted ? 'touch' : null;
+    if (!mode || !viewReady || !sourceVisible || !dataReady || busy || event.button !== 0) return;
     const point = contentPoint(event);
     if (!point) return;
-    event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
-    pointerRef.current = { ...point, pointerId: event.pointerId, startedAt: Date.now() };
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    pointerRef.current = { ...point, pointerId: event.pointerId, startedAt: Date.now(), mode };
+    if (mode === 'composer') setSelectionPreview({ x: point.x, y: point.y, width: 0, height: 0 });
   };
+
+  const pointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const start = pointerRef.current;
+    if (!start || start.pointerId !== event.pointerId || start.mode !== 'composer') return;
+    const end = contentPoint(event);
+    if (!end) return;
+    const region = createNormalizedDragSelection(start, end, 0.001);
+    setSelectionPreview(region);
+  };
+
+  const selectComposer = (region: { x: number; y: number; width: number; height: number }) => {
+    const channel = dataRef.current;
+    if (!viewReady || !sourceVisible || !dataReady || !channel || channel.readyState !== 'open') {
+      setRemoteTextStatus('Wait until the selected app stream and data channel are live.');
+      return;
+    }
+    const selectionId = uuid();
+    const timer = window.setTimeout(() => {
+      pendingComposerSelectionAcksRef.current.delete(selectionId);
+      clearComposerTarget(false);
+      setRemoteTextStatus('Android did not confirm the selection. Check that Accessibility permission is enabled and the approved app is foreground.');
+      notify('No composer-selection acknowledgement arrived from Android. No typing target has been registered.', true);
+    }, 8_000);
+    pendingComposerSelectionAcksRef.current.set(selectionId, timer);
+    setSelectionPreview(region);
+    setRemoteTextStatus('Checking the selected region against the phone accessibility tree…');
+    try {
+      channel.send(JSON.stringify({
+        kind: 'select_composer_target',
+        selectionId,
+        sessionId: sessionRef.current,
+        appPackageName: appPackage,
+        region: { left: region.x, top: region.y, right: region.x + region.width, bottom: region.y + region.height },
+      }));
+    } catch {
+      window.clearTimeout(timer);
+      pendingComposerSelectionAcksRef.current.delete(selectionId);
+      clearComposerTarget(false);
+      setRemoteTextStatus('The Android data channel rejected composer selection. Reconnect the stream and retry.');
+    }
+  };
+
   const pointerUp = (event: PointerEvent<HTMLDivElement>) => {
     const start = pointerRef.current;
     if (!start || start.pointerId !== event.pointerId) return;
     pointerRef.current = null;
     const end = contentPoint(event), channel = dataRef.current;
     if (!end || !channel || channel.readyState !== 'open') return;
+    if (start.mode === 'composer') {
+      const region = createNormalizedDragSelection(start, end);
+      if (!region) {
+        setSelectionPreview(null);
+        setRemoteTextStatus('Drag around one composer. The selection must be large enough to identify one editable field.');
+        return;
+      }
+      selectComposer(region);
+      return;
+    }
+    if (!controlGranted) return;
     const distance = Math.hypot(end.x - start.x, end.y - start.y);
     const durationMs = Math.min(1_500, Math.max(40, Date.now() - start.startedAt));
     const gesture = distance >= 0.02 ? 'swipe' : durationMs >= 500 ? 'long_press' : 'tap';
@@ -498,11 +616,11 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         {device.apps.map(app => <option key={app.package_name} value={app.package_name}>{app.app_label}</option>)}
       </select>
     </label>
-    <div className={'br-android-live-surface' + (controlGranted ? ' controllable' : '')}
-      onPointerDown={pointerDown} onPointerUp={pointerUp} onPointerCancel={pointerCancel}
+    <div className={'br-android-live-surface' + ((controlGranted || selectionMode) ? ' controllable' : '')}
+      onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp} onPointerCancel={pointerCancel}
       onContextMenu={event => event.preventDefault()}
-      role={controlGranted ? 'application' : 'img'} aria-label={controlGranted ? 'Tap and swipe inside the streamed Android app' : 'Android app screen preview'}
-      tabIndex={controlGranted ? 0 : -1}>
+      role={(controlGranted || selectionMode) ? 'application' : 'img'} aria-label={selectionMode ? 'Drag around one actual editable composer in the streamed app' : controlGranted ? 'Tap and swipe inside the streamed Android app' : 'Android app screen preview'}
+      tabIndex={(controlGranted || selectionMode) ? 0 : -1}>
       <video ref={videoRef} autoPlay playsInline muted />
       {!viewReady ? <div className="br-android-live-placeholder"><MonitorPlay size={26}/>
         <b>{sessionId ? 'Waiting for the phone stream' : 'No app stream active'}</b>
@@ -511,23 +629,42 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         <Smartphone size={24}/><b>App window hidden on the phone</b>
         <span>Bring the selected app to the foreground on the phone. The picture and touch control resume when Android reports it visible.</span>
       </div> : null}
-      {viewReady && controlGranted ? <div className="br-android-touch-hint"><Hand size={13}/> Tap · swipe · long press</div> : null}
+      {viewReady && selectionPreview ? <div className="br-android-composer-selection" style={{
+        left: (selectionPreview.x * 100) + '%',
+        top: (selectionPreview.y * 100) + '%',
+        width: (selectionPreview.width * 100) + '%',
+        height: (selectionPreview.height * 100) + '%',
+      }} aria-hidden="true"/> : null}
+      {viewReady && selectionMode ? <div className="br-android-touch-hint"><Hand size={13}/> Drag around one composer</div> : viewReady && controlGranted ? <div className="br-android-touch-hint"><Hand size={13}/> Tap · swipe · long press</div> : null}
     </div>
     {sessionId ? <div className="br-android-keyboard">
-      <label htmlFor="br-android-remote-text">Type into the focused phone field</label>
+      <div className="br-android-composer-head">
+        <b>Original app composer</b>
+        <span>{composerTargetId ? 'Selected and verified' : 'No target selected'}</span>
+      </div>
+      <div className="br-android-composer-actions">
+        <button type="button" onClick={() => {
+          if (selectionMode) { setSelectionMode(false); setSelectionPreview(null); }
+          else { clearComposerTarget(); setSelectionMode(true); setRemoteTextStatus('Drag a rectangle around exactly one editable composer in the live phone app.'); }
+        }} disabled={!viewReady || !sourceVisible || !dataReady || remoteTextBusy}>
+          {selectionMode ? 'Cancel selection' : 'Drag-select typing area'}
+        </button>
+        {composerTargetId ? <button type="button" onClick={() => { clearComposerTarget(); setRemoteTextStatus('Composer target cleared. Select the exact field again before inserting text.'); }}>Clear target</button> : null}
+      </div>
+      <label htmlFor="br-android-remote-text">Draft for the selected composer</label>
       <textarea id="br-android-remote-text" value={remoteText} maxLength={4_000}
         onChange={event => setRemoteText(event.target.value)}
-        placeholder="Tap a normal text field in the phone app, then type here…"
-        rows={3} disabled={!viewReady || !sourceVisible || !dataReady || remoteTextBusy}/>
+        placeholder={composerTargetId ? 'Type a draft for the selected field…' : 'Select the actual typing area in the streamed app first…'}
+        rows={3} disabled={!viewReady || !sourceVisible || !dataReady || remoteTextBusy || !composerTargetId}/>
       <div className="br-android-keyboard-actions">
         <span>{remoteText.length.toLocaleString()}/4,000</span>
         <button type="button" onClick={sendRemoteText}
-          disabled={!viewReady || !sourceVisible || !dataReady || remoteTextBusy || !remoteText.trim()}>
-          {remoteTextBusy ? 'Sending…' : 'Insert text on phone'}
+          disabled={!viewReady || !sourceVisible || !dataReady || remoteTextBusy || !composerTargetId || !remoteText.trim()}>
+          {remoteTextBusy ? 'Inserting…' : 'Insert draft'}
         </button>
       </div>
       <p role="status">{remoteTextStatus}</p>
-      <small>The phone must have the Rub Minds keyboard selected and remote typing locally armed. Line breaks go only into multiline fields; no Enter key or submit action is sent.</small>
+      <small>Selection identifies one real editable, visible, non-password field using accessibility metadata only. Tap that exact field on the phone before insertion. Draft insertion requires the phone keyboard and local typing permission. Nothing is submitted; no Enter action exists.</small>
     </div> : null}
     <div className="br-android-stream-actions">
       {!sessionId
