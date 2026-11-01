@@ -773,13 +773,14 @@ test("reports partial sends when a later message has a classified transient fail
 });
 
 
-function makeDurableTestStore(snapshots) {
+function makeDurableTestStore(snapshots, initialState = {}) {
   return {
     load: async () => ({
       revision: 0,
       cursor: null,
       pending_response: null,
       blocked_message: null,
+      ...structuredClone(initialState),
     }),
     save: async snapshot => {
       snapshots.push(structuredClone(snapshot));
