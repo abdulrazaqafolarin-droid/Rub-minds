@@ -657,6 +657,34 @@ class AndroidScreenShareService : Service() {
                 val bytes = ByteArray(buffer.data.remaining())
                 buffer.data.get(bytes)
                 val input = try { JSONObject(String(bytes, Charsets.UTF_8)) } catch (_: Exception) { return }
+                if (input.optString("kind") == "clear_composer_target") {
+                    val selectionId = input.optString("selectionId")
+                    if (!UUID_PATTERN.matches(selectionId) ||
+                        input.optString("sessionId") != sessionId ||
+                        input.optString("appPackageName") != appPackage
+                    ) return
+                    val allowedClearKeys = setOf("kind", "selectionId", "sessionId", "appPackageName")
+                    if (input.keys().asSequence().toSet() != allowedClearKeys) {
+                        sendComposerTargetAcknowledgement(
+                            channel, sessionId, selectionId,
+                            ComposerSelectionDecision(null, "invalid_request")
+                        )
+                        return
+                    }
+                    if (!claimRemoteTextRequest(selectionId)) {
+                        sendComposerTargetAcknowledgement(
+                            channel, sessionId, selectionId,
+                            ComposerSelectionDecision(null, "request_replayed_or_rate_limited")
+                        )
+                        return
+                    }
+                    AndroidTouchAccessibilityService.clearSelectedComposer()
+                    sendComposerTargetAcknowledgement(
+                        channel, sessionId, selectionId,
+                        ComposerSelectionDecision(null, "cleared")
+                    )
+                    return
+                }
                 if (input.optString("kind") == "select_composer_target") {
                     val selectionId = input.optString("selectionId")
                     if (!UUID_PATTERN.matches(selectionId) ||
