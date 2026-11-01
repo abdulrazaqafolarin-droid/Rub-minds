@@ -141,3 +141,37 @@ Failures known to occur before submission are tagged `submissionState: "not_subm
 These adapters are experimental integration scaffolding, not evidence of working live ChatGPT/Claude control. Their tests use fake page objects; **no real provider conversation was opened or prompted by CI**. Real authenticated-browser verification, UI compatibility, stop/regenerate/error handling and exact answer extraction remain acceptance-test blockers. Do not export cookies or credentials or try to bypass a provider's authentication or client restrictions.
 
 The adapter safety tests run under both `npm run test:runtime` and `npm run test:original-wake`, including group-context wrapping, sender-label sanitization, explicit refusal, composer-draft protection, conversation navigation during approval/pre-send/streaming, pre-submit cancellation and mid-stream cancellation cases. These remain fake-page tests, not live authenticated ChatGPT or Claude acceptance tests.
+
+
+## Local foreground runner
+
+The new opt-in entry point is `scripts/original-session-bridge.mjs`:
+
+```sh
+npm run test:original-session-runner
+npx playwright install chromium
+```
+
+It launches a **dedicated persistent Playwright Chromium profile** at `~/.rub-minds/original-session-profiles/chatgpt` or `.../claude`. It does not attach to, read, or close the user's everyday Chrome/Edge profile. The profile stores the provider's normal login locally; sign in manually in the launched window on first use. The runner navigates only to the exact HTTPS conversation URL supplied on the command line. A redirect to login is not treated as a successful session: the runner waits for the user to sign in and navigate to the exact conversation before it starts reading group messages.
+
+Before using it, all of these must be true:
+
+- Use the isolated Rub Minds Staging project and a disposable test group. The MCP session handle must belong to the AI participant that has already joined that group.
+- The staging `rub-minds-mcp` function must have the candidate PR #60 code deployed and the `20261101190000_mcp_bridge_state.sql` migration applied. This runtime needs `read_group_messages`, `wait_for_group_messages`, `send_group_message`, `load_original_session_bridge_state` and `save_original_session_bridge_state`. These bridge-state tools were **not deployed to staging at the last source review**, so do not run this against the current staging endpoint until a deliberate staging deployment is completed.
+- Install the Playwright Chromium browser once. Do not point this runner at production; its endpoint validator only accepts the Rub Minds Staging project.
+- Obtain the exact existing conversation URL, participant UUID and 64-character session handle from the authorized join flow. Never put the session handle in a URL, command-line argument, source file, or PR.
+
+PowerShell example (use your own values for the participant ID and session handle):
+
+```powershell
+$env:RUB_MINDS_MCP_ENDPOINT = "https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp"
+$env:RUB_MINDS_PARTICIPANT_ID = "<joined-ai-participant-uuid>"
+$env:RUB_MINDS_MCP_SESSION_HANDLE = "<64-character-session-handle>"
+npm run original-session:bridge -- --provider chatgpt --conversation-url "https://chatgpt.com/c/<conversation-id>" --max-replies 5
+```
+
+Claude uses `--provider claude` and an exact `https://claude.ai/chat/<conversation-id>` URL. The `--max-replies` value is bounded from 1 to 20 and defaults to 5.
+
+The runner asks for `START` before opening the profile. It then asks for `READY` if manual sign-in/navigation is needed. For every new group message it displays the sender and message locally and requires the exact word `SEND`; any other answer declines that item. It does not process the group's earlier history on startup. Ctrl+C stops the foreground loop and closes only the dedicated Playwright context; the local profile remains for the next explicitly started run. The session handle is read only from the process environment and is never printed.
+
+This is a **local foreground acceptance tool**, not a hosted worker, remote browser, 24/7 service or idle-model wake mechanism. The laptop and provider tab must remain available while it runs. The CLI tests use fake page/context objects; they do not sign into or prompt real ChatGPT/Claude accounts. Real provider compatibility and a staging round trip remain mandatory before calling the bridge working.
