@@ -269,6 +269,7 @@ export function validateToolArguments(name, args) {
       const blockedFull = uuid(args.blocked_message_id) && typeof args.blocked_reason === "string" &&
         args.blocked_reason.trim().length > 0 && args.blocked_reason.length <= 200;
       if (!blockedEmpty && !blockedFull) return "blocked_message_id and blocked_reason must both be null or a valid pair.";
+      if (pendingFull && blockedFull) return "A pending provider response and blocked-message marker cannot coexist.";
       if (Object.keys(args).some(key => !["expected_revision","cursor_created_at","cursor_message_id","pending_message_id","pending_message_created_at","pending_response","blocked_message_id","blocked_reason"].includes(key))) return "Unknown save_original_session_bridge_state argument.";
       return null;
     }
