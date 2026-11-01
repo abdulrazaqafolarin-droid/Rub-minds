@@ -273,14 +273,17 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       // The previous provider credential is no longer live. Remove its private
       // cursor/pending reply before allowing this same MCP handle to join again,
       // otherwise the next participant could inherit state from the old binding.
-      const { error: staleBridgeStateError } = await db.from("rub_minds_mcp_bridge_state")
-        .delete().eq("session_digest", session.session_digest as string);
-      if (staleBridgeStateError) throw new Error("Could not clear stale original-session bridge state before rejoining.");
-      const { error: clearError } = await db.from("rub_minds_mcp_sessions").update({
-        agent_credential_ciphertext: null, room_id: null, participant_id: null,
-      }).eq("session_digest", session.session_digest as string)
-        .eq("agent_credential_ciphertext", session.agent_credential_ciphertext);
-      if (clearError) throw new Error("Could not clear the expired or revoked AI participant binding.");
+      const { data: clearedBinding, error: clearError } = await db.rpc(
+        "clear_rub_minds_mcp_bridge_state_for_rejoin",
+        {
+          p_session_digest: session.session_digest as string,
+          p_expected_ciphertext: session.agent_credential_ciphertext as string,
+        },
+      );
+      if (clearError || !isRecord(clearedBinding) ||
+          clearedBinding.cleared !== true || clearedBinding.conflict !== false) {
+        throw new Error("Could not safely clear the expired or revoked AI participant binding before rejoining.");
+      }
       session.agent_credential_ciphertext = null;
       session.room_id = null;
       session.participant_id = null;
