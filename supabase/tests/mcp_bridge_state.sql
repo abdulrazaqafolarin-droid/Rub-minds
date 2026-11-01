@@ -93,6 +93,27 @@ begin
   if pg_catalog.to_regclass('public.rub_minds_mcp_bridge_state_room_updated_idx') is null then
     raise exception 'Bridge-state room/update index is missing';
   end if;
+
+  if not exists (
+    select 1 from pg_catalog.pg_trigger t
+    where t.tgrelid = v_table
+      and t.tgname = 'rub_minds_mcp_bridge_state_binding_guard'
+      and not t.tgisinternal
+  ) then
+    raise exception 'Bridge-state live-session binding guard trigger is missing';
+  end if;
+
+  if not exists (
+    select 1
+    from pg_catalog.pg_proc p
+    join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'enforce_rub_minds_mcp_bridge_state_binding'
+      and p.prosecdef
+      and coalesce(array_to_string(p.proconfig, ','), '') like '%search_path=%'
+  ) then
+    raise exception 'Bridge-state trigger must be SECURITY DEFINER with a pinned search_path';
+  end if;
 end;
 $bridge_state_security$;
 
