@@ -378,6 +378,8 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Install pinned official MCP client SDK for interoperability test
         run: npm install --no-save --package-lock=false @modelcontextprotocol/client@2.3.1
+      - name: Install PostgreSQL client for Vault acceptance
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: Install pinned Supabase CLI
         uses: supabase/setup-cli@v1
         with:
