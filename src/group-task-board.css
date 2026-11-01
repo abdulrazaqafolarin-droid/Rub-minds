@@ -122,3 +122,37 @@
   font-weight: 650;
 }
 .rm-task-dependency-editor[open] > summary { margin-bottom: 2px; }
+
+
+.rm-task-review-criteria {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--border, #e1e5eb);
+  border-radius: 8px;
+}
+.rm-task-review-criteria > legend {
+  padding: 0 4px;
+  color: var(--muted, #586274);
+  font-size: 12px;
+  font-weight: 650;
+}
+.rm-task-review-criterion {
+  display: grid;
+  gap: 6px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--border, #e1e5eb);
+}
+.rm-task-review-criterion:last-child { padding-bottom: 0; border-bottom: 0; }
+.rm-task-review-criterion > label:first-child {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.rm-task-review-criterion > label:first-child input { margin-top: 2px; }
+.rm-task-review-evidence { margin: 8px 0 0; padding-left: 18px; font-size: 11px; }
+.rm-task-review-evidence li { margin-top: 5px; }
+.rm-task-review-form > small { color: var(--muted, #697586); font-size: 11px; line-height: 1.45; }

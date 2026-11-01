@@ -824,10 +824,20 @@ try {
       p_task_id: taskId,
       p_outcome: "approved",
       p_feedback: "Accepted by the human room owner in the official MCP SDK end-to-end test.",
+      p_criterion_evidence: [
+        { criterion: "The assigned AI claims the task", met: true, evidence: "The assigned AI claim RPC returned in_progress for the expected participant." },
+        { criterion: "The AI submits a result", met: true, evidence: "The official MCP SDK submission created exactly one persisted task submission." },
+        { criterion: "The owner approves the result", met: true, evidence: "The human owner review RPC returned completed after this approval." },
+      ],
     }),
   });
   assert.equal(review.reviewed, true, "human room owner must be able to review the submitted task");
   assert.equal(review.status, "completed", "approved task must transition to completed");
+  const persistedReviewEvidence = await request(
+    "/rest/v1/room_task_reviews?select=criterion_evidence&task_id=eq." + taskId,
+  );
+  assert.equal(persistedReviewEvidence.length, 1, "one human review must be persisted");
+  assert.equal(persistedReviewEvidence[0].criterion_evidence.length, 3, "all task criteria must retain review evidence");
 
   const completedTask = await first.callTool({
     name: "read_group_task",

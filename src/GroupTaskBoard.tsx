@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { AlertCircle, Check, Clock3, ListChecks, Plus, RefreshCw, Send, UserRound } from "lucide-react";
 import {
   assignGroupTask,
@@ -16,6 +16,7 @@ import {
   type CloudParticipant,
   type GroupTask,
   type GroupTaskDependency,
+  type GroupTaskCriterionEvidence,
   type GroupTaskReview,
   type GroupTaskSubmission,
 } from "./cloudRooms";
@@ -83,34 +84,55 @@ export default function GroupTaskBoard({
   const [dueAt, setDueAt] = useState("");
   const [dependencyIds, setDependencyIds] = useState<string[]>([]);
   const [feedbackDrafts, setFeedbackDrafts] = useState<Record<string, string>>({});
+  const [criterionEvidenceDrafts, setCriterionEvidenceDrafts] = useState<Record<string, GroupTaskCriterionEvidence[]>>({});
+  const refreshGeneration = useRef(0);
   const [resultDrafts, setResultDrafts] = useState<Record<string, string>>({});
   const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, string>>({});
   const [dependencyDrafts, setDependencyDrafts] = useState<Record<string, string[]>>({});
 
-  async function refresh(shouldCommit: () => boolean = () => true) {
-    const [nextTasks, nextDependencies, nextSubmissions, nextReviews] = await Promise.all([
-      listGroupTasks(roomId),
-      listGroupTaskDependencies(roomId),
-      listGroupTaskSubmissions(roomId),
-      listGroupTaskReviews(roomId),
-    ]);
-    if (!shouldCommit()) return;
+  async function refresh(shouldCommit: () => boolean = () => true): Promise<boolean> {
+    const requestId = ++refreshGeneration.current;
+    let nextTasks: GroupTask[];
+    let nextDependencies: GroupTaskDependency[];
+    let nextSubmissions: GroupTaskSubmission[];
+    let nextReviews: GroupTaskReview[];
+    try {
+      [nextTasks, nextDependencies, nextSubmissions, nextReviews] = await Promise.all([
+        listGroupTasks(roomId),
+        listGroupTaskDependencies(roomId),
+        listGroupTaskSubmissions(roomId),
+        listGroupTaskReviews(roomId),
+      ]);
+    } catch (error) {
+      // A failed older refresh must not overwrite the status of a newer load.
+      if (requestId !== refreshGeneration.current || !shouldCommit()) return false;
+      throw error;
+    }
+    // Realtime events can arrive in bursts. Only the newest complete snapshot
+    // may replace the board, even when an older request finishes last.
+    if (requestId !== refreshGeneration.current || !shouldCommit()) return false;
     setTasks(nextTasks);
     setDependencies(nextDependencies);
     setSubmissions(nextSubmissions);
     setReviews(nextReviews);
+    setLoading(false);
+    return true;
   }
 
   useEffect(() => {
     let active = true;
+    let loadSequence = 0;
+    setLoading(true);
     const load = async () => {
+      const sequence = ++loadSequence;
       try {
-        await refresh(() => active);
-        if (active) setError("");
+        const committed = await refresh(() => active && sequence === loadSequence);
+        if (active && sequence === loadSequence && committed) setError("");
       } catch (e) {
-        if (active) setError(e instanceof Error ? e.message : "Could not load group tasks.");
-      } finally {
-        if (active) setLoading(false);
+        if (active && sequence === loadSequence) {
+          setError(e instanceof Error ? e.message : "Could not load group tasks.");
+          setLoading(false);
+        }
       }
     };
     void load();
@@ -119,6 +141,8 @@ export default function GroupTaskBoard({
     });
     return () => {
       active = false;
+      loadSequence += 1;
+      refreshGeneration.current += 1;
       unsubscribe();
     };
   }, [roomId]);
@@ -233,16 +257,41 @@ export default function GroupTaskBoard({
 
   async function onReview(task: GroupTask, outcome: "approved" | "revision_requested") {
     if (busyTask) return;
+    const draft = criterionEvidenceDrafts[task.id] || task.acceptance_criteria.map((criterion) => ({
+      criterion,
+      met: false,
+      evidence: "",
+    }));
+    const criterionEvidence = task.acceptance_criteria.map((criterion, index) => ({
+      criterion,
+      met: draft[index]?.met === true,
+      evidence: (draft[index]?.evidence || "").trim(),
+    }));
+    if (criterionEvidence.some((item) => !item.evidence)) {
+      setError("Add an evidence note for every acceptance criterion before submitting the review.");
+      return;
+    }
+    if (outcome === "approved" && criterionEvidence.some((item) => !item.met)) {
+      setError("Every acceptance criterion must be marked met before approval. Request a revision for unmet criteria.");
+      return;
+    }
     setBusyTask(task.id);
     setError("");
     setNotice("");
     try {
-      await reviewGroupTask(roomId, task.id, outcome, feedbackDrafts[task.id] || "");
-      setNotice(outcome === "approved" ? "Deliverable approved; task completed." : "Revision requested; task returned to its assignee.");
-      // Clear the retry payload only after the refreshed state is read. If the
-      // refresh fails, retrying the same review is idempotent at the database.
-      await refresh();
-      setFeedbackDrafts((current) => ({ ...current, [task.id]: "" }));
+      await reviewGroupTask(roomId, task.id, outcome, feedbackDrafts[task.id] || "", criterionEvidence);
+      setNotice(outcome === "approved" ? "Deliverable approved; every acceptance criterion has recorded evidence." : "Revision requested; criterion gaps have been recorded.");
+      // Retain the payload unless the refreshed authoritative state is read.
+      // This keeps a network retry identical and idempotent.
+      const refreshed = await refresh();
+      if (refreshed) {
+        setFeedbackDrafts((current) => ({ ...current, [task.id]: "" }));
+        setCriterionEvidenceDrafts((current) => {
+          const next = { ...current };
+          delete next[task.id];
+          return next;
+        });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not review this task.");
     } finally {
@@ -422,6 +471,7 @@ export default function GroupTaskBoard({
               JSON.stringify(taskDependencies.map((dependency) => dependency.depends_on_task_id).sort());
             const latestSubmission = submissionsByTask.get(task.id);
             const latestReview = latestReviews.get(task.id);
+            const criterionEvidenceDraft = criterionEvidenceDrafts[task.id] || task.acceptance_criteria.map((criterion) => ({ criterion, met: false, evidence: "" }));
             const canManage = isGroupOwner || task.created_by_participant_id === currentHumanParticipantId;
             const isAssignedHuman = task.assigned_to_participant_id === currentHumanParticipantId;
             const hasPendingPrerequisites = taskDependencies.some((dependency) =>
@@ -507,6 +557,14 @@ export default function GroupTaskBoard({
                 {latestReview && <div className="rm-task-review-note">
                   <strong>Latest review: {latestReview.outcome === "approved" ? "Approved" : "Revision requested"}</strong>
                   {latestReview.feedback && <p>{latestReview.feedback}</p>}
+                  {latestReview.criterion_evidence?.length > 0 && <ul className="rm-task-review-evidence">
+                    {latestReview.criterion_evidence.map((item, index) => (
+                      <li key={index}>
+                        <strong>{item.met ? "Met" : "Not met"}:</strong> {item.criterion}
+                        <p>{item.evidence}</p>
+                      </li>
+                    ))}
+                  </ul>}
                 </div>}
 
                 {canManage && ["backlog", "assigned", "blocked"].includes(task.status) && <div className="rm-task-assignment-control">
@@ -538,10 +596,47 @@ export default function GroupTaskBoard({
                   </button>
                 </div>}
                 {task.status === "review" && canManage && <div className="rm-task-review-form">
+                  {task.acceptance_criteria.length > 0 && <fieldset className="rm-task-review-criteria">
+                    <legend>Acceptance criteria evidence</legend>
+                    {task.acceptance_criteria.map((criterion, index) => {
+                      const draft = criterionEvidenceDraft[index] || { criterion, met: false, evidence: "" };
+                      return (
+                        <div className="rm-task-review-criterion" key={index}>
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={draft.met}
+                              onChange={(e) => setCriterionEvidenceDrafts((current) => {
+                                const next = [...(current[task.id] || task.acceptance_criteria.map((item) => ({ criterion: item, met: false, evidence: "" })))];
+                                next[index] = { ...next[index], criterion, met: e.target.checked };
+                                return { ...current, [task.id]: next };
+                              })}
+                            />
+                            <span>{criterion}</span>
+                          </label>
+                          <label>
+                            Evidence / review note
+                            <textarea
+                              rows={2}
+                              maxLength={2000}
+                              value={draft.evidence}
+                              onChange={(e) => setCriterionEvidenceDrafts((current) => {
+                                const next = [...(current[task.id] || task.acceptance_criteria.map((item) => ({ criterion: item, met: false, evidence: "" })))];
+                                next[index] = { ...next[index], criterion, evidence: e.target.value };
+                                return { ...current, [task.id]: next };
+                              })}
+                              placeholder="Point to the result, test, message or observable proof…"
+                            />
+                          </label>
+                        </div>
+                      );
+                    })}
+                  </fieldset>}
                   <label>
                     Review feedback (optional)
-                    <textarea rows={2} maxLength={12000} value={feedbackDrafts[task.id] || ""} onChange={(e) => setFeedbackDrafts((current) => ({ ...current, [task.id]: e.target.value }))} placeholder="Explain approval or what needs revision…"/>
+                    <textarea rows={2} maxLength={12000} value={feedbackDrafts[task.id] || ""} onChange={(e) => setFeedbackDrafts((current) => ({ ...current, [task.id]: e.target.value }))} placeholder="Summarize the decision or required changes…"/>
                   </label>
+                  <small>Approvals are blocked until every criterion is marked met and has an evidence note. Use “Request revision” for unmet criteria.</small>
                   <div>
                     <button type="button" className="rm-task-primary" disabled={busyTask === task.id} onClick={() => { void onReview(task, "approved"); }}>
                       <Check size={15}/>Approve

@@ -319,6 +319,11 @@ export type GroupTaskSubmission = {
   source_message_ids: string[];
   created_at: string;
 };
+export type GroupTaskCriterionEvidence = {
+  criterion: string;
+  met: boolean;
+  evidence: string;
+};
 export type GroupTaskReview = {
   id: string;
   room_id: string;
@@ -327,6 +332,7 @@ export type GroupTaskReview = {
   reviewer_participant_id: string;
   outcome: "approved" | "revision_requested";
   feedback: string;
+  criterion_evidence: GroupTaskCriterionEvidence[];
   created_at: string;
 };
 
@@ -359,7 +365,7 @@ export async function listGroupTaskSubmissions(roomId: string): Promise<GroupTas
 
 export async function listGroupTaskReviews(roomId: string): Promise<GroupTaskReview[]> {
   const { data, error } = await client().from("room_task_reviews")
-    .select("id,room_id,task_id,submission_id,reviewer_participant_id,outcome,feedback,created_at")
+    .select("id,room_id,task_id,submission_id,reviewer_participant_id,outcome,feedback,criterion_evidence,created_at")
     .eq("room_id", roomId).order("created_at", { ascending: false }).limit(200);
   if (error) throw error;
   return (data || []) as GroupTaskReview[];
@@ -436,15 +442,29 @@ export async function reviewGroupTask(
   roomId: string,
   taskId: string,
   outcome: "approved" | "revision_requested",
-  feedback = "",
+  feedback: string,
+  criterionEvidence: GroupTaskCriterionEvidence[],
 ): Promise<void> {
+  if (criterionEvidence.length > 20 || criterionEvidence.some((item) =>
+    !item.criterion.trim() || item.evidence.trim().length < 1 || item.evidence.trim().length > 2000
+  )) {
+    throw new Error("Add a concise evidence note for every acceptance criterion.");
+  }
+  if (outcome === "approved" && criterionEvidence.some((item) => !item.met)) {
+    throw new Error("Every acceptance criterion must be marked met before approval.");
+  }
   const { data, error } = await client().rpc("review_room_task", {
     p_room_id: roomId,
     p_task_id: taskId,
     p_outcome: outcome,
     p_feedback: feedback.trim(),
+    p_criterion_evidence: criterionEvidence.map((item) => ({
+      criterion: item.criterion.trim(),
+      met: item.met,
+      evidence: item.evidence.trim(),
+    })),
   });
-  if (error || !data) throw new Error("Could not save this task review. It may no longer be awaiting review.");
+  if (error || !data) throw new Error(error?.message || "Could not save this task review. It may no longer be awaiting review.");
 }
 
 export async function claimGroupTaskAsHuman(roomId: string, taskId: string, participantId: string): Promise<void> {
