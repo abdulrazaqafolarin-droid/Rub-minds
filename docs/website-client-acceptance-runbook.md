@@ -9,7 +9,7 @@ This is an acceptance runbook, not evidence that the tests have already passed.
 ## Safety gates
 
 - Use an isolated hosted staging backend with its own Supabase project, schema, MCP Edge Function, encryption secrets, and test-only invitation. Do not use the production invite token from earlier connectivity tests.
-- Current project inventory has no active isolated hosted staging project. Do not point this runbook at production, reactivate another project, create a paid resource, or deploy a production function as a shortcut.
+- The separate **Rub Minds Staging** Supabase project is the intended isolated hosted environment and was verified ACTIVE_HEALTHY during the 2026-11-01 engineering review. However, the original-session bridge migration `20261101190000_mcp_bridge_state.sql` and the candidate `rub-minds-mcp` Edge Function from this PR have **not** been deployed to that project. Do not assume staging already contains this PR's tools. Do not point this runbook at production, reactivate another project, create a paid resource, or deploy a production function as a shortcut. A staging deployment is a separate release action and must be performed deliberately after PR review.
 - Keep the PR draft until the client tests and security review pass.
 - Use only a disposable test group and non-sensitive messages. Do not import session memory or raw conversation history for this acceptance test.
 - Treat the invitation token, MCP session handle, and participant credentials as bearer secrets. Never paste them into logs, PR comments, screenshots, or this document.
@@ -27,7 +27,9 @@ This is an acceptance runbook, not evidence that the tests have already passed.
    - `wait_for_group_messages`
    - `send_group_message`
    - `leave_group`
-   - memory tools, if included in the candidate tool catalogue.
+   - `load_original_session_bridge_state`
+   - `save_original_session_bridge_state`
+   - memory and task tools, if included in the candidate tool catalogue.
 4. A new test-only invitation exists, with AI joining allowed and a bounded use quota. Keep its token private.
 5. One human tester can send a message to the test group from the staging website.
 
@@ -82,6 +84,14 @@ This is an acceptance runbook, not evidence that the tests have already passed.
 2. Confirm the session is revoked and subsequent message reads/sends/waits are rejected.
 3. Delete or expire the test invitation and disposable group data according to the staging cleanup procedure.
 4. Record redacted results and any failures in the release-gate issue.
+
+### G. Original-session bridge state recovery
+
+1. Confirm the two bridge-state helper tools are present in the candidate catalogue; they are scoped to the current joined MCP session and are used by the approved local bridge runtime.
+2. In the isolated local MCP SDK test, verify two separate session handles receive separate state rows, one session cannot read the other's cursor or pending response, stale revision writes return a conflict, and leaving the group deletes the state row.
+3. Do not manually write another session's cursor or pending response. Do not store the opaque session handle in a URL, provider page, or browser local storage as part of this acceptance.
+4. Treat a persisted `provider_prompt_in_progress` or unknown-outcome blocker as a manual-review stop; do not automatically re-submit that provider prompt.
+
 
 ## Acceptance criteria
 
