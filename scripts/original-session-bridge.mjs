@@ -15,6 +15,7 @@ import { createOriginalSessionWakeRuntime } from "../integrations/playwright/ori
 
 const SESSION_HANDLE_RE = /^[a-f0-9]{64}$/i;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const STAGING_MCP_HOST = "tzcuuynmviiuactafpld.supabase.co";
 const PROVIDERS = Object.freeze({
   chatgpt: Object.freeze({
     hosts: new Set(["chatgpt.com", "chat.openai.com"]),
@@ -67,9 +68,10 @@ export function validateRunnerEnvironment(env = {}, provider = "chatgpt") {
   } catch {
     fail("Set RUB_MINDS_MCP_ENDPOINT to the HTTPS staging MCP endpoint.");
   }
-  if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password ||
-      endpoint.search || endpoint.hash || !endpoint.pathname.replace(/\/$/, "").endsWith("/functions/v1/rub-minds-mcp")) {
-    fail("RUB_MINDS_MCP_ENDPOINT must be a clean HTTPS Supabase MCP function URL (no credentials, query or fragment).");
+  if (endpoint.protocol !== "https:" || endpoint.hostname !== STAGING_MCP_HOST ||
+      endpoint.username || endpoint.password || endpoint.search || endpoint.hash ||
+      endpoint.pathname.replace(/\/$/, "") !== "/functions/v1/rub-minds-mcp") {
+    fail("RUB_MINDS_MCP_ENDPOINT must point to the Rub Minds Staging MCP function (not production).");
   }
   const sessionHandle = env.RUB_MINDS_MCP_SESSION_HANDLE;
   if (typeof sessionHandle !== "string" || !SESSION_HANDLE_RE.test(sessionHandle)) {
@@ -81,7 +83,6 @@ export function validateRunnerEnvironment(env = {}, provider = "chatgpt") {
   }
   if (!Object.hasOwn(PROVIDERS, provider)) fail("Unsupported provider.");
   const profileDirectory = resolve(
-    env.RUB_MINDS_BROWSER_PROFILE_DIR ||
     join(homedir(), ".rub-minds", "original-session-profiles", provider),
   );
   return Object.freeze({
@@ -214,8 +215,8 @@ export async function runOriginalSessionBridge({
     });
     const page = await openExistingConversationPage(context, options.provider, options.conversationUrl);
     if (!isExactConversationPage(page, options.provider, options.conversationUrl)) {
-      output.write("The provider requires sign-in or redirected this dedicated profile away from the requested thread.\\n");
-      output.write("Complete sign-in manually, then navigate this window to the exact conversation URL shown above.\\n");
+      output.write("The provider requires sign-in or redirected this dedicated profile away from the requested thread.\n");
+      output.write("Complete sign-in manually, then navigate this window to the exact conversation URL shown above.\n");
       if (!(await prompt(rl, "When the exact conversation is open and visible, type READY: ", "READY", controller.signal))) {
         output.write("The original-session runner was not started.\\n");
         return { status: "not_started", replies: 0 };
