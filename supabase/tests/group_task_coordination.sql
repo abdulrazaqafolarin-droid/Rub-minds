@@ -377,6 +377,16 @@ begin
      or not has_table_privilege('authenticated','public.room_task_reviews','SELECT') then
     raise exception 'Authenticated group members must retain read access protected by RLS';
   end if;
+  -- Explicit FK coverage prevents expensive scans when room/member parent
+  -- rows are removed and keeps room-scoped task joins indexed.
+  if to_regclass('public.room_task_dependencies_room_task_fk_idx') is null
+     or to_regclass('public.room_task_dependencies_creator_fk_idx') is null
+     or to_regclass('public.room_task_submissions_room_task_fk_idx') is null
+     or to_regclass('public.room_task_submissions_submitter_fk_idx') is null
+     or to_regclass('public.room_task_reviews_room_task_fk_idx') is null
+     or to_regclass('public.room_task_reviews_reviewer_fk_idx') is null then
+    raise exception 'Every group-task foreign key must have a supporting index';
+  end if;
   if has_function_privilege('authenticated','public.claim_room_task(uuid,uuid,uuid)','EXECUTE')
      or has_function_privilege('authenticated','public.fail_room_task(uuid,uuid,uuid,text)','EXECUTE') then
     raise exception 'AI-only task functions must not be executable by authenticated clients';
