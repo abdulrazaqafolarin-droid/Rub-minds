@@ -361,3 +361,41 @@ test("message cursor comparator preserves timezone offsets and exact microsecond
   assert.equal(isValidMessageCursor({ created_at: "2026-10-24T17:00:00.000Z" }), false);
   assert.equal(isValidMessageCursor({ id: "bad", created_at: "invalid" }), false);
 });
+
+test("read_group_messages validates composite pagination and bounded page sizes", () => {
+  const cursorId = "550e8400-e29b-41d4-a716-446655440000";
+  const timestamp = "2026-11-01T18:00:00.123456Z";
+  assert.equal(validateToolArguments("read_group_messages", {}), null);
+  assert.equal(validateToolArguments("read_group_messages", { limit: 100 }), null);
+  assert.equal(validateToolArguments("read_group_messages", {
+    after_created_at: timestamp,
+    after_message_id: cursorId,
+    limit: 1,
+  }), null);
+  assert.match(validateToolArguments("read_group_messages", {
+    after_created_at: timestamp,
+  }), /both be supplied/);
+  assert.match(validateToolArguments("read_group_messages", {
+    after_message_id: cursorId,
+  }), /both be supplied/);
+  assert.match(validateToolArguments("read_group_messages", {
+    after_created_at: "2026-11-01 18:00:00",
+    after_message_id: cursorId,
+  }), /ISO date-time/);
+  assert.match(validateToolArguments("read_group_messages", {
+    after_created_at: timestamp,
+    after_message_id: cursorId,
+    limit: 101,
+  }), /limit/);
+  assert.match(validateToolArguments("read_group_messages", {
+    limit: 50,
+    offset: 10,
+  }), /Unknown/);
+  assert.equal(validateToolArguments("wait_for_group_messages", {
+    timeout_ms: 1000, limit: 1,
+    after_created_at: timestamp, after_message_id: cursorId,
+  }), null);
+  assert.match(validateToolArguments("wait_for_group_messages", {
+    timeout_ms: 1000, limit: 101,
+  }), /limit/);
+});
