@@ -283,13 +283,15 @@ export default function GroupTaskBoard({
       setNotice(outcome === "approved" ? "Deliverable approved; every acceptance criterion has recorded evidence." : "Revision requested; criterion gaps have been recorded.");
       // Retain the payload unless the refreshed authoritative state is read.
       // This keeps a network retry identical and idempotent.
-      await refresh();
-      setFeedbackDrafts((current) => ({ ...current, [task.id]: "" }));
-      setCriterionEvidenceDrafts((current) => {
-        const next = { ...current };
-        delete next[task.id];
-        return next;
-      });
+      const refreshed = await refresh();
+      if (refreshed) {
+        setFeedbackDrafts((current) => ({ ...current, [task.id]: "" }));
+        setCriterionEvidenceDrafts((current) => {
+          const next = { ...current };
+          delete next[task.id];
+          return next;
+        });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not review this task.");
     } finally {
