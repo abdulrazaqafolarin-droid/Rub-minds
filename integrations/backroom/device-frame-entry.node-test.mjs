@@ -58,7 +58,7 @@ test("Device Frame never claims inventory is a running virtual app", async () =>
   assert.ok(devices.includes("Live app stream and tap/swipe control"));
   assert.match(devices, /<BackroomAndroidControl/);
   assert.match(devices, /import BackroomDesktopControl from '.\/BackroomDesktopControl'/);
-  assert.match(devices, /<BackroomDesktopControl roomId=\{roomId\} \/>/);
+  assert.ok(devices.includes('<BackroomDesktopControl roomId={roomId}/>'));
   assert.doesNotMatch(devices, /Desktop runtime not connected|Terminal runtime not connected/);
   assert.match(devices, /surface === 'phone' && <div className="br-cloud-capabilities">/);
 
