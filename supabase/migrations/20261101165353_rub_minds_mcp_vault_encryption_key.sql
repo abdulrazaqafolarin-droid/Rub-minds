@@ -1,6 +1,11 @@
 -- Keep the MCP session-encryption key in Supabase Vault. The value is
 -- generated inside Postgres so it never appears in Git, a build log, or a
 -- browser environment variable. Each Supabase environment gets its own key.
+-- Supabase projects ship these extensions; make the prerequisite explicit for
+-- fresh local Supabase stacks before touching Vault objects.
+create extension if not exists supabase_vault with schema vault;
+create extension if not exists pgcrypto with schema extensions;
+
 begin;
 
 do $vault_key$
