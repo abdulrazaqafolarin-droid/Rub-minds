@@ -10,6 +10,17 @@ const cloudApp = await readFile(new URL("../../src/CloudApp.tsx", import.meta.ur
 const taskBoard = await readFile(new URL("../../src/GroupTaskBoard.tsx", import.meta.url), "utf8");
 const cloudRooms = await readFile(new URL("../../src/cloudRooms.ts", import.meta.url), "utf8");
 const taskAcceptance = await readFile(new URL("../../supabase/tests/group_task_coordination.sql", import.meta.url), "utf8");
+const supabaseConfig = await readFile(new URL("../../src/supabase.ts", import.meta.url), "utf8");
+
+test("external-agent endpoint follows the same Supabase environment as the browser client", () => {
+  assert.match(supabaseConfig, /const url = import\.meta\.env\.VITE_SUPABASE_URL/);
+  assert.match(supabaseConfig, /export const supabaseUrl = url \|\| ''/);
+  assert.match(supabaseConfig, /createClient\(url, key/);
+  assert.match(cloudApp, /import \{ supabase, supabaseUrl \} from '\.\/supabase'/);
+  assert.match(cloudApp, /const agentMessagesEndpoint = supabaseUrl/);
+  assert.match(cloudApp, /API endpoint: \{agentMessagesEndpoint\}/);
+  assert.doesNotMatch(cloudApp, /https:\/\/zucaeevlbwhcvjwbhwmq\.supabase\.co\/functions\/v1\/agent-messages/);
+});
 
 test("task records extend existing group and participant identities", () => {
   assert.match(migration, /create table if not exists public\.room_tasks[\s\S]*?references public\.rooms\(id\)/);
