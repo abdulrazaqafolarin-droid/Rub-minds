@@ -183,6 +183,13 @@ test("humans can revise a blocked dependency plan only through the scoped graph-
 });
 
 
+test("AI task claiming requires an explicit human assignment before work begins", () => {
+  assert.match(mcpProtocol, /Claim a task that a human group member has assigned to this participant/);
+  assert.match(migration, /A human group member must assign this task before an AI can claim it/);
+  assert.match(migration, /v_task\.assigned_to_participant_id <> p_participant_id/);
+  assert.match(taskAcceptance, /An AI task claim must not cancel its still-leased canonical wake/);
+});
+
 test("MCP exposes bounded task tools only after its existing participant-session authorization", () => {
   for (const name of ["propose_group_task", "list_group_tasks", "read_group_task", "claim_group_task", "block_group_task", "fail_group_task", "submit_group_task_result"]) {
     assert.match(mcpProtocol, new RegExp('name: "' + name + '"'));
