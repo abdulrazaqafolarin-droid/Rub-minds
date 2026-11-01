@@ -100,6 +100,18 @@ begin
   v_conflict := false;
   begin
     perform public.create_room_task(
+      v_room,v_human,'Implement prerequisite','Do the prerequisite work','A tested prerequisite',
+      v_ai_one,'{}'::uuid[],2::smallint,null,'["Tests pass","Evidence attached"]'::jsonb,
+      '88000000-0000-4000-8000-000000000001'
+    );
+  exception when others then
+    if sqlerrm not like 'Task idempotency key was reused with different creation input%' then raise; end if;
+    v_conflict := true;
+  end;
+  if not v_conflict then raise exception 'Reusing a task key with a different initial assignee must fail'; end if;
+  v_conflict := false;
+  begin
+    perform public.create_room_task(
       v_room,v_human,'Different title','Do the prerequisite work','A tested prerequisite',
       v_human,'{}'::uuid[],2::smallint,null,'["Tests pass","Evidence attached"]'::jsonb,
       '88000000-0000-4000-8000-000000000001'
@@ -125,6 +137,9 @@ begin
   );
   if v_replay<>v_fingerprint_task then
     raise exception 'A create retry after reassignment must return the same task ID';
+  end if;
+  if (select idempotency_initial_assignee_id from public.room_tasks where id=v_fingerprint_task)<>v_human then
+    raise exception 'Task idempotency must retain the original assignee request';
   end if;
   if (select assigned_to_participant_id from public.room_tasks where id=v_fingerprint_task)<>v_ai_one then
     raise exception 'A create retry must not revert a subsequent assignee change';

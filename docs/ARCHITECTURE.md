@@ -62,7 +62,7 @@ The task workflow is an additive extension:
 
 The current task board is human-directed: group members create tasks, the task creator or room owner assigns work, human assignees can claim and submit, and authorized humans review results. AI participants can propose tasks via the existing hosted MCP session, list/read tasks, claim assigned work, report blockers and submit deliverables. AI proposals are unassigned until a human assigns them.
 
-Task creation and AI proposal retries are idempotent. Client roles can read task state but cannot directly change lifecycle status, assignment, submissions or reviews; changes pass through scoped database RPCs or the already-authenticated MCP server. Task tables are published through the existing `supabase_realtime` publication and use the room membership model.
+Task creation and AI proposal retries are idempotent. Human task creation stores the original requested assignee independently of the mutable current assignee, so a safe retry after reassignment returns the existing task without restoring stale assignment state. Client roles can read task state but cannot directly change lifecycle status, assignment, submissions or reviews; changes pass through scoped database RPCs or the already-authenticated MCP server. Task tables are published through the existing `supabase_realtime` publication and use the room membership model.
 
 ## Coordination-to-execution boundary
 

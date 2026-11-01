@@ -102,10 +102,14 @@ test("no native or web localhost bridge exists in the cloud Device Frame path", 
 
 test("Supabase config declares the device Edge Function exactly once with manual JWT verification", async () => {
   // Git's Windows checkout may preserve CRLF; configuration semantics are line-ending agnostic.
-  const config = (await read("supabase/config.toml")).replace(/\r\n/g, "\n");
+  // Git for Windows may produce CRLF or lone-CR checkout line endings.
+  // Parse the section semantically instead of comparing a raw newline sequence.
+  const config = (await read("supabase/config.toml")).replace(/\r/g, "");
   const section = "[functions.backroom-device]";
   assert.equal(config.split(section).length - 1, 1);
-  assert.ok(config.includes(section + String.fromCharCode(10) + "verify_jwt = false"));
+  const sectionMatch = config.match(/^\[functions\.backroom-device\]\s*\n([\s\S]*?)(?=^\[|$)/m);
+  assert.ok(sectionMatch, "backroom-device function section must exist");
+  assert.match(sectionMatch[1], /^\s*verify_jwt\s*=\s*false\s*$/m);
 });
 
 

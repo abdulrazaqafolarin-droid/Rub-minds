@@ -43,7 +43,7 @@ A task with incomplete prerequisites remains in backlog and cannot be claimed. C
 
 The browser client can read task state through existing room membership and Realtime. It cannot directly insert task rows or update task lifecycle, assignments, submissions or reviews. Human mutations use narrowly scoped database RPCs that independently verify `auth.uid()`, group membership and task ownership. Dependency edits are serialized per room, cycle-checked and unavailable after work has started or entered review. No service-role key is exposed to the client.
 
-Task creation uses a transaction-scoped idempotency lock and compares all immutable input fields on retry. Reusing a key with different task content is rejected. Human submissions retain the same result/key pair across a retry until the refreshed task history confirms the submission.
+Task creation uses a transaction-scoped idempotency lock. The immutable task requirements and prerequisite set are fingerprinted; the original requested assignee is stored separately from the live assignee. Reusing a key with different requirements or a different original assignee is rejected, while a retry after a legitimate reassignment returns the original task without reverting the current assignee. Human submissions retain the same result/key pair across a retry until the refreshed task history confirms the submission.
 
 ## AI participant workflow through existing MCP
 

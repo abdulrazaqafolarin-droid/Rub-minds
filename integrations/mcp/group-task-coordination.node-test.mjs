@@ -84,7 +84,10 @@ test("task-mode assignments use the existing durable wake queue and fixed canoni
 test("task creation captures acceptance criteria and serializes idempotent retries", () => {
   assert.match(migration, /acceptance_criteria jsonb not null default/);
   assert.match(migration, /idempotency_fingerprint text/);
-  assert.match(migration, /v_existing\.idempotency_fingerprint is distinct from v_request_fingerprint/);
+  assert.match(migration, /idempotency_initial_assignee_id uuid/);
+  assert.match(migration, /v_existing\.idempotency_initial_assignee_id is distinct from p_assigned_to_participant_id/);
+  const fingerprint = migration.slice(migration.indexOf("v_request_fingerprint :="), migration.indexOf("v_request_fingerprint :=") + 700);
+  assert.doesNotMatch(fingerprint, /p_assigned_to_participant_id::text/);
   assert.match(taskAcceptance, /A create retry after reassignment must return the same task ID/);
   assert.match(migration, /p_acceptance_criteria jsonb default/);
   assert.match(migration, /p_idempotency_key uuid default null/);
