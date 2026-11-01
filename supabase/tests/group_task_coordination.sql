@@ -33,6 +33,8 @@ declare
   v_claimed_task_job uuid;
   v_repaired_job uuid;
   v_dependency_result jsonb;
+  v_task_version_before integer;
+  v_task_version_after integer;
   v_conflict boolean := false;
   v_claim jsonb;
 begin
@@ -294,6 +296,15 @@ begin
   v_dependency_result := public.replace_room_task_dependencies(v_room,v_fail_child,array[v_fail_parent]);
   if v_dependency_result->>'status'<>'blocked' then
     raise exception 'Retaining a failed prerequisite must keep the dependent task blocked';
+  end if;
+  select version into v_task_version_before from public.room_tasks where id=v_fail_child;
+  v_dependency_result := public.replace_room_task_dependencies(v_room,v_fail_child,array[v_fail_parent]);
+  if v_dependency_result->>'updated'<>'false' or v_dependency_result->>'replayed'<>'true' then
+    raise exception 'Repeating the same prerequisite set must be an idempotent no-op';
+  end if;
+  select version into v_task_version_after from public.room_tasks where id=v_fail_child;
+  if v_task_version_after<>v_task_version_before then
+    raise exception 'An identical prerequisite retry must not increment the task version';
   end if;
   v_dependency_result := public.replace_room_task_dependencies(v_room,v_fail_child,'{}'::uuid[]);
   if v_dependency_result->>'status'<>'assigned' then

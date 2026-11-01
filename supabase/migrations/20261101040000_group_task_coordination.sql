@@ -650,6 +650,8 @@ declare
   v_incomplete integer;
   v_failed integer;
   v_status text;
+  v_existing_dependencies uuid[];
+  v_requested_dependencies uuid[];
 begin
   if auth.uid() is null then raise exception 'Authentication required'; end if;
   if p_room_id is null or p_task_id is null or p_dependency_ids is null
@@ -695,12 +697,44 @@ begin
     raise exception 'Every task prerequisite must belong to the same group';
   end if;
 
+  -- Compare canonical sorted sets before touching edges or the task row.
+  -- A retry after an ambiguous network response must not bump version or
+  -- produce a second Backroom task wake for an unchanged dependency plan.
+  select coalesce(pg_catalog.array_agg(d.depends_on_task_id order by d.depends_on_task_id),'{}'::uuid[])
+    into v_existing_dependencies
+  from public.room_task_dependencies d
+  where d.room_id=p_room_id and d.task_id=p_task_id;
+
+  select coalesce(pg_catalog.array_agg(x.id order by x.id),'{}'::uuid[])
+    into v_requested_dependencies
+  from unnest(p_dependency_ids) as x(id);
+
+  if v_existing_dependencies=v_requested_dependencies then
+    select
+      count(*) filter (where prerequisite.status<>'completed'),
+      count(*) filter (where prerequisite.status in ('failed','cancelled'))
+    into v_incomplete,v_failed
+    from public.room_task_dependencies d
+    join public.room_tasks prerequisite on prerequisite.id=d.depends_on_task_id
+    where d.room_id=p_room_id and d.task_id=p_task_id;
+
+    return jsonb_build_object(
+      'updated',false,
+      'replayed',true,
+      'task_id',p_task_id,
+      'status',v_task.status,
+      'dependency_count',cardinality(v_existing_dependencies),
+      'incomplete_prerequisites',v_incomplete,
+      'failed_prerequisites',v_failed
+    );
+  end if;
+
   delete from public.room_task_dependencies
   where room_id=p_room_id and task_id=p_task_id;
 
   insert into public.room_task_dependencies(room_id,task_id,depends_on_task_id,created_by_participant_id)
   select p_room_id,p_task_id,x.id,v_actor_id
-  from unnest(p_dependency_ids) as x(id);
+  from unnest(v_requested_dependencies) as x(id);
 
   select
     count(*) filter (where prerequisite.status<>'completed'),
