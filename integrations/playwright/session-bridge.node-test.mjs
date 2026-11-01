@@ -859,3 +859,25 @@ test("pre-submit cancellation releases the claim instead of recording an ambiguo
   assert.equal(snapshots.at(-1).blocked_message, null,
     "pre-submit cancellation must release the durable claim");
 });
+
+test("conflicting pending-response and blocked-message state fails closed before provider access", async () => {
+  let askCount = 0;
+  const id = "10000000-0000-4000-8000-000000000099";
+  const bridge = new PlaywrightSessionBridge({
+    page: { isClosed: () => false },
+    participantId: "self",
+    adapter: { ask: async () => { askCount++; return "must not run"; } },
+    readMessages: async () => ({ messages: [] }),
+    sendMessage: async () => { throw new Error("must not send"); },
+    stateStore: makeDurableTestStore([], {
+      pending_response: {
+        source_message_id: id,
+        message_created_at: "2026-11-01T00:00:00.000Z",
+        body: "saved response",
+      },
+      blocked_message: { message_id: id, reason: "provider_prompt_in_progress" },
+    }),
+  });
+  await assert.rejects(() => bridge.step({ approved: true }), /cannot contain both/);
+  assert.equal(askCount, 0);
+});
