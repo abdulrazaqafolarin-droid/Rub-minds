@@ -19,6 +19,22 @@ test('sends one event to a correctly scoped private Realtime topic using server 
  assert.equal(called.init.headers.Authorization,undefined);
  assert.deepEqual(JSON.parse(called.init.body),payload);
 });
+test('rejects malformed optional fields without relying on inferred JS parameter types',async()=>{
+ await assert.rejects(broadcastPrivateDeviceEvent({
+  projectUrl:'https://example-project.supabase.co',
+  apiKey:'x'.repeat(20),
+  deviceId,
+  event:'command',
+  payload:{...payload,roomId:undefined},
+ }),/Invalid/);
+ await assert.rejects(broadcastPrivateDeviceEvent({
+  projectUrl:'https://example-project.supabase.co',
+  apiKey:'x'.repeat(20),
+  deviceId,
+  event:42,
+  payload,
+ }),/Invalid/);
+});
 test('rejects payloads that escape their topic or invalid private event types',async()=>{
  await assert.rejects(broadcastPrivateDeviceEvent({projectUrl:'https://example.supabase.co',apiKey:'x'.repeat(20),deviceId,event:'command',payload:{...payload,deviceId:'40000000-0000-4000-8000-000000000004'}}),/Invalid/);
  await assert.rejects(broadcastPrivateDeviceEvent({projectUrl:'https://example.supabase.co',apiKey:'x'.repeat(20),deviceId,event:'something',payload}),/Invalid/);
