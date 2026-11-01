@@ -292,7 +292,7 @@ export function validateToolArguments(name, args) {
           !Number.isFinite(Date.parse(args.after_created_at)))) return "after_created_at must be an ISO date-time with timezone and at most microsecond precision.";
       if (args.after_message_id !== undefined && (typeof args.after_message_id !== "string" ||
           !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(args.after_message_id))) return "after_message_id must be a UUID.";
-      if (args.after_message_id !== undefined && args.after_created_at === undefined) return "after_message_id requires after_created_at so the message cursor can be ordered safely.";
+      if (args.after_message_id !== undefined && args.after_created_at === undefined) return "after_created_at is required when after_message_id is supplied.";
       if (args.timeout_ms !== undefined && (!Number.isInteger(args.timeout_ms) || args.timeout_ms < 1000 || args.timeout_ms > 15000)) return "timeout_ms must be an integer from 1000 to 15000.";
       if (args.limit !== undefined && (!Number.isInteger(args.limit) || args.limit < 1 || args.limit > 100)) return "limit must be an integer from 1 to 100.";
       if (Object.keys(args).some((key) => !["after_created_at", "after_message_id", "timeout_ms", "limit"].includes(key))) return "Unknown wait_for_group_messages argument.";
