@@ -109,6 +109,17 @@ export const RUB_MINDS_MCP_TOOLS = [
     body: { type: "string", minLength: 1, maxLength: 10000 },
     source_message_id: { type: "string", minLength: 1, maxLength: 200 },
   }, ["body"]) },
+  { name: "load_original_session_bridge_state", description: "Internal original-session bridge helper. Load the durable cursor and pending-delivery state for this joined MCP session. Use only when an explicitly authorized original-session bridge runtime is running.", inputSchema: objectSchema({}) },
+  { name: "save_original_session_bridge_state", description: "Internal original-session bridge helper. Atomically save this session's cursor, pending reply, and fail-closed status using the revision returned by load_original_session_bridge_state. A revision conflict means another writer changed state; stop and reload instead of overwriting it.", inputSchema: objectSchema({
+    expected_revision: { type: "integer", minimum: 0 },
+    cursor_created_at: { type: ["string", "null"] },
+    cursor_message_id: { type: ["string", "null"], format: "uuid" },
+    pending_message_id: { type: ["string", "null"], format: "uuid" },
+    pending_message_created_at: { type: ["string", "null"] },
+    pending_response: { type: ["string", "null"], maxLength: 10000 },
+    blocked_message_id: { type: ["string", "null"], format: "uuid" },
+    blocked_reason: { type: ["string", "null"], maxLength: 200 },
+  }, ["expected_revision", "cursor_created_at", "cursor_message_id", "pending_message_id", "pending_message_created_at", "pending_response", "blocked_message_id", "blocked_reason"]) },
   { name: "read_session_memory", description: "Read this participant's private imported session summaries and memory entries explicitly shared with the group.", inputSchema: objectSchema({}) },
   { name: "import_session_memory", description: "Import a structured session-memory document, optionally including transcript_text and transcript_complete. Imported raw context is private to this AI participant; it is not automatically shared with the group.", inputSchema: objectSchema({ document: { type: "object" } }, ["document"]) },
   { name: "remember_memory", description: "Store a concise memory entry. Choose visibility explicitly: private or group. Group-visible entries can be read by other participants.", inputSchema: objectSchema({
@@ -206,6 +217,26 @@ export function validateToolArguments(name, args) {
       if (args.confirm_leave !== true) return "Explicit confirmation is required to leave and revoke this group session.";
       if (Object.keys(args).some((key) => key !== "confirm_leave")) return "Unknown leave_group argument.";
       return null;
+    case "load_original_session_bridge_state":
+      return Object.keys(args).length ? "This tool takes no arguments." : null;
+    case "save_original_session_bridge_state": {
+      if (!Number.isSafeInteger(args.expected_revision) || args.expected_revision < 0) return "expected_revision must be a non-negative safe integer.";
+      const uuid = value => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+      const timestamp = value => typeof value === "string" && Number.isFinite(Date.parse(value));
+      const cursorEmpty = args.cursor_created_at === null && args.cursor_message_id === null;
+      const cursorFull = timestamp(args.cursor_created_at) && uuid(args.cursor_message_id);
+      if (!cursorEmpty && !cursorFull) return "cursor_created_at and cursor_message_id must both be null or a valid timestamp/UUID pair.";
+      const pendingEmpty = args.pending_message_id === null && args.pending_message_created_at === null && args.pending_response === null;
+      const pendingFull = uuid(args.pending_message_id) && timestamp(args.pending_message_created_at) &&
+        typeof args.pending_response === "string" && args.pending_response.trim().length > 0 && args.pending_response.length <= 10000;
+      if (!pendingEmpty && !pendingFull) return "pending message ID, timestamp and response must all be null or a valid non-empty response tuple.";
+      const blockedEmpty = args.blocked_message_id === null && args.blocked_reason === null;
+      const blockedFull = uuid(args.blocked_message_id) && typeof args.blocked_reason === "string" &&
+        args.blocked_reason.trim().length > 0 && args.blocked_reason.length <= 200;
+      if (!blockedEmpty && !blockedFull) return "blocked_message_id and blocked_reason must both be null or a valid pair.";
+      if (Object.keys(args).some(key => !["expected_revision","cursor_created_at","cursor_message_id","pending_message_id","pending_message_created_at","pending_response","blocked_message_id","blocked_reason"].includes(key))) return "Unknown save_original_session_bridge_state argument.";
+      return null;
+    }
     case "read_group_context":
     case "read_group_messages":
     case "read_session_memory":
