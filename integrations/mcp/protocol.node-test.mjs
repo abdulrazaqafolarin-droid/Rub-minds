@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   messagesAfterCursor,
+  compareMessageCursors,
+  isValidMessageCursor,
   MCP_PROTOCOL_VERSION,
   MCP_MODERN_PROTOCOL_VERSION,
   getModernMcpTools,
@@ -342,4 +344,20 @@ test("original-session bridge state tools are listed, session-scoped, and fail c
     ...validEmpty, blocked_message_id: otherId,
   }), /blocked_message_id/);
   assert.match(validateToolArguments("save_original_session_bridge_state", { ...validEmpty, extra: true }), /Unknown/);
+});
+
+test("message cursor comparator preserves timezone offsets and exact microsecond ordering", () => {
+  const cursor = { id: "message-40", created_at: "2026-10-24T17:00:00.123456+00:00" };
+  assert.equal(compareMessageCursors(
+    { id: "message-41", created_at: "2026-10-24T19:00:00.123456+02:00" }, cursor
+  ), 1);
+  assert.equal(compareMessageCursors(
+    { id: "message-39", created_at: "2026-10-24T19:00:00.123456+02:00" }, cursor
+  ), -1);
+  assert.equal(compareMessageCursors(
+    { id: "message-99", created_at: "2026-10-24T19:00:00.123455+02:00" }, cursor
+  ), -1);
+  assert.equal(isValidMessageCursor(cursor), true);
+  assert.equal(isValidMessageCursor({ created_at: "2026-10-24T17:00:00.000Z" }), false);
+  assert.equal(isValidMessageCursor({ id: "bad", created_at: "invalid" }), false);
 });
