@@ -252,7 +252,7 @@ try {
   // Exercise real PostgreSQL composite pagination when two messages share
   // the exact same microsecond timestamp. A timestamp-only cursor would skip
   // or replay one of these rows, so page 1 and page 2 must use the stable ID tie-breaker.
-  const tieTimestamp = new Date(Date.now() + 60_000).toISOString().replace(/\\.\\d{3}Z$/, ".123456Z");
+  const tieTimestamp = new Date(Date.now() + 60_000).toISOString().replace(/\.\d{3}Z$/, ".123456Z");
   const lowerTieCursorId = "e0000000-0000-4000-8000-000000000001";
   const tieMessageOneId = "f1000000-0000-4000-8000-000000000001";
   const tieMessageTwoId = "f2000000-0000-4000-8000-000000000001";
