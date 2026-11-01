@@ -11,6 +11,7 @@ import android.os.Looper
 import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import java.security.MessageDigest
 
 /**
  * User-enabled gesture bridge. It does not upload the accessibility tree or text.
@@ -20,6 +21,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
     @Volatile private var boundSessionId: String? = null
     @Volatile private var boundPackageName: String? = null
     @Volatile private var gestureInFlight = false
+    @Volatile private var boundComposerTargetId: String? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -50,6 +52,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         if (instance === this) instance = null
         boundSessionId = null
         boundPackageName = null
+        boundComposerTargetId = null
         synchronized(this) { gestureInFlight = false }
         AndroidScreenShareService.revokeLocalTouch(applicationContext)
         super.onDestroy()
@@ -61,6 +64,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         if (AppGrantStore(this).get(packageName, digest) == null) return false
         boundSessionId = sessionId
         boundPackageName = packageName
+        boundComposerTargetId = null
         return true
     }
 
@@ -144,6 +148,139 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         }
     }
 
+    fun selectComposerTarget(
+        sessionId: String,
+        packageName: String,
+        selection: NormalizedComposerSelection
+    ): ComposerSelectionDecision {
+        boundComposerTargetId = null
+        if (boundSessionId != sessionId || boundPackageName != packageName) {
+            return ComposerSelectionDecision(null, "session_or_app_mismatch")
+        }
+        if (!isServiceEnabled(this)) return ComposerSelectionDecision(null, "accessibility_service_not_enabled")
+        val root = try { rootInActiveWindow } catch (_: SecurityException) { null }
+            ?: return ComposerSelectionDecision(null, "active_app_window_unavailable")
+        try {
+            if (!root.isVisibleToUser || root.packageName?.toString() != packageName) {
+                return ComposerSelectionDecision(null, "selected_app_not_foreground")
+            }
+            val signer = AppIdentity.signingCertificateSha256(this, packageName)
+                ?: return ComposerSelectionDecision(null, "app_signer_unavailable")
+            val grant = AppGrantStore(this).get(packageName, signer)
+                ?: return ComposerSelectionDecision(null, "app_not_locally_approved")
+            if (!grant.allowDraftInsertion || !AppGrantPolicy.canLaunch(grant, signer)) {
+                return ComposerSelectionDecision(null, "draft_insertion_not_locally_approved")
+            }
+
+            val rootBounds = Rect()
+            root.getBoundsInScreen(rootBounds)
+            val windowBounds = TouchWindowBounds(rootBounds.left, rootBounds.top, rootBounds.right, rootBounds.bottom)
+            val selectedBounds = AndroidComposerTargetPolicy.mapRegion(selection, windowBounds)
+                ?: return ComposerSelectionDecision(null, "invalid_selection_region")
+
+            val candidates = mutableListOf<ComposerCandidate>()
+            val traversal = intArrayOf(0, 0) // visited nodes, overflow flag
+            collectComposerCandidates(root, packageName, candidates, traversal)
+            if (traversal[1] != 0) return ComposerSelectionDecision(null, "accessibility_tree_too_large")
+            val decision = AndroidComposerTargetPolicy.choose(candidates, packageName, selectedBounds)
+            if (decision.candidate != null) boundComposerTargetId = decision.candidate.targetId
+            return decision
+        } finally {
+            root.recycle()
+        }
+    }
+
+    fun isSelectedComposerFocused(sessionId: String, packageName: String, targetId: String): Boolean {
+        if (boundSessionId != sessionId || boundPackageName != packageName ||
+            boundComposerTargetId != targetId || !isServiceEnabled(this)
+        ) return false
+        val root = try { rootInActiveWindow } catch (_: SecurityException) { null } ?: return false
+        try {
+            if (!root.isVisibleToUser || root.packageName?.toString() != packageName) return false
+            val signer = AppIdentity.signingCertificateSha256(this, packageName) ?: return false
+            val grant = AppGrantStore(this).get(packageName, signer) ?: return false
+            if (!grant.allowDraftInsertion || !AppGrantPolicy.canLaunch(grant, signer)) return false
+            val focused = try { root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) } catch (_: SecurityException) { null }
+                ?: return false
+            try {
+                if (!focused.isEditable || !focused.isEnabled || !focused.isVisibleToUser ||
+                    focused.isPassword || focused.packageName?.toString() != packageName
+                ) return false
+                val bounds = Rect()
+                focused.getBoundsInScreen(bounds)
+                if (bounds.isEmpty) return false
+                return composerTargetId(focused, packageName, bounds) == targetId
+            } finally {
+                focused.recycle()
+            }
+        } finally {
+            root.recycle()
+        }
+    }
+
+    fun clearSelectedComposer() {
+        boundComposerTargetId = null
+    }
+
+    private fun collectComposerCandidates(
+        node: AccessibilityNodeInfo,
+        packageName: String,
+        candidates: MutableList<ComposerCandidate>,
+        traversal: IntArray
+    ) {
+        if (traversal[1] != 0) return
+        traversal[0] += 1
+        if (traversal[0] > MAX_COMPOSER_TREE_NODES) {
+            traversal[1] = 1
+            return
+        }
+        if (node.packageName?.toString() == packageName &&
+            node.isEditable && node.isEnabled && node.isVisibleToUser && !node.isPassword
+        ) {
+            val bounds = Rect()
+            node.getBoundsInScreen(bounds)
+            if (!bounds.isEmpty) {
+                candidates += ComposerCandidate(
+                    targetId = composerTargetId(node, packageName, bounds),
+                    packageName = packageName,
+                    bounds = ComposerScreenRect(bounds.left, bounds.top, bounds.right, bounds.bottom),
+                    editable = node.isEditable,
+                    enabled = node.isEnabled,
+                    visible = node.isVisibleToUser,
+                    password = node.isPassword
+                )
+            }
+        }
+        for (index in 0 until node.childCount.coerceAtMost(MAX_COMPOSER_TREE_NODES)) {
+            if (traversal[1] != 0) return
+            val child = try { node.getChild(index) } catch (_: SecurityException) { null } ?: continue
+            try {
+                collectComposerCandidates(child, packageName, candidates, traversal)
+            } finally {
+                child.recycle()
+            }
+        }
+    }
+
+    /** Hash only non-content node identity; never read text, hint or description. */
+    private fun composerTargetId(
+        node: AccessibilityNodeInfo,
+        packageName: String,
+        bounds: Rect
+    ): String {
+        val identity = listOf(
+            packageName,
+            node.windowId.toString(),
+            node.className?.toString().orEmpty(),
+            node.viewIdResourceName.orEmpty(),
+            bounds.left.toString(), bounds.top.toString(),
+            bounds.right.toString(), bounds.bottom.toString()
+        ).joinToString("|")
+        return MessageDigest.getInstance("SHA-256")
+            .digest(identity.toByteArray(Charsets.UTF_8))
+            .joinToString("") { byte -> "%02x".format(byte) }
+    }
+
     private fun currentRootPackage(): String? =
         try { rootInActiveWindow?.let { root ->
             try { root.packageName?.toString() } finally { root.recycle() }
@@ -151,6 +288,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
 
     companion object {
         @Volatile private var instance: AndroidTouchAccessibilityService? = null
+        private const val MAX_COMPOSER_TREE_NODES = 160
 
         fun isServiceEnabled(context: Context): Boolean {
             val expected = ComponentName(context, AndroidTouchAccessibilityService::class.java).flattenToString()
@@ -177,7 +315,22 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             if (sessionId == null || current.boundSessionId == sessionId) {
                 current.boundSessionId = null
                 current.boundPackageName = null
+                current.boundComposerTargetId = null
             }
+        }
+
+        fun selectComposerTarget(
+            sessionId: String,
+            packageName: String,
+            selection: NormalizedComposerSelection
+        ): ComposerSelectionDecision = instance?.selectComposerTarget(sessionId, packageName, selection)
+            ?: ComposerSelectionDecision(null, "accessibility_service_not_connected")
+
+        fun isSelectedComposerFocused(sessionId: String, packageName: String, targetId: String): Boolean =
+            instance?.isSelectedComposerFocused(sessionId, packageName, targetId) == true
+
+        fun clearSelectedComposer() {
+            instance?.clearSelectedComposer()
         }
 
         fun currentForegroundPackage(): String? = instance?.currentRootPackage()
