@@ -109,11 +109,31 @@ export function conversationKey(provider, value) {
   return url.origin + url.pathname;
 }
 
+const BROWSER_ENV_ALLOWLIST = new Set([
+  // Process and temporary-directory basics.
+  "PATH", "PATHEXT", "COMSPEC", "TMP", "TEMP", "TMPDIR",
+  // Windows profile and system paths.
+  "SYSTEMROOT", "WINDIR", "PROGRAMDATA", "USERPROFILE", "HOMEDRIVE",
+  "HOMEPATH", "APPDATA", "LOCALAPPDATA",
+  // Unix/macOS user and locale basics.
+  "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TZ",
+  // Local graphical-session plumbing used by headed Chromium.
+  "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR",
+  "DBUS_SESSION_BUS_ADDRESS", "XAUTHORITY",
+  // Optional Playwright cache override; this is a filesystem path, not a credential.
+  "PLAYWRIGHT_BROWSERS_PATH",
+]);
+
 export function browserProcessEnvironment(env = process.env) {
-  // The browser process needs the provider session, not the Rub Minds bearer
-  // capability. Never pass the MCP session handle into Chromium's environment.
-  const browserEnv = { ...env };
-  delete browserEnv.RUB_MINDS_MCP_SESSION_HANDLE;
+  // Chromium receives only OS/runtime variables it needs. All application
+  // secrets, API keys, MCP identity/capabilities and arbitrary shell variables
+  // are excluded by default, not merely the currently known session handle.
+  const browserEnv = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (BROWSER_ENV_ALLOWLIST.has(key.toUpperCase()) && value !== undefined) {
+      browserEnv[key] = value;
+    }
+  }
   return browserEnv;
 }
 
