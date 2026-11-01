@@ -157,7 +157,7 @@ It launches a **dedicated persistent Playwright Chromium profile** at `~/.rub-mi
 Before using it, all of these must be true:
 
 - Use the isolated Rub Minds Staging project and a disposable test group. The MCP session handle must belong to the AI participant that has already joined that group.
-- The staging `rub-minds-mcp` function must have the candidate PR #60 code deployed and the `20261101190000_mcp_bridge_state.sql` migration applied. This runtime needs `read_group_messages`, `wait_for_group_messages`, `send_group_message`, `load_original_session_bridge_state` and `save_original_session_bridge_state`. These bridge-state tools were **not deployed to staging at the last source review**, so do not run this against the current staging endpoint until a deliberate staging deployment is completed.
+- The staging `rub-minds-mcp` function must have the bridge-enabled code and the bridge-state migration applied. On 2026-11-01, Rub Minds Staging was updated to function version 3; the deployed source was read back and matched the candidate branch bundle, including `read_group_messages`, `wait_for_group_messages`, `send_group_message`, `load_original_session_bridge_state` and `save_original_session_bridge_state`. The staging migration history records `20261101221132_mcp_bridge_state`, `20261101221147_group_task_review_criterion_evidence` and `20261101221342_restrict_group_task_review_service_role_execute`. Production was not changed.
 - Install the Playwright Chromium browser once. Do not point this runner at production; its endpoint validator only accepts the Rub Minds Staging project.
 - Obtain the exact existing conversation URL, participant UUID and 64-character session handle from the authorized join flow. Never put the session handle in a URL, command-line argument, source file, or PR.
 
@@ -198,3 +198,23 @@ Claude uses `--provider claude` and an exact `https://claude.ai/chat/<conversati
 The runner asks for `START` before opening the profile. It then asks for `READY` if manual sign-in/navigation is needed. For every new group message it displays the sender and message locally and requires the exact word `SEND`; any other answer declines that item. The runner pins the selected origin and conversation path for its entire lifetime and checks that identity before every group turn; switching the browser tab to another conversation blocks that turn before the provider adapter is called. It does not process the group's earlier history on startup. Ctrl+C stops the foreground loop and closes only the dedicated Playwright context; the local profile remains for the next explicitly started run. The session handle is read only from the process environment and is never printed.
 
 This is a **local foreground acceptance tool**, not a hosted worker, remote browser, 24/7 service or idle-model wake mechanism. The laptop and provider tab must remain available while it runs. The CLI tests use fake page/context objects; they do not sign into or prompt real ChatGPT/Claude accounts. Real provider compatibility and a staging round trip remain mandatory before calling the bridge working.
+
+## Staging bridge revalidation — 2026-11-01
+
+This section supersedes the earlier staging note above that the bridge-state tools had not yet been deployed.
+
+- Project: **Rub Minds Staging** (`tzcuuynmviiuactafpld`), PostgreSQL 17.11, status `ACTIVE_HEALTHY`.
+- Edge Function: `rub-minds-mcp`, active version **3**. Its deployed files were read back and compared with the candidate branch sources after the deployment's relative-import path rewrites. The bridge load/save tools, Vault-key fallback, atomic rejoin cleanup and atomic session-termination handler are present.
+- New staging migration history entries: `20261101221132_mcp_bridge_state`, `20261101221147_group_task_review_criterion_evidence`, and `20261101221342_restrict_group_task_review_service_role_execute`.
+- Bridge-state table verification: RLS enabled; no direct table privileges for `anon` or `authenticated`; `service_role` has the required table permissions. The load/save bridge RPCs are restricted to `service_role`.
+- Human task-review RPC verification: `authenticated` can execute it; `anon` and `service_role` cannot. The last permission is enforced by the forward-only revoke migration because the staging project's default function grants differed from the isolated CI database.
+- Staging PostgreSQL acceptance: `supabase/tests/mcp_bridge_state.sql` passed. `supabase/tests/group_task_coordination.sql` passed inside an explicit transaction followed by rollback. Post-test checks found zero fixture users, rooms, hosts or MCP sessions and verified the intended permissions remained in place.
+- The review/performance advisors are **not clean**: they still report authenticated-callable SECURITY DEFINER functions (including intentionally scoped application RPCs), disabled leaked-password protection, unindexed foreign keys and unused indexes. These remain review items; do not claim a project-wide security-advisor clean bill.
+
+### Remaining acceptance boundary
+
+The local GitHub Actions Supabase stack has passed clean migration rebuild, Vault-only startup, MCP tool discovery, and official SDK session tests on earlier bridge commits; the newest combined PR #59 run is repeating the full stack after the dependency merge. The hosted staging function source and database policy have been verified, but a live HTTP initialize/tools-list call against the hosted staging URL was not completed from this environment.
+
+The Playwright ChatGPT/Claude adapters remain **experimental and unverified against real authenticated provider pages**. Their selector, send, response-stability and navigation checks use fake Playwright pages in CI. A real acceptance round trip still requires the account owner to run the foreground CLI against a disposable staging group, manually authenticate in its dedicated browser profile, and approve each displayed group message with `SEND`. The CLI is not an unattended worker; the laptop, foreground process and provider tab must stay available.
+
+No production Supabase schema, Edge Function, secret, Auth setting, Vercel production alias or production deployment was changed during this revalidation.
