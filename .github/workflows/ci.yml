@@ -400,7 +400,13 @@ jobs:
           export LOCAL_SUPABASE_ANON_KEY="${ANON_KEY:?Local anon key missing}"
           export LOCAL_SUPABASE_SERVICE_ROLE_KEY="${SERVICE_ROLE_KEY:?Local service-role key missing}"
           node scripts/local-human-invite-e2e.mjs
-      - name: Start MCP Edge Function with disposable local credentials
+      - name: Verify local Supabase Vault key access boundary
+        run: |
+          set -euo pipefail
+          eval "$(supabase status -o env)"
+          : "${DB_URL:?Local Supabase database URL missing}"
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/rub_minds_mcp_vault_encryption_key.sql
+      - name: Start MCP Edge Function with Vault-only local credentials
         run: |
           set -euo pipefail
           eval "$(supabase status -o env)"
@@ -408,7 +414,6 @@ jobs:
           cat > "$RUNNER_TEMP/mcp.env" <<EOF
           SUPABASE_URL=${API_URL:-http://127.0.0.1:54321}
           SUPABASE_SERVICE_ROLE_KEY=${SERVICE_ROLE_KEY}
-          RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
           EOF
           supabase functions serve rub-minds-mcp --env-file "$RUNNER_TEMP/mcp.env" > "$RUNNER_TEMP/mcp-edge.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/mcp-edge.pid"
