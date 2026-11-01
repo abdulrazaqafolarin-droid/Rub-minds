@@ -74,10 +74,11 @@ begin
     and c.conname in (
       'mcp_bridge_cursor_pair_check',
       'mcp_bridge_pending_pair_check',
-      'mcp_bridge_blocked_pair_check'
+      'mcp_bridge_blocked_pair_check',
+      'mcp_bridge_pending_blocked_exclusive_check'
     );
-  if v_constraint_count <> 3 then
-    raise exception 'Bridge-state cursor, pending-response and blocked-state tuple constraints are required';
+  if v_constraint_count <> 4 then
+    raise exception 'Bridge-state cursor, pending-response, blocked-state and exclusivity constraints are required';
   end if;
 
   select pg_catalog.pg_get_constraintdef(c.oid)
