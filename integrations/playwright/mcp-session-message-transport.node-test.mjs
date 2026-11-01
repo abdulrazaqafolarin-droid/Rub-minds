@@ -216,6 +216,14 @@ test("surfaces a durable bridge-state revision conflict without overwriting it",
   assert.deepEqual(await transport.saveBridgeState({
     expected_revision: 7, cursor: null, pending_response: null, blocked_message: null,
   }), { saved: false, conflict: true, revision: 9 });
+  const id = "550e8400-e29b-41d4-a716-446655440000";
+  await assert.rejects(() => transport.saveBridgeState({
+    expected_revision: 7,
+    cursor: null,
+    pending_response: { source_message_id: id, message_created_at: NEW_TIME, body: "pending" },
+    blocked_message: { message_id: id, reason: "provider_prompt_in_progress" },
+  }), /cannot coexist/);
+  assert.equal(fake.requests.length, 1, "invalid mixed state must be rejected before an MCP write");
 });
 
 test("message sends include a stable source_message_id for server-side deduplication", async () => {
