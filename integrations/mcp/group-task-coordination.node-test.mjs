@@ -77,8 +77,8 @@ test("task-mode assignments use the existing durable wake queue and fixed canoni
   assert.doesNotMatch(promptStatement, /new\.(description|expected_output|acceptance_criteria|result_content)/);
   assert.match(migration, /agent_connections[\s\S]*?rub_minds_mcp_sessions/);
   assert.match(migration, /wake_enabled=true[\s\S]*?wake_expires_at/);
-  assert.match(migration, /cancel_backroom_wake_job\\(v_stale_job\\.id,v_stale_job\\.owner_id\\)/);
-  assert.match(migration, /old\\.assigned_to_participant_id is not null[\s\S]*?cancel_backroom_wake_job/);
+  assert.match(migration, /cancel_backroom_wake_job\s*\(\s*v_stale_job\.id\s*,\s*v_stale_job\.owner_id\s*\)/);
+  assert.match(migration, /old\.assigned_to_participant_id is not null[\s\S]*?cancel_backroom_wake_job/);
 });
 
 test("task creation captures acceptance criteria and serializes idempotent retries", () => {
@@ -89,18 +89,18 @@ test("task creation captures acceptance criteria and serializes idempotent retri
   assert.match(migration, /p_acceptance_criteria jsonb default/);
   assert.match(migration, /p_idempotency_key uuid default null/);
   assert.match(migration, /pg_advisory_xact_lock[\s\S]*p_idempotency_key/);
-  assert.match(migration, /Task idempotency key was reused with different content/);
+  assert.match(migration, /Task idempotency key was reused with different creation input/);
   assert.match(migration, /create unique index if not exists room_tasks_creator_idempotency_idx/);
   assert.match(migration, /alter publication supabase_realtime add table public\./);
 });
 
 test("task cancellation removes stale wakes and blocks dependent work after terminal prerequisite failure", () => {
-  assert.match(migration, /create or replace function public\\.cancel_room_task/);
-  assert.match(migration, /create or replace function public\\.fail_room_task/);
-  assert.match(migration, /cancel_backroom_wake_job\\(v_stale_job\\.id,v_stale_job\\.owner_id\\)/);
-  assert.match(migration, /new\\.status in \\('failed','cancelled'\\)[\\s\\S]*?set status='blocked'/);
-  assert.match(migration, /grant execute on function public\\.cancel_room_task\\(uuid,uuid\\) to authenticated/);
-  assert.match(migration, /grant execute on function public\\.fail_room_task\\(uuid,uuid,uuid,text\\) to service_role/);
+  assert.match(migration, /create or replace function public\.cancel_room_task\(/);
+  assert.match(migration, /create or replace function public\.fail_room_task\(/);
+  assert.match(migration, /cancel_backroom_wake_job\s*\(\s*v_stale_job\.id\s*,\s*v_stale_job\.owner_id\s*\)/);
+  assert.match(migration, /new\.status in \('failed','cancelled'\)[\s\S]*?set status='blocked'/);
+  assert.match(migration, /grant execute on function public\.cancel_room_task\(uuid,uuid\) to authenticated/);
+  assert.match(migration, /grant execute on function public\.fail_room_task\(uuid,uuid,uuid,text\) to service_role/);
 });
 
 test("task submissions preserve bounded provenance and humans cannot approve their own work", () => {
@@ -111,7 +111,7 @@ test("task submissions preserve bounded provenance and humans cannot approve the
   assert.match(migration, /Only the task creator or group owner may review this task/);
   assert.match(migration, /A participant cannot review its own task submission/);
   assert.match(migration, /status',v_task\.status/);
-  assert.match(migration, /A task awaiting review or in a terminal state cannot be reassigned/);
+  assert.match(migration, /Only backlog, assigned or blocked tasks can be reassigned/);
 });
 
 

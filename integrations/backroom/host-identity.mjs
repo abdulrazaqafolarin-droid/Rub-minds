@@ -4,14 +4,25 @@
  */
 import {randomUUID,randomBytes,createHash} from 'node:crypto';
 import {mkdir,open,readFile,lstat,realpath,unlink} from 'node:fs/promises';
-import {dirname,resolve} from 'node:path';
+import {dirname,resolve,win32} from 'node:path';
 
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TOKEN=/^[a-f0-9]{64}$/;
+function sameResolvedPath(actual, expected) {
+ if (process.platform !== "win32") return actual === expected;
+ const canonical = (value) => {
+  let candidate = value;
+  if (candidate.startsWith("\\\\?\\UNC\\")) candidate = "\\\\" + candidate.slice(8);
+  else if (candidate.startsWith("\\\\?\\")) candidate = candidate.slice(4);
+  return win32.normalize(win32.resolve(candidate)).toLowerCase();
+ };
+ return canonical(actual) === canonical(expected);
+}
+
 async function privateDirectory(directory){
  await mkdir(directory,{recursive:true,mode:0o700});
  const stat=await lstat(directory);
- if(!stat.isDirectory()||stat.isSymbolicLink()||await realpath(directory)!==directory||
+ if(!stat.isDirectory()||stat.isSymbolicLink()||!sameResolvedPath(await realpath(directory),directory)||
    (process.platform!=='win32'&&(stat.mode&0o077)!==0))
   throw new Error('Unsafe Backroom host identity directory');
 }

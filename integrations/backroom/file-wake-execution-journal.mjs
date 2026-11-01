@@ -5,11 +5,22 @@
  */
 import {createHash} from 'node:crypto';
 import {mkdir,open,lstat,realpath} from 'node:fs/promises';
-import {resolve,join} from 'node:path';
+import {resolve,join,win32} from 'node:path';
 
 const DIGEST=/^[a-f0-9]{64}$/;
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+function sameResolvedPath(actual, expected) {
+ if (process.platform !== "win32") return actual === expected;
+ const canonical = (value) => {
+  let candidate = value;
+  if (candidate.startsWith("\\\\?\\UNC\\")) candidate = "\\\\" + candidate.slice(8);
+  else if (candidate.startsWith("\\\\?\\")) candidate = candidate.slice(4);
+  return win32.normalize(win32.resolve(candidate)).toLowerCase();
+ };
+ return canonical(actual) === canonical(expected);
+}
+
 function validRecord(job) {
   return job && DIGEST.test(job.jobKey??'') && UUID.test(job.jobId??'') &&
     UUID.test(job.hostId??'') && UUID.test(job.bindingId??'') &&
@@ -25,7 +36,7 @@ export class FileWakeExecutionJournal {
     await mkdir(this.directory,{recursive:true,mode:0o700});
     // Refuse symlinked journal directories; do not trust a browser-selected path.
     const stat=await lstat(this.directory);
-    if(!stat.isDirectory()||stat.isSymbolicLink()||await realpath(this.directory)!==this.directory ||
+    if(!stat.isDirectory()||stat.isSymbolicLink()||!sameResolvedPath(await realpath(this.directory),this.directory) ||
        (process.platform!=='win32' && (stat.mode & 0o077)!==0))
       throw new Error('Unsafe wake journal directory');
     const digest=createHash('sha256').update(JSON.stringify([

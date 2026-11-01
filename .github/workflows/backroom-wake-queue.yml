@@ -50,9 +50,9 @@ jobs:
           returns uuid
           language sql stable
           set search_path = ''
-          as $
+          as $$
             select nullif(pg_catalog.current_setting('request.jwt.claim.sub', true), '')::uuid
-          $;
+          $$;
           create publication supabase_realtime;
           create table public.rooms (id uuid primary key, owner_id uuid not null references auth.users(id), title text not null default 'CI room', objective text not null default '', created_at timestamptz not null default now());
           create table public.participants (
