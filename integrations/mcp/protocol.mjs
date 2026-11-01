@@ -257,7 +257,9 @@ export function validateToolArguments(name, args) {
     case "save_original_session_bridge_state": {
       if (!Number.isSafeInteger(args.expected_revision) || args.expected_revision < 0) return "expected_revision must be a non-negative safe integer.";
       const uuid = value => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-      const timestamp = value => typeof value === "string" && Number.isFinite(Date.parse(value));
+      const timestamp = value => typeof value === "string" &&
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(value) &&
+        Number.isFinite(Date.parse(value));
       const cursorEmpty = args.cursor_created_at === null && args.cursor_message_id === null;
       const cursorFull = timestamp(args.cursor_created_at) && uuid(args.cursor_message_id);
       if (!cursorEmpty && !cursorFull) return "cursor_created_at and cursor_message_id must both be null or a valid timestamp/UUID pair.";
