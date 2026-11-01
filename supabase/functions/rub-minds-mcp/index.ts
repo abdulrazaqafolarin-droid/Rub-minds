@@ -267,6 +267,12 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
         .is("revoked_at", null).gt("expires_at", new Date().toISOString()).maybeSingle();
       if (activeConnectionError) throw new Error("Could not verify the existing AI participant session.");
       if (activeConnection) return { joined: true, room_id: session.room_id, participant_id: session.participant_id, note: "This MCP session is already joined to an active group.", post_join_next_step: "Ask the session owner for consent unless already explicitly authorized. If consent is given, call prepare_session_export with confirm_export=true; otherwise do not capture. Never post raw session history to the group." };
+      // The previous provider credential is no longer live. Remove its private
+      // cursor/pending reply before allowing this same MCP handle to join again,
+      // otherwise the next participant could inherit state from the old binding.
+      const { error: staleBridgeStateError } = await db.from("rub_minds_mcp_bridge_state")
+        .delete().eq("session_digest", session.session_digest as string);
+      if (staleBridgeStateError) throw new Error("Could not clear stale original-session bridge state before rejoining.");
       const { error: clearError } = await db.from("rub_minds_mcp_sessions").update({
         agent_credential_ciphertext: null, room_id: null, participant_id: null,
       }).eq("session_digest", session.session_digest as string)
