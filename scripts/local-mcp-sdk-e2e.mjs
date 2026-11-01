@@ -1019,6 +1019,84 @@ try {
   assert.equal(submissionRetry.structuredContent?.replayed, true);
   console.log("Official MCP SDK completed the human-governed task lifecycle: propose → human assign → AI claim → submit → owner approve.");
 
+  // Revoke AI two outside the MCP session while keeping its opaque MCP
+  // handle alive. A new invite on that same handle must clear the old private
+  // cursor before it can bind to the new participant.
+  const secondSessionDigest = createHash("sha256").update(two.session_handle, "utf8").digest("hex");
+  const previousCursorState = await second.callTool({
+    name: "save_original_session_bridge_state",
+    arguments: {
+      session_handle: two.session_handle,
+      expected_revision: isolatedState.structuredContent.revision,
+      cursor_created_at: stateMessage.created_at,
+      cursor_message_id: stateMessage.id,
+      pending_message_id: null,
+      pending_message_created_at: null,
+      pending_response: null,
+      blocked_message_id: null,
+      blocked_reason: null,
+    },
+  });
+  assert.notEqual(previousCursorState.isError, true, "could not seed stale cursor for revoked-session rejoin");
+  assert.equal(previousCursorState.structuredContent?.saved, true);
+  const oldConnectionRows = await request(
+    "/rest/v1/agent_connections?select=id,participant_id,revoked_at&participant_id=eq." + two.participant_id,
+  );
+  assert.equal(oldConnectionRows.length, 1);
+  const staleRejoinToken = "9".repeat(64);
+  await request("/rest/v1/room_invites", {
+    method: "POST",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      room_id: room.id,
+      created_by: owner.id,
+      token_hash: createHash("sha256").update(staleRejoinToken, "utf8").digest("hex"),
+      expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      max_uses: 1,
+      uses: 0,
+      allow_ai: true,
+      max_ai_uses: 1,
+      ai_uses: 0,
+    }),
+  });
+  const revokedOldConnection = await request(
+    "/rest/v1/agent_connections?id=eq." + oldConnectionRows[0].id,
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({ revoked_at: new Date().toISOString() }),
+    },
+  );
+  assert.equal(revokedOldConnection.length, 1);
+  assert.ok(revokedOldConnection[0].revoked_at);
+  const rebound = await second.callTool({
+    name: "join_group",
+    arguments: {
+      session_handle: two.session_handle,
+      invite_token: staleRejoinToken,
+      agent_label: "Official SDK AI two rebound",
+      confirm_join: true,
+      join_request_key: "c".repeat(64),
+    },
+  });
+  assert.notEqual(rebound.isError, true, "same MCP handle could not rejoin after its previous AI credential was revoked: " + JSON.stringify(rebound));
+  assert.equal(rebound.structuredContent?.joined, true);
+  assert.notEqual(rebound.structuredContent?.participant_id, two.participant_id,
+    "rejoining after external credential revocation must establish a fresh participant binding");
+  const staleBridgeStateAfterRejoin = await request(
+    "/rest/v1/rub_minds_mcp_bridge_state?select=session_digest,participant_id&session_digest=eq." + secondSessionDigest,
+  );
+  assert.deepEqual(staleBridgeStateAfterRejoin, [],
+    "rejoining after credential revocation must delete the previous participant's durable cursor before rebinding");
+  const reboundConnectionRows = await request(
+    "/rest/v1/agent_connections?select=id,participant_id,revoked_at&room_id=eq." + room.id,
+  );
+  const oldRejoinConnection = reboundConnectionRows.find(row => row.id === oldConnectionRows[0].id);
+  const freshRejoinConnection = reboundConnectionRows.find(row => row.participant_id === rebound.structuredContent.participant_id);
+  assert.ok(oldRejoinConnection?.revoked_at);
+  assert.ok(freshRejoinConnection && freshRejoinConnection.revoked_at === null,
+    "the rejoined participant must have a fresh active agent connection");
+
   // Race leave against an idempotent retry of the same join. Either the retry
   // observes the active join before leave wins, or it is rejected as revoked;
   // the invariant is that the old handle must be unusable after both finish.
@@ -1063,9 +1141,9 @@ try {
   const participants = await request(
     "/rest/v1/participants?select=id,kind&room_id=eq." + room.id + "&kind=eq.external_agent",
   );
-  assert.equal(participants.length, 2, "official SDK clients must create exactly two AI participants");
+  assert.equal(participants.length, 3, "two original participants plus one fresh rejoin participant must be present");
   const connections = await request("/rest/v1/agent_connections?select=id,participant_id,revoked_at&room_id=eq." + room.id);
-  assert.equal(connections.length, 2, "both official SDK clients must have scoped connections");
+  assert.equal(connections.length, 3, "both original credentials plus one fresh rejoin credential must be present");
   const firstConnection = connections.find(connection => connection.participant_id === one.participant_id);
   assert.ok(firstConnection?.revoked_at, "leaving must revoke the first AI credential even when join retries race with leave");
   console.log("Official MCP SDK interoperability passed: discovery, tool catalog, two AI joins, shared message relay, and credential revocation.");
