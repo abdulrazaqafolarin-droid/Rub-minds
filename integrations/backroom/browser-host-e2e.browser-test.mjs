@@ -11,6 +11,26 @@ import { BrowserDraftAdapter } from "./browser-draft-adapter.mjs";
 import { createBackroomHostServer } from "../../scripts/backroom-host-server.mjs";
 
 const ROOM_ID = "12345678-1234-4234-9234-123456789014";
+const ROOM_TWO_ID = "22345678-1234-4234-9234-123456789014";
+const EXACT_DRAFT_TEXT = "@RMConnects: please review the group's latest task. Do not send automatically.";
+const REPLACEMENT_DRAFT_TEXT = "replacement text";
+const ROOM_TWO_DRAFT_TEXT = "Independent room two draft";
+
+// The host deliberately defaults to deny local drafts. This fixture grants only
+// the three exact, local test drafts needed to exercise safe insertion,
+// overwrite rejection, and independent group scope. It never approves wake or
+// send actions and never grants arbitrary text/room combinations.
+async function authorizeTestDraft(action) {
+ if (!action || action.operation !== "browser.draft" ||
+     action.site !== "127.0.0.1" ||
+     !Array.isArray(action.capabilities) ||
+     action.capabilities.length !== 1 ||
+     action.capabilities[0] !== "draft" ||
+     typeof action.text !== "string") return false;
+ return (action.roomId === ROOM_ID &&
+     [EXACT_DRAFT_TEXT, REPLACEMENT_DRAFT_TEXT].includes(action.text)) ||
+   (action.roomId === ROOM_TWO_ID && action.text === ROOM_TWO_DRAFT_TEXT);
+}
 const HTML = `<!doctype html><html><head><meta charset="utf-8"><title>Local controlled AI composer</title>
 <style>body{font:16px system-ui;margin:32px}textarea{display:block;width:520px;height:100px;margin-top:18px;padding:10px}button{margin-top:18px}</style></head>
 <body><h1>Controlled composer</h1><label for="prompt">AI prompt</label><textarea id="prompt" aria-label="AI prompt"></textarea>
@@ -49,7 +69,8 @@ test("real local host -> Playwright browser overlay -> group-scoped target -> ve
   }}),
  });
  const host=createBackroomHostServer({port:0,allowedOrigins:[fixture.origin],hostId:"e2e-backroom-host",
-  pairingCode:"ab".repeat(16),browserRuntime});
+  pairingCode:"ab".repeat(16),browserRuntime,
+  authorizeLocalAction:authorizeTestDraft});
  let hostBase="";
  try {
   const address=await host.start();hostBase="http://127.0.0.1:"+address.port;
@@ -82,7 +103,7 @@ test("real local host -> Playwright browser overlay -> group-scoped target -> ve
   const registered=await requestJson(hostBase,fixture.origin,"/v1/browser/targets",{method:"POST",token,body:{pageId,roomId:ROOM_ID,attemptId:selectionAttemptId}});
   assert.equal(registered.response.status,201);
   assert.equal(registered.body.submittedAutomatically,false);
-  const exactText="@RMConnects: please review the group's latest task. Do not send automatically.";
+  const exactText=EXACT_DRAFT_TEXT;
   const drafted=await requestJson(hostBase,fixture.origin,"/v1/browser/draft",{method:"POST",token,
    body:{targetId:registered.body.id,roomId:ROOM_ID,text:exactText,approved:true}});
   assert.equal(drafted.response.status,200);
@@ -92,7 +113,7 @@ test("real local host -> Playwright browser overlay -> group-scoped target -> ve
   assert.equal(await page.locator("#sent-count").textContent(),"0","the Send button must remain untouched");
   // An occupied input must never be overwritten by a repeated task.
   const repeat=await requestJson(hostBase,fixture.origin,"/v1/browser/draft",{method:"POST",token,
-   body:{targetId:registered.body.id,roomId:ROOM_ID,text:"replacement text",approved:true}});
+   body:{targetId:registered.body.id,roomId:ROOM_ID,text:REPLACEMENT_DRAFT_TEXT,approved:true}});
   assert.equal(repeat.response.status,409);
   assert.equal(await page.locator("#prompt").inputValue(),exactText);
   assert.equal(await page.locator("#sent-count").textContent(),"0");
@@ -115,7 +136,7 @@ test("real local host -> Playwright browser overlay -> group-scoped target -> ve
   });
   assert.equal(await page.locator("#prompt-copy").getAttribute("data-rm-backroom-binding"),originalMarker,
    "fixture deliberately copies the original marker onto another writable input");
-  const roomTwo="22345678-1234-4234-9234-123456789014";
+  const roomTwo=ROOM_TWO_ID;
   const selectCopy=await requestJson(hostBase,fixture.origin,"/v1/browser/select",{
    method:"POST",token,body:{pageId,roomId:roomTwo}
   });
@@ -140,7 +161,7 @@ test("real local host -> Playwright browser overlay -> group-scoped target -> ve
   assert.equal(await page.locator("#prompt").getAttribute("data-rm-backroom-binding"),originalMarker,
    "the original target marker should remain attached to its original node");
   const roomTwoDraft=await requestJson(hostBase,fixture.origin,"/v1/browser/draft",{method:"POST",token,
-   body:{targetId:registeredCopy.body.id,roomId:roomTwo,text:"Independent room two draft",approved:true}});
+   body:{targetId:registeredCopy.body.id,roomId:roomTwo,text:ROOM_TWO_DRAFT_TEXT,approved:true}});
   assert.equal(roomTwoDraft.response.status,200);
   assert.equal(roomTwoDraft.body.submitted,false);
   assert.equal(await page.locator("#prompt-copy").inputValue(),"Independent room two draft");
