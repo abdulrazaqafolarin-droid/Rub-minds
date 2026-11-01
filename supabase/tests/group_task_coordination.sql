@@ -350,12 +350,32 @@ begin
     raise exception 'Failed task must not retain a pending or leased wake';
   end if;
 
-  -- Least privilege: browser roles can read with RLS, but cannot mutate task rows.
+  -- Least privilege: Supabase default table ACLs may grant DML to
+  -- authenticated unless they are explicitly revoked per table. RLS alone is
+  -- not a substitute for the intended RPC-only lifecycle boundary.
   if has_table_privilege('authenticated','public.room_tasks','INSERT')
      or has_table_privilege('authenticated','public.room_tasks','UPDATE')
+     or has_table_privilege('authenticated','public.room_tasks','DELETE')
+     or has_table_privilege('authenticated','public.room_tasks','TRUNCATE')
+     or has_table_privilege('authenticated','public.room_task_dependencies','INSERT')
+     or has_table_privilege('authenticated','public.room_task_dependencies','UPDATE')
+     or has_table_privilege('authenticated','public.room_task_dependencies','DELETE')
+     or has_table_privilege('authenticated','public.room_task_dependencies','TRUNCATE')
      or has_table_privilege('authenticated','public.room_task_submissions','INSERT')
-     or has_table_privilege('authenticated','public.room_task_reviews','INSERT') then
-    raise exception 'Authenticated clients must use scoped task RPCs rather than direct lifecycle writes';
+     or has_table_privilege('authenticated','public.room_task_submissions','UPDATE')
+     or has_table_privilege('authenticated','public.room_task_submissions','DELETE')
+     or has_table_privilege('authenticated','public.room_task_submissions','TRUNCATE')
+     or has_table_privilege('authenticated','public.room_task_reviews','INSERT')
+     or has_table_privilege('authenticated','public.room_task_reviews','UPDATE')
+     or has_table_privilege('authenticated','public.room_task_reviews','DELETE')
+     or has_table_privilege('authenticated','public.room_task_reviews','TRUNCATE') then
+    raise exception 'Authenticated clients must use scoped task RPCs rather than direct table writes';
+  end if;
+  if not has_table_privilege('authenticated','public.room_tasks','SELECT')
+     or not has_table_privilege('authenticated','public.room_task_dependencies','SELECT')
+     or not has_table_privilege('authenticated','public.room_task_submissions','SELECT')
+     or not has_table_privilege('authenticated','public.room_task_reviews','SELECT') then
+    raise exception 'Authenticated group members must retain read access protected by RLS';
   end if;
   if has_function_privilege('authenticated','public.claim_room_task(uuid,uuid,uuid)','EXECUTE')
      or has_function_privilege('authenticated','public.fail_room_task(uuid,uuid,uuid,text)','EXECUTE') then
