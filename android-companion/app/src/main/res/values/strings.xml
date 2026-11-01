@@ -2,4 +2,5 @@
 <resources>
     <string name="app_name">Rub Minds Companion</string>
     <string name="keyboard_subtype">Draft insertion</string>
+    <string name="work_profile_admin_description">Rub Minds managed Work Profile setup</string>
 </resources>
