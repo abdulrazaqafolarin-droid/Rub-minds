@@ -27,6 +27,39 @@ async function request(path, init = {}) {
   return body;
 }
 
+async function expectInvalidCompositeCursor(client, arguments_, label) {
+  let result;
+  let protocolError;
+  try {
+    result = await client.callTool({ name: "wait_for_group_messages", arguments: arguments_ });
+  } catch (error) {
+    protocolError = error;
+  }
+
+  // The official MCP SDK raises ProtocolError for a JSON-RPC invalid-params
+  // response instead of returning a ToolResult with isError=true. Accept that
+  // protocol-level rejection, while retaining compatibility with clients that
+  // expose the same rejection as an error tool result.
+  if (protocolError) {
+    assert.equal(protocolError.code, -32602, label + " must fail with JSON-RPC invalid params");
+    assert.match(
+      String(protocolError.message),
+      /after_created_at and after_message_id must be supplied together for a composite cursor/i,
+      label + " must explain why the incomplete cursor is invalid",
+    );
+    return;
+  }
+
+  assert.equal(result?.isError, true, label + " must be rejected rather than accepted");
+  const detail = result?.structuredContent?.error ??
+    (Array.isArray(result?.content) ? result.content.map(item => item?.text || "").join("\n") : "");
+  assert.match(
+    String(detail),
+    /after_created_at and after_message_id must be supplied together for a composite cursor/i,
+    label + " must explain why the incomplete cursor is invalid",
+  );
+}
+
 const owner = await request("/auth/v1/admin/users", {
   method: "POST",
   body: JSON.stringify({
@@ -212,26 +245,16 @@ try {
   assert.ok(cursorMessage?.id, "baseline message did not expose its persisted message ID");
   assert.ok(cursorMessage?.created_at, "baseline message did not expose its creation timestamp");
 
-  const waitWithoutMessageId = await first.callTool({
-    name: "wait_for_group_messages",
-    arguments: {
-      session_handle: one.session_handle,
-      after_created_at: cursorMessage.created_at,
-      timeout_ms: 1000,
-    },
-  });
-  assert.equal(waitWithoutMessageId.isError, true,
-    "wait tool must reject a timestamp-only cursor rather than risk skipping tied messages");
-  const waitWithoutTimestamp = await first.callTool({
-    name: "wait_for_group_messages",
-    arguments: {
-      session_handle: one.session_handle,
-      after_message_id: cursorMessage.id,
-      timeout_ms: 1000,
-    },
-  });
-  assert.equal(waitWithoutTimestamp.isError, true,
-    "wait tool must reject an ID-only cursor rather than use an ambiguous ordering");
+  await expectInvalidCompositeCursor(first, {
+    session_handle: one.session_handle,
+    after_created_at: cursorMessage.created_at,
+    timeout_ms: 1000,
+  }, "timestamp-only cursor");
+  await expectInvalidCompositeCursor(first, {
+    session_handle: one.session_handle,
+    after_message_id: cursorMessage.id,
+    timeout_ms: 1000,
+  }, "ID-only cursor");
 
   // Prove the MCP tool can wait on a real Supabase Realtime Postgres Changes
   // subscription. Delay the second client's send so the first subscription is
