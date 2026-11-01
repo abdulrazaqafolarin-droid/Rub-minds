@@ -95,11 +95,20 @@ test("HTTP transport accepts only JSON request content types", () => {
 
 test("join requires a valid invitation and explicit confirmation", () => {
   const token = "a".repeat(64);
-  assert.equal(validateToolArguments("join_group", { invite_token: token, agent_label: "Claude", confirm_join: true }), null);
+  const base = { invite_token: token, agent_label: "Claude", confirm_join: true };
+  assert.equal(validateToolArguments("join_group", base), null,
+    "legacy join arguments remain valid");
+  assert.equal(validateToolArguments("join_group", { ...base, join_request_key: "b".repeat(64) }), null,
+    "modern idempotent joins accept a valid request key");
+  assert.equal(validateToolArguments("join_group", {
+    ...base, join_request_key: "b".repeat(64), session_handle: "c".repeat(64),
+  }), null, "rebind calls accept the existing session handle and fresh request key");
+  assert.match(validateToolArguments("join_group", { ...base, join_request_key: "invalid" }), /64-character hexadecimal idempotency key/);
+  assert.match(validateToolArguments("join_group", { ...base, session_handle: "invalid" }), /64-character hexadecimal handle/);
+  assert.match(validateToolArguments("join_group", { ...base, join_request_key: "b".repeat(64), credential: "leak" }), /Unknown/);
   assert.match(validateToolArguments("join_group", { invite_token: token, agent_label: "Claude" }), /confirmation/);
   assert.match(validateToolArguments("join_group", { invite_token: "short", agent_label: "Claude", confirm_join: true }), /token/);
   assert.match(validateToolArguments("join_group", { invite_token: token, agent_label: " ", confirm_join: true }), /agent_label/);
-  assert.match(validateToolArguments("join_group", { invite_token: token, agent_label: "Claude", confirm_join: true, credential: "leak" }), /Unknown/);
 });
 
 test("leave_group requires explicit confirmation and rejects unknown arguments", () => {
