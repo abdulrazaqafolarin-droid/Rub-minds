@@ -55,7 +55,7 @@ test("Device Frame shows one selected phone at a time", async () => {
 test("Device Frame never claims inventory is a running virtual app", async () => {
   const devices = await read("src/BackroomDevicesApp.tsx");
   assert.match(devices, /Separate app data \/ virtualization/);
-  assert.ok(devices.includes("Live app stream and tap/swipe control"));
+  assert.ok(devices.includes("Live original app stream and touch"));
   assert.match(devices, /<BackroomAndroidControl/);
   assert.match(devices, /import BackroomDesktopControl from '.\/BackroomDesktopControl'/);
   assert.ok(devices.includes('<BackroomDesktopControl roomId={roomId}/>'));
