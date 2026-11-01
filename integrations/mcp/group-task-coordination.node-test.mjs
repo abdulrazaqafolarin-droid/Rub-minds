@@ -254,7 +254,8 @@ test("human task approvals require persisted evidence for every acceptance crite
   assert.match(reviewEvidenceMigration, /drop function if exists public\.review_room_task\(uuid, uuid, text, text\)/);
   assert.match(reviewEvidenceMigration, /create function public\.review_room_task\([\s\S]*?p_criterion_evidence jsonb/);
   assert.match(reviewEvidenceMigration, /Evidence must cover every acceptance criterion exactly once and in order/);
-  assert.match(reviewEvidenceMigration, /jsonb_typeof\(evidence\.item->'met'\) <> 'boolean'/);
+  assert.match(reviewEvidenceMigration, /jsonb_typeof\(evidence\.item->'met'\) is distinct from 'boolean'/i);
+  assert.match(reviewEvidenceMigration, /evidence\.item->>'met' is distinct from 'true'/);
   assert.match(reviewEvidenceMigration, /A task cannot be approved while any acceptance criterion is unmet/);
   assert.match(reviewEvidenceMigration, /criterion_evidence=p_criterion_evidence/);
   assert.match(reviewEvidenceMigration, /revoke all on function public\.review_room_task\(uuid,uuid,text,text,jsonb\) from public, anon/);
@@ -266,7 +267,11 @@ test("human task approvals require persisted evidence for every acceptance crite
   assert.match(taskBoard, /Every acceptance criterion must be marked met before approval/);
   assert.match(taskAcceptance, /Review must include evidence for every criterion/);
   assert.match(taskAcceptance, /Unmet acceptance criteria must block approval/);
+  assert.match(taskAcceptance, /Missing criterion met decision must be rejected/);
+  assert.match(taskAcceptance, /Null criterion met decision must be rejected/);
   assert.match(taskAcceptance, /Criterion-level review evidence must be persisted with the decision/);
+  assert.match(sdkTaskE2e, /p_criterion_evidence/);
+  assert.match(sdkTaskE2e, /all task criteria must retain review evidence/);
   assert.match(wakeQueueWorkflow, /20261101210000_group_task_review_criterion_evidence\.sql/);
 });
 
