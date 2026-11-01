@@ -254,7 +254,9 @@ test("human task approvals require persisted evidence for every acceptance crite
   assert.match(reviewEvidenceMigration, /drop function if exists public\.review_room_task\(uuid, uuid, text, text\)/);
   assert.match(reviewEvidenceMigration, /create function public\.review_room_task\([\s\S]*?p_criterion_evidence jsonb/);
   assert.match(reviewEvidenceMigration, /Evidence must cover every acceptance criterion exactly once and in order/);
+  assert.match(reviewEvidenceMigration, /jsonb_typeof\(evidence\.item->'criterion'\) is distinct from 'string'/i);
   assert.match(reviewEvidenceMigration, /jsonb_typeof\(evidence\.item->'met'\) is distinct from 'boolean'/i);
+  assert.match(reviewEvidenceMigration, /jsonb_typeof\(evidence\.item->'evidence'\) is distinct from 'string'/i);
   assert.match(reviewEvidenceMigration, /evidence\.item->>'met' is distinct from 'true'/);
   assert.match(reviewEvidenceMigration, /A task cannot be approved while any acceptance criterion is unmet/);
   assert.match(reviewEvidenceMigration, /criterion_evidence=p_criterion_evidence/);
@@ -269,6 +271,10 @@ test("human task approvals require persisted evidence for every acceptance crite
   assert.match(taskAcceptance, /Unmet acceptance criteria must block approval/);
   assert.match(taskAcceptance, /Missing criterion met decision must be rejected/);
   assert.match(taskAcceptance, /Null criterion met decision must be rejected/);
+  assert.match(taskAcceptance, /Non-text criterion evidence must be rejected/);
+  assert.match(taskAcceptance, /Non-text criterion labels must be rejected/);
+  assert.match(taskAcceptance, /Anonymous and service roles must not be granted the human review RPC/);
+  assert.match(taskAcceptance, /The old review RPC signature must not remain callable/);
   assert.match(taskAcceptance, /Criterion-level review evidence must be persisted with the decision/);
   assert.match(sdkTaskE2e, /p_criterion_evidence/);
   assert.match(sdkTaskE2e, /all task criteria must retain review evidence/);
