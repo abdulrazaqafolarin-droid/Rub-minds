@@ -3,7 +3,7 @@ import { ArrowLeft, Hand, MonitorPlay, Power, ShieldCheck, Smartphone } from 'lu
 import { supabase } from './supabase';
 import { type BackroomDevice } from './backroomCloudDevices';
 import { validateDeviceSignal } from '../integrations/backroom/desktop-realtime-protocol.mjs';
-import { createNormalizedDragSelection, getContainedVideoRect, normalizeClientPointToVideo } from '../integrations/backroom/video-selection-overlay.mjs';
+import { createNormalizedDragSelection, getContainedVideoRect, mapVideoSelectionToFrame, normalizeClientPointToVideo } from '../integrations/backroom/video-selection-overlay.mjs';
 import { waitForIceGatheringComplete } from '../integrations/backroom/ice-gathering.mjs';
 
 const uuid = () => crypto.randomUUID();
@@ -172,12 +172,15 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       if (controlRequestTimerRef.current !== null) window.clearTimeout(controlRequestTimerRef.current);
       for (const timer of pendingRemoteTextAcksRef.current.values()) window.clearTimeout(timer);
       pendingRemoteTextAcksRef.current.clear();
+      for (const timer of pendingComposerSelectionAcksRef.current.values()) window.clearTimeout(timer);
+      pendingComposerSelectionAcksRef.current.clear();
+      composerTargetRef.current = '';
       peerRef.current?.close(); dataRef.current?.close();
       streamRef.current?.getTracks().forEach(track => track.stop());
       if (videoRef.current) videoRef.current.srcObject = null;
       peerRef.current = null; dataRef.current = null; streamRef.current = null; sessionRef.current = '';
     };
-  }, [device.device_id, device.platform, device.status, device.apps, roomId, appPackage, disposePeer, notify, stopRemote]);
+  }, [device.device_id, device.platform, device.status, device.apps, roomId, appPackage, disposePeer, notify, stopRemote, clearComposerTarget]);
 
   useEffect(() => {
     const video = videoRef.current, stream = streamRef.current;
@@ -267,7 +270,8 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
             setRemoteTextStatus('Text inserted into the focused phone field. Nothing was submitted.');
           } else {
             const reason = acknowledgement.result.replaceAll('_', ' ');
-            setRemoteTextStatus('Phone declined text: ' + reason + '. Check keyboard selection, local permission, focused field and app approval.');
+            clearComposerTarget();
+            setRemoteTextStatus('Phone declined text: ' + reason + '. Verify the app, permissions and exact focused composer, then select it again.');
           }
           return;
         }
@@ -491,6 +495,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     const timeout = window.setTimeout(() => {
       pendingRemoteTextAcksRef.current.delete(requestId);
       setRemoteTextBusy(false);
+      clearComposerTarget();
       setRemoteTextStatus('No phone-keyboard acknowledgement arrived. Do not retry blindly; check the selected app field for the draft before sending another insertion.');
     }, 6_000);
     pendingRemoteTextAcksRef.current.set(requestId, timeout);
@@ -606,6 +611,15 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     if (pointerRef.current?.pointerId === event.pointerId) pointerRef.current = null;
   };
 
+  const selectionOverlay = (() => {
+    const video = videoRef.current;
+    const surface = video?.parentElement;
+    if (!selectionPreview || !video || !surface || video.videoWidth <= 0 || video.videoHeight <= 0) return null;
+    const videoRect = getContainedVideoRect(video.getBoundingClientRect(), video.videoWidth, video.videoHeight);
+    const surfaceRect = surface.getBoundingClientRect();
+    return mapVideoSelectionToFrame(videoRect, surfaceRect, selectionPreview);
+  })();
+
   return <section className="br-android-stream" aria-label="Android live app stream">
     <div className="br-android-stream-head">
       <div><b><Smartphone size={14}/> Live Android app</b><small>{device.device_label} · user-consented screen sharing</small></div>
@@ -629,11 +643,11 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         <Smartphone size={24}/><b>App window hidden on the phone</b>
         <span>Bring the selected app to the foreground on the phone. The picture and touch control resume when Android reports it visible.</span>
       </div> : null}
-      {viewReady && selectionPreview ? <div className="br-android-composer-selection" style={{
-        left: (selectionPreview.x * 100) + '%',
-        top: (selectionPreview.y * 100) + '%',
-        width: (selectionPreview.width * 100) + '%',
-        height: (selectionPreview.height * 100) + '%',
+      {viewReady && selectionOverlay ? <div className="br-android-composer-selection" style={{
+        left: selectionOverlay.left + '%',
+        top: selectionOverlay.top + '%',
+        width: selectionOverlay.width + '%',
+        height: selectionOverlay.height + '%',
       }} aria-hidden="true"/> : null}
       {viewReady && selectionMode ? <div className="br-android-touch-hint"><Hand size={13}/> Drag around one composer</div> : viewReady && controlGranted ? <div className="br-android-touch-hint"><Hand size={13}/> Tap · swipe · long press</div> : null}
     </div>
