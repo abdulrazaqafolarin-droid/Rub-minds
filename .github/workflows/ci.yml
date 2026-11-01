@@ -6,7 +6,7 @@ concurrency:
   cancel-in-progress: true
 on:
   push:
-    branches: [main]
+    branches: [main, feat/group-task-coordination-v1]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 jobs:
