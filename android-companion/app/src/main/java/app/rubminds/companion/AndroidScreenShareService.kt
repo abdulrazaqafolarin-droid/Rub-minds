@@ -575,6 +575,26 @@ class AndroidScreenShareService : Service() {
         true
     }
 
+    private fun sendComposerTargetAcknowledgement(
+        channel: DataChannel,
+        sessionId: String,
+        selectionId: String,
+        decision: ComposerSelectionDecision
+    ) {
+        if (!UUID_PATTERN.matches(sessionId) || !UUID_PATTERN.matches(selectionId) ||
+            channel.state() != DataChannel.State.OPEN || activeSessionId != sessionId ||
+            dataChannel !== channel
+        ) return
+        val payload = JSONObject()
+            .put("kind", "composer_target_ack")
+            .put("sessionId", sessionId)
+            .put("selectionId", selectionId)
+            .put("selected", decision.candidate != null)
+            .put("reason", decision.reason)
+        decision.candidate?.let { payload.put("targetId", it.targetId) }
+        runCatching { channel.send(DataChannel.Buffer(ByteBuffer.wrap(payload.toString().toByteArray(Charsets.UTF_8)), false)) }
+    }
+
     private fun sendRemoteTextAcknowledgement(
         channel: DataChannel,
         sessionId: String,
@@ -637,19 +657,78 @@ class AndroidScreenShareService : Service() {
                 val bytes = ByteArray(buffer.data.remaining())
                 buffer.data.get(bytes)
                 val input = try { JSONObject(String(bytes, Charsets.UTF_8)) } catch (_: Exception) { return }
+                if (input.optString("kind") == "select_composer_target") {
+                    val selectionId = input.optString("selectionId")
+                    if (!UUID_PATTERN.matches(selectionId) ||
+                        input.optString("sessionId") != sessionId ||
+                        input.optString("appPackageName") != appPackage
+                    ) return
+                    val allowedSelectionKeys = setOf("kind", "selectionId", "sessionId", "appPackageName", "region")
+                    if (input.keys().asSequence().toSet() != allowedSelectionKeys) {
+                        sendComposerTargetAcknowledgement(
+                            channel, sessionId, selectionId,
+                            ComposerSelectionDecision(null, "invalid_request")
+                        )
+                        return
+                    }
+                    if (!claimRemoteTextRequest(selectionId)) {
+                        sendComposerTargetAcknowledgement(
+                            channel, sessionId, selectionId,
+                            ComposerSelectionDecision(null, "request_replayed_or_rate_limited")
+                        )
+                        return
+                    }
+                    val region = input.optJSONObject("region")
+                    if (region == null || region.keys().asSequence().toSet() != setOf("left", "top", "right", "bottom")) {
+                        sendComposerTargetAcknowledgement(
+                            channel, sessionId, selectionId,
+                            ComposerSelectionDecision(null, "invalid_selection_region")
+                        )
+                        return
+                    }
+                    val values = listOf("left", "top", "right", "bottom").map { key ->
+                        region.opt(key) as? Number
+                    }
+                    if (values.any { it == null || !it.toDouble().isFinite() }) {
+                        sendComposerTargetAcknowledgement(
+                            channel, sessionId, selectionId,
+                            ComposerSelectionDecision(null, "invalid_selection_region")
+                        )
+                        return
+                    }
+                    val selection = NormalizedComposerSelection(
+                        values[0]!!.toFloat(), values[1]!!.toFloat(),
+                        values[2]!!.toFloat(), values[3]!!.toFloat()
+                    )
+                    mainHandler.post {
+                        val decision = if (stopping || !capturedContentVisible ||
+                            activeSessionId != sessionId || activeAppPackage != appPackage) {
+                            ComposerSelectionDecision(null, "session_not_active")
+                        } else {
+                            AndroidTouchAccessibilityService.selectComposerTarget(sessionId, appPackage, selection)
+                        }
+                        sendComposerTargetAcknowledgement(channel, sessionId, selectionId, decision)
+                    }
+                    return
+                }
                 if (input.optString("kind") == "remote_text") {
                     val requestId = input.optString("requestId")
                     if (!UUID_PATTERN.matches(requestId) ||
                         input.optString("sessionId") != sessionId ||
                         input.optString("appPackageName") != appPackage
                     ) return
-                    val allowedTextKeys = setOf("kind", "requestId", "sessionId", "appPackageName", "text")
+                    val allowedTextKeys = setOf("kind", "requestId", "sessionId", "appPackageName", "targetId", "text")
                     if (input.keys().asSequence().toSet() != allowedTextKeys) {
                         sendRemoteTextAcknowledgement(channel, sessionId, requestId, "invalid_request")
                         return
                     }
                     if (!claimRemoteTextRequest(requestId)) {
                         sendRemoteTextAcknowledgement(channel, sessionId, requestId, "request_replayed_or_rate_limited")
+                        return
+                    }
+                    val targetId = input.optString("targetId")
+                    if (!Regex("^[a-f0-9]{64}$").matches(targetId)) {
+                        sendRemoteTextAcknowledgement(channel, sessionId, requestId, "composer_target_required")
                         return
                     }
                     val text = input.opt("text") as? String
@@ -662,7 +741,7 @@ class AndroidScreenShareService : Service() {
                             activeSessionId != sessionId || activeAppPackage != appPackage) {
                             "session_not_active"
                         } else {
-                            DraftInputMethodService.insertRemoteText(sessionId, appPackage, text)
+                            DraftInputMethodService.insertRemoteText(sessionId, appPackage, targetId, text)
                         }
                         sendRemoteTextAcknowledgement(channel, sessionId, requestId, result)
                     }
@@ -905,6 +984,7 @@ class AndroidScreenShareService : Service() {
 
         fun revokeRemoteKeyboard() {
             RemoteKeyboardGate.disarm()
+            AndroidTouchAccessibilityService.clearSelectedComposer()
             instance?.let { service -> runCatching { service.sendRemoteKeyboardRevoked() } }
         }
 
