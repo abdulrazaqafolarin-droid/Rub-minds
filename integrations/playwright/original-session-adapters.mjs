@@ -310,7 +310,16 @@ export function createOriginalSessionAdapter(provider, {
       const assistant = page.locator(config.assistant.join(", "));
       const response = assistant.nth(before);
       await awaitWithSignal(response.waitFor({ state: "visible", timeout: timeoutMs }), signal, "unknown");
-      return waitForStableAnswer(page, response, config, timeoutMs, signal);
+      const answer = await waitForStableAnswer(page, response, config, timeoutMs, signal);
+      // The browser can navigate while the provider is streaming. Never return
+      // text from a different conversation, even when the response locator
+      // becomes visible before that navigation settles.
+      try {
+        assertSameConversation(page, provider, expectedConversationKey);
+      } catch (error) {
+        throw markAmbiguous(error);
+      }
+      return answer;
     },
   });
 }
