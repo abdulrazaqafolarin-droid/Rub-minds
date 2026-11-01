@@ -213,9 +213,9 @@ export default function BackroomApp() {
             <div className="br-cloud-capability-row"><span>Launcher-visible app discovery</span><b className="ready">Available</b></div>
             <div className="br-cloud-capability-row"><span>Virtualized app running inside phone frame</span><b>Not available</b></div>
             <div className="br-cloud-capability-row"><span>Separate app data / virtualization</span><b>Not available</b></div>
-            <div className="br-cloud-capability-row"><span>Live app stream and tap/swipe control</span><b>Device test pending</b></div>
-            <div className="br-cloud-capability-row"><span>Accessibility-backed field targeting</span><b>Not implemented</b></div>
-            <div className="br-cloud-capability-row"><span>Overlay drag-select typing</span><b>Not available</b></div>
+            <div className="br-cloud-capability-row"><span>Live original app stream and touch</span><b>Implementation ready · device verification pending</b></div>
+            <div className="br-cloud-capability-row"><span>Accessibility-backed composer identification</span><b>Implemented · Android CI pending</b></div>
+            <div className="br-cloud-capability-row"><span>Drag-select exact composer</span><b>Implemented · device verification pending</b></div>
             <div className="br-cloud-capability-row"><span>AI-directed device actions</span><b>Not available</b></div>
           </div>}
         </div>
