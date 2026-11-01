@@ -101,6 +101,10 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261101040000_group_task_coordination.sql
+      - name: Add group-task foreign-key indexes
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261101164016_group_task_fk_indexes.sql
       - name: Exercise task lifecycle, dependencies, MCP-scoped AI actions and existing Backroom wake queue
         env:
           PGPASSWORD: postgres
