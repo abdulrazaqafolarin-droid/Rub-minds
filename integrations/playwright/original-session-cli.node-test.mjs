@@ -385,3 +385,99 @@ test("declining a per-message SEND approval prevents provider interaction and st
     output.destroy();
   }
 });
+
+
+test("Ctrl+C while awaiting START returns stopped without opening a browser", async () => {
+  const input = makeTtyStream();
+  const output = makeTtyStream();
+  output.write = () => true;
+  let browserLaunches = 0;
+  try {
+    const result = await runOriginalSessionBridge({
+      argv: ["--provider", "chatgpt", "--conversation-url", CHATGPT_URL],
+      env: ENV,
+      input,
+      output,
+      errorOutput: output,
+      prompt: async () => {
+        process.emit("SIGINT");
+        const error = new Error("interactive prompt aborted");
+        error.name = "AbortError";
+        throw error;
+      },
+      playwright: {
+        chromium: {
+          async launchPersistentContext() {
+            browserLaunches += 1;
+            throw new Error("Browser must not launch after cancellation");
+          },
+        },
+      },
+    });
+    assert.deepEqual(result, { status: "stopped", replies: 0 });
+    assert.equal(browserLaunches, 0);
+  } finally {
+    input.destroy();
+    output.destroy();
+  }
+});
+
+test("Ctrl+C while awaiting SEND stops without provider interaction and closes the owned browser context", async () => {
+  const input = makeTtyStream();
+  const output = makeTtyStream();
+  output.write = () => true;
+  const stats = { contextClosed: 0, runtimeStopped: 0, providerInteractions: 0 };
+  const page = { isClosed: () => false, url: () => CHATGPT_URL };
+  const context = makeRunnerContext(page, stats);
+
+  try {
+    const result = await runOriginalSessionBridge({
+      argv: ["--provider", "chatgpt", "--conversation-url", CHATGPT_URL],
+      env: ENV,
+      input,
+      output,
+      errorOutput: output,
+      playwright: {
+        chromium: {
+          async launchPersistentContext() { return context; },
+        },
+      },
+      prepareProfile: async value => value,
+      prompt: async (_rl, _message, expected) => {
+        if (expected === "START") return true;
+        process.emit("SIGINT");
+        const error = new Error("per-message approval prompt aborted");
+        error.name = "AbortError";
+        throw error;
+      },
+      createAdapter: (_provider, { approval }) => ({
+        async ask(_page, body, metadata) {
+          await approval({ ...metadata, prompt: body });
+          stats.providerInteractions += 1;
+          return "must never be reached";
+        },
+      }),
+      createRuntime: options => ({
+        async run({ approved, signal }) {
+          assert.equal(approved, true);
+          await options.adapter.ask(options.page, "one group message", {
+            messageId: "message-cancelled",
+            senderName: "Human collaborator",
+            senderKind: "human",
+            signal,
+          });
+          return { status: "ok", replies: 1 };
+        },
+        stop() { stats.runtimeStopped += 1; },
+      }),
+    });
+
+    assert.deepEqual(result, { status: "stopped", replies: 0 });
+    assert.equal(stats.providerInteractions, 0);
+    assert.equal(stats.runtimeStopped, 1);
+    assert.equal(stats.contextClosed, 1);
+  } finally {
+    input.destroy();
+    output.destroy();
+  }
+});
