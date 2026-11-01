@@ -209,7 +209,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 val bounds = Rect()
                 focused.getBoundsInScreen(bounds)
                 if (bounds.isEmpty) return false
-                return composerTargetId(focused, packageName, bounds) == targetId
+                return composerTargetId(focused, packageName) == targetId
             } finally {
                 focused.recycle()
             }
@@ -241,7 +241,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             node.getBoundsInScreen(bounds)
             if (!bounds.isEmpty) {
                 candidates += ComposerCandidate(
-                    targetId = composerTargetId(node, packageName, bounds),
+                    targetId = composerTargetId(node, packageName),
                     packageName = packageName,
                     bounds = ComposerScreenRect(bounds.left, bounds.top, bounds.right, bounds.bottom),
                     editable = node.isEditable,
@@ -262,19 +262,22 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         }
     }
 
-    /** Hash only non-content node identity; never read text, hint or description. */
+    /**
+     * Bind a stable AccessibilityNodeInfo identity, not screen coordinates.
+     * Coordinates change when the on-screen keyboard resizes the app window;
+     * the platform node hash identifies the same source node across that layout
+     * change. No text, hint, label or content description is read.
+     */
     private fun composerTargetId(
         node: AccessibilityNodeInfo,
-        packageName: String,
-        bounds: Rect
+        packageName: String
     ): String {
         val identity = listOf(
             packageName,
             node.windowId.toString(),
+            node.hashCode().toString(16),
             node.className?.toString().orEmpty(),
-            node.viewIdResourceName.orEmpty(),
-            bounds.left.toString(), bounds.top.toString(),
-            bounds.right.toString(), bounds.bottom.toString()
+            node.viewIdResourceName.orEmpty()
         ).joinToString("|")
         return MessageDigest.getInstance("SHA-256")
             .digest(identity.toByteArray(Charsets.UTF_8))
