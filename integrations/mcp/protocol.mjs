@@ -178,6 +178,37 @@ export const SESSION_EXPORT_INSTRUCTIONS = [
 
 /** Select messages after the last processed cursor from a newest-50, ascending read window. */
 /** @param {unknown} messages @param {number} cursorTimestamp @param {string | null} [cursorMessageId] */
+/** Parse an ISO timestamp into exact UTC epoch microseconds. */
+function timestampMicros(value) {
+  if (typeof value !== "string") return null;
+  const match = value.match(/^(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2})(?:\\.(\\d{1,6}))?(Z|[+-]\\d{2}:\\d{2})$/);
+  if (!match) return null;
+  const milliseconds = Date.parse(value);
+  if (!Number.isFinite(milliseconds)) return null;
+  const fractionalMicros = Number((match[2] || "").padEnd(6, "0"));
+  return BigInt(milliseconds) * 1000n + BigInt(fractionalMicros % 1000);
+}
+
+/** True when a message has enough stable data to participate in a composite cursor. */
+export function isValidMessageCursor(value) {
+  return isRecord(value) &&
+    typeof value.id === "string" &&
+    value.id.length > 0 &&
+    timestampMicros(value.created_at) !== null;
+}
+
+/** Compare by exact microsecond timestamp, then stable message ID. */
+export function compareMessageCursors(left, right) {
+  if (!isValidMessageCursor(left) || !isValidMessageCursor(right)) return 0;
+  const leftMicros = timestampMicros(left.created_at);
+  const rightMicros = timestampMicros(right.created_at);
+  if (leftMicros < rightMicros) return -1;
+  if (leftMicros > rightMicros) return 1;
+  if (left.id < right.id) return -1;
+  if (left.id > right.id) return 1;
+  return 0;
+}
+
 export function messagesAfterCursor(messages, cursorTimestamp, cursorMessageId = null) {
   if (!Array.isArray(messages)) return [];
   const valid = messages.filter((message) =>
