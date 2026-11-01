@@ -4,6 +4,7 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  bindAdapterToExactConversation,
   conversationKey,
   isExactConversationPage,
   openExistingConversationPage,
@@ -131,4 +132,25 @@ test("creates a new tab when no blank or exact conversation tab exists", async (
   assert.equal(await openExistingConversationPage(context, "claude", CLAUDE_URL), created);
   assert.equal(created.current, CLAUDE_URL);
   assert.equal(isExactConversationPage(created, "claude", CLAUDE_URL), true);
+});
+
+
+test("pins all later group turns to the exact selected conversation", async () => {
+  let currentUrl = CHATGPT_URL;
+  let adapterCalls = 0;
+  const wrapped = bindAdapterToExactConversation({
+    provider: "chatgpt",
+    async ask(_page, prompt) {
+      adapterCalls += 1;
+      return "reply: " + prompt;
+    },
+  }, "chatgpt", CHATGPT_URL);
+  const page = { url: () => currentUrl };
+  assert.equal(await wrapped.ask(page, "first message"), "reply: first message");
+  currentUrl = "https://chatgpt.com/c/a-different-conversation";
+  await assert.rejects(
+    wrapped.ask(page, "second message"),
+    error => error?.submissionState === "not_submitted" && /pinned original conversation changed/.test(error.message),
+  );
+  assert.equal(adapterCalls, 1, "the provider adapter must not be called after the tab changes threads");
 });
