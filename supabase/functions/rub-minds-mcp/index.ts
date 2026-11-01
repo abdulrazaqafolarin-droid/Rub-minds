@@ -107,44 +107,52 @@ async function findSession(sessionId: string) {
   return data;
 }
 async function terminateMcpSession(sessionDigest: string) {
-  const { data: closingSession, error: lookupError } = await db.from("rub_minds_mcp_sessions")
-    .select("session_digest, agent_credential_ciphertext, terminated_at")
-    .eq("session_digest", sessionDigest)
-    .maybeSingle();
-  if (lookupError) throw new Error("Could not verify the MCP session before termination.");
-  if (!closingSession) return { terminated: false, alreadyTerminated: false };
-  if (closingSession.terminated_at) {
-    const { error: staleStateError } = await db.from("rub_minds_mcp_bridge_state").delete().eq("session_digest", sessionDigest);
-    if (staleStateError) throw new Error("Could not clear stale original-session bridge state.");
-    return { terminated: true, alreadyTerminated: true };
-  }
-  if (typeof closingSession.agent_credential_ciphertext === "string") {
-    let credential: string;
-    try {
-      credential = await decryptWithKeyRing(closingSession.agent_credential_ciphertext, credentialEncryptionKey, previousEncryptionKeys, sessionDigest);
-    } catch {
-      throw new Error("Could not securely close the AI participant session. Retry or wait for expiry.");
-    }
-    const { error: revokeError } = await db.from("agent_connections")
-      .update({ revoked_at: new Date().toISOString() })
-      .eq("credential_digest", await sha256(credential))
-      .is("revoked_at", null);
-    if (revokeError) throw new Error("Could not revoke the AI participant session. Retry or wait for expiry.");
-  }
-  const terminatedAt = new Date().toISOString();
   const tombstoneExpiry = new Date(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000).toISOString();
-  const { error: terminateError } = await db.from("rub_minds_mcp_sessions").update({
-    agent_credential_ciphertext: null, room_id: null, participant_id: null,
-    terminated_at: terminatedAt, expires_at: tombstoneExpiry, last_seen_at: terminatedAt,
-  }).eq("session_digest", sessionDigest).is("terminated_at", null);
-  if (terminateError) throw new Error("Could not terminate the MCP session. Retry or wait for expiry.");
-  // Tombstone the owning session first. The bridge-state binding trigger locks
-  // this row, so concurrent loads either finish before termination (and are
-  // deleted here) or observe the tombstone and fail closed.
-  const { error: stateDeleteError } = await db.from("rub_minds_mcp_bridge_state")
-    .delete().eq("session_digest", sessionDigest);
-  if (stateDeleteError) throw new Error("Could not clear original-session bridge state while terminating the MCP session.");
-  return { terminated: true, alreadyTerminated: false };
+  // A session may be rebound while a leave request is in flight. Retry only
+  // when the expected ciphertext changed; the RPC takes the parent session
+  // lock, verifies the exact binding, revokes its credential, tombstones the
+  // session, and deletes bridge state in a single database transaction.
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const { data: current, error: lookupError } = await db.from("rub_minds_mcp_sessions")
+      .select("session_digest, agent_credential_ciphertext, terminated_at")
+      .eq("session_digest", sessionDigest)
+      .maybeSingle();
+    if (lookupError) throw new Error("Could not verify the MCP session before termination.");
+    if (!current) return { terminated: false, alreadyTerminated: false };
+
+    let credentialDigest: string | null = null;
+    if (!current.terminated_at && typeof current.agent_credential_ciphertext === "string") {
+      let credential: string;
+      try {
+        credential = await decryptWithKeyRing(
+          current.agent_credential_ciphertext,
+          credentialEncryptionKey,
+          previousEncryptionKeys,
+          sessionDigest,
+        );
+      } catch {
+        throw new Error("Could not securely close the AI participant session. Retry or wait for expiry.");
+      }
+      credentialDigest = await sha256(credential);
+    }
+
+    const { data, error } = await db.rpc("terminate_rub_minds_mcp_bridge_session", {
+      p_session_digest: sessionDigest,
+      p_expected_ciphertext: current.terminated_at ? null : current.agent_credential_ciphertext,
+      p_credential_digest: credentialDigest,
+      p_tombstone_expires_at: tombstoneExpiry,
+    });
+    if (error || !isRecord(data)) {
+      throw new Error("Could not atomically revoke and terminate the MCP session. Retry or wait for expiry.");
+    }
+    if (data.conflict === true) continue;
+    if (data.not_found === true) return { terminated: false, alreadyTerminated: false };
+    if (data.terminated === true) {
+      return { terminated: true, alreadyTerminated: data.already_terminated === true };
+    }
+    throw new Error("The MCP session termination outcome was not confirmed. Retry safely.");
+  }
+  throw new Error("The MCP session kept changing during leave. Retry after the active join operation finishes.");
 }
 
 async function invokeAgent(credential: string, operation: "read" | "send", payload: string | null = null, sourceMessageId: string | null = null) {
