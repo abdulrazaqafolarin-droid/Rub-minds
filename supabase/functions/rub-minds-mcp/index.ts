@@ -171,6 +171,68 @@ async function enrichGroupMessages(data: unknown) {
   });
   return data;
 }
+
+async function readGroupMessagePage(
+  roomId: string,
+  {
+    afterCreatedAt = null,
+    afterMessageId = null,
+    limit = 100,
+  }: { afterCreatedAt?: string | null; afterMessageId?: string | null; limit?: number } = {},
+) {
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const ISO_MICROSECOND = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$/;
+  if (!UUID.test(roomId)) throw new Error("The joined group binding is invalid.");
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error("Message page limit must be between 1 and 100.");
+  if (afterCreatedAt !== null &&
+      (typeof afterCreatedAt !== "string" || !ISO_MICROSECOND.test(afterCreatedAt) || !Number.isFinite(Date.parse(afterCreatedAt)))) {
+    throw new Error("Message cursor timestamp is invalid.");
+  }
+  if (afterMessageId !== null && (typeof afterMessageId !== "string" || !UUID.test(afterMessageId))) {
+    throw new Error("Message cursor ID is invalid.");
+  }
+  if (afterMessageId !== null && afterCreatedAt === null) {
+    throw new Error("Message cursor ID requires its timestamp.");
+  }
+
+  let query = db.from("messages")
+    .select("id,room_id,sender_id,body,created_at")
+    .eq("room_id", roomId);
+
+  if (afterCreatedAt !== null) {
+    if (afterMessageId !== null) {
+      // The timestamp is strictly validated above and the ID is a UUID, so
+      // neither value can inject PostgREST filter syntax into this expression.
+      query = query.or(
+        "created_at.gt." + afterCreatedAt +
+        ",and(created_at.eq." + afterCreatedAt + ",id.gt." + afterMessageId + ")"
+      );
+    } else {
+      query = query.gt("created_at", afterCreatedAt);
+    }
+    query = query.order("created_at", { ascending: true })
+      .order("id", { ascending: true });
+  } else {
+    // Return the newest bounded snapshot, but present it in chronological order.
+    query = query.order("created_at", { ascending: false })
+      .order("id", { ascending: false });
+  }
+
+  const { data, error } = await query.limit(limit + 1);
+  if (error) throw new Error("Could not read authorized group messages.");
+  const raw = Array.isArray(data) ? data : [];
+  const hasMore = raw.length > limit;
+  const selected = raw.slice(0, limit);
+  const messages = afterCreatedAt === null ? selected.reverse() : selected;
+  const last = messages.length > 0 ? messages[messages.length - 1] : null;
+  const nextCursor = last
+    ? { after_created_at: last.created_at, after_message_id: last.id }
+    : (afterCreatedAt !== null && afterMessageId !== null
+        ? { after_created_at: afterCreatedAt, after_message_id: afterMessageId }
+        : null);
+  const enriched = await enrichGroupMessages({ messages });
+  return { ...enriched, next_cursor: nextCursor, has_more: hasMore };
+}
 async function enrichGroupTasks(tasks: unknown) {
   if (!Array.isArray(tasks) || tasks.length === 0) return [];
   const participantIds = [...new Set(tasks.flatMap((task) =>
@@ -328,30 +390,37 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
   }
 
   if (name === "read_group_messages") {
-    return await enrichGroupMessages(await invokeAgent(credential, "read"));
+    return await readGroupMessagePage(connection.room_id as string, {
+      afterCreatedAt: typeof args.after_created_at === "string" ? args.after_created_at : null,
+      afterMessageId: typeof args.after_message_id === "string" ? args.after_message_id : null,
+      limit: typeof args.limit === "number" ? args.limit : 100,
+    });
   }
 
   if (name === "wait_for_group_messages") {
     const timeoutMs = typeof args.timeout_ms === "number" ? args.timeout_ms : 10000;
     const deadline = Date.now() + timeoutMs;
-    const cursor = typeof args.after_created_at === "string" ? Date.parse(args.after_created_at) : Date.now();
-    const cursorMessageId = typeof args.after_message_id === "string" ? args.after_message_id : null;
-    const selectMessagesAfterCursor = (data: unknown) => isRecord(data) && Array.isArray(data.messages)
-      ? messagesAfterCursor(data.messages, cursor, cursorMessageId)
-      : [];
-    const hasNewMessages = (data: unknown) => selectMessagesAfterCursor(data).length > 0;
-    const onlyNewMessages = async (data: unknown) => {
-      if (!isRecord(data)) return { messages: [] };
-      return await enrichGroupMessages({ ...data, messages: selectMessagesAfterCursor(data) });
-    };
-    const initial = await invokeAgent(credential, "read");
-    if (hasNewMessages(initial)) return { timed_out: false, delivery: "snapshot", ...(await onlyNewMessages(initial) as Record<string, unknown>) };
-    if (Date.now() >= deadline) return { timed_out: true, delivery: "snapshot", messages: [] };
+    const afterCreatedAt = typeof args.after_created_at === "string"
+      ? args.after_created_at
+      : new Date().toISOString();
+    const afterMessageId = typeof args.after_message_id === "string" ? args.after_message_id : null;
+    const limit = typeof args.limit === "number" ? args.limit : 100;
+    const roomId = connection.room_id as string;
+    const readAfterCursor = () => readGroupMessagePage(roomId, {
+      afterCreatedAt,
+      afterMessageId,
+      limit,
+    });
+    const initial = await readAfterCursor();
+    if (initial.messages.length > 0) {
+      return { timed_out: false, delivery: "snapshot", ...initial };
+    }
+    if (Date.now() >= deadline) {
+      return { timed_out: true, delivery: "snapshot", ...initial };
+    }
 
-    const roomId = session.room_id;
-    if (typeof roomId !== "string" || !/^[0-9a-f-]{36}$/i.test(roomId)) throw new Error("The joined group binding is invalid.");
-    // The service credential is server-only. The channel is filtered to the
-    // authenticated session's room and payloads are never returned to the model.
+    // Realtime is only a wake signal. The authoritative, room-scoped page is
+    // always reread from Postgres before a message is returned to the MCP client.
     db.realtime.setAuth(serviceKey);
     const channel = db.channel("mcp-room-wait-" + roomId + "-" + crypto.randomUUID());
     let eventVersion = 0;
@@ -363,7 +432,9 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       const subscribed = await new Promise<boolean>((resolve) => {
         let settled = false;
         const subscribeWaitMs = Math.max(1, Math.min(3000, deadline - Date.now()));
-        const timer = setTimeout(() => { if (!settled) { settled = true; resolve(false); } }, subscribeWaitMs);
+        const timer = setTimeout(() => {
+          if (!settled) { settled = true; resolve(false); }
+        }, subscribeWaitMs);
         channel.on("postgres_changes", {
           event: "INSERT", schema: "public", table: "messages", filter: "room_id=eq." + roomId,
         }, () => {
@@ -372,28 +443,30 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
         }).subscribe((status: string) => {
           if (settled) return;
           if (status === "SUBSCRIBED") { settled = true; clearTimeout(timer); resolve(true); }
-          else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") { settled = true; clearTimeout(timer); resolve(false); }
+          else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+            settled = true; clearTimeout(timer); resolve(false);
+          }
         });
       });
-      if (!subscribed) return { timed_out: true, delivery: "unavailable", messages: [], note: "Supabase Realtime subscription could not be established. Retry read_group_messages or wait_for_group_messages." };
+      if (!subscribed) {
+        return {
+          timed_out: true,
+          delivery: "unavailable",
+          messages: [],
+          next_cursor: initial.next_cursor,
+          has_more: false,
+          note: "Supabase Realtime subscription could not be established. Retry read_group_messages or wait_for_group_messages.",
+        };
+      }
 
-      // Realtime messages can arrive late, including the INSERT used to establish
-      // the cursor. Treat events only as wake-ups: snapshot the authorized group
-      // and ignore stale notifications that do not contain a message after cursor.
       while (Date.now() < deadline) {
         const eventVersionBeforeRead = eventVersion;
-        const snapshot = await invokeAgent(credential, "read");
-        if (hasNewMessages(snapshot)) {
-          return {
-            timed_out: false,
-            delivery: realtimeWakeObserved ? "realtime" : "snapshot",
-            ...(await onlyNewMessages(snapshot) as Record<string, unknown>),
-          };
+        const snapshot = await readAfterCursor();
+        if (snapshot.messages.length > 0) {
+          return { timed_out: false, delivery: realtimeWakeObserved ? "realtime" : "snapshot", ...snapshot };
         }
         const eventVersionAfterRead = eventVersion;
         if (eventVersionAfterRead !== eventVersionBeforeRead) {
-          // An event raced the snapshot. Read again before advancing the cursor
-          // for notifications, or a newly committed message could be overlooked.
           observedEventVersion = eventVersionAfterRead;
           continue;
         }
@@ -417,32 +490,33 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
             wakeWaiter = null;
             resolve("message");
           };
-          // Handle an event that arrived after the snapshot but before the wait
-          // callback was installed.
           if (eventVersion > observedEventVersion) wakeWaiter();
         });
         wakeWaiter = null;
         if (eventOrTimeout === "timeout") break;
-        // A signal does not prove there is a new authorized message. The next
-        // loop iteration verifies it; stale events simply continue waiting.
         realtimeWakeObserved = true;
       }
 
-      // Always take a final authorized read at the deadline. Retry if a
-      // notification races this read, then report timeout only on a stable empty snapshot.
+      // Stable final read closes the event/deadline race before returning timeout.
       for (let attempt = 0; attempt < 3; attempt += 1) {
         const eventVersionBeforeRead = eventVersion;
-        const finalSnapshot = await invokeAgent(credential, "read");
-        if (hasNewMessages(finalSnapshot)) {
+        const finalSnapshot = await readAfterCursor();
+        if (finalSnapshot.messages.length > 0) {
+          return { timed_out: false, delivery: realtimeWakeObserved ? "realtime" : "snapshot", ...finalSnapshot };
+        }
+        if (eventVersion === eventVersionBeforeRead) {
           return {
-            timed_out: false,
-            delivery: realtimeWakeObserved ? "realtime" : "snapshot",
-            ...(await onlyNewMessages(finalSnapshot) as Record<string, unknown>),
+            timed_out: true,
+            delivery: realtimeWakeObserved ? "realtime" : "timeout",
+            ...finalSnapshot,
           };
         }
-        if (eventVersion === eventVersionBeforeRead) break;
       }
-      return { timed_out: true, delivery: "realtime", messages: [] };
+      return {
+        timed_out: true,
+        delivery: "realtime-recovery-read",
+        ...(await readAfterCursor()),
+      };
     } finally {
       if (eventTimer) clearTimeout(eventTimer);
       wakeWaiter = null;
