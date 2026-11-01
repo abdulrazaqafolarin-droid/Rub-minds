@@ -185,7 +185,7 @@ On macOS/Linux, use a hidden prompt instead of typing the session handle into a 
 export RUB_MINDS_MCP_ENDPOINT="https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp"
 export RUB_MINDS_PARTICIPANT_ID="<joined-ai-participant-uuid>"
 read -rsp "Rub Minds MCP session handle: " RUB_MINDS_MCP_SESSION_HANDLE
-printf '\\n'
+printf '\n'
 export RUB_MINDS_MCP_SESSION_HANDLE
 npm run original-session:bridge -- --provider chatgpt --conversation-url "https://chatgpt.com/c/<conversation-id>" --max-replies 5
 unset RUB_MINDS_MCP_SESSION_HANDLE
