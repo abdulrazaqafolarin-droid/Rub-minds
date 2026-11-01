@@ -143,7 +143,7 @@ begin
 
   -- Human assignee claims and submits. A different human reviewer requests
   -- revision, the assignee resubmits, and only human review completes it.
-  perform public.set_config('request.jwt.claim.sub',v_human::text,true);
+  perform pg_catalog.set_config('request.jwt.claim.sub',v_human::text,true);
   perform public.claim_room_task_human(v_room,v_human_task,v_human);
   select public.submit_room_task_result_human(
     v_room,v_human_task,v_human,'First deliverable', '{}'::uuid[],
