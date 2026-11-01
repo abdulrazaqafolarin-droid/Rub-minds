@@ -1,6 +1,6 @@
 # Group Coordination — durable task workflow v1
 
-**Status (2026-11-01):** draft PR #59 on `feat/group-task-coordination-v1`, exact head `8c2b61252d3a4f73b41fa4cc8f92ad52fee98cb2`. The four exact-head GitHub Actions workflows pass, and the additive schema plus related staging Edge Functions are present on the separate Rub Minds Staging project. This has **not** been merged to `main` or deployed to production. Keep the PR in draft until physical-device and live-provider acceptance gates below are complete.
+**Status (2026-11-01):** draft PR #59 on `feat/group-task-coordination-v1`, base head `3950180f58b3dee36e6f114fd1d71914941c057b`; all four PR #59 workflows passed on that exact head. Follow-up draft PR #61 targets this branch and adds mandatory criterion-level review evidence plus stale-Realtime-refresh protection; its exact-head CI is tracked separately. The task schema and supporting task Edge Function are present on the separate Rub Minds Staging project. Neither PR has been merged to `main` or deployed to production. Keep both drafts until physical-device and live-provider acceptance gates below are complete.
 
 ## Integration principle
 
@@ -91,13 +91,15 @@ The branch includes:
 
 ### Verified checkpoint — 2026-11-01
 
-At exact head `8c2b61252d3a4f73b41fa4cc8f92ad52fee98cb2`, all four GitHub Actions workflows completed successfully:
-- [Validate Rub Minds #41332605021](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/41332605021) — full build/runtime suite, browser checks, local Supabase rebuild, invitation and MCP SDK interoperability, session revocation, Vault and migration checks.
-- [Backroom durable wake queue SQL #41332605054](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/41332605054) — PostgreSQL 17 queue and group-task lifecycle/dependency/wake acceptance.
-- [Backroom Android companion #41332605224](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/41332605224) — Android unit tests, merged-manifest gate and APK build.
-- [Backroom Windows desktop companion #41332605015](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/41332605015) — web tests/build, WebView bundle, Rust unit tests, protocol/authorization tests and Windows native compilation.
+At exact PR #59 base head `3950180f58b3dee36e6f114fd1d71914941c057b`, all four GitHub Actions workflows completed successfully:
+- [Validate Rub Minds #41334693463](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/41334693463) — build/runtime suite, browser checks, local Supabase rebuild, invitation and MCP SDK interoperability, session revocation and Vault/migration checks.
+- [Backroom durable wake queue SQL #41334693418](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/41334693418) — PostgreSQL 17 wake-queue and group-task lifecycle/dependency/wake acceptance.
+- [Backroom Android companion #41334693419](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/41334693419) — Android unit tests, merged-manifest gate and APK build.
+- [Backroom Windows desktop companion #41334693512](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/41334693512) — web tests/build, WebView bundle, Rust unit tests, protocol/authorization tests and Windows native compilation.
 
-The separate Rub Minds Staging project has the task and supporting Backroom migrations. Staging `rub-minds-mcp` is ACTIVE v2 and advertises 18 tools, including the seven task operations; `backroom-device` is ACTIVE v13. The checked-in `supabase/tests/group_task_coordination.sql` was executed inside an explicit transaction followed by ROLLBACK; a follow-up query confirmed zero fixture users, rooms, participants, task rows or wake jobs remained. The Vault encryption-key security test also passed inside its own transaction and rollback. Staging table/RPC privilege checks confirmed RLS and least-privilege boundaries for task and service-only device/session/queue data.
+PR #61 adds the mandatory criterion-evidence review migration and realtime refresh ordering guard on top of this exact PR #59 head. Its new PostgreSQL acceptance path now applies the forward migration and tests authorization grants, missing/null/non-text evidence, unmet-criterion rejection, persisted revision evidence, successful approval and idempotent replay. Its Validate, Windows and PostgreSQL workflows must pass on the final PR #61 head before that follow-up is considered validated.
+
+The separate Rub Minds Staging project has the PR #59 task and supporting Backroom migrations. Staging `rub-minds-mcp` is ACTIVE v2 and advertises 18 tools, including the seven task operations; `backroom-device` is ACTIVE v13. The committed `supabase/tests/group_task_coordination.sql` was previously executed inside an explicit transaction followed by ROLLBACK on staging; follow-up queries confirmed no test fixture users, rooms, participants, task rows or wake jobs remained. Staging table/RPC privilege checks confirmed RLS and least-privilege boundaries for task and service-only device/session/queue data. PR #61's new migration has **not** been applied to staging.
 
 ### Remaining release gates
 
