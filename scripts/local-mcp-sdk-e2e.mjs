@@ -1097,6 +1097,45 @@ try {
   assert.ok(freshRejoinConnection && freshRejoinConnection.revoked_at === null,
     "the rejoined participant must have a fresh active agent connection");
 
+  // Prove the atomic termination RPC rejects a stale ciphertext snapshot
+  // without revoking the live connection, tombstoning the session, or deleting
+  // its private bridge state.
+  const firstSessionDigestForTermination = createHash("sha256")
+    .update(one.session_handle, "utf8").digest("hex");
+  const beforeTermination = await request(
+    "/rest/v1/rub_minds_mcp_sessions?select=session_digest,agent_credential_ciphertext,terminated_at&session_digest=eq." +
+      firstSessionDigestForTermination,
+  );
+  assert.equal(beforeTermination.length, 1);
+  assert.equal(beforeTermination[0].terminated_at, null);
+  assert.equal(typeof beforeTermination[0].agent_credential_ciphertext, "string");
+  const staleTermination = await request("/rest/v1/rpc/terminate_rub_minds_mcp_bridge_session", {
+    method: "POST",
+    body: JSON.stringify({
+      p_session_digest: firstSessionDigestForTermination,
+      p_expected_ciphertext: "stale-ciphertext-snapshot",
+      p_credential_digest: "f".repeat(64),
+      p_tombstone_expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    }),
+  });
+  assert.equal(staleTermination?.conflict, true,
+    "atomic termination must reject an outdated session ciphertext snapshot");
+  assert.equal(staleTermination?.terminated, false);
+  const unchangedAfterStaleTermination = await request(
+    "/rest/v1/rub_minds_mcp_sessions?select=agent_credential_ciphertext,terminated_at&session_digest=eq." +
+      firstSessionDigestForTermination,
+  );
+  assert.equal(unchangedAfterStaleTermination[0].agent_credential_ciphertext,
+    beforeTermination[0].agent_credential_ciphertext,
+    "a stale termination attempt must leave the current session binding intact");
+  assert.equal(unchangedAfterStaleTermination[0].terminated_at, null);
+  const bridgeStateAfterStaleTermination = await request(
+    "/rest/v1/rub_minds_mcp_bridge_state?select=session_digest&session_digest=eq." +
+      firstSessionDigestForTermination,
+  );
+  assert.equal(bridgeStateAfterStaleTermination.length, 1,
+    "stale termination must not delete current bridge state");
+
   // Race leave against an idempotent retry of the same join. Either the retry
   // observes the active join before leave wins, or it is rejected as revoked;
   // the invariant is that the old handle must be unusable after both finish.
