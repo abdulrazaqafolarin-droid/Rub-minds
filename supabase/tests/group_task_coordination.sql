@@ -31,6 +31,8 @@ declare
   v_job_old uuid;
   v_job_new uuid;
   v_claimed_task_job uuid;
+  v_repaired_job uuid;
+  v_dependency_result jsonb;
   v_conflict boolean := false;
   v_claim jsonb;
 begin
@@ -285,6 +287,29 @@ begin
   end if;
   if (select status from public.room_tasks where id=v_fail_child)<>'blocked' then
     raise exception 'Failure of a prerequisite must block downstream work';
+  end if;
+
+  -- The human owner repairs a blocked plan. Reintroducing the failed edge
+  -- keeps the task blocked; removing it safely reassigns and wakes the AI again.
+  v_dependency_result := public.replace_room_task_dependencies(v_room,v_fail_child,array[v_fail_parent]);
+  if v_dependency_result->>'status'<>'blocked' then
+    raise exception 'Retaining a failed prerequisite must keep the dependent task blocked';
+  end if;
+  v_dependency_result := public.replace_room_task_dependencies(v_room,v_fail_child,'{}'::uuid[]);
+  if v_dependency_result->>'status'<>'assigned' then
+    raise exception 'Removing the failed prerequisite must make the assigned dependent task ready';
+  end if;
+  select id into v_repaired_job from public.backroom_wake_jobs
+  where room_id=v_room and participant_id=v_ai_two
+    and event_id like 'task_'||v_fail_child::text||'_%'
+    and state in ('pending','leased')
+  order by created_at desc limit 1;
+  if v_repaired_job is null then
+    raise exception 'A repaired and ready task must reuse the existing Backroom wake queue';
+  end if;
+  perform public.cancel_room_task(v_room,v_fail_child);
+  if (select state from public.backroom_wake_jobs where id=v_repaired_job)<>'cancelled' then
+    raise exception 'Cancelling the repaired task must clean up its wake';
   end if;
   v_failed_created_child := public.create_room_task(
     v_room,v_owner,'Created after failed prerequisite','','',v_ai_two,array[v_fail_parent],3::smallint,null,'[]'::jsonb,

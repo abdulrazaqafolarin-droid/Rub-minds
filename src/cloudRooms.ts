@@ -413,6 +413,25 @@ export async function assignGroupTask(roomId: string, taskId: string, participan
   if (error || !data) throw new Error("Could not assign this task. Check its status and your group permissions.");
 }
 
+export async function replaceGroupTaskDependencies(
+  roomId: string,
+  taskId: string,
+  dependencyIds: string[],
+): Promise<{ status: GroupTaskStatus; dependency_count: number }> {
+  if (dependencyIds.length > 20 || new Set(dependencyIds).size !== dependencyIds.length) {
+    throw new Error("Choose at most 20 unique prerequisites.");
+  }
+  const { data, error } = await client().rpc("replace_room_task_dependencies", {
+    p_room_id: roomId,
+    p_task_id: taskId,
+    p_dependency_ids: dependencyIds,
+  });
+  if (error || !data || typeof data.status !== "string" || !Number.isInteger(data.dependency_count)) {
+    throw new Error("Could not revise this task's prerequisites.");
+  }
+  return { status: data.status as GroupTaskStatus, dependency_count: data.dependency_count as number };
+}
+
 export async function reviewGroupTask(
   roomId: string,
   taskId: string,

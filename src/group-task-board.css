@@ -108,3 +108,17 @@
   .rm-task-board-heading { flex-direction:column; }
   .rm-task-assignment-control { align-items:stretch; flex-direction:column; }
 }
+
+.rm-task-dependency-editor {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border, #e1e5eb);
+}
+.rm-task-dependency-editor > summary {
+  color: var(--muted, #586274);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+}
+.rm-task-dependency-editor[open] > summary { margin-bottom: 2px; }

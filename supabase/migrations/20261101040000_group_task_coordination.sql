@@ -627,6 +627,116 @@ revoke all on function public.assign_room_task(uuid,uuid,uuid) from public, anon
 grant execute on function public.assign_room_task(uuid,uuid,uuid) to authenticated;
 
 
+-- A blocked/backlog task can have its prerequisite plan repaired by its
+-- human creator or group owner. The dependency graph lock serializes edits
+-- with creation and other replacements; the row trigger remains the cycle guard.
+create or replace function public.replace_room_task_dependencies(
+  p_room_id uuid,
+  p_task_id uuid,
+  p_dependency_ids uuid[] default '{}'::uuid[]
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $replace_room_task_dependencies$
+declare
+  v_task public.room_tasks%rowtype;
+  v_actor_id uuid;
+  v_owner boolean;
+  v_total integer;
+  v_unique integer;
+  v_valid integer;
+  v_incomplete integer;
+  v_failed integer;
+  v_status text;
+begin
+  if auth.uid() is null then raise exception 'Authentication required'; end if;
+  if p_room_id is null or p_task_id is null or p_dependency_ids is null
+     or cardinality(p_dependency_ids) > 20 then
+    raise exception 'Invalid task dependency update';
+  end if;
+
+  select p.id into v_actor_id from public.participants p
+  where p.room_id=p_room_id and p.user_id=auth.uid() and p.kind='human'
+  limit 1;
+  if v_actor_id is null then raise exception 'Human group membership required'; end if;
+
+  -- Serialize all graph edits in this room before inspecting or replacing edges.
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(p_room_id::text || ':room-task-dependency-graph',0)
+  );
+
+  select t.* into v_task from public.room_tasks t
+  where t.id=p_task_id and t.room_id=p_room_id for update;
+  if not found then raise exception 'Task not found'; end if;
+
+  select exists(select 1 from public.rooms r where r.id=p_room_id and r.owner_id=auth.uid())
+    into v_owner;
+  if not v_owner and v_task.created_by_participant_id<>v_actor_id then
+    raise exception 'Only the task creator or group owner may revise task prerequisites';
+  end if;
+  if v_task.status not in ('backlog','assigned','blocked') then
+    raise exception 'Prerequisites cannot change after task work starts or enters review';
+  end if;
+
+  select count(*),count(distinct x.id)
+  into v_total,v_unique
+  from unnest(p_dependency_ids) as x(id);
+  if v_total<>v_unique then raise exception 'Task prerequisites must be unique and non-null'; end if;
+  if exists(select 1 from unnest(p_dependency_ids) as x(id) where x.id=p_task_id) then
+    raise exception 'A task cannot depend on itself';
+  end if;
+
+  select count(*) into v_valid
+  from unnest(p_dependency_ids) as x(id)
+  join public.room_tasks prerequisite on prerequisite.id=x.id and prerequisite.room_id=p_room_id;
+  if v_valid<>cardinality(p_dependency_ids) then
+    raise exception 'Every task prerequisite must belong to the same group';
+  end if;
+
+  delete from public.room_task_dependencies
+  where room_id=p_room_id and task_id=p_task_id;
+
+  insert into public.room_task_dependencies(room_id,task_id,depends_on_task_id,created_by_participant_id)
+  select p_room_id,p_task_id,x.id,v_actor_id
+  from unnest(p_dependency_ids) as x(id);
+
+  select
+    count(*) filter (where prerequisite.status<>'completed'),
+    count(*) filter (where prerequisite.status in ('failed','cancelled'))
+  into v_incomplete,v_failed
+  from public.room_task_dependencies d
+  join public.room_tasks prerequisite on prerequisite.id=d.depends_on_task_id
+  where d.room_id=p_room_id and d.task_id=p_task_id;
+
+  v_status := case
+    when v_failed>0 then 'blocked'
+    when v_incomplete>0 then 'backlog'
+    when v_task.assigned_to_participant_id is not null then 'assigned'
+    else 'backlog'
+  end;
+
+  update public.room_tasks
+  set status=v_status,
+      blocked_reason=case when v_failed>0
+        then 'One or more prerequisite tasks failed or were cancelled; revise the dependency plan.'
+        else null end
+  where id=p_task_id and room_id=p_room_id;
+
+  return jsonb_build_object(
+    'updated',true,
+    'task_id',p_task_id,
+    'status',v_status,
+    'dependency_count',cardinality(p_dependency_ids),
+    'incomplete_prerequisites',v_incomplete,
+    'failed_prerequisites',v_failed
+  );
+end;
+$replace_room_task_dependencies$;
+revoke all on function public.replace_room_task_dependencies(uuid,uuid,uuid[]) from public, anon;
+grant execute on function public.replace_room_task_dependencies(uuid,uuid,uuid[]) to authenticated;
+
 create or replace function public.cancel_room_task(
   p_room_id uuid,
   p_task_id uuid

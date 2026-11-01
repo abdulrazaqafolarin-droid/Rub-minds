@@ -10,6 +10,7 @@ import {
   listGroupTaskSubmissions,
   listGroupTasks,
   reviewGroupTask,
+  replaceGroupTaskDependencies,
   submitGroupTaskResultAsHuman,
   subscribeToGroupTasks,
   type CloudParticipant,
@@ -84,6 +85,7 @@ export default function GroupTaskBoard({
   const [feedbackDrafts, setFeedbackDrafts] = useState<Record<string, string>>({});
   const [resultDrafts, setResultDrafts] = useState<Record<string, string>>({});
   const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, string>>({});
+  const [dependencyDrafts, setDependencyDrafts] = useState<Record<string, string[]>>({});
 
   async function refresh(shouldCommit: () => boolean = () => true) {
     const [nextTasks, nextDependencies, nextSubmissions, nextReviews] = await Promise.all([
@@ -197,6 +199,33 @@ export default function GroupTaskBoard({
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not update task assignment.");
+    } finally {
+      setBusyTask("");
+    }
+  }
+
+  async function onSaveDependencies(task: GroupTask, nextIds: string[]) {
+    if (busyTask || nextIds.length > 20 || new Set(nextIds).size !== nextIds.length) return;
+    setBusyTask(task.id);
+    setError("");
+    setNotice("");
+    try {
+      const result = await replaceGroupTaskDependencies(roomId, task.id, nextIds);
+      await refresh();
+      setDependencyDrafts((current) => {
+        const next = { ...current };
+        delete next[task.id];
+        return next;
+      });
+      setNotice(
+        result.status === "assigned"
+          ? "Prerequisites updated; the task is ready for its assignee."
+          : result.status === "blocked"
+            ? "Prerequisites updated; the task remains blocked by a failed prerequisite."
+            : "Prerequisites updated; the task will wait until they are complete.",
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not revise task prerequisites.");
     } finally {
       setBusyTask("");
     }
@@ -384,6 +413,13 @@ export default function GroupTaskBoard({
             const creator = participantById.get(task.created_by_participant_id);
             const assignee = task.assigned_to_participant_id ? participantById.get(task.assigned_to_participant_id) : undefined;
             const taskDependencies = dependencies.filter((dependency) => dependency.task_id === task.id);
+            const selectedDependencyIds = Object.prototype.hasOwnProperty.call(dependencyDrafts, task.id)
+              ? dependencyDrafts[task.id]
+              : taskDependencies.map((dependency) => dependency.depends_on_task_id);
+            const dependencyChoices = tasks.filter((candidate) => candidate.id !== task.id &&
+              (!["failed", "cancelled"].includes(candidate.status) || selectedDependencyIds.includes(candidate.id)));
+            const dependencyDraftChanged = JSON.stringify([...selectedDependencyIds].sort()) !==
+              JSON.stringify(taskDependencies.map((dependency) => dependency.depends_on_task_id).sort());
             const latestSubmission = submissionsByTask.get(task.id);
             const latestReview = latestReviews.get(task.id);
             const canManage = isGroupOwner || task.created_by_participant_id === currentHumanParticipantId;
@@ -416,6 +452,45 @@ export default function GroupTaskBoard({
                   <span>Proposed by {creator?.display_name || "Participant"}</span>
                   {task.due_at && <span><Clock3 size={14}/> Due {new Date(task.due_at).toLocaleString()}</span>}
                 </div>
+                {canManage && ["backlog", "assigned", "blocked"].includes(task.status) && <details className="rm-task-dependency-editor">
+                  <summary>Revise prerequisites ({taskDependencies.length})</summary>
+                  <fieldset className="rm-task-dependencies">
+                    <legend>Required prerequisite tasks</legend>
+                    {dependencyChoices.length === 0 ? <p className="rm-task-empty">No other tasks are available.</p> :
+                      <div className="rm-task-dependency-options">
+                        {dependencyChoices.map((candidate) => (
+                          <label key={candidate.id}>
+                            <input
+                              type="checkbox"
+                              checked={selectedDependencyIds.includes(candidate.id)}
+                              onChange={(e) => {
+                                if (e.target.checked && selectedDependencyIds.length >= 20) {
+                                  setError("A task may have at most 20 prerequisites.");
+                                  return;
+                                }
+                                setError("");
+                                setDependencyDrafts((current) => {
+                                  const selected = Object.prototype.hasOwnProperty.call(current, task.id)
+                                    ? current[task.id]
+                                    : taskDependencies.map((dependency) => dependency.depends_on_task_id);
+                                  return { ...current, [task.id]: e.target.checked
+                                    ? [...selected, candidate.id]
+                                    : selected.filter((id) => id !== candidate.id) };
+                                });
+                              }}
+                            />
+                            <span>{candidate.title} · {statusLabels[candidate.status]}</span>
+                          </label>
+                        ))}
+                      </div>}
+                    <small>Removing a failed or cancelled prerequisite can unblock this task. Dependency cycles are rejected by the database.</small>
+                  </fieldset>
+                  <button type="button" className="rm-task-secondary" disabled={busyTask === task.id || !dependencyDraftChanged}
+                    onClick={() => { void onSaveDependencies(task, selectedDependencyIds); }}>
+                    {busyTask === task.id ? "Saving…" : "Save prerequisites"}
+                  </button>
+                </details>}
+
                 {taskDependencies.length > 0 && <div className="rm-task-prerequisites">
                   <strong>Prerequisites:</strong>
                   {taskDependencies.map((dependency) => {

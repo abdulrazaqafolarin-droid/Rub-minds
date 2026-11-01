@@ -39,8 +39,9 @@ A task with incomplete prerequisites remains in backlog and cannot be claimed. C
 4. A human assignee claims the task and submits a deliverable. A human can also cancel an active task.
 5. An authorized human task creator or group owner reviews the submission. Approval completes the task; a revision request returns it to the assignee, provided prerequisites remain ready.
 6. A task that has entered `in_progress` cannot be reassigned. A blocked task can be reassigned, but it remains blocked while any failed/cancelled prerequisite remains unresolved.
+7. The task creator or group owner can revise prerequisites while the task is in backlog, assigned or blocked using `replace_room_task_dependencies`. The RPC acquires the existing room-level dependency-graph lock, validates same-room edges and relies on the cycle-protection trigger. Removing a failed/cancelled prerequisite recalculates readiness and can release the task back to its assignee through the normal existing Backroom task-wake path.
 
-The browser client can read task state through existing room membership and Realtime. It cannot directly insert task rows or update task lifecycle, assignments, submissions or reviews. Human mutations use narrowly scoped database RPCs that independently verify `auth.uid()`, group membership and task ownership. No service-role key is exposed to the client.
+The browser client can read task state through existing room membership and Realtime. It cannot directly insert task rows or update task lifecycle, assignments, submissions or reviews. Human mutations use narrowly scoped database RPCs that independently verify `auth.uid()`, group membership and task ownership. Dependency edits are serialized per room, cycle-checked and unavailable after work has started or entered review. No service-role key is exposed to the client.
 
 Task creation uses a transaction-scoped idempotency lock and compares all immutable input fields on retry. Reusing a key with different task content is rejected. Human submissions retain the same result/key pair across a retry until the refreshed task history confirms the submission.
 

@@ -115,6 +115,17 @@ test("task submissions preserve bounded provenance and humans cannot approve the
 });
 
 
+test("humans can revise a blocked dependency plan only through the scoped graph-locked RPC", () => {
+  assert.ok(migration.includes("create or replace function public.replace_room_task_dependencies("));
+  assert.ok(migration.includes("pg_advisory_xact_lock(") && migration.includes("room-task-dependency-graph"));
+  assert.ok(migration.includes("Only the task creator or group owner may revise task prerequisites"));
+  assert.ok(migration.includes("Prerequisites cannot change after task work starts or enters review"));
+  assert.ok(migration.includes("grant execute on function public.replace_room_task_dependencies(uuid,uuid,uuid[]) to authenticated"));
+  assert.ok(taskAcceptance.includes("Removing the failed prerequisite must make the assigned dependent task ready"));
+  assert.ok(taskAcceptance.includes("A repaired and ready task must reuse the existing Backroom wake queue"));
+});
+
+
 test("MCP exposes bounded task tools only after its existing participant-session authorization", () => {
   for (const name of ["propose_group_task", "list_group_tasks", "read_group_task", "claim_group_task", "block_group_task", "fail_group_task", "submit_group_task_result"]) {
     assert.match(mcpProtocol, new RegExp('name: "' + name + '"'));
@@ -135,7 +146,9 @@ test("the existing cloud group UI owns the task board and uses the current Realt
   assert.match(cloudApp, /import GroupTaskBoard from '\.\/GroupTaskBoard'/);
   assert.match(cloudApp, /setShowTasks/);
   assert.match(cloudApp, /<GroupTaskBoard[\s\S]*?roomId=\{room\.id\}/);
-  for (const operation of ["listGroupTasks", "createGroupTask", "assignGroupTask", "reviewGroupTask", "cancelGroupTask", "claimGroupTaskAsHuman", "submitGroupTaskResultAsHuman"]) {
+  assert.match(taskBoard, /onSaveDependencies/);
+  assert.match(taskBoard, /Revise prerequisites/);
+  for (const operation of ["listGroupTasks", "createGroupTask", "assignGroupTask", "replaceGroupTaskDependencies", "reviewGroupTask", "cancelGroupTask", "claimGroupTaskAsHuman", "submitGroupTaskResultAsHuman"]) {
     assert.match(taskBoard, new RegExp(operation));
     assert.match(cloudRooms, new RegExp("function " + operation));
   }
