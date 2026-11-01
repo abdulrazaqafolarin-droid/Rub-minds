@@ -203,8 +203,10 @@ export function bindAdapterToExactConversation(adapter, provider, conversationUr
   });
 }
 
-function preview(value, limit = 700) {
-  const text = String(value ?? "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, " ");
+export function preview(value, limit = 700) {
+  // Keep ordinary line breaks, but remove terminal controls, carriage returns,
+  // C1 controls and bidi overrides that can spoof the operator's approval view.
+  const text = String(value ?? "").replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, " ");
   return text.length > limit ? text.slice(0, limit) + " … [truncated]" : text;
 }
 
