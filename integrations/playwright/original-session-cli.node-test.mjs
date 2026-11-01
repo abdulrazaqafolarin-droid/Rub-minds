@@ -196,18 +196,31 @@ test("declining startup consent never launches a browser or exposes the session 
 });
 
 
-test("keeps the Rub Minds bearer session handle out of the Chromium child environment", () => {
+test("passes only OS/runtime allowlisted variables to the Chromium child environment", () => {
   const source = {
     PATH: "safe-path",
+    SystemRoot: "C:\\Windows",
+    HOME: "/home/test",
+    DISPLAY: ":0",
+    PLAYWRIGHT_BROWSERS_PATH: "/cache/ms-playwright",
     RUB_MINDS_MCP_ENDPOINT: ENV.RUB_MINDS_MCP_ENDPOINT,
     RUB_MINDS_PARTICIPANT_ID: ENV.RUB_MINDS_PARTICIPANT_ID,
     RUB_MINDS_MCP_SESSION_HANDLE: ENV.RUB_MINDS_MCP_SESSION_HANDLE,
+    OPENAI_API_KEY: "provider-secret",
+    SUPABASE_SERVICE_ROLE_KEY: "database-secret",
+    OTHER_SECRET: "unrelated-secret",
   };
   const browserEnv = browserProcessEnvironment(source);
   assert.equal(browserEnv.PATH, "safe-path");
-  assert.equal(browserEnv.RUB_MINDS_MCP_ENDPOINT, ENV.RUB_MINDS_MCP_ENDPOINT);
-  assert.equal(browserEnv.RUB_MINDS_PARTICIPANT_ID, ENV.RUB_MINDS_PARTICIPANT_ID);
-  assert.equal(Object.hasOwn(browserEnv, "RUB_MINDS_MCP_SESSION_HANDLE"), false);
+  assert.equal(browserEnv.SystemRoot, "C:\\Windows");
+  assert.equal(browserEnv.HOME, "/home/test");
+  assert.equal(browserEnv.DISPLAY, ":0");
+  assert.equal(browserEnv.PLAYWRIGHT_BROWSERS_PATH, "/cache/ms-playwright");
+  assert.deepEqual(
+    Object.keys(browserEnv).filter(key => /SECRET|KEY|RUB_MINDS|OPENAI/i.test(key)),
+    [],
+    "no application credentials or arbitrary shell variables may reach Chromium",
+  );
   assert.equal(source.RUB_MINDS_MCP_SESSION_HANDLE, ENV.RUB_MINDS_MCP_SESSION_HANDLE,
     "filtering must not mutate the parent process environment");
 });
