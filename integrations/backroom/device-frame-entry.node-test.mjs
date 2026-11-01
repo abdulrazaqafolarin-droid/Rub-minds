@@ -82,6 +82,30 @@ test("Android Phone Frame wires a consented WebRTC stream and a separate touch g
   assert.match(control, /not an isolated virtual copy/);
 });
 
+test("Android composer selection binds one real non-password accessibility node before typing", async () => {
+  const control = await read("src/BackroomAndroidControl.tsx");
+  const service = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidTouchAccessibilityService.kt");
+  const screen = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  const keyboard = await read("android-companion/app/src/main/java/app/rubminds/companion/DraftInputMethodService.kt");
+  const policy = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidComposerTargetPolicy.kt");
+  assert.match(control, /Drag-select typing area/);
+  assert.match(control, /createNormalizedDragSelection/);
+  assert.match(control, /kind: 'select_composer_target'/);
+  assert.match(control, /composer_target_ack/);
+  assert.match(control, /targetId: selectedTargetId/);
+  assert.match(screen, /select_composer_target/);
+  assert.match(screen, /clear_composer_target/);
+  assert.match(screen, /insertRemoteText\(sessionId, appPackage, targetId, text\)/);
+  assert.match(service, /root\.findFocus\(AccessibilityNodeInfo\.FOCUS_INPUT\)/);
+  assert.match(service, /node\.isEditable/);
+  assert.match(service, /node\.isPassword/);
+  assert.match(service, /MAX_COMPOSER_TREE_NODES = 160/);
+  assert.doesNotMatch(service, /node\.text|node\.contentDescription|node\.getText\(/);
+  assert.match(keyboard, /isSelectedComposerFocused\(sessionId, packageName, targetId\)/);
+  assert.match(policy, /multiple_editable_fields_in_selection/);
+  assert.match(policy, /MIN_NODE_COVERAGE/);
+});
+
 test("Android touch-control requests have a bounded pending state and exact request correlation", async () => {
   const control = await read("src/BackroomAndroidControl.tsx");
   assert.match(control, /pendingControlRequestRef/);
