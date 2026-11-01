@@ -1,8 +1,9 @@
 const encoder = new TextEncoder();
 
-/** Derive the participant credential in a separate HKDF domain from the MCP handle.
- * Repeated calls for the same opaque handle recover the same credential without
- * storing its plaintext in the database or returning it from a database RPC.
+/** Derive a participant credential in a separate HKDF domain.
+ * The secret, opaque MCP handle and join request key bind the credential to one
+ * authorized join attempt: retries reproduce it, while a fresh rebind key rotates
+ * it. Plaintext is never stored in the database or returned from a database RPC.
  */
 export async function deriveJoinCredential(secretHex, sessionHandle, joinRequestKey) {
   if (typeof secretHex !== "string" || !/^[a-f0-9]{64}$/i.test(secretHex)) {

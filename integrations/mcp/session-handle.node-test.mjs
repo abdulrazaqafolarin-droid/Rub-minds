@@ -7,12 +7,12 @@ const key = "a".repeat(64);
 const invite = "b".repeat(64);
 const requestKey = "c".repeat(64);
 
-test("same invitation and retry key produce the same handle and credential", async () => {
+test("same invitation and retry key produce the same handle and participant credential", async () => {
   const first = await deriveModernSessionHandle(key, invite, "Claude", requestKey);
   const retry = await deriveModernSessionHandle(key, invite.toUpperCase(), " Claude ", requestKey.toUpperCase());
   assert.equal(first, retry);
   assert.match(first, /^[0-9a-f]{64}$/);
-  assert.equal(await deriveJoinCredential(key, first), await deriveJoinCredential(key, retry));
+  assert.equal(await deriveJoinCredential(key, first, requestKey), await deriveJoinCredential(key, retry, requestKey));
 });
 
 test("separate requests, invitations, labels and secrets cannot reuse a handle", async () => {
@@ -29,7 +29,7 @@ test("a rotated secret breaks deterministic retry compatibility and must be hand
   const oldHandle = await deriveModernSessionHandle(key, invite, "Claude", requestKey);
   const newHandle = await deriveModernSessionHandle("f".repeat(64), invite, "Claude", requestKey);
   assert.notEqual(oldHandle, newHandle);
-  assert.notEqual(await deriveJoinCredential(key, oldHandle), await deriveJoinCredential("f".repeat(64), newHandle));
+  assert.notEqual(await deriveJoinCredential(key, oldHandle, requestKey), await deriveJoinCredential("f".repeat(64), newHandle, requestKey));
 });
 
 test("invalid invitation, secret, label and retry key fail closed", async () => {
