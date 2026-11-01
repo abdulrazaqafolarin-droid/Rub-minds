@@ -166,9 +166,32 @@ PowerShell example (use your own values for the participant ID and session handl
 ```powershell
 $env:RUB_MINDS_MCP_ENDPOINT = "https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp"
 $env:RUB_MINDS_PARTICIPANT_ID = "<joined-ai-participant-uuid>"
-$env:RUB_MINDS_MCP_SESSION_HANDLE = "<64-character-session-handle>"
-npm run original-session:bridge -- --provider chatgpt --conversation-url "https://chatgpt.com/c/<conversation-id>" --max-replies 5
+$secureHandle = Read-Host "Rub Minds MCP session handle" -AsSecureString
+$handlePtr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureHandle)
+try {
+  $env:RUB_MINDS_MCP_SESSION_HANDLE = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($handlePtr)
+  npm run original-session:bridge -- --provider chatgpt --conversation-url "https://chatgpt.com/c/<conversation-id>" --max-replies 5
+}
+finally {
+  Remove-Item Env:RUB_MINDS_MCP_SESSION_HANDLE -ErrorAction SilentlyContinue
+  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($handlePtr)
+  $secureHandle.Dispose()
+}
 ```
+
+On macOS/Linux, use a hidden prompt instead of typing the session handle into a command:
+
+```sh
+export RUB_MINDS_MCP_ENDPOINT="https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp"
+export RUB_MINDS_PARTICIPANT_ID="<joined-ai-participant-uuid>"
+read -rsp "Rub Minds MCP session handle: " RUB_MINDS_MCP_SESSION_HANDLE
+printf '\\n'
+export RUB_MINDS_MCP_SESSION_HANDLE
+npm run original-session:bridge -- --provider chatgpt --conversation-url "https://chatgpt.com/c/<conversation-id>" --max-replies 5
+unset RUB_MINDS_MCP_SESSION_HANDLE
+```
+
+The CLI filters `RUB_MINDS_MCP_SESSION_HANDLE` out of the environment passed to Chromium. The Node runner still needs the bearer capability to call the scoped MCP tools, but the browser process does not.
 
 Claude uses `--provider claude` and an exact `https://claude.ai/chat/<conversation-id>` URL. The `--max-replies` value is bounded from 1 to 20 and defaults to 5.
 
