@@ -169,6 +169,9 @@ export class PlaywrightSessionBridge {
       }
       this.cursor = { id: cursor.after_message_id, created_at: cursor.after_created_at };
     }
+    if (state.pending_response !== null && state.blocked_message !== null) {
+      throw new Error("Durable bridge state cannot contain both a pending response and a blocked-message marker");
+    }
     if (state.pending_response !== null) {
       const pending = state.pending_response;
       if (!pending || typeof pending.source_message_id !== "string" ||
