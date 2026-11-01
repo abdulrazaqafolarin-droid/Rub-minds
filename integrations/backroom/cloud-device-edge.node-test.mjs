@@ -101,7 +101,8 @@ test("no native or web localhost bridge exists in the cloud Device Frame path", 
 
 
 test("Supabase config declares the device Edge Function exactly once with manual JWT verification", async () => {
-  const config = await read("supabase/config.toml");
+  // Git's Windows checkout may preserve CRLF; configuration semantics are line-ending agnostic.
+  const config = (await read("supabase/config.toml")).replace(/\r\n/g, "\n");
   const section = "[functions.backroom-device]";
   assert.equal(config.split(section).length - 1, 1);
   assert.ok(config.includes(section + String.fromCharCode(10) + "verify_jwt = false"));
