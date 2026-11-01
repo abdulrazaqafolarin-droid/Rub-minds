@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 
 const migration = await readFile(new URL("../../supabase/migrations/20261101040000_group_task_coordination.sql", import.meta.url), "utf8");
 const reviewEvidenceMigration = await readFile(new URL("../../supabase/migrations/20261101221147_group_task_review_criterion_evidence.sql", import.meta.url), "utf8");
+const reviewRoleMigration = await readFile(new URL("../../supabase/migrations/20261101221342_restrict_group_task_review_service_role_execute.sql", import.meta.url), "utf8");
 const vaultKeyMigration = await readFile(new URL("../../supabase/migrations/20261101165353_rub_minds_mcp_vault_encryption_key.sql", import.meta.url), "utf8");
 const vaultKeyAcceptance = await readFile(new URL("../../supabase/tests/rub_minds_mcp_vault_encryption_key.sql", import.meta.url), "utf8");
 const ciWorkflow = await readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
@@ -274,6 +275,7 @@ test("human task approvals require persisted evidence for every acceptance crite
   assert.match(reviewEvidenceMigration, /criterion_evidence=p_criterion_evidence/);
   assert.match(reviewEvidenceMigration, /revoke all on function public\.review_room_task\(uuid,uuid,text,text,jsonb\) from public, anon/);
   assert.match(reviewEvidenceMigration, /grant execute on function public\.review_room_task\(uuid,uuid,text,text,jsonb\) to authenticated/);
+  assert.match(reviewRoleMigration, /revoke all on function public\\.review_room_task\\(uuid,uuid,text,text,jsonb\\) from service_role/);
   assert.doesNotMatch(reviewEvidenceMigration, /grant execute on function public\.review_room_task\(uuid,uuid,text,text\) to authenticated/);
   assert.match(cloudRooms, /criterion_evidence,created_at/);
   assert.match(cloudRooms, /p_criterion_evidence:/);
