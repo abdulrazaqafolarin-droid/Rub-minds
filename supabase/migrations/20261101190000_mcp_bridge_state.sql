@@ -258,3 +258,62 @@ revoke all on function public.save_rub_minds_mcp_bridge_state(text, uuid, uuid, 
   from public, anon, authenticated;
 grant execute on function public.load_rub_minds_mcp_bridge_state(text, uuid, uuid) to service_role;
 grant execute on function public.save_rub_minds_mcp_bridge_state(text, uuid, uuid, bigint, timestamptz, uuid, uuid, timestamptz, text, uuid, text) to service_role;
+
+
+create or replace function public.clear_rub_minds_mcp_bridge_state_for_rejoin(
+  p_session_digest text,
+  p_expected_ciphertext text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_session public.rub_minds_mcp_sessions%rowtype;
+begin
+  if p_session_digest !~ '^[a-f0-9]{64}$'
+     or p_expected_ciphertext is null
+     or pg_catalog.length(p_expected_ciphertext) < 1 then
+    raise exception using errcode = '22023', message = 'Invalid MCP rejoin binding';
+  end if;
+
+  -- Parent-first row lock is shared with bridge load/save and termination.
+  select s.*
+    into v_session
+  from public.rub_minds_mcp_sessions s
+  where s.session_digest = p_session_digest
+  for update;
+
+  if not found or v_session.terminated_at is not null then
+    raise exception using errcode = '28000', message = 'MCP session is no longer active';
+  end if;
+
+  if v_session.agent_credential_ciphertext is distinct from p_expected_ciphertext then
+    return pg_catalog.jsonb_build_object('cleared', false, 'conflict', true);
+  end if;
+
+  update public.rub_minds_mcp_sessions
+  set agent_credential_ciphertext = null,
+      room_id = null,
+      participant_id = null,
+      last_seen_at = pg_catalog.clock_timestamp()
+  where session_digest = p_session_digest
+    and agent_credential_ciphertext = p_expected_ciphertext
+    and terminated_at is null;
+
+  if not found then
+    return pg_catalog.jsonb_build_object('cleared', false, 'conflict', true);
+  end if;
+
+  delete from public.rub_minds_mcp_bridge_state
+  where session_digest = p_session_digest;
+
+  return pg_catalog.jsonb_build_object('cleared', true, 'conflict', false);
+end;
+$$;
+
+revoke all on function public.clear_rub_minds_mcp_bridge_state_for_rejoin(text, text)
+  from public, anon, authenticated;
+grant execute on function public.clear_rub_minds_mcp_bridge_state_for_rejoin(text, text)
+  to service_role;
