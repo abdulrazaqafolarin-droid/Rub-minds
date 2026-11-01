@@ -223,6 +223,9 @@ export async function runOriginalSessionBridge({
   errorOutput = stderr,
   playwright = null,
   prompt = askExact,
+  prepareProfile = preparePrivateBrowserProfile,
+  createAdapter = createOriginalSessionAdapter,
+  createRuntime = createOriginalSessionWakeRuntime,
 } = {}) {
   if (!input.isTTY || !output.isTTY) fail("An interactive terminal is required so startup and every provider submission require explicit approval.");
   const options = parseRunnerArgs(argv);
@@ -257,7 +260,7 @@ export async function runOriginalSessionBridge({
     if (controller.signal.aborted) return { status: "stopped", replies: 0 };
 
     const browserApi = playwright || await import("playwright");
-    const profileDirectory = await preparePrivateBrowserProfile(config.profileDirectory);
+    const profileDirectory = await prepareProfile(config.profileDirectory);
     context = await browserApi.chromium.launchPersistentContext(profileDirectory, {
       headless: false,
       viewport: null,
@@ -276,7 +279,7 @@ export async function runOriginalSessionBridge({
       }
     }
 
-    const providerAdapter = createOriginalSessionAdapter(options.provider, {
+    const providerAdapter = createAdapter(options.provider, {
       approval: async ({ messageId, senderName, senderKind, prompt: groupPrompt, signal }) => {
         if (signal?.aborted || controller.signal.aborted) return false;
         output.write("\nIncoming Rub Minds group message\n");
@@ -289,7 +292,7 @@ export async function runOriginalSessionBridge({
     });
     const adapter = bindAdapterToExactConversation(providerAdapter, options.provider, options.conversationUrl);
 
-    runtime = createOriginalSessionWakeRuntime({
+    runtime = createRuntime({
       endpoint: config.endpoint,
       sessionHandle: config.sessionHandle,
       participantId: config.participantId,
