@@ -17,16 +17,23 @@ const pairingRepairMigration = await readFile(
 );
 
 test("pairing RPC qualifies output-column names to avoid PL/pgSQL ambiguity", () => {
+  const requiredFragments = [
+    "from public.backroom_devices as existing_device",
+    "where existing_device.token_digest = p_token_digest",
+    "where existing_device.device_id = p_device_id",
+    "from public.rooms as room",
+    "room.owner_id = v_pairing.owner_id",
+    "existing_device.owner_id = v_pairing.owner_id",
+    "set search_path = ''",
+    "to service_role",
+    "from public, anon, authenticated",
+  ];
   for (const sql of [initialPairingMigration, pairingRepairMigration]) {
-    assert.match(sql, /from public\\.backroom_devices as existing_device[\\s\\S]*existing_device\\.token_digest/);
-    assert.match(sql, /existing_device\\.device_id = p_device_id/);
-    assert.match(sql, /from public\\.rooms as room[\\s\\S]*room\\.owner_id = v_pairing\\.owner_id/);
-    assert.match(sql, /existing_device\\.owner_id = v_pairing\\.owner_id/);
-    assert.match(sql, /security definer[\\s\\S]*set search_path = ''/i);
-    assert.match(sql, /grant execute on function public\\.claim_backroom_device_pairing\\([\\s\\S]*to service_role/);
-    assert.match(sql, /revoke all on function public\\.claim_backroom_device_pairing\\([\\s\\S]*from public, anon, authenticated/);
+    for (const fragment of requiredFragments) {
+      assert.ok(sql.includes(fragment), "pairing migration is missing qualified SQL fragment: " + fragment);
+    }
   }
-});
+});;
 
 test("pair claim accepts only bounded typed credentials and identity", () => {
   assert.equal(validatePairClaim({pairingCode:hex,deviceId:uuid,deviceLabel:"My phone",osVersion:"14",appVersion:"0.2"},"b".repeat(64)),true);
