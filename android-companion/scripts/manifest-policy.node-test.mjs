@@ -1,0 +1,91 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+
+const root = new URL("../", import.meta.url);
+const read = path => readFile(new URL(path, root), "utf8");
+
+test("companion requests Internet only for the outbound cloud API", async () => {
+  const manifest = await read("app/src/main/AndroidManifest.xml");
+  assert.match(manifest, /<uses-permission android:name="android.permission.INTERNET"\s*\/>/);
+  const forbidden = [
+    "android.permission.MANAGE_EXTERNAL_STORAGE",
+    "android.permission.QUERY_ALL_PACKAGES",
+    "android.permission.SYSTEM_ALERT_WINDOW",
+    "android.permission.BIND_ACCESSIBILITY_SERVICE",
+    "android.permission.RECEIVE_BOOT_COMPLETED",
+    "android.permission.PACKAGE_USAGE_STATS",
+    "android.permission.REQUEST_INSTALL_PACKAGES",
+    "android.permission.READ_LOGS",
+    "android.permission.WRITE_SECURE_SETTINGS",
+    "android.permission.REQUEST_INSTALL_PACKAGES"
+  ];
+  for (const permission of forbidden) assert.equal(manifest.includes(permission), false, "Unexpected permission: " + permission);
+  assert.equal((manifest.match(/<uses-permission\b/g) ?? []).length, 1);
+  assert.match(manifest, /android:usesCleartextTraffic="false"/);
+  assert.match(manifest, /android.permission.BIND_INPUT_METHOD/);
+});
+
+test("package visibility is limited to launcher activities", async () => {
+  const manifest = await read("app/src/main/AndroidManifest.xml");
+  assert.match(manifest, /<queries>/);
+  assert.match(manifest, /android.intent.action.MAIN/);
+  assert.match(manifest, /android.intent.category.LAUNCHER/);
+  assert.doesNotMatch(manifest, /QUERY_ALL_PACKAGES/);
+});
+
+test("device connection uses outbound HTTPS only and refuses redirects", async () => {
+  const api = await read("app/src/main/java/app/rubminds/companion/CloudDeviceApi.kt");
+  assert.match(api, /HttpsURLConnection/);
+  assert.match(api, /protocol != "https"/);
+  assert.match(api, /instanceFollowRedirects = false/);
+  assert.match(api, /functions\/v1\/backroom-device/);
+  assert.doesNotMatch(api, /ServerSocket|Socket\(|127\.0\.0\.1|localhost|HttpServer/);
+  assert.match(api, /Authorization/);
+  assert.match(api, /BuildConfig\.SUPABASE_PUBLISHABLE_KEY/);
+});
+
+test("device bearer credential is encrypted with Android Keystore", async () => {
+  const vault = await read("app/src/main/java/app/rubminds/companion/DeviceCredentialVault.kt");
+  assert.match(vault, /AndroidKeyStore/);
+  assert.match(vault, /AES\/GCM\/NoPadding/);
+  assert.match(vault, /setRandomizedEncryptionRequired\(true\)/);
+  assert.match(vault, /credential_ciphertext/);
+  assert.match(vault, /\.commit\(\)/, "Pairing credentials must persist synchronously before a one-use network redemption.");
+});
+
+test("pairing is disabled without cloud configuration and cannot strand an unsent token", async () => {
+  const activity = await read("app/src/main/java/app/rubminds/companion/MainActivity.kt");
+  assert.match(activity, /isEnabled = pairConsent\.isChecked && cloudApi != null/);
+  assert.match(activity, /if \(cloudApi == null\) \{/);
+});
+
+test("selected inventory is the only app information sent to cloud", async () => {
+  const activity = await read("app/src/main/java/app/rubminds/companion/MainActivity.kt");
+  assert.match(activity, /CATEGORY_LAUNCHER/);
+  assert.match(activity, /syncInventoryBlocking/);
+  assert.match(activity, /draftInsertionAllowed/);
+  assert.match(activity, /signingCertificateSha256/);
+  assert.doesNotMatch(activity, /MANAGE_EXTERNAL_STORAGE|copy.*private.*data/i);
+});
+
+test("keyboard retains exact-package, signer and no-submit restrictions", async () => {
+  const keyboard = await read("app/src/main/java/app/rubminds/companion/DraftInputMethodService.kt");
+  const policy = await read("app/src/main/java/app/rubminds/companion/AppGrantPolicy.kt");
+  assert.match(keyboard, /currentInputEditorInfo/);
+  assert.match(keyboard, /isInsertAllowed\(verifyCurrentSigner = true\)/);
+  assert.match(keyboard, /commitText\(text, 1\)/);
+  assert.doesNotMatch(keyboard, /performEditorAction|sendKeyEvent|KEYCODE_ENTER/);
+  assert.match(policy, /grant\.signingCertificateSha256 == currentSigningCertificateSha256/);
+  assert.match(policy, /!isSensitiveInput\(inputType\)/);
+});
+
+test("installed apps on external storage are labelled without requesting file access", async () => {
+  const activity = await read("app/src/main/java/app/rubminds/companion/MainActivity.kt");
+  const manifest = await read("app/src/main/AndroidManifest.xml");
+  assert.match(activity, /ApplicationInfo\.FLAG_EXTERNAL_STORAGE/);
+  assert.match(activity, /"External storage"/);
+  assert.match(activity, /"Internal storage"/);
+  assert.doesNotMatch(activity, /"SD card"/);
+  assert.doesNotMatch(manifest, /MANAGE_EXTERNAL_STORAGE|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE/);
+});

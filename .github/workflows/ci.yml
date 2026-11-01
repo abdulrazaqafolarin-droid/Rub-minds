@@ -314,7 +314,7 @@ jobs:
       - name: Test public rate-limit helper
         run: deno test supabase/functions/_shared/public-rate-limit.deno-test.ts
       - name: Type-check Backroom coordination Edge Functions
-        run: deno check supabase/functions/backroom-config/index.ts supabase/functions/backroom-wake/index.ts
+        run: deno check supabase/functions/backroom-config/index.ts supabase/functions/backroom-wake/index.ts supabase/functions/backroom-device/index.ts
       - name: Type-check public invite Edge Functions
         run: deno check supabase/functions/redeem-ai-invite/index.ts supabase/functions/ai-invite-discovery/index.ts
       - name: Type-check session-memory Edge Function
@@ -327,6 +327,34 @@ jobs:
         run: npm run test:browser
       - name: Run Backroom managed-browser end-to-end tests
         run: npm run test:backroom:browser
+
+
+  android-companion:
+    # Build the native companion independently from the web bundle.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
+        with:
+          gradle-version: 8.10.2
+      - name: Install Android SDK platform
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Compile and unit-test the Android companion
+        working-directory: android-companion
+        run: |
+          gradle --no-daemon \
+            -PSUPABASE_URL=https://rubminds-ci.supabase.co \
+            -PSUPABASE_PUBLISHABLE_KEY=sb_publishable_ci_placeholder \
+            :app:testDebugUnitTest :app:assembleDebug
 
   local-supabase-stack:
     # Run validation on draft PRs as well; draft status does not imply a pass.
@@ -614,6 +642,49 @@ jobs:
             --header "Authorization: Bearer $LOCAL_SUPABASE_SERVICE_ROLE_KEY" \
             --header "Prefer: return=minimal"
           node scripts/local-mcp-sdk-e2e.mjs
+      - name: Start Backroom device Edge Function
+        run: |
+          set -euo pipefail
+          eval "$(supabase status -o env)"
+          : "${SERVICE_ROLE_KEY:?Local Supabase service-role key missing}"
+          if [ -f "$RUNNER_TEMP/mcp-edge.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/mcp-edge.pid")" 2>/dev/null || true
+          fi
+          cat > "$RUNNER_TEMP/backroom-device.env" <<EOF
+          SUPABASE_URL=${API_URL:-http://127.0.0.1:54321}
+          SUPABASE_SERVICE_ROLE_KEY=${SERVICE_ROLE_KEY}
+          BACKROOM_DEVICE_ALLOWED_ORIGINS=
+          EOF
+          supabase functions serve backroom-device --env-file "$RUNNER_TEMP/backroom-device.env" > "$RUNNER_TEMP/backroom-device-edge.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/backroom-device-edge.pid"
+          for attempt in $(seq 1 60); do
+            status_code="$(curl --silent --output /dev/null --write-out '%{http_code}' --request POST \
+              http://127.0.0.1:54321/functions/v1/backroom-device \
+              --header "Content-Type: application/json" --data '{}' || true)"
+            if [ "$status_code" = "400" ]; then exit 0; fi
+            if ! kill -0 "$(cat "$RUNNER_TEMP/backroom-device-edge.pid")" 2>/dev/null; then
+              cat "$RUNNER_TEMP/backroom-device-edge.log"
+              exit 1
+            fi
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/backroom-device-edge.log"
+          echo "Backroom device Edge Function did not become ready"
+          exit 1
+      - name: Test Backroom device pairing, inventory, group history and revocation
+        run: |
+          eval "$(supabase status -o env)"
+          export LOCAL_SUPABASE_URL="${API_URL:-http://127.0.0.1:54321}"
+          export LOCAL_SUPABASE_ANON_KEY="${ANON_KEY:?Local anon key missing}"
+          export LOCAL_SUPABASE_SERVICE_ROLE_KEY="${SERVICE_ROLE_KEY:?Local service-role key missing}"
+          node scripts/local-backroom-device-e2e.mjs
       - name: Stop isolated Supabase services
         if: always()
-        run: supabase stop --no-backup
+        run: |
+          if [ -f "$RUNNER_TEMP/backroom-device-edge.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/backroom-device-edge.pid")" 2>/dev/null || true
+          fi
+          if [ -f "$RUNNER_TEMP/mcp-edge.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/mcp-edge.pid")" 2>/dev/null || true
+          fi
+          supabase stop --no-backup
