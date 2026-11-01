@@ -62,8 +62,6 @@ test("Device Frame never claims inventory is a running virtual app", async () =>
   assert.doesNotMatch(devices, /Desktop runtime not connected|Terminal runtime not connected/);
   assert.match(devices, /surface === 'phone' && <div className="br-cloud-capabilities">/);
 
-  assert.match(devices, /Desktop runtime not connected/);
-  assert.match(devices, /Terminal runtime not connected/);
   assert.match(devices, /selected app metadata is synced/);
 });
 
