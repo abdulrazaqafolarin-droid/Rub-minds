@@ -218,10 +218,12 @@ test("MCP exposes bounded task tools only after its existing participant-session
   assert.match(mcpEdge, /status: existing\.status/);
   assert.match(mcpEdge, /status: raced\.status/);
   const staleBindingCheck = mcpEdge.indexOf("const { data: activeConnection, error: activeConnectionError }");
-  const staleBridgeCleanup = mcpEdge.indexOf('from("rub_minds_mcp_bridge_state")', staleBindingCheck);
-  const staleSessionUnbind = mcpEdge.indexOf('from("rub_minds_mcp_sessions").update({', staleBindingCheck);
-  assert.ok(staleBindingCheck > 0 && staleBridgeCleanup > staleBindingCheck && staleSessionUnbind > staleBridgeCleanup,
-    "a revoked/expired rejoin must clear old private bridge state before rebinding the same MCP handle");
+  const atomicRejoinCleanup = mcpEdge.indexOf('"clear_rub_minds_mcp_bridge_state_for_rejoin"', staleBindingCheck);
+  const freshJoinRedemption = mcpEdge.indexOf("const modernIdempotentJoin =", staleBindingCheck);
+  assert.ok(staleBindingCheck > 0 && atomicRejoinCleanup > staleBindingCheck &&
+    freshJoinRedemption > atomicRejoinCleanup &&
+    mcpEdge.includes("p_expected_ciphertext: session.agent_credential_ciphertext as string"),
+    "a revoked/expired rejoin must atomically clear old private bridge state under the parent MCP session lock before rebinding the same handle");
 });
 
 test("the existing cloud group UI owns the task board and uses the current Realtime room channel", () => {
