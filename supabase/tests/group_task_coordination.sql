@@ -84,12 +84,12 @@ begin
   perform pg_catalog.set_config('request.jwt.claim.sub',v_human::text,true);
   v_human_task := public.create_room_task(
     v_room,v_human,'Implement prerequisite','Do the prerequisite work','A tested prerequisite',
-    v_human,'{}'::uuid[],2,null,'["Tests pass","Evidence attached"]'::jsonb,
+    v_human,'{}'::uuid[],2::smallint,null,'["Tests pass","Evidence attached"]'::jsonb,
     '88000000-0000-4000-8000-000000000001'
   );
   v_replay := public.create_room_task(
     v_room,v_human,'Implement prerequisite','Do the prerequisite work','A tested prerequisite',
-    v_human,'{}'::uuid[],2,null,'["Tests pass","Evidence attached"]'::jsonb,
+    v_human,'{}'::uuid[],2::smallint,null,'["Tests pass","Evidence attached"]'::jsonb,
     '88000000-0000-4000-8000-000000000001'
   );
   if v_replay<>v_human_task then raise exception 'Idempotent task create did not return the same task ID'; end if;
@@ -97,7 +97,7 @@ begin
   begin
     perform public.create_room_task(
       v_room,v_human,'Different title','Do the prerequisite work','A tested prerequisite',
-      v_human,'{}'::uuid[],2,null,'["Tests pass","Evidence attached"]'::jsonb,
+      v_human,'{}'::uuid[],2::smallint,null,'["Tests pass","Evidence attached"]'::jsonb,
       '88000000-0000-4000-8000-000000000001'
     );
   exception when others then
@@ -109,14 +109,14 @@ begin
   -- A create retry must still resolve to the original task after mutable
   -- assignment state has changed.
   v_fingerprint_task := public.create_room_task(
-    v_room,v_human,'Retry after reassignment','','',v_human,'{}'::uuid[],3,null,'[]'::jsonb,
+    v_room,v_human,'Retry after reassignment','','',v_human,'{}'::uuid[],3::smallint,null,'[]'::jsonb,
     '88000000-0000-4000-8000-000000000009'
   );
   perform pg_catalog.set_config('request.jwt.claim.sub',v_owner::text,true);
   perform public.assign_room_task(v_room,v_fingerprint_task,v_ai_one);
   perform pg_catalog.set_config('request.jwt.claim.sub',v_human::text,true);
   v_replay := public.create_room_task(
-    v_room,v_human,'Retry after reassignment','','',v_human,'{}'::uuid[],3,null,'[]'::jsonb,
+    v_room,v_human,'Retry after reassignment','','',v_human,'{}'::uuid[],3::smallint,null,'[]'::jsonb,
     '88000000-0000-4000-8000-000000000009'
   );
   if v_replay<>v_fingerprint_task then
@@ -129,7 +129,7 @@ begin
   -- A task assigned to AI one waits until the human prerequisite is approved.
   v_dependent_task := public.create_room_task(
     v_room,v_owner,'Analyze completed prerequisite','Use the approved prerequisite',
-    'An evidence-backed analysis',v_ai_one,array[v_human_task],1,null,
+    'An evidence-backed analysis',v_ai_one,array[v_human_task],1::smallint,null,
     '["Cite the prerequisite","Explain limitations"]'::jsonb,
     '88000000-0000-4000-8000-000000000002'
   );
@@ -208,11 +208,11 @@ begin
   -- Dependency cycles are rejected even when a trusted backend attempts a
   -- direct dependency insert.
   v_cycle_parent := public.create_room_task(
-    v_room,v_owner,'Cycle parent','','',null,'{}'::uuid[],3,null,'[]'::jsonb,
+    v_room,v_owner,'Cycle parent','','',null,'{}'::uuid[],3::smallint,null,'[]'::jsonb,
     '88000000-0000-4000-8000-000000000003'
   );
   v_cycle_child := public.create_room_task(
-    v_room,v_owner,'Cycle child','','',null,array[v_cycle_parent],3,null,'[]'::jsonb,
+    v_room,v_owner,'Cycle child','','',null,array[v_cycle_parent],3::smallint,null,'[]'::jsonb,
     '88000000-0000-4000-8000-000000000004'
   );
   v_conflict := false;
@@ -228,7 +228,7 @@ begin
   -- A participant cannot review its own submission, even when it created the task.
   perform pg_catalog.set_config('request.jwt.claim.sub',v_human::text,true);
   v_self_review_task := public.create_room_task(
-    v_room,v_human,'No self review','','',v_human,'{}'::uuid[],3,null,'[]'::jsonb,
+    v_room,v_human,'No self review','','',v_human,'{}'::uuid[],3::smallint,null,'[]'::jsonb,
     '88000000-0000-4000-8000-000000000005'
   );
   perform public.claim_room_task_human(v_room,v_self_review_task,v_human);
@@ -249,11 +249,11 @@ begin
   -- wake is cancelled through the existing queue cancellation RPC.
   perform pg_catalog.set_config('request.jwt.claim.sub',v_owner::text,true);
   v_fail_parent := public.create_room_task(
-    v_room,v_owner,'AI task that fails','','',v_ai_one,'{}'::uuid[],3,null,'[]'::jsonb,
+    v_room,v_owner,'AI task that fails','','',v_ai_one,'{}'::uuid[],3::smallint,null,'[]'::jsonb,
     '88000000-0000-4000-8000-000000000006'
   );
   v_fail_child := public.create_room_task(
-    v_room,v_owner,'Blocked child','','',v_ai_two,array[v_fail_parent],3,null,'[]'::jsonb,
+    v_room,v_owner,'Blocked child','','',v_ai_two,array[v_fail_parent],3::smallint,null,'[]'::jsonb,
     '88000000-0000-4000-8000-000000000007'
   );
   if (select status from public.room_tasks where id=v_fail_child)<>'backlog' then
@@ -287,7 +287,7 @@ begin
     raise exception 'Failure of a prerequisite must block downstream work';
   end if;
   v_failed_created_child := public.create_room_task(
-    v_room,v_owner,'Created after failed prerequisite','','',v_ai_two,array[v_fail_parent],3,null,'[]'::jsonb,
+    v_room,v_owner,'Created after failed prerequisite','','',v_ai_two,array[v_fail_parent],3::smallint,null,'[]'::jsonb,
     '88000000-0000-4000-8000-000000000008'
   );
   if (select status from public.room_tasks where id=v_failed_created_child)<>'blocked' then
