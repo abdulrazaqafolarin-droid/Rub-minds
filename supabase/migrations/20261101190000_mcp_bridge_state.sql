@@ -43,3 +43,47 @@ grant all on table public.rub_minds_mcp_bridge_state to service_role;
 
 create index if not exists rub_minds_mcp_bridge_state_room_updated_idx
   on public.rub_minds_mcp_bridge_state(room_id, updated_at desc);
+
+
+-- Serialize bridge-state inserts/updates against session termination and
+-- re-joining. A bridge request that races with leave must never recreate state
+-- after the session has been tombstoned or rebound to another room/participant.
+create or replace function public.enforce_rub_minds_mcp_bridge_state_binding()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_session public.rub_minds_mcp_sessions%rowtype;
+begin
+  select s.*
+    into v_session
+  from public.rub_minds_mcp_sessions s
+  where s.session_digest = new.session_digest
+  for update;
+
+  if not found
+     or v_session.terminated_at is not null
+     or v_session.expires_at <= pg_catalog.clock_timestamp()
+     or v_session.room_id is distinct from new.room_id
+     or v_session.participant_id is distinct from new.participant_id then
+    raise exception using
+      errcode = '23514',
+      message = 'Bridge state requires the current active MCP session binding';
+  end if;
+
+  return new;
+end;
+$$;
+
+revoke all on function public.enforce_rub_minds_mcp_bridge_state_binding()
+  from public, anon, authenticated;
+
+drop trigger if exists rub_minds_mcp_bridge_state_binding_guard
+  on public.rub_minds_mcp_bridge_state;
+
+create trigger rub_minds_mcp_bridge_state_binding_guard
+before insert or update on public.rub_minds_mcp_bridge_state
+for each row
+execute function public.enforce_rub_minds_mcp_bridge_state_binding();
