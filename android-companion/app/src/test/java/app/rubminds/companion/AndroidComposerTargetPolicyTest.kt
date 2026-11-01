@@ -21,7 +21,7 @@ class AndroidComposerTargetPolicyTest {
     @Test fun normalizedDragMapsToTheActualAppWindow() {
         assertEquals(ComposerScreenRect(120, 1540, 920, 1780),
             AndroidComposerTargetPolicy.mapRegion(
-                NormalizedComposerSelection(0.1f, 0.9f, 0.9f, 0.98f), window
+                NormalizedComposerSelection(0.1f, 0.8333333f, 0.9f, 0.9666667f), window
             ))
     }
 
@@ -64,7 +64,7 @@ class AndroidComposerTargetPolicyTest {
     }
 
     @Test fun partiallyCoveredFieldsAreNotSelected() {
-        val partial = candidate(bounds = ComposerScreenRect(50, 1540, 900, 1740))
-        assertNull(AndroidComposerTargetPolicy.choose(listOf(partial), "com.example.chat", selection).candidate)
+        val partial = candidate(bounds = ComposerScreenRect(120, 1540, 900, 1740))
+        assertNull(AndroidComposerTargetPolicy.choose(listOf(partial), "com.example.chat", ComposerScreenRect(500, 1550, 920, 1740)).candidate)
     }
 }
