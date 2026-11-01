@@ -1,6 +1,6 @@
--- Native PostgreSQL 17 acceptance for the additive group-task migration.
--- Run after 20261029090000_backroom_wake_queue.sql and
--- 20261101040000_group_task_coordination.sql in the isolated CI database.
+-- Native PostgreSQL 17 acceptance for group tasks and evidence-backed reviews.
+-- Run after the durable wake queue, group-task coordination and criterion-evidence
+-- migrations in the isolated CI database.
 
 do $task_test$
 declare
