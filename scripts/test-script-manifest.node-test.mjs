@@ -77,3 +77,12 @@ test('original-session bridge runner is explicit and its safety tests are regist
  assert.ok(manifest.scripts?.['test:original-wake']?.includes('integrations/playwright/original-session-cli.node-test.mjs'));
  assert.ok(manifest.scripts?.['test:runtime']?.includes('integrations/playwright/original-session-cli.node-test.mjs'));
 });
+
+
+test('local Playwright runner isolates its browser profile and environment',async()=>{
+ const runner=await readFile(resolve(root,'scripts/original-session-bridge.mjs'),'utf8');
+ assert.match(runner,/launchPersistentContext\(profileDirectory,\s*\{[\s\S]*?env:\s*browserProcessEnvironment\(env\)/);
+ assert.match(runner,/BROWSER_ENV_ALLOWLIST/);
+ assert.match(runner,/join\(homedir\(\),\s*"\.rub-minds",\s*"original-session-profiles",\s*provider\)/);
+ assert.doesNotMatch(runner,/connectOverCDP/);
+});
