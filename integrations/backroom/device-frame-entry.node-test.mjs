@@ -50,8 +50,35 @@ test("Device Frame shows one selected phone at a time", async () => {
 test("Device Frame never claims inventory is a running virtual app", async () => {
   const devices = await read("src/BackroomDevicesApp.tsx");
   assert.match(devices, /Separate app data \/ virtualization/);
-  assert.match(devices, /Live screen and touch control/);
+  assert.ok(devices.includes("Live app stream and tap/swipe control"));
+  assert.match(devices, /<BackroomAndroidControl/);
   assert.match(devices, /Desktop runtime not connected/);
   assert.match(devices, /Terminal runtime not connected/);
   assert.match(devices, /selected app metadata is synced/);
+});
+
+test("Android Phone Frame wires a consented WebRTC stream and a separate touch grant", async () => {
+  const control = await read("src/BackroomAndroidControl.tsx");
+  const phone = await read("src/BackroomDevicesApp.tsx");
+  assert.match(phone, /import BackroomAndroidControl/);
+  assert.ok(phone.includes("BackroomAndroidControl device={activeDevice}") && phone.includes("roomId={roomId}"));
+  assert.match(control, /RTCPeerConnection/);
+  assert.ok(control.includes("addTransceiver('video', { direction: 'recvonly' })"));
+  assert.match(control, /android\/session-start/);
+  assert.match(control, /android\/command/);
+  assert.match(control, /request_control/);
+  assert.match(control, /kind: 'touch'/);
+  assert.match(control, /gesture, from:/);
+  assert.match(control, /waitForIceGatheringComplete/);
+  assert.match(control, /whole display/);
+  assert.match(control, /not an isolated virtual copy/);
+});
+
+test("Android touch-control requests have a bounded pending state and exact request correlation", async () => {
+  const control = await read("src/BackroomAndroidControl.tsx");
+  assert.match(control, /pendingControlRequestRef/);
+  assert.match(control, /controlRequestTimerRef/);
+  assert.match(control, /45_000/);
+  assert.ok(control.includes("payload.requestId !== pendingControlRequestRef.current"));
+  assert.ok(control.includes("pendingControlRequestRef.current === requestId"));
 });

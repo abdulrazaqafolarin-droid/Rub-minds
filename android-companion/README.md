@@ -28,7 +28,7 @@ You can also set `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` in the build envi
 
 ## Merged-manifest build gate
 
-Every debug/release APK or AAB build runs a Gradle audit against the **actual merged manifest**. It rejects any host permission beyond `INTERNET`, any exported component beyond the exact launcher and OS-bound draft keyboard, duplicate declarations, missing explicit `android:exported` values, or changed launcher/input-method intent filters. The task writes the merged-manifest SHA-256 and approved component/permission inventory to `app/build/reports/guest-host-manifest/`. A future engine dependency must pass this same gate before an APK can be produced.
+Every debug/release APK or AAB build runs a Gradle audit against the **actual merged manifest**. It rejects any host permission beyond `INTERNET`, any exported component beyond the exact launcher, OS-bound draft keyboard and OS-bound touch accessibility service, duplicate declarations, missing explicit `android:exported` values, or changed launcher/input-method/accessibility-service intent filters. The task writes the merged-manifest SHA-256 and approved component/permission inventory to `app/build/reports/guest-host-manifest/`. A future engine dependency must pass this same gate before an APK can be produced.
 
 Run the audit directly with `gradle :app:auditDebugGuestHostManifest`, or let `:app:assembleDebug` run it automatically.
 
@@ -45,7 +45,7 @@ The phone keeps the raw device credential locally; the database stores its diges
 
 ## Physical-device acceptance plan
 
-Use [the Android guest runtime acceptance matrix](../docs/BACKROOM_ANDROID_GUEST_RUNTIME_ACCEPTANCE.md) for the handset POC, app-by-app compatibility checks, exact artifact/manifest evidence, and release gates. The target device's API level, ABI and display geometry must be read from the actual handset during the test.
+Use [the Android live-stream acceptance matrix](../docs/BACKROOM_ANDROID_LIVE_STREAM_ACCEPTANCE.md) for MediaProjection, WebRTC, touch and phone-keyboard acceptance on the handset. Use [the Android guest runtime acceptance matrix](../docs/BACKROOM_ANDROID_GUEST_RUNTIME_ACCEPTANCE.md) separately for virtualization-provider admission and guest-only frame/data-isolation checks. The target device's API level, ABI and display geometry must be read from the actual handset during the test.
 
 ## Guest runtime integration gate
 
@@ -57,7 +57,7 @@ The contract requires true per-app guest data isolation, guest-only frames, sess
 
 ## Explicit capability boundaries
 
-This slice supports **app discovery and selected-app inventory only**. It does not clone or virtualize application code, copy another app's private data, embed native apps, capture the screen, or perform remote taps/swipes/typing. Opening a normal installed app is still an Android activity outside a Backroom isolated instance; the companion does not claim otherwise.
+This slice supports app discovery and selected-app inventory, plus an optional user-consented **live mirror of a real foreground app** on Android 14+. The user selects a locally approved app, approves Android's MediaProjection picker, and returns that app to the foreground. Backroom negotiates a WebRTC video session through the device-authenticated command queue. When Accessibility is separately enabled and touch is locally armed for 15 minutes, Backroom may send taps, swipes and long presses; every gesture is rechecked against the session, selected package, signer grant and current app window. This is remote interaction with the real installed app, not a virtualized copy or isolated guest process.
 
 `MANAGE_EXTERNAL_STORAGE` is deliberately not requested. It grants broad access to shared storage, not another app's private sandbox (`/data/user/0/<package>` or another app's `Android/data` directory). Existing private logins and app databases cannot be copied by an ordinary app. A future virtualization engine must create a fresh, isolated data container and pass app-specific compatibility tests; the user signs into that instance separately.
 
@@ -67,12 +67,22 @@ Package inventory is restricted to launchable apps visible under the declared `<
 
 See [`docs/architecture/backroom-app-execution-engine.md`](../docs/architecture/backroom-app-execution-engine.md) for the explicit proof-of-concept gate and current engine review. NewBlackbox was re-audited and is rejected unchanged: its Bcore source manifest has 323 permission entries (249 unique), with broad host privileges. No virtualization library has been integrated.
 
-## Verification status
+## Verification status — 2026-10-31
 
-- Repository Node tests statically verify permissions, HTTPS-only transport, lack of inbound localhost listeners, credential handling, and package query scope.
-- Kotlin/JUnit tests cover the existing per-app draft-insertion policy and the guest runtime admission/frame/touch/target/one-shot lease safety contract.
-- Node source-contract tests verify that no virtualization dependency or broad permission has been added to the companion.
-- **Not yet verified here:** Android Gradle compilation, APK installation, cloud function deployment, migration execution, pairing against a live backend, or physical-device behavior. A real Android build and phone acceptance test are mandatory before release.
+**Native build and automated tests: passed in an isolated Linux Android SDK 35 runner.**
+
+- JDK 17 / Gradle 8.10.2 / Android Gradle Plugin build completed successfully with `:app:testDebugUnitTest :app:auditDebugGuestHostManifest :app:assembleDebug`.
+- Kotlin/JUnit: **60 tests, 0 failures, 0 errors, 0 skipped**.
+- Android manifest/resource-policy Node suite: **27/27 passed**.
+- Cross-layer Phone Frame, Edge Function, Android touch-policy, SDP protocol and private Realtime suite: **50/50 passed**.
+- Combined automated verification: **137 passed, 0 failed**.
+- The final merged-manifest audit passed. SHA-256: `029cd32a4f972d980c0e9d4ce5bf7d2e9bce2b5921fa992ab51315448963a2d0`. It contains 5 declared permissions and 4 explicitly exported components.
+- Debug APK assembled and verified with `apksigner`. Size: 49,967,179 bytes. SHA-256: `2cc2ba30789ff111ee49acf779871298023d0a28378212ecff7b1f4a4eee40f5`. Debug signer certificate SHA-256: `6765d5a3cbed165ed9b18f45f5742bf313966c4c8cfb0106f2f94d0e75deced0`.
+- This compile-verification APK was built with empty `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` BuildConfig values. It cannot pair with a backend. Build a separate APK with an approved staging URL and publishable key before remote stream/keyboard acceptance; record that build's new artifact, signer and manifest hashes. Never put a service-role/secret key in the APK.
+
+**Not yet accepted:** no physical Android handset/ADB device was attached to the remote runner. The TECNO KL4 still needs APK installation, confirmation of the Android 14 QPR2 app-window picker, pairing against an explicitly approved staging backend, WebRTC video, real tap/swipe/long-press, local disarm, app-switch and projection/network revocation checks, and the phone-keyboard acceptance path (enable/select Rub Minds IME, arm locally, insert into a focused ordinary field, receive ACK, test rejection and revoke). Follow [the live-stream acceptance matrix](../docs/BACKROOM_ANDROID_LIVE_STREAM_ACCEPTANCE.md). A debug APK build is not a production release signature.
+
+The GitHub Actions jobs on this branch continue to terminate before runner allocation (`runner_id=0`, no steps executed); that is a GitHub runner-availability failure, not a test result. The checks above were executed directly in the isolated Android SDK runner against the PR source. The migration and Edge Function remain committed source only: they have **not** been applied or deployed. Production Supabase and production Vercel were not changed.
 
 ## Local app launch (2026-10-31)
 
@@ -127,3 +137,31 @@ Platform references:
 - https://developer.android.com/reference/android/companion/virtual/VirtualDeviceManager
 - https://developer.android.com/reference/android/content/pm/PackageManager#FEATURE_ACTIVITIES_ON_SECONDARY_DISPLAYS
 - https://android.googlesource.com/platform/frameworks/base/+/refs/heads/master/core/java/android/companion/virtual/VirtualDeviceManager.java
+
+
+## Live Android app mirror and touch (2026-10-31)
+
+The companion now includes a foreground MediaProjection + WebRTC sender and a Backroom Phone Frame control surface. It does not join Supabase Realtime as a fake user: the phone authenticates each poll/answer/ack with its enrolled device bearer; human users use their real Rub Minds JWT for group authorization; the server publishes Android SDP and permission events to a room-scoped private topic (`backroom-android:<device-id>:<room-id>`). This prevents a member of one group from receiving session signaling for another group bound to the same phone. Commands are session- and room-bound, leased for 60 seconds and expired after two minutes. The database permits only one active screen session per physical device; stale and duplicate sessions are retired before the uniqueness constraint is installed. Old queue rows are pruned after seven days.
+
+View-only streaming does not require Accessibility. Accessibility is a separate OS permission. When enabled, it checks the current active window and dispatches touch gestures only to the locally selected app whose signer still matches the saved app grant. Remote touch must also be explicitly armed by the user on the phone for up to 15 minutes. App/window switches, projection revocation, stop commands, device revocation or peer failure close the session. No accessibility tree or app text is sent to the cloud.
+
+Android app-window sharing was introduced in Android 14 QPR2; device/OEM rollout can vary. The Android screen-sharing picker can offer one app window or the entire display. The companion cannot independently inspect Android's selected capture target, so the user must choose the intended app window; if only full-display sharing is offered, cancel rather than exposing the whole phone. The setup screen displays the OS build identifiers to help verify device support. WebRTC currently uses public STUN servers only, so restrictive NAT/firewall networks may not connect. No TURN relay is configured.
+
+**Still not delivered:** isolated/virtual Android guest instances, separate app-private data, guest-only virtual display rendering, accessibility-backed field discovery in the Phone Frame, drag-select target binding, guest draft insertion/readback, physical-device validation of the remote typing path, or a production Emergency Stop for an isolated guest. The remote text-to-IME bridge is implemented in source but is not yet a verified handset capability. The current stream is a mirror of an ordinary app installation and must not be labelled virtualization.
+
+The command protocol and touch policy have passing regression tests (50/50 cross-layer tests); native :app:testDebugUnitTest, the merged-manifest audit and :app:assembleDebug have also passed in an isolated Android SDK 35 runner (60/60 JUnit tests and a signed debug APK). GitHub Actions on this branch still fail before runner allocation, so the direct runner result is recorded separately. No live migration or Edge Function deployment is implied by committed source.
+
+
+**Viewing topology:** the phone is the capture source and must keep the selected app window foreground. Open the Backroom Phone Frame control page on a separate device (for example a Windows laptop). Opening the control page on the same phone causes the selected app window to become hidden; Android pauses that app-window capture and Backroom shows a hidden-source state. This path is not an on-device overlay or same-phone virtual display.
+
+The Android stream setup screen also exposes **Disarm remote touch now**. It clears the local 15-minute gate and clears the service's active touch grant without stopping the view-only screen stream.
+
+Platform note: Android's official documentation states that app-window sharing was introduced in Android 14 QPR2. The presence of API level 34 alone does not prove that a particular Android 14 firmware has received the QPR2 user-facing picker feature. Confirm that the device chooser exposes the intended app window before proceeding; cancel if it only offers full display.
+
+## Remote typing into a focused phone app field
+
+The app mirror's Phone Frame includes a **Type into the focused phone field** composer. On the phone, enable **Rub Minds keyboard** in Android Settings, select it in the input-method picker, then open Backroom app streaming and confirm **Allow Backroom typing for 15 minutes**. Keep the selected app visible and focus an ordinary text field in it. Text typed in the Backroom composer is committed by the Rub Minds IME into that focused field.
+
+Remote typing is a separate local permission from touch. It is session/package/signer-bound, requires the app's local draft-insertion grant, supports ordinary text, numeric and phone editors, rejects password and unsupported date/time fields, and expires after 15 minutes or process/service shutdown. It uses InputConnection.commitText only: no editor text is read, no Enter key is sent and no form/message is submitted. Multiline text is accepted only by multiline editors. Each request is acknowledged and protected against replay.
+
+Android app-window sharing excludes system UI, so the phone's soft-keyboard surface is not expected to be visible in the video preview. The Backroom composer is the remote text-entry control; the phone's selected keyboard remains available for local typing. The feature is implemented in source but still requires the exact APK build and physical-device acceptance described in the guest-runtime acceptance document.

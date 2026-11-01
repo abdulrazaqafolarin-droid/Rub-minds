@@ -112,7 +112,7 @@ class MainActivity : Activity() {
             setTextColor(0xff172033.toInt())
         })
         root.addView(TextView(this).apply {
-            text = "Select apps for your group's Backroom inventory. You can also open a saved, approved app locally on this phone. Remote app control and isolated virtualization are not enabled. Pairing uses outbound HTTPS; this phone opens no local network port."
+            text = "Select installed apps for your group's Backroom inventory. You can open saved apps locally or configure user-consented app streaming. Streaming needs Android 14+, a separate Android screen-capture approval and an optional locally enabled accessibility service. It mirrors the real app; it does not create an isolated virtual copy."
             textSize = 13f
             setTextColor(0xff4b5563.toInt())
             setPadding(0, dp(7), 0, dp(12))
@@ -141,7 +141,7 @@ class MainActivity : Activity() {
             setPadding(0, dp(12), 0, dp(3))
         })
         cloudCard.addView(TextView(this).apply {
-            text = "Internet: connects to Rub Minds over encrypted HTTPS for pairing and selected-app metadata. App discovery: shows launchable apps Android exposes to this profile. All Files Access is not requested because this build does not clone app data; that permission would not unlock other apps' private data. Screen capture and Accessibility control are not requested and are not available in this build."
+            text = "Internet: connects to Rub Minds over encrypted HTTPS for pairing, selected-app metadata and short-lived stream commands. App discovery shows launchable apps Android exposes to this profile. All Files Access is not requested because streaming does not clone app data; that permission would not unlock other apps' private data. Screen capture is approved through Android's system picker for each share. Accessibility is optional, must be enabled by you in Settings, and is used only for foreground-package checks and locally armed touch gestures; app text and the accessibility tree are not uploaded."
             textSize = 11f
             setTextColor(0xff405070.toInt())
         })
@@ -191,6 +191,10 @@ class MainActivity : Activity() {
         cloudCard.addView(cloudStatus)
         root.addView(cloudCard)
         buildWorkProfileCard(root)
+        root.addView(Button(this).apply {
+            text = "Configure Backroom app streaming"
+            setOnClickListener { startActivity(Intent(this@MainActivity, AndroidStreamSetupActivity::class.java)) }
+        })
 
         val scopeNote = TextView(this).apply {
             text = "Privacy boundary: Backroom syncs only the apps you select, with their package names, labels, signer fingerprints and version names. It does not upload app data, login sessions, files, messages or passwords."
