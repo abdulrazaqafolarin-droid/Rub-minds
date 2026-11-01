@@ -324,6 +324,12 @@ test("original-session bridge state tools are listed, session-scoped, and fail c
   assert.match(validateToolArguments("save_original_session_bridge_state", { ...validEmpty, expected_revision: -1 }), /revision/);
   assert.match(validateToolArguments("save_original_session_bridge_state", { ...validEmpty, cursor_created_at: "2026-11-01T00:00:00Z" }), /cursor_created_at/);
   assert.match(validateToolArguments("save_original_session_bridge_state", { ...validEmpty, cursor_message_id: id }), /cursor_created_at/);
+  assert.match(validateToolArguments("save_original_session_bridge_state", {
+    ...validEmpty, cursor_created_at: "2026-11-01T00:00:00", cursor_message_id: id,
+  }), /cursor_created_at/);
+  assert.match(validateToolArguments("save_original_session_bridge_state", {
+    ...validEmpty, cursor_created_at: "2026-11-01T00:00:00.1234567Z", cursor_message_id: id,
+  }), /cursor_created_at/);
   assert.equal(validateToolArguments("save_original_session_bridge_state", {
     ...validEmpty, cursor_created_at: "2026-11-01T00:00:00.123456Z", cursor_message_id: id,
   }), null);
