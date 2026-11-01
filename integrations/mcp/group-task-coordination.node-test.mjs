@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const migration = await readFile(new URL("../../supabase/migrations/20261101040000_group_task_coordination.sql", import.meta.url), "utf8");
+const reviewEvidenceMigration = await readFile(new URL("../../supabase/migrations/20261101210000_group_task_review_criterion_evidence.sql", import.meta.url), "utf8");
 const vaultKeyMigration = await readFile(new URL("../../supabase/migrations/20261101165353_rub_minds_mcp_vault_encryption_key.sql", import.meta.url), "utf8");
 const vaultKeyAcceptance = await readFile(new URL("../../supabase/tests/rub_minds_mcp_vault_encryption_key.sql", import.meta.url), "utf8");
 const ciWorkflow = await readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
@@ -244,4 +245,34 @@ test("dependency graph, wake acknowledgement and in-progress assignment boundari
   assert.match(taskAcceptance, /An AI task claim must not cancel its still-leased canonical wake/);
   assert.match(taskAcceptance, /An in-progress task must not be reassigned to another participant/);
   assert.match(taskAcceptance, /Failure of a prerequisite must block downstream work/);
+});
+
+
+test("human task approvals require persisted evidence for every acceptance criterion", () => {
+  assert.match(reviewEvidenceMigration, /add column if not exists criterion_evidence jsonb not null default '\[\]'::jsonb/);
+  assert.match(reviewEvidenceMigration, /drop function if exists public\.review_room_task\(uuid, uuid, text, text\)/);
+  assert.match(reviewEvidenceMigration, /create function public\.review_room_task\([\s\S]*?p_criterion_evidence jsonb/);
+  assert.match(reviewEvidenceMigration, /Evidence must cover every acceptance criterion exactly once and in order/);
+  assert.match(reviewEvidenceMigration, /jsonb_typeof\(evidence\.item->'met'\) <> 'boolean'/);
+  assert.match(reviewEvidenceMigration, /A task cannot be approved while any acceptance criterion is unmet/);
+  assert.match(reviewEvidenceMigration, /criterion_evidence=p_criterion_evidence/);
+  assert.match(reviewEvidenceMigration, /revoke all on function public\.review_room_task\(uuid,uuid,text,text,jsonb\) from public, anon/);
+  assert.match(reviewEvidenceMigration, /grant execute on function public\.review_room_task\(uuid,uuid,text,text,jsonb\) to authenticated/);
+  assert.doesNotMatch(reviewEvidenceMigration, /grant execute on function public\.review_room_task\(uuid,uuid,text,text\) to authenticated/);
+  assert.match(cloudRooms, /criterion_evidence,created_at/);
+  assert.match(cloudRooms, /p_criterion_evidence:/);
+  assert.match(taskBoard, /Acceptance criteria evidence/);
+  assert.match(taskBoard, /Every acceptance criterion must be marked met before approval/);
+  assert.match(taskAcceptance, /Review must include evidence for every criterion/);
+  assert.match(taskAcceptance, /Unmet acceptance criteria must block approval/);
+  assert.match(taskAcceptance, /Criterion-level review evidence must be persisted with the decision/);
+  assert.match(ciWorkflow, /20261101210000_group_task_review_criterion_evidence\.sql/);
+});
+
+test("Realtime task refreshes reject stale snapshots and stale errors", () => {
+  assert.match(taskBoard, /const refreshGeneration = useRef\(0\)/);
+  assert.match(taskBoard, /requestId !== refreshGeneration\.current/);
+  assert.match(taskBoard, /refreshGeneration\.current \+= 1/);
+  assert.match(taskBoard, /sequence === loadSequence/);
+  assert.match(taskBoard, /Only the newest complete snapshot/);
 });
