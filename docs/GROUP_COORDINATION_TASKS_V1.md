@@ -1,6 +1,6 @@
 # Group Coordination — durable task workflow v1
 
-**Status:** implementation draft on `feat/group-task-coordination-v1`. The migration, MCP changes, UI and CI acceptance test are prepared for review. They have not been deployed to either Supabase project.
+**Status (2026-11-01):** draft PR #59 on `feat/group-task-coordination-v1`, exact head `8c2b61252d3a4f73b41fa4cc8f92ad52fee98cb2`. The four exact-head GitHub Actions workflows pass, and the additive schema plus related staging Edge Functions are present on the separate Rub Minds Staging project. This has **not** been merged to `main` or deployed to production. Keep the PR in draft until physical-device and live-provider acceptance gates below are complete.
 
 ## Integration principle
 
@@ -89,4 +89,21 @@ The branch includes:
 - a PostgreSQL 17 acceptance test for idempotency, human submission/review, dependency release and failure, AI task-mode wake, reassignment/cancellation and least privilege;
 - an extension to the existing Backroom durable-queue CI workflow so the task migration and acceptance test run after the existing queue migration/test.
 
-A successful GitHub Actions run is still required. Staging schema alignment, application against the isolated staging project, real MCP client acceptance and a real original-session task-assignment → Backroom wake → MCP task retrieval → submission round trip remain separate release gates. No production deployment is part of this change.
+### Verified checkpoint — 2026-11-01
+
+At exact head `8c2b61252d3a4f73b41fa4cc8f92ad52fee98cb2`, all four GitHub Actions workflows completed successfully:
+- [Validate Rub Minds #41332605021](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/41332605021) — full build/runtime suite, browser checks, local Supabase rebuild, invitation and MCP SDK interoperability, session revocation, Vault and migration checks.
+- [Backroom durable wake queue SQL #41332605054](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/41332605054) — PostgreSQL 17 queue and group-task lifecycle/dependency/wake acceptance.
+- [Backroom Android companion #41332605224](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/41332605224) — Android unit tests, merged-manifest gate and APK build.
+- [Backroom Windows desktop companion #41332605015](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/41332605015) — web tests/build, WebView bundle, Rust unit tests, protocol/authorization tests and Windows native compilation.
+
+The separate Rub Minds Staging project has the task and supporting Backroom migrations. Staging `rub-minds-mcp` is ACTIVE v2 and advertises 18 tools, including the seven task operations; `backroom-device` is ACTIVE v13. The checked-in `supabase/tests/group_task_coordination.sql` was executed inside an explicit transaction followed by ROLLBACK; a follow-up query confirmed zero fixture users, rooms, participants, task rows or wake jobs remained. The Vault encryption-key security test also passed inside its own transaction and rollback. Staging table/RPC privilege checks confirmed RLS and least-privilege boundaries for task and service-only device/session/queue data.
+
+### Remaining release gates
+
+- Run the real task-assignment → Backroom wake → original ChatGPT/Claude session MCP retrieval → result submission round trip against an isolated test group. CI and staging source/schema checks do not prove a real provider completed that journey.
+- Perform physical Windows 10 companion/ConPTY acceptance and Android handset acceptance (MediaProjection, foreground lifecycle, local touch arming, IME path, revocation and Emergency Stop).
+- Reconcile staging migration-history version identifiers with repository migration filenames before any formal promotion.
+- Review the remaining staging advisor findings, especially disabled leaked-password protection and the project's authenticated-callable SECURITY DEFINER functions. The task/device privilege checks passed, but the project-wide advisor report is not clean.
+
+No production migration, Edge Function deployment, secret, Auth setting or Vercel production deployment was changed during this checkpoint. PR #59 remains draft and unmerged.
