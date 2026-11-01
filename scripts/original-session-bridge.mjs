@@ -313,6 +313,12 @@ export async function runOriginalSessionBridge({
     const result = await runtime.run({ approved: true, signal: controller.signal });
     output.write("Bridge stopped: " + result.status + " · replies " + result.replies + "\n");
     return result;
+  } catch (error) {
+    if (controller.signal.aborted && error?.name === "AbortError") {
+      output.write("Bridge stopped by local cancellation.\n");
+      return { status: "stopped", replies: 0 };
+    }
+    throw error;
   } finally {
     runtime?.stop();
     process.removeListener("SIGINT", onSigint);
