@@ -145,6 +145,19 @@ begin
   ) then
     raise exception 'Bridge-state save RPC must be service-role-only SECURITY DEFINER with empty search_path';
   end if;
+
+  if not exists (
+    select 1
+    from pg_catalog.pg_proc p
+    where p.oid = pg_catalog.to_regprocedure('public.clear_rub_minds_mcp_bridge_state_for_rejoin(text,text)')
+      and p.prosecdef
+      and p.proconfig @> array['search_path=""']::text[]
+      and not pg_catalog.has_function_privilege('anon', p.oid, 'EXECUTE')
+      and not pg_catalog.has_function_privilege('authenticated', p.oid, 'EXECUTE')
+      and pg_catalog.has_function_privilege('service_role', p.oid, 'EXECUTE')
+  ) then
+    raise exception 'MCP rejoin cleanup RPC must be service-role-only SECURITY DEFINER with empty search_path';
+  end if;
 end;
 $bridge_state_security$;
 
