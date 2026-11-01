@@ -693,6 +693,163 @@ try {
   assert.deepEqual(forbiddenRows, [], "rejected sender impersonation must not persist");
   console.log("Authenticated human and MCP AI exchanged messages in both directions; outsider RLS denied room access.");
 
+  // Exercise the complete group-task lifecycle through the hosted MCP tools
+  // and human RPCs. Proposals remain unassigned until a signed-in human assigns them.
+  const ownerPassword = "Local-CI-Official-MCP-Owner-923!x";
+  const ownerLoginResponse = await fetch(apiUrl + "/auth/v1/token?grant_type=password", {
+    method: "POST",
+    headers: { apikey: publicKey, "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "rub-minds-official-mcp-owner@example.test", password: ownerPassword }),
+  });
+  const ownerLogin = await ownerLoginResponse.json();
+  assert.equal(ownerLoginResponse.status, 200, "room owner sign-in failed for task approval: " + JSON.stringify(ownerLogin));
+  assert.ok(ownerLogin.access_token, "room owner session has no access token");
+  const ownerHeaders = {
+    apikey: publicKey,
+    Authorization: "Bearer " + ownerLogin.access_token,
+    "Content-Type": "application/json",
+  };
+  async function ownerRequest(path, init = {}) {
+    const response = await fetch(apiUrl + path, {
+      ...init,
+      headers: { ...ownerHeaders, ...(init.headers || {}) },
+    });
+    const payload = await response.json().catch(() => null);
+    assert.ok(response.ok, "owner task RPC failed " + path + " (" + response.status + "): " + JSON.stringify(payload));
+    return payload;
+  }
+
+  // A room owner is a human participant; seed one only if room creation did not
+  // create it, then require exactly one identity before executing lifecycle RPCs.
+  let ownerParticipants = await request(
+    "/rest/v1/participants?select=id,kind,user_id&room_id=eq." + room.id + "&user_id=eq." + owner.id,
+  );
+  if (ownerParticipants.length === 0) {
+    ownerParticipants = await request("/rest/v1/participants", {
+      method: "POST",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({
+        room_id: room.id, user_id: owner.id, display_name: "Room owner",
+        kind: "human", status: "connected",
+      }),
+    });
+  }
+  assert.equal(ownerParticipants.length, 1, "the room owner must have exactly one human participant identity");
+  assert.equal(ownerParticipants[0].kind, "human");
+
+  const proposalArgs = {
+    session_handle: one.session_handle,
+    title: "CI end-to-end group task",
+    description: "Verify a real task can move through the human-governed MCP lifecycle.",
+    expected_output: "A completed task, one submission, and one human approval.",
+    acceptance_criteria: ["The assigned AI claims the task", "The AI submits a result", "The owner approves the result"],
+    priority: 2,
+    idempotency_key: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  };
+  const proposed = await first.callTool({ name: "propose_group_task", arguments: proposalArgs });
+  assert.notEqual(proposed.isError, true, "AI task proposal failed: " + JSON.stringify(proposed));
+  assert.equal(proposed.structuredContent?.proposed, true);
+  const taskId = proposed.structuredContent?.task?.id || proposed.structuredContent?.task_id;
+  assert.match(taskId || "", /^[0-9a-f-]{36}$/i, "AI proposal must return a task UUID");
+  assert.equal(proposed.structuredContent?.task?.status || proposed.structuredContent?.status, "backlog",
+    "AI proposal must begin in backlog before a human approves assignment");
+  const proposalRetry = await first.callTool({ name: "propose_group_task", arguments: proposalArgs });
+  assert.notEqual(proposalRetry.isError, true, "same task proposal retry must succeed: " + JSON.stringify(proposalRetry));
+  assert.equal(proposalRetry.structuredContent?.replayed, true, "same proposal retry must be idempotent");
+  assert.equal(proposalRetry.structuredContent?.task_id || proposalRetry.structuredContent?.task?.id, taskId,
+    "proposal retry must return the original task ID");
+
+  const listedBySecondAi = await second.callTool({
+    name: "list_group_tasks",
+    arguments: { session_handle: two.session_handle },
+  });
+  assert.notEqual(listedBySecondAi.isError, true, "second AI could not list group tasks");
+  assert.ok(listedBySecondAi.structuredContent?.tasks?.some(task => task.id === taskId),
+    "a task proposal must be visible to the other AI in the same group");
+
+  const unassignedClaim = await second.callTool({
+    name: "claim_group_task",
+    arguments: { session_handle: two.session_handle, task_id: taskId },
+  });
+  assert.equal(unassignedClaim.isError, true, "AI participants must not claim an unassigned proposal");
+
+  const assigned = await ownerRequest("/rest/v1/rpc/assign_room_task", {
+    method: "POST",
+    body: JSON.stringify({
+      p_room_id: room.id,
+      p_task_id: taskId,
+      p_assigned_to_participant_id: one.participant_id,
+    }),
+  });
+  assert.equal(assigned.assigned, true, "human owner must be able to assign the proposed task");
+  assert.equal(assigned.status, "assigned");
+
+  const wrongAssigneeClaim = await second.callTool({
+    name: "claim_group_task",
+    arguments: { session_handle: two.session_handle, task_id: taskId },
+  });
+  assert.equal(wrongAssigneeClaim.isError, true, "a different AI must not claim work assigned to AI one");
+
+  const claimed = await first.callTool({
+    name: "claim_group_task",
+    arguments: { session_handle: one.session_handle, task_id: taskId },
+  });
+  assert.notEqual(claimed.isError, true, "the assigned AI could not claim its task: " + JSON.stringify(claimed));
+  assert.equal(claimed.structuredContent?.claimed, true);
+  assert.equal(claimed.structuredContent?.status, "in_progress");
+
+  const submitted = await first.callTool({
+    name: "submit_group_task_result",
+    arguments: {
+      session_handle: one.session_handle,
+      task_id: taskId,
+      result: "The task was completed by the assigned AI and is ready for owner review.",
+      submission_key: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    },
+  });
+  assert.notEqual(submitted.isError, true, "assigned AI could not submit its result: " + JSON.stringify(submitted));
+  assert.equal(submitted.structuredContent?.submitted, true);
+  assert.equal(submitted.structuredContent?.status, "review");
+  assert.ok(submitted.structuredContent?.submission_id);
+
+  const resultRows = await request(
+    "/rest/v1/room_task_submissions?select=id,task_id,submitted_by_participant_id&task_id=eq." + taskId,
+  );
+  assert.equal(resultRows.length, 1, "one task submission must be persisted");
+
+  const review = await ownerRequest("/rest/v1/rpc/review_room_task", {
+    method: "POST",
+    body: JSON.stringify({
+      p_room_id: room.id,
+      p_task_id: taskId,
+      p_outcome: "approved",
+      p_feedback: "Accepted by the human room owner in the official MCP SDK end-to-end test.",
+    }),
+  });
+  assert.equal(review.reviewed, true, "human room owner must be able to review the submitted task");
+  assert.equal(review.status, "completed", "approved task must transition to completed");
+
+  const completedTask = await first.callTool({
+    name: "read_group_task",
+    arguments: { session_handle: one.session_handle, task_id: taskId },
+  });
+  assert.notEqual(completedTask.isError, true, "AI could not read the approved task");
+  assert.equal(completedTask.structuredContent?.task?.status, "completed");
+  assert.equal(completedTask.structuredContent?.submissions?.length, 1);
+  assert.equal(completedTask.structuredContent?.reviews?.length, 1);
+  const submissionRetry = await first.callTool({
+    name: "submit_group_task_result",
+    arguments: {
+      session_handle: one.session_handle,
+      task_id: taskId,
+      result: "The task was completed by the assigned AI and is ready for owner review.",
+      submission_key: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    },
+  });
+  assert.notEqual(submissionRetry.isError, true, "submission retry must remain idempotent after approval");
+  assert.equal(submissionRetry.structuredContent?.replayed, true);
+  console.log("Official MCP SDK completed the human-governed task lifecycle: propose → human assign → AI claim → submit → owner approve.");
+
   // Race leave against an idempotent retry of the same join. Either the retry
   // observes the active join before leave wins, or it is rejected as revoked;
   // the invariant is that the old handle must be unusable after both finish.
