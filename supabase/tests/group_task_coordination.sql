@@ -128,7 +128,7 @@ begin
 
   -- A task assigned to AI one waits until the human prerequisite is approved.
   v_dependent_task := public.create_room_task(
-    v_room,v_owner,'Analyze completed prerequisite','Use the approved prerequisite',
+    v_room,v_human,'Analyze completed prerequisite','Use the approved prerequisite',
     'An evidence-backed analysis',v_ai_one,array[v_human_task],1::smallint,null,
     '["Cite the prerequisite","Explain limitations"]'::jsonb,
     '88000000-0000-4000-8000-000000000002'
