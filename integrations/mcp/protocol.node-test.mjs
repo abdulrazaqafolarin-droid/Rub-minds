@@ -284,3 +284,62 @@ test("group task MCP tools require scoped identities, bounded content, and expli
     force: true,
   }), /Unknown/);
 });
+
+
+test("original-session bridge state tools are listed, session-scoped, and fail closed on malformed CAS state", () => {
+  const names = new Set(getModernMcpTools().map(tool => tool.name));
+  assert.ok(names.has("load_original_session_bridge_state"));
+  assert.ok(names.has("save_original_session_bridge_state"));
+  const load = RUB_MINDS_MCP_TOOLS.find(tool => tool.name === "load_original_session_bridge_state");
+  const save = RUB_MINDS_MCP_TOOLS.find(tool => tool.name === "save_original_session_bridge_state");
+  assert.ok(load);
+  assert.ok(save);
+  assert.deepEqual(save.inputSchema.required, [
+    "expected_revision", "cursor_created_at", "cursor_message_id", "pending_message_id",
+    "pending_message_created_at", "pending_response", "blocked_message_id", "blocked_reason",
+  ]);
+  for (const tool of [load, save]) {
+    const modern = getModernMcpTools().find(item => item.name === tool.name);
+    assert.ok(modern.inputSchema.required.includes("session_handle"), tool.name);
+    assert.equal(modern.inputSchema.properties.session_handle.pattern, "^[a-fA-F0-9]{64}$");
+  }
+  const id = "550e8400-e29b-41d4-a716-446655440000";
+  const otherId = "550e8400-e29b-41d4-a716-446655440001";
+  const validEmpty = {
+    expected_revision: 0,
+    cursor_created_at: null,
+    cursor_message_id: null,
+    pending_message_id: null,
+    pending_message_created_at: null,
+    pending_response: null,
+    blocked_message_id: null,
+    blocked_reason: null,
+  };
+  assert.equal(validateToolArguments("load_original_session_bridge_state", {}), null);
+  assert.match(validateToolArguments("load_original_session_bridge_state", { room_id: id }), /arguments/);
+  assert.equal(validateToolArguments("save_original_session_bridge_state", validEmpty), null);
+  assert.match(validateToolArguments("save_original_session_bridge_state", { ...validEmpty, expected_revision: -1 }), /revision/);
+  assert.match(validateToolArguments("save_original_session_bridge_state", { ...validEmpty, cursor_created_at: "2026-11-01T00:00:00Z" }), /cursor_created_at/);
+  assert.match(validateToolArguments("save_original_session_bridge_state", { ...validEmpty, cursor_message_id: id }), /cursor_created_at/);
+  assert.equal(validateToolArguments("save_original_session_bridge_state", {
+    ...validEmpty, cursor_created_at: "2026-11-01T00:00:00.123456Z", cursor_message_id: id,
+  }), null);
+  assert.match(validateToolArguments("save_original_session_bridge_state", {
+    ...validEmpty, pending_message_id: id, pending_response: "answer",
+  }), /pending message/);
+  assert.equal(validateToolArguments("save_original_session_bridge_state", {
+    ...validEmpty, pending_message_id: id, pending_message_created_at: "2026-11-01T00:00:00Z",
+    pending_response: "A completed provider response.",
+  }), null);
+  assert.match(validateToolArguments("save_original_session_bridge_state", {
+    ...validEmpty, pending_message_id: id, pending_message_created_at: "2026-11-01T00:00:00Z",
+    pending_response: "x".repeat(10001),
+  }), /pending message/);
+  assert.equal(validateToolArguments("save_original_session_bridge_state", {
+    ...validEmpty, blocked_message_id: otherId, blocked_reason: "provider_prompt_in_progress",
+  }), null);
+  assert.match(validateToolArguments("save_original_session_bridge_state", {
+    ...validEmpty, blocked_message_id: otherId,
+  }), /blocked_message_id/);
+  assert.match(validateToolArguments("save_original_session_bridge_state", { ...validEmpty, extra: true }), /Unknown/);
+});
