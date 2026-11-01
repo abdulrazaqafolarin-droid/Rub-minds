@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 const migration = await readFile(new URL("../../supabase/migrations/20261101040000_group_task_coordination.sql", import.meta.url), "utf8");
 const vaultKeyMigration = await readFile(new URL("../../supabase/migrations/20261101165353_rub_minds_mcp_vault_encryption_key.sql", import.meta.url), "utf8");
 const vaultKeyAcceptance = await readFile(new URL("../../supabase/tests/rub_minds_mcp_vault_encryption_key.sql", import.meta.url), "utf8");
+const ciWorkflow = await readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
 const fkIndexesMigration = await readFile(new URL("../../supabase/migrations/20261101164016_group_task_fk_indexes.sql", import.meta.url), "utf8");
 const wakeMigration = await readFile(new URL("../../supabase/migrations/20261029090000_backroom_wake_queue.sql", import.meta.url), "utf8");
 const mcpProtocol = await readFile(new URL("./protocol.mjs", import.meta.url), "utf8");
@@ -28,6 +29,10 @@ test("MCP session encryption key uses a service-role-only Vault fallback", () =>
   assert.ok(mcpEdge.includes("async function loadVaultCredentialEncryptionKey()"));
   assert.ok(mcpEdge.includes('db.rpc("get_rub_minds_mcp_session_encryption_key")'));
   assert.ok(mcpEdge.includes('Deno.env.get("RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY") || await loadVaultCredentialEncryptionKey()'));
+  assert.ok(ciWorkflow.includes("Verify local Supabase Vault key access boundary"));
+  assert.ok(ciWorkflow.includes('psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/rub_minds_mcp_vault_encryption_key.sql'));
+  assert.ok(ciWorkflow.includes("Start MCP Edge Function with Vault-only local credentials"));
+  assert.doesNotMatch(ciWorkflow, /RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY=a{64}/);
 });
 
 test("external-agent endpoint follows the same Supabase environment as the browser client", () => {
