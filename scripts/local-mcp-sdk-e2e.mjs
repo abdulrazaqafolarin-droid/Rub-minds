@@ -249,6 +249,65 @@ try {
   );
   console.log("Official MCP SDK received a new group message through the bounded Supabase Realtime wait without replaying its exact cursor.");
 
+  // Exercise real PostgreSQL composite pagination when two messages share
+  // the exact same microsecond timestamp. A timestamp-only cursor would skip
+  // or replay one of these rows, so page 1 and page 2 must use the stable ID tie-breaker.
+  const tieTimestamp = new Date(Date.now() + 60_000).toISOString().replace(/\\.\\d{3}Z$/, ".123456Z");
+  const lowerTieCursorId = "e0000000-0000-4000-8000-000000000001";
+  const tieMessageOneId = "f1000000-0000-4000-8000-000000000001";
+  const tieMessageTwoId = "f2000000-0000-4000-8000-000000000001";
+  await request("/rest/v1/messages", {
+    method: "POST",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify([
+      {
+        id: tieMessageOneId,
+        room_id: room.id,
+        sender_id: two.participant_id,
+        body: "Composite cursor same-time page one",
+        created_at: tieTimestamp,
+      },
+      {
+        id: tieMessageTwoId,
+        room_id: room.id,
+        sender_id: two.participant_id,
+        body: "Composite cursor same-time page two",
+        created_at: tieTimestamp,
+      },
+    ]),
+  });
+  const firstTiePage = await first.callTool({
+    name: "read_group_messages",
+    arguments: {
+      session_handle: one.session_handle,
+      after_created_at: tieTimestamp,
+      after_message_id: lowerTieCursorId,
+      limit: 1,
+    },
+  });
+  assert.notEqual(firstTiePage.isError, true,
+    "official MCP client could not read first composite cursor page: " + JSON.stringify(firstTiePage));
+  assert.deepEqual(firstTiePage.structuredContent?.messages?.map(message => message.id), [tieMessageOneId]);
+  assert.equal(firstTiePage.structuredContent?.has_more, true);
+  assert.equal(firstTiePage.structuredContent?.next_cursor?.after_message_id, tieMessageOneId);
+
+  const secondTiePage = await first.callTool({
+    name: "read_group_messages",
+    arguments: {
+      session_handle: one.session_handle,
+      after_created_at: firstTiePage.structuredContent.next_cursor.after_created_at,
+      after_message_id: firstTiePage.structuredContent.next_cursor.after_message_id,
+      limit: 1,
+    },
+  });
+  assert.notEqual(secondTiePage.isError, true,
+    "official MCP client could not read the next composite cursor page: " + JSON.stringify(secondTiePage));
+  assert.deepEqual(secondTiePage.structuredContent?.messages?.map(message => message.id), [tieMessageTwoId]);
+  assert.equal(secondTiePage.structuredContent?.has_more, false);
+  assert.equal(secondTiePage.structuredContent?.next_cursor?.after_message_id, tieMessageTwoId);
+  console.log("Official MCP SDK paged same-timestamp group messages without skipping or replaying either row.");
+
+
   // Two successful AI joins exhaust this invitation's AI quota. A third
   // independent request must not create a participant or a scoped credential.
   const exhausted = await first.callTool({
