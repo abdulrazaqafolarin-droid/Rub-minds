@@ -298,7 +298,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     }
     const modernIdempotentJoin = session._modern_idempotent_join === true;
     const deterministicCredential = modernIdempotentJoin
-      ? await deriveJoinCredential((session._session_handle_key as string) || credentialEncryptionKey, session.session_handle as string)
+      ? await deriveJoinCredential((session._session_handle_key as string) || credentialEncryptionKey, session.session_handle as string, session._join_request_key as string)
       : null;
     const { data, error } = modernIdempotentJoin
       ? await db.rpc("redeem_ai_room_invite_idempotent", {
@@ -957,56 +957,75 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
   let session: Record<string, unknown> | null;
   if (toolName === "join_group") {
     const joinKey = rawArgs.join_request_key;
-    if (typeof joinKey !== "string" || !/^[a-f0-9]{64}$/i.test(joinKey) || typeof rawArgs.invite_token !== "string" || !/^[a-f0-9]{64}$/i.test(rawArgs.invite_token) || typeof rawArgs.agent_label !== "string" || !rawArgs.agent_label.trim() || [...rawArgs.agent_label.trim()].length > 80) {
+    const suppliedSessionHandle = rawArgs.session_handle;
+    if (typeof joinKey !== "string" || !/^[a-f0-9]{64}$/i.test(joinKey) ||
+        typeof rawArgs.invite_token !== "string" || !/^[a-f0-9]{64}$/i.test(rawArgs.invite_token) ||
+        typeof rawArgs.agent_label !== "string" || !rawArgs.agent_label.trim() ||
+        [...rawArgs.agent_label.trim()].length > 80) {
       return modernRpcError(200, id, -32602, "join_group requires a valid invitation token, agent_label, and 64-character hexadecimal join_request_key.");
     }
-    try {
-      const selection = await selectSessionHandleForRetry(
-        credentialEncryptionKeys,
-        rawArgs.invite_token,
-        rawArgs.agent_label,
-        joinKey,
-        async (candidateHandle: string) => {
-          const candidateDigest = await sha256(candidateHandle);
-          const { data: existingSession, error: sessionLookupError } = await db.from("rub_minds_mcp_sessions")
-            .select("session_digest").eq("session_digest", candidateDigest).maybeSingle();
-          if (sessionLookupError) throw new Error("Could not verify an existing session retry.");
-          if (existingSession) return true;
-          // Session rows may be cleaned after their short handle TTL while the
-          // durable idempotency record remains valid. Preserve the old key choice.
-          const { data: existingJoin, error: joinLookupError } = await db.from("rub_minds_mcp_join_requests")
-            .select("session_digest").eq("session_digest", candidateDigest).maybeSingle();
-          if (joinLookupError) throw new Error("Could not verify a durable join retry.");
-          return Boolean(existingJoin);
-        },
-      );
-      sessionHandle = selection.handle;
-      rawArgs._selected_handle_key = selection.key;
-    } catch {
-      return modernRpcError(503, id, -32000, "Could not securely resolve the join retry. Check key-ring configuration and retry.");
+    if (suppliedSessionHandle !== undefined &&
+        (typeof suppliedSessionHandle !== "string" || !/^[a-f0-9]{64}$/i.test(suppliedSessionHandle))) {
+      return modernRpcError(200, id, -32602, "session_handle must be the opaque handle previously returned by join_group.");
     }
-    delete rawArgs.join_request_key;
-    session = await findSession(sessionHandle);
-    if (!session) {
-      const sessionDigest = await sha256(sessionHandle);
-      const { data: priorSession, error: lookupError } = await db.from("rub_minds_mcp_sessions")
-        .select("session_digest")
-        .eq("session_digest", sessionDigest)
-        .maybeSingle();
-      if (lookupError) return modernRpcError(503, id, -32000, "Could not verify the join handle before joining.");
-      if (priorSession) {
-        // Another concurrent join may have inserted its live session between
-        // findSession() and this tombstone check. Re-read before declaring the
-        // handle expired; a terminated/expired handle still fails closed.
-        session = await findSession(sessionHandle);
-        if (!session) return modernToolResult(id, { error: "This join handle has expired or was terminated. Start a new join request with a new join_request_key." }, true);
-      } else {
-        session = { session_digest: sessionDigest, agent_credential_ciphertext: null, room_id: null, participant_id: null, _new_session: true };
+    if (typeof suppliedSessionHandle === "string") {
+      // Rebind only a real, still-live MCP session whose bearer handle the
+      // caller already possesses. Never create a session from a supplied value
+      // or revive a leave/tombstoned or expired handle.
+      sessionHandle = suppliedSessionHandle.toLowerCase();
+      session = await findSession(sessionHandle);
+      if (!session) {
+        return modernToolResult(id, {
+          error: "The supplied session_handle is missing, expired, or terminated. A terminated handle cannot be rebound.",
+        }, true);
+      }
+      rawArgs._selected_handle_key = credentialEncryptionKey;
+    } else {
+      try {
+        const selection = await selectSessionHandleForRetry(
+          credentialEncryptionKeys,
+          rawArgs.invite_token,
+          rawArgs.agent_label,
+          joinKey,
+          async (candidateHandle: string) => {
+            const candidateDigest = await sha256(candidateHandle);
+            const { data: existingSession, error: sessionLookupError } = await db.from("rub_minds_mcp_sessions")
+              .select("session_digest").eq("session_digest", candidateDigest).maybeSingle();
+            if (sessionLookupError) throw new Error("Could not verify an existing session retry.");
+            if (existingSession) return true;
+            const { data: existingJoin, error: joinLookupError } = await db.from("rub_minds_mcp_join_requests")
+              .select("session_digest").eq("session_digest", candidateDigest).maybeSingle();
+            if (joinLookupError) throw new Error("Could not verify a durable join retry.");
+            return Boolean(existingJoin);
+          },
+        );
+        sessionHandle = selection.handle;
+        rawArgs._selected_handle_key = selection.key;
+      } catch {
+        return modernRpcError(503, id, -32000, "Could not securely resolve the join retry. Check key-ring configuration and retry.");
+      }
+      session = await findSession(sessionHandle);
+      if (!session) {
+        const sessionDigest = await sha256(sessionHandle);
+        const { data: priorSession, error: lookupError } = await db.from("rub_minds_mcp_sessions")
+          .select("session_digest")
+          .eq("session_digest", sessionDigest)
+          .maybeSingle();
+        if (lookupError) return modernRpcError(503, id, -32000, "Could not verify the join handle before joining.");
+        if (priorSession) {
+          session = await findSession(sessionHandle);
+          if (!session) return modernToolResult(id, { error: "This join handle has expired or was terminated. Start a new join request with a new join_request_key." }, true);
+        } else {
+          session = { session_digest: sessionDigest, agent_credential_ciphertext: null, room_id: null, participant_id: null, _new_session: true };
+        }
       }
     }
     session.session_handle = sessionHandle;
     session._session_handle_key = rawArgs._selected_handle_key;
+    session._join_request_key = joinKey.toLowerCase();
     delete rawArgs._selected_handle_key;
+    delete rawArgs.join_request_key;
+    delete rawArgs.session_handle;
     session._modern_idempotent_join = true;
   } else {
     const handle = rawArgs.session_handle;

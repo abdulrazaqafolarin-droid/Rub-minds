@@ -28,6 +28,9 @@ test("current stateless protocol exposes explicit session handles and retry keys
   assert.ok(join);
   assert.ok(join.inputSchema.required.includes("join_request_key"));
   assert.equal(join.inputSchema.properties.join_request_key.pattern, "^[a-fA-F0-9]{64}$");
+  assert.equal(join.inputSchema.properties.session_handle.pattern, "^[a-fA-F0-9]{64}$");
+  assert.equal(join.inputSchema.required.includes("session_handle"), false,
+    "session_handle is optional because first-time joins must derive a fresh handle");
   for (const tool of tools.filter((item) => item.name !== "join_group")) {
     assert.ok(tool.inputSchema.required.includes("session_handle"), tool.name);
     assert.equal(tool.inputSchema.properties.session_handle.pattern, "^[a-fA-F0-9]{64}$");

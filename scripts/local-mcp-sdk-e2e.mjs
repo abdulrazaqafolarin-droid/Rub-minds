@@ -1063,7 +1063,7 @@ try {
   assert.notEqual(previousCursorState.isError, true, "could not seed stale cursor for revoked-session rejoin");
   assert.equal(previousCursorState.structuredContent?.saved, true);
   const oldConnectionRows = await request(
-    "/rest/v1/agent_connections?select=id,participant_id,revoked_at&participant_id=eq." + two.participant_id,
+    "/rest/v1/agent_connections?select=id,participant_id,revoked_at,credential_digest&participant_id=eq." + two.participant_id,
   );
   assert.equal(oldConnectionRows.length, 1);
   const staleRejoinToken = "9".repeat(64);
@@ -1104,21 +1104,39 @@ try {
   });
   assert.notEqual(rebound.isError, true, "same MCP handle could not rejoin after its previous AI credential was revoked: " + JSON.stringify(rebound));
   assert.equal(rebound.structuredContent?.joined, true);
+  assert.equal(rebound.structuredContent?.session_handle, two.session_handle,
+    "a rebind must preserve the already-issued MCP session handle");
   assert.notEqual(rebound.structuredContent?.participant_id, two.participant_id,
     "rejoining after external credential revocation must establish a fresh participant binding");
+  const reboundRetry = await second.callTool({
+    name: "join_group",
+    arguments: {
+      session_handle: two.session_handle,
+      invite_token: staleRejoinToken,
+      agent_label: "Official SDK AI two rebound",
+      confirm_join: true,
+      join_request_key: "c".repeat(64),
+    },
+  });
+  assert.notEqual(reboundRetry.isError, true,
+    "retrying the same rebind request must return the already-established participant");
+  assert.equal(reboundRetry.structuredContent?.participant_id, rebound.structuredContent?.participant_id,
+    "retrying the same rebind request must not create another AI participant");
   const staleBridgeStateAfterRejoin = await request(
     "/rest/v1/rub_minds_mcp_bridge_state?select=session_digest,participant_id&session_digest=eq." + secondSessionDigest,
   );
   assert.deepEqual(staleBridgeStateAfterRejoin, [],
     "rejoining after credential revocation must delete the previous participant's durable cursor before rebinding");
   const reboundConnectionRows = await request(
-    "/rest/v1/agent_connections?select=id,participant_id,revoked_at&room_id=eq." + room.id,
+    "/rest/v1/agent_connections?select=id,participant_id,revoked_at,credential_digest&room_id=eq." + room.id,
   );
   const oldRejoinConnection = reboundConnectionRows.find(row => row.id === oldConnectionRows[0].id);
   const freshRejoinConnection = reboundConnectionRows.find(row => row.participant_id === rebound.structuredContent.participant_id);
   assert.ok(oldRejoinConnection?.revoked_at);
   assert.ok(freshRejoinConnection && freshRejoinConnection.revoked_at === null,
     "the rejoined participant must have a fresh active agent connection");
+  assert.notEqual(freshRejoinConnection.credential_digest, oldRejoinConnection.credential_digest,
+    "the new provider credential must have a distinct digest from the revoked credential");
 
   // Prove the atomic termination RPC rejects a stale ciphertext snapshot
   // without revoking the live connection, tombstoning the session, or deleting

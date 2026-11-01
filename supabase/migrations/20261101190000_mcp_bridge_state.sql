@@ -271,6 +271,7 @@ set search_path = ''
 as $$
 declare
   v_session public.rub_minds_mcp_sessions%rowtype;
+  v_join_request public.rub_minds_mcp_join_requests%rowtype;
 begin
   if p_session_digest !~ '^[a-f0-9]{64}$'
      or p_expected_ciphertext is null
@@ -304,6 +305,32 @@ begin
 
   if not found then
     return pg_catalog.jsonb_build_object('cleared', false, 'conflict', true);
+  end if;
+
+  -- Rebind only after the old provider credential is actually revoked or
+  -- expired. Delete its idempotency row atomically so a fresh invitation and
+  -- request key can establish a distinct credential for this same MCP handle.
+  select j.*
+    into v_join_request
+  from public.rub_minds_mcp_join_requests j
+  where j.session_digest = p_session_digest
+  for update;
+
+  if found then
+    if exists (
+      select 1
+      from public.agent_connections c
+      where c.credential_digest = v_join_request.credential_digest
+        and c.revoked_at is null
+        and c.expires_at > pg_catalog.clock_timestamp()
+    ) then
+      raise exception using
+        errcode = '55000',
+        message = 'Cannot clear a live MCP join request before its participant credential is revoked or expired';
+    end if;
+
+    delete from public.rub_minds_mcp_join_requests
+    where session_digest = p_session_digest;
   end if;
 
   delete from public.rub_minds_mcp_bridge_state

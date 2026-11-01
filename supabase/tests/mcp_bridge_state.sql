@@ -13,6 +13,7 @@ declare
   v_authenticated_privileges boolean;
   v_constraint_count integer;
   v_session_fk text;
+  v_rejoin_definition text;
 begin
   if v_table is null then
     raise exception 'Bridge-state table is missing';
@@ -157,6 +158,16 @@ begin
       and pg_catalog.has_function_privilege('service_role', p.oid, 'EXECUTE')
   ) then
     raise exception 'MCP rejoin cleanup RPC must be service-role-only SECURITY DEFINER with empty search_path';
+  end if;
+
+  select pg_catalog.lower(pg_catalog.pg_get_functiondef(
+    'public.clear_rub_minds_mcp_bridge_state_for_rejoin(text,text)'::regprocedure
+  )) into v_rejoin_definition;
+  if position('rub_minds_mcp_join_requests' in v_rejoin_definition) = 0
+     or position('agent_connections' in v_rejoin_definition) = 0
+     or position('c.revoked_at is null' in v_rejoin_definition) = 0
+     or position('c.expires_at > pg_catalog.clock_timestamp()' in v_rejoin_definition) = 0 then
+    raise exception 'MCP rejoin cleanup must delete the prior idempotency row only after its participant credential is inactive';
   end if;
 
   if not exists (

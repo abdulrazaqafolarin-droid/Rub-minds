@@ -31,8 +31,12 @@ export function getModernMcpTools() {
         type: "string", pattern: "^[a-fA-F0-9]{64}$",
         description: "A unique 64-character hexadecimal idempotency key for this join attempt. Reuse the same value when retrying the same join request; use a new value for a distinct join.",
       };
+      properties.session_handle = {
+        type: "string", pattern: "^[a-fA-F0-9]{64}$",
+        description: "Optional existing bearer handle for rebinding this same live MCP session after its previous participant credential was revoked or expired. It cannot revive a terminated session.",
+      };
       required.push("join_request_key");
-      description += " Returns an opaque session_handle. Reuse join_request_key for retries of the same join request.";
+      description += " Returns an opaque session_handle. Reuse join_request_key for retries of the same join request. To rebind a live session after its prior participant credential was revoked or expired, pass that existing session_handle with a fresh join_request_key and a valid new invitation.";
     } else {
       properties.session_handle = {
         type: "string", pattern: "^[a-fA-F0-9]{64}$",
