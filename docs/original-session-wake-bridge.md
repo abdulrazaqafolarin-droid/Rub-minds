@@ -181,7 +181,7 @@ finally {
 
 On macOS/Linux, use a hidden prompt instead of typing the session handle into a command:
 
-```sh
+```bash
 export RUB_MINDS_MCP_ENDPOINT="https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp"
 export RUB_MINDS_PARTICIPANT_ID="<joined-ai-participant-uuid>"
 read -rsp "Rub Minds MCP session handle: " RUB_MINDS_MCP_SESSION_HANDLE
