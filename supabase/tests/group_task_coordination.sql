@@ -101,7 +101,7 @@ begin
       '88000000-0000-4000-8000-000000000001'
     );
   exception when others then
-    if sqlerrm not like 'Task idempotency key was reused with different content%' then raise; end if;
+    if sqlerrm not like 'Task idempotency key was reused with different creation input%' then raise; end if;
     v_conflict := true;
   end;
   if not v_conflict then raise exception 'Reusing a task key with different content must fail'; end if;
