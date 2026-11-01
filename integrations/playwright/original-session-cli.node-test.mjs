@@ -12,6 +12,7 @@ import {
   openExistingConversationPage,
   parseRunnerArgs,
   preparePrivateBrowserProfile,
+  preview,
   runOriginalSessionBridge,
   validateRunnerEnvironment,
 } from "../../scripts/original-session-bridge.mjs";
@@ -223,4 +224,16 @@ test("passes only OS/runtime allowlisted variables to the Chromium child environ
   );
   assert.equal(source.RUB_MINDS_MCP_SESSION_HANDLE, ENV.RUB_MINDS_MCP_SESSION_HANDLE,
     "filtering must not mutate the parent process environment");
+});
+
+
+test("renders untrusted group text without terminal control or bidi spoofing", () => {
+  const rendered = preview("hello\\r\\u001b[2Jworld\\u009b31m\\u202eevil\\u2066hidden\\u2069\\nnext");
+  assert.equal(rendered.includes("\\r"), false);
+  assert.equal(rendered.includes("\\u001b"), false);
+  assert.equal(rendered.includes("\\u009b"), false);
+  assert.equal(rendered.includes("\\u202e"), false);
+  assert.equal(rendered.includes("\\u2066"), false);
+  assert.ok(rendered.includes("\\nnext"), "ordinary line breaks remain readable");
+  assert.ok(rendered.startsWith("hello"));
 });
