@@ -206,7 +206,7 @@ export function bindAdapterToExactConversation(adapter, provider, conversationUr
 export function preview(value, limit = 700) {
   // Keep ordinary line breaks, but remove terminal controls, carriage returns,
   // C1 controls and bidi overrides that can spoof the operator's approval view.
-  const text = String(value ?? "").replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200e-\u200f\u202a-\u202e\u2066-\u206f]/g, " ");
+  const text = String(value ?? "").replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u00ad\u061c\u200b\u200e\u200f\u2028\u2029\u202a-\u202e\u2060\u2066-\u206f\ufeff]/g, " ");
   return text.length > limit ? text.slice(0, limit) + " … [truncated]" : text;
 }
 
