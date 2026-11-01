@@ -430,7 +430,7 @@ test("Phone Frame remote typing is acknowledged, bounded and never auto-submits"
   const ui = await read("../src/BackroomAndroidControl.tsx");
   const service = await read("app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
   for (const expected of [
-    "kind: 'remote_text', requestId, sessionId: sessionRef.current, appPackageName, text",
+    "kind: 'remote_text', requestId, sessionId: sessionRef.current, appPackageName: appPackage, text",
     "maxLength={4_000}",
     "pendingRemoteTextAcksRef.current.set(requestId, timeout)",
     "acknowledgement.kind === 'remote_text_ack'",
