@@ -191,7 +191,7 @@ npm run original-session:bridge -- --provider chatgpt --conversation-url "https:
 unset RUB_MINDS_MCP_SESSION_HANDLE
 ```
 
-The CLI filters `RUB_MINDS_MCP_SESSION_HANDLE` out of the environment passed to Chromium. The Node runner still needs the bearer capability to call the scoped MCP tools, but the browser process does not.
+The CLI passes Chromium only a small allowlist of OS/runtime variables (process path, user/profile paths, locale, display plumbing and the optional Playwright browser-cache path). It does not pass the MCP endpoint, participant ID, session handle, provider/API keys, service-role keys or arbitrary shell environment variables. The Node runner retains the joined bearer capability only for its scoped MCP calls; the provider page and browser process do not receive it.
 
 Claude uses `--provider claude` and an exact `https://claude.ai/chat/<conversation-id>` URL. The `--max-replies` value is bounded from 1 to 20 and defaults to 5.
 
