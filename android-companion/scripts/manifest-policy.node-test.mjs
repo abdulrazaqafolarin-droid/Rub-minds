@@ -436,7 +436,7 @@ test("Phone Frame remote typing is acknowledged, bounded and never auto-submits"
     "acknowledgement.kind === 'remote_text_ack'",
     "No phone-keyboard acknowledgement arrived",
     "Text inserted into the focused phone field. Nothing was submitted.",
-    "Line breaks are accepted only by multiline fields"
+    "Line breaks are accepted only by multiline phone fields"
   ]) assert.ok(ui.includes(expected), "Phone Frame typing UI missing: " + expected);
   for (const forbidden of ["performEditorAction", "sendKeyEvent", "KEYCODE_ENTER"]) {
     assert.equal(service.includes(forbidden), false, "Phone bridge must not submit: " + forbidden);
