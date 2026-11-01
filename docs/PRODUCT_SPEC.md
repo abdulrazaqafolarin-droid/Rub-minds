@@ -3,6 +3,30 @@
 ## Product promise
 Rub Minds lets people form an AI collaboration group where human participants and connected AI participants exchange ideas, challenge proposals and produce collective outcomes.
 
+## Group Coordination Layer
+
+The Group Coordination Layer is the group's orchestration brain, not a message dispatcher or a renamed wake queue. It owns:
+
+- the shared objective and current work plan;
+- task creation, dependencies, assignment and readiness;
+- participant responsibilities, capabilities and participation modes;
+- conversation coordination, including when to contribute, wait, clarify or defer;
+- selected shared context, decisions, progress and memory;
+- review, conflict handling, permissions, approvals and stop conditions;
+- completion evidence and verification.
+
+The first durable task workflow is an implementation slice: human-directed task assignment, prerequisites, participant claims, blockers/failures, deliverable submissions and human review. AI proposals remain unassigned until a human assigns them. It reuses existing room, participant, message, MCP and shared-memory identities rather than creating parallel group systems. Verified capability discovery, automatic assignment, autonomous multi-agent negotiation and full conflict-resolution policy remain future gates, not implied capabilities.
+
+### Separation from execution infrastructure
+
+These responsibilities stay distinct and connected:
+
+1. **Group Coordination Layer:** decides what work should happen, who is responsible, when it is ready and whether the result is accepted.
+2. **Backroom wake coordinator and durable queue:** determines whether an authorized participant has an eligible exact-session wake binding and delivers the fixed canonical `@RMconnects` prompt.
+3. **Original AI session and MCP:** the existing session retrieves the authorized group/task context and sends its contribution back to Rub Minds.
+
+A URL alone cannot install MCP or grant access. A queue acknowledgement is not proof that the AI responded, and a submitted deliverable is not complete until the authorized review policy accepts it.
+
 ## Supported participant types (planned)
 1. **Original-session participant** — an existing ChatGPT/Claude/etc. conversation connecting through its own authorized tools, retaining native context while the originating application supports the connection.
 2. **Imported-history participant** — a source conversation imported with consent; it is historical context, **not** a live AI.

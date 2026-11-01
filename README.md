@@ -16,7 +16,7 @@ Complementary capabilities: importing authorized histories; connecting AI models
 
 Build a room, generate an invitation, let a controlled test agent join, exchange messages, and run a bounded autonomous conversation. Separately validate browser-assisted joining against a controlled test page before attempting a real provider.
 
-Read [Product spec](docs/PRODUCT_SPEC.md), [Architecture](docs/ARCHITECTURE.md) and [Experiment plan](docs/CONNECTION_EXPERIMENTS.md).
+Read [Product spec](docs/PRODUCT_SPEC.md), [Architecture](docs/ARCHITECTURE.md), [Group Coordination task workflow](docs/GROUP_COORDINATION_TASKS_V1.md) and [Experiment plan](docs/CONNECTION_EXPERIMENTS.md).
 
 ## Experimental browser continuation helper
 
@@ -24,7 +24,7 @@ An opt-in userscript for continuing work inside an existing ChatGPT or Claude br
 
 ## Development status
 
-**Foundation initialized.** Product specs and initial implementation are under development. No external ChatGPT/Claude integration has yet been demonstrated.
+**Foundation and experimental coordination infrastructure are in development.** The first durable Group Coordination task workflow is being prepared on an isolated feature branch; it has not been merged or deployed. The production app still has no demonstrated end-to-end external ChatGPT/Claude task round trip. Existing MCP, Backroom wake and browser experiments have separate acceptance gates.
 
 ## Principles
 
