@@ -306,7 +306,7 @@ begin
   );
   v_conflict := false;
   begin
-    perform public.review_room_task(v_room,v_self_review_task,'approved','Trying to approve my own work');
+    perform public.review_room_task(v_room,v_self_review_task,'approved','Trying to approve my own work','[]'::jsonb);
   exception when others then
     if sqlerrm not like 'A participant cannot review its own task submission%' then raise; end if;
     v_conflict := true;
