@@ -365,6 +365,25 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
             Date.parse(concurrentBinding.expires_at) > Date.now()) {
           return { joined: true, room_id: data.room_id, participant_id: data.participant_id, expires_at: concurrentBinding.expires_at, replayed: true, post_join_next_step: "If session capture has not been completed or declined, call prepare_session_export with confirm_export=true. It returns instructions for importing a private context document; never post raw session history to the group." };
         }
+        // If leave/revocation won the race, the deterministic credential may
+        // have been created by invite redemption but never safely bound to the
+        // MCP session. Revoke that orphan credential. Keep it untouched only
+        // when another concurrent request has already established a different
+        // still-live binding for this same handle.
+        const hasDifferentLiveBinding = !concurrentLookupError && concurrentBinding &&
+          concurrentBinding.terminated_at === null &&
+          Date.parse(concurrentBinding.expires_at) > Date.now() &&
+          (concurrentBinding.room_id !== data.room_id ||
+            concurrentBinding.participant_id !== data.participant_id);
+        if (!hasDifferentLiveBinding) {
+          const { error: orphanCredentialRevokeError } = await db.from("agent_connections")
+            .update({ revoked_at: new Date().toISOString() })
+            .eq("credential_digest", await sha256(credential))
+            .is("revoked_at", null);
+          if (orphanCredentialRevokeError) {
+            throw new Error("Could not revoke an invitation credential that lost its MCP session binding race.");
+          }
+        }
       } else {
         await db.from("agent_connections").update({ revoked_at: new Date().toISOString() })
           .eq("credential_digest", await sha256(credential)).is("revoked_at", null);
