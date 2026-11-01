@@ -209,9 +209,10 @@ test("MCP exposes bounded task tools only after its existing participant-session
     assert.match(mcpEdge, new RegExp('name === "' + name + '"'));
   }
   const taskHandler = mcpEdge.indexOf('if (name === "propose_group_task")');
-  const liveCredentialCheck = mcpEdge.indexOf('await invokeAgent(credential, "read");', taskHandler - 5000);
-  assert.ok(taskHandler > 0 && liveCredentialCheck > 0 && liveCredentialCheck < taskHandler,
-    "task operations must remain behind the existing live MCP credential check");
+  const connectionLookup = mcpEdge.lastIndexOf('const { data: connection, error: connectionError }', taskHandler);
+  const liveCredentialCheck = mcpEdge.lastIndexOf('await invokeAgent(credential, "read");', taskHandler);
+  assert.ok(taskHandler > 0 && connectionLookup > 0 && liveCredentialCheck > connectionLookup && liveCredentialCheck < taskHandler,
+    "task operations must remain behind the active agent_connections lookup and live MCP credential check");
   assert.match(mcpEdge, /connection\.room_id/);
   assert.match(mcpEdge, /connection\.participant_id/);
   assert.match(mcpEdge, /status: existing\.status/);
