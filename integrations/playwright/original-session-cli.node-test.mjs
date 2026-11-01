@@ -235,3 +235,153 @@ test("renders untrusted group text without terminal control or bidi spoofing", (
   assert.ok(rendered.includes("\nnext"), "ordinary line breaks remain readable");
   assert.ok(rendered.startsWith("hello"));
 });
+
+
+function makeTtyStream() {
+  const stream = new PassThrough();
+  stream.isTTY = true;
+  stream.setRawMode = () => {};
+  return stream;
+}
+
+function makeRunnerContext(page, stats) {
+  return {
+    pages: () => [page],
+    async newPage() {
+      throw new Error("An exact existing conversation page should be reused");
+    },
+    async close() {
+      stats.contextClosed += 1;
+    },
+  };
+}
+
+test("local runner starts with consent, approves one new group message, and closes only its owned context", async () => {
+  const input = makeTtyStream();
+  const output = makeTtyStream();
+  const writes = [];
+  output.write = value => { writes.push(String(value)); return true; };
+  const stats = { launches: 0, contextClosed: 0, runtimeStopped: 0, providerInteractions: 0 };
+  const page = { isClosed: () => false, url: () => CHATGPT_URL };
+  const context = makeRunnerContext(page, stats);
+  const approvals = [];
+
+  try {
+    const result = await runOriginalSessionBridge({
+      argv: ["--provider", "chatgpt", "--conversation-url", CHATGPT_URL, "--max-replies", "2"],
+      env: { ...ENV, PATH: "safe-path", OPENAI_API_KEY: "must-not-reach-browser" },
+      input,
+      output,
+      errorOutput: output,
+      playwright: {
+        chromium: {
+          async launchPersistentContext(profileDirectory, options) {
+            stats.launches += 1;
+            assert.equal(profileDirectory.endsWith("chatgpt"), true);
+            assert.equal(options.headless, false);
+            assert.equal(options.env.PATH, "safe-path");
+            assert.equal(Object.hasOwn(options.env, "OPENAI_API_KEY"), false);
+            assert.equal(Object.hasOwn(options.env, "RUB_MINDS_MCP_SESSION_HANDLE"), false);
+            return context;
+          },
+        },
+      },
+      prepareProfile: async value => value,
+      prompt: async (_rl, message, expected) => {
+        approvals.push({ message, expected });
+        return true;
+      },
+      createAdapter: (_provider, { approval }) => ({
+        async ask(_page, body, metadata) {
+          const approved = await approval({ ...metadata, prompt: body });
+          assert.equal(approved, true);
+          stats.providerInteractions += 1;
+          return "provider answer";
+        },
+      }),
+      createRuntime: options => ({
+        async run({ approved }) {
+          assert.equal(approved, true);
+          const answer = await options.adapter.ask(options.page, "share this safely", {
+            messageId: "message-1",
+            senderName: "Human collaborator",
+            senderKind: "human",
+          });
+          assert.equal(answer, "provider answer");
+          return { status: "limit_reached", replies: 1 };
+        },
+        stop() {
+          stats.runtimeStopped += 1;
+        },
+      }),
+    });
+
+    assert.deepEqual(result, { status: "limit_reached", replies: 1 });
+    assert.deepEqual(approvals.map(item => item.expected), ["START", "SEND"]);
+    assert.equal(stats.launches, 1);
+    assert.equal(stats.providerInteractions, 1);
+    assert.equal(stats.runtimeStopped, 1);
+    assert.equal(stats.contextClosed, 1);
+    assert.ok(!writes.join("").includes(ENV.RUB_MINDS_MCP_SESSION_HANDLE));
+  } finally {
+    input.destroy();
+    output.destroy();
+  }
+});
+
+test("declining a per-message SEND approval prevents provider interaction and still closes the owned context", async () => {
+  const input = makeTtyStream();
+  const output = makeTtyStream();
+  output.write = () => true;
+  const stats = { contextClosed: 0, runtimeStopped: 0, providerInteractions: 0 };
+  const page = { isClosed: () => false, url: () => CHATGPT_URL };
+  const context = makeRunnerContext(page, stats);
+
+  try {
+    await assert.rejects(
+      runOriginalSessionBridge({
+        argv: ["--provider", "chatgpt", "--conversation-url", CHATGPT_URL],
+        env: ENV,
+        input,
+        output,
+        errorOutput: output,
+        playwright: {
+          chromium: {
+            async launchPersistentContext() { return context; },
+          },
+        },
+        prepareProfile: async value => value,
+        prompt: async (_rl, _message, expected) => expected === "START",
+        createAdapter: (_provider, { approval }) => ({
+          async ask(_page, body, metadata) {
+            const approved = await approval({ ...metadata, prompt: body });
+            if (!approved) {
+              const error = new Error("approval denied");
+              error.submissionState = "not_submitted";
+              throw error;
+            }
+            stats.providerInteractions += 1;
+            return "must not send";
+          },
+        }),
+        createRuntime: options => ({
+          async run() {
+            return options.adapter.ask(options.page, "private group request", {
+              messageId: "message-2",
+              senderName: "Human collaborator",
+              senderKind: "human",
+            });
+          },
+          stop() { stats.runtimeStopped += 1; },
+        }),
+      }),
+      /approval denied/,
+    );
+    assert.equal(stats.providerInteractions, 0);
+    assert.equal(stats.runtimeStopped, 1);
+    assert.equal(stats.contextClosed, 1);
+  } finally {
+    input.destroy();
+    output.destroy();
+  }
+});
