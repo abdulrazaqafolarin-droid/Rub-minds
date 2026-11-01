@@ -131,9 +131,6 @@ async function terminateMcpSession(sessionDigest: string) {
       .is("revoked_at", null);
     if (revokeError) throw new Error("Could not revoke the AI participant session. Retry or wait for expiry.");
   }
-  const { error: stateDeleteError } = await db.from("rub_minds_mcp_bridge_state")
-    .delete().eq("session_digest", sessionDigest);
-  if (stateDeleteError) throw new Error("Could not clear original-session bridge state while terminating the MCP session.");
   const terminatedAt = new Date().toISOString();
   const tombstoneExpiry = new Date(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000).toISOString();
   const { error: terminateError } = await db.from("rub_minds_mcp_sessions").update({
@@ -141,6 +138,12 @@ async function terminateMcpSession(sessionDigest: string) {
     terminated_at: terminatedAt, expires_at: tombstoneExpiry, last_seen_at: terminatedAt,
   }).eq("session_digest", sessionDigest).is("terminated_at", null);
   if (terminateError) throw new Error("Could not terminate the MCP session. Retry or wait for expiry.");
+  // Tombstone the owning session first. The bridge-state binding trigger locks
+  // this row, so concurrent loads either finish before termination (and are
+  // deleted here) or observe the tombstone and fail closed.
+  const { error: stateDeleteError } = await db.from("rub_minds_mcp_bridge_state")
+    .delete().eq("session_digest", sessionDigest);
+  if (stateDeleteError) throw new Error("Could not clear original-session bridge state while terminating the MCP session.");
   return { terminated: true, alreadyTerminated: false };
 }
 
