@@ -90,9 +90,11 @@ begin
     left join jsonb_array_elements_text(v_task.acceptance_criteria)
       with ordinality as criterion(value, ordinal)
       on criterion.ordinal=evidence.ordinal
-    where jsonb_typeof(evidence.item) <> 'object'
+    where jsonb_typeof(evidence.item) is distinct from 'object'
+       or jsonb_typeof(evidence.item->'criterion') is distinct from 'string'
        or evidence.item->>'criterion' is distinct from criterion.value
        or jsonb_typeof(evidence.item->'met') is distinct from 'boolean'
+       or jsonb_typeof(evidence.item->'evidence') is distinct from 'string'
        or coalesce(char_length(btrim(evidence.item->>'evidence')),0) not between 1 and 2000
   ) then
     raise exception 'Each criterion requires its exact text, a met/not-met decision, and 1-2000 characters of evidence';
