@@ -17,6 +17,8 @@ const taskAcceptance = await readFile(new URL("../../supabase/tests/group_task_c
 const supabaseConfig = await readFile(new URL("../../src/supabase.ts", import.meta.url), "utf8");
 
 test("MCP session encryption key uses a service-role-only Vault fallback", () => {
+  assert.ok(vaultKeyMigration.includes("create extension if not exists supabase_vault with schema vault"));
+  assert.ok(vaultKeyMigration.includes("create extension if not exists pgcrypto with schema extensions"));
   assert.ok(vaultKeyMigration.includes("vault.create_secret("));
   assert.ok(vaultKeyMigration.includes("extensions.gen_random_bytes(32)"));
   assert.ok(vaultKeyMigration.includes("create or replace function public.get_rub_minds_mcp_session_encryption_key()"));
