@@ -156,6 +156,25 @@ export async function openExistingConversationPage(context, provider, conversati
   return page;
 }
 
+export function bindAdapterToExactConversation(adapter, provider, conversationUrl) {
+  if (!adapter || typeof adapter.ask !== "function") fail("A provider adapter with ask() is required.");
+  // Validate once, then enforce the same conversation identity before every
+  // group message. The provider adapter separately rechecks through send and
+  // response completion for each individual turn.
+  const expectedKey = conversationKey(provider, conversationUrl);
+  return Object.freeze({
+    provider,
+    async ask(page, prompt, metadata = {}) {
+      if (!isExactConversationPage(page, provider, expectedKey)) {
+        const error = new Error("The pinned original conversation changed; no group message was sent.");
+        error.submissionState = "not_submitted";
+        throw error;
+      }
+      return adapter.ask(page, prompt, metadata);
+    },
+  });
+}
+
 function preview(value, limit = 700) {
   const text = String(value ?? "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, " ");
   return text.length > limit ? text.slice(0, limit) + " … [truncated]" : text;
@@ -226,7 +245,7 @@ export async function runOriginalSessionBridge({
       }
     }
 
-    const adapter = createOriginalSessionAdapter(options.provider, {
+    const providerAdapter = createOriginalSessionAdapter(options.provider, {
       approval: async ({ messageId, senderName, senderKind, prompt: groupPrompt, signal }) => {
         if (signal?.aborted || controller.signal.aborted) return false;
         output.write("\nIncoming Rub Minds group message\n");
@@ -237,6 +256,7 @@ export async function runOriginalSessionBridge({
         return prompt(rl, "Send this one message to the existing " + options.provider + " conversation? Type SEND to approve: ", "SEND", signal || controller.signal);
       },
     });
+    const adapter = bindAdapterToExactConversation(providerAdapter, options.provider, options.conversationUrl);
 
     runtime = createOriginalSessionWakeRuntime({
       endpoint: config.endpoint,
