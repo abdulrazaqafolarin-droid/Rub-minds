@@ -228,8 +228,8 @@ test("passes only OS/runtime allowlisted variables to the Chromium child environ
 
 
 test("renders untrusted group text without terminal control or bidi spoofing", () => {
-  const rendered = preview("hello\r\u001b[2Jworld\u009b31m\u061cevil\u200ehidden\u202eoverride\u2066isolate\u2069\nnext");
-  for (const forbidden of ["\r", "\u001b", "\u009b", "\u061c", "\u200e", "\u202e", "\u2066", "\u2069"]) {
+  const rendered = preview("hello\r\t\u001b[2Jworld\u009b31m\u00adsoft\u200binvisible\u061cevil\u200ehidden\u2028separator\u2029paragraph\u202eoverride\u2060joiner\u2066isolate\u2069\ufeffbom\nnext");
+  for (const forbidden of ["\r", "\t", "\u001b", "\u009b", "\u00ad", "\u200b", "\u061c", "\u200e", "\u2028", "\u2029", "\u202e", "\u2060", "\u2066", "\u2069", "\ufeff"]) {
     assert.equal(rendered.includes(forbidden), false, "must strip " + JSON.stringify(forbidden));
   }
   assert.ok(rendered.includes("\nnext"), "ordinary line breaks remain readable");
