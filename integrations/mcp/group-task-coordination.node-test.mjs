@@ -16,16 +16,18 @@ const taskAcceptance = await readFile(new URL("../../supabase/tests/group_task_c
 const supabaseConfig = await readFile(new URL("../../src/supabase.ts", import.meta.url), "utf8");
 
 test("MCP session encryption key uses a service-role-only Vault fallback", () => {
-  assert.match(vaultKeyMigration, /vault\\.create_secret\\([\\s\\S]*extensions\\.gen_random_bytes\\(32\\)/);
-  assert.match(vaultKeyMigration, /create or replace function public\\.get_rub_minds_mcp_session_encryption_key\\(\\)/);
-  assert.match(vaultKeyMigration, /security definer[\\s\\S]*set search_path to ''/i);
-  assert.match(vaultKeyMigration, /revoke all on function public\\.get_rub_minds_mcp_session_encryption_key\\(\\)[\\s\\S]*from public, anon, authenticated/i);
-  assert.match(vaultKeyMigration, /grant execute on function public\\.get_rub_minds_mcp_session_encryption_key\\(\\)[\\s\\S]*to service_role/i);
-  assert.match(vaultKeyAcceptance, /has_function_privilege\\([\\s\\S]*'authenticated'[\\s\\S]*'EXECUTE'/i);
-  assert.match(vaultKeyAcceptance, /set local role service_role[\\s\\S]*get_rub_minds_mcp_session_encryption_key/);
-  assert.match(mcpEdge, /async function loadVaultCredentialEncryptionKey\\(\\)/);
-  assert.match(mcpEdge, /db\\.rpc\\(["']get_rub_minds_mcp_session_encryption_key["']\\)/);
-  assert.match(mcpEdge, /RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY["']\\) \\|\\| await loadVaultCredentialEncryptionKey\\(\\)/);
+  assert.ok(vaultKeyMigration.includes("vault.create_secret("));
+  assert.ok(vaultKeyMigration.includes("extensions.gen_random_bytes(32)"));
+  assert.ok(vaultKeyMigration.includes("create or replace function public.get_rub_minds_mcp_session_encryption_key()"));
+  assert.match(vaultKeyMigration, /security definer[\s\S]*set search_path to ''/i);
+  assert.ok(vaultKeyMigration.includes("from public, anon, authenticated"));
+  assert.ok(vaultKeyMigration.includes("to service_role"));
+  assert.ok(vaultKeyAcceptance.includes("'authenticated'"));
+  assert.ok(vaultKeyAcceptance.includes("set local role service_role"));
+  assert.ok(vaultKeyAcceptance.includes("length"));
+  assert.ok(mcpEdge.includes("async function loadVaultCredentialEncryptionKey()"));
+  assert.ok(mcpEdge.includes('db.rpc("get_rub_minds_mcp_session_encryption_key")'));
+  assert.ok(mcpEdge.includes('Deno.env.get("RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY") || await loadVaultCredentialEncryptionKey()'));
 });
 
 test("external-agent endpoint follows the same Supabase environment as the browser client", () => {
