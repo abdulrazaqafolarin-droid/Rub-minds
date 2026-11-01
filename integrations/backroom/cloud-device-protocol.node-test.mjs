@@ -1,10 +1,32 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { validatePairClaim, validateSelectedApps, isDeviceControlAvailable, sanitizeDeviceEvent, DEVICE_CAPABILITIES_V1 } from "./cloud-device-protocol.mjs";
 
 const uuid = "6f3e31c1-2c72-4e3f-a8d3-30b3fcb72a12";
 const hex = "a".repeat(64);
 const app = { packageName:"com.example.chat", label:"Chat", signingCertificateSha256:hex, versionName:"1.2.3", draftInsertionAllowed:false };
+
+const initialPairingMigration = await readFile(
+  new URL("../../supabase/migrations/20261030110000_backroom_cloud_devices.sql", import.meta.url),
+  "utf8",
+);
+const pairingRepairMigration = await readFile(
+  new URL("../../supabase/migrations/20261101173500_fix_backroom_device_pairing_output_column_ambiguity.sql", import.meta.url),
+  "utf8",
+);
+
+test("pairing RPC qualifies output-column names to avoid PL/pgSQL ambiguity", () => {
+  for (const sql of [initialPairingMigration, pairingRepairMigration]) {
+    assert.match(sql, /from public\\.backroom_devices as existing_device[\\s\\S]*existing_device\\.token_digest/);
+    assert.match(sql, /existing_device\\.device_id = p_device_id/);
+    assert.match(sql, /from public\\.rooms as room[\\s\\S]*room\\.owner_id = v_pairing\\.owner_id/);
+    assert.match(sql, /existing_device\\.owner_id = v_pairing\\.owner_id/);
+    assert.match(sql, /security definer[\\s\\S]*set search_path = ''/i);
+    assert.match(sql, /grant execute on function public\\.claim_backroom_device_pairing\\([\\s\\S]*to service_role/);
+    assert.match(sql, /revoke all on function public\\.claim_backroom_device_pairing\\([\\s\\S]*from public, anon, authenticated/);
+  }
+});
 
 test("pair claim accepts only bounded typed credentials and identity", () => {
   assert.equal(validatePairClaim({pairingCode:hex,deviceId:uuid,deviceLabel:"My phone",osVersion:"14",appVersion:"0.2"},"b".repeat(64)),true);
