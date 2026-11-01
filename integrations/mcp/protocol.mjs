@@ -185,7 +185,7 @@ export const SESSION_EXPORT_INSTRUCTIONS = [
 /** Parse an ISO timestamp into exact UTC epoch microseconds. */
 function timestampMicros(value) {
   if (typeof value !== "string") return null;
-  const match = value.match(/^(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2})(?:\\.(\\d{1,6}))?(Z|[+-]\\d{2}:\\d{2})$/);
+  const match = value.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}:\d{2})$/);
   if (!match) return null;
   const milliseconds = Date.parse(value);
   if (!Number.isFinite(milliseconds)) return null;
@@ -278,7 +278,7 @@ export function validateToolArguments(name, args) {
       return Object.keys(args).length ? "This tool takes no arguments." : null;
     case "read_group_messages":
       if (args.after_created_at !== undefined && (typeof args.after_created_at !== "string" ||
-          !/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$/.test(args.after_created_at) ||
+          !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(args.after_created_at) ||
           !Number.isFinite(Date.parse(args.after_created_at)))) return "after_created_at must be an ISO date-time with timezone and at most microsecond precision.";
       if (args.after_message_id !== undefined && (typeof args.after_message_id !== "string" ||
           !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(args.after_message_id))) return "after_message_id must be a UUID.";
@@ -288,7 +288,7 @@ export function validateToolArguments(name, args) {
       return null;
     case "wait_for_group_messages":
       if (args.after_created_at !== undefined && (typeof args.after_created_at !== "string" ||
-          !/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$/.test(args.after_created_at) ||
+          !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(args.after_created_at) ||
           !Number.isFinite(Date.parse(args.after_created_at)))) return "after_created_at must be an ISO date-time with timezone and at most microsecond precision.";
       if (args.after_message_id !== undefined && (typeof args.after_message_id !== "string" ||
           !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(args.after_message_id))) return "after_message_id must be a UUID.";
