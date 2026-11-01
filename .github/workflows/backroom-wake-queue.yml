@@ -108,7 +108,11 @@ jobs:
       - name: Add criterion-level review evidence and replace the bypassable review RPC
         env:
           PGPASSWORD: postgres
-        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261101210000_group_task_review_criterion_evidence.sql
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261101221147_group_task_review_criterion_evidence.sql
+      - name: Revoke service-role execution on human review RPC
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261101221342_restrict_group_task_review_service_role_execute.sql
       - name: Exercise task lifecycle, dependencies, MCP-scoped AI actions and existing Backroom wake queue
         env:
           PGPASSWORD: postgres

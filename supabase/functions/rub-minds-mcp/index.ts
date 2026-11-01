@@ -107,34 +107,52 @@ async function findSession(sessionId: string) {
   return data;
 }
 async function terminateMcpSession(sessionDigest: string) {
-  const { data: closingSession, error: lookupError } = await db.from("rub_minds_mcp_sessions")
-    .select("session_digest, agent_credential_ciphertext, terminated_at")
-    .eq("session_digest", sessionDigest)
-    .maybeSingle();
-  if (lookupError) throw new Error("Could not verify the MCP session before termination.");
-  if (!closingSession) return { terminated: false, alreadyTerminated: false };
-  if (closingSession.terminated_at) return { terminated: true, alreadyTerminated: true };
-  if (typeof closingSession.agent_credential_ciphertext === "string") {
-    let credential: string;
-    try {
-      credential = await decryptWithKeyRing(closingSession.agent_credential_ciphertext, credentialEncryptionKey, previousEncryptionKeys, sessionDigest);
-    } catch {
-      throw new Error("Could not securely close the AI participant session. Retry or wait for expiry.");
-    }
-    const { error: revokeError } = await db.from("agent_connections")
-      .update({ revoked_at: new Date().toISOString() })
-      .eq("credential_digest", await sha256(credential))
-      .is("revoked_at", null);
-    if (revokeError) throw new Error("Could not revoke the AI participant session. Retry or wait for expiry.");
-  }
-  const terminatedAt = new Date().toISOString();
   const tombstoneExpiry = new Date(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000).toISOString();
-  const { error: terminateError } = await db.from("rub_minds_mcp_sessions").update({
-    agent_credential_ciphertext: null, room_id: null, participant_id: null,
-    terminated_at: terminatedAt, expires_at: tombstoneExpiry, last_seen_at: terminatedAt,
-  }).eq("session_digest", sessionDigest).is("terminated_at", null);
-  if (terminateError) throw new Error("Could not terminate the MCP session. Retry or wait for expiry.");
-  return { terminated: true, alreadyTerminated: false };
+  // A session may be rebound while a leave request is in flight. Retry only
+  // when the expected ciphertext changed; the RPC takes the parent session
+  // lock, verifies the exact binding, revokes its credential, tombstones the
+  // session, and deletes bridge state in a single database transaction.
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const { data: current, error: lookupError } = await db.from("rub_minds_mcp_sessions")
+      .select("session_digest, agent_credential_ciphertext, terminated_at")
+      .eq("session_digest", sessionDigest)
+      .maybeSingle();
+    if (lookupError) throw new Error("Could not verify the MCP session before termination.");
+    if (!current) return { terminated: false, alreadyTerminated: false };
+
+    let credentialDigest: string | null = null;
+    if (!current.terminated_at && typeof current.agent_credential_ciphertext === "string") {
+      let credential: string;
+      try {
+        credential = await decryptWithKeyRing(
+          current.agent_credential_ciphertext,
+          credentialEncryptionKey,
+          previousEncryptionKeys,
+          sessionDigest,
+        );
+      } catch {
+        throw new Error("Could not securely close the AI participant session. Retry or wait for expiry.");
+      }
+      credentialDigest = await sha256(credential);
+    }
+
+    const { data, error } = await db.rpc("terminate_rub_minds_mcp_bridge_session", {
+      p_session_digest: sessionDigest,
+      p_expected_ciphertext: current.terminated_at ? null : current.agent_credential_ciphertext,
+      p_credential_digest: credentialDigest,
+      p_tombstone_expires_at: tombstoneExpiry,
+    });
+    if (error || !isRecord(data)) {
+      throw new Error("Could not atomically revoke and terminate the MCP session. Retry or wait for expiry.");
+    }
+    if (data.conflict === true) continue;
+    if (data.not_found === true) return { terminated: false, alreadyTerminated: false };
+    if (data.terminated === true) {
+      return { terminated: true, alreadyTerminated: data.already_terminated === true };
+    }
+    throw new Error("The MCP session termination outcome was not confirmed. Retry safely.");
+  }
+  throw new Error("The MCP session kept changing during leave. Retry after the active join operation finishes.");
 }
 
 async function invokeAgent(credential: string, operation: "read" | "send", payload: string | null = null, sourceMessageId: string | null = null) {
@@ -164,6 +182,75 @@ async function enrichGroupMessages(data: unknown) {
   });
   return data;
 }
+
+async function readGroupMessagePage(
+  roomId: string,
+  {
+    afterCreatedAt = null,
+    afterMessageId = null,
+    limit = 100,
+  }: { afterCreatedAt?: string | null; afterMessageId?: string | null; limit?: number } = {},
+): Promise<{
+  messages: Array<Record<string, unknown>>;
+  next_cursor: { after_created_at: string; after_message_id: string } | null;
+  has_more: boolean;
+}> {
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const ISO_MICROSECOND = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
+  if (!UUID.test(roomId)) throw new Error("The joined group binding is invalid.");
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error("Message page limit must be between 1 and 100.");
+  if (afterCreatedAt !== null &&
+      (typeof afterCreatedAt !== "string" || !ISO_MICROSECOND.test(afterCreatedAt) || !Number.isFinite(Date.parse(afterCreatedAt)))) {
+    throw new Error("Message cursor timestamp is invalid.");
+  }
+  if (afterMessageId !== null && (typeof afterMessageId !== "string" || !UUID.test(afterMessageId))) {
+    throw new Error("Message cursor ID is invalid.");
+  }
+  if (afterMessageId !== null && afterCreatedAt === null) {
+    throw new Error("Message cursor ID requires its timestamp.");
+  }
+
+  let query = db.from("messages")
+    .select("id,room_id,sender_id,body,created_at")
+    .eq("room_id", roomId);
+
+  if (afterCreatedAt !== null) {
+    if (afterMessageId !== null) {
+      // The timestamp is strictly validated above and the ID is a UUID, so
+      // neither value can inject PostgREST filter syntax into this expression.
+      query = query.or(
+        "created_at.gt." + afterCreatedAt +
+        ",and(created_at.eq." + afterCreatedAt + ",id.gt." + afterMessageId + ")"
+      );
+    } else {
+      query = query.gt("created_at", afterCreatedAt);
+    }
+    query = query.order("created_at", { ascending: true })
+      .order("id", { ascending: true });
+  } else {
+    // Return the newest bounded snapshot, but present it in chronological order.
+    query = query.order("created_at", { ascending: false })
+      .order("id", { ascending: false });
+  }
+
+  const { data, error } = await query.limit(limit + 1);
+  if (error) throw new Error("Could not read authorized group messages.");
+  const raw = Array.isArray(data) ? data : [];
+  const hasMore = raw.length > limit;
+  const selected = raw.slice(0, limit);
+  const messages = afterCreatedAt === null ? selected.reverse() : selected;
+  const last = messages.length > 0 ? messages[messages.length - 1] : null;
+  const nextCursor = last
+    ? { after_created_at: last.created_at, after_message_id: last.id }
+    : (afterCreatedAt !== null && afterMessageId !== null
+        ? { after_created_at: afterCreatedAt, after_message_id: afterMessageId }
+        : null);
+  const enriched = await enrichGroupMessages({ messages });
+  const enrichedMessages = isRecord(enriched) && Array.isArray(enriched.messages)
+    ? enriched.messages as Array<Record<string, unknown>>
+    : messages as Array<Record<string, unknown>>;
+  return { messages: enrichedMessages, next_cursor: nextCursor, has_more: hasMore };
+}
 async function enrichGroupTasks(tasks: unknown) {
   if (!Array.isArray(tasks) || tasks.length === 0) return [];
   const participantIds = [...new Set(tasks.flatMap((task) =>
@@ -191,18 +278,27 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
         .is("revoked_at", null).gt("expires_at", new Date().toISOString()).maybeSingle();
       if (activeConnectionError) throw new Error("Could not verify the existing AI participant session.");
       if (activeConnection) return { joined: true, room_id: session.room_id, participant_id: session.participant_id, note: "This MCP session is already joined to an active group.", post_join_next_step: "Ask the session owner for consent unless already explicitly authorized. If consent is given, call prepare_session_export with confirm_export=true; otherwise do not capture. Never post raw session history to the group." };
-      const { error: clearError } = await db.from("rub_minds_mcp_sessions").update({
-        agent_credential_ciphertext: null, room_id: null, participant_id: null,
-      }).eq("session_digest", session.session_digest as string)
-        .eq("agent_credential_ciphertext", session.agent_credential_ciphertext);
-      if (clearError) throw new Error("Could not clear the expired or revoked AI participant binding.");
+      // The previous provider credential is no longer live. Remove its private
+      // cursor/pending reply before allowing this same MCP handle to join again,
+      // otherwise the next participant could inherit state from the old binding.
+      const { data: clearedBinding, error: clearError } = await db.rpc(
+        "clear_rub_minds_mcp_bridge_state_for_rejoin",
+        {
+          p_session_digest: session.session_digest as string,
+          p_expected_ciphertext: session.agent_credential_ciphertext as string,
+        },
+      );
+      if (clearError || !isRecord(clearedBinding) ||
+          clearedBinding.cleared !== true || clearedBinding.conflict !== false) {
+        throw new Error("Could not safely clear the expired or revoked AI participant binding before rejoining.");
+      }
       session.agent_credential_ciphertext = null;
       session.room_id = null;
       session.participant_id = null;
     }
     const modernIdempotentJoin = session._modern_idempotent_join === true;
     const deterministicCredential = modernIdempotentJoin
-      ? await deriveJoinCredential((session._session_handle_key as string) || credentialEncryptionKey, session.session_handle as string)
+      ? await deriveJoinCredential((session._session_handle_key as string) || credentialEncryptionKey, session.session_handle as string, session._join_request_key as string)
       : null;
     const { data, error } = modernIdempotentJoin
       ? await db.rpc("redeem_ai_room_invite_idempotent", {
@@ -277,6 +373,25 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
             Date.parse(concurrentBinding.expires_at) > Date.now()) {
           return { joined: true, room_id: data.room_id, participant_id: data.participant_id, expires_at: concurrentBinding.expires_at, replayed: true, post_join_next_step: "If session capture has not been completed or declined, call prepare_session_export with confirm_export=true. It returns instructions for importing a private context document; never post raw session history to the group." };
         }
+        // If leave/revocation won the race, the deterministic credential may
+        // have been created by invite redemption but never safely bound to the
+        // MCP session. Revoke that orphan credential. Keep it untouched only
+        // when another concurrent request has already established a different
+        // still-live binding for this same handle.
+        const hasDifferentLiveBinding = !concurrentLookupError && concurrentBinding &&
+          concurrentBinding.terminated_at === null &&
+          Date.parse(concurrentBinding.expires_at) > Date.now() &&
+          (concurrentBinding.room_id !== data.room_id ||
+            concurrentBinding.participant_id !== data.participant_id);
+        if (!hasDifferentLiveBinding) {
+          const { error: orphanCredentialRevokeError } = await db.from("agent_connections")
+            .update({ revoked_at: new Date().toISOString() })
+            .eq("credential_digest", await sha256(credential))
+            .is("revoked_at", null);
+          if (orphanCredentialRevokeError) {
+            throw new Error("Could not revoke an invitation credential that lost its MCP session binding race.");
+          }
+        }
       } else {
         await db.from("agent_connections").update({ revoked_at: new Date().toISOString() })
           .eq("credential_digest", await sha256(credential)).is("revoked_at", null);
@@ -320,31 +435,84 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     return { room, participants: participants || [] };
   }
 
+  if (name === "send_group_message") {
+    return await invokeAgent(credential, "send", args.body as string, (args.source_message_id as string | undefined) || null);
+  }
+
+  const credentialDigest = await sha256(credential);
+  const { data: connection, error: connectionError } = await db.from("agent_connections")
+    .select("id, room_id, participant_id, owner_id, expires_at, revoked_at")
+    .eq("credential_digest", credentialDigest).is("revoked_at", null)
+    .gt("expires_at", new Date().toISOString()).maybeSingle();
+  if (connectionError || !connection) throw new Error("AI participant credential is invalid, expired, or revoked.");
+  const sessionDigest = typeof session.session_digest === "string" ? session.session_digest : "";
+  if (name === "load_original_session_bridge_state" || name === "save_original_session_bridge_state") {
+    if (!/^[a-f0-9]{64}$/.test(sessionDigest) ||
+        session.room_id !== connection.room_id || session.participant_id !== connection.participant_id) {
+      throw new Error("Original-session bridge state requires this session's current joined group binding.");
+    }
+
+    if (name === "load_original_session_bridge_state") {
+      const { data, error } = await db.rpc("load_rub_minds_mcp_bridge_state", {
+        p_session_digest: sessionDigest,
+        p_room_id: connection.room_id,
+        p_participant_id: connection.participant_id,
+      });
+      if (error || !isRecord(data)) throw new Error("Could not load original-session bridge state.");
+      return data;
+    }
+
+    const { data, error } = await db.rpc("save_rub_minds_mcp_bridge_state", {
+      p_session_digest: sessionDigest,
+      p_room_id: connection.room_id,
+      p_participant_id: connection.participant_id,
+      p_expected_revision: args.expected_revision,
+      p_cursor_created_at: args.cursor_created_at,
+      p_cursor_message_id: args.cursor_message_id,
+      p_pending_message_id: args.pending_message_id,
+      p_pending_message_created_at: args.pending_message_created_at,
+      p_pending_response: args.pending_response,
+      p_blocked_message_id: args.blocked_message_id,
+      p_blocked_reason: args.blocked_reason,
+    });
+    if (error || !isRecord(data)) throw new Error("Could not save original-session bridge state.");
+    return data;
+  }
+
+  await invokeAgent(credential, "read");
+
   if (name === "read_group_messages") {
-    return await enrichGroupMessages(await invokeAgent(credential, "read"));
+    return await readGroupMessagePage(connection.room_id as string, {
+      afterCreatedAt: typeof args.after_created_at === "string" ? args.after_created_at : null,
+      afterMessageId: typeof args.after_message_id === "string" ? args.after_message_id : null,
+      limit: typeof args.limit === "number" ? args.limit : 100,
+    });
   }
 
   if (name === "wait_for_group_messages") {
     const timeoutMs = typeof args.timeout_ms === "number" ? args.timeout_ms : 10000;
     const deadline = Date.now() + timeoutMs;
-    const cursor = typeof args.after_created_at === "string" ? Date.parse(args.after_created_at) : Date.now();
-    const cursorMessageId = typeof args.after_message_id === "string" ? args.after_message_id : null;
-    const selectMessagesAfterCursor = (data: unknown) => isRecord(data) && Array.isArray(data.messages)
-      ? messagesAfterCursor(data.messages, cursor, cursorMessageId)
-      : [];
-    const hasNewMessages = (data: unknown) => selectMessagesAfterCursor(data).length > 0;
-    const onlyNewMessages = async (data: unknown) => {
-      if (!isRecord(data)) return { messages: [] };
-      return await enrichGroupMessages({ ...data, messages: selectMessagesAfterCursor(data) });
-    };
-    const initial = await invokeAgent(credential, "read");
-    if (hasNewMessages(initial)) return { timed_out: false, delivery: "snapshot", ...(await onlyNewMessages(initial) as Record<string, unknown>) };
-    if (Date.now() >= deadline) return { timed_out: true, delivery: "snapshot", messages: [] };
+    const afterCreatedAt = typeof args.after_created_at === "string"
+      ? args.after_created_at
+      : new Date().toISOString();
+    const afterMessageId = typeof args.after_message_id === "string" ? args.after_message_id : null;
+    const limit = typeof args.limit === "number" ? args.limit : 100;
+    const roomId = connection.room_id as string;
+    const readAfterCursor = () => readGroupMessagePage(roomId, {
+      afterCreatedAt,
+      afterMessageId,
+      limit,
+    });
+    const initial = await readAfterCursor();
+    if (initial.messages.length > 0) {
+      return { timed_out: false, delivery: "snapshot", ...initial };
+    }
+    if (Date.now() >= deadline) {
+      return { timed_out: true, delivery: "snapshot", ...initial };
+    }
 
-    const roomId = session.room_id;
-    if (typeof roomId !== "string" || !/^[0-9a-f-]{36}$/i.test(roomId)) throw new Error("The joined group binding is invalid.");
-    // The service credential is server-only. The channel is filtered to the
-    // authenticated session's room and payloads are never returned to the model.
+    // Realtime is only a wake signal. The authoritative, room-scoped page is
+    // always reread from Postgres before a message is returned to the MCP client.
     db.realtime.setAuth(serviceKey);
     const channel = db.channel("mcp-room-wait-" + roomId + "-" + crypto.randomUUID());
     let eventVersion = 0;
@@ -356,7 +524,9 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       const subscribed = await new Promise<boolean>((resolve) => {
         let settled = false;
         const subscribeWaitMs = Math.max(1, Math.min(3000, deadline - Date.now()));
-        const timer = setTimeout(() => { if (!settled) { settled = true; resolve(false); } }, subscribeWaitMs);
+        const timer = setTimeout(() => {
+          if (!settled) { settled = true; resolve(false); }
+        }, subscribeWaitMs);
         channel.on("postgres_changes", {
           event: "INSERT", schema: "public", table: "messages", filter: "room_id=eq." + roomId,
         }, () => {
@@ -365,28 +535,30 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
         }).subscribe((status: string) => {
           if (settled) return;
           if (status === "SUBSCRIBED") { settled = true; clearTimeout(timer); resolve(true); }
-          else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") { settled = true; clearTimeout(timer); resolve(false); }
+          else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+            settled = true; clearTimeout(timer); resolve(false);
+          }
         });
       });
-      if (!subscribed) return { timed_out: true, delivery: "unavailable", messages: [], note: "Supabase Realtime subscription could not be established. Retry read_group_messages or wait_for_group_messages." };
+      if (!subscribed) {
+        return {
+          timed_out: true,
+          delivery: "unavailable",
+          messages: [],
+          next_cursor: initial.next_cursor,
+          has_more: false,
+          note: "Supabase Realtime subscription could not be established. Retry read_group_messages or wait_for_group_messages.",
+        };
+      }
 
-      // Realtime messages can arrive late, including the INSERT used to establish
-      // the cursor. Treat events only as wake-ups: snapshot the authorized group
-      // and ignore stale notifications that do not contain a message after cursor.
       while (Date.now() < deadline) {
         const eventVersionBeforeRead = eventVersion;
-        const snapshot = await invokeAgent(credential, "read");
-        if (hasNewMessages(snapshot)) {
-          return {
-            timed_out: false,
-            delivery: realtimeWakeObserved ? "realtime" : "snapshot",
-            ...(await onlyNewMessages(snapshot) as Record<string, unknown>),
-          };
+        const snapshot = await readAfterCursor();
+        if (snapshot.messages.length > 0) {
+          return { timed_out: false, delivery: realtimeWakeObserved ? "realtime" : "snapshot", ...snapshot };
         }
         const eventVersionAfterRead = eventVersion;
         if (eventVersionAfterRead !== eventVersionBeforeRead) {
-          // An event raced the snapshot. Read again before advancing the cursor
-          // for notifications, or a newly committed message could be overlooked.
           observedEventVersion = eventVersionAfterRead;
           continue;
         }
@@ -410,50 +582,39 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
             wakeWaiter = null;
             resolve("message");
           };
-          // Handle an event that arrived after the snapshot but before the wait
-          // callback was installed.
           if (eventVersion > observedEventVersion) wakeWaiter();
         });
         wakeWaiter = null;
         if (eventOrTimeout === "timeout") break;
-        // A signal does not prove there is a new authorized message. The next
-        // loop iteration verifies it; stale events simply continue waiting.
         realtimeWakeObserved = true;
       }
 
-      // Always take a final authorized read at the deadline. Retry if a
-      // notification races this read, then report timeout only on a stable empty snapshot.
+      // Stable final read closes the event/deadline race before returning timeout.
       for (let attempt = 0; attempt < 3; attempt += 1) {
         const eventVersionBeforeRead = eventVersion;
-        const finalSnapshot = await invokeAgent(credential, "read");
-        if (hasNewMessages(finalSnapshot)) {
+        const finalSnapshot = await readAfterCursor();
+        if (finalSnapshot.messages.length > 0) {
+          return { timed_out: false, delivery: realtimeWakeObserved ? "realtime" : "snapshot", ...finalSnapshot };
+        }
+        if (eventVersion === eventVersionBeforeRead) {
           return {
-            timed_out: false,
-            delivery: realtimeWakeObserved ? "realtime" : "snapshot",
-            ...(await onlyNewMessages(finalSnapshot) as Record<string, unknown>),
+            timed_out: true,
+            delivery: realtimeWakeObserved ? "realtime" : "timeout",
+            ...finalSnapshot,
           };
         }
-        if (eventVersion === eventVersionBeforeRead) break;
       }
-      return { timed_out: true, delivery: "realtime", messages: [] };
+      return {
+        timed_out: true,
+        delivery: "realtime-recovery-read",
+        ...(await readAfterCursor()),
+      };
     } finally {
       if (eventTimer) clearTimeout(eventTimer);
       wakeWaiter = null;
       try { await db.removeChannel(channel); } catch { /* best-effort cleanup for this bounded subscription */ }
     }
   }
-
-  if (name === "send_group_message") {
-    return await invokeAgent(credential, "send", args.body as string, (args.source_message_id as string | undefined) || null);
-  }
-
-  const credentialDigest = await sha256(credential);
-  const { data: connection, error: connectionError } = await db.from("agent_connections")
-    .select("id, room_id, participant_id, owner_id, expires_at, revoked_at")
-    .eq("credential_digest", credentialDigest).is("revoked_at", null)
-    .gt("expires_at", new Date().toISOString()).maybeSingle();
-  if (connectionError || !connection) throw new Error("AI participant credential is invalid, expired, or revoked.");
-  await invokeAgent(credential, "read");
 
 
   if (name === "propose_group_task") {
@@ -796,56 +957,75 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
   let session: Record<string, unknown> | null;
   if (toolName === "join_group") {
     const joinKey = rawArgs.join_request_key;
-    if (typeof joinKey !== "string" || !/^[a-f0-9]{64}$/i.test(joinKey) || typeof rawArgs.invite_token !== "string" || !/^[a-f0-9]{64}$/i.test(rawArgs.invite_token) || typeof rawArgs.agent_label !== "string" || !rawArgs.agent_label.trim() || [...rawArgs.agent_label.trim()].length > 80) {
+    const suppliedSessionHandle = rawArgs.session_handle;
+    if (typeof joinKey !== "string" || !/^[a-f0-9]{64}$/i.test(joinKey) ||
+        typeof rawArgs.invite_token !== "string" || !/^[a-f0-9]{64}$/i.test(rawArgs.invite_token) ||
+        typeof rawArgs.agent_label !== "string" || !rawArgs.agent_label.trim() ||
+        [...rawArgs.agent_label.trim()].length > 80) {
       return modernRpcError(200, id, -32602, "join_group requires a valid invitation token, agent_label, and 64-character hexadecimal join_request_key.");
     }
-    try {
-      const selection = await selectSessionHandleForRetry(
-        credentialEncryptionKeys,
-        rawArgs.invite_token,
-        rawArgs.agent_label,
-        joinKey,
-        async (candidateHandle: string) => {
-          const candidateDigest = await sha256(candidateHandle);
-          const { data: existingSession, error: sessionLookupError } = await db.from("rub_minds_mcp_sessions")
-            .select("session_digest").eq("session_digest", candidateDigest).maybeSingle();
-          if (sessionLookupError) throw new Error("Could not verify an existing session retry.");
-          if (existingSession) return true;
-          // Session rows may be cleaned after their short handle TTL while the
-          // durable idempotency record remains valid. Preserve the old key choice.
-          const { data: existingJoin, error: joinLookupError } = await db.from("rub_minds_mcp_join_requests")
-            .select("session_digest").eq("session_digest", candidateDigest).maybeSingle();
-          if (joinLookupError) throw new Error("Could not verify a durable join retry.");
-          return Boolean(existingJoin);
-        },
-      );
-      sessionHandle = selection.handle;
-      rawArgs._selected_handle_key = selection.key;
-    } catch {
-      return modernRpcError(503, id, -32000, "Could not securely resolve the join retry. Check key-ring configuration and retry.");
+    if (suppliedSessionHandle !== undefined &&
+        (typeof suppliedSessionHandle !== "string" || !/^[a-f0-9]{64}$/i.test(suppliedSessionHandle))) {
+      return modernRpcError(200, id, -32602, "session_handle must be the opaque handle previously returned by join_group.");
     }
-    delete rawArgs.join_request_key;
-    session = await findSession(sessionHandle);
-    if (!session) {
-      const sessionDigest = await sha256(sessionHandle);
-      const { data: priorSession, error: lookupError } = await db.from("rub_minds_mcp_sessions")
-        .select("session_digest")
-        .eq("session_digest", sessionDigest)
-        .maybeSingle();
-      if (lookupError) return modernRpcError(503, id, -32000, "Could not verify the join handle before joining.");
-      if (priorSession) {
-        // Another concurrent join may have inserted its live session between
-        // findSession() and this tombstone check. Re-read before declaring the
-        // handle expired; a terminated/expired handle still fails closed.
-        session = await findSession(sessionHandle);
-        if (!session) return modernToolResult(id, { error: "This join handle has expired or was terminated. Start a new join request with a new join_request_key." }, true);
-      } else {
-        session = { session_digest: sessionDigest, agent_credential_ciphertext: null, room_id: null, participant_id: null, _new_session: true };
+    if (typeof suppliedSessionHandle === "string") {
+      // Rebind only a real, still-live MCP session whose bearer handle the
+      // caller already possesses. Never create a session from a supplied value
+      // or revive a leave/tombstoned or expired handle.
+      sessionHandle = suppliedSessionHandle.toLowerCase();
+      session = await findSession(sessionHandle);
+      if (!session) {
+        return modernToolResult(id, {
+          error: "The supplied session_handle is missing, expired, or terminated. A terminated handle cannot be rebound.",
+        }, true);
+      }
+      rawArgs._selected_handle_key = credentialEncryptionKey;
+    } else {
+      try {
+        const selection = await selectSessionHandleForRetry(
+          credentialEncryptionKeys,
+          rawArgs.invite_token,
+          rawArgs.agent_label,
+          joinKey,
+          async (candidateHandle: string) => {
+            const candidateDigest = await sha256(candidateHandle);
+            const { data: existingSession, error: sessionLookupError } = await db.from("rub_minds_mcp_sessions")
+              .select("session_digest").eq("session_digest", candidateDigest).maybeSingle();
+            if (sessionLookupError) throw new Error("Could not verify an existing session retry.");
+            if (existingSession) return true;
+            const { data: existingJoin, error: joinLookupError } = await db.from("rub_minds_mcp_join_requests")
+              .select("session_digest").eq("session_digest", candidateDigest).maybeSingle();
+            if (joinLookupError) throw new Error("Could not verify a durable join retry.");
+            return Boolean(existingJoin);
+          },
+        );
+        sessionHandle = selection.handle;
+        rawArgs._selected_handle_key = selection.key;
+      } catch {
+        return modernRpcError(503, id, -32000, "Could not securely resolve the join retry. Check key-ring configuration and retry.");
+      }
+      session = await findSession(sessionHandle);
+      if (!session) {
+        const sessionDigest = await sha256(sessionHandle);
+        const { data: priorSession, error: lookupError } = await db.from("rub_minds_mcp_sessions")
+          .select("session_digest")
+          .eq("session_digest", sessionDigest)
+          .maybeSingle();
+        if (lookupError) return modernRpcError(503, id, -32000, "Could not verify the join handle before joining.");
+        if (priorSession) {
+          session = await findSession(sessionHandle);
+          if (!session) return modernToolResult(id, { error: "This join handle has expired or was terminated. Start a new join request with a new join_request_key." }, true);
+        } else {
+          session = { session_digest: sessionDigest, agent_credential_ciphertext: null, room_id: null, participant_id: null, _new_session: true };
+        }
       }
     }
     session.session_handle = sessionHandle;
     session._session_handle_key = rawArgs._selected_handle_key;
+    session._join_request_key = joinKey.toLowerCase();
     delete rawArgs._selected_handle_key;
+    delete rawArgs.join_request_key;
+    delete rawArgs.session_handle;
     session._modern_idempotent_join = true;
   } else {
     const handle = rawArgs.session_handle;

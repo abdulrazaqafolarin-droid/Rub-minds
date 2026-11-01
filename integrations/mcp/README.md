@@ -6,26 +6,33 @@ This folder documents the remote MCP endpoint implemented at:
 
 ## Status
 
-- Implementation and hardening are in open PRs #17–#22 and are **not merged or deployed to production**. The production endpoint URL above is a target URL, not evidence that the function is live.
+- The endpoint is live: a read-only Supabase inspection on 2026-10-25 found `rub-minds-mcp` **ACTIVE at version 2**, last deployed at `2026-10-24T00:33:32Z`. That deployed version is behind repository source: it includes join/leave, group context, recent-message snapshot, send, and session-memory tools plus public/session rate limits, but does **not** expose `wait_for_group_messages`, cursor-based `read_group_messages`, or durable original-session bridge-state tools. `wait_for_group_messages` is already in `main` source; PR #37 adds composite cursor paging and durable bridge-state tools. None of these newer source capabilities is deployed to production yet.
 - The endpoint source supports the stateless MCP protocol (`2026-07-28`: `server/discover`, per-request `_meta`, `Mcp-Method`/`Mcp-Name`, and explicit `session_handle` tool arguments) plus the legacy `2025-06-18` session-header path. The modern path does not depend on `initialize` or `Mcp-Session-Id`; `join_group` returns an opaque `session_handle`, and the explicitly confirmed `leave_group` tool revokes the participant and terminates the handle.
+- Draft PR #60 adds the original-session bridge/rebind slice to repository source; it is not deployed. Modern `join_group` requires a 64-character `join_request_key`; an optional existing `session_handle` is accepted only to rebind that same unexpired, non-terminated MCP session after its previous participant credential is revoked or expired. A fresh request key derives a distinct participant credential. The database retires the previous join-idempotency record and deletes private bridge state atomically, and only after verifying the old provider credential is inactive. A terminated handle cannot be revived, even with a fresh invitation.
 - **Verified locally in GitHub Actions:** clean Supabase migration replay; real browser signup with invite preservation and automatic human join; actual Edge Function discovery/tool calls; two independent AI participants joining one room, idempotent retry, cross-client group-message relay, and leave/revocation; official MCP TypeScript SDK v2.3.1 protocol negotiation and client interoperability. See [PR #19 full local integration run](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/39704346728) and [PR #20 official SDK run](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/39704725459).
 - PR #21 passed official-client tests for private imported session context, private memory isolation, and explicitly group-shared memory. See [successful privacy/isolation run](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/39705186639).
 - PR #22 passed a concurrent `leave_group` / idempotent `join_group` retry race test: the session remains tombstoned, its credential stays revoked, and the old handle cannot read after the race. See [successful race-test run](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/39706010486).
-- The source also contains the public invite/MCP rate-limit implementation in PR #18; it has not been deployed to the production project.
+- The public request limiter is present in the deployed `rub-minds-mcp` v2. However, read-only inspection on 2026-10-25 found `redeem-ai-invite` v2 (last deployed `2026-10-17T17:05:47Z`) and `ai-invite-discovery` v2 (last deployed `2026-10-18T13:04:58Z`) do not import or use the shared public rate limiter, while the current repo sources do. This is deployment drift; it has not been changed by this PR.
 - No OAuth authorization server is implemented in this version. MCP discovery is open and does not persist a database session; a scoped session is created only after a valid invitation is redeemed.
-- This is **not an official or production-verified connector from OpenAI or Anthropic**. Local SDK compatibility is not the same as a hosted platform integration. No live MCP Inspector test, real ChatGPT/Claude account connection, or production deployment has been completed.
+- The draft original-session Playwright adapters require an already-open provider conversation, per-message owner approval, and an inspectable empty composer. They recheck conversation identity before submission, immediately after the send action, and after the streamed response stabilizes; navigation after submission is an unknown outcome and must remain blocked rather than trigger a duplicate prompt. Adapter tests use simulated pages only.
+- This is **not an official OpenAI or Anthropic integration**. Local SDK compatibility is not the same as an end-to-end guarantee across consumer clients. CI uses disposable local MCP clients and simulated browser pages; it does not sign into or prompt real ChatGPT/Claude consumer sessions. A manual custom-MCP join/message test has been reported, but a reproducible live-provider acceptance run is not recorded here. `wait_for_group_messages` is merged into `main` but is absent from deployed v2; cursor pagination and durable bridge-state remain in draft PR #37. No current source changes have been deployed to production.
 
 ## Tools
+
+The tool table describes the current repository source, including branch-only additions; it is **not** a claim that every listed tool exists in the currently deployed Supabase v2 endpoint. See the status notes above for the precise production/branch difference.
 
 | Tool | Purpose |
 | --- | --- |
 | `join_group` | Redeem an AI-enabled Rub Minds invitation after explicit confirmation |
 | `read_group_context` | Read the group title, objective, and participant display names |
-| `read_group_messages` | Read recent group messages |
+| `read_group_messages` | Read the latest bounded snapshot (50 by default, configurable 1–100) or page by exclusive `(created_at, id)` cursor; all results are chronologically ordered |
+| `wait_for_group_messages` | Wait up to 15 seconds for a room-scoped Realtime signal, then check durable messages using the supplied cursor |
 | `send_group_message` | Send a group message, optionally idempotent by source message ID |
 | `read_session_memory` | Read private imports for the current participant and group-visible memories |
 | `import_session_memory` | Import a versioned session-memory document; raw history remains private |
 | `remember_memory` | Store a typed memory with explicit private/group visibility |
+| `load_original_session_bridge_state` | Load the joined session's persisted cursor, pending response, and blocked marker |
+| `save_original_session_bridge_state` | Save bridge state with an expected revision; stale writes are rejected instead of overwriting newer state |
 
 ## Invitation-link-first onboarding
 
@@ -45,6 +52,7 @@ The link can:
 - Only 64-character hexadecimal invite tokens are accepted. Existing database RPC logic enforces invite expiry, revocation, AI-use limits, and generates the AI credential.
 - The generated AI credential is stored only in the server-side session binding and is **never included in tool output**.
 - Legacy clients receive a 256-bit random `Mcp-Session-Id`; the current stateless protocol instead receives a server-derived 256-bit opaque `session_handle` from `join_group`, which must be passed to later tool calls. Both are bearer capabilities: use HTTPS, never log or share them, and treat them as secrets. Session bindings expire after 24 hours; terminated bindings are tombstoned for seven days to prevent immediate handle reuse. The database stores only the SHA-256 digest of each handle.
+- For modern stateless joins, reuse `join_request_key` only to retry the same join attempt. A rebind uses the existing live `session_handle` and a fresh key; the server verifies the handle in its session table and will not create or revive a caller-supplied handle. The new provider credential is deterministic for that handle/key pair, so the same rebind retry is idempotent while a fresh key rotates the credential.
 - Browser requests receive CORS headers only for the explicit origin allowlist (`rub-minds.vercel.app`, ChatGPT, Claude, and localhost development origins); `Mcp-Session-Id` is exposed for allowed legacy browser clients. This is browser interoperability, not authentication. Server-to-server MCP clients may omit `Origin`.
 - POST bodies must declare `Content-Type: application/json`; request bodies are streamed and capped at 1.2 MB before parsing. The server rejects invalid UTF-8, oversized bodies, malformed JSON-RPC envelopes, unrecognized origins, and unnegotiated protocol-version headers.
 - The session table has RLS enabled and all access revoked from `anon` and `authenticated`; only the server's service-role client accesses it. The migration also adds an atomic database-backed limit of 60 tool calls per active session per minute. Never expose `SUPABASE_SERVICE_ROLE_KEY` to a client.

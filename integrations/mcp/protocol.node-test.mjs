@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   messagesAfterCursor,
+  compareMessageCursors,
+  isValidMessageCursor,
   MCP_PROTOCOL_VERSION,
   MCP_MODERN_PROTOCOL_VERSION,
   getModernMcpTools,
@@ -26,6 +28,9 @@ test("current stateless protocol exposes explicit session handles and retry keys
   assert.ok(join);
   assert.ok(join.inputSchema.required.includes("join_request_key"));
   assert.equal(join.inputSchema.properties.join_request_key.pattern, "^[a-fA-F0-9]{64}$");
+  assert.equal(join.inputSchema.properties.session_handle.pattern, "^[a-fA-F0-9]{64}$");
+  assert.equal(join.inputSchema.required.includes("session_handle"), false,
+    "session_handle is optional because first-time joins must derive a fresh handle");
   for (const tool of tools.filter((item) => item.name !== "join_group")) {
     assert.ok(tool.inputSchema.required.includes("session_handle"), tool.name);
     assert.equal(tool.inputSchema.properties.session_handle.pattern, "^[a-fA-F0-9]{64}$");
@@ -50,6 +55,7 @@ test("advertises invitation, messaging, and memory tools", () => {
   assert.equal(MCP_PROTOCOL_VERSION, "2025-06-18");
   assert.deepEqual(RUB_MINDS_MCP_TOOLS.map((tool) => tool.name), [
     "join_group", "prepare_session_export", "leave_group", "read_group_context", "read_group_messages", "wait_for_group_messages", "send_group_message",
+    "load_original_session_bridge_state", "save_original_session_bridge_state",
     "read_session_memory", "import_session_memory", "remember_memory", "forget_memory",
     "propose_group_task", "list_group_tasks", "read_group_task", "claim_group_task", "block_group_task", "fail_group_task", "submit_group_task_result",
   ]);
@@ -89,11 +95,20 @@ test("HTTP transport accepts only JSON request content types", () => {
 
 test("join requires a valid invitation and explicit confirmation", () => {
   const token = "a".repeat(64);
-  assert.equal(validateToolArguments("join_group", { invite_token: token, agent_label: "Claude", confirm_join: true }), null);
+  const base = { invite_token: token, agent_label: "Claude", confirm_join: true };
+  assert.equal(validateToolArguments("join_group", base), null,
+    "legacy join arguments remain valid");
+  assert.equal(validateToolArguments("join_group", { ...base, join_request_key: "b".repeat(64) }), null,
+    "modern idempotent joins accept a valid request key");
+  assert.equal(validateToolArguments("join_group", {
+    ...base, join_request_key: "b".repeat(64), session_handle: "c".repeat(64),
+  }), null, "rebind calls accept the existing session handle and fresh request key");
+  assert.match(validateToolArguments("join_group", { ...base, join_request_key: "invalid" }), /64-character hexadecimal idempotency key/);
+  assert.match(validateToolArguments("join_group", { ...base, session_handle: "invalid" }), /64-character hexadecimal handle/);
+  assert.match(validateToolArguments("join_group", { ...base, join_request_key: "b".repeat(64), credential: "leak" }), /Unknown/);
   assert.match(validateToolArguments("join_group", { invite_token: token, agent_label: "Claude" }), /confirmation/);
   assert.match(validateToolArguments("join_group", { invite_token: "short", agent_label: "Claude", confirm_join: true }), /token/);
   assert.match(validateToolArguments("join_group", { invite_token: token, agent_label: " ", confirm_join: true }), /agent_label/);
-  assert.match(validateToolArguments("join_group", { invite_token: token, agent_label: "Claude", confirm_join: true, credential: "leak" }), /Unknown/);
 });
 
 test("leave_group requires explicit confirmation and rejects unknown arguments", () => {
@@ -102,13 +117,29 @@ test("leave_group requires explicit confirmation and rejects unknown arguments",
   assert.match(validateToolArguments("leave_group", { confirm_leave: true, force: true }), /Unknown/);
 });
 
-test("Realtime wait tool validates cursor and bounds its wait", () => {
+test("Realtime wait tool validates complete composite cursors and bounds its wait", () => {
+  const cursorId = "550e8400-e29b-41d4-a716-446655440000";
+  const timestamp = "2026-10-24T17:00:00.123456Z";
   assert.equal(validateToolArguments("wait_for_group_messages", {}), null);
-  assert.equal(validateToolArguments("wait_for_group_messages", { after_created_at: "2026-10-24T17:00:00.000Z", timeout_ms: 5000 }), null);
-  assert.equal(validateToolArguments("wait_for_group_messages", { after_message_id: "550e8400-e29b-41d4-a716-446655440000", after_created_at: "2026-10-24T17:00:00.000Z", timeout_ms: 5000 }), null);
-  assert.match(validateToolArguments("wait_for_group_messages", { after_message_id: "550e8400-e29b-41d4-a716-446655440000", timeout_ms: 5000 }), /after_created_at is required/);
-  assert.match(validateToolArguments("wait_for_group_messages", { after_message_id: "not-a-uuid", after_created_at: "2026-10-24T17:00:00.000Z" }), /UUID/);
-  assert.match(validateToolArguments("wait_for_group_messages", { after_created_at: "not-a-date" }), /date-time/);
+  assert.equal(validateToolArguments("wait_for_group_messages", { timeout_ms: 5000 }), null);
+  assert.equal(validateToolArguments("wait_for_group_messages", {
+    after_message_id: cursorId, after_created_at: timestamp, timeout_ms: 5000,
+  }), null);
+  assert.match(validateToolArguments("wait_for_group_messages", {
+    after_message_id: cursorId, timeout_ms: 5000,
+  }), /supplied together/);
+  assert.match(validateToolArguments("wait_for_group_messages", {
+    after_created_at: timestamp, timeout_ms: 5000,
+  }), /supplied together/);
+  assert.match(validateToolArguments("wait_for_group_messages", {
+    after_message_id: "not-a-uuid", after_created_at: timestamp,
+  }), /UUID/);
+  assert.match(validateToolArguments("wait_for_group_messages", {
+    after_message_id: cursorId, after_created_at: "2026-10-24 17:00:00",
+  }), /date-time/);
+  assert.match(validateToolArguments("wait_for_group_messages", {
+    after_message_id: cursorId, after_created_at: "2026-10-24T17:00:00.1234567Z",
+  }), /date-time/);
   assert.match(validateToolArguments("wait_for_group_messages", { timeout_ms: 999 }), /1000 to 15000/);
   assert.match(validateToolArguments("wait_for_group_messages", { timeout_ms: 15001 }), /1000 to 15000/);
   assert.match(validateToolArguments("wait_for_group_messages", { extra: true }), /Unknown/);
@@ -283,4 +314,137 @@ test("group task MCP tools require scoped identities, bounded content, and expli
     idempotency_key: taskId,
     force: true,
   }), /Unknown/);
+});
+
+
+test("original-session bridge state tools are listed, session-scoped, and fail closed on malformed CAS state", () => {
+  const names = new Set(getModernMcpTools().map(tool => tool.name));
+  assert.ok(names.has("load_original_session_bridge_state"));
+  assert.ok(names.has("save_original_session_bridge_state"));
+  const load = RUB_MINDS_MCP_TOOLS.find(tool => tool.name === "load_original_session_bridge_state");
+  const save = RUB_MINDS_MCP_TOOLS.find(tool => tool.name === "save_original_session_bridge_state");
+  assert.ok(load);
+  assert.ok(save);
+  assert.deepEqual(save.inputSchema.required, [
+    "expected_revision", "cursor_created_at", "cursor_message_id", "pending_message_id",
+    "pending_message_created_at", "pending_response", "blocked_message_id", "blocked_reason",
+  ]);
+  for (const tool of [load, save]) {
+    const modern = getModernMcpTools().find(item => item.name === tool.name);
+    assert.ok(modern.inputSchema.required.includes("session_handle"), tool.name);
+    assert.equal(modern.inputSchema.properties.session_handle.pattern, "^[a-fA-F0-9]{64}$");
+  }
+  const id = "550e8400-e29b-41d4-a716-446655440000";
+  const otherId = "550e8400-e29b-41d4-a716-446655440001";
+  const validEmpty = {
+    expected_revision: 0,
+    cursor_created_at: null,
+    cursor_message_id: null,
+    pending_message_id: null,
+    pending_message_created_at: null,
+    pending_response: null,
+    blocked_message_id: null,
+    blocked_reason: null,
+  };
+  assert.equal(validateToolArguments("load_original_session_bridge_state", {}), null);
+  assert.match(validateToolArguments("load_original_session_bridge_state", { room_id: id }), /arguments/);
+  assert.equal(validateToolArguments("save_original_session_bridge_state", validEmpty), null);
+  assert.match(validateToolArguments("save_original_session_bridge_state", { ...validEmpty, expected_revision: -1 }), /revision/);
+  assert.match(validateToolArguments("save_original_session_bridge_state", { ...validEmpty, cursor_created_at: "2026-11-01T00:00:00Z" }), /cursor_created_at/);
+  assert.match(validateToolArguments("save_original_session_bridge_state", { ...validEmpty, cursor_message_id: id }), /cursor_created_at/);
+  assert.match(validateToolArguments("save_original_session_bridge_state", {
+    ...validEmpty, cursor_created_at: "2026-11-01T00:00:00", cursor_message_id: id,
+  }), /cursor_created_at/);
+  assert.match(validateToolArguments("save_original_session_bridge_state", {
+    ...validEmpty, cursor_created_at: "2026-11-01T00:00:00.1234567Z", cursor_message_id: id,
+  }), /cursor_created_at/);
+  assert.equal(validateToolArguments("save_original_session_bridge_state", {
+    ...validEmpty, cursor_created_at: "2026-11-01T00:00:00.123456Z", cursor_message_id: id,
+  }), null);
+  assert.match(validateToolArguments("save_original_session_bridge_state", {
+    ...validEmpty, pending_message_id: id, pending_response: "answer",
+  }), /pending message/);
+  assert.equal(validateToolArguments("save_original_session_bridge_state", {
+    ...validEmpty, pending_message_id: id, pending_message_created_at: "2026-11-01T00:00:00Z",
+    pending_response: "A completed provider response.",
+  }), null);
+  assert.match(validateToolArguments("save_original_session_bridge_state", {
+    ...validEmpty, pending_message_id: id, pending_message_created_at: "2026-11-01T00:00:00Z",
+    pending_response: "x".repeat(10001),
+  }), /pending message/);
+  assert.equal(validateToolArguments("save_original_session_bridge_state", {
+    ...validEmpty, blocked_message_id: otherId, blocked_reason: "provider_prompt_in_progress",
+  }), null);
+  assert.match(validateToolArguments("save_original_session_bridge_state", {
+    ...validEmpty, blocked_message_id: otherId,
+  }), /blocked_message_id/);
+  assert.match(validateToolArguments("save_original_session_bridge_state", {
+    ...validEmpty,
+    pending_message_id: id,
+    pending_message_created_at: "2026-11-01T00:00:00Z",
+    pending_response: "A completed response.",
+    blocked_message_id: otherId,
+    blocked_reason: "provider_prompt_in_progress",
+  }), /cannot coexist/);
+  assert.match(validateToolArguments("save_original_session_bridge_state", { ...validEmpty, extra: true }), /Unknown/);
+});
+
+test("message cursor comparator preserves timezone offsets and exact microsecond ordering", () => {
+  const cursor = { id: "message-40", created_at: "2026-10-24T17:00:00.123456+00:00" };
+  assert.equal(compareMessageCursors(
+    { id: "message-41", created_at: "2026-10-24T19:00:00.123456+02:00" }, cursor
+  ), 1);
+  assert.equal(compareMessageCursors(
+    { id: "message-39", created_at: "2026-10-24T19:00:00.123456+02:00" }, cursor
+  ), -1);
+  assert.equal(compareMessageCursors(
+    { id: "message-99", created_at: "2026-10-24T19:00:00.123455+02:00" }, cursor
+  ), -1);
+  assert.equal(isValidMessageCursor(cursor), true);
+  assert.equal(isValidMessageCursor({ created_at: "2026-10-24T17:00:00.000Z" }), false);
+  assert.equal(isValidMessageCursor({ id: "bad", created_at: "invalid" }), false);
+});
+
+test("read_group_messages validates composite pagination and bounded page sizes", () => {
+  const cursorId = "550e8400-e29b-41d4-a716-446655440000";
+  const timestamp = "2026-11-01T18:00:00.123456Z";
+  assert.equal(validateToolArguments("read_group_messages", {}), null);
+  assert.equal(validateToolArguments("read_group_messages", { limit: 100 }), null);
+  assert.equal(validateToolArguments("read_group_messages", {
+    after_created_at: timestamp,
+    after_message_id: cursorId,
+    limit: 1,
+  }), null);
+  assert.match(validateToolArguments("read_group_messages", {
+    after_created_at: timestamp,
+  }), /both be supplied/);
+  assert.match(validateToolArguments("read_group_messages", {
+    after_message_id: cursorId,
+  }), /both be supplied/);
+  assert.match(validateToolArguments("read_group_messages", {
+    after_created_at: "2026-11-01 18:00:00",
+    after_message_id: cursorId,
+  }), /ISO date-time/);
+  assert.match(validateToolArguments("read_group_messages", {
+    after_created_at: timestamp,
+    after_message_id: cursorId,
+    limit: 101,
+  }), /limit/);
+  assert.match(validateToolArguments("read_group_messages", {
+    limit: 50,
+    offset: 10,
+  }), /Unknown/);
+  assert.equal(validateToolArguments("wait_for_group_messages", {
+    timeout_ms: 1000, limit: 1,
+    after_created_at: timestamp, after_message_id: cursorId,
+  }), null);
+  assert.match(validateToolArguments("wait_for_group_messages", {
+    after_created_at: timestamp,
+  }), /supplied together/);
+  assert.match(validateToolArguments("wait_for_group_messages", {
+    after_message_id: cursorId,
+  }), /supplied together/);
+  assert.match(validateToolArguments("wait_for_group_messages", {
+    timeout_ms: 1000, limit: 101,
+  }), /limit/);
 });

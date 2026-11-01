@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const migration = await readFile(new URL("../../supabase/migrations/20261101040000_group_task_coordination.sql", import.meta.url), "utf8");
-const reviewEvidenceMigration = await readFile(new URL("../../supabase/migrations/20261101210000_group_task_review_criterion_evidence.sql", import.meta.url), "utf8");
+const reviewEvidenceMigration = await readFile(new URL("../../supabase/migrations/20261101221147_group_task_review_criterion_evidence.sql", import.meta.url), "utf8");
+const reviewRoleMigration = await readFile(new URL("../../supabase/migrations/20261101221342_restrict_group_task_review_service_role_execute.sql", import.meta.url), "utf8");
 const vaultKeyMigration = await readFile(new URL("../../supabase/migrations/20261101165353_rub_minds_mcp_vault_encryption_key.sql", import.meta.url), "utf8");
 const vaultKeyAcceptance = await readFile(new URL("../../supabase/tests/rub_minds_mcp_vault_encryption_key.sql", import.meta.url), "utf8");
 const ciWorkflow = await readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
@@ -211,13 +212,25 @@ test("MCP exposes bounded task tools only after its existing participant-session
     assert.match(mcpEdge, new RegExp('name === "' + name + '"'));
   }
   const taskHandler = mcpEdge.indexOf('if (name === "propose_group_task")');
-  const liveCredentialCheck = mcpEdge.indexOf('await invokeAgent(credential, "read");', taskHandler - 5000);
-  assert.ok(taskHandler > 0 && liveCredentialCheck > 0 && liveCredentialCheck < taskHandler,
-    "task operations must remain behind the existing live MCP credential check");
+  const connectionLookup = mcpEdge.lastIndexOf('const { data: connection, error: connectionError }', taskHandler);
+  const liveCredentialCheck = mcpEdge.lastIndexOf('await invokeAgent(credential, "read");', taskHandler);
+  assert.ok(taskHandler > 0 && connectionLookup > 0 && liveCredentialCheck > connectionLookup && liveCredentialCheck < taskHandler,
+    "task operations must remain behind the active agent_connections lookup and live MCP credential check");
   assert.match(mcpEdge, /connection\.room_id/);
   assert.match(mcpEdge, /connection\.participant_id/);
   assert.match(mcpEdge, /status: existing\.status/);
   assert.match(mcpEdge, /status: raced\.status/);
+  const staleBindingCheck = mcpEdge.indexOf("const { data: activeConnection, error: activeConnectionError }");
+  const atomicRejoinCleanup = mcpEdge.indexOf('"clear_rub_minds_mcp_bridge_state_for_rejoin"', staleBindingCheck);
+  const freshJoinRedemption = mcpEdge.indexOf("const modernIdempotentJoin =", staleBindingCheck);
+  assert.ok(staleBindingCheck > 0 && atomicRejoinCleanup > staleBindingCheck &&
+    freshJoinRedemption > atomicRejoinCleanup &&
+    mcpEdge.includes("p_expected_ciphertext: session.agent_credential_ciphertext as string"),
+    "a revoked/expired rejoin must atomically clear old private bridge state under the parent MCP session lock before rebinding the same handle");
+  const orphanCredentialRevoke = mcpEdge.indexOf("orphanCredentialRevokeError", freshJoinRedemption);
+  assert.ok(orphanCredentialRevoke > freshJoinRedemption &&
+    mcpEdge.includes('.eq("credential_digest", await sha256(credential))'),
+    "if leave wins after invite redemption, the unbound deterministic AI credential must be revoked");
 });
 
 test("the existing cloud group UI owns the task board and uses the current Realtime room channel", () => {
@@ -262,6 +275,7 @@ test("human task approvals require persisted evidence for every acceptance crite
   assert.match(reviewEvidenceMigration, /criterion_evidence=p_criterion_evidence/);
   assert.match(reviewEvidenceMigration, /revoke all on function public\.review_room_task\(uuid,uuid,text,text,jsonb\) from public, anon/);
   assert.match(reviewEvidenceMigration, /grant execute on function public\.review_room_task\(uuid,uuid,text,text,jsonb\) to authenticated/);
+  assert.match(reviewRoleMigration, /revoke all on function public\.review_room_task\(uuid,uuid,text,text,jsonb\) from service_role/);
   assert.doesNotMatch(reviewEvidenceMigration, /grant execute on function public\.review_room_task\(uuid,uuid,text,text\) to authenticated/);
   assert.match(cloudRooms, /criterion_evidence,created_at/);
   assert.match(cloudRooms, /p_criterion_evidence:/);
@@ -278,7 +292,7 @@ test("human task approvals require persisted evidence for every acceptance crite
   assert.match(taskAcceptance, /Criterion-level review evidence must be persisted with the decision/);
   assert.match(sdkTaskE2e, /p_criterion_evidence/);
   assert.match(sdkTaskE2e, /all task criteria must retain review evidence/);
-  assert.match(wakeQueueWorkflow, /20261101210000_group_task_review_criterion_evidence\.sql/);
+  assert.match(wakeQueueWorkflow, /20261101221147_group_task_review_criterion_evidence\.sql/);
 });
 
 test("Realtime task refreshes reject stale snapshots and stale errors", () => {

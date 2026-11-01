@@ -31,8 +31,12 @@ export function getModernMcpTools() {
         type: "string", pattern: "^[a-fA-F0-9]{64}$",
         description: "A unique 64-character hexadecimal idempotency key for this join attempt. Reuse the same value when retrying the same join request; use a new value for a distinct join.",
       };
+      properties.session_handle = {
+        type: "string", pattern: "^[a-fA-F0-9]{64}$",
+        description: "Optional existing bearer handle for rebinding this same live MCP session after its previous participant credential was revoked or expired. It cannot revive a terminated session.",
+      };
       required.push("join_request_key");
-      description += " Returns an opaque session_handle. Reuse join_request_key for retries of the same join request.";
+      description += " Returns an opaque session_handle. Reuse join_request_key for retries of the same join request. To rebind a live session after its prior participant credential was revoked or expired, pass that existing session_handle with a fresh join_request_key and a valid new invitation.";
     } else {
       properties.session_handle = {
         type: "string", pattern: "^[a-fA-F0-9]{64}$",
@@ -99,7 +103,11 @@ export const RUB_MINDS_MCP_TOOLS = [
     confirm_leave: { type: "boolean", const: true },
   }, ["confirm_leave"]) },
   { name: "read_group_context", description: "Read the joined group title, objective, and participant display names so this existing AI conversation understands the collaboration context.", inputSchema: objectSchema({}) },
-  { name: "read_group_messages", description: "Read the latest messages in the Rub Minds group this AI participant has joined.", inputSchema: objectSchema({}) },
+  { name: "read_group_messages", description: "Read a bounded page of group messages in ascending composite (created_at, id) order. The first call omits the cursor and returns the latest bounded snapshot; later calls pass both fields from next_cursor to page forward without timestamp-tie replay.", inputSchema: objectSchema({
+    after_created_at: { type: "string", format: "date-time" },
+    after_message_id: { type: "string", format: "uuid" },
+    limit: { type: "integer", minimum: 1, maximum: 100 },
+  }) },
   { name: "wait_for_group_messages", description: "Wait briefly for new messages in this joined group using Supabase Realtime. This is a bounded wait, not an always-on listener; call again while actively participating. Supply after_message_id and after_created_at for the newest processed message to avoid replaying it.", inputSchema: objectSchema({
     after_created_at: { type: "string", format: "date-time" },
     after_message_id: { type: "string", format: "uuid" },
@@ -109,6 +117,17 @@ export const RUB_MINDS_MCP_TOOLS = [
     body: { type: "string", minLength: 1, maxLength: 10000 },
     source_message_id: { type: "string", minLength: 1, maxLength: 200 },
   }, ["body"]) },
+  { name: "load_original_session_bridge_state", description: "Internal original-session bridge helper. Load the durable cursor and pending-delivery state for this joined MCP session. Use only when an explicitly authorized original-session bridge runtime is running.", inputSchema: objectSchema({}) },
+  { name: "save_original_session_bridge_state", description: "Internal original-session bridge helper. Atomically save this session's cursor, pending reply, and fail-closed status using the revision returned by load_original_session_bridge_state. A revision conflict means another writer changed state; stop and reload instead of overwriting it.", inputSchema: objectSchema({
+    expected_revision: { type: "integer", minimum: 0 },
+    cursor_created_at: { type: ["string", "null"] },
+    cursor_message_id: { type: ["string", "null"], format: "uuid" },
+    pending_message_id: { type: ["string", "null"], format: "uuid" },
+    pending_message_created_at: { type: ["string", "null"] },
+    pending_response: { type: ["string", "null"], maxLength: 10000 },
+    blocked_message_id: { type: ["string", "null"], format: "uuid" },
+    blocked_reason: { type: ["string", "null"], maxLength: 200 },
+  }, ["expected_revision", "cursor_created_at", "cursor_message_id", "pending_message_id", "pending_message_created_at", "pending_response", "blocked_message_id", "blocked_reason"]) },
   { name: "read_session_memory", description: "Read this participant's private imported session summaries and memory entries explicitly shared with the group.", inputSchema: objectSchema({}) },
   { name: "import_session_memory", description: "Import a structured session-memory document, optionally including transcript_text and transcript_complete. Imported raw context is private to this AI participant; it is not automatically shared with the group.", inputSchema: objectSchema({ document: { type: "object" } }, ["document"]) },
   { name: "remember_memory", description: "Store a concise memory entry. Choose visibility explicitly: private or group. Group-visible entries can be read by other participants.", inputSchema: objectSchema({
@@ -167,6 +186,37 @@ export const SESSION_EXPORT_INSTRUCTIONS = [
 
 /** Select messages after the last processed cursor from a newest-50, ascending read window. */
 /** @param {unknown} messages @param {number} cursorTimestamp @param {string | null} [cursorMessageId] */
+/** Parse an ISO timestamp into exact UTC epoch microseconds. */
+function timestampMicros(value) {
+  if (typeof value !== "string") return null;
+  const match = value.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}:\d{2})$/);
+  if (!match) return null;
+  const milliseconds = Date.parse(value);
+  if (!Number.isFinite(milliseconds)) return null;
+  const fractionalMicros = Number((match[2] || "").padEnd(6, "0"));
+  return BigInt(milliseconds) * 1000n + BigInt(fractionalMicros % 1000);
+}
+
+/** True when a message has enough stable data to participate in a composite cursor. */
+export function isValidMessageCursor(value) {
+  return isRecord(value) &&
+    typeof value.id === "string" &&
+    value.id.length > 0 &&
+    timestampMicros(value.created_at) !== null;
+}
+
+/** Compare by exact microsecond timestamp, then stable message ID. */
+export function compareMessageCursors(left, right) {
+  if (!isValidMessageCursor(left) || !isValidMessageCursor(right)) return 0;
+  const leftMicros = timestampMicros(left.created_at);
+  const rightMicros = timestampMicros(right.created_at);
+  if (leftMicros < rightMicros) return -1;
+  if (leftMicros > rightMicros) return 1;
+  if (left.id < right.id) return -1;
+  if (left.id > right.id) return 1;
+  return 0;
+}
+
 export function messagesAfterCursor(messages, cursorTimestamp, cursorMessageId = null) {
   if (!Array.isArray(messages)) return [];
   const valid = messages.filter((message) =>
@@ -196,7 +246,15 @@ export function validateToolArguments(name, args) {
       if (typeof args.invite_token !== "string" || !/^[a-f0-9]{64}$/i.test(args.invite_token)) return "A 64-character hexadecimal invite token is required.";
       if (typeof args.agent_label !== "string" || args.agent_label.trim().length < 1 || args.agent_label.length > 80) return "agent_label must be 1-80 characters.";
       if (args.confirm_join !== true) return "Explicit confirmation is required to join this group.";
-      if (Object.keys(args).some((key) => !["invite_token", "agent_label", "confirm_join"].includes(key))) return "Unknown join_group argument.";
+      if (args.join_request_key !== undefined &&
+          (typeof args.join_request_key !== "string" || !/^[a-f0-9]{64}$/i.test(args.join_request_key))) {
+        return "join_request_key must be a 64-character hexadecimal idempotency key.";
+      }
+      if (args.session_handle !== undefined &&
+          (typeof args.session_handle !== "string" || !/^[a-f0-9]{64}$/i.test(args.session_handle))) {
+        return "session_handle must be a 64-character hexadecimal handle.";
+      }
+      if (Object.keys(args).some((key) => !["invite_token", "agent_label", "confirm_join", "join_request_key", "session_handle"].includes(key))) return "Unknown join_group argument.";
       return null;
     case "prepare_session_export":
       if (args.confirm_export !== true) return "Explicit confirmation is required before requesting session capture.";
@@ -206,17 +264,53 @@ export function validateToolArguments(name, args) {
       if (args.confirm_leave !== true) return "Explicit confirmation is required to leave and revoke this group session.";
       if (Object.keys(args).some((key) => key !== "confirm_leave")) return "Unknown leave_group argument.";
       return null;
+    case "load_original_session_bridge_state":
+      return Object.keys(args).length ? "This tool takes no arguments." : null;
+    case "save_original_session_bridge_state": {
+      if (!Number.isSafeInteger(args.expected_revision) || args.expected_revision < 0) return "expected_revision must be a non-negative safe integer.";
+      const uuid = value => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+      const timestamp = value => typeof value === "string" &&
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(value) &&
+        Number.isFinite(Date.parse(value));
+      const cursorEmpty = args.cursor_created_at === null && args.cursor_message_id === null;
+      const cursorFull = timestamp(args.cursor_created_at) && uuid(args.cursor_message_id);
+      if (!cursorEmpty && !cursorFull) return "cursor_created_at and cursor_message_id must both be null or a valid timestamp/UUID pair.";
+      const pendingEmpty = args.pending_message_id === null && args.pending_message_created_at === null && args.pending_response === null;
+      const pendingFull = uuid(args.pending_message_id) && timestamp(args.pending_message_created_at) &&
+        typeof args.pending_response === "string" && args.pending_response.trim().length > 0 && args.pending_response.length <= 10000;
+      if (!pendingEmpty && !pendingFull) return "pending message ID, timestamp and response must all be null or a valid non-empty response tuple.";
+      const blockedEmpty = args.blocked_message_id === null && args.blocked_reason === null;
+      const blockedFull = uuid(args.blocked_message_id) && typeof args.blocked_reason === "string" &&
+        args.blocked_reason.trim().length > 0 && args.blocked_reason.length <= 200;
+      if (!blockedEmpty && !blockedFull) return "blocked_message_id and blocked_reason must both be null or a valid pair.";
+      if (pendingFull && blockedFull) return "A pending provider response and blocked-message marker cannot coexist.";
+      if (Object.keys(args).some(key => !["expected_revision","cursor_created_at","cursor_message_id","pending_message_id","pending_message_created_at","pending_response","blocked_message_id","blocked_reason"].includes(key))) return "Unknown save_original_session_bridge_state argument.";
+      return null;
+    }
     case "read_group_context":
-    case "read_group_messages":
     case "read_session_memory":
     case "list_group_tasks":
       return Object.keys(args).length ? "This tool takes no arguments." : null;
+    case "read_group_messages":
+      if (args.after_created_at !== undefined && (typeof args.after_created_at !== "string" ||
+          !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(args.after_created_at) ||
+          !Number.isFinite(Date.parse(args.after_created_at)))) return "after_created_at must be an ISO date-time with timezone and at most microsecond precision.";
+      if (args.after_message_id !== undefined && (typeof args.after_message_id !== "string" ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(args.after_message_id))) return "after_message_id must be a UUID.";
+      if ((args.after_created_at === undefined) !== (args.after_message_id === undefined)) return "Cursor timestamp and message ID must both be supplied for composite pagination.";
+      if (args.limit !== undefined && (!Number.isInteger(args.limit) || args.limit < 1 || args.limit > 100)) return "limit must be an integer from 1 to 100.";
+      if (Object.keys(args).some((key) => !["after_created_at", "after_message_id", "limit"].includes(key))) return "Unknown read_group_messages argument.";
+      return null;
     case "wait_for_group_messages":
-      if (args.after_created_at !== undefined && (typeof args.after_created_at !== "string" || !Number.isFinite(Date.parse(args.after_created_at)))) return "after_created_at must be a valid date-time string.";
-      if (args.after_message_id !== undefined && args.after_created_at === undefined) return "after_created_at is required when after_message_id is supplied.";
-      if (args.after_message_id !== undefined && (typeof args.after_message_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(args.after_message_id))) return "after_message_id must be a UUID.";
+      if (args.after_created_at !== undefined && (typeof args.after_created_at !== "string" ||
+          !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(args.after_created_at) ||
+          !Number.isFinite(Date.parse(args.after_created_at)))) return "after_created_at must be an ISO date-time with timezone and at most microsecond precision.";
+      if (args.after_message_id !== undefined && (typeof args.after_message_id !== "string" ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(args.after_message_id))) return "after_message_id must be a UUID.";
+      if ((args.after_created_at === undefined) !== (args.after_message_id === undefined)) return "after_created_at and after_message_id must be supplied together for a composite cursor.";
       if (args.timeout_ms !== undefined && (!Number.isInteger(args.timeout_ms) || args.timeout_ms < 1000 || args.timeout_ms > 15000)) return "timeout_ms must be an integer from 1000 to 15000.";
-      if (Object.keys(args).some((key) => !["after_created_at", "after_message_id", "timeout_ms"].includes(key))) return "Unknown wait_for_group_messages argument.";
+      if (args.limit !== undefined && (!Number.isInteger(args.limit) || args.limit < 1 || args.limit > 100)) return "limit must be an integer from 1 to 100.";
+      if (Object.keys(args).some((key) => !["after_created_at", "after_message_id", "timeout_ms", "limit"].includes(key))) return "Unknown wait_for_group_messages argument.";
       return null;
     case "send_group_message":
       if (typeof args.body !== "string" || !args.body.trim() || args.body.length > 10000) return "body must contain 1-10000 characters.";

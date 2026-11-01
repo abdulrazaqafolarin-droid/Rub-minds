@@ -27,6 +27,39 @@ async function request(path, init = {}) {
   return body;
 }
 
+async function expectInvalidCompositeCursor(client, arguments_, label) {
+  let result;
+  let protocolError;
+  try {
+    result = await client.callTool({ name: "wait_for_group_messages", arguments: arguments_ });
+  } catch (error) {
+    protocolError = error;
+  }
+
+  // The official MCP SDK raises ProtocolError for a JSON-RPC invalid-params
+  // response instead of returning a ToolResult with isError=true. Accept that
+  // protocol-level rejection, while retaining compatibility with clients that
+  // expose the same rejection as an error tool result.
+  if (protocolError) {
+    assert.equal(protocolError.code, -32602, label + " must fail with JSON-RPC invalid params");
+    assert.match(
+      String(protocolError.message),
+      /after_created_at and after_message_id must be supplied together for a composite cursor/i,
+      label + " must explain why the incomplete cursor is invalid",
+    );
+    return;
+  }
+
+  assert.equal(result?.isError, true, label + " must be rejected rather than accepted");
+  const detail = result?.structuredContent?.error ??
+    (Array.isArray(result?.content) ? result.content.map(item => item?.text || "").join("\n") : "");
+  assert.match(
+    String(detail),
+    /after_created_at and after_message_id must be supplied together for a composite cursor/i,
+    label + " must explain why the incomplete cursor is invalid",
+  );
+}
+
 const owner = await request("/auth/v1/admin/users", {
   method: "POST",
   body: JSON.stringify({
@@ -115,6 +148,8 @@ try {
   assert.ok(names.includes("read_group_messages"), "official client did not discover read_group_messages");
   assert.ok(names.includes("wait_for_group_messages"), "official client did not discover wait_for_group_messages");
   assert.ok(names.includes("forget_memory"), "official client did not discover forget_memory");
+  assert.ok(names.includes("load_original_session_bridge_state"), "official client did not discover bridge-state load");
+  assert.ok(names.includes("save_original_session_bridge_state"), "official client did not discover bridge-state save");
 
   for (const entry of rejectedInvites) {
     const rejected = await first.callTool({
@@ -210,6 +245,17 @@ try {
   assert.ok(cursorMessage?.id, "baseline message did not expose its persisted message ID");
   assert.ok(cursorMessage?.created_at, "baseline message did not expose its creation timestamp");
 
+  await expectInvalidCompositeCursor(first, {
+    session_handle: one.session_handle,
+    after_created_at: cursorMessage.created_at,
+    timeout_ms: 1000,
+  }, "timestamp-only cursor");
+  await expectInvalidCompositeCursor(first, {
+    session_handle: one.session_handle,
+    after_message_id: cursorMessage.id,
+    timeout_ms: 1000,
+  }, "ID-only cursor");
+
   // Prove the MCP tool can wait on a real Supabase Realtime Postgres Changes
   // subscription. Delay the second client's send so the first subscription is
   // established; a timeout or unavailable subscription must fail this test.
@@ -246,6 +292,65 @@ try {
     "Realtime wait replayed the exact cursor message",
   );
   console.log("Official MCP SDK received a new group message through the bounded Supabase Realtime wait without replaying its exact cursor.");
+
+  // Exercise real PostgreSQL composite pagination when two messages share
+  // the exact same microsecond timestamp. A timestamp-only cursor would skip
+  // or replay one of these rows, so page 1 and page 2 must use the stable ID tie-breaker.
+  const tieTimestamp = new Date(Date.now() + 60_000).toISOString().replace(/\.\d{3}Z$/, ".123456Z");
+  const lowerTieCursorId = "e0000000-0000-4000-8000-000000000001";
+  const tieMessageOneId = "f1000000-0000-4000-8000-000000000001";
+  const tieMessageTwoId = "f2000000-0000-4000-8000-000000000001";
+  await request("/rest/v1/messages", {
+    method: "POST",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify([
+      {
+        id: tieMessageOneId,
+        room_id: room.id,
+        sender_id: two.participant_id,
+        body: "Composite cursor same-time page one",
+        created_at: tieTimestamp,
+      },
+      {
+        id: tieMessageTwoId,
+        room_id: room.id,
+        sender_id: two.participant_id,
+        body: "Composite cursor same-time page two",
+        created_at: tieTimestamp,
+      },
+    ]),
+  });
+  const firstTiePage = await first.callTool({
+    name: "read_group_messages",
+    arguments: {
+      session_handle: one.session_handle,
+      after_created_at: tieTimestamp,
+      after_message_id: lowerTieCursorId,
+      limit: 1,
+    },
+  });
+  assert.notEqual(firstTiePage.isError, true,
+    "official MCP client could not read first composite cursor page: " + JSON.stringify(firstTiePage));
+  assert.deepEqual(firstTiePage.structuredContent?.messages?.map(message => message.id), [tieMessageOneId]);
+  assert.equal(firstTiePage.structuredContent?.has_more, true);
+  assert.equal(firstTiePage.structuredContent?.next_cursor?.after_message_id, tieMessageOneId);
+
+  const secondTiePage = await first.callTool({
+    name: "read_group_messages",
+    arguments: {
+      session_handle: one.session_handle,
+      after_created_at: firstTiePage.structuredContent.next_cursor.after_created_at,
+      after_message_id: firstTiePage.structuredContent.next_cursor.after_message_id,
+      limit: 1,
+    },
+  });
+  assert.notEqual(secondTiePage.isError, true,
+    "official MCP client could not read the next composite cursor page: " + JSON.stringify(secondTiePage));
+  assert.deepEqual(secondTiePage.structuredContent?.messages?.map(message => message.id), [tieMessageTwoId]);
+  assert.equal(secondTiePage.structuredContent?.has_more, false);
+  assert.equal(secondTiePage.structuredContent?.next_cursor?.after_message_id, tieMessageTwoId);
+  console.log("Official MCP SDK paged same-timestamp group messages without skipping or replaying either row.");
+
 
   // Two successful AI joins exhaust this invitation's AI quota. A third
   // independent request must not create a participant or a scoped credential.
@@ -693,6 +798,93 @@ try {
   assert.deepEqual(forbiddenRows, [], "rejected sender impersonation must not persist");
   console.log("Authenticated human and MCP AI exchanged messages in both directions; outsider RLS denied room access.");
 
+  // Exercise private, revision-checked original-session bridge state through
+  // the real hosted MCP handler. Each MCP session receives a distinct row.
+  const firstBridgeState = await first.callTool({
+    name: "load_original_session_bridge_state",
+    arguments: { session_handle: one.session_handle },
+  });
+  assert.notEqual(firstBridgeState.isError, true,
+    "official MCP client could not initialize bridge state: " + JSON.stringify(firstBridgeState));
+  assert.equal(firstBridgeState.structuredContent?.revision, 0);
+  assert.equal(firstBridgeState.structuredContent?.cursor, null);
+  const secondBridgeState = await second.callTool({
+    name: "load_original_session_bridge_state",
+    arguments: { session_handle: two.session_handle },
+  });
+  assert.notEqual(secondBridgeState.isError, true,
+    "second MCP client could not initialize its separate bridge state");
+  assert.equal(secondBridgeState.structuredContent?.revision, 0);
+  assert.equal(secondBridgeState.structuredContent?.pending_response, null);
+
+  const stateMessages = await request(
+    "/rest/v1/messages?select=id,created_at&room_id=eq." + room.id + "&order=created_at.desc&limit=1",
+  );
+  assert.equal(stateMessages.length, 1, "a persisted group message is required for a realistic bridge cursor");
+  const stateMessage = stateMessages[0];
+  const bridgeSave = await first.callTool({
+    name: "save_original_session_bridge_state",
+    arguments: {
+      session_handle: one.session_handle,
+      expected_revision: firstBridgeState.structuredContent.revision,
+      cursor_created_at: stateMessage.created_at,
+      cursor_message_id: stateMessage.id,
+      pending_message_id: stateMessage.id,
+      pending_message_created_at: stateMessage.created_at,
+      pending_response: "A completed original-session reply awaiting group delivery.",
+      blocked_message_id: null,
+      blocked_reason: null,
+    },
+  });
+  assert.notEqual(bridgeSave.isError, true, "bridge state save failed: " + JSON.stringify(bridgeSave));
+  assert.equal(bridgeSave.structuredContent?.saved, true);
+  assert.equal(bridgeSave.structuredContent?.revision, 1);
+
+  const staleSave = await first.callTool({
+    name: "save_original_session_bridge_state",
+    arguments: {
+      session_handle: one.session_handle,
+      expected_revision: 0,
+      cursor_created_at: null,
+      cursor_message_id: null,
+      pending_message_id: null,
+      pending_message_created_at: null,
+      pending_response: null,
+      blocked_message_id: null,
+      blocked_reason: null,
+    },
+  });
+  assert.notEqual(staleSave.isError, true, "a stale CAS write should return an explicit conflict, not an RPC error");
+  assert.equal(staleSave.structuredContent?.saved, false);
+  assert.equal(staleSave.structuredContent?.conflict, true);
+  assert.equal(staleSave.structuredContent?.revision, 1);
+
+  const isolatedState = await second.callTool({
+    name: "load_original_session_bridge_state",
+    arguments: { session_handle: two.session_handle },
+  });
+  assert.notEqual(isolatedState.isError, true);
+  assert.equal(isolatedState.structuredContent?.revision, 0);
+  assert.equal(isolatedState.structuredContent?.cursor, null,
+    "one AI session must not read the other session's message cursor");
+  assert.equal(isolatedState.structuredContent?.pending_response, null,
+    "one AI session must not read the other session's private pending reply");
+
+  const firstSessionDigestForState = createHash("sha256").update(one.session_handle, "utf8").digest("hex");
+  const secondSessionDigestForState = createHash("sha256").update(two.session_handle, "utf8").digest("hex");
+  const persistedState = await request(
+    "/rest/v1/rub_minds_mcp_bridge_state?select=session_digest,cursor_message_id,pending_response,revision&session_digest=eq." + firstSessionDigestForState,
+  );
+  const isolatedPersistedState = await request(
+    "/rest/v1/rub_minds_mcp_bridge_state?select=session_digest,cursor_message_id,pending_response,revision&session_digest=eq." + secondSessionDigestForState,
+  );
+  assert.equal(persistedState.length, 1);
+  assert.equal(persistedState[0].cursor_message_id, stateMessage.id);
+  assert.equal(persistedState[0].pending_response, "A completed original-session reply awaiting group delivery.");
+  assert.equal(persistedState[0].revision, 1);
+  assert.equal(isolatedPersistedState.length, 1);
+  assert.equal(isolatedPersistedState[0].pending_response, null);
+
   // Exercise the complete group-task lifecycle through the hosted MCP tools
   // and human RPCs. Proposals remain unassigned until a signed-in human assigns them.
   const ownerPassword = "Local-CI-Official-MCP-Owner-923!x";
@@ -860,10 +1052,145 @@ try {
   assert.equal(submissionRetry.structuredContent?.replayed, true);
   console.log("Official MCP SDK completed the human-governed task lifecycle: propose → human assign → AI claim → submit → owner approve.");
 
+  // Revoke AI two outside the MCP session while keeping its opaque MCP
+  // handle alive. A new invite on that same handle must clear the old private
+  // cursor before it can bind to the new participant.
+  const secondSessionDigest = createHash("sha256").update(two.session_handle, "utf8").digest("hex");
+  const previousCursorState = await second.callTool({
+    name: "save_original_session_bridge_state",
+    arguments: {
+      session_handle: two.session_handle,
+      expected_revision: isolatedState.structuredContent.revision,
+      cursor_created_at: stateMessage.created_at,
+      cursor_message_id: stateMessage.id,
+      pending_message_id: null,
+      pending_message_created_at: null,
+      pending_response: null,
+      blocked_message_id: null,
+      blocked_reason: null,
+    },
+  });
+  assert.notEqual(previousCursorState.isError, true, "could not seed stale cursor for revoked-session rejoin");
+  assert.equal(previousCursorState.structuredContent?.saved, true);
+  const oldConnectionRows = await request(
+    "/rest/v1/agent_connections?select=id,participant_id,revoked_at,credential_digest&participant_id=eq." + two.participant_id,
+  );
+  assert.equal(oldConnectionRows.length, 1);
+  const staleRejoinToken = "9".repeat(64);
+  await request("/rest/v1/room_invites", {
+    method: "POST",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      room_id: room.id,
+      created_by: owner.id,
+      token_hash: createHash("sha256").update(staleRejoinToken, "utf8").digest("hex"),
+      expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      max_uses: 1,
+      uses: 0,
+      allow_ai: true,
+      max_ai_uses: 1,
+      ai_uses: 0,
+    }),
+  });
+  const revokedOldConnection = await request(
+    "/rest/v1/agent_connections?id=eq." + oldConnectionRows[0].id,
+    {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({ revoked_at: new Date().toISOString() }),
+    },
+  );
+  assert.equal(revokedOldConnection.length, 1);
+  assert.ok(revokedOldConnection[0].revoked_at);
+  const rebound = await second.callTool({
+    name: "join_group",
+    arguments: {
+      session_handle: two.session_handle,
+      invite_token: staleRejoinToken,
+      agent_label: "Official SDK AI two rebound",
+      confirm_join: true,
+      join_request_key: "c".repeat(64),
+    },
+  });
+  assert.notEqual(rebound.isError, true, "same MCP handle could not rejoin after its previous AI credential was revoked: " + JSON.stringify(rebound));
+  assert.equal(rebound.structuredContent?.joined, true);
+  assert.equal(rebound.structuredContent?.session_handle, two.session_handle,
+    "a rebind must preserve the already-issued MCP session handle");
+  assert.notEqual(rebound.structuredContent?.participant_id, two.participant_id,
+    "rejoining after external credential revocation must establish a fresh participant binding");
+  const reboundRetry = await second.callTool({
+    name: "join_group",
+    arguments: {
+      session_handle: two.session_handle,
+      invite_token: staleRejoinToken,
+      agent_label: "Official SDK AI two rebound",
+      confirm_join: true,
+      join_request_key: "c".repeat(64),
+    },
+  });
+  assert.notEqual(reboundRetry.isError, true,
+    "retrying the same rebind request must return the already-established participant");
+  assert.equal(reboundRetry.structuredContent?.participant_id, rebound.structuredContent?.participant_id,
+    "retrying the same rebind request must not create another AI participant");
+  const staleBridgeStateAfterRejoin = await request(
+    "/rest/v1/rub_minds_mcp_bridge_state?select=session_digest,participant_id&session_digest=eq." + secondSessionDigest,
+  );
+  assert.deepEqual(staleBridgeStateAfterRejoin, [],
+    "rejoining after credential revocation must delete the previous participant's durable cursor before rebinding");
+  const reboundConnectionRows = await request(
+    "/rest/v1/agent_connections?select=id,participant_id,revoked_at,credential_digest&room_id=eq." + room.id,
+  );
+  const oldRejoinConnection = reboundConnectionRows.find(row => row.id === oldConnectionRows[0].id);
+  const freshRejoinConnection = reboundConnectionRows.find(row => row.participant_id === rebound.structuredContent.participant_id);
+  assert.ok(oldRejoinConnection?.revoked_at);
+  assert.ok(freshRejoinConnection && freshRejoinConnection.revoked_at === null,
+    "the rejoined participant must have a fresh active agent connection");
+  assert.notEqual(freshRejoinConnection.credential_digest, oldRejoinConnection.credential_digest,
+    "the new provider credential must have a distinct digest from the revoked credential");
+
+  // Prove the atomic termination RPC rejects a stale ciphertext snapshot
+  // without revoking the live connection, tombstoning the session, or deleting
+  // its private bridge state.
+  const firstSessionDigestForTermination = createHash("sha256")
+    .update(one.session_handle, "utf8").digest("hex");
+  const beforeTermination = await request(
+    "/rest/v1/rub_minds_mcp_sessions?select=session_digest,agent_credential_ciphertext,terminated_at&session_digest=eq." +
+      firstSessionDigestForTermination,
+  );
+  assert.equal(beforeTermination.length, 1);
+  assert.equal(beforeTermination[0].terminated_at, null);
+  assert.equal(typeof beforeTermination[0].agent_credential_ciphertext, "string");
+  const staleTermination = await request("/rest/v1/rpc/terminate_rub_minds_mcp_bridge_session", {
+    method: "POST",
+    body: JSON.stringify({
+      p_session_digest: firstSessionDigestForTermination,
+      p_expected_ciphertext: "stale-ciphertext-snapshot",
+      p_credential_digest: "f".repeat(64),
+      p_tombstone_expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    }),
+  });
+  assert.equal(staleTermination?.conflict, true,
+    "atomic termination must reject an outdated session ciphertext snapshot");
+  assert.equal(staleTermination?.terminated, false);
+  const unchangedAfterStaleTermination = await request(
+    "/rest/v1/rub_minds_mcp_sessions?select=agent_credential_ciphertext,terminated_at&session_digest=eq." +
+      firstSessionDigestForTermination,
+  );
+  assert.equal(unchangedAfterStaleTermination[0].agent_credential_ciphertext,
+    beforeTermination[0].agent_credential_ciphertext,
+    "a stale termination attempt must leave the current session binding intact");
+  assert.equal(unchangedAfterStaleTermination[0].terminated_at, null);
+  const bridgeStateAfterStaleTermination = await request(
+    "/rest/v1/rub_minds_mcp_bridge_state?select=session_digest&session_digest=eq." +
+      firstSessionDigestForTermination,
+  );
+  assert.equal(bridgeStateAfterStaleTermination.length, 1,
+    "stale termination must not delete current bridge state");
+
   // Race leave against an idempotent retry of the same join. Either the retry
   // observes the active join before leave wins, or it is rejected as revoked;
   // the invariant is that the old handle must be unusable after both finish.
-  const [left, racingJoin] = await Promise.all([
+  const [left, racingJoin, racingBridgeStateLoad, racingBridgeStateSave] = await Promise.all([
     first.callTool({
       name: "leave_group",
       arguments: { session_handle: one.session_handle, confirm_leave: true },
@@ -871,14 +1198,44 @@ try {
     first.callTool({
       name: "join_group",
       arguments: {
+        session_handle: one.session_handle,
         invite_token: inviteToken,
         agent_label: "Official SDK AI one",
         confirm_join: true,
-        join_request_key: "a".repeat(64),
+        join_request_key: "d".repeat(64),
+      },
+    }),
+    first.callTool({
+      name: "load_original_session_bridge_state",
+      arguments: { session_handle: one.session_handle },
+    }),
+    first.callTool({
+      name: "save_original_session_bridge_state",
+      arguments: {
+        session_handle: one.session_handle,
+        expected_revision: bridgeSave.structuredContent.revision,
+        cursor_created_at: stateMessage.created_at,
+        cursor_message_id: stateMessage.id,
+        pending_message_id: null,
+        pending_message_created_at: null,
+        pending_response: null,
+        blocked_message_id: null,
+        blocked_reason: null,
       },
     }),
   ]);
   assert.notEqual(left.isError, true, "official SDK client could not leave and revoke its session: " + JSON.stringify(left));
+  assert.ok(
+    racingBridgeStateLoad.isError === true ||
+      Number.isSafeInteger(racingBridgeStateLoad.structuredContent?.revision),
+    "a bridge-state load racing with leave must either finish before termination or be rejected after tombstoning",
+  );
+  assert.ok(
+    racingBridgeStateSave.isError === true ||
+      racingBridgeStateSave.structuredContent?.saved === true ||
+      racingBridgeStateSave.structuredContent?.conflict === true,
+    "a bridge-state save racing with leave must either complete before termination, return a CAS conflict, or fail after tombstoning",
+  );
   assert.ok(
     racingJoin.isError === true || racingJoin.structuredContent?.joined === true,
     "concurrent retry must either be rejected or return the already-joined session: " + JSON.stringify(racingJoin),
@@ -896,15 +1253,20 @@ try {
   assert.equal(terminatedSessions.length, 1, "leaving must retain the session tombstone by its digest");
   assert.ok(terminatedSessions[0].terminated_at, "leaving must mark the session as terminated");
   assert.equal(terminatedSessions[0].participant_id, null, "a tombstoned session must no longer be bound to a participant");
+  const residualBridgeState = await request(
+    "/rest/v1/rub_minds_mcp_bridge_state?select=session_digest&session_digest=eq." + firstSessionDigest,
+  );
+  assert.deepEqual(residualBridgeState, [], "leaving must delete private original-session cursor and pending-response state");
+
   const participants = await request(
     "/rest/v1/participants?select=id,kind&room_id=eq." + room.id + "&kind=eq.external_agent",
   );
-  assert.equal(participants.length, 2, "official SDK clients must create exactly two AI participants");
+  assert.equal(participants.length, 3, "two original participants plus one fresh rejoin participant must be present");
   const connections = await request("/rest/v1/agent_connections?select=id,participant_id,revoked_at&room_id=eq." + room.id);
-  assert.equal(connections.length, 2, "both official SDK clients must have scoped connections");
+  assert.equal(connections.length, 3, "both original credentials plus one fresh rejoin credential must be present");
   const firstConnection = connections.find(connection => connection.participant_id === one.participant_id);
   assert.ok(firstConnection?.revoked_at, "leaving must revoke the first AI credential even when join retries race with leave");
-  console.log("Official MCP SDK interoperability passed: discovery, tool catalog, two AI joins, shared message relay, and credential revocation.");
+  console.log("Official MCP SDK interoperability passed: discovery, two AI joins, idempotent rebind, credential rotation, shared message relay, and revocation.");
 } finally {
   await Promise.allSettled([first.close(), second.close()]);
 }
