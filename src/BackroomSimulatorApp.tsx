@@ -98,51 +98,6 @@ function parseHostStatus(value: unknown, expectedHostId?: string): HostStatus {
   };
 }
 
-function Preview({ surface, appName, onSelect, selected }: { surface: Surface; appName: string; onSelect: (r: Rect) => void; selected: Rect | null }) {
-  const [start, setStart] = useState<{ x: number; y: number } | null>(null);
-  const [drag, setDrag] = useState<Rect | null>(null);
-  function coords(e: PointerEvent<HTMLDivElement>) {
-    const b = e.currentTarget.getBoundingClientRect();
-    return { x: clamp((e.clientX - b.left) / b.width * 100), y: clamp((e.clientY - b.top) / b.height * 100) };
-  }
-  function move(e: PointerEvent<HTMLDivElement>) {
-    if (!start) return;
-    const p = coords(e);
-    setDrag({ x: Math.min(start.x, p.x), y: Math.min(start.y, p.y), width: Math.abs(p.x - start.x), height: Math.abs(p.y - start.y) });
-  }
-  function end(e: PointerEvent<HTMLDivElement>) {
-    if (!start) return;
-    const p = coords(e);
-    const next = { x: Math.min(start.x, p.x), y: Math.min(start.y, p.y), width: Math.abs(p.x - start.x), height: Math.abs(p.y - start.y) };
-    if (next.width >= 4 && next.height >= 3) onSelect(next);
-    setStart(null); setDrag(null);
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
-  }
-  const rect = drag ?? selected;
-  const isPhone = surface === 'android_app';
-  const isTerminal = surface === 'terminal';
-  const isBrowser = surface === 'browser_tab';
-  const heading = appName.trim() || (isPhone ? 'Mobile application' : isTerminal ? 'AI terminal session' : isBrowser ? 'Browser conversation' : 'Desktop application');
-  const subtitle = isPhone ? 'Android companion' : isTerminal ? 'Verified assistant composer' : isBrowser ? 'Managed browser profile' : 'Local desktop host';
-  return <div className={'br-preview br-preview-platform-' + surface} aria-label={'Simulated ' + subtitle + ' preview'}>
-    <div className="br-preview-bar"><span className="br-preview-dots"><i/><i/><i/></span><span>{heading}</span><span className="br-preview-demo">DEMO · NOT LIVE</span></div>
-    <div className="br-inspace-view">
-      <div className="br-inspace-toolbar"><span className="br-inspace-chip">{subtitle}</span><span className="br-inspace-disconnected"><WifiOff size={12}/> No live stream</span></div>
-      <div className={'br-inspace-content' + (isPhone ? ' br-inspace-phone-wrapper' : '')}>
-        {isPhone ? <div className="br-inspace-phone"><div className="br-inspace-notch"/><div className="br-inspace-phone-app"><Smartphone size={28}/><strong>{heading}</strong><small>Phone screen not connected</small></div><div className="br-inspace-home"/></div> :
-          isTerminal ? <div className="br-inspace-terminal"><div className="br-inspace-terminal-top"><SquareTerminal size={16}/> {heading} <span>disconnected</span></div><div className="br-inspace-terminal-line"><span>assistant ›</span> Connect a trusted terminal composer to display this session.</div><div className="br-inspace-terminal-placeholder">No shell access · no command execution</div></div> :
-          <div className="br-inspace-window">
-            {isBrowser ? <div className="br-inspace-address"><Monitor size={15}/><span>Managed browser — select an authorized tab after pairing</span></div> : <div className="br-inspace-apphead"><Laptop size={17}/><span>{heading}</span><span>Local window</span></div>}
-            <div className="br-inspace-appbody"><div className="br-inspace-appicon">{isBrowser ? <Monitor size={27}/> : <Bot size={27}/>}</div><strong>{heading}</strong><p>This is a workspace placeholder, not a screenshot of your actual app.</p><div className="br-inspace-fakefield">Selected typing area will appear after permission and verification.</div></div>
-          </div>}
-      </div>
-    </div>
-    <div className="br-drag-layer" onPointerDown={e => { if (e.button !== 0) return; e.currentTarget.setPointerCapture(e.pointerId); setStart(coords(e)); setDrag(null); }} onPointerMove={move} onPointerUp={end} onPointerCancel={() => { setStart(null); setDrag(null); }} role="img" aria-label="Drag across this simulated preview to test selection coordinates only"/>
-    {rect && <div className="br-selection" style={{ left: rect.x + '%', top: rect.y + '%', width: rect.width + '%', height: rect.height + '%' }} />}
-  </div>;
-}
-
-
 function LiveBrowserPreview({ frame, appName, onSelectRegion }: {
   frame: BrowserViewFrame;
   appName: string;
@@ -253,7 +208,6 @@ export default function BackroomApp() {
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [active, setActive] = useState('');
   const [adding, setAdding] = useState(false);
-  const [selection, setSelection] = useState<Rect | null>(null);
   const [notice, setNotice] = useState('');
   useEffect(() => {
     if (!hostModal && !adding) return;
@@ -336,11 +290,19 @@ export default function BackroomApp() {
   }, [room?.id]);
   const storageKey = user && room ? 'rub-backroom-spaces-v1:' + user.id + ':' + room.id : '';
   useEffect(() => {
-    setActive(''); setSelection(null); setSpaces([]);
+    setActive(''); setSpaces([]);
     if (!storageKey) return;
     try {
       const value: unknown = JSON.parse(localStorage.getItem(storageKey) || '[]');
-      if (Array.isArray(value)) setSpaces(value.filter(s => s && typeof s.id === 'string' && typeof s.name === 'string' && surfaces.some(t => t.id === s.surface)).slice(0, 30));
+      if (Array.isArray(value)) {
+        // Only discovered managed-browser tabs represent real saved app sessions.
+        // Drop old layout-only demo tiles rather than rendering fake applications.
+        const connectedSpaces = value.filter(s =>
+          s && typeof s.id === 'string' && typeof s.name === 'string' &&
+          s.surface === 'browser_tab' && typeof s.pageId === 'string' && s.pageId.length > 0
+        );
+        setSpaces(connectedSpaces.slice(0, 30));
+      }
     } catch { setNotice('Local space layout could not be restored.'); }
   }, [storageKey]);
   function save(next: Space[]) {
@@ -1088,7 +1050,7 @@ export default function BackroomApp() {
       id: randomId(), name: displayName, app: selectedPage.site, surface: 'browser_tab',
       pageId: selectedPage.pageId, createdAt: Date.now(),
     };
-    save([...spaces, next]); setActive(next.id); setSelection(null);
+    save([...spaces, next]); setActive(next.id);
     setAdding(false); setSelectedBrowserPage('');
     setLiveViewEnabled(false); setLiveGrantId(''); setLiveFrame(null);
     setNotice('Verified managed browser tab added. Start its separate local view permission from the workspace to display screenshots.');
@@ -1108,7 +1070,7 @@ export default function BackroomApp() {
         setRoomId(e.target.value);
       }}><option value="">Select a group</option>{rooms.map(r => <option key={r.id} value={r.id}>{r.title}</option>)}</select><ChevronDown size={15}/></div>
       <div className="br-side-heading br-space-heading">SPACES <span>{spaces.length}</span></div>
-      <div className="br-space-list">{spaces.map(s => { const Icon = iconFor(s.surface); return <button className={'br-space-item' + (s.id === active ? ' active' : '')} key={s.id} onClick={() => { setActive(s.id); setSelection(null); setNotice(''); }}><span className="br-space-icon"><Icon size={18}/></span><span className="br-space-name"><b>{s.name}</b><small>{surfaces.find(t => t.id === s.surface)?.name}</small></span><span className="br-offline-dot"/></button>; })}</div>
+      <div className="br-space-list">{spaces.map(s => { const Icon = iconFor(s.surface); return <button className={'br-space-item' + (s.id === active ? ' active' : '')} key={s.id} onClick={() => { setActive(s.id); setNotice(''); }}><span className="br-space-icon"><Icon size={18}/></span><span className="br-space-name"><b>{s.name}</b><small>{surfaces.find(t => t.id === s.surface)?.name}</small></span><span className="br-offline-dot"/></button>; })}</div>
       <button className="br-add-side" onClick={() => setAdding(true)} disabled={!room || spaces.length >= 30}><Plus size={17}/> Add a space</button>
       <div className="br-side-footer"><span>{hostInfo?.connected ? <Check size={15}/> : <WifiOff size={15}/>} {hostInfo?.connected ? "Local host connected" : hostInfo ? "Local host not reachable" : "No device host connected"}</span><small>{wakeGatewayMismatch(hostInfo) ? `Wake gateway mismatch · ${hostInfo?.wakeGatewayHost} is not this Preview's Supabase project.` : hostInfo?.capabilities.browserDraft ? "Browser draft only · native drivers unavailable" : hostInfo?.connected ? "Host online · browser driver not started" : "Workspace layouts remain local · no active device control"}</small></div>
     </aside>
@@ -1120,15 +1082,18 @@ export default function BackroomApp() {
         <div className="br-metrics"><div><span>Registered spaces</span><strong>{spaces.length.toString().padStart(2, '0')}</strong><small>Local workspace layouts</small></div><div><span>Connected hosts</span><strong>{hostInfo?.connected ? "01" : "00"}</strong><small>{hostInfo?.connected ? "Local host is reachable" : hostInfo ? "Reconnect to verify the saved host" : "Pair a local host to connect"}</small></div><div><span>Active automations</span><strong>00</strong><small>No device commands running</small></div></div>
         {notice && <div className="br-notice" role="status"><CircleHelp size={16}/>{notice}<button onClick={() => setNotice('')} aria-label="Dismiss notice"><X size={15}/></button></div>}
         {!current ? <div className="br-empty-card"><div className="br-empty-symbol"><Layers3 size={34}/></div><h2>Give every AI its own space.</h2><p>Create spaces for phone apps, desktop assistants, terminals and browser sessions. Pair the local host for browser drafts; native Android, desktop, Windows and terminal drivers are still in development.</p><button className="br-primary" onClick={() => setAdding(true)}><Plus size={16}/> Create your first space</button><div className="br-platforms">{surfaces.map(s => { const Icon = iconFor(s.id); return <span key={s.id} title={s.name}><Icon size={18}/></span>; })}</div></div> :
-        <div className="br-workspace-grid"><section className="br-panel br-stage"><div className="br-panel-head"><div><span className="br-eyebrow">ACTIVE SPACE</span><h2>{current.name}</h2><p>{current.app || surfaces.find(s => s.id === current.surface)?.detail}</p></div><button className="br-icon-button" aria-label="Remove this local space" title="Remove local space" onClick={() => { if (!confirm('Remove this local space layout? No external app will be changed.')) return; save(spaces.filter(s => s.id !== current.id)); setActive(''); setSelection(null); }}><Trash2 size={17}/></button></div>{current.pageId
+        <div className="br-workspace-grid"><section className="br-panel br-stage"><div className="br-panel-head"><div><span className="br-eyebrow">ACTIVE SPACE</span><h2>{current.name}</h2><p>{current.app || surfaces.find(s => s.id === current.surface)?.detail}</p></div><button className="br-icon-button" aria-label="Remove this local space" title="Remove local space" onClick={() => { if (!confirm('Remove this saved app session from Backroom? This will not close the app on your computer.')) return; save(spaces.filter(s => s.id !== current.id)); setActive(''); }}><Trash2 size={17}/></button></div>{current.pageId
           ? liveViewEnabled && liveFrame
             ? <LiveBrowserPreview key={current.id} frame={liveFrame} appName={current.app || current.name} onSelectRegion={(frameId, region) => void registerLiveRegion(frameId, region)}/>
             : <div className="br-live-placeholder" role="status"><Monitor size={28}/><b>{liveViewEnabled ? 'Connecting to the selected browser tab…' : 'Live view paused'}</b><p>{hostInfo?.capabilities.browserView ? 'Enable the read-only local view to display the actual managed tab here. Its screenshots are not stored or uploaded.' : 'This paired host does not advertise the browser-view adapter. Update and restart the local host.'}</p></div>
-          : <Preview key={current.id} surface={current.surface} appName={current.app || current.name} selected={selection} onSelect={setSelection}/>}
-        <div className="br-stage-foot"><MousePointer2 size={16}/><span>{current.pageId ? (liveFrame ? 'Local screenshot view. Drag around one empty field to register a real DOM target.' : 'This space is linked to a discovered tab; no screenshot is being captured while paused.') : 'Legacy demo layout only. It is not connected to a real application.'}</span>{current.pageId
+          : <div className="br-live-placeholder" role="status">
+              <Monitor size={28}/><b>No verified app session</b>
+              <p>This saved entry is not linked to a discovered live browser tab. Add the original app from the paired local browser instead.</p>
+            </div>}
+        <div className="br-stage-foot"><MousePointer2 size={16}/><span>{current.pageId ? (liveFrame ? 'Local screenshot view. Drag around one empty field to register a real DOM target.' : 'This space is linked to a discovered tab; no screenshot is being captured while paused.') : 'This saved entry has no verified live app session.'}</span>{current.pageId
           ? <button type="button" className="br-sample-select" onClick={() => void toggleLiveBrowserView()} disabled={browserBusy || !hostInfo?.connected || hostInfo.capabilities.browserView !== true}>{liveViewEnabled ? 'Revoke view permission' : 'Request local view permission'}</button>
-          : <><button type="button" className="br-sample-select" onClick={() => setHostModal(true)}>Connect device / permissions</button><button type="button" className="br-sample-select" onClick={() => setSelection({ x: 12, y: 72, width: 76, height: 17 })}>Select demo region</button></>}</div></section>
-        <section className="br-panel br-inspector"><span className="br-eyebrow">SPACE INSPECTOR</span><h2>Connection details</h2><div className="br-detail"><span>Platform</span><b>{surfaces.find(s => s.id === current.surface)?.name}</b></div><div className="br-detail"><span>Host status</span><b className="br-muted">{hostInfo?.connected ? (hostInfo.capabilities.browserDraft ? 'Paired · browser draft only' : 'Paired · browser idle') : hostInfo ? 'Offline · paired before' : 'Not connected'}</b></div><div className="br-detail"><span>App view</span><b className="br-muted">{current.pageId ? (liveFrame ? 'Local screenshot view active' : liveViewEnabled ? 'Connecting' : 'Paused') : 'Demo · not connected'}</b></div><div className="br-detail"><span>View permission</span><b className="br-muted">{current.pageId && liveViewEnabled ? 'Enabled for this tab' : 'Not enabled'}</b></div><div className="br-detail"><span>Typing target</span><b>{currentBrowserTarget ? 'Verified · draft only' : current.pageId ? 'Not registered' : selection ? 'Demo region · not authorized' : 'Not registered'}</b></div><div className="br-onboard-steps"><b>Open this app in Backroom</b><div><span>1</span> Connect and authenticate the device host</div><div><span>2</span> Choose the real app, window, tab or terminal session</div><div><span>3</span> Approve view and draft permissions separately on the device</div><div><span>4</span> Start an authorized live view (driver required)</div></div>{selection && <div className="br-coords"><b>Preview selection</b><code>x {selection.x.toFixed(1)}% · y {selection.y.toFixed(1)}%</code><code>w {selection.width.toFixed(1)}% · h {selection.height.toFixed(1)}%</code><button onClick={() => setSelection(null)}>Clear selection</button></div>}<div className="br-warning"><ShieldCheck size={19}/><div><b>{current.pageId ? 'Local tab identity and draft-only permissions' : 'Demo workspace only'}</b><p>{current.pageId ? 'This tile is linked to a discovered managed browser tab. View permission is separate from draft registration. The local host resolves drag selections against one exact visible DOM field, then revalidates the node and conversation before inserting text. Enter, Send and submission are not part of this adapter.' : 'This is a legacy simulated layout without a verified app connection. Add only creates spaces from actual tabs discovered by the paired local browser. Desktop, Windows, Android and terminal tiles stay unavailable until their drivers report real targets.'}</p></div></div><button className="br-disabled-action" onClick={() => setHostModal(true)}><Command size={16}/> {hostInfo ? 'Manage local host' : 'Pair local host'} <span>{hostInfo?.connected ? 'Online' : hostInfo ? 'Offline' : 'Connect'}</span></button></section></div>}
+          : <button type="button" className="br-sample-select" onClick={() => { save(spaces.filter(space => space.id !== current.id)); setActive(''); }}>Remove disconnected entry</button></div></section>
+        <section className="br-panel br-inspector"><span className="br-eyebrow">SPACE INSPECTOR</span><h2>Connection details</h2><div className="br-detail"><span>Platform</span><b>{surfaces.find(s => s.id === current.surface)?.name}</b></div><div className="br-detail"><span>Host status</span><b className="br-muted">{hostInfo?.connected ? (hostInfo.capabilities.browserDraft ? 'Paired · browser draft only' : 'Paired · browser idle') : hostInfo ? 'Offline · paired before' : 'Not connected'}</b></div><div className="br-detail"><span>App view</span><b className="br-muted">{current.pageId ? (liveFrame ? 'Local screenshot view active' : liveViewEnabled ? 'Connecting' : 'Paused') : 'Demo · not connected'}</b></div><div className="br-detail"><span>View permission</span><b className="br-muted">{current.pageId && liveViewEnabled ? 'Enabled for this tab' : 'Not enabled'}</b></div><div className="br-detail"><span>Typing target</span><b>{currentBrowserTarget ? 'Verified · draft only' : current.pageId ? 'Not registered' : 'Not registered'}</b></div><div className="br-onboard-steps"><b>Open this app in Backroom</b><div><span>1</span> Connect and authenticate the device host</div><div><span>2</span> Choose the real app, window, tab or terminal session</div><div><span>3</span> Approve view and draft permissions separately on the device</div><div><span>4</span> Start an authorized live view (driver required)</div></div><div className="br-warning"><ShieldCheck size={19}/><div><b>{current.pageId ? 'Local tab identity and draft-only permissions' : 'No verified app connection'}</b><p>{current.pageId ? 'This tile is linked to a discovered managed browser tab. View permission is separate from draft registration. The local host resolves drag selections against one exact visible DOM field, then revalidates the node and conversation before inserting text. Enter, Send and submission are not part of this adapter.' : 'This saved entry has no verified app connection. Add an original app only after the paired local runtime discovers its real session and identity.'}</p></div></div><button className="br-disabled-action" onClick={() => setHostModal(true)}><Command size={16}/> {hostInfo ? 'Manage local host' : 'Pair local host'} <span>{hostInfo?.connected ? 'Online' : hostInfo ? 'Offline' : 'Connect'}</span></button></section></div>}
         <BackroomDesktopControl roomId={room.id} />
         {hostToken && <ExternalWorkspacePanel
           hostToken={hostToken}
