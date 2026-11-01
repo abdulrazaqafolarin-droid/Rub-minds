@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const migration = await readFile(new URL("../../supabase/migrations/20261101040000_group_task_coordination.sql", import.meta.url), "utf8");
-const reviewEvidenceMigration = await readFile(new URL("../../supabase/migrations/20261101210000_group_task_review_criterion_evidence.sql", import.meta.url), "utf8");
+const reviewEvidenceMigration = await readFile(new URL("../../supabase/migrations/20261101221147_group_task_review_criterion_evidence.sql", import.meta.url), "utf8");
 const vaultKeyMigration = await readFile(new URL("../../supabase/migrations/20261101165353_rub_minds_mcp_vault_encryption_key.sql", import.meta.url), "utf8");
 const vaultKeyAcceptance = await readFile(new URL("../../supabase/tests/rub_minds_mcp_vault_encryption_key.sql", import.meta.url), "utf8");
 const ciWorkflow = await readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
@@ -290,7 +290,7 @@ test("human task approvals require persisted evidence for every acceptance crite
   assert.match(taskAcceptance, /Criterion-level review evidence must be persisted with the decision/);
   assert.match(sdkTaskE2e, /p_criterion_evidence/);
   assert.match(sdkTaskE2e, /all task criteria must retain review evidence/);
-  assert.match(wakeQueueWorkflow, /20261101210000_group_task_review_criterion_evidence\.sql/);
+  assert.match(wakeQueueWorkflow, /20261101221147_group_task_review_criterion_evidence\.sql/);
 });
 
 test("Realtime task refreshes reject stale snapshots and stale errors", () => {
