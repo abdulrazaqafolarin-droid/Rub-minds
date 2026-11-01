@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const migration = await readFile(new URL("../../supabase/migrations/20261101040000_group_task_coordination.sql", import.meta.url), "utf8");
+const fkIndexesMigration = await readFile(new URL("../../supabase/migrations/20261101164016_group_task_fk_indexes.sql", import.meta.url), "utf8");
 const wakeMigration = await readFile(new URL("../../supabase/migrations/20261029090000_backroom_wake_queue.sql", import.meta.url), "utf8");
 const mcpProtocol = await readFile(new URL("./protocol.mjs", import.meta.url), "utf8");
 const mcpEdge = await readFile(new URL("../../supabase/functions/rub-minds-mcp/index.ts", import.meta.url), "utf8");
@@ -20,6 +21,22 @@ test("external-agent endpoint follows the same Supabase environment as the brows
   assert.match(cloudApp, /const agentMessagesEndpoint = supabaseUrl/);
   assert.match(cloudApp, /API endpoint: \{agentMessagesEndpoint\}/);
   assert.doesNotMatch(cloudApp, /https:\/\/zucaeevlbwhcvjwbhwmq\.supabase\.co\/functions\/v1\/agent-messages/);
+});
+
+test("every group-task foreign key is indexed in both fresh and upgraded databases", () => {
+  const indexes = [
+    "room_task_dependencies_room_task_fk_idx",
+    "room_task_dependencies_creator_fk_idx",
+    "room_task_submissions_room_task_fk_idx",
+    "room_task_submissions_submitter_fk_idx",
+    "room_task_reviews_room_task_fk_idx",
+    "room_task_reviews_reviewer_fk_idx",
+  ];
+  for (const index of indexes) {
+    assert.match(migration, new RegExp("create index if not exists " + index));
+    assert.match(fkIndexesMigration, new RegExp("create index if not exists " + index));
+    assert.match(taskAcceptance, new RegExp(index));
+  }
 });
 
 test("task records extend existing group and participant identities", () => {
