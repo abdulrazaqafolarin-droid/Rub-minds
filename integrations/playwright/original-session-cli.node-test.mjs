@@ -6,6 +6,7 @@ import { PassThrough } from "node:stream";
 import { join } from "node:path";
 import {
   bindAdapterToExactConversation,
+  browserProcessEnvironment,
   conversationKey,
   isExactConversationPage,
   openExistingConversationPage,
@@ -192,4 +193,21 @@ test("declining startup consent never launches a browser or exposes the session 
     input.destroy();
     output.destroy();
   }
+});
+
+
+test("keeps the Rub Minds bearer session handle out of the Chromium child environment", () => {
+  const source = {
+    PATH: "safe-path",
+    RUB_MINDS_MCP_ENDPOINT: ENV.RUB_MINDS_MCP_ENDPOINT,
+    RUB_MINDS_PARTICIPANT_ID: ENV.RUB_MINDS_PARTICIPANT_ID,
+    RUB_MINDS_MCP_SESSION_HANDLE: ENV.RUB_MINDS_MCP_SESSION_HANDLE,
+  };
+  const browserEnv = browserProcessEnvironment(source);
+  assert.equal(browserEnv.PATH, "safe-path");
+  assert.equal(browserEnv.RUB_MINDS_MCP_ENDPOINT, ENV.RUB_MINDS_MCP_ENDPOINT);
+  assert.equal(browserEnv.RUB_MINDS_PARTICIPANT_ID, ENV.RUB_MINDS_PARTICIPANT_ID);
+  assert.equal(Object.hasOwn(browserEnv, "RUB_MINDS_MCP_SESSION_HANDLE"), false);
+  assert.equal(source.RUB_MINDS_MCP_SESSION_HANDLE, ENV.RUB_MINDS_MCP_SESSION_HANDLE,
+    "filtering must not mutate the parent process environment");
 });
