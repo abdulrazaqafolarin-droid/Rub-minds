@@ -16,7 +16,7 @@ begin
       add constraint room_task_reviews_criterion_evidence_shape
       check (
         jsonb_typeof(criterion_evidence) = 'array'
-        and octet_length(criterion_evidence::text) <= 32768
+        and octet_length(criterion_evidence::text) <= 65536
       );
   end if;
 end;
@@ -54,7 +54,7 @@ begin
      or coalesce(char_length(p_feedback),0) > 12000
      or p_criterion_evidence is null
      or jsonb_typeof(p_criterion_evidence) <> 'array'
-     or octet_length(p_criterion_evidence::text) > 32768 then
+     or octet_length(p_criterion_evidence::text) > 65536 then
     raise exception 'Invalid task review';
   end if;
 
@@ -92,7 +92,7 @@ begin
       on criterion.ordinal=evidence.ordinal
     where jsonb_typeof(evidence.item) <> 'object'
        or evidence.item->>'criterion' is distinct from criterion.value
-       or jsonb_typeof(evidence.item->'met') <> 'boolean'
+       or jsonb_typeof(evidence.item->'met') is distinct from 'boolean'
        or coalesce(char_length(btrim(evidence.item->>'evidence')),0) not between 1 and 2000
   ) then
     raise exception 'Each criterion requires its exact text, a met/not-met decision, and 1-2000 characters of evidence';
@@ -101,7 +101,7 @@ begin
   if p_outcome='approved' and exists (
     select 1
     from jsonb_array_elements(p_criterion_evidence) as evidence(item)
-    where evidence.item->>'met' <> 'true'
+    where evidence.item->>'met' is distinct from 'true'
   ) then
     raise exception 'A task cannot be approved while any acceptance criterion is unmet';
   end if;
