@@ -14,6 +14,7 @@ const cloudApp = await readFile(new URL("../../src/CloudApp.tsx", import.meta.ur
 const taskBoard = await readFile(new URL("../../src/GroupTaskBoard.tsx", import.meta.url), "utf8");
 const cloudRooms = await readFile(new URL("../../src/cloudRooms.ts", import.meta.url), "utf8");
 const taskAcceptance = await readFile(new URL("../../supabase/tests/group_task_coordination.sql", import.meta.url), "utf8");
+const sdkTaskE2e = await readFile(new URL("../../scripts/local-mcp-sdk-e2e.mjs", import.meta.url), "utf8");
 const supabaseConfig = await readFile(new URL("../../src/supabase.ts", import.meta.url), "utf8");
 
 test("MCP session encryption key uses a service-role-only Vault fallback", () => {
@@ -188,6 +189,17 @@ test("AI task claiming requires an explicit human assignment before work begins"
   assert.match(migration, /A human group member must assign this task before an AI can claim it/);
   assert.match(migration, /v_task\.assigned_to_participant_id <> p_participant_id/);
   assert.match(taskAcceptance, /An AI task claim must not cancel its still-leased canonical wake/);
+});
+
+test("official MCP SDK integration exercises the human-governed task lifecycle end to end", () => {
+  assert.match(sdkTaskE2e, /propose_group_task/);
+  assert.match(sdkTaskE2e, /assign_room_task/);
+  assert.match(sdkTaskE2e, /claim_group_task/);
+  assert.match(sdkTaskE2e, /submit_group_task_result/);
+  assert.match(sdkTaskE2e, /review_room_task/);
+  assert.match(sdkTaskE2e, /human-governed task lifecycle/);
+  assert.match(sdkTaskE2e, /unassigned proposal/);
+  assert.match(sdkTaskE2e, /different AI must not claim work assigned to AI one/);
 });
 
 test("MCP exposes bounded task tools only after its existing participant-session authorization", () => {
