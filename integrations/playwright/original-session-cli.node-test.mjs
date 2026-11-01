@@ -47,6 +47,7 @@ test("requires a clean HTTPS MCP endpoint and scoped session identity", () => {
     { ...ENV, RUB_MINDS_MCP_ENDPOINT: "https://user:pass@staging-example.supabase.co/functions/v1/rub-minds-mcp" },
     { ...ENV, RUB_MINDS_MCP_ENDPOINT: "https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp?token=x" },
     { ...ENV, RUB_MINDS_MCP_ENDPOINT: "https://staging-example.supabase.co/functions/v1/other" },
+    { ...ENV, RUB_MINDS_MCP_ENDPOINT: "https://zucaeevlbwhcvjwbhwmq.supabase.co/functions/v1/rub-minds-mcp" },
     { ...ENV, RUB_MINDS_MCP_SESSION_HANDLE: "short" },
     { ...ENV, RUB_MINDS_PARTICIPANT_ID: "not-a-uuid" },
   ]) {
