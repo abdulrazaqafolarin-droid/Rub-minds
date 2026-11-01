@@ -31,6 +31,7 @@ test("MCP session encryption key uses a service-role-only Vault fallback", () =>
   assert.ok(mcpEdge.includes("async function loadVaultCredentialEncryptionKey()"));
   assert.ok(mcpEdge.includes('db.rpc("get_rub_minds_mcp_session_encryption_key")'));
   assert.ok(mcpEdge.includes('Deno.env.get("RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY") || await loadVaultCredentialEncryptionKey()'));
+  assert.ok(ciWorkflow.includes("Install PostgreSQL client for Vault acceptance"));
   assert.ok(ciWorkflow.includes("Verify local Supabase Vault key access boundary"));
   assert.ok(ciWorkflow.includes('psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/rub_minds_mcp_vault_encryption_key.sql'));
   assert.ok(ciWorkflow.includes("Start MCP Edge Function with Vault-only local credentials"));
