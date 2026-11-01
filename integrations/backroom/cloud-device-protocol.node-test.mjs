@@ -15,6 +15,15 @@ const pairingRepairMigration = await readFile(
   new URL("../../supabase/migrations/20261101173500_fix_backroom_device_pairing_output_column_ambiguity.sql", import.meta.url),
   "utf8",
 );
+const initialDesktopRegistrationMigration = await readFile(
+  new URL("../../supabase/migrations/20261030195538_backroom_desktop_companion_registration.sql", import.meta.url),
+  "utf8",
+);
+const desktopRegistrationRepairMigration = await readFile(
+  new URL("../../supabase/migrations/20261101175000_fix_backroom_desktop_registration_output_column_ambiguity.sql", import.meta.url),
+  "utf8",
+);
+
 
 test("pairing RPC qualifies output-column names to avoid PL/pgSQL ambiguity", () => {
   const requiredFragments = [
@@ -34,6 +43,25 @@ test("pairing RPC qualifies output-column names to avoid PL/pgSQL ambiguity", ()
     }
   }
 });;
+
+test("desktop registration RPC qualifies output-column names and keeps privileged access", () => {
+  const requiredFragments = [
+    "from public.backroom_devices as existing_device",
+    "where existing_device.device_id = p_device_id",
+    "where existing_device.token_digest = p_token_digest",
+    "existing_device.owner_id = p_owner_id",
+    "from public.rooms as room",
+    "room.id = p_room_id and room.owner_id = p_owner_id",
+    "set search_path = ''",
+    "to service_role",
+    "from public,anon,authenticated",
+  ];
+  for (const sql of [initialDesktopRegistrationMigration, desktopRegistrationRepairMigration]) {
+    for (const fragment of requiredFragments) {
+      assert.ok(sql.includes(fragment), "desktop registration migration is missing: " + fragment);
+    }
+  }
+});
 
 test("pair claim accepts only bounded typed credentials and identity", () => {
   assert.equal(validatePairClaim({pairingCode:hex,deviceId:uuid,deviceLabel:"My phone",osVersion:"14",appVersion:"0.2"},"b".repeat(64)),true);
