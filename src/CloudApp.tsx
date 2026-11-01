@@ -14,7 +14,7 @@ import {
 } from './cloudRooms';
 
 const agentMessagesEndpoint = supabaseUrl
-  ? `${supabaseUrl.replace(/\\/+$/, '')}/functions/v1/agent-messages`
+  ? `${supabaseUrl}/functions/v1/agent-messages`
   : 'Supabase endpoint unavailable';
 
 export default function CloudApp() {
