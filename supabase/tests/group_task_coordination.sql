@@ -12,8 +12,8 @@ declare
   v_room uuid := '11000000-0000-4000-8000-000000000001';
   v_ai_host text := '44000000-0000-4000-8000-000000000001';
   v_ai_two_host text := '44000000-0000-4000-8000-000000000002';
-  v_ai_session text := repeat('a',64);
-  v_ai_two_session text := repeat('b',64);
+  v_ai_session text := repeat('9',64);
+  v_ai_two_session text := repeat('0',64);
   v_human_task uuid;
   v_fingerprint_task uuid;
   v_dependent_task uuid;

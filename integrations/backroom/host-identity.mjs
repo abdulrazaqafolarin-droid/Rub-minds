@@ -8,21 +8,23 @@ import {dirname,resolve,win32} from 'node:path';
 
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TOKEN=/^[a-f0-9]{64}$/;
-function sameResolvedPath(actual, expected) {
- if (process.platform !== "win32") return actual === expected;
- const canonical = (value) => {
-  let candidate = value;
-  if (candidate.startsWith("\\\\?\\UNC\\")) candidate = "\\\\" + candidate.slice(8);
-  else if (candidate.startsWith("\\\\?\\")) candidate = candidate.slice(4);
-  return win32.normalize(win32.resolve(candidate)).toLowerCase();
- };
- return canonical(actual) === canonical(expected);
+async function hasSymlinkInPath(directory) {
+ if (process.platform !== "win32") return false;
+ const parsed = win32.parse(directory);
+ if (!parsed.root) return true;
+ let current = parsed.root;
+ if ((await lstat(current)).isSymbolicLink()) return true;
+ for (const component of directory.slice(parsed.root.length).split(/[\\/]+/).filter(Boolean)) {
+  current = win32.join(current, component);
+  if ((await lstat(current)).isSymbolicLink()) return true;
+ }
+ return false;
 }
 
 async function privateDirectory(directory){
  await mkdir(directory,{recursive:true,mode:0o700});
  const stat=await lstat(directory);
- if(!stat.isDirectory()||stat.isSymbolicLink()||!sameResolvedPath(await realpath(directory),directory)||
+ if(!stat.isDirectory()||stat.isSymbolicLink()||(process.platform==='win32' ? await hasSymlinkInPath(directory) : await realpath(directory)!==directory)||
    (process.platform!=='win32'&&(stat.mode&0o077)!==0))
   throw new Error('Unsafe Backroom host identity directory');
 }
