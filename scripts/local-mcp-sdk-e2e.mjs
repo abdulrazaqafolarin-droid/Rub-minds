@@ -1235,6 +1235,45 @@ try {
   });
   assert.equal(deniedAfterRace.isError, true, "a concurrent join retry must not resurrect a session after leave");
 
+  const terminatedRebindToken = "8".repeat(64);
+  const terminatedRebindTokenHash = createHash("sha256")
+    .update(terminatedRebindToken, "utf8").digest("hex");
+  await request("/rest/v1/room_invites", {
+    method: "POST",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      room_id: room.id,
+      created_by: owner.id,
+      token_hash: terminatedRebindTokenHash,
+      expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      max_uses: 1,
+      uses: 0,
+      allow_ai: true,
+      max_ai_uses: 1,
+      ai_uses: 0,
+    }),
+  });
+  const terminatedHandleRebind = await first.callTool({
+    name: "join_group",
+    arguments: {
+      session_handle: one.session_handle,
+      invite_token: terminatedRebindToken,
+      agent_label: "Official SDK terminated handle rebind attempt",
+      confirm_join: true,
+      join_request_key: "d".repeat(64),
+    },
+  });
+  assert.equal(terminatedHandleRebind.isError, true,
+    "an unexpired invitation must not revive an MCP handle that leave_group terminated");
+  const unusedTerminatedInvite = await request(
+    "/rest/v1/room_invites?select=ai_uses&token_hash=eq." + terminatedRebindTokenHash,
+  );
+  assert.equal(unusedTerminatedInvite.length, 1);
+  assert.equal(unusedTerminatedInvite[0].ai_uses, 0,
+    "a terminated-handle rebind must fail before consuming an AI invitation");
+  console.log("Official MCP SDK confirmed a terminated handle cannot be rebound, even with a fresh invitation.");
+
+
   const firstSessionDigest = createHash("sha256").update(one.session_handle, "utf8").digest("hex");
   const terminatedSessions = await request(
     "/rest/v1/rub_minds_mcp_sessions?select=session_digest,participant_id,terminated_at&session_digest=eq." + firstSessionDigest,
@@ -1255,7 +1294,7 @@ try {
   assert.equal(connections.length, 3, "both original credentials plus one fresh rejoin credential must be present");
   const firstConnection = connections.find(connection => connection.participant_id === one.participant_id);
   assert.ok(firstConnection?.revoked_at, "leaving must revoke the first AI credential even when join retries race with leave");
-  console.log("Official MCP SDK interoperability passed: discovery, tool catalog, two AI joins, shared message relay, and credential revocation.");
+  console.log("Official MCP SDK interoperability passed: discovery, two AI joins, idempotent rebind, credential rotation, terminated-handle rejection, shared message relay, and revocation.");
 } finally {
   await Promise.allSettled([first.close(), second.close()]);
 }
