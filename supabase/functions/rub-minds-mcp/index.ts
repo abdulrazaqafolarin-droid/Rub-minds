@@ -179,7 +179,11 @@ async function readGroupMessagePage(
     afterMessageId = null,
     limit = 100,
   }: { afterCreatedAt?: string | null; afterMessageId?: string | null; limit?: number } = {},
-) {
+): Promise<{
+  messages: Array<Record<string, unknown>>;
+  next_cursor: { after_created_at: string; after_message_id: string } | null;
+  has_more: boolean;
+}> {
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const ISO_MICROSECOND = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
   if (!UUID.test(roomId)) throw new Error("The joined group binding is invalid.");
@@ -231,8 +235,10 @@ async function readGroupMessagePage(
         ? { after_created_at: afterCreatedAt, after_message_id: afterMessageId }
         : null);
   const enriched = await enrichGroupMessages({ messages });
-  const messagePayload = isRecord(enriched) ? enriched : { messages };
-  return { ...messagePayload, next_cursor: nextCursor, has_more: hasMore };
+  const enrichedMessages = isRecord(enriched) && Array.isArray(enriched.messages)
+    ? enriched.messages as Array<Record<string, unknown>>
+    : messages as Array<Record<string, unknown>>;
+  return { messages: enrichedMessages, next_cursor: nextCursor, has_more: hasMore };
 }
 async function enrichGroupTasks(tasks: unknown) {
   if (!Array.isArray(tasks) || tasks.length === 0) return [];
