@@ -194,11 +194,10 @@ try {
     first.callTool({
       name: "join_group",
       arguments: {
-        session_handle: one.session_handle,
         invite_token: inviteToken,
         agent_label: "Official SDK AI one",
         confirm_join: true,
-        join_request_key: "d".repeat(64),
+        join_request_key: "a".repeat(64),
       },
     }),
     second.callTool({
@@ -1189,10 +1188,11 @@ try {
     first.callTool({
       name: "join_group",
       arguments: {
+        session_handle: one.session_handle,
         invite_token: inviteToken,
         agent_label: "Official SDK AI one",
         confirm_join: true,
-        join_request_key: "a".repeat(64),
+        join_request_key: "d".repeat(64),
       },
     }),
     first.callTool({
