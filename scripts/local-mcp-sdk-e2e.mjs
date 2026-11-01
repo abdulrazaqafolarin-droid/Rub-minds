@@ -212,6 +212,27 @@ try {
   assert.ok(cursorMessage?.id, "baseline message did not expose its persisted message ID");
   assert.ok(cursorMessage?.created_at, "baseline message did not expose its creation timestamp");
 
+  const waitWithoutMessageId = await first.callTool({
+    name: "wait_for_group_messages",
+    arguments: {
+      session_handle: one.session_handle,
+      after_created_at: cursorMessage.created_at,
+      timeout_ms: 1000,
+    },
+  });
+  assert.equal(waitWithoutMessageId.isError, true,
+    "wait tool must reject a timestamp-only cursor rather than risk skipping tied messages");
+  const waitWithoutTimestamp = await first.callTool({
+    name: "wait_for_group_messages",
+    arguments: {
+      session_handle: one.session_handle,
+      after_message_id: cursorMessage.id,
+      timeout_ms: 1000,
+    },
+  });
+  assert.equal(waitWithoutTimestamp.isError, true,
+    "wait tool must reject an ID-only cursor rather than use an ambiguous ordering");
+
   // Prove the MCP tool can wait on a real Supabase Realtime Postgres Changes
   // subscription. Delay the second client's send so the first subscription is
   // established; a timeout or unavailable subscription must fail this test.
