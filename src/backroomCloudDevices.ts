@@ -7,6 +7,12 @@ export type BackroomDeviceApp = {
   draft_insertion_allowed: boolean;
   discovered_at: string;
 };
+export type BackroomDesktopApp = {
+  app_id: string;
+  app_label: string;
+  executable_sha256: string;
+  discovered_at: string;
+};
 export type BackroomDevice = {
   device_id: string;
   device_label: string;
@@ -19,6 +25,7 @@ export type BackroomDevice = {
   approved_at: string | null;
   last_seen_at: string | null;
   apps: BackroomDeviceApp[];
+  desktopApps?: BackroomDesktopApp[];
 };
 export type BackroomDeviceEvent = {
   id: string;

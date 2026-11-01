@@ -194,7 +194,8 @@ export default function BackroomApp() {
                 {addedApps.length ? addedApps.map(app => <div className="br-cloud-app-row" key={app.deviceId + app.package_name}>
                   <div className="br-cloud-app-icon"><Smartphone size={18}/></div><div><b>{app.app_label}</b><small>{app.package_name}</small></div><span className={app.status}>{app.status}</span>
                 </div>) : <div className="br-cloud-phone-empty"><ArrowDownToLine size={27}/><b>No apps added yet</b><span>Choose apps in the Android companion. Only selected app metadata is synced.</span></div>}
-                <div className="br-cloud-frame-foot"><Check size={14}/> Inventory synced from {activeDevice?.device_label ?? 'Android device'}</div>
+                <div className="br-cloud-frame-foot"><Check size={14}/> App inventory synced from {activeDevice?.device_label ?? 'Android device'}</div>
+                <div className="br-cloud-phone-runtime-note">These entries are inventory only, not running virtual apps. Live app rendering, touch control, accessibility-backed field targeting and drag-select typing are not enabled for the phone frame yet.</div>
               </div> : <div className="br-cloud-phone-screen disconnected">
                 <div className="br-cloud-phone-bar"><span>Backroom</span><small>Not connected</small></div>
                 <Smartphone size={32}/><b>Connect your Android runtime</b><p>Pair the phone, approve it, then select apps inside Rub Minds Companion.</p>
@@ -210,8 +211,11 @@ export default function BackroomApp() {
           <div className="br-cloud-capabilities">
             <div><b>Current phone capabilities</b><span>Available in the current companion build</span></div>
             <div className="br-cloud-capability-row"><span>Launcher-visible app discovery</span><b className="ready">Available</b></div>
+            <div className="br-cloud-capability-row"><span>Virtualized app running inside phone frame</span><b>Not available</b></div>
             <div className="br-cloud-capability-row"><span>Separate app data / virtualization</span><b>Not available</b></div>
             <div className="br-cloud-capability-row"><span>Live screen and touch control</span><b>Not available</b></div>
+            <div className="br-cloud-capability-row"><span>Accessibility-backed field targeting</span><b>Not available</b></div>
+            <div className="br-cloud-capability-row"><span>Overlay drag-select typing</span><b>Not available</b></div>
             <div className="br-cloud-capability-row"><span>AI-directed device actions</span><b>Not available</b></div>
           </div>
         </div>

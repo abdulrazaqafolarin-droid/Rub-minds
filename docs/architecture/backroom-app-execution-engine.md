@@ -6,6 +6,23 @@ Status: **decision pending a device-backed proof of concept**. This is an archit
 
 Backroom should eventually offer one group-visible Device Frame with four surfaces: Android apps in an isolated phone-shaped space, managed browser sessions/tabs, desktop apps in a desktop window, and terminals in a terminal surface. A human or authorized AI may request launch, close, restart, switch, tap, swipe, type, press keys, or run commands. Every accepted, rejected, and completed action must be attributed to its human/AI actor and appended to the group's durable activity log.
 
+## Android app execution platform boundary — 2026-10-31
+
+A normal third-party Rub Minds companion APK cannot create the Android virtual-device app-streaming environment that would run another installed app in a separate Backroom-owned virtual display with remote input:
+
+- Android's `VirtualDeviceManager#createVirtualDevice` requires restricted `CREATE_VIRTUAL_DEVICE`. AOSP documents that this permission is granted to system apps holding the `COMPANION_DEVICE_APP_STREAMING` role; only preinstalled privileged apps can hold that role.
+- Android Virtualization Framework / Microdroid is separate: its APIs are `@SystemApi` and require restricted `MANAGE_VIRTUAL_MACHINE`, unavailable to an ordinary sideloaded app.
+- Android 14+ MediaProjection can let a user share one selected app window, but that captures the existing app window; it does not create an isolated guest instance or separate app-private data.
+- An AccessibilityService can inspect accessible controls and dispatch gestures only after the user enables it in Android Settings. It is a powerful system-wide capability, not ordinary app access. Its distribution/policy eligibility must be established before remote automation is enabled.
+
+**Decision:** keep the Android guest provider unimplemented and fail closed rather than ship a fake simulator or import an unsafe virtualization engine. A device-owned single-app MediaProjection session may be built as a clearly labelled *live app streaming* mode, but it must not be marketed as isolated virtualization and must have separate consent/input gates. True isolated app streaming with OS virtual input requires OEM/preinstalled privileged-role distribution or a separately audited engine that passes the full Android 14 handset acceptance matrix.
+
+Primary platform references:
+- Android app screen sharing / MediaProjection: https://developer.android.com/media/grow/media-projection
+- AOSP companion app streaming role: https://source.android.com/docs/core/permissions/app-streaming
+- Android Virtualization Framework privilege boundary: https://android.googlesource.com/platform/packages/modules/Virtualization/+/HEAD/libs/framework-virtualization/README.md
+- AccessibilityService intended use and capabilities: https://developer.android.com/reference/android/accessibilityservice/AccessibilityService
+
 ## Android constraint
 
 The current Android companion only discovers launcher-visible packages and syncs selected metadata through outbound HTTPS. It does not clone package code, copy private app data, render an app inside Backroom, or remotely operate the device. Broad storage access does not grant access to another app's private sandbox. Do not market this slice as a DualSpace equivalent.
@@ -24,18 +41,18 @@ Reject any approach that requires undisclosed broad permissions, exposes an inbo
 
 ## Initial engine research (not yet adopted)
 
-### ALEX5402/NewBlackbox — preferred Android 14 proof-of-concept candidate, not integration-ready
+### ALEX5402/NewBlackbox — researched candidate; reject unchanged
 
 Repository: [ALEX5402/NewBlackbox](https://github.com/ALEX5402/NewBlackbox). The GitHub repository metadata and root `LICENSE` file identify Apache-2.0. Its README claims Android 5–14+, no-root userspace virtualization, ARM64/ARMv7/x86 support, and describes a Bcore core module / AAR-style integration.
 
 The source review found important gaps between that top-level pitch and a safe Rub Minds integration:
 
 - The app and Bcore Gradle modules use Java 21 and NDK 29, despite README build guidance saying JDK 17. The root build targets SDK 35 but sets target SDK 28.
-- The Bcore manifest contains 323 `uses-permission` entries. It includes `QUERY_ALL_PACKAGES`, `MANAGE_EXTERNAL_STORAGE`, `SYSTEM_ALERT_WINDOW`, location, camera, microphone, contacts, phone/SMS, account-management, package-installation and many legacy/vendor permissions.
+- The current Bcore manifest contains **323 permission entries (249 unique names)**. It includes `QUERY_ALL_PACKAGES`, `MANAGE_EXTERNAL_STORAGE`, `SYSTEM_ALERT_WINDOW`, location, camera, microphone, contacts, phone/SMS, account-management, package-installation and many legacy/vendor permissions. These are permissions in the virtualization engine's host manifest, not just simulated guest-app permissions.
 - The release app build is configured with the debug signing key. Do not use the published/demo APK as a Rub Minds trust artifact.
 - The user guide says root is recommended for full functionality, although the README overview says no root is required. That discrepancy must be resolved with an unrooted proof of concept on the target handset.
 
-This is the most reasonable candidate for a **separate disposable POC** on the target Android 14 phone because its license is clear and its source documents a library module. It is not approved to merge unchanged. The POC must use a dedicated test application ID and signing key, remove unneeded modules/features, inspect the final merged manifest (not just the companion manifest), and prove that the minimum app-install/launch workflow works without granting broad permissions unnecessarily.
+The Apache-2.0 license is clear, and the repository documents a Bcore library module, but the engine is **not approved for integration**. The README's no-root claim conflicts with the user guide's statement that root is recommended for full functionality; the README says Android 5–14+ while the releases page advertises Android 16 work. The source build also uses Java 21/NDK 29 while the README says JDK 17. The app's release build is signed with the debug signing configuration. A separate disposable POC would first need to remove broad host permissions and unused modules, use a dedicated test application ID and release signing key, build against the companion's target SDK, and pass the complete physical-device acceptance matrix. Do not include the upstream code or its AAR in the companion until those gates pass.
 
 ### fdavids77/BlackBoxReborn — legal hold pending upstream clarification
 
@@ -51,7 +68,26 @@ Repository: [Black00Z/Blacks-BlackBox](https://github.com/Black00Z/Blacks-BlackB
 
 Android's [Virtualization Framework API documentation](https://android.googlesource.com/platform/packages/modules/Virtualization/+/HEAD/libs/framework-virtualization/README.md) says its Microdroid APIs are system APIs requiring the restricted `MANAGE_VIRTUAL_MACHINE` permission; they are not a general drop-in option for ordinary third-party apps.
 
-**Decision:** NewBlackbox may be used for a disposable, isolated Android 14 POC only after reviewing and trimming its permission surface. No engine has been selected or integrated. Do not claim that a native app is running inside Backroom until an installed guest app has been launched in an isolated instance and its frame is actually rendered in the Backroom Device Frame on a physical device.
+**Decision (2026-10-31):** NewBlackbox is rejected unchanged. No engine has been selected or integrated. The Rub Minds companion now contains a provider-neutral guest-runtime admission, frame and target policy contract, but it is not an engine and does not launch or render guest apps. An engine may be admitted only after its final merged host manifest, license, release signature and required capabilities pass static review, followed by matching physical-device acceptance evidence. Do not claim a native app is running inside Backroom until a real isolated guest instance is launched and its guest-only frame is rendered in the Phone Frame on a physical device.
+
+## Provider-neutral guest runtime contract — 2026-10-31
+
+The Android companion now defines a provider boundary in `android-companion/app/src/main/java/app/rubminds/companion/guest/GuestRuntimeContract.kt`. This is policy and data-contract code only; no external virtualization engine is linked.
+
+An engine is blocked unless its reviewed final host manifest declares only the existing `android.permission.INTERNET` host permission and exactly one known launcher activity plus exactly one system-bound input-method service as exported components. Additional permissions and additional exported components are denied by default, even when a component claims signature protection; engine-owned services and providers must remain non-exported unless separately reviewed and explicitly allowlisted. The release artifact must not be debug-signed, its license must be allowlisted, it must not require root or an inbound listener, and it must declare all required capabilities: a fresh per-app data container, process isolation, guest-only frame capture, touch input, accessibility-backed field targeting, draft-only insertion, emergency stop and no private-data import.
+
+The final merged manifest review includes both permission declarations and exported component exposure; a permission-light manifest with an exported unprotected bridge is not acceptable. The companion's Gradle `audit*GuestHostManifest` task reads AGP's `SingleArtifact.MERGED_MANIFEST` and is a dependency of APK/AAB assembly. It fails on permissions beyond `INTERNET`, extra or duplicate exported components, missing explicit export values, and changes to launcher/input-method intent filters. It records the exact merged-manifest SHA-256 and component inventory under `app/build/reports/guest-host-manifest/`; retain that report with the matching APK. Static capability declarations are not sufficient to make the engine ready. `GuestRuntimeAdmissionPolicy` remains at `DEVICE_POC_REQUIRED` until acceptance evidence matches the exact engine version, release artifact SHA-256, merged-manifest SHA-256 and local device profile and all required checks pass.
+
+Frame and target rules are fail-closed:
+- A frame must be tagged `GUEST_APP`, belong to the active session and guest instance, have a strictly positive sequence, valid dimensions/MIME type, a bounded payload and a recent capture timestamp. Whole-device capture cannot masquerade as an app frame.
+- A text target must be accessibility-backed, enabled, editable, non-password, non-read-only and empty. Its identity and frame sequence must match the active guest instance. Selection and draft request IDs must be RFC 4122 UUIDs; the launcher/export exception is bound to the exact companion application ID and exact component classes.
+- The drag rectangle must cover at least 65% of that single field. A selection expires after 60 seconds and cannot cross a guest restart or a newer frame.
+- A new drag immediately supersedes the previous selection; invalid drags also retire the old target. A valid selection lease is consumed before a write attempt, so an ambiguous result requires a fresh drag rather than an automatic retry. Each guest session retains at most 1,024 retired selection IDs; at that limit the session must be restarted rather than discarding replay history.
+- Touch pointers must follow valid DOWN/MOVE/UP-or-CANCEL lifecycles, remain monotonic in timestamp, and are capped at 10 simultaneous pointers per session. The provider registry is capped at eight concurrent guest instances.
+- Each guest instance must have its own fresh data-container ID. The included registry is process-local test/helper code; a production provider must persist that ownership mapping across app-process death and prove it in the acceptance run.
+- Draft insertion requires a short-lived opaque receipt issued only after a local native confirmation succeeds, the exact current selection ID, single-line plain text (maximum 4,000 characters), exact read-back and an explicit no-submit result. The install contract accepts the same multi-signer SHA-256 format as the companion's existing signer checker. The receipt is bound to the guest session, selection, exact request ID and SHA-256 of the approved text, and is consumed once. Any post-approval text change invalidates it. A caller cannot provide a `approvedLocally` Boolean or serialize a trusted receipt from the network. Enter/Send is not part of this interface.
+
+The receipt factory is only an internal contract boundary; a real provider must call it exclusively after its native confirmation dialog returns affirmative. No local approval dialog or receipt issuer is wired to a live guest runtime in this slice. This contract creates the integration point for a future provider; it does not yet implement app installation, guest process creation, video capture, touch injection or real accessibility queries. No current Android provider implements `GuestRuntimeProvider`, and no guest frame is available to the Phone Frame.
 
 ## Permission UX
 
@@ -73,3 +109,125 @@ A stage is complete only when its acceptance tests run successfully; source-only
 The current user-facing `BackroomApp` routes signed-in users to the cloud `BackroomDevicesApp` by default. A second authenticated `Browser runtime` workspace mounts the earlier `BackroomSimulatorApp` managed Playwright/Chromium surface. Changing groups inside that browser workspace preserves the `backroom=1&browser=1` route. This restores browser access without discarding the cloud Device Frame. Browser is still a peer workspace, not yet a tab rendered inside the same phone/desktop/terminal Device Frame canvas. The managed browser host remains a same-computer local runtime; it is not an Android localhost bridge and cannot be assumed reachable from a different device.
 
 Likewise, the phone tab currently renders selected-app metadata, not a guest app screenshot or running virtual app. The Android companion reports discovery/inventory only. These are explicit V1 boundaries, not completed app virtualization.
+
+
+## Second provider audit — 2026-10-31
+
+A second pass checked newer public forks and the platform-supported VM route. None is currently admitted:
+
+- **[BlackBox Reborn](https://github.com/fdavids77/BlackBoxReborn)** advertises API 34–37 compatibility and Apache-2.0 in its LICENSE, but the README badge says GPL-3.0. Its `Bcore/src/main/AndroidManifest.xml` still contains 323 `<uses-permission>` entries (249 unique), including overlays, location, camera, microphone, broad storage, contacts/call-log/SMS and install/package visibility permissions. Its app manifest independently requests `QUERY_ALL_PACKAGES`, `READ_EXTERNAL_STORAGE` and `WRITE_EXTERNAL_STORAGE`. The root build deliberately sets target SDK 28, and the release build uses `signingConfigs.debug`. Its compatibility notes disclose that kernel-visible socket credentials still expose the host process UID; userspace UID spoofing does not change `SO_PEERCRED`. It is not safe to add to the companion unchanged.
+- **[TeguFy/blackbox-android](https://github.com/TeguFy/blackbox-android)** has the same 323/249 Bcore permission footprint and the same broad package/storage permissions in its app manifest. It is not an independent least-privilege implementation.
+- **[ZENINXOP/BlackBox](https://github.com/ZENINXOP/BlackBox)** currently exposes a README but no auditable source tree, manifest, build configuration or license file in the repository snapshot reviewed. Its Android 17 and sandbox claims are therefore unverified; it is not eligible for integration.
+- **Android Virtualization Framework (AVF/Microdroid)** is the platform-supported VM option, but its framework APIs are `@SystemApi` and require restricted `android.permission.MANAGE_VIRTUAL_MACHINE`. The platform declaration is `signature|preinstalled|development`; the development grant is for controlled adb testing and is not a production permission ordinary third-party companion apps can obtain. This could be reconsidered only for an OEM/preinstalled/system-app distribution, not the current normal companion APK.
+- **asLody/VirtualApp** remains useful historical research, but its public source is stale and is not a maintained, production-ready integration target for current Android releases.
+
+**Decision:** no candidate passes the existing manifest, signing, licensing, isolation and device-proof gates. Keep the provider interface only. Do not lower the admission policy or bundle a fork just to produce a visual “guest app” frame. The next acceptable POC is a separately signed, disposable host build for an audited candidate after its host manifest has been stripped and the provider's runtime dependencies and limitations have been documented; it must pass the handset matrix before the companion advertises guest execution.
+
+
+## Third provider audit — 2026-10-31
+
+This audit checked the source/build/manifest files for three newer approaches. **None is approved for the normal Rub Minds companion APK.** The decision is intentionally not to vendor any engine or enable Phone Frame guest execution.
+
+### josskixg/renjana — Apache-2.0; reject unchanged
+
+Reviewed source files: root `LICENSE`, `README.md`, `app/build.gradle`, `app/src/main/AndroidManifest.xml`, `docs/CREATE_INSTANCE.md`, `PROBLEM.md`, and `CHANGELOG.md`.
+
+Positive findings:
+- The checked-in root license is Apache-2.0.
+- The code describes user-space subprocesses, stub activities, package-specific data paths and split-APK loading.
+- The advertised minimum API is 29 and supported architectures include ARM64 and ARMv7.
+
+Blocking findings:
+- Its app targets SDK 34, below this companion's SDK 35 admission floor.
+- Its host manifest requests `MANAGE_EXTERNAL_STORAGE`, `QUERY_ALL_PACKAGES`, `REQUEST_INSTALL_PACKAGES`, `SYSTEM_ALERT_WINDOW`, legacy external-storage permissions, and foreground-service / special-use service permissions. It also sets `usesCleartextTraffic=true`.
+- The release build falls back to the debug signing configuration when a release keystore is absent.
+- The README and changelog advertise anti-detection, device fingerprint randomization, signature spoofing and Play Integrity / root-detection evasion. These are outside Backroom's required app-execution scope and must not be imported.
+- The documented `WrapperActivity` / `StubActivity_0..9` architecture uses guest-like Activities in host-owned processes/tasks. The reviewed source does not establish that these surfaces can be embedded as a guest-only render target inside the existing Phone Frame, nor does it establish kernel-enforced per-guest UID/SELinux isolation.
+- The source's own `PROBLEM.md` describes framework lifecycle and resource compatibility patches. These claims require independent reproducible testing.
+
+**Decision:** useful research material only. Do not import its manifest, app shell, spoofing hooks, or binary. Any future clean-room experiment must first isolate only the minimum guest lifecycle code, remove all anti-detection / spoofing features, avoid broad permissions and cleartext, produce a non-debug-signed artifact, prove an embeddable guest-only surface, and demonstrate an OS-enforced security boundary. A license file alone is not engine approval.
+
+### ISEKHON/VirtualApp — Apache-2.0; reject unchanged
+
+Reviewed source files: root `LICENSE`, `README.md`, `app/build.gradle`, `app/src/main/AndroidManifest.xml`, `docs/ARCHITECTURE.md`, and `docs/KNOWN-ISSUES.md`.
+
+Blocking findings:
+- The app targets SDK 33 and uses an old Android Gradle Plugin 7.4.2 / Gradle 7.5 build.
+- The host manifest requests broad package visibility, all-files access, ignore-battery-optimizations and multiple foreground-service types, including camera, location, microphone, phone call and media projection.
+- It declares an exported command receiver and an exported installer alias in addition to the launcher and share bridge.
+- The project's own known-issues document says hidden-API bypass may fail on Android 15–16 and documents root as a workaround for complete operation on affected devices.
+- The project itself warns that it is highly unstable and not recommended for production.
+
+**Decision:** reject unchanged. Its permissive license does not offset the compatibility, permission, exported-surface and reliability problems.
+
+### Hexadecinull/VineOS — GPL-3.0; research-only / not boot-proven
+
+Reviewed source files: README, LICENSE, `app/build.gradle.kts`, and version catalog.
+
+VineOS is conceptually closer to a full guest OS than an app-hooking container and is worth monitoring. However, its own project status says the container engine has booted a test ROM but **no real Android system image has booted inside VineOS yet**. It also depends on Shizuku components and uses GPL-3.0, which is not in the companion's current license allowlist.
+
+**Decision:** do not integrate. Revisit only after the upstream project demonstrates a bootable Android image on an unrooted physical handset, provides a documented least-privilege mode and an embed-capable display/input API, and the product/legal review approves its licensing model.
+
+### OS-backed alternatives and the real platform boundary
+
+Android's official companion app-streaming architecture provides a more defensible virtual display and input path, but AOSP states that the `COMPANION_DEVICE_APP_STREAMING` role is limited to preinstalled privileged apps. The role grants `CREATE_VIRTUAL_DEVICE`; it is not available to the current ordinary sideloaded Rub Minds companion.
+
+AVF/Microdroid likewise uses restricted system APIs. It is not an ordinary third-party app embedding SDK.
+
+A managed/work profile provides Android-managed profile separation, but its apps remain OS-managed activities; it does not provide a general API to composite arbitrary profile activities as a child surface inside Rub Minds.
+
+Android 14 MediaProjection can capture a user-selected single app window after per-session user consent. This is a legitimate **live app mirror** option, not an isolated guest runtime: it captures an existing app window and does not create a cloned package, a fresh guest data container or a guest process identity. It must be a separately labelled mode and must not satisfy `GuestRuntimeProvider` readiness.
+
+### Implementation decision
+
+No reviewed candidate satisfies all of the following simultaneously:
+1. rootless operation on the target retail handset;
+2. permissive, auditable licensing and complete source/dependency provenance;
+3. least-privilege merged host manifest and non-debug release signing;
+4. per-guest OS-level security isolation, not just an in-process/fake UID identity;
+5. guest-only embeddable surface, touch routing and accessibility tree;
+6. fresh persistent data containers and safe lifecycle/recovery;
+7. exact-build physical-device evidence on the target handset.
+
+Therefore the current correct implementation is a **fail-closed provider gate**, not a guessed engine adapter. Keep the Android Phone Frame inventory-only until an engine or OS-level distribution path satisfies the above. Do not set `GuestRuntimeDecision.READY`, display a simulated app surface as live, enable touch injection, or claim virtualization on static capability declarations alone.
+
+Potentially useful non-virtualized fallback: a separate, explicitly consented Android 14+ MediaProjection single-app mirror. It must show a persistent `LIVE MIRROR — NOT ISOLATED` label, have an obvious stop/revoke control, never claim private-data separation, and never turn on remote input unless a separately approved input method is available and tested.
+
+### Source references
+
+- Renjana: https://github.com/josskixg/renjana
+- ISEKHON VirtualApp: https://github.com/ISEKHON/VirtualApp
+- VineOS: https://github.com/Hexadecinull/VineOS
+- AOSP companion app streaming role: https://source.android.com/docs/core/permissions/app-streaming
+- Android MediaProjection single-app capture: https://developer.android.com/media/grow/media-projection
+- AVF/Microdroid API privilege note: https://android.googlesource.com/platform/packages/modules/Virtualization/+/HEAD/libs/framework-virtualization/README.md
+
+
+## Managed Work Profile execution bridge — implemented locally, not in-frame virtualization (2026-10-31)
+
+The Android companion now has a deliberately separate Work Profile bridge. It uses Android's standard managed-profile provisioning flow and makes the companion a profile owner only inside the new Work Profile. The DPC uses no device-wide policies; it saves a profile-local Keystore secret and allowlists only the companion package for cross-profile communication. The parent profile must separately obtain the user's Android cross-profile consent.
+
+A personal-profile user can request a local launch of a package in the one managed profile. The request is HMAC-SHA256 authenticated, bound to package + signer digest + issue time + UUID nonce, expires after 60 seconds and is consumed once. The Work Profile app re-reads the package signer and checks a distinct profile-local saved grant before opening its copy. A missing app, mismatched signer, unapproved profile-local grant, missing secret, denied system consent, replay or ambiguous multiple-profile result fails closed. No app data, cookies, account state or login is copied between the two profiles. No cloud/AI action can invoke this path.
+
+This is an **interim OS-isolated execution bridge** only. It demonstrates a supported data-separation boundary and local cross-profile launch on a compatible Android build. It does not create a virtual display, stream the Work Profile app into the Phone Frame, route touch, expose the app's accessibility tree or support drag-select text insertion. The app remains a normal Android Activity outside the Backroom canvas. Do not set GuestRuntimeDecision.READY based on Work Profile provisioning or launch success alone; common guest-frame, touch, accessibility, draft and emergency-stop evidence is still required.
+
+The merged-manifest build gate now permits exactly two host permissions (INTERNET and INTERACT_ACROSS_PROFILES) and exactly three exported components (MainActivity, DraftInputMethodService and the exact WorkProfileAdminReceiver). The DPC receiver must be protected by BIND_DEVICE_ADMIN and retain its device-admin metadata and provisioning actions. Every other exported component and every other permission continues to fail the build/admission gate.
+
+Platform references:
+- https://developer.android.com/reference/android/app/admin/DevicePolicyManager#ACTION_PROVISION_MANAGED_PROFILE
+- https://developer.android.com/reference/android/content/pm/CrossProfileApps
+- https://developer.android.com/reference/android/app/admin/DevicePolicyManager#setCrossProfilePackages(android.content.ComponentName,java.util.Set)
+
+
+## OEM VirtualDevice route — probe only, no ordinary-app creation (2026-10-31)
+
+The Android companion now performs a read-only capability probe for the public VirtualDeviceManager service and the secondary-display activity feature. Android may expose no manager when the OEM has not enabled its config flag. The existence of the service or visible virtual devices is not a grant to create a new device.
+
+VirtualDevice creation is a restricted platform API: the caller needs the system role/permission path and a Companion Device Manager association. The side-loaded Rub Minds companion does not have those privileges and intentionally does not request CREATE_VIRTUAL_DEVICE, use reflection, or call hidden APIs. The probe only reports Android version, secondary-display feature, service availability and visible virtual-device count.
+
+This is the most direct architectural path for an in-frame Android guest, but it requires a supported OEM/system-role integration. A positive probe must be followed by an authorized provider that can create and own the virtual device, install/launch the guest, capture its virtual display only, forward input, and implement guest accessibility/draft/Emergency Stop boundaries. A Work Profile remains useful OS-managed data isolation, but it is not a virtual display and does not embed its apps in Backroom.
+
+Platform API references:
+- https://developer.android.com/reference/android/companion/virtual/VirtualDeviceManager
+- https://developer.android.com/reference/android/content/pm/PackageManager#FEATURE_ACTIVITIES_ON_SECONDARY_DISPLAYS
+- https://android.googlesource.com/platform/frameworks/base/+/refs/heads/master/core/java/android/companion/virtual/VirtualDeviceManager.java

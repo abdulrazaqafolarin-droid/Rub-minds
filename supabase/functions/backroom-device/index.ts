@@ -6,6 +6,12 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { resolveOwnerFromJwt } from './owner-jwt.mjs';
 import { sanitizeDeviceEvent, validatePairClaim, validateSelectedApps } from './cloud-device-protocol.mjs';
+import { validateDesktopRegistration } from './desktop-device-protocol.mjs';
+import { validateDesktopApps } from './desktop-app-protocol.mjs';
+import { validateDesktopCommand, validateDesktopSignal } from './desktop-command-protocol.mjs';
+import { validateDesktopSessionClose } from './desktop-session-close-protocol.mjs';
+import { validateDesktopSessionAbandon } from './desktop-session-abandon-protocol.mjs';
+import { broadcastPrivateDeviceEvent } from './realtime-broadcast.mjs';
 
 const url = Deno.env.get('SUPABASE_URL');
 const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
@@ -54,6 +60,45 @@ async function device(req: Request, allowPending = false, allowRevoked = false) 
 }
 function fail(reason: string) { return { ok: false, reason }; }
 
+function strictKeys(value: Record<string, unknown>, keys: string[]) {
+  return exactKeys(value, keys) && keys.every(key => Object.hasOwn(value, key));
+}
+async function authorizeRoomActor(roomId: string, userId: string) {
+  const { data: room, error: roomError } = await db.from('rooms').select('id')
+    .eq('id', roomId).eq('owner_id', userId).maybeSingle();
+  if (roomError) return { ok: false as const, status: 503, reason: 'room_authorization_unavailable' };
+  if (room) return { ok: true as const, userId, displayName: 'Group owner' };
+  const { data: participant, error } = await db.from('participants')
+    .select('id,display_name,kind,status')
+    .eq('room_id', roomId).eq('user_id', userId).eq('kind', 'human')
+    .in('status', ['active', 'connected', 'autonomous']).maybeSingle();
+  if (error) return { ok: false as const, status: 503, reason: 'room_authorization_unavailable' };
+  if (!participant) return { ok: false as const, status: 403, reason: 'active_human_membership_required' };
+  const displayName = typeof participant.display_name === 'string'
+    ? participant.display_name.replace(/[\\u0000-\\u001f\\u007f-\\u009f]/g, '').trim().slice(0, 80)
+    : '';
+  return { ok: true as const, userId, displayName: displayName || 'Group member' };
+}
+async function verifyActiveDeviceRoomBinding(deviceId: string, roomId: string) {
+  const [{ data: deviceRow, error: deviceError }, { data: binding, error: bindingError }] = await Promise.all([
+    db.from('backroom_devices').select('device_id,status').eq('device_id', deviceId).eq('status', 'active').maybeSingle(),
+    db.from('backroom_device_room_bindings').select('device_id,room_id')
+      .eq('device_id', deviceId).eq('room_id', roomId).is('revoked_at', null).maybeSingle(),
+  ]);
+  if (deviceError || bindingError) return { ok: false as const, status: 503, reason: 'device_authorization_unavailable' };
+  if (!deviceRow || !binding) return { ok: false as const, status: 404, reason: 'active_device_binding_not_found' };
+  return { ok: true as const };
+}
+async function activeDesktopSession(sessionId: string, deviceId: string, roomId: string) {
+  const { data, error } = await db.from('backroom_desktop_sessions')
+    .select('session_id,session_type,status,expires_at')
+    .eq('session_id', sessionId).eq('device_id', deviceId).eq('room_id', roomId)
+    .eq('status', 'active').gt('expires_at', new Date().toISOString()).maybeSingle();
+  if (error) return { ok: false as const, status: 503, reason: 'desktop_session_unavailable' };
+  if (!data) return { ok: false as const, status: 404, reason: 'desktop_session_not_active' };
+  return { ok: true as const, session: data };
+}
+
 Deno.serve(async req => {
   const origin = req.headers.get('origin');
   if (origin && !allowedOrigins.has(origin)) return json(403, fail('origin_not_allowed'), null);
@@ -78,6 +123,253 @@ Deno.serve(async req => {
   }
   const action = input.action;
   try {
+    if (action === 'desktop/register') {
+      const ownerId = await owner(req);
+      if (!ownerId) return json(401, fail('owner_auth_required'), origin);
+      if (!exactKeys(input, ['action','deviceId','deviceLabel','platform','osVersion','appVersion','roomId','devicePublicKey'])) {
+        return json(400, fail('invalid_desktop_registration'), origin);
+      }
+      const registration = validateDesktopRegistration({
+        deviceId: input.deviceId,
+        deviceLabel: input.deviceLabel,
+        platform: input.platform,
+        osVersion: input.osVersion,
+        appVersion: input.appVersion,
+        roomId: input.roomId,
+        devicePublicKey: input.devicePublicKey
+      });
+      if (!registration) return json(400, fail('invalid_desktop_registration'), origin);
+      const { data: room, error: roomError } = await db.from('rooms').select('id')
+        .eq('id', registration.roomId).eq('owner_id', ownerId).maybeSingle();
+      if (roomError) return json(503, fail('device_service_unavailable'), origin);
+      if (!room) return json(403, fail('room_owner_required'), origin);
+
+      // Generated once, returned once, and persisted only as a SHA-256 digest.
+      // The native app must save it in the OS credential store before it starts
+      // polling/connecting. Never log this value or return it from status APIs.
+      const deviceToken = randomHex(32);
+      const { data, error } = await db.rpc('register_backroom_desktop_device', {
+        p_device_id: registration.deviceId,
+        p_owner_id: ownerId,
+        p_room_id: registration.roomId,
+        p_token_digest: await sha256(deviceToken),
+        p_device_public_key: registration.devicePublicKey,
+        p_device_label: registration.deviceLabel,
+        p_platform: registration.platform,
+        p_os_version: registration.osVersion,
+        p_app_version: registration.appVersion
+      });
+      if (error) return json(409, fail('desktop_registration_failed'), origin);
+      if (!Array.isArray(data) || data.length !== 1 ||
+          data[0]?.device_id !== registration.deviceId || data[0]?.status !== 'active') {
+        return json(409, fail('desktop_registration_conflict'), origin);
+      }
+      return json(201, {
+        ok: true, deviceId: registration.deviceId, status: 'active',
+        deviceToken, roomId: registration.roomId,
+        capabilities: {
+          appDiscovery: true, separateAppData: false, embeddedVirtualApp: false,
+          liveScreen: false, touchControl: false, desktopControl: false, terminalControl: false
+        }
+      }, origin);
+    }
+
+
+
+
+    if (action === 'desktop/session-abandon') {
+      const userId = await owner(req);
+      if (!userId) return json(401, fail('owner_auth_required'), origin);
+      const abandonRequest = validateDesktopSessionAbandon(input);
+      if (!abandonRequest) return json(400, fail('invalid_desktop_session_abandon'), origin);
+      const [actor, binding] = await Promise.all([
+        authorizeRoomActor(abandonRequest.roomId, userId),
+        verifyActiveDeviceRoomBinding(abandonRequest.deviceId, abandonRequest.roomId),
+      ]);
+      if (!actor.ok) return json(actor.status, fail(actor.reason), origin);
+      if (!binding.ok) return json(binding.status, fail(binding.reason), origin);
+      const { data: existing, error: lookupError } = await db.from('backroom_desktop_sessions')
+        .select('session_id,status')
+        .eq('session_id', abandonRequest.sessionId).eq('device_id', abandonRequest.deviceId)
+        .eq('room_id', abandonRequest.roomId).eq('requested_by', userId).maybeSingle();
+      if (lookupError) return json(503, fail('desktop_session_lookup_failed'), origin);
+      if (!existing) return json(404, fail('desktop_session_not_found'), origin);
+      if (existing.status === 'revoked' || existing.status === 'expired') {
+        return json(409, fail('desktop_session_no_longer_controllable'), origin);
+      }
+      let closed = false;
+      if (existing.status === 'active') {
+        const { data, error } = await db.from('backroom_desktop_sessions')
+          .update({ status: 'stopped', stopped_at: new Date().toISOString() })
+          .eq('session_id', abandonRequest.sessionId).eq('device_id', abandonRequest.deviceId)
+          .eq('room_id', abandonRequest.roomId).eq('requested_by', userId).eq('status', 'active')
+          .select('session_id');
+        if (error) return json(503, fail('desktop_session_abandon_failed'), origin);
+        closed = Array.isArray(data) && data.length === 1;
+      } else if (existing.status !== 'stopped') {
+        return json(409, fail('desktop_session_no_longer_controllable'), origin);
+      }
+      try {
+        await broadcastPrivateDeviceEvent({
+          projectUrl: url, apiKey: serviceKey, deviceId: abandonRequest.deviceId,
+          event: 'command',
+          payload: {
+            deviceId: abandonRequest.deviceId, roomId: abandonRequest.roomId,
+            requestId: abandonRequest.requestId, issuedAt: abandonRequest.issuedAt,
+            action: 'stop_session', sessionId: abandonRequest.sessionId,
+            actorUserId: actor.userId, actorDisplayName: actor.displayName,
+          },
+        });
+      } catch {
+        return json(503, fail('desktop_session_abandon_delivery_failed'), origin);
+      }
+      return json(200, { ok: true, sessionId: abandonRequest.sessionId, status: 'stopped', closed }, origin);
+    }
+
+    if (action === 'desktop/session-close') {
+      const current = await device(req);
+      if (!current) return json(401, fail('device_not_approved'), origin);
+      const closeRequest = validateDesktopSessionClose(input);
+      if (!closeRequest) return json(400, fail('invalid_desktop_session_close'), origin);
+      const binding = await verifyActiveDeviceRoomBinding(current.device_id, closeRequest.roomId);
+      if (!binding.ok) return json(binding.status, fail(binding.reason), origin);
+      const { data, error } = await db.from('backroom_desktop_sessions')
+        .update({ status: 'stopped', stopped_at: new Date().toISOString() })
+        .eq('session_id', closeRequest.sessionId).eq('device_id', current.device_id)
+        .eq('room_id', closeRequest.roomId).eq('status', 'active')
+        .select('session_id');
+      if (error) return json(503, fail('desktop_session_close_failed'), origin);
+      return json(200, {
+        ok: true, sessionId: closeRequest.sessionId,
+        status: data?.length ? 'stopped' : 'unchanged',
+        closed: Array.isArray(data) && data.length === 1,
+      }, origin);
+    }
+
+    if (action === 'desktop/command') {
+      const userId = await owner(req);
+      if (!userId) return json(401, fail('owner_auth_required'), origin);
+      if (!strictKeys(input, ['action','deviceId','roomId','requestId','issuedAt','command','details'])) {
+        return json(400, fail('invalid_desktop_command'), origin);
+      }
+      const command = validateDesktopCommand({
+        deviceId: input.deviceId, roomId: input.roomId, requestId: input.requestId,
+        issuedAt: input.issuedAt, command: input.command, details: input.details,
+      });
+      if (!command) return json(400, fail('invalid_desktop_command'), origin);
+      const [actor, binding] = await Promise.all([
+        authorizeRoomActor(command.roomId, userId),
+        verifyActiveDeviceRoomBinding(command.deviceId, command.roomId),
+      ]);
+      if (!actor.ok) return json(actor.status, fail(actor.reason), origin);
+      if (!binding.ok) return json(binding.status, fail(binding.reason), origin);
+
+      if (command.command === 'launch_app') {
+        const { data: app } = await db.from('backroom_desktop_apps').select('app_id')
+          .eq('device_id', command.deviceId).eq('app_id', command.details.appId).maybeSingle();
+        if (!app) return json(403, fail('app_not_registered_on_device'), origin);
+      }
+
+      let sessionType: 'screen' | 'terminal' | null = null;
+      if (command.command === 'view_offer') sessionType = 'screen';
+      if (command.command === 'terminal_start') sessionType = 'terminal';
+      if (sessionType) {
+        const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+        const { error } = await db.from('backroom_desktop_sessions').insert({
+          session_id: command.details.sessionId,
+          device_id: command.deviceId, room_id: command.roomId,
+          requested_by: userId, session_type: sessionType, status: 'active', expires_at: expiresAt,
+        });
+        if (error) return json(409, fail('desktop_session_id_conflict'), origin);
+      } else if (command.command === 'stop_session') {
+        const { data: existing, error: lookupError } = await db.from('backroom_desktop_sessions')
+          .select('session_id,status,expires_at')
+          .eq('session_id', command.details.sessionId).eq('device_id', command.deviceId)
+          .eq('room_id', command.roomId).maybeSingle();
+        if (lookupError) return json(503, fail('desktop_session_lookup_failed'), origin);
+        if (!existing) return json(404, fail('desktop_session_not_found'), origin);
+        if (existing.status === 'revoked' || existing.status === 'expired') {
+          return json(409, fail('desktop_session_no_longer_controllable'), origin);
+        }
+        if (existing.status === 'active') {
+          const { error } = await db.from('backroom_desktop_sessions')
+            .update({ status: 'stopped', stopped_at: new Date().toISOString() })
+            .eq('session_id', command.details.sessionId).eq('device_id', command.deviceId)
+            .eq('room_id', command.roomId).eq('status', 'active');
+          if (error) return json(503, fail('desktop_session_stop_failed'), origin);
+        } else if (existing.status !== 'stopped') {
+          return json(409, fail('desktop_session_no_longer_controllable'), origin);
+        }
+      } else {
+        const authorizationSessionId = command.command === 'request_control' && command.details.peerSessionId
+          ? command.details.peerSessionId : command.details.sessionId;
+        const session = await activeDesktopSession(authorizationSessionId, command.deviceId, command.roomId);
+        if (!session.ok) return json(session.status, fail(session.reason), origin);
+        if (command.command === 'request_control' && command.details.peerSessionId &&
+            session.session.session_type !== 'terminal') {
+          return json(409, fail('peer_session_must_be_terminal'), origin);
+        }
+        if (command.command === 'request_draft_permission' && session.session.session_type !== 'screen') {
+          return json(409, fail('draft_permission_requires_screen_session'), origin);
+        }
+      }
+
+      const eventPayload = {
+        deviceId: command.deviceId, roomId: command.roomId,
+        requestId: command.requestId, issuedAt: command.issuedAt,
+        action: command.command, ...command.details,
+        actorUserId: actor.userId, actorDisplayName: actor.displayName,
+      };
+      try {
+        await broadcastPrivateDeviceEvent({
+          projectUrl: url, apiKey: serviceKey, deviceId: command.deviceId,
+          event: 'command', payload: eventPayload,
+        });
+      } catch {
+        if (sessionType) await db.from('backroom_desktop_sessions')
+          .update({ status: 'stopped', stopped_at: new Date().toISOString() })
+          .eq('session_id', command.details.sessionId).eq('device_id', command.deviceId);
+        return json(503, fail('device_command_delivery_failed'), origin);
+      }
+      return json(202, { ok: true, requestId: command.requestId, command: command.command }, origin);
+    }
+
+    if (action === 'desktop/signal') {
+      const userId = await owner(req);
+      if (!userId) return json(401, fail('owner_auth_required'), origin);
+      if (!strictKeys(input, ['action','deviceId','roomId','sessionId','issuedAt','candidate'])) {
+        return json(400, fail('invalid_desktop_signal'), origin);
+      }
+      const signal = validateDesktopSignal({
+        deviceId: input.deviceId, roomId: input.roomId, sessionId: input.sessionId,
+        issuedAt: input.issuedAt, candidate: input.candidate,
+      });
+      if (!signal) return json(400, fail('invalid_desktop_signal'), origin);
+      const [actor, binding, session] = await Promise.all([
+        authorizeRoomActor(signal.roomId, userId),
+        verifyActiveDeviceRoomBinding(signal.deviceId, signal.roomId),
+        activeDesktopSession(signal.sessionId, signal.deviceId, signal.roomId),
+      ]);
+      if (!actor.ok) return json(actor.status, fail(actor.reason), origin);
+      if (!binding.ok) return json(binding.status, fail(binding.reason), origin);
+      if (!session.ok) return json(session.status, fail(session.reason), origin);
+      try {
+        await broadcastPrivateDeviceEvent({
+          projectUrl: url, apiKey: serviceKey, deviceId: signal.deviceId,
+          event: 'signal',
+          payload: {
+            deviceId: signal.deviceId, roomId: signal.roomId,
+            sessionId: signal.sessionId, issuedAt: signal.issuedAt,
+            candidate: signal.candidate, actorUserId: actor.userId,
+            actorDisplayName: actor.displayName,
+          },
+        });
+      } catch {
+        return json(503, fail('device_signal_delivery_failed'), origin);
+      }
+      return json(202, { ok: true, sessionId: signal.sessionId }, origin);
+    }
+
     if (action === 'pair/create') {
       const ownerId = await owner(req);
       if (!ownerId) return json(401, fail('owner_auth_required'), origin);
@@ -134,6 +426,20 @@ Deno.serve(async req => {
         capabilities: current.capabilities }, origin);
     }
 
+    if (action === 'desktop/inventory') {
+      const current = await device(req);
+      if (!current) return json(401, fail('device_not_approved'), origin);
+      if (!exactKeys(input, ['action','apps']) || !validateDesktopApps(input.apps)) {
+        return json(400, fail('invalid_desktop_inventory'), origin);
+      }
+      const { data, error } = await db.rpc('sync_backroom_desktop_apps', {
+        p_device_id: current.device_id,
+        p_apps: input.apps.map((app: any) => ({ app_id: app.appId, app_label: app.label.trim(), executable_sha256: app.sha256 }))
+      });
+      if (error) return json(409, fail('desktop_inventory_sync_failed'), origin);
+      await db.from('backroom_devices').update({ last_seen_at: new Date().toISOString() }).eq('device_id', current.device_id);
+      return json(200, { ok: true, synced: Number(data) || 0 }, origin);
+    }
     if (action === 'device/inventory') {
       const current = await device(req);
       if (!current) return json(401, fail('device_not_approved'), origin);
@@ -184,7 +490,8 @@ Deno.serve(async req => {
         if (roomError) return json(503, fail('device_service_unavailable'), origin);
         if (!room) {
           const { data: member, error: memberError } = await db.from('participants').select('id')
-            .eq('room_id', input.roomId).eq('user_id', ownerId).maybeSingle();
+            .eq('room_id', input.roomId).eq('user_id', ownerId).eq('kind', 'human')
+            .in('status', ['active', 'connected', 'autonomous']).maybeSingle();
           if (memberError) return json(503, fail('device_membership_unavailable'), origin);
           if (!member) return json(403, fail('room_member_required'), origin);
         }
@@ -199,15 +506,19 @@ Deno.serve(async req => {
         if (bindingError) return json(503, fail('device_list_unavailable'), origin);
         const ids = [...new Set((bindings ?? []).map((item: any) => item.device_id))];
         if (!ids.length) return json(200, { ok: true, devices: [] }, origin);
-        const [devices, apps] = await Promise.all([
+        const [devices, apps, desktopApps] = await Promise.all([
           db.from('backroom_devices').select('device_id,device_label,platform,os_version,app_version,status,capabilities,created_at,approved_at,last_seen_at')
             .in('device_id', ids).order('created_at', { ascending: false }),
           db.from('backroom_device_apps').select('device_id,package_name,app_label,version_name,draft_insertion_allowed,discovered_at')
+            .in('device_id', ids).order('app_label', { ascending: true }),
+          db.from('backroom_desktop_apps').select('device_id,app_id,app_label,executable_sha256,discovered_at')
             .in('device_id', ids).order('app_label', { ascending: true })
         ]);
-        if (devices.error || apps.error) return json(503, fail('device_list_unavailable'), origin);
+        if (devices.error || apps.error || desktopApps.error) return json(503, fail('device_list_unavailable'), origin);
         return json(200, { ok: true, devices: (devices.data ?? []).map((d: any) => ({
-          ...d, apps: (apps.data ?? []).filter((app: any) => app.device_id === d.device_id)
+          ...d,
+          apps: (apps.data ?? []).filter((app: any) => app.device_id === d.device_id),
+          desktopApps: (desktopApps.data ?? []).filter((app: any) => app.device_id === d.device_id)
         })) }, origin);
       }
       if (action === 'owner/approve' || action === 'owner/revoke') {
@@ -230,7 +541,19 @@ Deno.serve(async req => {
         });
         if (error) return json(503, fail('device_revocation_failed'), origin);
         if (data !== true) return json(404, fail('device_not_found_or_owner_scope_invalid'), origin);
-        return json(200, { ok: true, deviceId: input.deviceId, status: 'revoked' }, origin);
+        const revokedAt = new Date().toISOString();
+        await db.from('backroom_desktop_sessions').update({ status: 'revoked', stopped_at: revokedAt })
+          .eq('device_id', input.deviceId).eq('room_id', input.roomId).eq('status', 'active');
+        let notificationSent = false;
+        try {
+          await broadcastPrivateDeviceEvent({
+            projectUrl: url, apiKey: serviceKey, deviceId: input.deviceId,
+            event: 'device_revoked',
+            payload: { deviceId: input.deviceId, roomId: input.roomId, status: 'revoked', issuedAt: Date.now() },
+          });
+          notificationSent = true;
+        } catch { /* The companion's low-frequency status fallback remains authoritative. */ }
+        return json(200, { ok: true, deviceId: input.deviceId, status: 'revoked', notificationSent }, origin);
       }
     }
     return json(404, fail('unknown_action'), origin);

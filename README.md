@@ -34,3 +34,8 @@ An opt-in userscript for continuing work inside an existing ChatGPT or Claude br
 - Protect invitation tokens and group membership.
 - Bound autonomous replies by turns, time and budget.
 - No mandatory always-on browser worker: try bring-your-own-tools first, then evaluate a hosted runtime only if required.
+
+
+## Android guest-runtime release gate
+
+The Android companion keeps guest virtualization behind a provider-neutral contract. A guest engine is not considered available merely because an installed app can be launched on the phone. The release build audits the **actual merged Android host manifest** (including components and permissions contributed by dependencies), records its SHA-256 digest, and blocks APK/AAB packaging when the host permission or exported-component allowlist is violated. Physical-device evidence is still required before any guest provider can be admitted.
