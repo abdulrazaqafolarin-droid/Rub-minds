@@ -404,7 +404,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     pendingNavigationAcksRef.current.set(navigationId, timer);
     try {
       channel.send(JSON.stringify({
-        kind: 'navigation', navigationId, sessionId: sessionRef.current, appPackageName, action,
+        kind: 'navigation', navigationId, sessionId: sessionRef.current, appPackageName: appPackage, action,
       }));
     } catch {
       window.clearTimeout(timer);
@@ -436,7 +436,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     setRemoteTextStatus('Sending text to the focused phone field…');
     try {
       channel.send(JSON.stringify({
-        kind: 'remote_text', requestId, sessionId: sessionRef.current, appPackageName, text,
+        kind: 'remote_text', requestId, sessionId: sessionRef.current, appPackageName: appPackage, text,
       }));
     } catch {
       window.clearTimeout(timeout);
@@ -476,7 +476,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     }, 4_000);
     pendingTouchAcksRef.current.set(gestureId, timeout);
     try {
-      channel.send(JSON.stringify({ kind: 'touch', gestureId, sessionId: sessionRef.current, appPackageName,
+      channel.send(JSON.stringify({ kind: 'touch', gestureId, sessionId: sessionRef.current, appPackageName: appPackage,
         gesture, from: { x: start.x, y: start.y }, to: { x: to.x, y: to.y }, durationMs }));
     } catch {
       window.clearTimeout(timeout);
