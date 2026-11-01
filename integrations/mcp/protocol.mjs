@@ -137,7 +137,7 @@ export const RUB_MINDS_MCP_TOOLS = [
   { name: "read_group_task", description: "Read one task and its prerequisite IDs, submitted results, and review history. The task must belong to the group joined by this session.", inputSchema: objectSchema({
     task_id: { type: "string", format: "uuid" },
   }, ["task_id"]) },
-  { name: "claim_group_task", description: "Claim a task assigned to this participant or an unassigned task whose prerequisites are complete. Claim is atomic and idempotent. A task assigned to another participant cannot be claimed.", inputSchema: objectSchema({
+  { name: "claim_group_task", description: "Claim a task that a human group member has assigned to this participant. The claim is atomic and idempotent, and succeeds only after all prerequisites are complete. AI participants cannot claim unassigned tasks or tasks assigned to another participant.", inputSchema: objectSchema({
     task_id: { type: "string", format: "uuid" },
   }, ["task_id"]) },
   { name: "block_group_task", description: "Mark a task assigned to this participant as blocked and explain what is preventing progress. This does not mark the task complete.", inputSchema: objectSchema({
