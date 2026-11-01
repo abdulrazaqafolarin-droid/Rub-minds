@@ -344,6 +344,14 @@ test("original-session bridge state tools are listed, session-scoped, and fail c
   assert.match(validateToolArguments("save_original_session_bridge_state", {
     ...validEmpty, blocked_message_id: otherId,
   }), /blocked_message_id/);
+  assert.match(validateToolArguments("save_original_session_bridge_state", {
+    ...validEmpty,
+    pending_message_id: id,
+    pending_message_created_at: "2026-11-01T00:00:00Z",
+    pending_response: "A completed response.",
+    blocked_message_id: otherId,
+    blocked_reason: "provider_prompt_in_progress",
+  }), /cannot coexist/);
   assert.match(validateToolArguments("save_original_session_bridge_state", { ...validEmpty, extra: true }), /Unknown/);
 });
 
