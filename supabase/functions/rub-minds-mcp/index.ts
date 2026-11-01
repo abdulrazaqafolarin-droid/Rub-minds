@@ -24,14 +24,27 @@ import {
 
 const databaseUrl = Deno.env.get("SUPABASE_URL");
 const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-const credentialEncryptionKey = Deno.env.get("RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY");
-if (!databaseUrl || !serviceKey || !credentialEncryptionKey) throw new Error("Missing backend configuration or MCP credential-encryption secret");
+if (!databaseUrl || !serviceKey) throw new Error("Missing backend database configuration");
+const db = createClient(databaseUrl, serviceKey, { auth: { persistSession: false } });
+
+async function loadVaultCredentialEncryptionKey(): Promise<string> {
+  const { data, error } = await db.rpc("get_rub_minds_mcp_session_encryption_key");
+  if (error || typeof data !== "string" || !/^[0-9a-f]{64}$/i.test(data)) {
+    throw new Error("Missing backend configuration or MCP credential-encryption secret");
+  }
+  return data;
+}
+
+// Prefer the platform-managed Edge Function secret when configured. Vault is
+// the environment-isolated fallback; its getter RPC is executable only by
+// service_role and never returns the value to browser clients.
+const credentialEncryptionKey =
+  Deno.env.get("RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY") || await loadVaultCredentialEncryptionKey();
 const publicRateLimitSecret: string = serviceKey;
 // Previous keys are optional, decryption/retry-only. Keep them configured through the maximum session/idempotency lifetime.
 const previousKeySetting = Deno.env.get("RUB_MINDS_MCP_SESSION_ENCRYPTION_KEYS_PREVIOUS") || "";
 const previousEncryptionKeys = previousKeySetting ? previousKeySetting.split(",").map((key) => key.trim()).filter(Boolean) : [];
 const credentialEncryptionKeys = validateCredentialKeyRing(credentialEncryptionKey, previousEncryptionKeys);
-const db = createClient(databaseUrl, serviceKey, { auth: { persistSession: false } });
 const SESSION_TTL_HOURS = 24;
 const TERMINATED_TOMBSTONE_HOURS = 168;
 const MAX_REQUEST_BYTES = 1_200_000;
