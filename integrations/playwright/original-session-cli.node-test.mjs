@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   conversationKey,
-  findExistingConversationPage,
   isExactConversationPage,
   openExistingConversationPage,
   parseRunnerArgs,
@@ -16,7 +15,7 @@ import {
 const CHATGPT_URL = "https://chatgpt.com/c/conversation-123";
 const CLAUDE_URL = "https://claude.ai/chat/conversation-456";
 const ENV = {
-  RUB_MINDS_MCP_ENDPOINT: "https://staging-example.supabase.co/functions/v1/rub-minds-mcp",
+  RUB_MINDS_MCP_ENDPOINT: "https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp",
   RUB_MINDS_MCP_SESSION_HANDLE: "a".repeat(64),
   RUB_MINDS_PARTICIPANT_ID: "33333333-3333-4333-8333-333333333333",
 };
@@ -46,7 +45,7 @@ test("requires a clean HTTPS MCP endpoint and scoped session identity", () => {
   for (const invalid of [
     { ...ENV, RUB_MINDS_MCP_ENDPOINT: "http://staging-example.supabase.co/functions/v1/rub-minds-mcp" },
     { ...ENV, RUB_MINDS_MCP_ENDPOINT: "https://user:pass@staging-example.supabase.co/functions/v1/rub-minds-mcp" },
-    { ...ENV, RUB_MINDS_MCP_ENDPOINT: "https://staging-example.supabase.co/functions/v1/rub-minds-mcp?token=x" },
+    { ...ENV, RUB_MINDS_MCP_ENDPOINT: "https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp?token=x" },
     { ...ENV, RUB_MINDS_MCP_ENDPOINT: "https://staging-example.supabase.co/functions/v1/other" },
     { ...ENV, RUB_MINDS_MCP_SESSION_HANDLE: "short" },
     { ...ENV, RUB_MINDS_PARTICIPANT_ID: "not-a-uuid" },
