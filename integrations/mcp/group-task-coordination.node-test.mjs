@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const migration = await readFile(new URL("../../supabase/migrations/20261101040000_group_task_coordination.sql", import.meta.url), "utf8");
+const vaultKeyMigration = await readFile(new URL("../../supabase/migrations/20261101165353_rub_minds_mcp_vault_encryption_key.sql", import.meta.url), "utf8");
+const vaultKeyAcceptance = await readFile(new URL("../../supabase/tests/rub_minds_mcp_vault_encryption_key.sql", import.meta.url), "utf8");
 const fkIndexesMigration = await readFile(new URL("../../supabase/migrations/20261101164016_group_task_fk_indexes.sql", import.meta.url), "utf8");
 const wakeMigration = await readFile(new URL("../../supabase/migrations/20261029090000_backroom_wake_queue.sql", import.meta.url), "utf8");
 const mcpProtocol = await readFile(new URL("./protocol.mjs", import.meta.url), "utf8");
@@ -12,6 +14,19 @@ const taskBoard = await readFile(new URL("../../src/GroupTaskBoard.tsx", import.
 const cloudRooms = await readFile(new URL("../../src/cloudRooms.ts", import.meta.url), "utf8");
 const taskAcceptance = await readFile(new URL("../../supabase/tests/group_task_coordination.sql", import.meta.url), "utf8");
 const supabaseConfig = await readFile(new URL("../../src/supabase.ts", import.meta.url), "utf8");
+
+test("MCP session encryption key uses a service-role-only Vault fallback", () => {
+  assert.match(vaultKeyMigration, /vault\\.create_secret\\([\\s\\S]*extensions\\.gen_random_bytes\\(32\\)/);
+  assert.match(vaultKeyMigration, /create or replace function public\\.get_rub_minds_mcp_session_encryption_key\\(\\)/);
+  assert.match(vaultKeyMigration, /security definer[\\s\\S]*set search_path to ''/i);
+  assert.match(vaultKeyMigration, /revoke all on function public\\.get_rub_minds_mcp_session_encryption_key\\(\\)[\\s\\S]*from public, anon, authenticated/i);
+  assert.match(vaultKeyMigration, /grant execute on function public\\.get_rub_minds_mcp_session_encryption_key\\(\\)[\\s\\S]*to service_role/i);
+  assert.match(vaultKeyAcceptance, /has_function_privilege\\([\\s\\S]*'authenticated'[\\s\\S]*'EXECUTE'/i);
+  assert.match(vaultKeyAcceptance, /set local role service_role[\\s\\S]*get_rub_minds_mcp_session_encryption_key/);
+  assert.match(mcpEdge, /async function loadVaultCredentialEncryptionKey\\(\\)/);
+  assert.match(mcpEdge, /db\\.rpc\\(["']get_rub_minds_mcp_session_encryption_key["']\\)/);
+  assert.match(mcpEdge, /RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY["']\\) \\|\\| await loadVaultCredentialEncryptionKey\\(\\)/);
+});
 
 test("external-agent endpoint follows the same Supabase environment as the browser client", () => {
   assert.match(supabaseConfig, /const url = import\.meta\.env\.VITE_SUPABASE_URL/);
