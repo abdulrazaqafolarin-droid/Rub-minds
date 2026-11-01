@@ -233,10 +233,16 @@ export async function runOriginalSessionBridge({
   const rl = createInterface({ input, output });
   let context;
   let runtime;
+  let runtimeStopRequested = false;
   const controller = new AbortController();
+  const stopRuntime = () => {
+    if (!runtime || runtimeStopRequested) return;
+    runtimeStopRequested = true;
+    runtime.stop();
+  };
   const stop = () => {
     controller.abort();
-    runtime?.stop();
+    stopRuntime();
   };
   const onSigint = () => stop();
   const onSigterm = () => stop();
@@ -310,6 +316,7 @@ export async function runOriginalSessionBridge({
       },
     });
 
+    if (controller.signal.aborted) stopRuntime();
     const result = await runtime.run({ approved: true, signal: controller.signal });
     output.write("Bridge stopped: " + result.status + " · replies " + result.replies + "\n");
     return result;
@@ -320,7 +327,7 @@ export async function runOriginalSessionBridge({
     }
     throw error;
   } finally {
-    runtime?.stop();
+    stopRuntime();
     process.removeListener("SIGINT", onSigint);
     process.removeListener("SIGTERM", onSigterm);
     rl.close();
