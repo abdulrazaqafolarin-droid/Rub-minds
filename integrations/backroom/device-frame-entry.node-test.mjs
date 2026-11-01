@@ -25,9 +25,9 @@ test("Backroom uses the cloud Device Frame and gates direct links with Rub Minds
   assert.match(devices, /Terminal/);
   assert.match(devices, /outbound HTTPS/);
   assert.match(browser, /LiveBrowserPreview/);
-  assert.doesNotMatch(browser, /function Preview\\(/);
-  assert.doesNotMatch(browser, /DEMO · NOT LIVE|Select demo region|Simulated .* preview|workspace placeholder/);
-  assert.match(browser, /surface === 'browser_tab' && typeof s\\.pageId === 'string'/);
+  assert.ok(!browser.includes('function Preview('));
+  for (const demoOnlyCopy of ['DEMO · NOT LIVE', 'Select demo region', 'Simulated ', 'workspace placeholder']) assert.ok(!browser.includes(demoOnlyCopy), 'legacy demo content remains: ' + demoOnlyCopy);
+  assert.ok(browser.includes("surface === 'browser_tab' && typeof s.pageId === 'string'"));
   assert.match(browser, /verified app connection/);
 
   assert.match(browser, /refreshBrowserInventory/);
