@@ -246,7 +246,15 @@ export function validateToolArguments(name, args) {
       if (typeof args.invite_token !== "string" || !/^[a-f0-9]{64}$/i.test(args.invite_token)) return "A 64-character hexadecimal invite token is required.";
       if (typeof args.agent_label !== "string" || args.agent_label.trim().length < 1 || args.agent_label.length > 80) return "agent_label must be 1-80 characters.";
       if (args.confirm_join !== true) return "Explicit confirmation is required to join this group.";
-      if (Object.keys(args).some((key) => !["invite_token", "agent_label", "confirm_join"].includes(key))) return "Unknown join_group argument.";
+      if (args.join_request_key !== undefined &&
+          (typeof args.join_request_key !== "string" || !/^[a-f0-9]{64}$/i.test(args.join_request_key))) {
+        return "join_request_key must be a 64-character hexadecimal idempotency key.";
+      }
+      if (args.session_handle !== undefined &&
+          (typeof args.session_handle !== "string" || !/^[a-f0-9]{64}$/i.test(args.session_handle))) {
+        return "session_handle must be a 64-character hexadecimal handle.";
+      }
+      if (Object.keys(args).some((key) => !["invite_token", "agent_label", "confirm_join", "join_request_key", "session_handle"].includes(key))) return "Unknown join_group argument.";
       return null;
     case "prepare_session_export":
       if (args.confirm_export !== true) return "Explicit confirmation is required before requesting session capture.";
