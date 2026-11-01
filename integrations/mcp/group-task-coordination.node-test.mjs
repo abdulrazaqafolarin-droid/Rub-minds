@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const migration = await readFile(new URL("../../supabase/migrations/20261101040000_group_task_coordination.sql", import.meta.url), "utf8");
+const reviewEvidenceMigration = await readFile(new URL("../../supabase/migrations/20261101210000_group_task_review_criterion_evidence.sql", import.meta.url), "utf8");
 const vaultKeyMigration = await readFile(new URL("../../supabase/migrations/20261101165353_rub_minds_mcp_vault_encryption_key.sql", import.meta.url), "utf8");
 const vaultKeyAcceptance = await readFile(new URL("../../supabase/tests/rub_minds_mcp_vault_encryption_key.sql", import.meta.url), "utf8");
 const ciWorkflow = await readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+const wakeQueueWorkflow = await readFile(new URL("../../.github/workflows/backroom-wake-queue.yml", import.meta.url), "utf8");
 const fkIndexesMigration = await readFile(new URL("../../supabase/migrations/20261101164016_group_task_fk_indexes.sql", import.meta.url), "utf8");
 const wakeMigration = await readFile(new URL("../../supabase/migrations/20261029090000_backroom_wake_queue.sql", import.meta.url), "utf8");
 const mcpProtocol = await readFile(new URL("./protocol.mjs", import.meta.url), "utf8");
@@ -233,7 +235,7 @@ test("MCP exposes bounded task tools only after its existing participant-session
 test("the existing cloud group UI owns the task board and uses the current Realtime room channel", () => {
   assert.match(cloudApp, /import GroupTaskBoard from '\.\/GroupTaskBoard'/);
   assert.match(cloudApp, /setShowTasks/);
-  assert.match(cloudApp, /<GroupTaskBoard[\s\S]*?roomId=\{room\.id\}/);
+  assert.match(cloudApp, /<GroupTaskBoard[\s\S]*?key=\{room\.id\}[\s\S]*?roomId=\{room\.id\}/);
   assert.match(taskBoard, /onSaveDependencies/);
   assert.match(taskBoard, /Revise prerequisites/);
   for (const operation of ["listGroupTasks", "createGroupTask", "assignGroupTask", "replaceGroupTaskDependencies", "reviewGroupTask", "cancelGroupTask", "claimGroupTaskAsHuman", "submitGroupTaskResultAsHuman"]) {
@@ -256,4 +258,45 @@ test("dependency graph, wake acknowledgement and in-progress assignment boundari
   assert.match(taskAcceptance, /An AI task claim must not cancel its still-leased canonical wake/);
   assert.match(taskAcceptance, /An in-progress task must not be reassigned to another participant/);
   assert.match(taskAcceptance, /Failure of a prerequisite must block downstream work/);
+});
+
+
+test("human task approvals require persisted evidence for every acceptance criterion", () => {
+  assert.match(reviewEvidenceMigration, /add column if not exists criterion_evidence jsonb not null default '\[\]'::jsonb/);
+  assert.match(reviewEvidenceMigration, /drop function if exists public\.review_room_task\(uuid, uuid, text, text\)/);
+  assert.match(reviewEvidenceMigration, /create function public\.review_room_task\([\s\S]*?p_criterion_evidence jsonb/);
+  assert.match(reviewEvidenceMigration, /Evidence must cover every acceptance criterion exactly once and in order/);
+  assert.match(reviewEvidenceMigration, /jsonb_typeof\(evidence\.item->'criterion'\) is distinct from 'string'/i);
+  assert.match(reviewEvidenceMigration, /jsonb_typeof\(evidence\.item->'met'\) is distinct from 'boolean'/i);
+  assert.match(reviewEvidenceMigration, /jsonb_typeof\(evidence\.item->'evidence'\) is distinct from 'string'/i);
+  assert.match(reviewEvidenceMigration, /evidence\.item->>'met' is distinct from 'true'/);
+  assert.match(reviewEvidenceMigration, /A task cannot be approved while any acceptance criterion is unmet/);
+  assert.match(reviewEvidenceMigration, /criterion_evidence=p_criterion_evidence/);
+  assert.match(reviewEvidenceMigration, /revoke all on function public\.review_room_task\(uuid,uuid,text,text,jsonb\) from public, anon/);
+  assert.match(reviewEvidenceMigration, /grant execute on function public\.review_room_task\(uuid,uuid,text,text,jsonb\) to authenticated/);
+  assert.doesNotMatch(reviewEvidenceMigration, /grant execute on function public\.review_room_task\(uuid,uuid,text,text\) to authenticated/);
+  assert.match(cloudRooms, /criterion_evidence,created_at/);
+  assert.match(cloudRooms, /p_criterion_evidence:/);
+  assert.match(taskBoard, /Acceptance criteria evidence/);
+  assert.match(taskBoard, /Every acceptance criterion must be marked met before approval/);
+  assert.match(taskAcceptance, /Review must include evidence for every criterion/);
+  assert.match(taskAcceptance, /Unmet acceptance criteria must block approval/);
+  assert.match(taskAcceptance, /Missing criterion met decision must be rejected/);
+  assert.match(taskAcceptance, /Null criterion met decision must be rejected/);
+  assert.match(taskAcceptance, /Non-text criterion evidence must be rejected/);
+  assert.match(taskAcceptance, /Non-text criterion labels must be rejected/);
+  assert.match(taskAcceptance, /Anonymous and service roles must not be granted the human review RPC/);
+  assert.match(taskAcceptance, /The old review RPC signature must not remain callable/);
+  assert.match(taskAcceptance, /Criterion-level review evidence must be persisted with the decision/);
+  assert.match(sdkTaskE2e, /p_criterion_evidence/);
+  assert.match(sdkTaskE2e, /all task criteria must retain review evidence/);
+  assert.match(wakeQueueWorkflow, /20261101210000_group_task_review_criterion_evidence\.sql/);
+});
+
+test("Realtime task refreshes reject stale snapshots and stale errors", () => {
+  assert.match(taskBoard, /const refreshGeneration = useRef\(0\)/);
+  assert.match(taskBoard, /requestId !== refreshGeneration\.current/);
+  assert.match(taskBoard, /refreshGeneration\.current \+= 1/);
+  assert.match(taskBoard, /sequence === loadSequence/);
+  assert.match(taskBoard, /Only the newest complete snapshot/);
 });
