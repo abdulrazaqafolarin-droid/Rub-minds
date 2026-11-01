@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { PassThrough } from "node:stream";
 import { join } from "node:path";
 import {
   bindAdapterToExactConversation,
@@ -10,6 +11,7 @@ import {
   openExistingConversationPage,
   parseRunnerArgs,
   preparePrivateBrowserProfile,
+  runOriginalSessionBridge,
   validateRunnerEnvironment,
 } from "../../scripts/original-session-bridge.mjs";
 
@@ -153,4 +155,41 @@ test("pins all later group turns to the exact selected conversation", async () =
     error => error?.submissionState === "not_submitted" && /pinned original conversation changed/.test(error.message),
   );
   assert.equal(adapterCalls, 1, "the provider adapter must not be called after the tab changes threads");
+});
+
+
+test("declining startup consent never launches a browser or exposes the session handle", async () => {
+  const input = new PassThrough();
+  input.isTTY = true;
+  input.setRawMode = () => {};
+  const output = new PassThrough();
+  output.isTTY = true;
+  const writes = [];
+  output.write = value => { writes.push(String(value)); return true; };
+  let browserLaunches = 0;
+  try {
+    const result = await runOriginalSessionBridge({
+      argv: ["--provider", "chatgpt", "--conversation-url", CHATGPT_URL],
+      env: ENV,
+      input,
+      output,
+      errorOutput: output,
+      prompt: async () => false,
+      playwright: {
+        chromium: {
+          async launchPersistentContext() {
+            browserLaunches += 1;
+            throw new Error("Browser must not launch without startup consent");
+          },
+        },
+      },
+    });
+    assert.deepEqual(result, { status: "not_started", replies: 0 });
+    assert.equal(browserLaunches, 0);
+    assert.ok(!writes.join("").includes(ENV.RUB_MINDS_MCP_SESSION_HANDLE));
+    assert.match(writes.join(""), /Not started/);
+  } finally {
+    input.destroy();
+    output.destroy();
+  }
 });
