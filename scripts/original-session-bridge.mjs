@@ -109,6 +109,14 @@ export function conversationKey(provider, value) {
   return url.origin + url.pathname;
 }
 
+export function browserProcessEnvironment(env = process.env) {
+  // The browser process needs the provider session, not the Rub Minds bearer
+  // capability. Never pass the MCP session handle into Chromium's environment.
+  const browserEnv = { ...env };
+  delete browserEnv.RUB_MINDS_MCP_SESSION_HANDLE;
+  return browserEnv;
+}
+
 export async function preparePrivateBrowserProfile(profileDirectory) {
   const directory = resolve(profileDirectory);
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -231,6 +239,7 @@ export async function runOriginalSessionBridge({
     context = await browserApi.chromium.launchPersistentContext(profileDirectory, {
       headless: false,
       viewport: null,
+      env: browserProcessEnvironment(env),
     });
     const page = await openExistingConversationPage(context, options.provider, options.conversationUrl);
     if (!isExactConversationPage(page, options.provider, options.conversationUrl)) {
