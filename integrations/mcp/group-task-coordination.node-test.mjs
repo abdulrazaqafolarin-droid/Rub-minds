@@ -267,7 +267,7 @@ test("human task approvals require persisted evidence for every acceptance crite
   assert.match(taskAcceptance, /Review must include evidence for every criterion/);
   assert.match(taskAcceptance, /Unmet acceptance criteria must block approval/);
   assert.match(taskAcceptance, /Criterion-level review evidence must be persisted with the decision/);
-  assert.match(ciWorkflow, /20261101210000_group_task_review_criterion_evidence\.sql/);
+  assert.match(wakeQueueWorkflow, /20261101210000_group_task_review_criterion_evidence\.sql/);
 });
 
 test("Realtime task refreshes reject stale snapshots and stale errors", () => {
