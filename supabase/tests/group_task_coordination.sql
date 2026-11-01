@@ -172,17 +172,50 @@ begin
   perform pg_catalog.set_config('request.jwt.claim.sub',v_human_reviewer::text,true);
   v_conflict := false;
   begin
-    perform public.review_room_task(v_room,v_human_task,'approved','Self-review is not allowed');
+    perform public.review_room_task(v_room,v_human_task,'approved','Self-review is not allowed','[]'::jsonb);
   exception when others then
     if sqlerrm not like 'Only the task creator or group owner may review this task%' then raise; end if;
     v_conflict := true;
   end;
   if not v_conflict then raise exception 'Unrelated human must not approve a task'; end if;
 
+  -- Database-side review validation must reject incomplete evidence and any
+  -- approval that marks a required criterion as unmet.
   perform pg_catalog.set_config('request.jwt.claim.sub',v_owner::text,true);
-  perform public.review_room_task(v_room,v_human_task,'revision_requested','Add the missing evidence');
+  v_conflict := false;
+  begin
+    perform public.review_room_task(v_room,v_human_task,'approved','Missing evidence','[]'::jsonb);
+  exception when others then
+    if sqlerrm not like 'Evidence must cover every acceptance criterion exactly once and in order%' then raise; end if;
+    v_conflict := true;
+  end;
+  if not v_conflict then raise exception 'Review must include evidence for every criterion'; end if;
+  v_conflict := false;
+  begin
+    perform public.review_room_task(
+      v_room,v_human_task,'approved','Criterion still unmet',
+      '[{"criterion":"Tests pass","met":true,"evidence":"CI run 123 passed"},{"criterion":"Evidence attached","met":false,"evidence":"Source proof is missing"}]'::jsonb
+    );
+  exception when others then
+    if sqlerrm not like 'A task cannot be approved while any acceptance criterion is unmet%' then raise; end if;
+    v_conflict := true;
+  end;
+  if not v_conflict then raise exception 'Unmet acceptance criteria must block approval'; end if;
+  if (select status from public.room_tasks where id=v_human_task)<>'review' then
+    raise exception 'Rejected reviews must leave the task awaiting review';
+  end if;
+
+  perform public.review_room_task(
+    v_room,v_human_task,'revision_requested','Add the missing evidence',
+    '[{"criterion":"Tests pass","met":true,"evidence":"CI run 123 passed"},{"criterion":"Evidence attached","met":false,"evidence":"Source proof is missing"}]'::jsonb
+  );
   select status into v_status from public.room_tasks where id=v_human_task;
   if v_status<>'assigned' then raise exception 'Revision request should return the task to assigned'; end if;
+  if not exists (
+    select 1 from public.room_task_reviews r
+    where r.task_id=v_human_task
+      and r.criterion_evidence='[{"criterion":"Tests pass","met":true,"evidence":"CI run 123 passed"},{"criterion":"Evidence attached","met":false,"evidence":"Source proof is missing"}]'::jsonb
+  ) then raise exception 'Criterion-level review evidence must be persisted with the decision'; end if;
 
   perform pg_catalog.set_config('request.jwt.claim.sub',v_human::text,true);
   perform public.claim_room_task_human(v_room,v_human_task,v_human);
@@ -191,9 +224,25 @@ begin
     '99000000-0000-4000-8000-000000000002'
   );
   perform pg_catalog.set_config('request.jwt.claim.sub',v_owner::text,true);
-  perform public.review_room_task(v_room,v_human_task,'approved','Acceptance criteria met');
+  perform public.review_room_task(
+    v_room,v_human_task,'approved','Acceptance criteria met',
+    '[{"criterion":"Tests pass","met":true,"evidence":"CI run 124 passed"},{"criterion":"Evidence attached","met":true,"evidence":"Artifact attached to the submission"}]'::jsonb
+  );
   select status into v_status from public.room_tasks where id=v_human_task;
   if v_status<>'completed' then raise exception 'Only an approved human review completes a task'; end if;
+  if not exists (
+    select 1 from public.room_task_reviews r
+    where r.task_id=v_human_task and r.outcome='approved'
+      and jsonb_array_length(r.criterion_evidence)=2
+  ) then raise exception 'Approval must retain evidence for every acceptance criterion'; end if;
+
+  -- A retry with the same complete payload is idempotent; changing evidence
+  -- cannot silently rewrite an already recorded review.
+  v_claim := public.review_room_task(
+    v_room,v_human_task,'approved','Acceptance criteria met',
+    '[{"criterion":"Tests pass","met":true,"evidence":"CI run 124 passed"},{"criterion":"Evidence attached","met":true,"evidence":"Artifact attached to the submission"}]'::jsonb
+  );
+  if v_claim->>'replayed'<>'true' then raise exception 'An identical review retry must be idempotent'; end if;
 
   -- Completion releases the dependent AI task. The task event trigger calls
   -- the existing durable queue, using the same canonical @RMconnects prompt.
