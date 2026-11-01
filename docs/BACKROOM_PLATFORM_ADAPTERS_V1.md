@@ -41,3 +41,16 @@ Playwright is only a browser adapter and local smoke-test tool. Provider website
 5. Real session identity and focus checks tested during deliberate window switching, stale sessions, rotations and disconnections.
 6. Host authentication, revocation, kill switch, durable replay protection and server-side group authority reviewed before external message dispatch.
 7. Production deploy separately approved. An open PR and passing mock tests do not constitute device support.
+
+## Incremental browser in-space view (feature branch only)
+
+The feat/rm-backroom-live-browser-view change adds the first actual in-space view adapter for tabs discovered by the paired, host-managed Playwright Chromium profile.
+
+- The Backroom tile is created from a real pageId returned by the host's tab inventory. The Add App form no longer treats a manually typed app label as a discovered application.
+- A tab's read-only snapshot permission is separate from draft insertion. The web UI requests a permission, but the trusted local host terminal must separately approve the exact tab (title and site), group scope and view-only capability. Draft insertion and autonomous wake grants each require their own trusted local terminal approval too; a remote `approved`, `ownerConfirmed` or `confirmed` field is not sufficient. Non-interactive hosts deny these requests. The view grant expires after five minutes by default and is revoked on pause, tab change, host stop or page close.
+- The host returns short-lived JPEG viewport snapshots over the authenticated loopback connection. The UI refreshes them periodically and displays them in the Backroom stage. This is a read-only snapshot view, not an iframe, interactive remote desktop stream or native process embed. Images are not stored or uploaded by the app.
+- Each frame has a single-use ID and is bound to the page, group, permission grant, URL, viewport size, scroll position and observed DOM revision. The selection overlay maps its drag rectangle back to the screenshot's CSS viewport. The host accepts only one visible, enabled, editable, empty field wholly inside the selected region; ambiguous, occupied or stale selections fail closed.
+- The selected DOM element is retained by the existing browser target registration path. The existing BrowserDraftAdapter still revalidates the exact node, URL and empty value before insertion. Draft insertion requires its own confirmation and never presses Enter or Send.
+- This path covers managed Chromium tabs only. It does not embed tabs from an unrelated Chrome profile, and it does not claim native Windows, macOS, Android or terminal views. Those remain unavailable until their respective discovery, permission and transport drivers are implemented and integration-tested.
+
+The local browser-view API and mock tests are not physical-device or provider-account acceptance tests. A real Chromium run and actual host terminal approval are required before marking this adapter end-to-end verified.

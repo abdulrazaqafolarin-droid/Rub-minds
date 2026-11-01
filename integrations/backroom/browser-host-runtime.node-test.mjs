@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { BrowserHostRuntime } from "./browser-host-runtime.mjs";
 
 function fakePage({url="https://chatgpt.com/c/test",title="Research thread",selection=null,closed=false}={}) {
- const handlers={}; let input="", pageUrl=url, bindingMarker=null, nodeId=1, markerNodeId=null, disposedHandles=0, selectedElementNodeId=null, selectionSerial=100, activeAttemptId=null;
+ const handlers={}; let input="", pageUrl=url, bindingMarker=null, nodeId=1, markerNodeId=null, disposedHandles=0, selectedElementNodeId=null, selectionSerial=100, activeAttemptId=null, viewportWidth=1200, viewportHeight=800, scrollX=0, scrollY=0, domRevision=0;
  const makeHandle = capturedNodeId => ({
   nodeId:capturedNodeId,
   getAttribute:async name=>name==="data-rm-backroom-binding"&&markerNodeId===capturedNodeId?bindingMarker:null,
@@ -81,8 +81,17 @@ function fakePage({url="https://chatgpt.com/c/test",title="Research thread",sele
  return {
   handlers,isClosed:()=>closed,url:()=>pageUrl,title:async()=>title,on:(event,fn)=>{handlers[event]=fn},
   goto:async value=>{pageUrl=value},locator,
+  screenshot:async options=>Buffer.from("fake-jpeg"),
   evaluate:async(fn,arg)=>{
    const code=String(fn);
+   if(code.includes("RM_BACKROOM_VIEWPORT_V1"))return {marker:"RM_BACKROOM_VIEWPORT_V1",width:viewportWidth,height:viewportHeight,scrollX,scrollY,href:pageUrl,revision:domRevision};
+   if(code.includes("RM_BACKROOM_REGION_PICK_V1")){
+    if(domRevision!==arg.revision)return {state:"stale_view"};
+    if(input!=="")return {state:"occupied_target"};
+    selection={state:"selected",attemptId:arg.attemptId,selectionId:arg.selectionId,selector:'textarea[aria-label="Prompt"]',tagName:"textarea",selectedAt:Date.now()};
+    selectedElementNodeId=nodeId;
+    return {state:"selected",selector:selection.selector,tagName:"textarea"};
+   }
    if(typeof fn==="function" && fn.name==="installSelectionOverlay") {
     activeAttemptId=arg;selection={state:"pending",attemptId:arg};selectedElementNodeId=null;return {state:"pending"};
    }
@@ -104,7 +113,9 @@ function fakePage({url="https://chatgpt.com/c/test",title="Research thread",sele
    return {asElement:()=>handle,dispose:async()=>{if(!handle)disposedHandles++;}};
   },
   setSelection:v=>{const stamp=++selectionSerial;selection={...v,attemptId:v.attemptId??activeAttemptId,selectedAt:v.selectedAt??stamp,selectionId:v.selectionId??("aaaaaaaa-bbbb-4ccc-8ddd-"+String(stamp).padStart(12,"0"))};selectedElementNodeId=nodeId;},
-  value:()=>input,setValue:v=>{input=v},setUrl:v=>pageUrl=v,
+  value:()=>input,setValue:v=>{input=v},setUrl:v=>{pageUrl=v},
+  setViewport:({width=viewportWidth,height=viewportHeight,x=scrollX,y=scrollY}={})=>{viewportWidth=width;viewportHeight=height;scrollX=x;scrollY=y},
+  setDomRevision:()=>{domRevision++},
   replaceNode:({preserveMarker=false}={})=>{nodeId++;if(!preserveMarker){bindingMarker=null;markerNodeId=null;}else markerNodeId=nodeId;},
   setBindingMarker:v=>{bindingMarker=v;markerNodeId=v?nodeId:null},bindingMarker:()=>bindingMarker,disposedHandles:()=>disposedHandles,
   selectionState:()=>selection,activeSelectionAttempt:()=>activeAttemptId,selectedElementNodeId:()=>selectedElementNodeId,
@@ -346,6 +357,66 @@ test("a copied DOM binding marker cannot impersonate the original composer node"
  p.replaceNode({preserveMarker:true});
  assert.equal((await runtime.listTargets()).length,0);
  await assert.rejects(()=>runtime.draft(target.id,"stale",{approved:true,roomId:"room-1"}),/target unavailable/i);
+ await runtime.stop();
+});
+
+
+test("in-space browser view requires a scoped grant and resolves drag regions to an exact DOM target",async()=>{
+ const p=fakePage(),runtime=factory(fakeContext([p]));await runtime.start();
+ const [page]=await runtime.listPages();
+ const roomId="12345678-1234-4234-9234-123456789014";
+ await assert.rejects(()=>runtime.captureView(page.pageId,roomId,"12345678-1234-4234-9234-123456789099"),/permission required/i);
+ const grant=await runtime.grantView(page.pageId,roomId);
+ assert.equal(grant.pageId,page.pageId);assert.equal(grant.roomId,roomId);
+ const frame=await runtime.captureView(page.pageId,roomId,grant.grantId);
+ assert.equal(frame.mimeType,"image/jpeg");
+ assert.equal(Buffer.from(frame.image,"base64").toString(),"fake-jpeg");
+ assert.equal(frame.width,1200);assert.equal(frame.height,800);
+ const target=await runtime.selectRegionFromView(page.pageId,roomId,frame.frameId,{x:0,y:0,width:100,height:100});
+ assert.equal(target.pageId,page.pageId);assert.equal(target.roomId,roomId);
+ assert.equal(target.surface,"browser_tab");assert.ok(target.operations.includes("draft"));
+ await assert.rejects(()=>runtime.selectRegionFromView(page.pageId,roomId,frame.frameId,{x:0,y:0,width:100,height:100}),/view_frame_expired/i);
+ await runtime.stop();
+});
+
+test("in-space browser view invalidates stale viewport and revoked grants",async()=>{
+ const p=fakePage(),runtime=factory(fakeContext([p]));await runtime.start();
+ const [page]=await runtime.listPages();
+ const roomId="12345678-1234-4234-9234-123456789014";
+ const grant=await runtime.grantView(page.pageId,roomId);
+ const frame=await runtime.captureView(page.pageId,roomId,grant.grantId);
+ p.setViewport({width:900,height:700,x:0,y:0});
+ await assert.rejects(()=>runtime.selectRegionFromView(page.pageId,roomId,frame.frameId,{x:0,y:0,width:100,height:100}),/view_frame_invalidated/i);
+ const next=await runtime.captureView(page.pageId,roomId,grant.grantId);
+ assert.equal(runtime.revokeView(page.pageId,roomId,grant.grantId),true);
+ await assert.rejects(()=>runtime.captureView(page.pageId,roomId,grant.grantId),/permission required/i);
+ await assert.rejects(()=>runtime.selectRegionFromView(page.pageId,roomId,next.frameId,{x:0,y:0,width:100,height:100}),/view_frame_expired/i);
+ await runtime.stop();
+});
+
+
+test("in-space browser view rejects same-URL SPA changes and occupied composers",async()=>{
+ const p=fakePage(),runtime=factory(fakeContext([p]));await runtime.start();
+ const [page]=await runtime.listPages();
+ const roomId="12345678-1234-4234-9234-123456789014";
+ const grant=await runtime.grantView(page.pageId,roomId);
+ const stale=await runtime.captureView(page.pageId,roomId,grant.grantId);
+ p.setDomRevision();
+ await assert.rejects(()=>runtime.selectRegionFromView(page.pageId,roomId,stale.frameId,{x:0,y:0,width:100,height:100}),/view_frame_invalidated/i);
+ const occupied=await runtime.captureView(page.pageId,roomId,grant.grantId);
+ p.setValue("Existing draft");
+ await assert.rejects(()=>runtime.selectRegionFromView(page.pageId,roomId,occupied.frameId,{x:0,y:0,width:100,height:100}),/occupied_target/i);
+ await runtime.stop();
+});
+
+test("view grants cannot be used by another group or another tab",async()=>{
+ const p=fakePage(),runtime=factory(fakeContext([p]));await runtime.start();
+ const [page]=await runtime.listPages();
+ const roomA="12345678-1234-4234-9234-123456789014";
+ const roomB="22345678-1234-4234-9234-123456789014";
+ const grant=await runtime.grantView(page.pageId,roomA);
+ await assert.rejects(()=>runtime.captureView(page.pageId,roomB,grant.grantId),/permission required/i);
+ await assert.rejects(()=>runtime.grantView("32345678-1234-4234-9234-123456789014",roomA),/browser_page_unavailable/i);
  await runtime.stop();
 });
 
