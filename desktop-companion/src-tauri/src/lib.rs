@@ -75,7 +75,7 @@ fn clear_device_credentials() -> Result<(), String> {
 // This confirmation is a native OS dialog, not HTML rendered in the companion
 // WebView. Sensitive Tauri commands enforce it themselves so an IPC caller
 // cannot bypass the local approval screen with a direct invoke() call.
-async fn require_native_confirmation(app: AppHandle, title: &str, message: &str) -> Result<(), String> {
+async fn require_native_confirmation(app: &AppHandle, title: &str, message: &str) -> Result<(), String> {
     let (sender, receiver) = tokio::sync::oneshot::channel::<bool>();
     app.dialog()
         .message(message.to_string())
@@ -200,7 +200,7 @@ struct RegistrationSummary {
 async fn register_desktop_device(app: AppHandle, args: RegisterDeviceArgs) -> Result<RegistrationSummary, String> {
     require_native_confirmation(&app, "Connect this computer to Rub Minds?", &format!(
         "Register this computer as a Backroom device for group {}. The selected application inventory will share labels and executable fingerprints, not file contents or application sessions.", args.room_id
-    ))?;
+    )).await?;
     let base = validate_supabase_config(&args.supabase_url, &args.publishable_key, &args.access_token)?;
     if Uuid::parse_str(&args.room_id).is_err() || args.device_label.trim().is_empty() ||
        args.device_label.len() > 80 || args.os_version.len() > 40 ||
@@ -595,7 +595,7 @@ async fn launch_registered_app(app: AppHandle, state: State<'_, AppState>, app_i
         require_native_confirmation(&app, "Launch approved application?", &format!(
             "Open {} on this computer?\\n\\nExecutable: {}\\n\\nThe app runs locally; Backroom does not receive its private files or login state.",
             entry.label, path.display()
-        ))?;
+        )).await?;
         let parent = path.parent().ok_or("Application directory is unavailable")?;
         let mut processes = state.desktop_processes.lock().map_err(|_| "Desktop process registry unavailable")?;
         processes.retain(|_, process| process.try_wait().ok().flatten().is_none());
@@ -825,7 +825,7 @@ async fn grant_control(app: AppHandle, state: State<'_, AppState>, session_id: S
     require_native_confirmation(&app, "Allow Backroom control?", &format!(
         "Allow this group to control local session {} for up to {} seconds? Pointer, keyboard, and terminal input may reach the selected application.",
         session_id, seconds.clamp(30, 600)
-    ))?;
+    )).await?;
 
     // Revalidate after the user has answered the OS prompt. Hold the control
     // lock while checking liveness so a competing revoke/stop cannot install a
@@ -873,7 +873,7 @@ async fn grant_draft_typing(app: AppHandle, state: State<'_, AppState>, session_
     };
     require_native_confirmation(&app, "Allow unsent draft typing?", &format!(
         "{}\n\nPermission expires after {} seconds.", approval_message, seconds.clamp(30, 120)
-    ))?;
+    )).await?;
 
     // The screen/terminal could be stopped or its control grant revoked while
     // the native approval dialog was open. Serialize the final recheck and
@@ -1286,7 +1286,7 @@ async fn approve_draft_request(app: AppHandle, state: State<'_, AppState>, reque
     require_native_confirmation(&app, "Insert this unsent draft?", &format!(
         "{}\n\nInsert this exact text into that verified empty field? Backroom will recheck the field identity and empty value before writing. It will not press Enter or Send.\n\n{}",
         target_label, pending.text
-    ))?;
+    )).await?;
 
     // Re-check after approval. The app may have moved, closed or populated
     // the field while the native confirmation dialog was open.
@@ -1321,7 +1321,7 @@ struct TerminalStarted {
     rows: u16,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TerminalOutput {
     session_id: String,
@@ -1331,7 +1331,7 @@ struct TerminalOutput {
 #[tauri::command]
 async fn start_terminal(app: AppHandle, state: State<'_, AppState>, session_id: Option<String>) -> Result<TerminalStarted, String> {
     check_approval_rate(&state)?;
-    require_native_confirmation(&app, "Start a native terminal?", "Start a local PowerShell/zsh/bash shell for this Backroom session? A separate time-limited control approval is needed before remote typing is enabled.")?;
+    require_native_confirmation(&app, "Start a native terminal?", "Start a local PowerShell/zsh/bash shell for this Backroom session? A separate time-limited control approval is needed before remote typing is enabled.").await?;
     let mut active_terminals = state.terminals.lock().map_err(|_| "Terminal registry unavailable")?;
     if active_terminals.len() >= MAX_ACTIVE_TERMINALS {
         return Err("Backroom has reached the limit of four active terminal sessions. Stop a terminal or use Emergency Stop.".into());
@@ -1451,7 +1451,7 @@ async fn submit_terminal_input(
     // Enter can execute a command or submit a prompt. It is always confirmed
     // separately on the physical computer; remote UI state is not authorization.
     if let Err(error) = require_native_confirmation(
-        app,
+        &app,
         "Send Enter to this terminal?",
         "Backroom will send exactly one Enter key to this terminal session. This may submit the current Claude Code/OpenCode prompt or execute a shell command. The companion cannot inspect the TUI input buffer; inspect the visible terminal and approve only when intended. No text will be added."
     ).await {
@@ -1503,7 +1503,7 @@ async fn submit_terminal_input(
     let session = sessions.get(&session_id).ok_or("Terminal session is closed")?;
     let mut writer = session.writer.lock().map_err(|_| "Terminal writer unavailable")?;
     writer.write_all(b"\r").map_err(|_| "Terminal Enter key could not be delivered; inspect the terminal before retrying")?;
-    writer.flush().map_err(|_| "Terminal Enter key could not be delivered; inspect the terminal before retrying")
+    writer.flush().map_err(|_| "Terminal Enter key could not be delivered; inspect the terminal before retrying".to_string())
 }
 
 #[tauri::command]
@@ -1514,9 +1514,10 @@ fn resize_terminal(state: State<'_, AppState>, session_id: String, cols: u16, ro
     }
     let sessions = state.terminals.lock().map_err(|_| "Terminal registry unavailable")?;
     let session = sessions.get(&session_id).ok_or("Terminal session is closed")?;
-    session.master.lock().map_err(|_| "Terminal resize is unavailable")?
+    let result = session.master.lock().map_err(|_| "Terminal resize is unavailable")?
         .resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
-        .map_err(|_| "Terminal resize failed".into())
+        .map_err(|_| "Terminal resize failed".to_string());
+    result
 }
 
 #[tauri::command]
@@ -1528,8 +1529,11 @@ fn stop_terminal(state: State<'_, AppState>, session_id: String) -> Result<(), S
     // revocation but before the PTY was removed. The post-removal revoke is
     // serialized with grant_control/grant_draft_typing and cannot be renewed.
     revoke_control_inner(&state, &session_id)?;
-    session.child.lock().map_err(|_| "Terminal process state unavailable")?
-        .kill().map_err(|_| "Could not stop the terminal shell".to_string())
+    let result = {
+        let mut child = session.child.lock().map_err(|_| "Terminal process state unavailable")?;
+        child.kill().map_err(|_| "Could not stop the terminal shell".to_string())
+    };
+    result
 }
 
 fn revoke_control_inner(state: &AppState, session_id: &str) -> Result<(), String> {

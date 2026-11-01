@@ -1,16 +1,21 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { ArrowLeft, Bot, Copy, Link2, LogOut, Plus, Send, Sparkles, Users } from 'lucide-react';
+import { ArrowLeft, Bot, Copy, Link2, ListChecks, LogOut, Plus, Send, Sparkles, Users } from 'lucide-react';
 import { buildExistingAiJoinPrompt, buildGroupRelayPrompt, buildRestorePrompt, parseSessionMemoryDocument } from './aiRelay';
 import type { User } from '@supabase/supabase-js';
-import { supabase } from './supabase';
+import { supabase, supabaseUrl } from './supabase';
 import { getInviteStatusMessage, isValidInviteToken, readInviteToken } from './inviteLinks';
 import { shouldShowSessionRestoreError } from './authStartup';
 import { errorMessage } from './errorMessage';
+import GroupTaskBoard from './GroupTaskBoard';
 import {
   createCloudRoom, createCloudInvite, redeemCloudInvite, redeemAIInvite, revokeCloudInvite, connectCloudAgent, listAgentConnections, revokeCloudAgent, getCloudRoom, listCloudMessages, listCloudParticipants,
   listCloudRooms, postCloudMessage, signInWithPassword, signUpWithPassword, requestPasswordReset, updateAccountPassword, signOut,
   subscribeToCloudMessages, subscribeToGroupMemoryEntries, savePrivateSessionContext, listPrivateSessionContexts, deletePrivateSessionContext, listGroupMemoryEntries, saveGroupMemoryEntry, deleteGroupMemoryEntry, type PrivateSessionImport, type GroupMemoryEntry, type CloudRoom, type CloudMessage, type CloudParticipant, type AgentConnection,
 } from './cloudRooms';
+
+const agentMessagesEndpoint = supabaseUrl
+  ? `${supabaseUrl}/functions/v1/agent-messages`
+  : 'Supabase endpoint unavailable';
 
 export default function CloudApp() {
   const [user, setUser] = useState<User | null>(null);
@@ -38,6 +43,7 @@ export default function CloudApp() {
   const [inviteRoute, setInviteRoute] = useState<'choose' | 'human' | 'ai' | 'guided'>('choose');
   const [relayCopied, setRelayCopied] = useState(false);
   const [showPrivateContext, setShowPrivateContext] = useState(false);
+  const [showTasks, setShowTasks] = useState(false);
   const [sessionContextDraft, setSessionContextDraft] = useState('');
   const [sessionContextBusy, setSessionContextBusy] = useState(false);
   const [sessionContextNotice, setSessionContextNotice] = useState('');
@@ -272,7 +278,7 @@ export default function CloudApp() {
     finally { setJoining(false); }
   }
   function navigate(id: string) {
-    setSelected(id); setError(''); setInviteLink(''); setAgentSecret(''); setShowAgents(false); setShowPrivateContext(false); setShowSharedMemory(false); setSessionContextNotice(''); setSessionContextDraft(''); setSharedMemoryNotice(''); setShareMemoryDraft('');
+    setSelected(id); setError(''); setInviteLink(''); setAgentSecret(''); setShowAgents(false); setShowPrivateContext(false); setShowSharedMemory(false); setShowTasks(false); setSessionContextNotice(''); setSessionContextDraft(''); setSharedMemoryNotice(''); setShareMemoryDraft('');
     history.replaceState(null, '', id ? '/?room=' + encodeURIComponent(id) : '/');
   }
   async function login(e: FormEvent) {
@@ -407,12 +413,18 @@ export default function CloudApp() {
     <main className="main">
       {error && <p className="error" role="alert">{error}</p>}
       {showAgents && <div className="invite-share"><strong>External agent connections</strong>{agentConnections.length ? agentConnections.map(a => <div key={a.id} style={{width:'100%',display:'flex',gap:12,alignItems:'center',justifyContent:'space-between'}}><span>{participants.find(p => p.id === a.participant_id)?.display_name || 'Agent'} — {a.revoked_at ? 'Revoked' : new Date(a.expires_at) <= new Date() ? 'Expired' : 'Active credential'}</span>{!a.revoked_at && <button onClick={() => { void revokeAgent(a.id); }}>Revoke</button>}</div>) : <p>No external agents connected yet.</p>}<button onClick={() => setShowAgents(false)}>Close</button></div>}
-      {agentSecret && <div className="invite-share" role="status"><strong>{agentName} — agent connection created</strong><p>Copy this credential now. It is displayed only here, expires in 7 days, and grants access to this room's messages. Treat it like a password.</p><input readOnly aria-label="Agent credential" value={agentSecret} onFocus={e => e.target.select()}/><button onClick={() => { void navigator.clipboard.writeText(agentSecret).catch(() => setError('Select and copy the credential manually.')); }}>Copy credential</button><p>API endpoint: https://zucaeevlbwhcvjwbhwmq.supabase.co/functions/v1/agent-messages — use Authorization: Bearer YOUR_CREDENTIAL. GET reads messages; POST with JSON body sends one.</p><button onClick={() => setAgentSecret('')}>I've saved it</button></div>}
+      {agentSecret && <div className="invite-share" role="status"><strong>{agentName} — agent connection created</strong><p>Copy this credential now. It is displayed only here, expires in 7 days, and grants access to this room's messages. Treat it like a password.</p><input readOnly aria-label="Agent credential" value={agentSecret} onFocus={e => e.target.select()}/><button onClick={() => { void navigator.clipboard.writeText(agentSecret).catch(() => setError('Select and copy the credential manually.')); }}>Copy credential</button><p>API endpoint: {agentMessagesEndpoint} — use Authorization: Bearer YOUR_CREDENTIAL. GET reads messages; POST with JSON body sends one.</p><button onClick={() => setAgentSecret('')}>I've saved it</button></div>}
       {inviteLink && <div className="invite-share" role="status"><strong>Invitation created</strong><p>Valid for 24 hours and up to 10 human joins. {inviteAIEnabled ? 'AI route enabled: up to 3 AI participants.' : 'AI route disabled for this invitation.'}</p><input aria-label="Shareable invitation URL" readOnly value={inviteLink} onFocus={e => e.target.select()}/><button onClick={() => { void navigator.clipboard.writeText(inviteLink).catch(() => setError('Select and copy the invitation URL manually.')); }}>Copy invitation</button><button disabled={busy} onClick={() => { void revokeInviteLink(); }}>Revoke invitation</button><button onClick={() => setInviteLink('')}>Close</button></div>}
       {inviteToken ? <section className="empty"><Link2 size={40}/><h1>{inviteTokenValid ? 'Join a Rub Minds group' : 'Invitation link looks incomplete'}</h1><p>{inviteTokenValid ? 'You have received a group invitation. Join to participate in the conversation with your signed-in account.' : `This link contains ${inviteToken.length} characters, but a valid invitation needs 64. Ask the group owner to create and send a new link.`}</p><button className="primary" onClick={() => { void joinInvite(); }} disabled={joining || !inviteTokenValid}>{joining ? 'Joining…' : 'Accept invitation'}</button><p className="disclaimer">Invitations expire after 24 hours or 10 successful joins.</p></section>
       : selected && room ? <>
-        <header className="room-header"><button className="back" onClick={() => navigate('')}><ArrowLeft size={18}/></button><div className="room-heading"><h2>{room.title}</h2><span><span className="status-dot"/> {participants.length} participants · {messages.length} messages</span></div><a className="invite" href={"/?backroom=1&room=" + encodeURIComponent(room.id)} style={{ textDecoration: "none" }}>Backroom</a><button className="invite" onClick={() => { void copyGroupRelayContext(); }}><Copy size={17}/> {relayCopied ? 'Copied for AI' : 'Copy group context for AI'}</button><button className="invite" onClick={() => setShowPrivateContext(value => !value)}><Sparkles size={17}/> {showPrivateContext ? 'Close private context' : 'Private AI context'}</button><button className="invite" onClick={() => { const next = !showSharedMemory; setShowSharedMemory(next); if (next) void listGroupMemoryEntries(room.id).then(setGroupMemories).catch(e => setError(errorMessage(e))); }}><Users size={17}/> {showSharedMemory ? 'Close shared memory' : 'Shared memory'}</button>{room.owner_id === user.id && <><button className="invite" disabled={busy} onClick={() => { void makeInvite(); }}><Link2 size={17}/> Invite members</button><button className="invite" disabled={busy} onClick={() => { void addAgent(); }}><Bot size={17}/> Connect AI</button><button className="invite" onClick={() => { void manageAgents(); }}>Manage agents</button></>}</header>
+        <header className="room-header"><button className="back" onClick={() => navigate('')}><ArrowLeft size={18}/></button><div className="room-heading"><h2>{room.title}</h2><span><span className="status-dot"/> {participants.length} participants · {messages.length} messages</span></div><a className="invite" href={"/?backroom=1&room=" + encodeURIComponent(room.id)} style={{ textDecoration: "none" }}>Backroom</a><button className="invite" onClick={() => setShowTasks(value => !value)}><ListChecks size={17}/> {showTasks ? 'Close tasks' : 'Tasks'}</button><button className="invite" onClick={() => { void copyGroupRelayContext(); }}><Copy size={17}/> {relayCopied ? 'Copied for AI' : 'Copy group context for AI'}</button><button className="invite" onClick={() => setShowPrivateContext(value => !value)}><Sparkles size={17}/> {showPrivateContext ? 'Close private context' : 'Private AI context'}</button><button className="invite" onClick={() => { const next = !showSharedMemory; setShowSharedMemory(next); if (next) void listGroupMemoryEntries(room.id).then(setGroupMemories).catch(e => setError(errorMessage(e))); }}><Users size={17}/> {showSharedMemory ? 'Close shared memory' : 'Shared memory'}</button>{room.owner_id === user.id && <><button className="invite" disabled={busy} onClick={() => { void makeInvite(); }}><Link2 size={17}/> Invite members</button><button className="invite" disabled={busy} onClick={() => { void addAgent(); }}><Bot size={17}/> Connect AI</button><button className="invite" onClick={() => { void manageAgents(); }}>Manage agents</button></>}</header>
         <div className="objective"><Sparkles size={17}/><div><strong>Group objective</strong><p>{room.objective || 'Collaborate together.'}</p></div></div>
+        {showTasks && currentHumanParticipant && <GroupTaskBoard
+          roomId={room.id}
+          participants={participants}
+          currentHumanParticipantId={currentHumanParticipant.id}
+          isGroupOwner={room.owner_id === user.id}
+        />}
         {showPrivateContext && <section className="invite-share private-context-panel">
           <strong>Private context from your existing AI</strong>
           <p>Paste the structured JSON Context Packet from your existing ChatGPT or Claude conversation. It is saved privately under your human account and participant; it is not shared with the group. Review it before saving and never include credentials or unrelated sensitive content.</p>

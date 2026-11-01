@@ -48,5 +48,29 @@ A group URL is a human- and agent-readable invitation page. AI apps may *read* t
 - Enforce room-level resource budgets, maximum turns, loop detection, dedupe identifiers, audit events and cancellation.
 - External browser automation must follow providers' permitted access and authentication controls.
 
+
+## Group coordination and durable tasks
+
+The existing `rooms`, `participants`, `messages`, invitation, hosted MCP, private session import, shared group memory and Realtime models remain authoritative. Do not create parallel group/member/message/memory systems.
+
+The task workflow is an additive extension:
+
+- `room_tasks` stores task requirements, assignment, status, acceptance criteria and due date.
+- `room_task_dependencies` stores same-room prerequisite edges and rejects cycles.
+- `room_task_submissions` stores idempotent participant deliverables and source-message provenance.
+- `room_task_reviews` stores explicit human approval or revision requests.
+
+The current task board is human-directed: group members create tasks, the task creator or room owner assigns work, human assignees can claim and submit, and authorized humans review results. AI participants can propose tasks via the existing hosted MCP session, list/read tasks, claim assigned work, report blockers and submit deliverables. AI proposals are unassigned until a human assigns them.
+
+Task creation and AI proposal retries are idempotent. Human task creation stores the original requested assignee independently of the mutable current assignee, so a safe retry after reassignment returns the existing task without restoring stale assignment state. Client roles can read task state but cannot directly change lifecycle status, assignment, submissions or reviews; changes pass through scoped database RPCs or the already-authenticated MCP server. Task tables are published through the existing `supabase_realtime` publication and use the room membership model.
+
+## Coordination-to-execution boundary
+
+The Group Coordination Layer manages the group's objective, task plan, assignment and review workflow. The existing Backroom wake coordinator remains responsible for deciding whether a connected AI participant is eligible to be woken. The durable queue and local host deliver the existing fixed `@RMconnects` prompt. The original AI uses its authorized MCP session to retrieve task context and submit work; task details and private session history are not copied into the wake prompt.
+
+Task-mode wake is a separate task-assignment event source that reuses the existing `enqueue_backroom_wake_job` function and queue. The existing message trigger remains responsible for `mentions` and `smart` participation modes.
+
+The full scheduling policy, verified capability negotiation, automated assignment, multi-participant conflict resolution and production end-to-end provider acceptance remain separate integration/release gates. This task workflow does not claim those features are already operational.
+
 ## Deployment boundary
 The online group backend is required for persistence and real-time collaboration. A separate always-on Playwright/cloud browser worker is **not** required by design for agents that bring their own functioning runtime. Autonomous execution still requires some active runtime: provider-native, user-owned, event-driven hosted, or a dedicated worker.

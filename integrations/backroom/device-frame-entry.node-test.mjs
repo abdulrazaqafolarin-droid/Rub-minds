@@ -25,6 +25,11 @@ test("Backroom uses the cloud Device Frame and gates direct links with Rub Minds
   assert.match(devices, /Terminal/);
   assert.match(devices, /outbound HTTPS/);
   assert.match(browser, /LiveBrowserPreview/);
+  assert.ok(!browser.includes('function Preview('));
+  for (const demoOnlyCopy of ['DEMO · NOT LIVE', 'Select demo region', 'Simulated ', 'workspace placeholder']) assert.ok(!browser.includes(demoOnlyCopy), 'legacy demo content remains: ' + demoOnlyCopy);
+  assert.ok(browser.includes("surface === 'browser_tab' && typeof s.pageId === 'string'"));
+  assert.match(browser, /verified app connection/);
+
   assert.match(browser, /refreshBrowserInventory/);
   assert.match(browser, /select-region/);
   assert.match(browser, /browser_tab/);
@@ -50,10 +55,13 @@ test("Device Frame shows one selected phone at a time", async () => {
 test("Device Frame never claims inventory is a running virtual app", async () => {
   const devices = await read("src/BackroomDevicesApp.tsx");
   assert.match(devices, /Separate app data \/ virtualization/);
-  assert.ok(devices.includes("Live app stream and tap/swipe control"));
+  assert.ok(devices.includes("Live original app stream and touch"));
   assert.match(devices, /<BackroomAndroidControl/);
-  assert.match(devices, /Desktop runtime not connected/);
-  assert.match(devices, /Terminal runtime not connected/);
+  assert.match(devices, /import BackroomDesktopControl from '.\/BackroomDesktopControl'/);
+  assert.ok(devices.includes('<BackroomDesktopControl roomId={roomId}/>'));
+  assert.doesNotMatch(devices, /Desktop runtime not connected|Terminal runtime not connected/);
+  assert.match(devices, /surface === 'phone' && <div className="br-cloud-capabilities">/);
+
   assert.match(devices, /selected app metadata is synced/);
 });
 
@@ -72,6 +80,30 @@ test("Android Phone Frame wires a consented WebRTC stream and a separate touch g
   assert.match(control, /waitForIceGatheringComplete/);
   assert.match(control, /whole display/);
   assert.match(control, /not an isolated virtual copy/);
+});
+
+test("Android composer selection binds one real non-password accessibility node before typing", async () => {
+  const control = await read("src/BackroomAndroidControl.tsx");
+  const service = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidTouchAccessibilityService.kt");
+  const screen = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  const keyboard = await read("android-companion/app/src/main/java/app/rubminds/companion/DraftInputMethodService.kt");
+  const policy = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidComposerTargetPolicy.kt");
+  assert.match(control, /Drag-select typing area/);
+  assert.match(control, /createNormalizedDragSelection/);
+  assert.match(control, /kind: 'select_composer_target'/);
+  assert.match(control, /composer_target_ack/);
+  assert.match(control, /targetId: selectedTargetId/);
+  assert.match(screen, /select_composer_target/);
+  assert.match(screen, /clear_composer_target/);
+  assert.match(screen, /insertRemoteText\(sessionId, appPackage, targetId, text\)/);
+  assert.match(service, /root\.findFocus\(AccessibilityNodeInfo\.FOCUS_INPUT\)/);
+  assert.match(service, /node\.isEditable/);
+  assert.match(service, /node\.isPassword/);
+  assert.match(service, /MAX_COMPOSER_TREE_NODES = 160/);
+  assert.doesNotMatch(service, /node\.text|node\.contentDescription|node\.getText\(/);
+  assert.match(keyboard, /isSelectedComposerFocused\(sessionId, packageName, targetId\)/);
+  assert.match(policy, /multiple_editable_fields_in_selection/);
+  assert.match(policy, /MIN_NODE_COVERAGE/);
 });
 
 test("Android touch-control requests have a bounded pending state and exact request correlation", async () => {

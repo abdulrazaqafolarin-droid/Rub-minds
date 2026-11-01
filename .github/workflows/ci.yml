@@ -6,7 +6,7 @@ concurrency:
   cancel-in-progress: true
 on:
   push:
-    branches: [main]
+    branches: [main, feat/group-task-coordination-v1]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 jobs:
@@ -343,6 +343,9 @@ jobs:
           java-version: '17'
           cache: gradle
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          # "tools" was removed from the Android SDK package repository.
+          packages: platform-tools
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
         with:
           gradle-version: 8.10.2
@@ -354,7 +357,7 @@ jobs:
           gradle --no-daemon \
             -PSUPABASE_URL=https://rubminds-ci.supabase.co \
             -PSUPABASE_PUBLISHABLE_KEY=sb_publishable_ci_placeholder \
-:app:testDebugUnitTest :app:auditDebugGuestHostManifest :app:assembleDebug
+            :app:testDebugUnitTest :app:auditDebugGuestHostManifest :app:assembleDebug
 
   local-supabase-stack:
     # Run validation on draft PRs as well; draft status does not imply a pass.
@@ -378,6 +381,8 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Install pinned official MCP client SDK for interoperability test
         run: npm install --no-save --package-lock=false @modelcontextprotocol/client@2.3.1
+      - name: Install PostgreSQL client for Vault acceptance
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: Install pinned Supabase CLI
         uses: supabase/setup-cli@v1
         with:
@@ -400,7 +405,13 @@ jobs:
           export LOCAL_SUPABASE_ANON_KEY="${ANON_KEY:?Local anon key missing}"
           export LOCAL_SUPABASE_SERVICE_ROLE_KEY="${SERVICE_ROLE_KEY:?Local service-role key missing}"
           node scripts/local-human-invite-e2e.mjs
-      - name: Start MCP Edge Function with disposable local credentials
+      - name: Verify local Supabase Vault key access boundary
+        run: |
+          set -euo pipefail
+          eval "$(supabase status -o env)"
+          : "${DB_URL:?Local Supabase database URL missing}"
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/rub_minds_mcp_vault_encryption_key.sql
+      - name: Start MCP Edge Function with Vault-only local credentials
         run: |
           set -euo pipefail
           eval "$(supabase status -o env)"
@@ -408,7 +419,6 @@ jobs:
           cat > "$RUNNER_TEMP/mcp.env" <<EOF
           SUPABASE_URL=${API_URL:-http://127.0.0.1:54321}
           SUPABASE_SERVICE_ROLE_KEY=${SERVICE_ROLE_KEY}
-          RUB_MINDS_MCP_SESSION_ENCRYPTION_KEY=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
           EOF
           supabase functions serve rub-minds-mcp --env-file "$RUNNER_TEMP/mcp.env" > "$RUNNER_TEMP/mcp-edge.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/mcp-edge.pid"

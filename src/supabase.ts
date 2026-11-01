@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 const url = import.meta.env.VITE_SUPABASE_URL;
+export const supabaseUrl = url || '';
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 /** Browser-safe publishable/anon key only. Never use a service_role key here. */

@@ -44,8 +44,9 @@ function randomHex(size: number) {
   const bytes = crypto.getRandomValues(new Uint8Array(size));
   return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
 }
-function exactKeys(value: Record<string, unknown>, keys: string[]) {
-  return Object.keys(value).every(key => keys.includes(key));
+function exactKeys(value: Record<string, unknown>, allowedKeys: string[], requiredKeys: string[] = []) {
+  return Object.keys(value).every(key => allowedKeys.includes(key)) &&
+    requiredKeys.every(key => Object.hasOwn(value, key));
 }
 async function owner(req: Request) {
   return await resolveOwnerFromJwt(req, token => db.auth.getUser(token));
@@ -77,7 +78,7 @@ async function authorizeRoomActor(roomId: string, userId: string) {
   if (error) return { ok: false as const, status: 503, reason: 'room_authorization_unavailable' };
   if (!participant) return { ok: false as const, status: 403, reason: 'active_human_membership_required' };
   const displayName = typeof participant.display_name === 'string'
-    ? participant.display_name.replace(/[\\u0000-\\u001f\\u007f-\\u009f]/g, '').trim().slice(0, 80)
+    ? participant.display_name.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim().slice(0, 80)
     : '';
   return { ok: true as const, userId, displayName: displayName || 'Group member' };
 }

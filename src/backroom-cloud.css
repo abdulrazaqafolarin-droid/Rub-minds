@@ -36,3 +36,10 @@
 .br-android-stream-status{padding:7px 8px;border-radius:7px;background:#e9eef8;color:#465675;font-size:10px;line-height:1.45}
 .br-android-stream-status.error{background:#fff0f0;color:#a43844}
 .br-android-stream-disclaimer{margin:0;color:#7a879e;font-size:9px;line-height:1.45}
+
+.br-android-composer-selection{position:absolute;z-index:3;border:2px solid #65e6ae;background:#36d99a33;border-radius:5px;box-shadow:0 0 0 9999px #050b1870;pointer-events:none}
+.br-android-composer-head{display:flex;align-items:center;justify-content:space-between;gap:8px;color:#36476a;font-size:10px}
+.br-android-composer-head span{font-size:9px;color:#607395}
+.br-android-composer-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.br-android-composer-actions button{border:1px solid #c4cfe4;border-radius:8px;padding:8px 10px;background:#dce6ff;color:#25365f;font-size:10px;font-weight:750}
+.br-android-composer-actions button:disabled{opacity:.45;cursor:not-allowed}

@@ -237,9 +237,10 @@ class DraftInputMethodService : InputMethodService() {
      * This deliberately exposes commitText only: no editor reads, key events,
      * IME actions, Enter key, or submit operation are available to the caller.
      */
-    private fun insertRemoteText(sessionId: String, packageName: String, text: String): String {
+    private fun insertRemoteText(sessionId: String, packageName: String, targetId: String, text: String): String {
         if (!RemoteKeyboardGate.isArmed()) return "local_typing_permission_not_armed"
         if (boundSessionId != sessionId || boundPackageName != packageName) return "session_or_app_mismatch"
+        if (!Regex("^[a-f0-9]{64}$").matches(targetId)) return "composer_target_required"
         if (text.isBlank() || text.length > MAX_REMOTE_TEXT_CHARS) return "text_invalid_or_too_long"
         val liveEditor = currentInputEditorInfo ?: return "phone_text_field_not_focused"
         if (activePackage != packageName || liveEditor.packageName != packageName) return "phone_text_field_wrong_app"
@@ -250,6 +251,9 @@ class DraftInputMethodService : InputMethodService() {
         }
         if (!multiline && (text.contains('\n') || text.contains('\r'))) return "line_break_requires_multiline_field"
         if (!isInsertAllowed(verifyCurrentSigner = true)) return "app_or_field_not_approved"
+        if (!AndroidTouchAccessibilityService.isSelectedComposerFocused(sessionId, packageName, targetId)) {
+            return "selected_composer_not_focused_or_changed"
+        }
         val connection = currentInputConnection ?: return "phone_keyboard_not_active"
         return if (connection.commitText(text, 1)) "inserted" else "phone_editor_rejected_text"
     }
@@ -283,8 +287,8 @@ class DraftInputMethodService : InputMethodService() {
             }
         }
 
-        fun insertRemoteText(sessionId: String, packageName: String, text: String): String =
-            activeInstance?.insertRemoteText(sessionId, packageName, text) ?: "phone_keyboard_not_active"
+        fun insertRemoteText(sessionId: String, packageName: String, targetId: String, text: String): String =
+            activeInstance?.insertRemoteText(sessionId, packageName, targetId, text) ?: "phone_keyboard_not_active"
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()

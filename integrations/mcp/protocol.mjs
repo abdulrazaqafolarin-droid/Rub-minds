@@ -123,6 +123,37 @@ export const RUB_MINDS_MCP_TOOLS = [
     idempotency_key: { type: "string", pattern: "^browser-resume-[A-Za-z0-9-]{8,180}$" },
     confirm_forget: { type: "boolean", const: true },
   }, ["idempotency_key", "confirm_forget"]) },
+
+  { name: "propose_group_task", description: "Propose a durable group task for human review. Proposals start in backlog and are not assigned or executed until a human assigns them. Use a stable idempotency_key when retrying the same proposal.", inputSchema: objectSchema({
+    title: { type: "string", minLength: 1, maxLength: 160 },
+    description: { type: "string", maxLength: 12000 },
+    expected_output: { type: "string", maxLength: 4000 },
+    acceptance_criteria: { type: "array", maxItems: 20, items: { type: "string", minLength: 1, maxLength: 500 } },
+    priority: { type: "integer", minimum: 1, maximum: 5 },
+    due_at: { type: "string", format: "date-time" },
+    idempotency_key: { type: "string", format: "uuid" },
+  }, ["title", "idempotency_key"]) },
+  { name: "list_group_tasks", description: "List up to 100 durable tasks in the group joined by this MCP session, including assignment, dependencies' readiness, and task status.", inputSchema: objectSchema({}) },
+  { name: "read_group_task", description: "Read one task and its prerequisite IDs, submitted results, and review history. The task must belong to the group joined by this session.", inputSchema: objectSchema({
+    task_id: { type: "string", format: "uuid" },
+  }, ["task_id"]) },
+  { name: "claim_group_task", description: "Claim a task that a human group member has assigned to this participant. The claim is atomic and idempotent, and succeeds only after all prerequisites are complete. AI participants cannot claim unassigned tasks or tasks assigned to another participant.", inputSchema: objectSchema({
+    task_id: { type: "string", format: "uuid" },
+  }, ["task_id"]) },
+  { name: "block_group_task", description: "Mark a task assigned to this participant as blocked and explain what is preventing progress. This does not mark the task complete.", inputSchema: objectSchema({
+    task_id: { type: "string", format: "uuid" },
+    reason: { type: "string", minLength: 1, maxLength: 2000 },
+  }, ["task_id", "reason"]) },
+  { name: "fail_group_task", description: "Mark an active task assigned to this AI participant as failed when it cannot be completed. Provide a concise reason. This is terminal; use block_group_task for recoverable blockers.", inputSchema: objectSchema({
+    task_id: { type: "string", format: "uuid" },
+    reason: { type: "string", minLength: 1, maxLength: 2000 },
+  }, ["task_id", "reason"]) },
+  { name: "submit_group_task_result", description: "Submit a result for a task currently in progress and assigned to this participant. Submission moves the task to review; only an authorized human reviewer can approve completion. Use a UUID idempotency key for safe retries.", inputSchema: objectSchema({
+    task_id: { type: "string", format: "uuid" },
+    result: { type: "string", minLength: 1, maxLength: 20000 },
+    submission_key: { type: "string", format: "uuid" },
+    source_message_ids: { type: "array", maxItems: 50, items: { type: "string", format: "uuid" } },
+  }, ["task_id", "result", "submission_key"]) },
 ];
 
 /** Prompt returned by prepare_session_export; it never reads provider history itself. */
@@ -178,6 +209,7 @@ export function validateToolArguments(name, args) {
     case "read_group_context":
     case "read_group_messages":
     case "read_session_memory":
+    case "list_group_tasks":
       return Object.keys(args).length ? "This tool takes no arguments." : null;
     case "wait_for_group_messages":
       if (args.after_created_at !== undefined && (typeof args.after_created_at !== "string" || !Number.isFinite(Date.parse(args.after_created_at)))) return "after_created_at must be a valid date-time string.";
@@ -190,6 +222,39 @@ export function validateToolArguments(name, args) {
       if (typeof args.body !== "string" || !args.body.trim() || args.body.length > 10000) return "body must contain 1-10000 characters.";
       if (args.source_message_id !== undefined && (typeof args.source_message_id !== "string" || !args.source_message_id.trim() || args.source_message_id.length > 200)) return "source_message_id must be 1-200 characters.";
       if (Object.keys(args).some((key) => !["body", "source_message_id"].includes(key))) return "Unknown send_group_message argument.";
+      return null;
+    case "propose_group_task": {
+      if (typeof args.title !== "string" || !args.title.trim() || args.title.length > 160) return "title must contain 1-160 characters.";
+      if (args.description !== undefined && (typeof args.description !== "string" || args.description.length > 12000)) return "description must be at most 12000 characters.";
+      if (args.expected_output !== undefined && (typeof args.expected_output !== "string" || args.expected_output.length > 4000)) return "expected_output must be at most 4000 characters.";
+      if (args.acceptance_criteria !== undefined && (!Array.isArray(args.acceptance_criteria) || args.acceptance_criteria.length > 20 || args.acceptance_criteria.some(value => typeof value !== "string" || !value.trim() || value.length > 500))) return "acceptance_criteria must contain at most 20 non-empty strings of at most 500 characters.";
+      if (args.priority !== undefined && (!Number.isInteger(args.priority) || args.priority < 1 || args.priority > 5)) return "priority must be an integer from 1 to 5.";
+      if (args.due_at !== undefined && (typeof args.due_at !== "string" || !Number.isFinite(Date.parse(args.due_at)))) return "due_at must be a valid date-time string.";
+      if (typeof args.idempotency_key !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(args.idempotency_key)) return "idempotency_key must be a UUID.";
+      if (Object.keys(args).some(key => !["title", "description", "expected_output", "acceptance_criteria", "priority", "due_at", "idempotency_key"].includes(key))) return "Unknown propose_group_task argument.";
+      return null;
+    }
+    case "read_group_task":
+    case "claim_group_task":
+      if (typeof args.task_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(args.task_id)) return "task_id must be a UUID.";
+      if (Object.keys(args).some(key => key !== "task_id")) return "Unknown task argument.";
+      return null;
+    case "block_group_task":
+      if (typeof args.task_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(args.task_id)) return "task_id must be a UUID.";
+      if (typeof args.reason !== "string" || !args.reason.trim() || args.reason.length > 2000) return "reason must contain 1-2000 characters.";
+      if (Object.keys(args).some(key => !["task_id", "reason"].includes(key))) return "Unknown block_group_task argument.";
+      return null;
+    case "fail_group_task":
+      if (typeof args.task_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(args.task_id)) return "task_id must be a UUID.";
+      if (typeof args.reason !== "string" || !args.reason.trim() || args.reason.length > 2000) return "reason must contain 1-2000 characters.";
+      if (Object.keys(args).some(key => !["task_id", "reason"].includes(key))) return "Unknown fail_group_task argument.";
+      return null;
+    case "submit_group_task_result":
+      if (typeof args.task_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(args.task_id)) return "task_id must be a UUID.";
+      if (typeof args.result !== "string" || !args.result.trim() || args.result.length > 20000) return "result must contain 1-20000 characters.";
+      if (typeof args.submission_key !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(args.submission_key)) return "submission_key must be a UUID.";
+      if (args.source_message_ids !== undefined && (!Array.isArray(args.source_message_ids) || args.source_message_ids.length > 50 || args.source_message_ids.some(id => typeof id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) || new Set(args.source_message_ids).size !== args.source_message_ids.length)) return "source_message_ids must contain at most 50 unique UUIDs.";
+      if (Object.keys(args).some(key => !["task_id", "result", "submission_key", "source_message_ids"].includes(key))) return "Unknown submit_group_task_result argument.";
       return null;
     case "import_session_memory":
       if (!isRecord(args.document)) return "document must be a session-memory object.";

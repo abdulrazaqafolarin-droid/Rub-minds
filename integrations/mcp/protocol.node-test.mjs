@@ -51,6 +51,7 @@ test("advertises invitation, messaging, and memory tools", () => {
   assert.deepEqual(RUB_MINDS_MCP_TOOLS.map((tool) => tool.name), [
     "join_group", "prepare_session_export", "leave_group", "read_group_context", "read_group_messages", "wait_for_group_messages", "send_group_message",
     "read_session_memory", "import_session_memory", "remember_memory", "forget_memory",
+    "propose_group_task", "list_group_tasks", "read_group_task", "claim_group_task", "block_group_task", "fail_group_task", "submit_group_task_result",
   ]);
 });
 
@@ -230,4 +231,56 @@ test("missing exact cursor falls back to the timestamp", () => {
     { id: "newer", created_at: "2026-10-25T10:00:01.000Z" },
   ];
   assert.deepEqual(messagesAfterCursor(messages, Date.parse("2026-10-25T10:00:00.000Z"), "not-in-window").map(m => m.id), ["newer"]);
+});
+
+test("group task MCP tools require scoped identities, bounded content, and explicit idempotency", () => {
+  const taskId = "550e8400-e29b-41d4-a716-446655440000";
+  const submissionKey = "550e8400-e29b-41d4-a716-446655440001";
+  const messageId = "550e8400-e29b-41d4-a716-446655440002";
+  assert.equal(validateToolArguments("list_group_tasks", {}), null);
+  assert.match(validateToolArguments("list_group_tasks", { room_id: taskId }), /arguments/);
+  assert.equal(validateToolArguments("read_group_task", { task_id: taskId }), null);
+  assert.match(validateToolArguments("read_group_task", { task_id: "bad" }), /UUID/);
+  assert.equal(validateToolArguments("claim_group_task", { task_id: taskId }), null);
+  assert.equal(validateToolArguments("block_group_task", { task_id: taskId, reason: "Waiting for the API key owner." }), null);
+  assert.match(validateToolArguments("block_group_task", { task_id: taskId, reason: " " }), /reason/);
+  assert.equal(validateToolArguments("fail_group_task", { task_id: taskId, reason: "The provider no longer exposes this capability." }), null);
+  assert.match(validateToolArguments("fail_group_task", { task_id: taskId, reason: " " }), /reason/);
+  assert.equal(validateToolArguments("submit_group_task_result", {
+    task_id: taskId, result: "Implementation and test evidence.", submission_key: submissionKey, source_message_ids: [messageId],
+  }), null);
+  assert.match(validateToolArguments("submit_group_task_result", {
+    task_id: taskId, result: "ok", submission_key: "bad",
+  }), /submission_key/);
+  assert.match(validateToolArguments("submit_group_task_result", {
+    task_id: taskId, result: "ok", submission_key: submissionKey, source_message_ids: [messageId, messageId],
+  }), /unique UUIDs/);
+  assert.match(validateToolArguments("submit_group_task_result", {
+    task_id: taskId, result: " ", submission_key: submissionKey,
+  }), /result/);
+  assert.match(validateToolArguments("submit_group_task_result", {
+    task_id: taskId, result: "ok", submission_key: submissionKey, arbitrary_room_id: taskId,
+  }), /Unknown/);
+  assert.equal(validateToolArguments("propose_group_task", {
+    title: "Audit deployment pipeline",
+    description: "Inspect the existing pipeline without changing production.",
+    expected_output: "A tested report and recommended changes.",
+    acceptance_criteria: ["Production remains unchanged", "Evidence is linked"],
+    priority: 2,
+    idempotency_key: taskId,
+  }), null);
+  assert.match(validateToolArguments("propose_group_task", {
+    title: " ",
+    idempotency_key: taskId,
+  }), /title/);
+  assert.match(validateToolArguments("propose_group_task", {
+    title: "Task",
+    acceptance_criteria: ["ok".repeat(300)],
+    idempotency_key: taskId,
+  }), /acceptance_criteria/);
+  assert.match(validateToolArguments("propose_group_task", {
+    title: "Task",
+    idempotency_key: taskId,
+    force: true,
+  }), /Unknown/);
 });

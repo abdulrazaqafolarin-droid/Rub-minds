@@ -282,3 +282,209 @@ export function subscribeToGroupMemoryEntries(roomId: string, refresh: () => voi
     .subscribe();
   return () => { void client().removeChannel(channel); };
 }
+
+
+export type GroupTaskStatus = "backlog" | "assigned" | "in_progress" | "blocked" | "review" | "completed" | "failed" | "cancelled";
+export type GroupTask = {
+  id: string;
+  room_id: string;
+  created_by_participant_id: string;
+  assigned_to_participant_id: string | null;
+  title: string;
+  description: string;
+  expected_output: string;
+  acceptance_criteria: string[];
+  priority: number;
+  status: GroupTaskStatus;
+  due_at: string | null;
+  blocked_reason: string | null;
+  created_at: string;
+  updated_at: string;
+  version: number;
+};
+export type GroupTaskDependency = {
+  id: string;
+  room_id: string;
+  task_id: string;
+  depends_on_task_id: string;
+  created_by_participant_id: string;
+  created_at: string;
+};
+export type GroupTaskSubmission = {
+  id: string;
+  room_id: string;
+  task_id: string;
+  submitted_by_participant_id: string;
+  result_content: string;
+  source_message_ids: string[];
+  created_at: string;
+};
+export type GroupTaskReview = {
+  id: string;
+  room_id: string;
+  task_id: string;
+  submission_id: string;
+  reviewer_participant_id: string;
+  outcome: "approved" | "revision_requested";
+  feedback: string;
+  created_at: string;
+};
+
+export async function listGroupTasks(roomId: string): Promise<GroupTask[]> {
+  const { data, error } = await client().from("room_tasks")
+    .select("id,room_id,created_by_participant_id,assigned_to_participant_id,title,description,expected_output,acceptance_criteria,priority,status,due_at,blocked_reason,created_at,updated_at,version")
+    .eq("room_id", roomId)
+    .order("priority", { ascending: true })
+    .order("created_at", { ascending: true })
+    .limit(100);
+  if (error) throw error;
+  return (data || []) as GroupTask[];
+}
+
+export async function listGroupTaskDependencies(roomId: string): Promise<GroupTaskDependency[]> {
+  const { data, error } = await client().from("room_task_dependencies")
+    .select("id,room_id,task_id,depends_on_task_id,created_by_participant_id,created_at")
+    .eq("room_id", roomId).order("created_at", { ascending: true }).limit(500);
+  if (error) throw error;
+  return (data || []) as GroupTaskDependency[];
+}
+
+export async function listGroupTaskSubmissions(roomId: string): Promise<GroupTaskSubmission[]> {
+  const { data, error } = await client().from("room_task_submissions")
+    .select("id,room_id,task_id,submitted_by_participant_id,result_content,source_message_ids,created_at")
+    .eq("room_id", roomId).order("created_at", { ascending: false }).limit(200);
+  if (error) throw error;
+  return (data || []) as GroupTaskSubmission[];
+}
+
+export async function listGroupTaskReviews(roomId: string): Promise<GroupTaskReview[]> {
+  const { data, error } = await client().from("room_task_reviews")
+    .select("id,room_id,task_id,submission_id,reviewer_participant_id,outcome,feedback,created_at")
+    .eq("room_id", roomId).order("created_at", { ascending: false }).limit(200);
+  if (error) throw error;
+  return (data || []) as GroupTaskReview[];
+}
+
+export async function createGroupTask(input: {
+  roomId: string;
+  creatorParticipantId: string;
+  title: string;
+  description?: string;
+  expectedOutput?: string;
+  assignedToParticipantId?: string | null;
+  dependencyIds?: string[];
+  acceptanceCriteria?: string[];
+  priority?: number;
+  dueAt?: string | null;
+  idempotencyKey: string;
+}): Promise<string> {
+  const { data, error } = await client().rpc("create_room_task", {
+    p_room_id: input.roomId,
+    p_created_by_participant_id: input.creatorParticipantId,
+    p_title: input.title.trim(),
+    p_description: (input.description || "").trim(),
+    p_expected_output: (input.expectedOutput || "").trim(),
+    p_assigned_to_participant_id: input.assignedToParticipantId || null,
+    p_dependency_ids: input.dependencyIds || [],
+    p_priority: input.priority ?? 3,
+    p_due_at: input.dueAt || null,
+    p_acceptance_criteria: input.acceptanceCriteria || [],
+    p_idempotency_key: input.idempotencyKey,
+  });
+  if (error) throw error;
+  if (typeof data !== "string") throw new Error("Task creation did not return a task ID.");
+  return data;
+}
+
+export async function cancelGroupTask(roomId: string, taskId: string): Promise<void> {
+  const { data, error } = await client().rpc("cancel_room_task", {
+    p_room_id: roomId,
+    p_task_id: taskId,
+  });
+  if (error || !data || data.cancelled !== true) throw new Error("Could not cancel this task. It may already be completed or failed.");
+}
+
+export async function assignGroupTask(roomId: string, taskId: string, participantId: string | null): Promise<void> {
+  const { data, error } = await client().rpc("assign_room_task", {
+    p_room_id: roomId,
+    p_task_id: taskId,
+    p_assigned_to_participant_id: participantId,
+  });
+  if (error || !data) throw new Error("Could not assign this task. Check its status and your group permissions.");
+}
+
+export async function replaceGroupTaskDependencies(
+  roomId: string,
+  taskId: string,
+  dependencyIds: string[],
+): Promise<{ status: GroupTaskStatus; dependency_count: number }> {
+  if (dependencyIds.length > 20 || new Set(dependencyIds).size !== dependencyIds.length) {
+    throw new Error("Choose at most 20 unique prerequisites.");
+  }
+  const { data, error } = await client().rpc("replace_room_task_dependencies", {
+    p_room_id: roomId,
+    p_task_id: taskId,
+    p_dependency_ids: dependencyIds,
+  });
+  if (error || !data || typeof data.status !== "string" || !Number.isInteger(data.dependency_count)) {
+    throw new Error("Could not revise this task's prerequisites.");
+  }
+  return { status: data.status as GroupTaskStatus, dependency_count: data.dependency_count as number };
+}
+
+export async function reviewGroupTask(
+  roomId: string,
+  taskId: string,
+  outcome: "approved" | "revision_requested",
+  feedback = "",
+): Promise<void> {
+  const { data, error } = await client().rpc("review_room_task", {
+    p_room_id: roomId,
+    p_task_id: taskId,
+    p_outcome: outcome,
+    p_feedback: feedback.trim(),
+  });
+  if (error || !data) throw new Error("Could not save this task review. It may no longer be awaiting review.");
+}
+
+export async function claimGroupTaskAsHuman(roomId: string, taskId: string, participantId: string): Promise<void> {
+  const { data, error } = await client().rpc("claim_room_task_human", {
+    p_room_id: roomId,
+    p_task_id: taskId,
+    p_participant_id: participantId,
+  });
+  if (error || !data || data.claimed !== true) {
+    const reason = data?.reason === "dependencies_incomplete"
+      ? "Finish the prerequisite tasks before starting this one."
+      : "Could not start this task. It may be assigned to another participant.";
+    throw new Error(reason);
+  }
+}
+
+export async function submitGroupTaskResultAsHuman(
+  roomId: string,
+  taskId: string,
+  participantId: string,
+  result: string,
+  submissionKey: string,
+): Promise<void> {
+  const { data, error } = await client().rpc("submit_room_task_result_human", {
+    p_room_id: roomId,
+    p_task_id: taskId,
+    p_participant_id: participantId,
+    p_result_content: result.trim(),
+    p_source_message_ids: [],
+    p_idempotency_key: submissionKey,
+  });
+  if (error || !data) throw new Error("Could not submit this task result.");
+}
+
+export function subscribeToGroupTasks(roomId: string, refresh: () => void) {
+  const channel = client().channel("room-tasks:" + roomId)
+    .on("postgres_changes", { event: "*", schema: "public", table: "room_tasks", filter: "room_id=eq." + roomId }, refresh)
+    .on("postgres_changes", { event: "*", schema: "public", table: "room_task_dependencies", filter: "room_id=eq." + roomId }, refresh)
+    .on("postgres_changes", { event: "*", schema: "public", table: "room_task_submissions", filter: "room_id=eq." + roomId }, refresh)
+    .on("postgres_changes", { event: "*", schema: "public", table: "room_task_reviews", filter: "room_id=eq." + roomId }, refresh)
+    .subscribe();
+  return () => { void client().removeChannel(channel); };
+}

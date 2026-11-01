@@ -46,6 +46,14 @@ jobs:
           create role service_role nologin;
           create schema auth;
           create table auth.users (id uuid primary key);
+          create or replace function auth.uid()
+          returns uuid
+          language sql stable
+          set search_path = ''
+          as $$
+            select nullif(pg_catalog.current_setting('request.jwt.claim.sub', true), '')::uuid
+          $$;
+          create publication supabase_realtime;
           create table public.rooms (id uuid primary key, owner_id uuid not null references auth.users(id), title text not null default 'CI room', objective text not null default '', created_at timestamptz not null default now());
           create table public.participants (
             id uuid primary key,
@@ -89,3 +97,15 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/tests/backroom_wake_queue.sql
+      - name: Apply the additive group-task coordination migration
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261101040000_group_task_coordination.sql
+      - name: Add group-task foreign-key indexes
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261101164016_group_task_fk_indexes.sql
+      - name: Exercise task lifecycle, dependencies, MCP-scoped AI actions and existing Backroom wake queue
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/tests/group_task_coordination.sql

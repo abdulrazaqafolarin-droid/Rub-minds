@@ -20,6 +20,21 @@
 
 The queue migration now includes a **PostgreSQL AFTER INSERT trigger on `public.messages`**. It reads only the authoritative saved message ID, room, sender, and body for mention matching; the queued prompt contains only the message ID and the fixed `@RMconnects` instructions, **never the body**. It suppresses self-wakes, checks the AI participant's current room membership, room ownership, nonrevoked `agent_connections` and live MCP session, and checks an active consented host/input binding. `mentions` mode looks for a bounded `@display_name` mention; `smart` handles any other participant's message; `task` waits for an actual task event source (not wired into the message trigger). The trigger catches enqueue failure so a user-authored message still commits. It enforces a maximum six queued wake jobs per input binding per minute, with a 100-pending-job backlog ceiling.
 
+## Task-mode assignment event source (feature branch)
+
+The additive `20261101040000_group_task_coordination.sql` migration introduces durable group task records, prerequisite edges, submissions and human reviews by referencing the existing `rooms` and `participants` tables. It does not replace the message trigger or create a second wake queue.
+
+When a task enters `assigned` for an AI participant, the task trigger checks that participant's live MCP connection, exact existing Backroom input binding, `participation_mode='task'`, enabled consent and expiry. It then calls the existing `enqueue_backroom_wake_job` function using a task/version event ID and the same fixed canonical `@RMconnects` prompt. Task details and result content are retrieved by the AI through MCP; they are not embedded in the prompt.
+
+
+When task assignment, content or lifecycle changes, the task trigger cancels pending/leased wakes for the previous task version and assignee through the existing `cancel_backroom_wake_job` RPC. The successful `assigned` → `in_progress` claim transition is treated as the participant acting on the wake and does not cancel the in-flight canonical delivery before the local host can acknowledge it. Later submission, blocking, failure or cancellation transitions clean up any still-pending stale wake.
+
+If a task is cancelled or failed, dependent tasks are marked blocked rather than silently left executable or automatically treated as completed. A human task creator/group owner can cancel an active task, while an assigned AI can report terminal failure separately from a recoverable blocker.
+
+The message trigger intentionally remains `mentions`/`smart` only. Task assignments are a separate event source, so a task-mode participant is not woken by every group message. Dependency completion releases eligible downstream tasks, which can then enter this same task-assignment path. A queue failure does not roll back task creation or human review; the task remains visible and can be read through MCP when the AI reconnects.
+
+The MCP server adds bounded proposal/list/read/claim/block/submit tools. AI proposals start unassigned in `backlog`; a human must assign them. AI claims and submissions are scoped to the existing MCP session's room and participant, submissions are idempotent, and only an authorized human reviewer can mark a submission approved and the task completed.
+
 **The source-level integration path is present, but automated participation is not yet proven end-to-end.** The branch includes an authenticated host gateway, HTTPS handler, Supabase Edge Function, remote queue client, paired worker, local poller, consent-scoped host service, owner UI configuration, and host/binding revocation. The committed Node runtime and Backroom suites now pass in an isolated Node 22 sandbox, and the draft migration plus full SQL acceptance file passed in a PGlite PostgreSQL-compatible runtime. The native PostgreSQL 17 GitHub Actions job still fails before any steps are recorded, so that gate remains blocked. The Edge Function has not been verified in a staging Deno/Supabase deployment, and a real ChatGPT/Claude MCP round trip has not been demonstrated. A local UI composer clearing proves only a DOM transition, not provider delivery.
 
 **Historical validation note:** Earlier GitHub Actions runs failed before any steps were recorded and their log retrieval returned `BlobNotFound`; that did not prove a SQL or Node assertion failed. The current evidence is recorded in **Validation record — 2026-10-29** below: the full committed runtime and Backroom Node suites pass, and the SQL migration plus acceptance file pass in PGlite. Native PostgreSQL 17 workflow execution remains blocked. Keep the migration out of production.
@@ -173,3 +188,47 @@ To distinguish SQL compatibility from the GitHub Actions runner-dispatch failure
 Using `psql -v ON_ERROR_STOP=1`, the draft `supabase/migrations/20261029090000_backroom_wake_queue.sql` applied successfully and the exact `supabase/tests/backroom_wake_queue.sql` completed with exit **0** (ending `DO`). The process was independently repeated in a **second new database**, with migration and test again returning exit **0**. The test produced a handled `Backroom wake skipped` warning from its negative wake-trigger case; no SQL assertion failure occurred. This proves native PostgreSQL 17 execution of the draft migration and acceptance test under the isolated fixture, twice; it does not prove the whole production migration stack or hosted Supabase integration.
 
 GitHub Actions jobs on the branch still have no assigned runner/recorded steps; neither a CI green status nor an Actions quota resolution has been observed. Accordingly, mark the **native PG17 SQL acceptance** as passed independently but retain **GitHub CI runner dispatch**, full Supabase staging, and real ChatGPT/Claude interoperability as release blockers. The draft PR was not merged and no production database/deployment was changed.
+
+
+## Superseding revalidation — 2026-11-01
+
+This dated checkpoint supersedes earlier statements in this document that the native PostgreSQL 17 workflow was still blocked or that the relevant Backroom/MCP schema and Edge Functions had not yet been verified in staging. Those earlier entries remain as historical checkpoints for the dates on which they were written.
+
+### Exact-head automated validation
+
+At implementation head `8c2b61252d3a4f73b41fa4cc8f92ad52fee98cb2`, all four current GitHub Actions workflows completed successfully:
+
+- [Validate Rub Minds #41332605021](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/41332605021) — full web/runtime tests and build, local Supabase migration rebuild, human invitation path, MCP SDK interoperability/session revocation, Vault boundary and Edge Function type checks.
+- [Backroom durable wake queue SQL #41332605054](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/41332605054) — native PostgreSQL 17 queue and group-task SQL acceptance.
+- [Backroom Android companion #41332605224](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/41332605224) — Android unit tests, merged-manifest policy gate and APK build.
+- [Backroom Windows desktop companion #41332605015](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/41332605015) — web tests/build, WebView bundle, Rust unit tests, protocol/authorization regression tests and Windows native compilation.
+
+### Isolated staging revalidation
+
+The separate **Rub Minds Staging** Supabase project is ACTIVE_HEALTHY on PostgreSQL 17.11. Its migration inventory includes the Backroom Android streaming, group-task coordination, group-task privilege/index, MCP Vault-key and device-registration repair migrations. Its inspected Edge Function inventory reports:
+
+- `rub-minds-mcp`: ACTIVE v2, with the 18-tool protocol catalogue including group-task proposal, list, read, claim, blocker, failure and result-submission operations.
+- `backroom-device`: ACTIVE v13, with the Android streaming protocol included in the deployed function package.
+- `backroom-wake`: ACTIVE v7.
+- `backroom-config`: ACTIVE v3.
+
+The repository's group-task PostgreSQL acceptance script was run against staging inside an explicit transaction and rolled back. A follow-up query verified that the test fixture users, room, participants, tasks and wake jobs were all absent. The MCP Vault-key security test also passed with its own explicit rollback and did not expose the secret value.
+
+Read-only grants and function audits confirmed:
+- Task tables are RLS-enabled; authenticated clients have read access only and cannot directly write or truncate task rows.
+- Device, wake, MCP session, join-request, rate-limit and request-log tables are RLS-enabled and service-role-only, with no anon/authenticated table privileges.
+- Task SECURITY DEFINER functions use an empty pinned `search_path`; human lifecycle RPCs validate authenticated room membership and task ownership/creator rules; AI-only claim/failure and Vault-key functions are not executable by browser roles.
+
+The staging security advisor still reports disabled leaked-password protection and authenticated-callable SECURITY DEFINER functions (including intentionally scoped human RPCs and pre-existing app functions). The performance advisor reports 20 remaining unindexed foreign keys outside the new group-task foreign keys and unused indexes in this fresh staging workload. These are open review items; do not describe the project-wide advisor report as clean. The staging migration-history identifiers also differ from some repository filenames and must be reconciled before promotion.
+
+### What this proves — and what it does not
+
+The current results prove the checked-in SQL contracts on native PostgreSQL 17 and the isolated Supabase staging schema/function package, plus the fake/controlled browser and native compilation test suites. They do **not** prove unattended wake of an idle ChatGPT/Claude conversation, successful original-provider UI submission/response capture, or physical device control on the owner's actual hardware.
+
+Keep PR #59 and its stacked Backroom dependencies in draft. Remaining acceptance includes:
+- A real task assignment → consented Backroom wake → authenticated original-session MCP task retrieval → submission round trip using a controlled group.
+- Physical Windows 10 companion/ConPTY validation, including OS approval and revocation/Emergency Stop.
+- Physical Android acceptance for MediaProjection, foreground-service lifecycle, locally armed touch, IME typing, revocation and Emergency Stop.
+- Reconciliation of staging migration history and completion of the security-advisor review before any formal release.
+
+No production Supabase schema, Edge Function, secret, Auth setting or Vercel production deployment was changed during this revalidation. Vercel's free-tier deployment-rate limit remains a constraint; do not spend deployment attempts to repeat green CI.
