@@ -411,6 +411,12 @@ test("read_group_messages validates composite pagination and bounded page sizes"
     after_created_at: timestamp, after_message_id: cursorId,
   }), null);
   assert.match(validateToolArguments("wait_for_group_messages", {
+    after_created_at: timestamp,
+  }), /supplied together/);
+  assert.match(validateToolArguments("wait_for_group_messages", {
+    after_message_id: cursorId,
+  }), /supplied together/);
+  assert.match(validateToolArguments("wait_for_group_messages", {
     timeout_ms: 1000, limit: 101,
   }), /limit/);
 });
