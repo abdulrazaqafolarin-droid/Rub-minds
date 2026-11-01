@@ -67,3 +67,23 @@ test('host identity rotation is explicit and cannot be mistaken for server revoc
  assert.match(wrapper,/Local rotation does not revoke a server host/);
  assert.match(server,/This only rotates the local file; it does NOT revoke the previous server registration/);
 });
+
+
+test('original-session bridge runner is explicit and its safety tests are registered',()=>{
+ const runner=manifest.scripts?.['original-session:bridge'];
+ assert.equal(runner,'node scripts/original-session-bridge.mjs');
+ const focused=manifest.scripts?.['test:original-session-runner'];
+ assert.equal(focused,'node --test integrations/playwright/original-session-cli.node-test.mjs');
+ assert.ok(manifest.scripts?.['test:original-wake']?.includes('integrations/playwright/original-session-cli.node-test.mjs'));
+ assert.ok(manifest.scripts?.['test:runtime']?.includes('integrations/playwright/original-session-cli.node-test.mjs'));
+});
+
+
+test('local Playwright runner isolates its browser profile and environment',async()=>{
+ const runner=await readFile(resolve(root,'scripts/original-session-bridge.mjs'),'utf8');
+ assert.match(runner,/launchPersistentContext\(profileDirectory,\s*\{[\s\S]*?env:\s*browserProcessEnvironment\(env\)/);
+ assert.match(runner,/BROWSER_ENV_ALLOWLIST/);
+ assert.match(runner,/join\(homedir\(\),\s*"\.rub-minds",\s*"original-session-profiles",\s*provider\)/);
+ assert.doesNotMatch(runner,/connectOverCDP/);
+ assert.match(runner,/controller\.signal\.aborted\s*&&\s*error\?\.name\s*===\s*"AbortError"/);
+});
