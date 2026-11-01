@@ -85,4 +85,5 @@ test('local Playwright runner isolates its browser profile and environment',asyn
  assert.match(runner,/BROWSER_ENV_ALLOWLIST/);
  assert.match(runner,/join\(homedir\(\),\s*"\.rub-minds",\s*"original-session-profiles",\s*provider\)/);
  assert.doesNotMatch(runner,/connectOverCDP/);
+ assert.match(runner,/controller\.signal\.aborted\s*&&\s*error\?\.name\s*===\s*"AbortError"/);
 });
