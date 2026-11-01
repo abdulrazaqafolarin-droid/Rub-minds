@@ -218,7 +218,7 @@ export async function runOriginalSessionBridge({
       output.write("The provider requires sign-in or redirected this dedicated profile away from the requested thread.\n");
       output.write("Complete sign-in manually, then navigate this window to the exact conversation URL shown above.\n");
       if (!(await prompt(rl, "When the exact conversation is open and visible, type READY: ", "READY", controller.signal))) {
-        output.write("The original-session runner was not started.\\n");
+        output.write("The original-session runner was not started.\n");
         return { status: "not_started", replies: 0 };
       }
       if (!isExactConversationPage(page, options.provider, options.conversationUrl)) {
