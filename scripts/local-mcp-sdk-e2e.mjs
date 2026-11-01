@@ -1100,7 +1100,7 @@ try {
   // Race leave against an idempotent retry of the same join. Either the retry
   // observes the active join before leave wins, or it is rejected as revoked;
   // the invariant is that the old handle must be unusable after both finish.
-  const [left, racingJoin] = await Promise.all([
+  const [left, racingJoin, racingBridgeStateLoad] = await Promise.all([
     first.callTool({
       name: "leave_group",
       arguments: { session_handle: one.session_handle, confirm_leave: true },
@@ -1114,8 +1114,17 @@ try {
         join_request_key: "a".repeat(64),
       },
     }),
+    first.callTool({
+      name: "load_original_session_bridge_state",
+      arguments: { session_handle: one.session_handle },
+    }),
   ]);
   assert.notEqual(left.isError, true, "official SDK client could not leave and revoke its session: " + JSON.stringify(left));
+  assert.ok(
+    racingBridgeStateLoad.isError === true ||
+      Number.isSafeInteger(racingBridgeStateLoad.structuredContent?.revision),
+    "a bridge-state load racing with leave must either finish before termination or be rejected after tombstoning",
+  );
   assert.ok(
     racingJoin.isError === true || racingJoin.structuredContent?.joined === true,
     "concurrent retry must either be rejected or return the already-joined session: " + JSON.stringify(racingJoin),
