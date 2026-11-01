@@ -32,7 +32,7 @@
         <!-- The system binds this OS administration receiver only during an explicitly user-approved Work Profile flow. -->
         <receiver
             android:name=".WorkProfileAdminReceiver"
-            android:description="Rub Minds managed Work Profile setup"
+            android:description="@string/work_profile_admin_description"
             android:exported="true"
             android:label="Rub Minds Work Profile administrator"
             android:permission="android.permission.BIND_DEVICE_ADMIN">
