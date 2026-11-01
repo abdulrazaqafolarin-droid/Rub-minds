@@ -245,6 +245,9 @@ export class McpSessionMessageTransport {
         typeof blocked.reason !== "string" || !blocked.reason.trim() || blocked.reason.length > 200)) {
       throw new TypeError("bridge state blocked marker is invalid");
     }
+    if (pending !== null && blocked !== null) {
+      throw new TypeError("pending response and blocked marker cannot coexist");
+    }
     const result = await this.callTool("save_original_session_bridge_state", {
       expected_revision: snapshot.expected_revision,
       cursor_created_at: cursor?.after_created_at ?? null,
