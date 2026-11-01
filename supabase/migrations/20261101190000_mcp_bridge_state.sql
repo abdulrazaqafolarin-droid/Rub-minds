@@ -31,6 +31,9 @@ create table if not exists public.rub_minds_mcp_bridge_state (
       blocked_message_id is not null and blocked_reason is not null
       and char_length(btrim(blocked_reason)) between 1 and 200
     )
+  ),
+  constraint mcp_bridge_pending_blocked_exclusive_check check (
+    pending_message_id is null or blocked_message_id is null
   )
 );
 
