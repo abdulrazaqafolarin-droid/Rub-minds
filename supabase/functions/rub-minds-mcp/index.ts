@@ -181,7 +181,7 @@ async function readGroupMessagePage(
   }: { afterCreatedAt?: string | null; afterMessageId?: string | null; limit?: number } = {},
 ) {
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const ISO_MICROSECOND = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$/;
+  const ISO_MICROSECOND = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
   if (!UUID.test(roomId)) throw new Error("The joined group binding is invalid.");
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error("Message page limit must be between 1 and 100.");
   if (afterCreatedAt !== null &&
