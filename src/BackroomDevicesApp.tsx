@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Activity, ArrowDownToLine, Check, ChevronDown, CircleAlert, Copy, Laptop,
+  Activity, ArrowDownToLine, Check, ChevronDown, CircleAlert, Copy,
   LockKeyhole, Monitor, RefreshCw, ShieldCheck, Smartphone, SquareTerminal, X,
 } from 'lucide-react';
 import { listCloudRooms, type CloudRoom } from './cloudRooms';
