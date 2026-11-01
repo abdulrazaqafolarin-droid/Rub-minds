@@ -28,8 +28,8 @@ test("task data is RLS-protected and clients cannot directly alter the lifecycle
   }
   assert.match(migration, /grant select on table public\.room_tasks, public\.room_task_dependencies to authenticated/);
   assert.match(migration, /grant select on table public\.room_task_submissions, public\.room_task_reviews to authenticated/);
-  assert.match(migration, /revoke all on table public\\.room_tasks, public\\.room_task_dependencies,[\\s\\S]*?from public, anon, authenticated/);
-  assert.doesNotMatch(migration, /grant (insert|update|delete|truncate)[\\s\\S]*?to authenticated/);
+  assert.match(migration, /revoke all on table public\.room_tasks, public\.room_task_dependencies,[\s\S]*?from public, anon, authenticated/);
+  assert.doesNotMatch(migration, /grant (insert|update|delete|truncate)[\s\S]*?to authenticated/);
   assert.match(migration, /grant all on table public\.room_tasks[\s\S]*?to service_role/);
   assert.match(migration, /room_tasks_member_select/);
   assert.match(migration, /room_task_submissions_member_select/);
