@@ -391,7 +391,7 @@ test("phone streaming binds remote typing to the exact session and returns an ex
     "UUID_PATTERN.matches(requestId)",
     'input.optString("sessionId") != sessionId',
     'input.optString("appPackageName") != appPackage',
-    'allowedTextKeys = setOf("kind", "requestId", "sessionId", "appPackageName", "text")',
+    'allowedTextKeys = setOf("kind", "requestId", "sessionId", "appPackageName", "targetId", "text")',
     "claimRemoteTextRequest(requestId)",
     "mainHandler.post",
     "DraftInputMethodService.insertRemoteText"
@@ -430,13 +430,13 @@ test("Phone Frame remote typing is acknowledged, bounded and never auto-submits"
   const ui = await read("../src/BackroomAndroidControl.tsx");
   const service = await read("app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
   for (const expected of [
-    "kind: 'remote_text', requestId, sessionId: sessionRef.current, appPackageName: appPackage, text",
+    "kind: 'remote_text', requestId, sessionId: sessionRef.current, appPackageName: appPackage, targetId: selectedTargetId, text",
     "maxLength={4_000}",
     "pendingRemoteTextAcksRef.current.set(requestId, timeout)",
     "acknowledgement.kind === 'remote_text_ack'",
     "No phone-keyboard acknowledgement arrived",
     "Text inserted into the focused phone field. Nothing was submitted.",
-    "Line breaks are accepted only by multiline phone fields"
+    "Line breaks are accepted only by multiline fields"
   ]) assert.ok(ui.includes(expected), "Phone Frame typing UI missing: " + expected);
   for (const forbidden of ["performEditorAction", "sendKeyEvent", "KEYCODE_ENTER"]) {
     assert.equal(service.includes(forbidden), false, "Phone bridge must not submit: " + forbidden);
