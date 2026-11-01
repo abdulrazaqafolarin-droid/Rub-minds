@@ -224,6 +224,10 @@ test("MCP exposes bounded task tools only after its existing participant-session
     freshJoinRedemption > atomicRejoinCleanup &&
     mcpEdge.includes("p_expected_ciphertext: session.agent_credential_ciphertext as string"),
     "a revoked/expired rejoin must atomically clear old private bridge state under the parent MCP session lock before rebinding the same handle");
+  const orphanCredentialRevoke = mcpEdge.indexOf("orphanCredentialRevokeError", freshJoinRedemption);
+  assert.ok(orphanCredentialRevoke > freshJoinRedemption &&
+    mcpEdge.includes('.eq("credential_digest", await sha256(credential))'),
+    "if leave wins after invite redemption, the unbound deterministic AI credential must be revoked");
 });
 
 test("the existing cloud group UI owns the task board and uses the current Realtime room channel", () => {
