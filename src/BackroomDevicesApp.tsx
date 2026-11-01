@@ -10,6 +10,7 @@ import {
   listBackroomDevices, revokeBackroomDevice, type BackroomDevice, type BackroomDeviceEvent,
 } from './backroomCloudDevices';
 import BackroomAndroidControl from './BackroomAndroidControl';
+import BackroomDesktopControl from './BackroomDesktopControl';
 import './backroom-cloud.css';
 
 type Surface = 'phone' | 'desktop' | 'terminal';
@@ -204,15 +205,11 @@ export default function BackroomApp() {
                 <Smartphone size={32}/><b>Connect your Android runtime</b><p>Pair the phone, approve it, then select apps inside Rub Minds Companion.</p>
               </div>}
               <div className="br-cloud-phone-home"/>
-            </div> : <div className="br-cloud-unavailable">
-              {surface === 'desktop' ? <Laptop size={35}/> : <SquareTerminal size={35}/>}
-              <b>{surface === 'desktop' ? 'Desktop runtime not connected' : 'Terminal runtime not connected'}</b>
-              <p>{surface === 'desktop' ? 'The desktop Device Frame will use the same cloud device contract. A Windows/macOS runtime and native window driver are not shipped in this slice.' : 'The terminal surface will use an isolated session runtime. No raw phone shell or localhost command bridge is enabled.'}</p>
-            </div>}
+            </div> : <BackroomDesktopControl roomId={roomId}/>}
           </div>
 
-          <div className="br-cloud-capabilities">
-            <div><b>Current phone capabilities</b><span>Available in the current companion build</span></div>
+          {surface === 'phone' && <div className="br-cloud-capabilities">
+            <div><b>Android app capabilities</b><span>Reported separately from desktop and terminal runtime status</span></div>
             <div className="br-cloud-capability-row"><span>Launcher-visible app discovery</span><b className="ready">Available</b></div>
             <div className="br-cloud-capability-row"><span>Virtualized app running inside phone frame</span><b>Not available</b></div>
             <div className="br-cloud-capability-row"><span>Separate app data / virtualization</span><b>Not available</b></div>
@@ -220,7 +217,7 @@ export default function BackroomApp() {
             <div className="br-cloud-capability-row"><span>Accessibility-backed field targeting</span><b>Not implemented</b></div>
             <div className="br-cloud-capability-row"><span>Overlay drag-select typing</span><b>Not available</b></div>
             <div className="br-cloud-capability-row"><span>AI-directed device actions</span><b>Not available</b></div>
-          </div>
+          </div>}
         </div>
       </section>
 
