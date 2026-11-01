@@ -411,6 +411,12 @@ jobs:
           eval "$(supabase status -o env)"
           : "${DB_URL:?Local Supabase database URL missing}"
           psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/rub_minds_mcp_vault_encryption_key.sql
+      - name: Verify private original-session bridge-state schema and grants
+        run: |
+          set -euo pipefail
+          eval "$(supabase status -o env)"
+          : "${DB_URL:?Local Supabase database URL missing}"
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/mcp_bridge_state.sql
       - name: Start MCP Edge Function with Vault-only local credentials
         run: |
           set -euo pipefail
