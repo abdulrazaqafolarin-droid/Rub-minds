@@ -4,14 +4,27 @@
  */
 import {randomUUID,randomBytes,createHash} from 'node:crypto';
 import {mkdir,open,readFile,lstat,realpath,unlink} from 'node:fs/promises';
-import {dirname,resolve} from 'node:path';
+import {dirname,resolve,win32} from 'node:path';
 
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TOKEN=/^[a-f0-9]{64}$/;
+async function hasSymlinkInPath(directory) {
+ if (process.platform !== "win32") return false;
+ const parsed = win32.parse(directory);
+ if (!parsed.root) return true;
+ let current = parsed.root;
+ if ((await lstat(current)).isSymbolicLink()) return true;
+ for (const component of directory.slice(parsed.root.length).split(/[\\/]+/).filter(Boolean)) {
+  current = win32.join(current, component);
+  if ((await lstat(current)).isSymbolicLink()) return true;
+ }
+ return false;
+}
+
 async function privateDirectory(directory){
  await mkdir(directory,{recursive:true,mode:0o700});
  const stat=await lstat(directory);
- if(!stat.isDirectory()||stat.isSymbolicLink()||await realpath(directory)!==directory||
+ if(!stat.isDirectory()||stat.isSymbolicLink()||(process.platform==='win32' ? await hasSymlinkInPath(directory) : await realpath(directory)!==directory)||
    (process.platform!=='win32'&&(stat.mode&0o077)!==0))
   throw new Error('Unsafe Backroom host identity directory');
 }
