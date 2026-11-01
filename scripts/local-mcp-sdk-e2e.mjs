@@ -115,6 +115,8 @@ try {
   assert.ok(names.includes("read_group_messages"), "official client did not discover read_group_messages");
   assert.ok(names.includes("wait_for_group_messages"), "official client did not discover wait_for_group_messages");
   assert.ok(names.includes("forget_memory"), "official client did not discover forget_memory");
+  assert.ok(names.includes("load_original_session_bridge_state"), "official client did not discover bridge-state load");
+  assert.ok(names.includes("save_original_session_bridge_state"), "official client did not discover bridge-state save");
 
   for (const entry of rejectedInvites) {
     const rejected = await first.callTool({
@@ -693,6 +695,93 @@ try {
   assert.deepEqual(forbiddenRows, [], "rejected sender impersonation must not persist");
   console.log("Authenticated human and MCP AI exchanged messages in both directions; outsider RLS denied room access.");
 
+  // Exercise private, revision-checked original-session bridge state through
+  // the real hosted MCP handler. Each MCP session receives a distinct row.
+  const firstBridgeState = await first.callTool({
+    name: "load_original_session_bridge_state",
+    arguments: { session_handle: one.session_handle },
+  });
+  assert.notEqual(firstBridgeState.isError, true,
+    "official MCP client could not initialize bridge state: " + JSON.stringify(firstBridgeState));
+  assert.equal(firstBridgeState.structuredContent?.revision, 0);
+  assert.equal(firstBridgeState.structuredContent?.cursor, null);
+  const secondBridgeState = await second.callTool({
+    name: "load_original_session_bridge_state",
+    arguments: { session_handle: two.session_handle },
+  });
+  assert.notEqual(secondBridgeState.isError, true,
+    "second MCP client could not initialize its separate bridge state");
+  assert.equal(secondBridgeState.structuredContent?.revision, 0);
+  assert.equal(secondBridgeState.structuredContent?.pending_response, null);
+
+  const stateMessages = await request(
+    "/rest/v1/messages?select=id,created_at&room_id=eq." + room.id + "&order=created_at.desc&limit=1",
+  );
+  assert.equal(stateMessages.length, 1, "a persisted group message is required for a realistic bridge cursor");
+  const stateMessage = stateMessages[0];
+  const bridgeSave = await first.callTool({
+    name: "save_original_session_bridge_state",
+    arguments: {
+      session_handle: one.session_handle,
+      expected_revision: firstBridgeState.structuredContent.revision,
+      cursor_created_at: stateMessage.created_at,
+      cursor_message_id: stateMessage.id,
+      pending_message_id: stateMessage.id,
+      pending_message_created_at: stateMessage.created_at,
+      pending_response: "A completed original-session reply awaiting group delivery.",
+      blocked_message_id: null,
+      blocked_reason: null,
+    },
+  });
+  assert.notEqual(bridgeSave.isError, true, "bridge state save failed: " + JSON.stringify(bridgeSave));
+  assert.equal(bridgeSave.structuredContent?.saved, true);
+  assert.equal(bridgeSave.structuredContent?.revision, 1);
+
+  const staleSave = await first.callTool({
+    name: "save_original_session_bridge_state",
+    arguments: {
+      session_handle: one.session_handle,
+      expected_revision: 0,
+      cursor_created_at: null,
+      cursor_message_id: null,
+      pending_message_id: null,
+      pending_message_created_at: null,
+      pending_response: null,
+      blocked_message_id: null,
+      blocked_reason: null,
+    },
+  });
+  assert.notEqual(staleSave.isError, true, "a stale CAS write should return an explicit conflict, not an RPC error");
+  assert.equal(staleSave.structuredContent?.saved, false);
+  assert.equal(staleSave.structuredContent?.conflict, true);
+  assert.equal(staleSave.structuredContent?.revision, 1);
+
+  const isolatedState = await second.callTool({
+    name: "load_original_session_bridge_state",
+    arguments: { session_handle: two.session_handle },
+  });
+  assert.notEqual(isolatedState.isError, true);
+  assert.equal(isolatedState.structuredContent?.revision, 0);
+  assert.equal(isolatedState.structuredContent?.cursor, null,
+    "one AI session must not read the other session's message cursor");
+  assert.equal(isolatedState.structuredContent?.pending_response, null,
+    "one AI session must not read the other session's private pending reply");
+
+  const firstSessionDigestForState = createHash("sha256").update(one.session_handle, "utf8").digest("hex");
+  const secondSessionDigestForState = createHash("sha256").update(two.session_handle, "utf8").digest("hex");
+  const persistedState = await request(
+    "/rest/v1/rub_minds_mcp_bridge_state?select=session_digest,cursor_message_id,pending_response,revision&session_digest=eq." + firstSessionDigestForState,
+  );
+  const isolatedPersistedState = await request(
+    "/rest/v1/rub_minds_mcp_bridge_state?select=session_digest,cursor_message_id,pending_response,revision&session_digest=eq." + secondSessionDigestForState,
+  );
+  assert.equal(persistedState.length, 1);
+  assert.equal(persistedState[0].cursor_message_id, stateMessage.id);
+  assert.equal(persistedState[0].pending_response, "A completed original-session reply awaiting group delivery.");
+  assert.equal(persistedState[0].revision, 1);
+  assert.equal(isolatedPersistedState.length, 1);
+  assert.equal(isolatedPersistedState[0].pending_response, null);
+
   // Exercise the complete group-task lifecycle through the hosted MCP tools
   // and human RPCs. Proposals remain unassigned until a signed-in human assigns them.
   const ownerPassword = "Local-CI-Official-MCP-Owner-923!x";
@@ -886,6 +975,11 @@ try {
   assert.equal(terminatedSessions.length, 1, "leaving must retain the session tombstone by its digest");
   assert.ok(terminatedSessions[0].terminated_at, "leaving must mark the session as terminated");
   assert.equal(terminatedSessions[0].participant_id, null, "a tombstoned session must no longer be bound to a participant");
+  const residualBridgeState = await request(
+    "/rest/v1/rub_minds_mcp_bridge_state?select=session_digest&session_digest=eq." + firstSessionDigest,
+  );
+  assert.deepEqual(residualBridgeState, [], "leaving must delete private original-session cursor and pending-response state");
+
   const participants = await request(
     "/rest/v1/participants?select=id,kind&room_id=eq." + room.id + "&kind=eq.external_agent",
   );
