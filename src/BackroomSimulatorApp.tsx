@@ -742,17 +742,17 @@ export default function BackroomApp() {
     if(!window.confirm('Enable the selected original AI conversation to receive only canonical @RMconnects event triggers for up to 5 minutes? This may press Send in that selected AI chat.'))return;
     setHostBusy(true);
     try{
-      const grant=await hostApi<{grantId:string}>('/v1/browser/wake/grants',{
+      const grant=await hostApi<{grantId:string;expiresAt:number}>('/v1/browser/wake/grants',{
         method:'POST',body:{
           targetId:binding.targetId,roomId:binding.roomId,
           participantId:binding.participantId,sessionId:binding.sessionId,
-          bindingId:binding.bindingId,confirmed:true,ttlMs:300000,maxPerMinute:6
+          bindingId:binding.bindingId,confirmed:true,ttlMs:86400000,maxPerMinute:6
         }
       });
       if(typeof grant.grantId!=='string')throw new Error('Local wake grant was not confirmed.');
       setHostedWakeGrantId(grant.grantId);
-      setHostedWakeBinding(current=>current?{...current,wakeEnabled:true,wakeExpiresAt:new Date(Date.now()+300000).toISOString()}:current);
-      setHostMessage(selectedWakeMode.toUpperCase() + ' enabled for this one selected AI input. The local grant expires after five minutes and is limited to six wake triggers per minute.');
+      setHostedWakeBinding(current=>current?{...current,wakeEnabled:true,wakeExpiresAt:new Date(grant.expiresAt).toISOString()}:current);
+      setHostMessage(selectedWakeMode.toUpperCase() + ' enabled for this one selected AI input. The local grant expires after 24 hours and is limited to six wake triggers per minute.');
     }catch(error){
       setHostMessage(error instanceof Error?error.message:'Wake activation failed and must be retried with consent.');
     }finally{setHostBusy(false);}
@@ -1261,7 +1261,7 @@ export default function BackroomApp() {
 {roomBrowserTargets.length>0 && <><label className="br-browser-field-label" htmlFor="br-browser-target">Registered typing area</label><select id="br-browser-target" value={selectedBrowserTarget} onChange={e=>setSelectedBrowserTarget(e.target.value)}><option value="">Choose a typing target</option>{roomBrowserTargets.map(t=><option key={t.id} value={t.id}>{t.site} · {t.title}</option>)}</select><div className="br-browser-target-actions"><button className="br-secondary" onClick={() => void removeBrowserTarget()} disabled={browserBusy || !roomBrowserTargets.some(t => t.id === selectedBrowserTarget)}>Remove selected target</button></div><label className="br-browser-field-label" htmlFor="br-group-message">Source group message (optional)</label><select id="br-group-message" value={selectedGroupMessageId} onChange={e => { const id = e.target.value; setSelectedGroupMessageId(id); const message = groupMessages.find(m => m.id === id); if (message) setBrowserDraftText(message.body); }}><option value="">Write a manual draft instead</option>{groupMessages.map(m => <option key={m.id} value={m.id}>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · {m.body.slice(0, 90).replace(/\s+/g, ' ')}</option>)}</select><label className="br-browser-field-label" htmlFor="br-browser-draft">Text to draft (not sent)</label><textarea id="br-browser-draft" rows={3} maxLength={10000} value={browserDraftText} onChange={e=>setBrowserDraftText(e.target.value)} placeholder="Write the exact text to insert into the selected composer…"/><button className="br-primary br-browser-draft" onClick={() => void draftToBrowser()} disabled={browserBusy || !roomBrowserTargets.some(t => t.id === selectedBrowserTarget) || !browserDraftText.trim()}>Insert draft — never send <ArrowRight size={15}/></button><p className="br-browser-caption">Target registration stores the selector locally. Text is inserted only after confirmation, only into an empty input, and is read back to verify success.</p></>}
 <button className="br-secondary br-browser-stop" onClick={() => void stopManagedBrowser()} disabled={browserBusy}>Close managed browser</button></>}
 {browserNotice && <div className="br-host-message" role="status">{browserNotice}</div>}</div>
-<div className="br-warning"><ShieldCheck size={19}/><div><b>AI interaction modes</b><p>Off submits no wake triggers. On wakes this AI only when another participant mentions it by display name. Auto wakes it for every new human-authored group message and ignores AI-authored message events. Auto submits only the fixed @RMconnects trigger, not the group message text. Both active modes require a local five-minute consent grant and are capped at six triggers per minute.</p></div></div>
+<div className="br-warning"><ShieldCheck size={19}/><div><b>AI interaction modes</b><p>Off submits no wake triggers. On wakes this AI only when another participant mentions it by display name. Auto wakes it for every new human-authored group message and ignores AI-authored message events. Auto submits only the fixed @RMconnects trigger, not the group message text. Both active modes require one explicit local consent approval for up to 24 hours and are capped at six triggers per minute. The paired host must remain online; switching Off revokes the binding.</p></div></div>
 <label htmlFor="br-ai-interaction-mode">AI interaction mode</label>
 <select id="br-ai-interaction-mode" value={selectedWakeMode} onChange={event => void chooseWakeMode(event.target.value as WakeInteractionMode)} disabled={hostBusy || browserBusy}>
   <option value="off">Off — no automatic wake</option>
@@ -1277,11 +1277,11 @@ export default function BackroomApp() {
     <div className="br-modal-actions"><button className="br-secondary" onClick={() => void bindHostedWakeInput()} disabled={hostBusy || browserBusy || !selectedBrowserTarget || selectedWakeMode==='off'}>Register inactive {selectedWakeMode==='auto'?'Auto':'On'} input binding</button></div>
   </>}
   {hostedWakeBinding && hostedWakeBinding.roomId===room.id && <>
-    <div className="br-detail"><span>Wake status</span><b>{hostedWakeBinding.requiresRevoke?'Existing binding · revoke before rebind':wakeBindingNeedsRebind?'Mode change · rebind required':(hostedWakeGrantId||hostedWakeBinding.wakeEnabled)?selectedWakeMode.toUpperCase()+' armed · time-limited':selectedWakeMode==='off'?'Off · no wake grant':selectedWakeMode.toUpperCase()+' selected · not armed'}</b></div>
+    <div className="br-detail"><span>Wake status</span><b>{hostedWakeBinding.requiresRevoke?'Existing binding · revoke before rebind':wakeBindingNeedsRebind?'Mode change · rebind required':hostedWakeBinding.serverWakeEnabled&&!hostedWakeBinding.localPollingConfirmed?'Server grant stale · revoke required':(hostedWakeGrantId||hostedWakeBinding.wakeEnabled)?selectedWakeMode.toUpperCase()+' armed · up to 24 hours':selectedWakeMode==='off'?'Off · no wake grant':selectedWakeMode.toUpperCase()+' selected · not armed'}</b></div>
     <div className="br-modal-actions">
       {hostedWakeBinding.requiresRevoke || wakeBindingNeedsRebind
         ? <button className="br-danger-action" disabled={hostBusy || browserBusy} onClick={() => void revokeHostedWakeBinding()}>Revoke binding to apply selected mode</button>
-        : (hostedWakeGrantId || hostedWakeBinding.wakeEnabled)
+        : (hostedWakeGrantId || hostedWakeBinding.wakeEnabled || hostedWakeBinding.serverWakeEnabled)
           ? <button className="br-danger-action" disabled={hostBusy || browserBusy} onClick={() => void chooseWakeMode('off')}>Turn Off and revoke binding</button>
           : selectedWakeMode==='off'
             ? <span className="br-browser-caption">Off is not armed. Choose On or Auto, then register the intended input.</span>
