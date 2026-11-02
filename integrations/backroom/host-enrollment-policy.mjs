@@ -15,6 +15,13 @@ function label(value,name,max=256){
  return value;
 }
 function uuid(value,name){if(typeof value!=='string'||!UUID.test(value))throw new TypeError('Invalid '+name);return value;}
+export function validateBindingStatusQuery(raw){
+ const v=object(raw);
+ keys(v,['roomId','participantId']);
+ const result={roomId:uuid(v.roomId,'roomId')};
+ if(v.participantId!==undefined)result.participantId=uuid(v.participantId,'participantId');
+ return Object.freeze(result);
+}
 export function validateHostEnrollment(raw){
  const v=object(raw);
  keys(v,['hostId','credentialDigest','ttlSeconds']);
