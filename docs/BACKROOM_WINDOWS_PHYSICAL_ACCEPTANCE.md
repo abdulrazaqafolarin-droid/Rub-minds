@@ -1,6 +1,6 @@
 # Backroom Windows companion — physical acceptance
 
-Status: **The earlier PR #62 Windows test lane passed; this acceptance branch adds a linked release artifact and Emergency Stop race protections, which still require exact-head CI. Physical host acceptance remains pending.**
+Status: **The earlier PR #62 Windows test lane passed; this branch adds a linked release artifact and Emergency Stop race protections. Exact-head CI has not executed its steps (failed jobs returned no runner logs); physical host acceptance remains pending.**
 
 This matrix verifies the native Tauri companion on a real Windows 10/11 x64 computer. A successful GitHub-hosted Windows job is not physical-device acceptance.
 
