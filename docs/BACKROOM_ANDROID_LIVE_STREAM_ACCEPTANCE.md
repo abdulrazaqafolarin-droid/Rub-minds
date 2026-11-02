@@ -1,6 +1,6 @@
 # Backroom Android live app stream — physical acceptance
 
-Status: **source, CI build and automated checks pass; physical handset acceptance is pending**.
+Status: **The baseline PR #62 Android unit-test, merged-manifest and debug-APK jobs passed. The new artifact-export workflow still needs exact-head CI validation; physical handset acceptance is pending.**
 
 This checklist covers the Android real-app mirror, remote touch and remote text entry into the currently focused phone field. It does not certify Android guest virtualization, isolated app data, guest-only frames or accessibility field discovery.
 
