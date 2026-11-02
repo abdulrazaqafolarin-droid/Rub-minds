@@ -4,6 +4,7 @@ import { chmod, mkdir, mkdtemp, rm, stat, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { BrowserHostRuntime } from "./browser-host-runtime.mjs";
+import { BrowserCanonicalWakeAdapter } from "./browser-wake-adapter.mjs";
 
 function fakePage({url="https://chatgpt.com/c/test",title="Research thread",selection=null,closed=false}={}) {
  const handlers={}; let input="", pageUrl=url, bindingMarker=null, nodeId=1, markerNodeId=null, disposedHandles=0, selectedElementNodeId=null, selectionSerial=100, activeAttemptId=null, viewportWidth=1200, viewportHeight=800, scrollX=0, scrollY=0, domRevision=0;
@@ -516,5 +517,38 @@ test("managed browser refuses a symbolic-link profile path", async (t) => {
  } finally {
   await runtime.stop().catch(() => {});
   await rm(root, { recursive: true, force: true });
+ }
+});
+
+test("a full 24-hour user-approved browser wake grant passes the remote activation proof",async()=>{
+ const p=fakePage(),runtime=factory(fakeContext([p]));await runtime.start();
+ const [page]=await runtime.listPages();
+ const roomId="12345678-1234-4234-9234-123456789014";
+ const participantId="42345678-1234-4234-9234-123456789014";
+ const bindingId="52345678-1234-4234-9234-123456789014";
+ const sessionDigest="a".repeat(64);
+ const originalProbe=BrowserCanonicalWakeAdapter.prototype.probe;
+ BrowserCanonicalWakeAdapter.prototype.probe=async()=>({connected:true,focused:true});
+ try{
+  await runtime.startSelection(page.pageId,roomId);
+  p.setSelection({state:"selected",selector:"[role=textbox]",tagName:"textarea"});
+  const target=await runtime.registerSelectedTarget(page.pageId,roomId,p.activeSelectionAttempt());
+  assert.ok(target.wakeAvailable);
+  const grant=await runtime.enableContinuousWake({
+   targetId:target.id,roomId,participantId,sessionId:page.pageId,bindingId,
+   confirmed:true,ttlMs:24*60*60*1000,maxPerMinute:6
+  });
+  assert.equal(grant.expiresAt-grant.createdAt,24*60*60*1000);
+  const acceptedTtl=Math.floor((grant.expiresAt-Date.now()-15000)/1000);
+  assert.ok(acceptedTtl>=86380&&acceptedTtl<86400);
+  assert.equal(await runtime.verifyRemoteWakeActivation({
+   hostId:"host",sessionDigest,bindingId,grantId:grant.grantId,ttlSeconds:acceptedTtl
+  }),true);
+  assert.equal(await runtime.verifyRemoteWakeActivation({
+   hostId:"host",sessionDigest,bindingId,grantId:grant.grantId,ttlSeconds:86401
+  }),false);
+ }finally{
+  BrowserCanonicalWakeAdapter.prototype.probe=originalProbe;
+  await runtime.stop();
  }
 });
