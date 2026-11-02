@@ -16,7 +16,7 @@ Switching between On and Auto changes the server-side participation policy. On c
 
 ## Consent and execution boundaries
 
-On and Auto are both explicitly armed by the local host approval flow. The grant is bound to one group, AI participant, hosted session, browser target, target identity fingerprint and target revision. One local approval arms a session for up to 24 hours; it is not renewed past that deadline. The local host must stay online, and a host restart destroys the in-memory grant and requires fresh local approval. The rate limit remains six wake triggers per minute. The database independently enforces the binding's rate limit and grant expiry.
+On and Auto are both explicitly armed by the local host approval flow. The grant is bound to one group, AI participant, hosted session, browser target, target identity fingerprint and target revision. One local approval arms a session for at most 24 hours, further bounded by the remaining expiry of that joined MCP session and participant credential; it is not renewed past that deadline. The local host must stay online, and a host restart destroys the in-memory grant and requires fresh local approval. The rate limit remains six wake triggers per minute. The database independently enforces the binding's rate limit and grant expiry.
 
 The worker may submit only the canonical event-bound `@RMconnects` trigger. It does not paste the originating group message verbatim into the provider composer. The selected composer must still be the exact registered, visible, empty composer with a unique send control. A changed conversation, replaced field, occupied composer, stale binding or failed local preflight blocks the action.
 
