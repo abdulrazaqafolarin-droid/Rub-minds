@@ -12,12 +12,13 @@ type Surface = 'browser_tab' | 'desktop_app' | 'windows_app' | 'terminal' | 'and
 type Space = { id: string; name: string; surface: Surface; app: string; createdAt: number; pageId?: string };
 type BrowserViewFrame = { pageId: string; roomId: string; grantId: string; frameId: string; mimeType: 'image/jpeg'; image: string; width: number; height: number; expiresAt: number };
 type Rect = { x: number; y: number; width: number; height: number };
-type HostStatus = { hostId: string; label: string; expiresAt: number; protocolVersion: string; connected: boolean; executionReady: boolean; capabilities: Record<string, boolean>; nextStep: string; browserPages?: number; enrollmentDigest?: string; wakeGatewayHost?: string };
+type HostWakeBindingStatus = { bindingId: string; polling: boolean; consentActive: boolean; deactivationPending: boolean };
+type HostStatus = { hostId: string; label: string; expiresAt: number; protocolVersion: string; connected: boolean; executionReady: boolean; capabilities: Record<string, boolean>; nextStep: string; browserPages?: number; enrollmentDigest?: string; wakeGatewayHost?: string; wakeBindings?: HostWakeBindingStatus[] };
 type BrowserPageRow = { pageId: string; title: string; site: string; canSelect: boolean };
 type BrowserTargetRow = { id: string; pageId: string; roomId: string; title: string; site: string; surface: string; operations: string[]; wakeAvailable?: boolean; spaceId?: string; sessionId?: string; identityFingerprint?: string; revision?: number; locatorKind?: string; locatorValue?: string };
 type HostedAiSession = { participantId: string; displayName: string; sessionDigest: string; expiresAt: string };
 type WakeInteractionMode = 'off' | 'on' | 'auto';
-type HostedWakeBinding = { bindingId: string; roomId: string; participantId: string; sessionId: string; targetId: string; sessionDigest: string; participationMode?: 'mentions' | 'smart' | 'task'; wakeEnabled?: boolean; wakeExpiresAt?: string | null; requiresRevoke?: boolean };
+type HostedWakeBinding = { bindingId: string; roomId: string; participantId: string; sessionId: string; targetId: string; sessionDigest: string; participationMode?: 'mentions' | 'smart' | 'task'; wakeEnabled?: boolean; serverWakeEnabled?: boolean; localPollingConfirmed?: boolean; wakeExpiresAt?: string | null; requiresRevoke?: boolean };
 type PendingBrowserSelection = { pageId: string; roomId: string; generation: number; attemptId: string | null };
 const surfaces: { id: Surface; name: string; detail: string }[] = [
   { id: 'browser_tab', name: 'Browser session', detail: 'ChatGPT, Claude and other browser conversations' },
@@ -69,6 +70,17 @@ function parseHostStatus(value: unknown, expectedHostId?: string): HostStatus {
       !/^(?:[a-z0-9-]+\\.)*[a-z0-9-]+$/i.test(row.wakeGatewayHost))) {
     throw new HostStatusValidationError('Local host returned an invalid wake gateway hostname.');
   }
+  let wakeBindings: HostWakeBindingStatus[] | undefined;
+  if (row.wakeBindings !== undefined) {
+    if (!Array.isArray(row.wakeBindings) || row.wakeBindings.length > 10 || row.wakeBindings.some(value => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return true;
+      const item=value as Record<string,unknown>;
+      return typeof item.bindingId!=='string' || !/^[a-f0-9-]{36}$/i.test(item.bindingId) ||
+        typeof item.polling!=='boolean' || typeof item.consentActive!=='boolean' ||
+        typeof item.deactivationPending!=='boolean';
+    })) throw new HostStatusValidationError('Local host returned invalid durable wake status.');
+    wakeBindings = row.wakeBindings as HostWakeBindingStatus[];
+  }
   if (!row.capabilities || typeof row.capabilities !== 'object' || Array.isArray(row.capabilities)) {
     throw new HostStatusValidationError('Local host returned invalid capabilities.');
   }
@@ -97,6 +109,7 @@ function parseHostStatus(value: unknown, expectedHostId?: string): HostStatus {
     ...(typeof row.browserPages === 'number' ? { browserPages: row.browserPages } : {}),
     ...(typeof row.enrollmentDigest === 'string' ? { enrollmentDigest: row.enrollmentDigest } : {}),
     ...(typeof row.wakeGatewayHost === 'string' ? { wakeGatewayHost: row.wakeGatewayHost.toLowerCase() } : {}),
+    ...(wakeBindings ? { wakeBindings } : {}),
   };
 }
 
