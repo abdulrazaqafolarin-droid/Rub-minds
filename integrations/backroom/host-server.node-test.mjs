@@ -792,3 +792,23 @@ test("paired host status reports only the trusted wake gateway hostname",async()
   assert.equal(value.hostToken,undefined);
  },{wakeService});
 });
+
+test("paired host status reports exact local wake poller state without leaking grant credentials",async()=>{
+ const bindingId="42345678-1234-4234-9234-123456789012";
+ const gatewayHost="tzcuuynmviiuactafpld.supabase.co";
+ const wakeService={
+  get status(){return {configured:true,count:1,gatewayHost,bindings:[{
+   bindingId,polling:true,consentActive:true,deactivationPending:false,
+   grantId:"must-not-leak",sessionDigest:"a".repeat(64),hostToken:"must-not-leak"
+  }]};}
+ };
+ await withHost(async({base,origin})=>{
+  const credentials=await(await pair(base,origin)).json();
+  const response=await fetch(base+"/v1/host",{headers:{Origin:origin,Authorization:"Bearer "+credentials.sessionToken}});
+  assert.equal(response.status,200);
+  const value=await response.json();
+  assert.deepEqual(value.wakeBindings,[{bindingId,polling:true,consentActive:true,deactivationPending:false}]);
+  assert.equal(JSON.stringify(value).includes("must-not-leak"),false);
+  assert.equal(JSON.stringify(value).includes("a".repeat(64)),false);
+ },{wakeService});
+});
