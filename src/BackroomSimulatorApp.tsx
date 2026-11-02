@@ -570,6 +570,8 @@ export default function BackroomApp() {
       if(revokeError||data?.ok!==true||data?.revoked!==true)
         throw new Error('Input binding was not revoked. Check ownership and retry.');
       if(!localStopConfirmed){
+        setHostedWakeBinding(current=>current?{...current,wakeEnabled:false,serverWakeEnabled:false,localPollingConfirmed:false,requiresRevoke:true}:current);
+        setHostedWakeGrantId('');
         setHostMessage('The server revoked this binding and cancelled queued jobs, but the paired local host did not confirm that polling and any in-flight action have stopped. This mode change is not marked complete. Reconnect to that host and use Emergency Stop before retrying.');
         return false;
       }
