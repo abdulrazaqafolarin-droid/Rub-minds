@@ -20,7 +20,7 @@ On and Auto are both explicitly armed by the local host approval flow. The grant
 
 The worker may submit only the canonical event-bound `@RMconnects` trigger. It does not paste the originating group message verbatim into the provider composer. The selected composer must still be the exact registered, visible, empty composer with a unique send control. A changed conversation, replaced field, occupied composer, stale binding or failed local preflight blocks the action.
 
-Off uses owner-authenticated server-side binding revocation, which cancels pending and leased jobs even when the local host cannot be reached. A failed server revocation must be shown as a failure; the UI must not claim Off succeeded.
+Off attempts to stop the paired local host's wake grant and poller before the owner-authenticated server binding revocation. The server revoke cancels pending and leased jobs even when the local host cannot be reached, but it cannot prove that an already-running provider action has stopped. The UI reports Off as complete only when the local host confirms polling/in-flight cleanup and the server confirms binding revocation. If the local host is unreachable, the queue is revoked but the mode transition remains unconfirmed; reconnect to that host and use Emergency Stop before treating the session as fully Off.
 
 ## What a successful wake means
 
