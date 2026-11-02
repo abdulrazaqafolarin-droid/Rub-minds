@@ -60,3 +60,58 @@ test("wrong group, host and capability fail closed", async () => {
   await assert.rejects(() => guard.execute({ command: { ...command, roomId: "wrong" }, target }), /scope/);
   await assert.rejects(() => guard.execute({ command: { ...command, operation: "submit" }, target }), /capability/);
 });
+
+test("wake execution seal runs after permission and exact composer preflight but before UI effect", async () => {
+  const order = [];
+  const wakeHost = { ...host, operations: ["wake"] };
+  const wakeCommand = {
+    ...command,
+    operation: "wake",
+    eventId: "event-1",
+    text: "@RMconnects\\nEvent: event-1\\nRetrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.",
+  };
+  const guard = new LocalExecutionGuard({
+    host: wakeHost,
+    isConnected: async () => { order.push("connected"); return true; },
+    permission: async () => { order.push("permission"); return true; },
+    adapter: {
+      probe: async () => { order.push("probe"); return probe; },
+      execute: async () => { order.push("effect"); return { state: "completed", verified: true }; },
+    },
+  });
+  const result = await guard.execute({
+    command: wakeCommand,
+    target,
+    beforeEffect: async () => { order.push("seal-and-consume"); return true; },
+  });
+  assert.equal(result.state, "completed");
+  assert.deepEqual(order, ["connected", "permission", "probe", "seal-and-consume", "effect"]);
+});
+
+test("wake execution seal is not acquired when local app preflight fails", async () => {
+  let sealCalls = 0;
+  let effectCalls = 0;
+  const wakeHost = { ...host, operations: ["wake"] };
+  const wakeCommand = {
+    ...command,
+    operation: "wake",
+    eventId: "event-1",
+    text: "@RMconnects\\nEvent: event-1\\nRetrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.",
+  };
+  const guard = new LocalExecutionGuard({
+    host: wakeHost,
+    isConnected: async () => true,
+    permission: async () => true,
+    adapter: {
+      probe: async () => ({ ...probe, focused: false }),
+      execute: async () => { effectCalls++; return { state: "completed", verified: true }; },
+    },
+  });
+  await assert.rejects(() => guard.execute({
+    command: wakeCommand,
+    target,
+    beforeEffect: async () => { sealCalls++; return true; },
+  }), /focus mismatch/);
+  assert.equal(sealCalls, 0);
+  assert.equal(effectCalls, 0);
+});
