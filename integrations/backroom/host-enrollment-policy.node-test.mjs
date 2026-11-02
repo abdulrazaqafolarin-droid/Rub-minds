@@ -30,8 +30,11 @@ test('binding creation only accepts inactive registration fields and explicit sc
 
 test('binding status queries require owner-scoped room and optional participant identities',()=>{
  assert.deepEqual(validateBindingStatusQuery({roomId:uuid}),{roomId:uuid});
- assert.deepEqual(validateBindingStatusQuery({roomId:uuid,participantId:uuid}),{roomId:uuid,participantId:uuid});
+ assert.deepEqual(validateBindingStatusQuery({roomId:uuid,participantId:uuid,sessionDigest:'a'.repeat(64)}),
+  {roomId:uuid,participantId:uuid,sessionDigest:'a'.repeat(64)});
  assert.throws(()=>validateBindingStatusQuery({roomId:uuid,ownerId:uuid}),/Unexpected/);
  assert.throws(()=>validateBindingStatusQuery({roomId:'not-a-uuid'}),/roomId/);
- assert.throws(()=>validateBindingStatusQuery({roomId:uuid,participantId:'not-a-uuid'}),/participantId/);
+ assert.throws(()=>validateBindingStatusQuery({roomId:uuid,participantId:uuid}),/supplied together/);
+ assert.throws(()=>validateBindingStatusQuery({roomId:uuid,sessionDigest:'a'.repeat(64)}),/supplied together/);
+ assert.throws(()=>validateBindingStatusQuery({roomId:uuid,participantId:uuid,sessionDigest:'bad'}),/sessionDigest/);
 });
