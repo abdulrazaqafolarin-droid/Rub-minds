@@ -1111,7 +1111,7 @@ export class BrowserHostRuntime {
   async verifyRemoteWakeActivation({hostId,sessionDigest,bindingId,grantId,ttlSeconds}={}) {
     if(hostId!==this.hostId||typeof sessionDigest!=="string"||!/^[a-f0-9]{64}$/.test(sessionDigest)||
        typeof bindingId!=="string"||!validId(bindingId)||this.#remoteWakeGrants.get(bindingId)!==grantId||
-       !Number.isSafeInteger(ttlSeconds)||ttlSeconds<60||ttlSeconds>900)return false;
+       !Number.isSafeInteger(ttlSeconds)||ttlSeconds<60||ttlSeconds>86400)return false;
     await this.listTargets();
     const grant=this.wakeAuthority.status(grantId);
     if(!grant.active||grant.scope.hostId!==this.hostId||grant.scope.bindingId!==bindingId||
