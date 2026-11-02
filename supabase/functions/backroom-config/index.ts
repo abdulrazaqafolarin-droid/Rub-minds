@@ -97,7 +97,9 @@ Deno.serve(async req=>{
     .select('id,participant_id,host_id,session_id,space_id,target_id,target_identity_fingerprint,target_revision,surface,participation_mode,wake_enabled,wake_expires_at,confirmed_at,revoked_at')
     .eq('owner_id',ownerId).eq('room_id',input.roomId).is('revoked_at',null)
     .order('updated_at',{ascending:false}).limit(10);
-   if(input.participantId)query=query.eq('participant_id',input.participantId);
+   if(input.participantId){
+    query=query.eq('participant_id',input.participantId).eq('session_digest',input.sessionDigest);
+   }
    const {data,error}=await query;
    if(error)return json(503,{ok:false,reason:'service_unavailable'},origin);
    const now=Date.now();
