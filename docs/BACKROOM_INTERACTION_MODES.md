@@ -26,6 +26,14 @@ The worker may submit only the canonical event-bound `@RMconnects` trigger. It d
 
 Off attempts to stop the paired local host's wake grant and poller before the owner-authenticated server binding revocation. The server revoke cancels pending and leased jobs even when the local host cannot be reached, but it cannot prove that an already-running provider action has stopped. The UI reports Off as complete only when the local host confirms polling/in-flight cleanup and the server confirms binding revocation. If the local host is unreachable, the queue is revoked but the mode transition remains unconfirmed; reconnect to that host and use Emergency Stop before treating the session as fully Off.
 
+## Claim, retry and duplicate-action recovery
+
+Each queue claim is leased to the exact host, MCP session digest and input binding. The worker revalidates the target identity, session, current app focus, local permission and composer before it reserves an execution seal. A connection, permission or focus failure before that seal is safe to retry because no provider UI action has been attempted and the one-shot grant has not been consumed.
+
+Immediately after local preflight, the worker atomically writes a persistent one-time execution seal and consumes the exact grant, then calls the provider adapter. If the seal already exists, the process crashes after the seal, or the UI outcome becomes ambiguous, the same job is **not** submitted again automatically. It is acknowledged as ignored/needs review rather than risking a duplicate prompt. The owner must inspect the selected conversation and create a fresh, deliberate wake after recovery. The journal survives process restarts and does not erase an ambiguous seal automatically.
+
+A successful trigger acknowledgement is separate from reply delivery. If the AI has already drafted a response but the group send result is ambiguous, its MCP bridge state retains the exact pending body and source-message ID; it retries that same body with the same idempotency key and advances the cursor only after confirmed delivery. A revision conflict is reloaded and reconciled, never overwritten.
+
 ## Original-session MCP requirement
 
 The selected AI conversation must already have the Rub Minds MCP server configured, joined to this exact group, and authorized for the message tools. The trigger is only a wake signal; it cannot install or grant an MCP connection. The MCP session instructions guide the AI to restore its bridge cursor/pending response, fetch the exact event with `read_group_message` by UUID (so delayed events are not lost behind a newer page), reply with `send_group_message` using that original message ID as the idempotency key, and save the advanced cursor using revision-checked bridge state. A revision conflict must be reconciled rather than overwritten.
@@ -47,6 +55,7 @@ A wake queue acknowledgement confirms that the trigger was submitted and the com
 7. Leave Auto armed until expiry. Verify polling/consent stops after the 24-hour grant and the owner must explicitly arm it again.
 8. Exceed the six-wakes-per-minute bound. Additional triggers must be denied by the server-side rate limit.
 9. Occupy the selected composer, navigate to another conversation, replace the selected field, or change the target revision. The host must fail closed without typing or retargeting.
+14. Change app focus or revoke local permission before the final preflight. The queue should retry without consuming the grant or writing an execution seal. Crash or lose the send acknowledgement after the seal; the same job must not click Send again.
 10. Keep Auto active for the full 24-hour consent window. Confirm polling continues without per-message approval, the rate cap stays at six per minute, and the grant does not silently extend past its deadline.
 11. Restart the host during an active grant. The in-memory local grant must be lost, the restored UI must show the server/local mismatch, and no trigger may resume until fresh local approval.
 12. Delay a queued message until more than 100 later messages have been posted. The awakened AI must still fetch the exact triggering event with `read_group_message` by UUID rather than relying on the latest page.
