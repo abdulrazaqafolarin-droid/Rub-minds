@@ -113,7 +113,7 @@ function parseHostStatus(value: unknown, expectedHostId?: string): HostStatus {
   };
 }
 
-function LiveBrowserPreview({ frame, appName, onSelectRegion, wakeMode, onWakeModeChange, wakeModeDisabled, wakeModeStatus, onFindSessions }: {
+function LiveBrowserPreview({ frame, appName, onSelectRegion, wakeMode, onWakeModeChange, wakeModeDisabled, wakeModeStatus, wakeCapable, findSessionsDisabled, onFindSessions }: {
   frame: BrowserViewFrame;
   appName: string;
   onSelectRegion: (frameId: string, region: Rect) => void;
@@ -121,6 +121,8 @@ function LiveBrowserPreview({ frame, appName, onSelectRegion, wakeMode, onWakeMo
   onWakeModeChange: (mode: WakeInteractionMode) => void;
   wakeModeDisabled: boolean;
   wakeModeStatus: string;
+  wakeCapable: boolean;
+  findSessionsDisabled: boolean;
   onFindSessions: () => void;
 }) {
   const [start, setStart] = useState<{ x: number; y: number; frameId: string } | null>(null);
@@ -180,7 +182,7 @@ function LiveBrowserPreview({ frame, appName, onSelectRegion, wakeMode, onWakeMo
         onPointerUp={finish}
         onPointerCancel={() => { setStart(null); setDrag(null); setDragFrame(null); }}
         role="group"
-        aria-label="Drag around exactly one visible empty text field to register it as a draft-only target"
+        aria-label="Drag around exactly one visible empty AI composer to register it for draft insertion and, when the provider adapter supports it, a separately consented canonical wake"
         tabIndex={0}
       />
       {rectangle && <div className="br-live-selection" style={{
@@ -191,13 +193,13 @@ function LiveBrowserPreview({ frame, appName, onSelectRegion, wakeMode, onWakeMo
     <div className="br-live-mode-control">
       <div className="br-live-mode-head">
         <div><b>AI participation</b><small>Choose how this exact composer joins the group</small></div>
-        <button type="button" className="br-secondary" onClick={onFindSessions} disabled={wakeModeDisabled}>Find joined AI</button>
+        <button type="button" className="br-secondary" onClick={onFindSessions} disabled={findSessionsDisabled}>Find joined AI</button>
       </div>
       <label htmlFor="br-frame-wake-mode">Interaction mode</label>
       <select id="br-frame-wake-mode" value={wakeMode} onChange={event => onWakeModeChange(event.target.value as WakeInteractionMode)} disabled={wakeModeDisabled}>
         <option value="off">Off — no automatic triggers</option>
-        <option value="on">On — wake only when mentioned</option>
-        <option value="auto">Auto — wake on human group messages</option>
+        <option value="on" disabled={!wakeCapable}>On — wake only when mentioned</option>
+        <option value="auto" disabled={!wakeCapable}>Auto — wake on human group messages</option>
       </select>
       <p>{wakeModeStatus}</p>
       <small>Auto sends only the fixed @RMconnects trigger to this registered managed-browser composer. It does not copy the group message into the AI chat. The AI must already be joined to Rub Minds through MCP. Native Android and Windows app frames still support verified draft insertion only.</small>
@@ -1010,7 +1012,7 @@ export default function BackroomApp() {
     const pageId = current?.pageId;
     const groupId = room?.id;
     if (!pageId || !groupId || !hostToken || !liveViewEnabled || !liveFrame) return;
-    if (!window.confirm('Register the field inside this rectangle on the selected live tab? The local host will accept only one visible, editable, empty text field. Registration grants draft insertion only; it will never send or press Enter.')) return;
+    if (!window.confirm('Register the field inside this rectangle on the selected live tab? The local host must resolve it to one visible, editable, empty composer. This does not send anything. A provider-specific canonical wake capability, when available, still requires a separate joined-AI binding and explicit local consent before it can submit a fixed @RMconnects trigger.')) return;
     setBrowserBusy(true);
     try {
       const target = await hostApi<BrowserTargetRow>('/v1/browser/select-region', {
@@ -1022,7 +1024,7 @@ export default function BackroomApp() {
       }
       setBrowserTargets(previous => [target, ...previous.filter(existing => existing.id !== target.id)]);
       setSelectedBrowserTarget(target.id);
-      setNotice('Live tab target registered. The host retains the exact DOM element and revalidates it before draft insertion. No message was sent.');
+      setNotice(target.wakeAvailable===true ? 'Live composer registered. The host retains the exact DOM node and verified provider wake control. No message was sent; On / Auto still require a joined-AI binding and explicit local consent.' : 'Live text field registered for verified draft insertion only. No message was sent.');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not register this live typing area.');
     } finally { setBrowserBusy(false); }
@@ -1270,9 +1272,15 @@ export default function BackroomApp() {
               wakeMode={selectedWakeMode}
               onWakeModeChange={mode => void chooseWakeMode(mode)}
               wakeModeDisabled={hostBusy || browserBusy || !wakeBindingStatusKnown}
+              findSessionsDisabled={hostBusy || browserBusy}
+              wakeCapable={browserTargets.some(target => target.id===selectedBrowserTarget && target.roomId===room.id && target.wakeAvailable===true)}
               wakeModeStatus={!wakeBindingStatusKnown
                 ? 'Find the exact joined AI session first so Backroom can restore its server-side mode and local poller state.'
-                : hostedWakeBinding?.roomId===room.id && hostedWakeBinding.targetId===selectedBrowserTarget
+                : !selectedBrowserTarget
+                  ? 'Drag-select one exact composer in this frame. On and Auto become available only when its provider adapter verifies canonical wake support.'
+                  : !browserTargets.some(target => target.id===selectedBrowserTarget && target.roomId===room.id && target.wakeAvailable===true)
+                    ? 'This registered field supports draft insertion only. Choose a verified ChatGPT or Claude composer with a unique visible Send control for On / Auto.'
+                  : hostedWakeBinding?.roomId===room.id && hostedWakeBinding.targetId===selectedBrowserTarget
                   ? hostedWakeBinding.serverWakeEnabled && !hostedWakeBinding.localPollingConfirmed
                     ? 'A server grant exists but the paired host did not confirm its poller. Revoke or restart/re-pair before enabling this target.'
                     : hostedWakeBinding.wakeEnabled
