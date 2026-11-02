@@ -167,7 +167,7 @@ export function createHostWakeService({
   if(entry.activeGrantId||entry.poller.running)
    throw new Error('Stop the previous consent grant before activating this binding');
   const remainingMs=Number.isFinite(grant.expiresAt)?grant.expiresAt-Date.now():0;
-  const ttlSeconds=Math.min(300,Math.floor((remainingMs-5000)/1000));
+  const ttlSeconds=Math.min(86400,Math.floor((remainingMs-5000)/1000));
   if(ttlSeconds<60)throw new Error('Local wake grant has insufficient remaining lifetime');
   const activateInput={hostId:identity.hostId,bindingId:entry.scope.bindingId,
     sessionDigest:entry.scope.sessionDigest,grantId:grant.grantId,ttlSeconds};
