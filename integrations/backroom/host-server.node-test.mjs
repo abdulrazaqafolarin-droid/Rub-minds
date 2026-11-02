@@ -822,22 +822,43 @@ test("paired host status reports exact local wake poller state without leaking g
  },{wakeService});
 });
 
-test("binding revoke does not claim local stop when a restarted host has no in-memory grant or poller",async()=>{
+test("binding revoke confirms no local worker after restart only from a complete empty poller inventory",async()=>{
  const bindingId="52345678-1234-4234-9234-123456789012";
  const browserRuntime={
   status:()=>({running:true,pages:1,capabilities:{browserCanonicalWake:true}}),
   revokeWakeBinding:()=>false
  };
- const wakeService={stop:async()=>({stopped:true,bindings:[],remotelyDeactivated:null})};
+ const wakeService={
+  status:{configured:false,count:0,bindings:[],gatewayHost:"project.supabase.co"},
+  stop:async()=>({stopped:true,bindings:[],remotelyDeactivated:null})
+ };
  await withHost(async({base,origin})=>{
   const credentials=await(await pair(base,origin)).json();
   const headers={Origin:origin,Authorization:"Bearer "+credentials.sessionToken,"Content-Type":"application/json"};
   const response=await fetch(base+"/v1/browser/wake/bindings/revoke",{method:"POST",headers,body:JSON.stringify({bindingId})});
   assert.equal(response.status,200);
   assert.deepEqual(await response.json(),{
-   revoked:false,localPollingStopped:false,grantRevoked:false,
+   revoked:true,localPollingStopped:true,grantRevoked:false,noLocalWorker:true,
    remoteDeactivationConfirmed:false,remoteDeactivationPending:false
   });
+ },{browserRuntime,wakeService});
+});
+
+test("binding revoke remains unconfirmed if local poller inventory is missing",async()=>{
+ const bindingId="52345678-1234-4234-9234-123456789015";
+ const browserRuntime={
+  status:()=>({running:true,pages:1,capabilities:{browserCanonicalWake:true}}),
+  revokeWakeBinding:()=>false
+ };
+ const wakeService={status:{configured:false,count:0},stop:async()=>({stopped:true,bindings:[],remotelyDeactivated:null})};
+ await withHost(async({base,origin})=>{
+  const credentials=await(await pair(base,origin)).json();
+  const headers={Origin:origin,Authorization:"Bearer "+credentials.sessionToken,"Content-Type":"application/json"};
+  const response=await fetch(base+"/v1/browser/wake/bindings/revoke",{method:"POST",headers,body:JSON.stringify({bindingId})});
+  assert.equal(response.status,200);
+  const value=await response.json();
+  assert.equal(value.localPollingStopped,false);
+  assert.equal(value.noLocalWorker,false);
  },{browserRuntime,wakeService});
 });
 
