@@ -15,6 +15,7 @@ set search_path = ''
 as $function$
 declare
   v_binding public.backroom_input_bindings%rowtype;
+  v_session public.rub_minds_mcp_sessions%rowtype;
   v_now timestamptz := pg_catalog.clock_timestamp();
 begin
   if p_host_id is null or p_session_digest is null or p_binding_id is null
@@ -22,6 +23,21 @@ begin
     or p_ttl_seconds < 60 or p_ttl_seconds > 86400 then
     raise exception 'Invalid Backroom wake grant activation';
   end if;
+
+  -- Match queue admission and Leave lock ordering: session admission lock,
+  -- parent MCP session row, then the child Backroom input binding row.
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(p_session_digest, 0)
+  );
+
+  select * into v_session
+  from public.rub_minds_mcp_sessions s
+  where s.session_digest = p_session_digest
+    and s.terminated_at is null
+    and s.expires_at > v_now
+    and s.agent_credential_ciphertext is not null
+  for update;
+  if not found then return false; end if;
 
   select * into v_binding
   from public.backroom_input_bindings b
@@ -68,28 +84,30 @@ begin
   ) then return false; end if;
 
   -- The MCP handle is initially issued with a 24-hour lifetime. The
-  -- explicit, owner-approved Auto grant may extend this exact live handle,
-  -- but never beyond the existing AI credential/invitation expiry checked above.
-  -- Lock/update the parent session so a concurrent leave/revoke cannot race
-  -- this extension; the session must still be live at the instant of activation.
-  update public.rub_minds_mcp_sessions ms
-  set expires_at = greatest(ms.expires_at,
+  -- explicit, owner-approved Auto grant may extend this exact locked live handle,
+  -- but never beyond the active AI participant credential/invitation expiry checked
+  -- below. The parent row was locked before the child binding to match Leave.
+  if v_session.room_id is distinct from v_binding.room_id
+    or v_session.participant_id is distinct from v_binding.participant_id then
+    return false;
+  end if;
+  if not exists (
+    select 1 from public.agent_connections ac
+    where ac.room_id = v_binding.room_id
+      and ac.participant_id = v_binding.participant_id
+      and ac.owner_id = v_binding.owner_id
+      and ac.revoked_at is null
+      and ac.expires_at > v_now + pg_catalog.make_interval(secs => p_ttl_seconds)
+  ) then return false; end if;
+
+  update public.rub_minds_mcp_sessions
+  set expires_at = greatest(expires_at,
         v_now + pg_catalog.make_interval(secs => p_ttl_seconds)),
       last_seen_at = v_now
-  where ms.session_digest = p_session_digest
-    and ms.room_id = v_binding.room_id
-    and ms.participant_id = v_binding.participant_id
-    and ms.terminated_at is null
-    and ms.expires_at > v_now
-    and ms.agent_credential_ciphertext is not null
-    and exists (
-      select 1 from public.agent_connections ac
-      where ac.room_id = v_binding.room_id
-        and ac.participant_id = v_binding.participant_id
-        and ac.owner_id = v_binding.owner_id
-        and ac.revoked_at is null
-        and ac.expires_at > v_now + pg_catalog.make_interval(secs => p_ttl_seconds)
-    );
+  where session_digest = p_session_digest
+    and terminated_at is null
+    and expires_at > v_now
+    and agent_credential_ciphertext is not null;
   if not found then return false; end if;
 
   update public.backroom_input_bindings
