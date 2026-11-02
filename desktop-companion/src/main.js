@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { stopLocalExecutionBeforePeerCleanup } from '../../integrations/backroom/emergency-stop-orchestrator.mjs';
 import { validateDeviceCommand, validateDeviceSignal, queueIceCandidate, takeIceCandidates } from '../../integrations/backroom/desktop-realtime-protocol.mjs';
 import { validateTerminalDraftMessage, validateTerminalSubmitMessage, createTerminalActionRequestGuard } from '../../integrations/backroom/terminal-pty-protocol.mjs';
 import { waitForIceGatheringComplete } from '../../integrations/backroom/ice-gathering.mjs';
@@ -155,16 +156,17 @@ async function revokeDevice(){
   if(!confirm('Revoke this computer from the selected Rub Minds group? This closes Backroom terminal sessions and revokes local desktop-control permissions.'))return;
   stopHeartbeat();
   try{
-    await stopAllPeerSessions();
-    await invoke('emergency_stop');
+    const stopResult=await stopNativeAndPeerSessions();
     const session=await currentSession();
     await invoke('revoke_desktop_device',{supabaseUrl:cfg.url,publishableKey:cfg.key,accessToken:session.access_token,roomId:state.roomId});
     state.deviceTokenSaved=false;state.deviceId=null;state.roomId=null;state.apps=[];state.pending=[];state.terminals.clear();
-    if(state.channel){await state.client.removeChannel(state.channel);state.channel=null;}
+    if(state.channel){try{await state.client.removeChannel(state.channel);}catch{}state.channel=null;}
     document.querySelector('#device-state').textContent='Revoked';
     document.querySelector('#revoke-device').classList.add('hidden');
     renderApps();renderPending();setConnected(false,'Computer revoked');
-    notify('Computer revoked in Rub Minds. The local device credential was removed and active Backroom sessions were stopped.','success');
+    if(stopResult.localError)notify('The computer was revoked remotely, but the local Emergency Stop command failed: '+(stopResult.localError?.message||stopResult.localError),'error');
+    else if(stopResult.peerError)notify('Computer revoked and native local execution stopped. Some peer cleanup did not finish: '+(stopResult.peerError?.message||stopResult.peerError),'error');
+    else notify('Computer revoked in Rub Minds. The local device credential was removed and active Backroom sessions were stopped.','success');
   }catch(error){notify(error?.message||'Could not revoke this computer.','error');}
 }
 async function loadApps(){
@@ -272,28 +274,31 @@ async function publish(event,payload){
 async function handleDeviceRevoked(payload){
   if(payload?.deviceId!==state.deviceId||payload?.roomId!==state.roomId||payload?.status!=='revoked')return;
   stopHeartbeat();
-  await stopAllPeerSessions({serverAlreadyClosed:true});
+  const stopResult=await stopNativeAndPeerSessions({serverAlreadyClosed:true});
   // Native status verification clears the OS keyring credential and all grants.
-  try{await invoke('desktop_device_status',{supabaseUrl:cfg.url,publishableKey:cfg.key});}
-  catch{try{await invoke('emergency_stop');}catch{}}
+  try{await invoke('desktop_device_status',{supabaseUrl:cfg.url,publishableKey:cfg.key});}catch{}
   if(state.channel){const channel=state.channel;state.channel=null;try{await state.client.removeChannel(channel);}catch{}}
   state.deviceTokenSaved=false;state.deviceId=null;state.roomId=null;state.pending=[];state.terminals.clear();state.apps=[];renderApps();
   setConnected(false,'Computer authorization revoked');
   const stateNode=document.querySelector('#device-state');if(stateNode)stateNode.textContent='Revoked';
   document.querySelector('#revoke-device')?.classList.add('hidden');
   renderPending();
-  notify('This computer was revoked by the Rub Minds group owner. Backroom streams, terminal sessions and native permissions have been stopped.','error');
+  if(stopResult.localError)notify('This computer was revoked, but local Emergency Stop failed: '+(stopResult.localError?.message||stopResult.localError),'error');
+  else if(stopResult.peerError)notify('This computer was revoked and local execution stopped, but peer cleanup was incomplete: '+(stopResult.peerError?.message||stopResult.peerError),'error');
+  else notify('This computer was revoked by the Rub Minds group owner. Backroom streams, terminal sessions and native permissions have been stopped.','error');
 }
 async function failClosedDeviceChannel(reason,failedChannel){
   if(failedChannel&&state.channel!==failedChannel)return;
   stopHeartbeat();
   const channel=failedChannel||state.channel;
   state.channel=null;
-  await stopAllPeerSessions();
-  try{await invoke('emergency_stop');}catch{}
+  const stopResult=await stopNativeAndPeerSessions();
   if(channel&&state.client){try{await state.client.removeChannel(channel);}catch{}}
   setConnected(false,'Device channel unavailable');
-  notify(reason||'The private device channel was lost. Active Backroom sessions were stopped locally. Reconnect to resume.', 'error');
+  const details=stopResult.localError
+    ?' Local Emergency Stop failed: '+(stopResult.localError?.message||stopResult.localError)
+    :stopResult.peerError?' Some peer cleanup failed: '+(stopResult.peerError?.message||stopResult.peerError):'';
+  notify((reason||'The private device channel is unavailable. Reconnect to resume.')+details,'error');
 }
 
 async function connectDeviceChannel(){
@@ -813,6 +818,13 @@ async function stopAllPeerSessions({serverAlreadyClosed=false}={}){
     ['terminal','view'].includes(item.extra?.capability)&&serverSessionIds.has(item.extra?.sessionId)));
   renderPending();
 }
+
+async function stopNativeAndPeerSessions(options={}){
+  return stopLocalExecutionBeforePeerCleanup({
+    stopLocalExecution:()=>invoke('emergency_stop'),
+    cleanupPeerSessions:()=>stopAllPeerSessions(options),
+  });
+}
 function stopHeartbeat(){if(state.heartbeat){clearInterval(state.heartbeat);state.heartbeat=null;}}
 function startHeartbeat(){
   stopHeartbeat();state.heartbeatMisses=0;
@@ -821,18 +833,24 @@ function startHeartbeat(){
       const status=await invoke('desktop_device_status',{supabaseUrl:cfg.url,publishableKey:cfg.key});
       state.heartbeatMisses=0;
       if(status.status!=='active'||status.deviceId!==state.deviceId){
-        stopHeartbeat();await stopAllPeerSessions();try{await invoke('emergency_stop');}catch{}
-        if(state.channel){const channel=state.channel;state.channel=null;await state.client.removeChannel(channel);}
+        stopHeartbeat();
+        const stopResult=await stopNativeAndPeerSessions();
+        if(state.channel){const channel=state.channel;state.channel=null;try{await state.client.removeChannel(channel);}catch{}}
         state.deviceTokenSaved=false;setConnected(false,'Computer authorization revoked');
-        notify('Rub Minds revoked this computer. Backroom streams, terminal sessions and local control grants were stopped.','error');
+        const detail=stopResult.localError?' Local Emergency Stop failed: '+(stopResult.localError?.message||stopResult.localError)
+          :stopResult.peerError?' Peer cleanup was incomplete: '+(stopResult.peerError?.message||stopResult.peerError):'';
+        notify('Rub Minds revoked this computer. Backroom execution has been stopped.'+detail,'error');
       }
     }catch(error){
       state.heartbeatMisses++;
       if(state.heartbeatMisses>=3){
-        stopHeartbeat();await stopAllPeerSessions();try{await invoke('emergency_stop');}catch{}
-        if(state.channel){const channel=state.channel;state.channel=null;await state.client.removeChannel(channel);}
+        stopHeartbeat();
+        const stopResult=await stopNativeAndPeerSessions();
+        if(state.channel){const channel=state.channel;state.channel=null;try{await state.client.removeChannel(channel);}catch{}}
         setConnected(false,'Device disconnected');
-        notify('The authenticated device connection was lost. Active Backroom sessions were stopped locally. Reconnect after checking the internet connection.','error');
+        const detail=stopResult.localError?' Local Emergency Stop failed: '+(stopResult.localError?.message||stopResult.localError)
+          :stopResult.peerError?' Peer cleanup was incomplete: '+(stopResult.peerError?.message||stopResult.peerError):'';
+        notify('The authenticated device connection was lost. Backroom execution has been stopped locally. Reconnect after checking the internet connection.'+detail,'error');
       }
     }
   },60*60*1000);
@@ -851,22 +869,21 @@ async function sendLocalTerminal(){
   catch(error){notify(error.message,'error');}
 }
 async function emergencyStop(){
-  try{
-    stopHeartbeat();
-    await stopAllPeerSessions();
-    await invoke('emergency_stop');
-    if(state.channel){await state.client.removeChannel(state.channel);state.channel=null;}
-    state.pending=[];state.draftCorrelations.clear();renderPending();setConnected(false,'Emergency stop · disconnected');
-    notify('Emergency stop complete. Local permissions and Backroom-launched sessions were stopped. Reopen the companion to reconnect.','success');
-  }catch(error){notify('Emergency stop needs attention: '+error.message,'error');}
+  stopHeartbeat();
+  const stopResult=await stopNativeAndPeerSessions();
+  if(state.channel){const channel=state.channel;state.channel=null;try{await state.client.removeChannel(channel);}catch{}}
+  state.pending=[];state.draftCorrelations.clear();renderPending();setConnected(false,'Emergency stop · disconnected');
+  if(stopResult.localError)notify('Emergency Stop failed at the native layer: '+(stopResult.localError?.message||stopResult.localError)+'. Local processes may still be active; inspect this computer immediately.','error');
+  else if(stopResult.peerError)notify('Native Emergency Stop completed. Some remote peer cleanup did not finish: '+(stopResult.peerError?.message||stopResult.peerError),'error');
+  else notify('Emergency stop complete. Local permissions and Backroom-launched sessions were stopped. Reopen the companion to reconnect.','success');
 }
 async function disconnect(){
   stopHeartbeat();
-  await stopAllPeerSessions();
-  try{await invoke('emergency_stop');}catch{}
-  
+  const stopResult=await stopNativeAndPeerSessions();
   if(state.channel){const channel=state.channel;state.channel=null;try{await state.client.removeChannel(channel);}catch{}}
   setConnected(false,'Disconnected from device channel');
+  if(stopResult.localError)notify('Disconnected, but native Emergency Stop failed: '+(stopResult.localError?.message||stopResult.localError),'error');
+  else if(stopResult.peerError)notify('Disconnected; peer cleanup did not complete: '+(stopResult.peerError?.message||stopResult.peerError),'error');
 }
 async function signOut(){
   try{await emergencyStop();await disconnect();await state.client.auth.signOut();state.user=null;state.session=null;location.reload();}
