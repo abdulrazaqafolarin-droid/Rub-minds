@@ -637,7 +637,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
               <textarea value={draft} onChange={e=>setDraft(e.target.value)} rows={2} maxLength={4000} placeholder="Write the text to insert in the selected area. It will never press Enter or Send."/>
               <button type="button" onClick={requestDraft} disabled={!selectedIsWindows||!selection||!targetStatus.startsWith('Verified editable field ·')||!draft.trim()}>Request draft insertion</button>
             </div>}
-            {controlGranted&&<div className="br-desktop-caption">Computer control is locally approved for a limited time. The user at the computer can revoke it immediately. Draft typing has a second independent approval and never sends or submits.</div>}
+            {controlGranted&&<div className="br-desktop-caption">The drag overlay is mapped to the visible video content and Windows UI Automation resolves it to one exact editable field inside the selected app window. Draft typing has a separate local approval and never sends or presses Enter. Native Windows app Auto wake is not enabled yet; Off / On / Auto currently applies to managed browser composers only.</div>}
           </div>}
           {(terminalSession||terminalPeerId)&&<div className="br-terminal-remote">
             <div className="br-terminal-remote-head"><SquareTerminal size={15}/> Native terminal · actual computer</div>
