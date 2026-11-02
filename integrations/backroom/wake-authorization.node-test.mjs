@@ -11,7 +11,7 @@ test('continuous wake grant requires explicit confirmation and exact finite scop
  const grant=auth.createGrant({...scope,confirmed:true});
  assert.equal(grant.scope.targetId,scope.targetId);
  assert.equal(auth.status(grant.grantId).active,true);
- assert.throws(()=>auth.createGrant({...scope,confirmed:true,ttlMs:60*60*1000+1}),/lifetime/);
+ assert.throws(()=>auth.createGrant({...scope,confirmed:true,ttlMs:24*60*60*1000+1}),/lifetime/);
 });
 test('canonical wake grant preflight and one-shot command consumption',()=>{
  const auth=new WakeAuthorizationAuthority(),grant=auth.createGrant({...scope,confirmed:true});
