@@ -814,6 +814,26 @@ test("paired host status preserves an authoritative empty wake inventory after p
  },{wakeService});
 });
 
+test("paired host status omits malformed or truncated wake inventory instead of claiming it is complete",async()=>{
+ const bindingId="42345678-1234-4234-9234-123456789013";
+ for(const bindings of [
+  [{bindingId,polling:true}],
+  Array.from({length:11},(_,i)=>({
+   bindingId:"52345678-1234-4234-9234-"+String(i+1).padStart(12,"0"),
+   polling:false,consentActive:false,deactivationPending:false
+  }))
+ ]) {
+  const wakeService={get status(){return {configured:true,count:bindings.length,bindings,gatewayHost:"tzcuuynmviiuactafpld.supabase.co"};}};
+  await withHost(async({base,origin})=>{
+   const credentials=await(await pair(base,origin)).json();
+   const response=await fetch(base+"/v1/host",{headers:{Origin:origin,Authorization:"Bearer "+credentials.sessionToken}});
+   assert.equal(response.status,200);
+   const value=await response.json();
+   assert.equal(Object.hasOwn(value,"wakeBindings"),false);
+  },{wakeService});
+ }
+});
+
 test("paired host status reports exact local wake poller state without leaking grant credentials",async()=>{
  const bindingId="42345678-1234-4234-9234-123456789012";
  const gatewayHost="tzcuuynmviiuactafpld.supabase.co";
