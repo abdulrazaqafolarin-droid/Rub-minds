@@ -339,6 +339,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     const binding = {
       session_digest: session.session_digest as string,
       agent_credential_ciphertext: encryptedCredential,
+      agent_credential_digest: await sha256(credential),
       room_id: data.room_id,
       participant_id: data.participant_id,
       expires_at: expiresAt,
@@ -349,6 +350,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       ? await db.from("rub_minds_mcp_sessions").insert(binding).select("session_digest").maybeSingle()
       : await db.from("rub_minds_mcp_sessions").update({
           agent_credential_ciphertext: encryptedCredential,
+          agent_credential_digest: await sha256(credential),
           room_id: data.room_id,
           participant_id: data.participant_id,
           expires_at: expiresAt,
