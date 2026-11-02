@@ -36,7 +36,7 @@ export class LocalExecutionGuard {
     this.permission = permission;
     this.isConnected = isConnected;
   }
-  async execute({ command, target }) {
+  async execute({ command, target, beforeEffect }) {
     if (!command || !target || target.hostId !== this.host.hostId ||
       command.hostId !== this.host.hostId || command.targetId !== target.id ||
       command.roomId !== target.roomId || command.spaceId !== target.spaceId ||
@@ -58,6 +58,18 @@ export class LocalExecutionGuard {
       live.surface !== target.surface || live.identityFingerprint !== target.identityFingerprint ||
       !Array.isArray(live.locatorKinds) || !live.locatorKinds.includes(target.locatorKind)) {
       denyBeforeEffect("live target identity/focus mismatch");
+    }
+    // A durable wake seal and one-shot grant consumption happen only after
+    // local connection, permission and focus preflight, immediately before UI.
+    if (beforeEffect !== undefined) {
+      if (typeof beforeEffect !== "function") denyBeforeEffect("invalid execution seal callback");
+      let permitted = false;
+      try { permitted = (await beforeEffect()) === true; } catch { permitted = false; }
+      if (!permitted) {
+        const error = new Error("Durable execution seal or one-shot wake grant was not acquired.");
+        error.code = "BACKROOM_EXECUTION_SEAL_DENIED";
+        throw error;
+      }
     }
     // The adapter must check identity again immediately before any OS effect.
     // A successful result is only accepted with explicit verification evidence.
