@@ -468,3 +468,9 @@ test("exact group-message lookup is UUID-scoped and rejects unknown inputs",()=>
   assert.match(validateToolArguments("read_group_message",{message_id:"not-a-uuid"}),/UUID/);
   assert.match(validateToolArguments("read_group_message",{message_id:id,room_id:"other"}),/Unknown/);
 });
+test("MCP tool list exposes exact group-message lookup only with a UUID",()=>{
+  const tool=getModernMcpTools().find(item=>item.name==="read_group_message");
+  assert.ok(tool);
+  assert.ok(tool.inputSchema.required.includes("message_id"));
+  assert.equal(tool.inputSchema.properties.message_id.format,"uuid");
+});
