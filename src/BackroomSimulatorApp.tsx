@@ -489,7 +489,7 @@ export default function BackroomApp() {
           const local=await hostApi<{revoked:boolean}>('/v1/browser/wake/bindings/revoke',{
             method:'POST',body:{bindingId:binding.bindingId}
           });
-          localStopConfirmed=local.revoked===true;
+          localStopConfirmed=local.localPollingStopped===true;
         }
       }catch{}
       const {data,error:revokeError}=await supabase.functions.invoke('backroom-config/revoke-binding',{
