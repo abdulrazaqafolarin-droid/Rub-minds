@@ -18,6 +18,7 @@ type BrowserPageRow = { pageId: string; title: string; site: string; canSelect: 
 type BrowserTargetRow = { id: string; pageId: string; roomId: string; title: string; site: string; surface: string; operations: string[]; wakeAvailable?: boolean; spaceId?: string; sessionId?: string; identityFingerprint?: string; revision?: number; locatorKind?: string; locatorValue?: string };
 type HostedAiSession = { participantId: string; displayName: string; sessionDigest: string; expiresAt: string; credentialExpiresAt: string };
 type WakeInteractionMode = 'off' | 'on' | 'auto';
+type FrameWakeBindingState = 'unknown' | 'unbound' | 'bound' | 'armed' | 'stale' | 'needs-rebind' | 'other-target' | 'other-group';
 type HostedWakeBinding = { bindingId: string; roomId: string; participantId: string; sessionId: string; targetId: string; sessionDigest: string; participationMode?: 'mentions' | 'smart' | 'task'; wakeEnabled?: boolean; serverWakeEnabled?: boolean; localPollingConfirmed?: boolean; wakeExpiresAt?: string | null; requiresRevoke?: boolean };
 type PendingBrowserSelection = { pageId: string; roomId: string; generation: number; attemptId: string | null };
 const surfaces: { id: Surface; name: string; detail: string }[] = [
@@ -113,7 +114,7 @@ function parseHostStatus(value: unknown, expectedHostId?: string): HostStatus {
   };
 }
 
-function LiveBrowserPreview({ frame, appName, onSelectRegion, wakeMode, onWakeModeChange, wakeModeDisabled, wakeModeStatus, wakeCapable, findSessionsDisabled, onFindSessions }: {
+function LiveBrowserPreview({ frame, appName, onSelectRegion, wakeMode, onWakeModeChange, wakeModeDisabled, wakeModeStatus, wakeCapable, findSessionsDisabled, onFindSessions, sessions, selectedSessionDigest, onSelectSession, bindingState, canBind, canArm, onBind, onArm, onOff, onRevoke }: {
   frame: BrowserViewFrame;
   appName: string;
   onSelectRegion: (frameId: string, region: Rect) => void;
@@ -124,6 +125,16 @@ function LiveBrowserPreview({ frame, appName, onSelectRegion, wakeMode, onWakeMo
   wakeCapable: boolean;
   findSessionsDisabled: boolean;
   onFindSessions: () => void;
+  sessions: HostedAiSession[];
+  selectedSessionDigest: string;
+  onSelectSession: (digest: string) => void;
+  bindingState: FrameWakeBindingState;
+  canBind: boolean;
+  canArm: boolean;
+  onBind: () => void;
+  onArm: () => void;
+  onOff: () => void;
+  onRevoke: () => void;
 }) {
   const [start, setStart] = useState<{ x: number; y: number; frameId: string } | null>(null);
   const [drag, setDrag] = useState<Rect | null>(null);
@@ -201,7 +212,20 @@ function LiveBrowserPreview({ frame, appName, onSelectRegion, wakeMode, onWakeMo
         <option value="on" disabled={!wakeCapable}>On — wake only when mentioned</option>
         <option value="auto" disabled={!wakeCapable}>Auto — wake on human group messages</option>
       </select>
+      {sessions.length>0 && <>
+        <label htmlFor="br-frame-joined-ai">Joined AI conversation</label>
+        <select id="br-frame-joined-ai" value={selectedSessionDigest} onChange={event=>onSelectSession(event.target.value)} disabled={wakeModeDisabled}>
+          {sessions.map(session=><option key={session.sessionDigest} value={session.sessionDigest}>{session.displayName}</option>)}
+        </select>
+      </>}
       <p>{wakeModeStatus}</p>
+      {bindingState==='armed'
+        ? <button type="button" className="br-danger-action br-live-mode-action" onClick={onOff} disabled={wakeModeDisabled}>Turn Off and revoke this binding</button>
+        : bindingState==='stale' || bindingState==='needs-rebind' || bindingState==='other-target' || bindingState==='other-group'
+          ? <button type="button" className="br-danger-action br-live-mode-action" onClick={onRevoke} disabled={wakeModeDisabled}>Revoke current binding</button>
+          : bindingState==='bound'
+            ? <button type="button" className="br-primary br-live-mode-action" onClick={onArm} disabled={!canArm || wakeModeDisabled}>Arm {wakeMode.toUpperCase()} — local approval</button>
+            : <button type="button" className="br-primary br-live-mode-action" onClick={onBind} disabled={!canBind || wakeModeDisabled || wakeMode==='off'}>Bind this composer to the selected AI</button>}
       <small>Auto sends only the fixed @RMconnects trigger to this registered managed-browser composer. It does not copy the group message into the AI chat. The AI must already be joined to Rub Minds through MCP. Native Android and Windows app frames still support verified draft insertion only.</small>
     </div>
     <div className="br-live-caption">Read-only snapshots are refreshed locally. Drag around one visible empty editable composer in this frame; Backroom resolves the region against the live DOM and rejects stale, ambiguous or occupied targets. The frame mode above applies to this managed-browser surface only.</div>
@@ -358,6 +382,24 @@ export default function BackroomApp() {
   const selectedWakeParticipationMode = participationModeForInteractionMode(selectedWakeMode);
   const wakeBindingNeedsRebind = Boolean(hostedWakeBinding && selectedWakeParticipationMode &&
     needsWakeBindingRebind(selectedWakeMode, hostedWakeBinding.participationMode));
+  const frameWakeBinding = hostedWakeBinding?.roomId===room?.id && hostedWakeBinding.targetId===selectedBrowserTarget
+    ? hostedWakeBinding : null;
+  const frameWakeBindingState: FrameWakeBindingState = !wakeBindingStatusKnown ? 'unknown'
+    : hostedWakeBinding && hostedWakeBinding.roomId!==room?.id ? 'other-group'
+    : hostedWakeBinding && hostedWakeBinding.roomId===room?.id && hostedWakeBinding.targetId!==selectedBrowserTarget ? 'other-target'
+    : !frameWakeBinding ? 'unbound'
+    : frameWakeBinding.requiresRevoke || (frameWakeBinding.serverWakeEnabled && !frameWakeBinding.localPollingConfirmed) ? 'stale'
+    : frameWakeBinding.participationMode!==selectedWakeParticipationMode ? 'needs-rebind'
+    : frameWakeBinding.wakeEnabled ? 'armed' : 'bound';
+  const frameTargetCanWake = Boolean(browserTargets.some(target =>
+    target.id===selectedBrowserTarget && target.roomId===room?.id &&
+    target.wakeAvailable===true && target.operations.includes('wake')));
+  const frameCanBind = Boolean(wakeBindingStatusKnown && hostInfo?.connected && hostToken &&
+    frameTargetCanWake && selectedWakeParticipationMode && selectedHostedSession &&
+    hostedAiSessions.some(session=>session.sessionDigest===selectedHostedSession));
+  const frameCanArm = Boolean(frameWakeBindingState==='bound' && frameTargetCanWake &&
+    hostInfo?.connected && selectedWakeParticipationMode &&
+    frameWakeBinding?.participationMode===selectedWakeParticipationMode);
   useEffect(() => {
     setLiveViewEnabled(false);
     setLiveGrantId('');
@@ -1280,22 +1322,38 @@ export default function BackroomApp() {
               onWakeModeChange={mode => void chooseWakeMode(mode)}
               wakeModeDisabled={hostBusy || browserBusy || !wakeBindingStatusKnown}
               findSessionsDisabled={hostBusy || browserBusy}
-              wakeCapable={browserTargets.some(target => target.id===selectedBrowserTarget && target.roomId===room.id && target.wakeAvailable===true)}
+              wakeCapable={frameTargetCanWake}
+              sessions={hostedAiSessions}
+              selectedSessionDigest={selectedHostedSession}
+              onSelectSession={digest=>{setSelectedHostedSession(digest);const selected=hostedAiSessions.find(session=>session.sessionDigest===digest);if(selected&&room?.id)void restoreHostedWakeBinding(room.id,selected);}}
+              bindingState={frameWakeBindingState}
+              canBind={frameCanBind}
+              canArm={frameCanArm}
+              onBind={()=>void bindHostedWakeInput()}
+              onArm={()=>void enableHostedWake()}
+              onOff={()=>void chooseWakeMode('off')}
+              onRevoke={()=>void revokeHostedWakeBinding()}
               wakeModeStatus={!wakeBindingStatusKnown
                 ? 'Find the exact joined AI session first so Backroom can restore its server-side mode and local poller state.'
                 : !selectedBrowserTarget
-                  ? 'Drag-select one exact composer in this frame. On and Auto become available only when its provider adapter verifies canonical wake support.'
-                  : !browserTargets.some(target => target.id===selectedBrowserTarget && target.roomId===room.id && target.wakeAvailable===true)
-                    ? 'This registered field supports draft insertion only. Choose a verified ChatGPT or Claude composer with a unique visible Send control for On / Auto.'
-                  : hostedWakeBinding?.roomId===room.id && hostedWakeBinding.targetId===selectedBrowserTarget
-                  ? hostedWakeBinding.serverWakeEnabled && !hostedWakeBinding.localPollingConfirmed
-                    ? 'A server grant exists but the paired host did not confirm its poller. Revoke or restart/re-pair before enabling this target.'
-                    : hostedWakeBinding.wakeEnabled
-                      ? selectedWakeMode.toUpperCase() + ' is active on this exact managed-browser target.'
-                      : selectedWakeMode.toUpperCase() + ' is selected but not armed. Open host settings to register the joined AI and approve the bounded grant.'
-                  : selectedWakeMode==='off'
-                    ? 'Off: this frame has no active automatic wake binding.'
-                    : selectedWakeMode.toUpperCase() + ' selected. Register this exact frame composer to activate it.'}
+                  ? 'Drag-select one exact composer in this frame. On and Auto are available only when the provider adapter verifies a unique visible Send control.'
+                  : !frameTargetCanWake
+                    ? 'This registered field supports draft insertion only. On and Auto are unavailable until the provider wake adapter verifies this composer and its Send control.'
+                    : frameWakeBindingState==='other-group'
+                      ? 'Another group has a separately registered input on this host. Return to that group and manage it before binding this composer.'
+                      : frameWakeBindingState==='other-target'
+                        ? 'This group already has a binding for a different composer. Revoke it before binding the selected frame target.'
+                        : frameWakeBindingState==='stale'
+                          ? 'The server grant or task-only binding needs revocation. The UI will not report it Off unless the local host confirms stop.'
+                          : frameWakeBindingState==='needs-rebind'
+                            ? 'The selected mode differs from the registered binding. Revoke/rebind is required before arming.'
+                            : frameWakeBindingState==='armed'
+                              ? selectedWakeMode.toUpperCase()+' is active on this exact managed-browser target.'
+                              : frameWakeBindingState==='bound'
+                                ? selectedWakeMode.toUpperCase()+' is registered but not armed. Arm it to request local consent.'
+                                : selectedWakeMode==='off'
+                                  ? 'Off: this frame has no active automatic wake binding.'
+                                  : 'Select the joined AI, bind this exact composer, then arm the selected mode with local consent.'}
               onFindSessions={() => void discoverHostedAiSessions()}
               onSelectRegion={(frameId, region) => void registerLiveRegion(frameId, region)}/>
             : <div className="br-live-placeholder" role="status"><Monitor size={28}/><b>{liveViewEnabled ? 'Connecting to the selected browser tab…' : 'Live view paused'}</b><p>{hostInfo?.capabilities.browserView ? 'Enable the read-only local view to display the actual managed tab here. Its screenshots are not stored or uploaded.' : 'This paired host does not advertise the browser-view adapter. Update and restart the local host.'}</p></div>
