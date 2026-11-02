@@ -6,28 +6,21 @@ export async function stopLocalExecutionBeforePeerCleanup({
     throw new TypeError('Both local-stop and peer-cleanup callbacks are required.');
   }
 
-  // Invoke native cleanup first. Observe both promises immediately so a fast
-  // rejection cannot become unhandled while peer/media cleanup is still running.
-  let localResult;
+  // Await local shutdown before starting any network/media teardown. Peer
+  // cleanup is still attempted if the native command fails.
+  let localError = null;
   try {
-    localResult = Promise.resolve(stopLocalExecution()).then(
-      () => ({ error: null }),
-      error => ({ error }),
-    );
+    await stopLocalExecution();
   } catch (error) {
-    localResult = Promise.resolve({ error });
+    localError = error;
   }
 
-  let peerResult;
+  let peerError = null;
   try {
-    peerResult = Promise.resolve(cleanupPeerSessions()).then(
-      () => ({ error: null }),
-      error => ({ error }),
-    );
+    await cleanupPeerSessions();
   } catch (error) {
-    peerResult = Promise.resolve({ error });
+    peerError = error;
   }
 
-  const [local, peers] = await Promise.all([localResult, peerResult]);
-  return { localError: local.error, peerError: peers.error };
+  return { localError, peerError };
 }
