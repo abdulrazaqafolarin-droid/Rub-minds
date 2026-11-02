@@ -443,6 +443,7 @@ test("wrong-origin callers cannot trigger the emergency stop", async () => {
 
 test("canonical wake HTTP routes require pairing, explicit opt-in, exact scope and grant",async()=>{
  const browserRuntime=fakeBrowserRuntime();
+ const approvalRequests=[];
  await withHost(async({base,origin})=>{
   const targetId=browserRuntime.targetId,roomId="12345678-1234-4234-9234-123456789014";
   assert.equal((await fetch(base+"/v1/browser/wake/grants",{method:"POST",headers:{Origin:origin,"Content-Type":"application/json"},body:JSON.stringify({confirmed:true})})).status,401);
@@ -458,7 +459,6 @@ test("canonical wake HTTP routes require pairing, explicit opt-in, exact scope a
   const request={confirmed:true,targetId,roomId,participantId:"32345678-1234-4234-9234-123456789011",sessionId:browserRuntime.pageId,bindingId:"32345678-1234-4234-9234-123456789012",ttlMs:86400000,maxPerMinute:6};
   const invalidTtl=await fetch(base+"/v1/browser/wake/grants",{method:"POST",headers:auth,body:JSON.stringify({...request,ttlMs:86400001})});
   assert.equal(invalidTtl.status,400);
-  const approvalRequests=[];
   const grantResponse=await fetch(base+"/v1/browser/wake/grants",{method:"POST",headers:auth,body:JSON.stringify(request)});
   assert.equal(grantResponse.status,201);
   const grant=await grantResponse.json();assert.equal(grant.mode,"canonical-trigger-only");assert.equal(grant.scope.targetId,targetId);
