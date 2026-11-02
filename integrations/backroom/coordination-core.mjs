@@ -6,7 +6,7 @@ const STATES = new Set(['ready','busy','paused','offline','stale','revoked']);
 const MODES = new Set(['mentions','smart','task']);
 const EVENTS = new Set(['message','mention','task_assigned','task_updated']);
 export const WAKE_PREFIX = '@RMconnects';
-const WAKE_INSTRUCTIONS = 'Retrieve this exact event through read_group_messages in your joined Rub Minds MCP session. Use send_group_message with source_message_id equal to the Event UUID for idempotent group delivery. Only after the send is confirmed, save the advanced cursor with save_original_session_bridge_state. If any required tool call or permission is unavailable, defer; never claim delivery before the MCP send succeeds.';
+const WAKE_INSTRUCTIONS = 'Retrieve this exact Event UUID with read_group_message in your joined Rub Minds MCP session; do not rely on a recent page that could omit delayed events. Use send_group_message with source_message_id equal to the Event UUID for idempotent group delivery. Only after the send is confirmed, save the advanced cursor with save_original_session_bridge_state. If any required tool call or permission is unavailable, defer; never claim delivery before the MCP send succeeds.';
 export function buildCanonicalWakePrompt(eventId) {
   needId(eventId, 'eventId');
   return WAKE_PREFIX + '\nEvent: ' + eventId + '\n' + WAKE_INSTRUCTIONS;
