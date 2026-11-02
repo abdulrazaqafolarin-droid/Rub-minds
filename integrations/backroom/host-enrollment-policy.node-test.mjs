@@ -12,6 +12,7 @@ test('accepts digest-only host enrollment with bounded TTL and no raw credential
  const valid=validateHostEnrollment({hostId:uuid,credentialDigest:'b'.repeat(64)});
  assert.equal(valid.ttlSeconds,86400);
  assert.equal(valid.credentialDigest,'b'.repeat(64));
+ assert.equal(validateHostEnrollment({hostId:uuid,credentialDigest:'c'.repeat(64),ttlSeconds:604800}).ttlSeconds,604800);
  assert.throws(()=>validateHostEnrollment({hostId:uuid,hostToken:'b'.repeat(64),credentialDigest:'b'.repeat(64)}),/Unexpected/);
  assert.throws(()=>validateHostEnrollment({hostId:uuid,credentialDigest:'b'.repeat(64),ttlSeconds:604801}),/TTL/);
 });
