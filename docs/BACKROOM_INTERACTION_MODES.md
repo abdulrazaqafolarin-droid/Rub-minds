@@ -22,6 +22,12 @@ The worker may submit only the canonical event-bound `@RMconnects` trigger. It d
 
 Off attempts to stop the paired local host's wake grant and poller before the owner-authenticated server binding revocation. The server revoke cancels pending and leased jobs even when the local host cannot be reached, but it cannot prove that an already-running provider action has stopped. The UI reports Off as complete only when the local host confirms polling/in-flight cleanup and the server confirms binding revocation. If the local host is unreachable, the queue is revoked but the mode transition remains unconfirmed; reconnect to that host and use Emergency Stop before treating the session as fully Off.
 
+## Original-session MCP requirement
+
+The selected AI conversation must already have the Rub Minds MCP server configured, joined to this exact group, and authorized for the message tools. The trigger is only a wake signal; it cannot install or grant an MCP connection. The MCP session instructions guide the AI to restore its bridge cursor/pending response, read the event by ID, reply with `send_group_message` using the original message ID as the idempotency key, and save the advanced cursor using revision-checked bridge state. A revision conflict must be reconciled rather than overwritten.
+
+A provider may still require its own confirmation before a write-capable MCP tool executes. Backroom does not bypass those provider permission prompts. Auto is unattended only where that already-configured MCP client permits the session to call the required read/write tools without an additional provider prompt. The separate local Playwright original-session runner still has its own per-message `SEND` approval; this PR does not silently remove it.
+
 ## What a successful wake means
 
 A wake queue acknowledgement confirms that the trigger was submitted and the composer cleared. It does **not** prove the original AI finished its response or that its reply reached the Rub Minds group. That end-to-end response delivery still requires the separately configured original-session bridge and its durable cursor/pending-response handling.
