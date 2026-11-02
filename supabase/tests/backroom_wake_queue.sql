@@ -116,7 +116,7 @@ begin
     v_owner,v_room,v_participant,v_host_test,'space-1','session-6',repeat('6',64),
     v_binding_6,'target-6','fingerprint-6',1,'grant-deactivation-event',
     '@RMconnects'||chr(10)||'Event: grant-deactivation-event'||chr(10)||
-    'Retrieve this exact Event UUID with read_group_message in your joined Rub Minds MCP session; do not rely on a recent page that could omit delayed events. Use send_group_message with source_message_id equal to the Event UUID for idempotent group delivery. Only after the send is confirmed, save the advanced cursor with save_original_session_bridge_state. If any required tool call or permission is unavailable, defer; never claim delivery before the MCP send succeeds.',3600);
+    'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   select * into v_claim from public.claim_backroom_wake_jobs(
     v_host_test,repeat('6',64),v_binding_6,5,30) limit 1;
   if not found then raise exception 'Grant-deactivation fixture must have a live lease'; end if;
@@ -306,7 +306,7 @@ begin
   begin
     perform public.enqueue_backroom_wake_job(
       repeat('5',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-5',repeat('f',64),
-      v_binding_5,'target-5','fingerprint-5',1,'event-5','@RMconnects'||chr(10)||'Event: event-5'||chr(10)||'Retrieve this exact Event UUID with read_group_message in your joined Rub Minds MCP session; do not rely on a recent page that could omit delayed events. Use send_group_message with source_message_id equal to the Event UUID for idempotent group delivery. Only after the send is confirmed, save the advanced cursor with save_original_session_bridge_state. If any required tool call or permission is unavailable, defer; never claim delivery before the MCP send succeeds.',3600);
+      v_binding_5,'target-5','fingerprint-5',1,'event-5','@RMconnects'||chr(10)||'Event: event-5'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   exception when others then
     if sqlerrm <> 'Active MCP session does not authorize this group participant' then raise; end if;
     v_conflict := true;
@@ -320,7 +320,7 @@ begin
       repeat('8',64),'20000000-0000-0000-0000-000000000098',v_room,v_participant,
       v_host_test,'space-1','session-8',v_session_digest,
       v_binding_1,'target-8','fingerprint-8',1,'event-8',
-      '@RMconnects'||chr(10)||'Event: event-8'||chr(10)||'Retrieve this exact Event UUID with read_group_message in your joined Rub Minds MCP session; do not rely on a recent page that could omit delayed events. Use send_group_message with source_message_id equal to the Event UUID for idempotent group delivery. Only after the send is confirmed, save the advanced cursor with save_original_session_bridge_state. If any required tool call or permission is unavailable, defer; never claim delivery before the MCP send succeeds.',3600);
+      '@RMconnects'||chr(10)||'Event: event-8'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   exception when others then
     if sqlerrm <> 'Active MCP session does not authorize this group participant' then raise; end if;
     v_conflict := true;
@@ -329,10 +329,10 @@ begin
 
   v_first := public.enqueue_backroom_wake_job(
     repeat('1',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-1',v_session_digest,
-    v_binding_1,'target-1','fingerprint-1',1,'event-1','@RMconnects'||chr(10)||'Event: event-1'||chr(10)||'Retrieve this exact Event UUID with read_group_message in your joined Rub Minds MCP session; do not rely on a recent page that could omit delayed events. Use send_group_message with source_message_id equal to the Event UUID for idempotent group delivery. Only after the send is confirmed, save the advanced cursor with save_original_session_bridge_state. If any required tool call or permission is unavailable, defer; never claim delivery before the MCP send succeeds.',3600);
+    v_binding_1,'target-1','fingerprint-1',1,'event-1','@RMconnects'||chr(10)||'Event: event-1'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   v_repeat := public.enqueue_backroom_wake_job(
     repeat('1',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-1',v_session_digest,
-    v_binding_1,'target-1','fingerprint-1',1,'event-1','@RMconnects'||chr(10)||'Event: event-1'||chr(10)||'Retrieve this exact Event UUID with read_group_message in your joined Rub Minds MCP session; do not rely on a recent page that could omit delayed events. Use send_group_message with source_message_id equal to the Event UUID for idempotent group delivery. Only after the send is confirmed, save the advanced cursor with save_original_session_bridge_state. If any required tool call or permission is unavailable, defer; never claim delivery before the MCP send succeeds.',3600);
+    v_binding_1,'target-1','fingerprint-1',1,'event-1','@RMconnects'||chr(10)||'Event: event-1'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   if (v_first->>'created') <> 'true' or (v_repeat->>'created') <> 'false'
     or (v_first->>'job_id') <> (v_repeat->>'job_id') then
     raise exception 'Identical enqueue retries must return the same job idempotently';
@@ -340,7 +340,7 @@ begin
   begin
     perform public.enqueue_backroom_wake_job(
       repeat('1',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-2',repeat('c',64),
-      v_binding_2,'target-2','fingerprint-2',2,'event-1','@RMconnects'||chr(10)||'Event: event-1'||chr(10)||'Retrieve this exact Event UUID with read_group_message in your joined Rub Minds MCP session; do not rely on a recent page that could omit delayed events. Use send_group_message with source_message_id equal to the Event UUID for idempotent group delivery. Only after the send is confirmed, save the advanced cursor with save_original_session_bridge_state. If any required tool call or permission is unavailable, defer; never claim delivery before the MCP send succeeds.',3600);
+      v_binding_2,'target-2','fingerprint-2',2,'event-1','@RMconnects'||chr(10)||'Event: event-1'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   exception when others then
       if sqlerrm <> 'Wake idempotency key conflicts with a different request' then raise; end if;
       v_conflict := true;
@@ -373,7 +373,7 @@ begin
 
   v_retry_job := public.enqueue_backroom_wake_job(
     repeat('2',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-2',repeat('c',64),
-    v_binding_2,'target-2','fingerprint-2',2,'event-2','@RMconnects'||chr(10)||'Event: event-2'||chr(10)||'Retrieve this exact Event UUID with read_group_message in your joined Rub Minds MCP session; do not rely on a recent page that could omit delayed events. Use send_group_message with source_message_id equal to the Event UUID for idempotent group delivery. Only after the send is confirmed, save the advanced cursor with save_original_session_bridge_state. If any required tool call or permission is unavailable, defer; never claim delivery before the MCP send succeeds.',3600);
+    v_binding_2,'target-2','fingerprint-2',2,'event-2','@RMconnects'||chr(10)||'Event: event-2'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   select * into v_claim_retry from public.claim_backroom_wake_jobs(v_host_test,repeat('c',64),v_binding_2,1,30) limit 1;
   if not found or v_claim_retry.out_job_id::text <> (v_retry_job->>'job_id') then
     raise exception 'Expected the second session job to be claimed';
@@ -391,7 +391,7 @@ begin
   -- Revocation between claim and acknowledgement invalidates the outstanding lease.
   v_retry_job := public.enqueue_backroom_wake_job(
     repeat('6',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-6',repeat('6',64),
-    v_binding_6,'target-6','fingerprint-6',1,'event-6','@RMconnects'||chr(10)||'Event: event-6'||chr(10)||'Retrieve this exact Event UUID with read_group_message in your joined Rub Minds MCP session; do not rely on a recent page that could omit delayed events. Use send_group_message with source_message_id equal to the Event UUID for idempotent group delivery. Only after the send is confirmed, save the advanced cursor with save_original_session_bridge_state. If any required tool call or permission is unavailable, defer; never claim delivery before the MCP send succeeds.',3600);
+    v_binding_6,'target-6','fingerprint-6',1,'event-6','@RMconnects'||chr(10)||'Event: event-6'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   select * into v_claim_retry from public.claim_backroom_wake_jobs(v_host_test,repeat('6',64),v_binding_6,1,30) limit 1;
   if not found then raise exception 'Expected the revocation-test lease to be claimed'; end if;
   update public.agent_connections set revoked_at=pg_catalog.clock_timestamp() where participant_id=v_participant;
@@ -400,7 +400,7 @@ begin
     perform public.enqueue_backroom_wake_job(
       repeat('9',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-6',repeat('6',64),
       v_binding_6,'target-6','fingerprint-6',1,'event-9',
-      '@RMconnects'||chr(10)||'Event: event-9'||chr(10)||'Retrieve this exact Event UUID with read_group_message in your joined Rub Minds MCP session; do not rely on a recent page that could omit delayed events. Use send_group_message with source_message_id equal to the Event UUID for idempotent group delivery. Only after the send is confirmed, save the advanced cursor with save_original_session_bridge_state. If any required tool call or permission is unavailable, defer; never claim delivery before the MCP send succeeds.',3600);
+      '@RMconnects'||chr(10)||'Event: event-9'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   exception when others then
     if sqlerrm <> 'Active MCP session does not authorize this group participant' then raise; end if;
     v_conflict := true;
@@ -413,7 +413,7 @@ begin
 
   v_cancel_job := public.enqueue_backroom_wake_job(
     repeat('3',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-3',repeat('d',64),
-    v_binding_3,'target-3','fingerprint-3',1,'event-3','@RMconnects'||chr(10)||'Event: event-3'||chr(10)||'Retrieve this exact Event UUID with read_group_message in your joined Rub Minds MCP session; do not rely on a recent page that could omit delayed events. Use send_group_message with source_message_id equal to the Event UUID for idempotent group delivery. Only after the send is confirmed, save the advanced cursor with save_original_session_bridge_state. If any required tool call or permission is unavailable, defer; never claim delivery before the MCP send succeeds.',3600);
+    v_binding_3,'target-3','fingerprint-3',1,'event-3','@RMconnects'||chr(10)||'Event: event-3'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   if public.cancel_backroom_wake_job((v_cancel_job->>'job_id')::uuid,'20000000-0000-0000-0000-000000000098') then
     raise exception 'A different owner must not cancel a wake';
   end if;
@@ -426,7 +426,7 @@ begin
 
   v_expire_job := public.enqueue_backroom_wake_job(
     repeat('4',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-4',repeat('e',64),
-    v_binding_4,'target-4','fingerprint-4',1,'event-4','@RMconnects'||chr(10)||'Event: event-4'||chr(10)||'Retrieve this exact Event UUID with read_group_message in your joined Rub Minds MCP session; do not rely on a recent page that could omit delayed events. Use send_group_message with source_message_id equal to the Event UUID for idempotent group delivery. Only after the send is confirmed, save the advanced cursor with save_original_session_bridge_state. If any required tool call or permission is unavailable, defer; never claim delivery before the MCP send succeeds.',3600);
+    v_binding_4,'target-4','fingerprint-4',1,'event-4','@RMconnects'||chr(10)||'Event: event-4'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   update public.rub_minds_mcp_sessions set terminated_at=pg_catalog.clock_timestamp() where session_digest=repeat('e',64);
   select count(*) into v_count from public.claim_backroom_wake_jobs(v_host_test,repeat('e',64),v_binding_4,5,30);
   if v_count <> 0 then raise exception 'Terminated MCP sessions must not claim queued wake jobs'; end if;
@@ -443,7 +443,7 @@ begin
     v_cancel_job := public.enqueue_backroom_wake_job(
       v_key,v_owner,v_room,v_participant,v_host_capacity,'space-capacity','session-capacity',repeat('7',64),
       v_binding_7,'target-capacity','fingerprint-capacity',1,'capacity-event-'||i::text,
-      '@RMconnects'||chr(10)||'Event: capacity-event-'||i::text||chr(10)||'Retrieve this exact Event UUID with read_group_message in your joined Rub Minds MCP session; do not rely on a recent page that could omit delayed events. Use send_group_message with source_message_id equal to the Event UUID for idempotent group delivery. Only after the send is confirmed, save the advanced cursor with save_original_session_bridge_state. If any required tool call or permission is unavailable, defer; never claim delivery before the MCP send succeeds.',3600);
+      '@RMconnects'||chr(10)||'Event: capacity-event-'||i::text||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
     if i = 1 then v_capacity_first := v_cancel_job; end if;
     if mod(i,6)=0 then
       -- Age the rate-limit window but retain pending rows so this loop isolates backlog capacity.
@@ -456,7 +456,7 @@ begin
   v_repeat := public.enqueue_backroom_wake_job(
     v_key,v_owner,v_room,v_participant,v_host_capacity,'space-capacity','session-capacity',repeat('7',64),
     v_binding_7,'target-capacity','fingerprint-capacity',1,'capacity-event-1',
-    '@RMconnects'||chr(10)||'Event: capacity-event-1'||chr(10)||'Retrieve this exact Event UUID with read_group_message in your joined Rub Minds MCP session; do not rely on a recent page that could omit delayed events. Use send_group_message with source_message_id equal to the Event UUID for idempotent group delivery. Only after the send is confirmed, save the advanced cursor with save_original_session_bridge_state. If any required tool call or permission is unavailable, defer; never claim delivery before the MCP send succeeds.',3600);
+    '@RMconnects'||chr(10)||'Event: capacity-event-1'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   if (v_repeat->>'created') <> 'false' or (v_repeat->>'job_id') <> (v_capacity_first->>'job_id') then
     raise exception 'Idempotent retry must work at queue capacity';
   end if;
@@ -466,7 +466,7 @@ begin
       pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('capacity-key-101','UTF8')),'hex'),
       v_owner,v_room,v_participant,v_host_capacity,'space-capacity','session-capacity',repeat('7',64),
       v_binding_7,'target-capacity','fingerprint-capacity',1,'capacity-event-101',
-      '@RMconnects'||chr(10)||'Event: capacity-event-101'||chr(10)||'Retrieve this exact Event UUID with read_group_message in your joined Rub Minds MCP session; do not rely on a recent page that could omit delayed events. Use send_group_message with source_message_id equal to the Event UUID for idempotent group delivery. Only after the send is confirmed, save the advanced cursor with save_original_session_bridge_state. If any required tool call or permission is unavailable, defer; never claim delivery before the MCP send succeeds.',3600);
+      '@RMconnects'||chr(10)||'Event: capacity-event-101'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   exception when others then
     if sqlerrm <> 'Backroom wake queue is full for this input binding' then raise; end if;
     v_conflict := true;
@@ -511,7 +511,7 @@ begin
   if v_count <> 1 then raise exception 'A matching @mention must enqueue exactly one wake'; end if;
   if (select prompt from public.backroom_wake_jobs where room_id=v_trigger_room and event_id=v_trigger_message::text)
     <> '@RMconnects'||pg_catalog.chr(10)||'Event: '||v_trigger_message::text||pg_catalog.chr(10)||
-       'Retrieve this exact Event UUID with read_group_message in your joined Rub Minds MCP session; do not rely on a recent page that could omit delayed events. Use send_group_message with source_message_id equal to the Event UUID for idempotent group delivery. Only after the send is confirmed, save the advanced cursor with save_original_session_bridge_state. If any required tool call or permission is unavailable, defer; never claim delivery before the MCP send succeeds.' then
+       'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.' then
     raise exception 'Message trigger must enqueue only the canonical prompt, not message body';
   end if;
 
@@ -586,7 +586,7 @@ begin
     v_owner,v_room,v_participant,v_host_test,'space-1','session-1',repeat('b',64),
     v_binding_1,'target-1','fingerprint-1',1,'revoke-binding-event',
     '@RMconnects'||chr(10)||'Event: revoke-binding-event'||chr(10)||
-    'Retrieve this exact Event UUID with read_group_message in your joined Rub Minds MCP session; do not rely on a recent page that could omit delayed events. Use send_group_message with source_message_id equal to the Event UUID for idempotent group delivery. Only after the send is confirmed, save the advanced cursor with save_original_session_bridge_state. If any required tool call or permission is unavailable, defer; never claim delivery before the MCP send succeeds.',3600);
+    'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   select * into v_claim from public.claim_backroom_wake_jobs(
     v_host_test,repeat('b',64),v_binding_1,5,30) limit 1;
   if not found then raise exception 'Binding revoke fixture must have an active lease'; end if;
@@ -631,7 +631,7 @@ begin
     v_owner,v_room,v_participant,v_host_capacity,'space-capacity','session-capacity',
     repeat('7',64),v_binding_7,'target-capacity','fingerprint-capacity',1,'revoke-event',
     '@RMconnects'||chr(10)||'Event: revoke-event'||chr(10)||
-    'Retrieve this exact Event UUID with read_group_message in your joined Rub Minds MCP session; do not rely on a recent page that could omit delayed events. Use send_group_message with source_message_id equal to the Event UUID for idempotent group delivery. Only after the send is confirmed, save the advanced cursor with save_original_session_bridge_state. If any required tool call or permission is unavailable, defer; never claim delivery before the MCP send succeeds.',3600);
+    'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   select * into v_claim from public.claim_backroom_wake_jobs(
     v_host_capacity,repeat('7',64),v_binding_7,5,30) limit 1;
   if not found then raise exception 'Revoke fixture must have an active lease'; end if;
