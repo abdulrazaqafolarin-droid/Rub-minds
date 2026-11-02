@@ -100,7 +100,7 @@ test("health endpoint is no-store and query strings are rejected",async()=>{
 });
 
 function fakeBrowserRuntime() {
- let running=false, selected=null, selectionRoom=null, selectionAttemptId=null, selectionCounter=0, targets=[], viewGrants=new Map();
+ let running=false, selected=null, selectionRoom=null, selectionAttemptId=null, selectionCounter=0, targets=[], viewGrants=new Map(),lastWakeInput=null;
  const pageId="12345678-1234-4234-9234-123456789012";
  const targetId="12345678-1234-4234-9234-123456789013";
  const makeSelectionAttempt=()=> "32345678-1234-4234-9234-"+String(++selectionCounter).padStart(12,"0");
@@ -122,10 +122,11 @@ function fakeBrowserRuntime() {
   listTargets:async()=>targets,
   unregisterTarget:async(id,roomId)=>{const index=targets.findIndex(t=>t.id===id&&t.roomId===roomId);if(index<0)return false;targets.splice(index,1);return true},
   draft:async(id,text,{approved,roomId}={})=>{if(approved!==true)throw Error("approval required");if(!targets.some(t=>t.id===id&&t.roomId===roomId)){const error=Error("target scope mismatch");error.status=409;throw error}return {state:"completed",result:{drafted:true,submitted:false},submitted:false}},
-  enableContinuousWake:async input=>{if(input.confirmed!==true)throw Object.assign(Error("confirmation required"),{status:403});if(!targets.some(t=>t.id===input.targetId&&t.roomId===input.roomId))throw Object.assign(Error("target scope mismatch"),{status:409});return {grantId:"42345678-1234-4234-9234-123456789099",createdAt:1,expiresAt:900001,maxPerMinute:6,scope:{hostId:"host-test",groupId:input.roomId,participantId:input.participantId,sessionId:input.sessionId,bindingId:input.bindingId,targetId:input.targetId,identityFingerprint:"fake-window",targetRevision:1},mode:"canonical-trigger-only"}},
+  enableContinuousWake:async input=>{if(input.confirmed!==true)throw Object.assign(Error("confirmation required"),{status:403});if(!targets.some(t=>t.id===input.targetId&&t.roomId===input.roomId))throw Object.assign(Error("target scope mismatch"),{status:409});lastWakeInput=input;const createdAt=Date.now();return {grantId:"42345678-1234-4234-9234-123456789099",createdAt,expiresAt:createdAt+input.ttlMs,maxPerMinute:input.maxPerMinute,scope:{hostId:"host-test",groupId:input.roomId,participantId:input.participantId,sessionId:input.sessionId,bindingId:input.bindingId,targetId:input.targetId,identityFingerprint:"fake-window",targetRevision:1},mode:"canonical-trigger-only"}},
   revokeContinuousWake:async input=>input.grantId==="42345678-1234-4234-9234-123456789099"&&input.targetId===targetId&&targets.some(t=>t.id===input.targetId&&t.roomId===input.roomId),
   wake:async (targetId,eventId,grantId,{roomId}={})=>{if(grantId!=="42345678-1234-4234-9234-123456789099")throw Object.assign(Error("grant invalid"),{status:403});if(!targets.some(t=>t.id===targetId&&t.roomId===roomId))throw Object.assign(Error("target scope mismatch"),{status:409});return {state:"completed",reason:null,result:{triggerSubmitted:true,confirmation:"composer-cleared"},submitted:true,triggerOnly:true}},
   testSetSelected:()=>{selected={state:"selected",selectionAttemptId};},
+  lastWakeInput:()=>lastWakeInput,
   pageId,targetId,
  };
 }
@@ -454,7 +455,10 @@ test("canonical wake HTTP routes require pairing, explicit opt-in, exact scope a
   const selection=await (await fetch(base+"/v1/browser/select",{method:"POST",headers:auth,body:JSON.stringify({pageId:browserRuntime.pageId,roomId})})).json();
   browserRuntime.testSetSelected();
   assert.equal((await fetch(base+"/v1/browser/targets",{method:"POST",headers:auth,body:JSON.stringify({pageId:browserRuntime.pageId,roomId,attemptId:selection.selectionAttemptId})})).status,201);
-  const request={confirmed:true,targetId,roomId,participantId:"32345678-1234-4234-9234-123456789011",sessionId:browserRuntime.pageId,bindingId:"32345678-1234-4234-9234-123456789012"};
+  const request={confirmed:true,targetId,roomId,participantId:"32345678-1234-4234-9234-123456789011",sessionId:browserRuntime.pageId,bindingId:"32345678-1234-4234-9234-123456789012",ttlMs:86400000,maxPerMinute:6};
+  const invalidTtl=await fetch(base+"/v1/browser/wake/grants",{method:"POST",headers:auth,body:JSON.stringify({...request,ttlMs:86400001})});
+  assert.equal(invalidTtl.status,400);
+  const approvalRequests=[];
   const grantResponse=await fetch(base+"/v1/browser/wake/grants",{method:"POST",headers:auth,body:JSON.stringify(request)});
   assert.equal(grantResponse.status,201);
   const grant=await grantResponse.json();assert.equal(grant.mode,"canonical-trigger-only");assert.equal(grant.scope.targetId,targetId);
@@ -464,7 +468,12 @@ test("canonical wake HTTP routes require pairing, explicit opt-in, exact scope a
   assert.equal(wake.status,200);assert.equal((await wake.json()).triggerOnly,true);
   const revoke=await fetch(base+"/v1/browser/wake/grants/revoke",{method:"POST",headers:auth,body:JSON.stringify({grantId:grant.grantId,targetId,roomId,bindingId:request.bindingId})});
   assert.equal(revoke.status,200);assert.equal((await revoke.json()).revoked,true);
- },{browserRuntime,authorizeLocalAction:async()=>true});
+ },{browserRuntime,authorizeLocalAction:async action=>{approvalRequests.push(action);return true;}});
+ assert.equal(approvalRequests.length,1);
+ assert.equal(approvalRequests[0].ttlMs,86400000);
+ assert.equal(approvalRequests[0].maxPerMinute,6);
+ assert.equal(browserRuntime.lastWakeInput().ttlMs,approvalRequests[0].ttlMs);
+ assert.equal(browserRuntime.lastWakeInput().maxPerMinute,approvalRequests[0].maxPerMinute);
 });
 
 
