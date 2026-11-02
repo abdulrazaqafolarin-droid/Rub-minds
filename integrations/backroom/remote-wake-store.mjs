@@ -42,8 +42,8 @@ export function createRemoteWakeStore({baseUrl,hostToken,apiKey,fetchImpl=fetch,
  return Object.freeze({
   async activate({hostId,sessionDigest,bindingId,grantId,ttlSeconds}={}){
    const scope=checkScope({hostId,sessionDigest,bindingId});
-   if(!UUID.test(grantId??'')||!Number.isSafeInteger(ttlSeconds)||ttlSeconds<60||ttlSeconds>900)
-    throw new TypeError('Invalid short-lived local wake grant');
+   if(!UUID.test(grantId??'')||!Number.isSafeInteger(ttlSeconds)||ttlSeconds<60||ttlSeconds>86400)
+    throw new TypeError('Invalid local wake grant');
    if(typeof verifyLocalGrant!=='function')throw new Error('Trusted local grant verifier required');
    let verified=false;
    try{verified=(await verifyLocalGrant(Object.freeze({...scope,grantId,ttlSeconds})))===true;}catch{verified=false;}
