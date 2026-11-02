@@ -85,6 +85,7 @@ jobs:
             agent_credential_ciphertext text,
             room_id uuid,
             participant_id uuid,
+            last_seen_at timestamptz not null default now(),
             expires_at timestamptz not null,
             terminated_at timestamptz
           );
