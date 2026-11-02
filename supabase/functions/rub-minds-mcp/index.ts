@@ -482,6 +482,25 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
 
   await invokeAgent(credential, "read");
 
+  if (name === "read_group_message") {
+    const messageId = args.message_id as string;
+    if (typeof messageId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(messageId)) {
+      throw new Error("Group message ID must be a UUID.");
+    }
+    const { data: message, error } = await db.from("messages")
+      .select("id,room_id,sender_id,body,created_at")
+      .eq("room_id", connection.room_id as string)
+      .eq("id", messageId)
+      .maybeSingle();
+    if (error) throw new Error("Could not read the exact authorized group message.");
+    if (!message) return { found: false, message: null };
+    const enriched = await enrichGroupMessages({ messages: [message] });
+    const item = isRecord(enriched) && Array.isArray(enriched.messages)
+      ? enriched.messages[0]
+      : message;
+    return { found: true, message: item };
+  }
+
   if (name === "read_group_messages") {
     return await readGroupMessagePage(connection.room_id as string, {
       afterCreatedAt: typeof args.after_created_at === "string" ? args.after_created_at : null,
