@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {validateHostEnrollment,validatePendingWakeBinding} from './host-enrollment-policy.mjs';
+import {validateHostEnrollment,validatePendingWakeBinding,validateBindingStatusQuery} from './host-enrollment-policy.mjs';
 const uuid='40000000-0000-4000-8000-000000000011';
 const binding={
  roomId:uuid,participantId:uuid,hostId:uuid,sessionDigest:'a'.repeat(64),
@@ -26,4 +26,12 @@ test('binding creation only accepts inactive registration fields and explicit sc
  assert.throws(()=>validatePendingWakeBinding({...binding,locatorValue:'textarea\nsecret'}),/locatorValue/);
  assert.throws(()=>validatePendingWakeBinding({...binding,maxWakesPerMinute:7}),/wake rate/);
  assert.throws(()=>validatePendingWakeBinding({...binding,surface:'arbitrary'}),/surface/);
+});
+
+test('binding status queries require owner-scoped room and optional participant identities',()=>{
+ assert.deepEqual(validateBindingStatusQuery({roomId:uuid}),{roomId:uuid});
+ assert.deepEqual(validateBindingStatusQuery({roomId:uuid,participantId:uuid}),{roomId:uuid,participantId:uuid});
+ assert.throws(()=>validateBindingStatusQuery({roomId:uuid,ownerId:uuid}),/Unexpected/);
+ assert.throws(()=>validateBindingStatusQuery({roomId:'not-a-uuid'}),/roomId/);
+ assert.throws(()=>validateBindingStatusQuery({roomId:uuid,participantId:'not-a-uuid'}),/participantId/);
 });
