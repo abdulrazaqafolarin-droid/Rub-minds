@@ -24,7 +24,7 @@ Off attempts to stop the paired local host's wake grant and poller before the ow
 
 ## Original-session MCP requirement
 
-The selected AI conversation must already have the Rub Minds MCP server configured, joined to this exact group, and authorized for the message tools. The trigger is only a wake signal; it cannot install or grant an MCP connection. The MCP session instructions guide the AI to restore its bridge cursor/pending response, read the event by ID, reply with `send_group_message` using the original message ID as the idempotency key, and save the advanced cursor using revision-checked bridge state. A revision conflict must be reconciled rather than overwritten.
+The selected AI conversation must already have the Rub Minds MCP server configured, joined to this exact group, and authorized for the message tools. The trigger is only a wake signal; it cannot install or grant an MCP connection. The MCP session instructions guide the AI to restore its bridge cursor/pending response, fetch the exact event with `read_group_message` by UUID (so delayed events are not lost behind a newer page), reply with `send_group_message` using that original message ID as the idempotency key, and save the advanced cursor using revision-checked bridge state. A revision conflict must be reconciled rather than overwritten.
 
 A provider may still require its own confirmation before a write-capable MCP tool executes. Backroom does not bypass those provider permission prompts. Auto is unattended only where that already-configured MCP client permits the session to call the required read/write tools without an additional provider prompt. The separate local Playwright original-session runner still has its own per-message `SEND` approval; this PR does not silently remove it.
 
@@ -39,11 +39,13 @@ A wake queue acknowledgement confirms that the trigger was submitted and the com
 3. Mention the AI by its participant display name. On should enqueue a canonical trigger for that event.
 4. Change to Auto. Confirm the old binding is revoked before the new smart-mode binding is created. An ordinary human group message should now enqueue a trigger.
 5. Send an AI-authored message. Auto must not relay it automatically to another AI.
-6. Choose Off. Confirm the binding is revoked and pending/leased jobs are cancelled. Verify that no more provider trigger is submitted.
+6. Choose Off. Confirm the paired local poller stops, the binding is revoked and pending/leased jobs are cancelled. If the local host has restarted and no local binding record exists, the UI must not falsely claim local stop confirmation.
 7. Leave Auto armed until expiry. Verify polling/consent stops after the 24-hour grant and the owner must explicitly arm it again.
 8. Exceed the six-wakes-per-minute bound. Additional triggers must be denied by the server-side rate limit.
 9. Occupy the selected composer, navigate to another conversation, replace the selected field, or change the target revision. The host must fail closed without typing or retargeting.
 10. Keep Auto active for the full 24-hour consent window. Confirm polling continues without per-message approval, the rate cap stays at six per minute, and the grant does not silently extend past its deadline.
 11. Restart the host during an active grant. The in-memory local grant must be lost, the restored UI must show the server/local mismatch, and no trigger may resume until fresh local approval.
+12. Delay a queued message until more than 100 later messages have been posted. The awakened AI must still fetch the exact triggering event with `read_group_message` by UUID rather than relying on the latest page.
+13. Interrupt the AI after it creates a response but before `send_group_message` confirms. It must retry the same pending body with the same source message ID, not regenerate or duplicate the group reply.
 
 This acceptance checklist is not a claim that those live-provider/device tests have already been performed.
