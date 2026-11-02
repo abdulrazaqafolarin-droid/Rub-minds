@@ -293,6 +293,10 @@ async fn revoke_desktop_device(
     access_token: String,
     room_id: String,
 ) -> Result<(), String> {
+    // This command is also callable directly through native IPC. Stop local
+    // execution before contacting the network; a failed revoke request must
+    // never leave a running terminal or app under a now-revoking device.
+    emergency_stop_inner(&state)?;
     let device_id = vault_get("device-id")?.ok_or("This computer has no saved device identity")?;
     if vault_get("device-token")?.is_none() {
         return Err("This computer is not registered".into());
@@ -315,7 +319,6 @@ async fn revoke_desktop_device(
        body.get("status").and_then(Value::as_str) != Some("revoked") {
         return Err("Rub Minds did not confirm computer revocation. The device credential remains stored.".into());
     }
-    emergency_stop(state)?;
     clear_device_credentials()?;
     Ok(())
 }
@@ -582,6 +585,7 @@ async fn launch_registered_app(app: AppHandle, state: State<'_, AppState>, app_i
     }
     #[cfg(target_os = "windows")]
     {
+        let approval_generation = current_execution_generation(&state)?;
         let apps = load_apps(&app)?;
         let entry = apps.into_iter().find(|item| item.id == app_id).ok_or("Application not found in the local allowlist")?;
         let path = PathBuf::from(&entry.executable_path);
@@ -596,6 +600,10 @@ async fn launch_registered_app(app: AppHandle, state: State<'_, AppState>, app_i
             "Open {} on this computer?\\n\\nExecutable: {}\\n\\nThe app runs locally; Backroom does not receive its private files or login state.",
             entry.label, path.display()
         )).await?;
+        // Keep this gate through process creation/registration. Emergency Stop
+        // either wins first (making this approval stale) or waits and then
+        // terminates the process that this approved launch creates.
+        let _execution_guard = lock_execution_generation(&state, approval_generation)?;
         let parent = path.parent().ok_or("Application directory is unavailable")?;
         let mut processes = state.desktop_processes.lock().map_err(|_| "Desktop process registry unavailable")?;
         processes.retain(|_, process| process.try_wait().ok().flatten().is_none());
@@ -626,6 +634,9 @@ enum TerminalSubmitState {
 
 #[derive(Default)]
 struct AppState {
+    // Serializes Emergency Stop with all native execution side effects. The
+    // generation invalidates approvals that were opened before a stop.
+    execution_generation: Mutex<u64>,
     control_grants: Mutex<HashMap<String, Instant>>,
     draft_grants: Mutex<HashMap<String, Instant>>,
     capture_geometry: Mutex<HashMap<String, CaptureGeometry>>,
@@ -645,6 +656,24 @@ struct TerminalSession {
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
     child: Mutex<Box<dyn Child + Send>>,
+}
+
+fn current_execution_generation(state: &AppState) -> Result<u64, String> {
+    state.execution_generation.lock()
+        .map(|generation| *generation)
+        .map_err(|_| "Native execution state is unavailable".to_string())
+}
+
+fn lock_execution_generation(
+    state: &AppState,
+    expected: u64,
+) -> Result<std::sync::MutexGuard<'_, u64>, String> {
+    let generation = state.execution_generation.lock()
+        .map_err(|_| "Native execution state is unavailable".to_string())?;
+    if *generation != expected {
+        return Err("Emergency Stop was activated while this approval was open. Submit a new request.".into());
+    }
+    Ok(generation)
 }
 
 #[derive(Clone)]
@@ -813,6 +842,7 @@ fn check_input_rate(state: &AppState) -> Result<(), String> {
 
 #[tauri::command]
 async fn grant_control(app: AppHandle, state: State<'_, AppState>, session_id: String, seconds: u64) -> Result<(), String> {
+    let approval_generation = current_execution_generation(&state)?;
     if !valid_session_id(&session_id) { return Err("Invalid session".into()); }
     let has_live_capture = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
         .contains_key(&session_id);
@@ -826,6 +856,9 @@ async fn grant_control(app: AppHandle, state: State<'_, AppState>, session_id: S
         "Allow this group to control local session {} for up to {} seconds? Pointer, keyboard, and terminal input may reach the selected application.",
         session_id, seconds.clamp(30, 600)
     )).await?;
+
+    // Do not let an old OS dialog recreate control after Emergency Stop.
+    let _execution_guard = lock_execution_generation(&state, approval_generation)?;
 
     // Revalidate after the user has answered the OS prompt. Hold the control
     // lock while checking liveness so a competing revoke/stop cannot install a
@@ -845,6 +878,8 @@ async fn grant_control(app: AppHandle, state: State<'_, AppState>, session_id: S
 
 #[tauri::command]
 fn revoke_control(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+    let _execution_guard = state.execution_generation.lock()
+        .map_err(|_| "Native execution state is unavailable")?;
     state.control_grants.lock().map_err(|_| "Control state unavailable")?.remove(&session_id);
     state.draft_grants.lock().map_err(|_| "Draft state unavailable")?.remove(&session_id);
     state.terminal_submit_ready.lock().map_err(|_| "Terminal submit state unavailable")?.remove(&session_id);
@@ -857,6 +892,7 @@ fn revoke_control(state: State<'_, AppState>, session_id: String) -> Result<(), 
 
 #[tauri::command]
 async fn grant_draft_typing(app: AppHandle, state: State<'_, AppState>, session_id: String, seconds: u64) -> Result<(), String> {
+    let approval_generation = current_execution_generation(&state)?;
     control_granted(&state, &session_id)?;
     let has_live_capture = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
         .contains_key(&session_id);
@@ -875,9 +911,11 @@ async fn grant_draft_typing(app: AppHandle, state: State<'_, AppState>, session_
         "{}\n\nPermission expires after {} seconds.", approval_message, seconds.clamp(30, 120)
     )).await?;
 
-    // The screen/terminal could be stopped or its control grant revoked while
-    // the native approval dialog was open. Serialize the final recheck and
-    // draft-grant insert against revoke_control/stop_terminal.
+    // The screen/terminal could be stopped or Emergency Stop could complete
+    // while the native approval dialog was open. Never recreate an old grant.
+    let _execution_guard = lock_execution_generation(&state, approval_generation)?;
+
+    // Serialize the final recheck and draft-grant insert against revocation.
     let mut control = state.control_grants.lock().map_err(|_| "Control state unavailable")?;
     match control.get(&session_id) {
         Some(expires_at) if *expires_at > Instant::now() => {}
@@ -903,6 +941,7 @@ async fn grant_draft_typing(app: AppHandle, state: State<'_, AppState>, session_
 fn set_capture_geometry(
     state: State<'_, AppState>,
     session_id: String,
+    expected_generation: u64,
     frame_width: u32,
     frame_height: u32,
     screen_width_css: u32,
@@ -913,6 +952,9 @@ fn set_capture_geometry(
     display_surface: String,
     app_id: Option<String>,
 ) -> Result<(), String> {
+    // The browser captures this generation before opening Android/OS capture
+    // consent. A picker returning after Emergency Stop cannot resurrect a view.
+    let _execution_guard = lock_execution_generation(&state, expected_generation)?;
     if !valid_session_id(&session_id)
         || !(320..=16_384).contains(&frame_width)
         || !(200..=16_384).contains(&frame_height)
@@ -1041,7 +1083,16 @@ fn map_key(value: &str) -> Option<Key> {
 }
 
 #[tauri::command]
+fn get_execution_generation(state: State<'_, AppState>) -> Result<u64, String> {
+    current_execution_generation(&state)
+}
+
+#[tauri::command]
 fn dispatch_input(state: State<'_, AppState>, session_id: String, event: NativeInput) -> Result<(), String> {
+    // A stop waits for an already-running native input action, then clears its
+    // grant. No queued input can run after Emergency Stop returns.
+    let _execution_guard = state.execution_generation.lock()
+        .map_err(|_| "Native execution state is unavailable")?;
     control_granted(&state, &session_id)?;
     check_input_rate(&state)?;
     let geometry = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
@@ -1125,6 +1176,8 @@ fn verify_selected_editable_target(
 
 #[tauri::command]
 fn select_draft_target(state: State<'_, AppState>, session_id: String, mut target: DraftTarget) -> Result<SelectedTargetSummary, String> {
+    let _execution_guard = state.execution_generation.lock()
+        .map_err(|_| "Native execution state is unavailable")?;
     control_granted(&state, &session_id)?;
     draft_granted(&state, &session_id)?;
 
@@ -1190,6 +1243,8 @@ struct SelectedTargetSummary {
 
 #[tauri::command]
 fn clear_draft_target(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+    let _execution_guard = state.execution_generation.lock()
+        .map_err(|_| "Native execution state is unavailable")?;
     // Clearing a target is a revocation-only action. It remains available while
     // computer control is approved even if the separate draft grant has expired.
     control_granted(&state, &session_id)?;
@@ -1201,6 +1256,8 @@ fn clear_draft_target(state: State<'_, AppState>, session_id: String) -> Result<
 
 #[tauri::command]
 fn stage_draft_request(state: State<'_, AppState>, session_id: String, text: String) -> Result<String, String> {
+    let _execution_guard = state.execution_generation.lock()
+        .map_err(|_| "Native execution state is unavailable")?;
     control_granted(&state, &session_id)?;
     draft_granted(&state, &session_id)?;
     if text.trim().is_empty() || text.chars().count() > MAX_DRAFT_CHARS || text.chars().any(char::is_control) {
@@ -1262,6 +1319,7 @@ fn list_pending_drafts(state: State<'_, AppState>) -> Result<Vec<PendingDraftSum
 
 #[tauri::command]
 async fn approve_draft_request(app: AppHandle, state: State<'_, AppState>, request_id: String) -> Result<String, String> {
+    let approval_generation = current_execution_generation(&state)?;
     let pending = state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?
         .remove(&request_id).ok_or("Draft request expired or no longer exists")?;
     if pending.expires_at <= Instant::now() {
@@ -1287,6 +1345,10 @@ async fn approve_draft_request(app: AppHandle, state: State<'_, AppState>, reque
         "{}\n\nInsert this exact text into that verified empty field? Backroom will recheck the field identity and empty value before writing. It will not press Enter or Send.\n\n{}",
         target_label, pending.text
     )).await?;
+
+    // If Emergency Stop completed while the native dialog was open, do not
+    // permit the saved draft to write into a now-uncontrolled desktop.
+    let _execution_guard = lock_execution_generation(&state, approval_generation)?;
 
     // Re-check after approval. The app may have moved, closed or populated
     // the field while the native confirmation dialog was open.
@@ -1330,8 +1392,12 @@ struct TerminalOutput {
 
 #[tauri::command]
 async fn start_terminal(app: AppHandle, state: State<'_, AppState>, session_id: Option<String>) -> Result<TerminalStarted, String> {
+    let approval_generation = current_execution_generation(&state)?;
     check_approval_rate(&state)?;
     require_native_confirmation(&app, "Start a native terminal?", "Start a local PowerShell/zsh/bash shell for this Backroom session? A separate time-limited control approval is needed before remote typing is enabled.").await?;
+    // A terminal confirmation may remain open while Emergency Stop runs.
+    // Refuse that stale approval before creating or registering a PTY.
+    let _execution_guard = lock_execution_generation(&state, approval_generation)?;
     let mut active_terminals = state.terminals.lock().map_err(|_| "Terminal registry unavailable")?;
     if active_terminals.len() >= MAX_ACTIVE_TERMINALS {
         return Err("Backroom has reached the limit of four active terminal sessions. Stop a terminal or use Emergency Stop.".into());
@@ -1386,6 +1452,8 @@ async fn start_terminal(app: AppHandle, state: State<'_, AppState>, session_id: 
 
 #[tauri::command]
 fn write_terminal(state: State<'_, AppState>, session_id: String, data: String) -> Result<(), String> {
+    let _execution_guard = state.execution_generation.lock()
+        .map_err(|_| "Native execution state is unavailable")?;
     if !valid_session_id(&session_id) {
         return Err("Invalid control session".into());
     }
@@ -1432,6 +1500,7 @@ async fn submit_terminal_input(
     state: State<'_, AppState>,
     session_id: String,
 ) -> Result<(), String> {
+    let approval_generation = current_execution_generation(&state)?;
     control_granted(&state, &session_id)?;
     check_input_rate(&state)?;
     check_approval_rate(&state)?;
@@ -1467,6 +1536,24 @@ async fn submit_terminal_input(
             "The native Enter confirmation failed. Type the terminal draft again before retrying.".into()
         });
     }
+
+    // A pending Enter dialog must not outlive Emergency Stop. Only clear
+    // the exact pending confirmation owned by this request: a fresh session
+    // may legitimately reuse the same ID after a later explicit start.
+    let _execution_guard = match lock_execution_generation(&state, approval_generation) {
+        Ok(guard) => guard,
+        Err(error) => {
+            if let Ok(mut pending) = state.terminal_submit_ready.lock() {
+                if matches!(
+                    pending.get(&session_id),
+                    Some(TerminalSubmitState::Confirming(current)) if *current == expires_at
+                ) {
+                    pending.remove(&session_id);
+                }
+            }
+            return Err(error);
+        }
+    };
 
     // Re-check the time-limited control grant after the native dialog. Hold
     // its mutex through the final write so a concurrent revocation cannot race
@@ -1508,6 +1595,8 @@ async fn submit_terminal_input(
 
 #[tauri::command]
 fn resize_terminal(state: State<'_, AppState>, session_id: String, cols: u16, rows: u16) -> Result<(), String> {
+    let _execution_guard = state.execution_generation.lock()
+        .map_err(|_| "Native execution state is unavailable")?;
     control_granted(&state, &session_id)?;
     if !(20..=300).contains(&cols) || !(5..=120).contains(&rows) {
         return Err("Terminal dimensions are outside the supported range".into());
@@ -1522,6 +1611,8 @@ fn resize_terminal(state: State<'_, AppState>, session_id: String, cols: u16, ro
 
 #[tauri::command]
 fn stop_terminal(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+    let _execution_guard = state.execution_generation.lock()
+        .map_err(|_| "Native execution state is unavailable")?;
     revoke_control_inner(&state, &session_id)?;
     let session = state.terminals.lock().map_err(|_| "Terminal registry unavailable")?
         .remove(&session_id).ok_or("Terminal session is already closed")?;
@@ -1546,8 +1637,14 @@ fn revoke_control_inner(state: &AppState, session_id: &str) -> Result<(), String
     Ok(())
 }
 
-#[tauri::command]
-fn emergency_stop(state: State<'_, AppState>) -> Result<(), String> {
+fn emergency_stop_inner(state: &AppState) -> Result<(), String> {
+    // Serialize the entire stop with new launches, PTY creation and native
+    // input. Bumping the generation invalidates any native approval dialog
+    // that began before this stop and returns only after tracked work is gone.
+    let mut generation = state.execution_generation.lock()
+        .map_err(|_| "Native execution state is unavailable")?;
+    *generation = generation.wrapping_add(1);
+
     state.control_grants.lock().map_err(|_| "Control state unavailable")?.clear();
     state.draft_grants.lock().map_err(|_| "Draft state unavailable")?.clear();
     state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?.clear();
@@ -1555,19 +1652,65 @@ fn emergency_stop(state: State<'_, AppState>) -> Result<(), String> {
     state.pending_drafts.lock().map_err(|_| "Draft state unavailable")?.clear();
     state.terminal_submit_ready.lock().map_err(|_| "Terminal submit state unavailable")?.clear();
     let sessions = std::mem::take(&mut *state.terminals.lock().map_err(|_| "Terminal registry unavailable")?);
-    // A control grant dialog may have completed between the initial grant clear
-    // and terminal-registry shutdown. Re-clear after the sessions are removed;
-    // grant_control rechecks liveness under the same control lock.
     state.control_grants.lock().map_err(|_| "Control state unavailable")?.clear();
-    for (_, session) in sessions {
-        let _ = session.child.lock().map(|mut child| child.kill());
+
+    let mut failures = Vec::new();
+    let mut failed_sessions = HashMap::new();
+    for (session_id, session) in sessions {
+        let stopped = match session.child.lock() {
+            Ok(mut child) => match child.try_wait() {
+                Ok(Some(_)) => true,
+                _ => child.kill().is_ok(),
+            },
+            Err(_) => false,
+        };
+        if !stopped {
+            failures.push(format!("terminal session {session_id}"));
+            failed_sessions.insert(session_id, session);
+        }
     }
+    if !failed_sessions.is_empty() {
+        state.terminals.lock().map_err(|_| "Terminal registry unavailable")?
+            .extend(failed_sessions);
+    }
+
     let processes = std::mem::take(&mut *state.desktop_processes.lock().map_err(|_| "Desktop process registry unavailable")?);
-    for (_, mut child) in processes {
-        let _ = child.kill();
+    let mut failed_processes = HashMap::new();
+    let mut failed_pids = std::collections::HashSet::new();
+    for (pid, mut child) in processes {
+        let stopped = match child.try_wait() {
+            Ok(Some(_)) => true,
+            _ => child.kill().is_ok(),
+        };
+        if !stopped {
+            failures.push(format!("desktop process {pid}"));
+            failed_pids.insert(pid);
+            failed_processes.insert(pid, child);
+        }
     }
-    state.launched_app_ids.lock().map_err(|_| "App identity registry unavailable")?.clear();
-    Ok(())
+    if !failed_processes.is_empty() {
+        state.desktop_processes.lock().map_err(|_| "Desktop process registry unavailable")?
+            .extend(failed_processes);
+    }
+    state.launched_app_ids.lock().map_err(|_| "App identity registry unavailable")?
+        .retain(|_, pid| failed_pids.contains(pid));
+
+    // Keep the generation mutex held until cleanup is complete so no native
+    // action can slip between the generation change and resource teardown.
+    drop(generation);
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Emergency Stop could not confirm termination for: {}. The remaining targets are retained for another stop attempt.",
+            failures.join(", ")
+        ))
+    }
+}
+
+#[tauri::command]
+fn emergency_stop(state: State<'_, AppState>) -> Result<(), String> {
+    emergency_stop_inner(&state)
 }
 
 pub fn run() {
@@ -1579,7 +1722,7 @@ pub fn run() {
             device_identity, register_desktop_device, desktop_device_status, sync_desktop_app_inventory, revoke_desktop_device, close_desktop_session,
             pick_and_register_app, list_registered_apps, launch_registered_app, stop_registered_app,
             grant_control, revoke_control, grant_draft_typing, set_capture_geometry,
-            dispatch_input, select_draft_target, clear_draft_target, stage_draft_request, list_pending_drafts,
+            get_execution_generation, dispatch_input, select_draft_target, clear_draft_target, stage_draft_request, list_pending_drafts,
             approve_draft_request, deny_draft_request, start_terminal, write_terminal, submit_terminal_input,
             resize_terminal, stop_terminal, emergency_stop
         ])
@@ -1827,6 +1970,27 @@ mod native_input_tests {
         pending.insert("session-expired".to_string(), TerminalSubmitState::Ready(expired));
         assert!(begin_terminal_submit_confirmation(&mut pending, "session-expired", now).is_err());
         assert!(!pending.contains_key("session-expired"));
+    }
+
+    #[test]
+    fn emergency_stop_invalidates_approvals_and_clears_native_permissions() {
+        let state = AppState::default();
+        let approved_generation = current_execution_generation(&state).unwrap();
+        let expiry = Instant::now() + Duration::from_secs(60);
+        state.control_grants.lock().unwrap().insert("session-a".into(), expiry);
+        state.draft_grants.lock().unwrap().insert("session-a".into(), expiry);
+        state.capture_geometry.lock().unwrap().insert("session-a".into(), geometry());
+
+        emergency_stop_inner(&state).unwrap();
+
+        assert!(state.control_grants.lock().unwrap().is_empty());
+        assert!(state.draft_grants.lock().unwrap().is_empty());
+        assert!(state.capture_geometry.lock().unwrap().is_empty());
+        assert_ne!(current_execution_generation(&state).unwrap(), approved_generation);
+        assert!(lock_execution_generation(&state, approved_generation).is_err());
+
+        let fresh_generation = current_execution_generation(&state).unwrap();
+        assert!(lock_execution_generation(&state, fresh_generation).is_ok());
     }
 
     #[test]

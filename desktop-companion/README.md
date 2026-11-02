@@ -74,13 +74,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\backroom-windows-a
 
 Open an x64 Visual Studio Developer PowerShell first so `cl.exe` and `link.exe` are available. The script checks Node.js 22, the `x86_64-pc-windows-msvc` Rust target and the MSVC linker, then runs the locked web regression/production build, companion WebView build, Rust formatting/tests, Windows MSVC check and release binary build. Add `-BuildInstallers` when the Tauri CLI is installed and MSI/NSIS packaging should also be checked. A transcript is saved in the Windows temporary directory.
 
+The Windows GitHub Actions lane also links the x64 MSVC release executable and uploads it with a SHA-256 provenance file for physical-host testing. CI compilation is not physical acceptance, and the artifact has no staging credentials. See [the Windows physical acceptance matrix](../docs/BACKROOM_WINDOWS_PHYSICAL_ACCEPTANCE.md) for the required on-device checks, including app launch, PTY, capability grants, revocation and Emergency Stop.
+
 For the Android companion baseline (JDK 17, Gradle 8.10.2 and Android SDK 35/build-tools 35.0.0 required):
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\backroom-android-acceptance.ps1
 ```
 
-It runs the source/manifest policy tests, Kotlin unit tests, the actual merged-host-manifest gate and a debug APK build, then prints the APK SHA-256 and audit report path. **This does not test or imply guest virtualization**; the current Android companion still has no guest runtime provider.
+It runs the source/manifest policy tests, Kotlin unit tests, the actual merged-host-manifest gate and a debug APK build, then prints the APK SHA-256 and audit report path. The Android GitHub Actions lane additionally verifies the APK signature and merged-manifest digest, then uploads the compile-verification APK and provenance (seven-day retention). That CI APK has empty Supabase build configuration and cannot pair or stream. See [the Android live-stream physical acceptance matrix](../docs/BACKROOM_ANDROID_LIVE_STREAM_ACCEPTANCE.md). **This does not test or imply guest virtualization**; the current Android companion still has no guest runtime provider.
 
 ## Enrollment and use
 
@@ -104,3 +106,5 @@ It runs the source/manifest policy tests, Kotlin unit tests, the actual merged-h
 - A real Windows build, installer launch, PowerShell control, screen share, native confirmation and drag-select draft flow are release gates. Passing Node protocol tests is not a substitute for this device-level test.
 
 Do not claim the desktop companion is production-ready until the Windows integration matrix is completed and CI has a successful native build.
+
+Emergency Stop runs the native local shutdown before best-effort peer/network cleanup. Native launch and terminal approvals are generation-bound: an approval left open across Emergency Stop cannot create a process afterward. The focused ordering and stale-approval regression tests are included in `npm run test:companion` and the Windows CI lane.

@@ -1,43 +1,62 @@
 # Backroom Android live app stream — physical acceptance
 
-Status: **source, native build and automated tests pass; handset acceptance is pending**.
+Status: **The baseline PR #62 Android unit-test, merged-manifest and debug-APK jobs passed. The new artifact-export workflow has not yet executed on its exact PR head (failed jobs returned no runner logs), so no artifact is available; physical handset acceptance is pending.**
 
 This checklist covers the Android real-app mirror, remote touch and remote text entry into the currently focused phone field. It does not certify Android guest virtualization, isolated app data, guest-only frames or accessibility field discovery.
 
-## Verified build under test
+## Exact CI artifact and build boundary
 
-Use the exact debug artifact built from the PR source. Do not substitute a locally rebuilt APK without recording its new hashes.
+The Android companion workflow now builds a compile-verification debug APK with both `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` explicitly empty. On a successful run it verifies the APK signature and merged-manifest audit, writes an artifact provenance file and uploads the APK plus its audit/signature evidence as a GitHub Actions artifact (seven-day retention).
 
-- APK size: 49,967,179 bytes.
-- APK SHA-256: `2cc2ba30789ff111ee49acf779871298023d0a28378212ecff7b1f4a4eee40f5`.
-- Debug signer certificate SHA-256: `6765d5a3cbed165ed9b18f45f5742bf313966c4c8cfb0106f2f94d0e75deced0`.
-- Merged-manifest SHA-256: `029cd32a4f972d980c0e9d4ce5bf7d2e9bce2b5921fa992ab51315448963a2d0`.
+For a physical test, download the artifact from the **same commit's** successful `Backroom Android companion` workflow run. Use its `acceptance-manifest.txt` to record the exact APK SHA-256, signer-certificate SHA-256, merged-manifest SHA-256, commit and run ID. Do not use an APK from a different commit or substitute a locally rebuilt APK without recording new hashes.
 
-This is a debug-signed **compile-verification artifact**, not a production release and not the APK to use for pairing. The Android native build, final merged-manifest audit and APK assembly passed in an isolated Android SDK 35 runner against the PR source.
+**This artifact is compile/install verification only.** Its backend configuration is intentionally empty, so it can check package installation, Android permission prompts, app startup and device metadata. It cannot pair, authenticate to Rub Minds or create a cloud-connected live stream. Do not treat installing it as passing the end-to-end stream test. A live stream requires a separately built APK with an approved isolated-staging HTTPS URL and publishable/anon key, after its backend migration and function have been deliberately deployed to staging. Never embed a service-role key. Production Supabase and Vercel remain out of scope.
 
-| Verification | Result |
-|---|---:|
-| Android Kotlin/JUnit (`:app:testDebugUnitTest`) | 60 passed, 0 failed |
-| Android manifest/resource-policy Node suite | 27 passed, 0 failed |
-| Phone Frame, touch-policy, Edge Function, SDP protocol and private Realtime suite | 50 passed, 0 failed |
-| **Combined automated checks** | **137 passed, 0 failed** |
-| Merged-manifest audit (`:app:auditDebugGuestHostManifest`) | PASS |
-| Debug APK assembly (`:app:assembleDebug`) | PASS |
-| APK signature verification (`apksigner verify --print-certs`) | PASS |
+The APK is debug-signed and is not a production release. The merged-manifest audit must pass; the final merged manifest currently uses a narrow permission allowlist and exact exported-component allowlist. The current source gate validates the final merged APK manifest, not only the app's source manifest.
 
-The merged manifest contains 5 declared permissions, 6 components and 4 exported components. Its SHA-256 is `029cd32a4f972d980c0e9d4ce5bf7d2e9bce2b5921fa992ab51315448963a2d0`. The APK is 49,967,179 bytes, SHA-256 `2cc2ba30789ff111ee49acf779871298023d0a28378212ecff7b1f4a4eee40f5`; the debug signer certificate SHA-256 is `6765d5a3cbed165ed9b18f45f5742bf313966c4c8cfb0106f2f94d0e75deced0`.
+### Build the separately configured staging APK
 
-**Important build configuration:** this compile-verification APK was built with empty `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` BuildConfig values. It can verify package installation, manifest and signature only; it cannot pair, authenticate to the project or create a live stream. Actual backend acceptance requires a separate rebuild with the approved staging HTTPS URL and publishable/anon key after the migration and Edge Function have been deployed to isolated staging. Never embed a service-role key.
+Run this only from the repository on the Windows build machine after the staging migration and Edge Function have been deliberately deployed to the isolated staging Supabase project. Use the staging project's HTTPS URL and its publishable/anon key. Do not use the production project and never use a service-role/secret key.
 
-The last observed GitHub-hosted Android job ended before runner allocation (`runner_id=0`, no runner name and zero executed steps); the checks above were executed directly in the isolated Android SDK runner and are recorded separately from GitHub Actions. No physical ADB device was attached, so no handset behavior is claimed. Production Supabase and Vercel have not been changed.
+In PowerShell, set the two values in the current session without committing them:
+
+```powershell
+$env:SUPABASE_URL = 'https://<staging-project-ref>.supabase.co'
+$env:SUPABASE_PUBLISHABLE_KEY = '<staging-publishable-or-anon-key>'
+
+if (-not $env:SUPABASE_URL.StartsWith('https://')) {
+    throw 'A staging HTTPS Supabase URL is required.'
+}
+if ([string]::IsNullOrWhiteSpace($env:SUPABASE_PUBLISHABLE_KEY)) {
+    throw 'The staging publishable/anon key is required.'
+}
+
+Push-Location .\android-companion
+try {
+    gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:auditDebugGuestHostManifest :app:assembleDebug
+    if ($LASTEXITCODE -ne 0) { throw 'Android staging build or acceptance tests failed.' }
+
+    $apk = '.\app\build\outputs\apk\debug\app-debug.apk'
+    $audit = '.\app\build\reports\guest-host-manifest\debug.txt'
+    if (-not (Test-Path $apk -PathType Leaf)) { throw 'Staging APK was not produced.' }
+    if (-not (Test-Path $audit -PathType Leaf)) { throw 'Merged-manifest audit report is missing.' }
+
+    Get-FileHash $apk -Algorithm SHA256
+    Get-Content $audit
+} finally {
+    Pop-Location
+}
+```
+
+Record the APK SHA-256 beside the handset evidence. The environment values are read by Gradle and embedded as the app's public Supabase client configuration; they are not secrets. Do not paste them into an issue or commit them. Confirm the URL is the isolated staging project before building. Rebuild after any migration/function change, and do not reuse the empty-backend CI APK for pairing or streaming.
 
 ## Required setup
 
 1. Use two devices. The TECNO KL4 is the capture source. Open the Backroom Phone Frame on a separate Windows laptop or another device.
-2. The hash-matched compile-verification APK may be installed only to check package installation, merged manifest and debug signer; it has empty Supabase build configuration and **cannot pair or stream**. For live acceptance, build a second APK with the approved staging URL and publishable key, record its new artifact/signer/manifest hashes, and install that staging-configured artifact.
-3. Record the actual handset values from the running app: Android release, SDK, ABI, build/display/incremental identifiers, display dimensions and density. Do not infer ABI or QPR2 support from the model name.
-4. Use an isolated staging Rub Minds project and a dedicated test group/account. The PR migration and Edge Function are source-only until a separately approved staging deployment. Do not apply them to production as part of this test.
-5. Before pairing, install the staging-configured APK (not the backend-unconfigured compile-verification APK above) after the staging migration and Edge Function have been separately applied/deployed to the isolated staging project. Pair the phone, approve it as the group owner and confirm only locally selected, signer-approved app metadata is synced.
+2. Install the hash-matched CI compile-verification APK only for package/startup/OS-permission checks. For live pairing and streaming, use a separate staging-configured build as described above; do not point a test build at production.
+3. Record actual handset values from the running app: Android release, SDK, ABI, build/display/incremental identifiers, display dimensions and density. Do not infer ABI or QPR2 support from the model name.
+4. Use an isolated staging Rub Minds project and a dedicated test group/account. Do not apply this work's migrations or deploy functions to production.
+5. Confirm package name, signer digest and app grant on the phone before proceeding to live streaming.
 
 ## Live app window and video
 
@@ -53,6 +72,7 @@ The last observed GitHub-hosted Android job ended before runner allocation (`run
 | Projection revoke | Stop sharing from Android system UI | The companion closes the stream and the Phone Frame reports loss |
 | Network loss | Interrupt network connectivity long enough to exceed the bounded heartbeat grace | The phone ends the session; no stale session remains active |
 | Stop/restart | Stop locally and remotely, then start a new session | Both stop routes clean up; a new session does not inherit old peer or request state |
+| Process recreation | Force-stop/restart the companion while a session is active | MediaProjection, WebRTC, touch and remote-keyboard grants are not restored; a new Android system consent and local re-arm are required |
 
 **Compatibility boundary:** app-window sharing was introduced with Android 14 QPR2. API 34 alone does not prove that an OEM build exposes the app-only picker. The companion cannot independently inspect which picker target the phone user selected. If the intended app-only target is not offered, cancel instead of sharing the entire phone.
 
@@ -63,7 +83,7 @@ The last observed GitHub-hosted Android job ended before runner allocation (`run
 3. On the laptop, test tap, swipe and long-press on safe, reversible UI controls. Each gesture must carry a unique UUID and return an explicit Android completion/rejection acknowledgement.
 4. Confirm input is rejected when the app/window/session changes, the signer grant no longer matches, the source becomes hidden, or local consent expires.
 5. Tap **Disarm remote touch now** on the phone. The video must continue in view-only mode while the Phone Frame immediately loses touch capability.
-6. Disable/interupt Accessibility. View-only capture may continue; touch must be revoked.
+6. Disable or interrupt Accessibility. View-only capture may continue; touch must be revoked.
 7. Confirm local and remote stop, projection revocation, device revocation and session expiry all clear the touch grant.
 
 Never use this test on payments, purchases, sending messages or other irreversible actions.
