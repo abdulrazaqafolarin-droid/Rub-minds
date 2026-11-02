@@ -1355,6 +1355,10 @@ export default function BackroomApp() {
                         ? 'This group already has a binding for a different composer. Revoke it before binding the selected frame target.'
                         : frameWakeBindingState==='stale'
                           ? 'The server grant or task-only binding needs revocation. The UI will not report it Off unless the local host confirms stop.'
+                          : frameWakeBindingState==='unknown'
+                            ? 'Wake status is unknown. Restore the exact joined AI session before binding or arming this composer.'
+                            : frameWakeBindingState==='unbound' && hostedAiSessions.length===0
+                              ? 'No eligible joined AI session was found. Rejoin the original AI once through the current MCP join_group flow, then find it here.'
                           : frameWakeBindingState==='needs-rebind'
                             ? 'The selected mode differs from the registered binding. Revoke/rebind is required before arming.'
                             : frameWakeBindingState==='armed'
