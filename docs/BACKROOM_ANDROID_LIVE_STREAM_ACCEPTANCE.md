@@ -1,43 +1,26 @@
 # Backroom Android live app stream — physical acceptance
 
-Status: **source, native build and automated tests pass; handset acceptance is pending**.
+Status: **source, CI build and automated checks pass; physical handset acceptance is pending**.
 
 This checklist covers the Android real-app mirror, remote touch and remote text entry into the currently focused phone field. It does not certify Android guest virtualization, isolated app data, guest-only frames or accessibility field discovery.
 
-## Verified build under test
+## Exact CI artifact and build boundary
 
-Use the exact debug artifact built from the PR source. Do not substitute a locally rebuilt APK without recording its new hashes.
+The Android companion workflow now builds a compile-verification debug APK with both `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` explicitly empty. On a successful run it verifies the APK signature and merged-manifest audit, writes an artifact provenance file and uploads the APK plus its audit/signature evidence as a GitHub Actions artifact (seven-day retention).
 
-- APK size: 49,967,179 bytes.
-- APK SHA-256: `2cc2ba30789ff111ee49acf779871298023d0a28378212ecff7b1f4a4eee40f5`.
-- Debug signer certificate SHA-256: `6765d5a3cbed165ed9b18f45f5742bf313966c4c8cfb0106f2f94d0e75deced0`.
-- Merged-manifest SHA-256: `029cd32a4f972d980c0e9d4ce5bf7d2e9bce2b5921fa992ab51315448963a2d0`.
+For a physical test, download the artifact from the **same commit's** successful `Backroom Android companion` workflow run. Use its `acceptance-manifest.txt` to record the exact APK SHA-256, signer-certificate SHA-256, merged-manifest SHA-256, commit and run ID. Do not use an APK from a different commit or substitute a locally rebuilt APK without recording new hashes.
 
-This is a debug-signed **compile-verification artifact**, not a production release and not the APK to use for pairing. The Android native build, final merged-manifest audit and APK assembly passed in an isolated Android SDK 35 runner against the PR source.
+**This artifact is compile/install verification only.** Its backend configuration is intentionally empty, so it can check package installation, Android permission prompts, app startup and device metadata. It cannot pair, authenticate to Rub Minds or create a cloud-connected live stream. Do not treat installing it as passing the end-to-end stream test. A live stream requires a separately built APK with an approved isolated-staging HTTPS URL and publishable/anon key, after its backend migration and function have been deliberately deployed to staging. Never embed a service-role key. Production Supabase and Vercel remain out of scope.
 
-| Verification | Result |
-|---|---:|
-| Android Kotlin/JUnit (`:app:testDebugUnitTest`) | 60 passed, 0 failed |
-| Android manifest/resource-policy Node suite | 27 passed, 0 failed |
-| Phone Frame, touch-policy, Edge Function, SDP protocol and private Realtime suite | 50 passed, 0 failed |
-| **Combined automated checks** | **137 passed, 0 failed** |
-| Merged-manifest audit (`:app:auditDebugGuestHostManifest`) | PASS |
-| Debug APK assembly (`:app:assembleDebug`) | PASS |
-| APK signature verification (`apksigner verify --print-certs`) | PASS |
-
-The merged manifest contains 5 declared permissions, 6 components and 4 exported components. Its SHA-256 is `029cd32a4f972d980c0e9d4ce5bf7d2e9bce2b5921fa992ab51315448963a2d0`. The APK is 49,967,179 bytes, SHA-256 `2cc2ba30789ff111ee49acf779871298023d0a28378212ecff7b1f4a4eee40f5`; the debug signer certificate SHA-256 is `6765d5a3cbed165ed9b18f45f5742bf313966c4c8cfb0106f2f94d0e75deced0`.
-
-**Important build configuration:** this compile-verification APK was built with empty `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` BuildConfig values. It can verify package installation, manifest and signature only; it cannot pair, authenticate to the project or create a live stream. Actual backend acceptance requires a separate rebuild with the approved staging HTTPS URL and publishable/anon key after the migration and Edge Function have been deployed to isolated staging. Never embed a service-role key.
-
-The last observed GitHub-hosted Android job ended before runner allocation (`runner_id=0`, no runner name and zero executed steps); the checks above were executed directly in the isolated Android SDK runner and are recorded separately from GitHub Actions. No physical ADB device was attached, so no handset behavior is claimed. Production Supabase and Vercel have not been changed.
+The APK is debug-signed and is not a production release. The merged-manifest audit must pass; the final merged manifest currently uses a narrow permission allowlist and exact exported-component allowlist. The current source gate validates the final merged APK manifest, not only the app's source manifest.
 
 ## Required setup
 
 1. Use two devices. The TECNO KL4 is the capture source. Open the Backroom Phone Frame on a separate Windows laptop or another device.
-2. The hash-matched compile-verification APK may be installed only to check package installation, merged manifest and debug signer; it has empty Supabase build configuration and **cannot pair or stream**. For live acceptance, build a second APK with the approved staging URL and publishable key, record its new artifact/signer/manifest hashes, and install that staging-configured artifact.
-3. Record the actual handset values from the running app: Android release, SDK, ABI, build/display/incremental identifiers, display dimensions and density. Do not infer ABI or QPR2 support from the model name.
-4. Use an isolated staging Rub Minds project and a dedicated test group/account. The PR migration and Edge Function are source-only until a separately approved staging deployment. Do not apply them to production as part of this test.
-5. Before pairing, install the staging-configured APK (not the backend-unconfigured compile-verification APK above) after the staging migration and Edge Function have been separately applied/deployed to the isolated staging project. Pair the phone, approve it as the group owner and confirm only locally selected, signer-approved app metadata is synced.
+2. Install the hash-matched CI compile-verification APK only for package/startup/OS-permission checks. For live pairing and streaming, use a separate staging-configured build as described above; do not point a test build at production.
+3. Record actual handset values from the running app: Android release, SDK, ABI, build/display/incremental identifiers, display dimensions and density. Do not infer ABI or QPR2 support from the model name.
+4. Use an isolated staging Rub Minds project and a dedicated test group/account. Do not apply this work's migrations or deploy functions to production.
+5. Confirm package name, signer digest and app grant on the phone before proceeding to live streaming.
 
 ## Live app window and video
 
