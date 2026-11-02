@@ -436,6 +436,9 @@ async function startTerminalPeer(payload,term){
 }
 async function startViewSession(payload){
   const sessionId=payload.sessionId;
+  // Capture the native generation before opening the OS picker. If Emergency
+  // Stop runs while the picker is open, the stale result cannot restart video.
+  const expectedGeneration=await invoke('get_execution_generation');
   const stream=await navigator.mediaDevices.getDisplayMedia({video:{frameRate:{ideal:15,max:30}},audio:false});
   const track=stream.getVideoTracks()[0];
   if(!track){stream.getTracks().forEach(t=>t.stop());throw new Error('The selected monitor did not provide a video stream.');}
@@ -444,14 +447,21 @@ async function startViewSession(payload){
   let canControl=false;
   try{
     await invoke('set_capture_geometry',{
-      sessionId,frameWidth:settings.width,frameHeight:settings.height,
+      sessionId,expectedGeneration,frameWidth:settings.width,frameHeight:settings.height,
       screenWidthCss:screen.width,screenHeightCss:screen.height,
       deviceScaleFactor:devicePixelRatio,originXCss:screen.availLeft||0,originYCss:screen.availTop||0,
       displaySurface:settings.displaySurface||'unknown',
       appId
     });
     canControl=true;
-  }catch(error){notify('The screen is visible, but input is view-only because the selected capture could not be bound safely: '+error.message,'error');}
+  }catch(error){
+    // A stale picker result must not create a new view after Emergency Stop.
+    if(String(error?.message||error).includes('Emergency Stop was activated')){
+      stream.getTracks().forEach(mediaTrack=>mediaTrack.stop());
+      throw error;
+    }
+    notify('The screen is visible, but input is view-only because the selected capture could not be bound safely: '+error.message,'error');
+  }
   const pc=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun.cloudflare.com:3478']}]});
   state.peers.set(sessionId,{pc,stream,channel:null,canControl,terminalId:null,createdAt:Date.now(),lastHeartbeat:Date.now()});
   startPeerWatchdog();
