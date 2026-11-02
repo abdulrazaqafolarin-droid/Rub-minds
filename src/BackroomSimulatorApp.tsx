@@ -16,7 +16,7 @@ type HostWakeBindingStatus = { bindingId: string; polling: boolean; consentActiv
 type HostStatus = { hostId: string; label: string; expiresAt: number; protocolVersion: string; connected: boolean; executionReady: boolean; capabilities: Record<string, boolean>; nextStep: string; browserPages?: number; enrollmentDigest?: string; wakeGatewayHost?: string; wakeBindings?: HostWakeBindingStatus[] };
 type BrowserPageRow = { pageId: string; title: string; site: string; canSelect: boolean };
 type BrowserTargetRow = { id: string; pageId: string; roomId: string; title: string; site: string; surface: string; operations: string[]; wakeAvailable?: boolean; spaceId?: string; sessionId?: string; identityFingerprint?: string; revision?: number; locatorKind?: string; locatorValue?: string };
-type HostedAiSession = { participantId: string; displayName: string; sessionDigest: string; expiresAt: string };
+type HostedAiSession = { participantId: string; displayName: string; sessionDigest: string; expiresAt: string; credentialExpiresAt: string };
 type WakeInteractionMode = 'off' | 'on' | 'auto';
 type HostedWakeBinding = { bindingId: string; roomId: string; participantId: string; sessionId: string; targetId: string; sessionDigest: string; participationMode?: 'mentions' | 'smart' | 'task'; wakeEnabled?: boolean; serverWakeEnabled?: boolean; localPollingConfirmed?: boolean; wakeExpiresAt?: string | null; requiresRevoke?: boolean };
 type PendingBrowserSelection = { pageId: string; roomId: string; generation: number; attemptId: string | null };
@@ -620,7 +620,9 @@ export default function BackroomApp() {
         if(!v||typeof v!=='object'||Array.isArray(v))return false;
         const x=v as Record<string,unknown>;
         return typeof x.participantId==='string'&&typeof x.displayName==='string'&&
-          typeof x.sessionDigest==='string'&&/^[a-f0-9]{64}$/.test(x.sessionDigest);
+          typeof x.sessionDigest==='string'&&/^[a-f0-9]{64}$/.test(x.sessionDigest)&&
+          typeof x.expiresAt==='string'&&Number.isFinite(Date.parse(x.expiresAt))&&
+          typeof x.credentialExpiresAt==='string'&&Number.isFinite(Date.parse(x.credentialExpiresAt));
       }) as HostedAiSession[];
       setHostedAiSessions(sessions);
       setSelectedHostedSession(sessions[0]?.sessionDigest??'');
@@ -741,9 +743,11 @@ export default function BackroomApp() {
     }
     const joinedSession=hostedAiSessions.find(session=>session.sessionDigest===binding.sessionDigest&&session.participantId===binding.participantId);
     const sessionExpiry=typeof joinedSession?.expiresAt==='string'?Date.parse(joinedSession.expiresAt):NaN;
-    const sessionBoundTtlMs=Math.min(86400000,Math.floor(sessionExpiry-Date.now()-15000));
-    if(!Number.isFinite(sessionBoundTtlMs)||sessionBoundTtlMs<60000) {
-      setHostMessage('This joined AI session expires too soon for continuous Auto. Reconnect or rejoin the original AI session, refresh the joined-session list, then arm it again.');
+    const credentialExpiry=typeof joinedSession?.credentialExpiresAt==='string'?Date.parse(joinedSession.credentialExpiresAt):NaN;
+    const sessionBoundTtlMs=Math.min(86400000,Math.floor(credentialExpiry-Date.now()-15000));
+    if(!Number.isFinite(sessionExpiry)||sessionExpiry<=Date.now()||
+       !Number.isFinite(sessionBoundTtlMs)||sessionBoundTtlMs<60000) {
+      setHostMessage('This joined AI session is no longer live or its exact invitation credential expires too soon for a one-minute wake grant. Rejoin with a valid invitation, refresh the session list, then arm it again.');
       return;
     }
     if(!window.confirm('Enable the selected original AI conversation to receive canonical @RMconnects event triggers automatically for up to 24 hours? This can press Send in that exact selected AI chat without per-message confirmation. It is limited to six triggers per minute. You can revoke it or use Emergency Stop at any time.'))return;
