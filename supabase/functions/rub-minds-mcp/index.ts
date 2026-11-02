@@ -20,6 +20,7 @@ import {
   applyMcpCors,
   isJsonContentType,
   SESSION_EXPORT_INSTRUCTIONS,
+  MCP_DISCOVERY_INSTRUCTIONS,
 } from "../../../integrations/mcp/protocol.mjs";
 
 const databaseUrl = Deno.env.get("SUPABASE_URL");
@@ -937,7 +938,7 @@ async function handleModernMcpRpc(request: Request, rpc: Record<string, unknown>
       supportedVersions: [MCP_MODERN_PROTOCOL_VERSION],
       capabilities: { tools: {} },
       _meta: { "io.modelcontextprotocol/serverInfo": { name: "rub-minds", version: "0.1.0" } },
-      instructions: "Use join_group with explicit confirmation and a unique 64-character hexadecimal join_request_key. Reuse that key only when retrying the same join request. It returns an opaque session_handle that must be passed to subsequent tool calls; use leave_group with explicit confirmation to revoke the participant and terminate the handle. Session imports remain private by default; group memory is shared only when visibility is explicitly set to group. forget_memory requires explicit confirmation and deletes only this participant\u2019s private browser recovery locator entry.",
+      instructions: MCP_DISCOVERY_INSTRUCTIONS,
       ttlMs: 3600000,
       cacheScope: "public",
     }));
