@@ -379,21 +379,24 @@ export default function BackroomApp() {
   const roomBrowserTargets = browserTargets.filter(target => target.roomId === room?.id);
   const currentBrowserTarget = current?.pageId
     ? roomBrowserTargets.find(target => target.pageId === current.pageId) : undefined;
+  const selectedFrameTarget = browserTargets.find(target =>
+    target.id===selectedBrowserTarget && target.roomId===room?.id &&
+    target.pageId===current?.pageId);
   const selectedWakeParticipationMode = participationModeForInteractionMode(selectedWakeMode);
   const wakeBindingNeedsRebind = Boolean(hostedWakeBinding?.roomId===room?.id && selectedWakeParticipationMode &&
     needsWakeBindingRebind(selectedWakeMode, hostedWakeBinding.participationMode));
-  const frameWakeBinding = hostedWakeBinding?.roomId===room?.id && hostedWakeBinding.targetId===selectedBrowserTarget
-    ? hostedWakeBinding : null;
+  const frameWakeBinding = selectedFrameTarget && hostedWakeBinding?.roomId===room?.id &&
+    hostedWakeBinding.targetId===selectedFrameTarget.id ? hostedWakeBinding : null;
   const frameWakeBindingState: FrameWakeBindingState = !wakeBindingStatusKnown ? 'unknown'
     : hostedWakeBinding && hostedWakeBinding.roomId!==room?.id ? 'other-group'
-    : hostedWakeBinding && hostedWakeBinding.roomId===room?.id && hostedWakeBinding.targetId!==selectedBrowserTarget ? 'other-target'
+    : selectedBrowserTarget && !selectedFrameTarget ? 'other-target'
+    : hostedWakeBinding && hostedWakeBinding.roomId===room?.id && hostedWakeBinding.targetId!==selectedFrameTarget?.id ? 'other-target'
     : !frameWakeBinding ? 'unbound'
     : frameWakeBinding.requiresRevoke || (frameWakeBinding.serverWakeEnabled && !frameWakeBinding.localPollingConfirmed) ? 'stale'
     : frameWakeBinding.participationMode!==selectedWakeParticipationMode ? 'needs-rebind'
     : frameWakeBinding.wakeEnabled ? 'armed' : 'bound';
-  const frameTargetCanWake = Boolean(browserTargets.some(target =>
-    target.id===selectedBrowserTarget && target.roomId===room?.id &&
-    target.wakeAvailable===true && Array.isArray(target.operations) && target.operations.includes('wake')));
+  const frameTargetCanWake = Boolean(selectedFrameTarget?.wakeAvailable===true &&
+    Array.isArray(selectedFrameTarget.operations) && selectedFrameTarget.operations.includes('wake'));
   const frameCanBind = Boolean(wakeBindingStatusKnown && hostInfo?.connected && hostToken &&
     frameTargetCanWake && selectedWakeParticipationMode && selectedHostedSession &&
     hostedAiSessions.some(session=>session.sessionDigest===selectedHostedSession));
@@ -1347,8 +1350,10 @@ export default function BackroomApp() {
                 ? 'Find the exact joined AI session first so Backroom can restore its server-side mode and local poller state.'
                 : !selectedBrowserTarget
                   ? 'Drag-select one exact composer in this frame. On and Auto are available only when the provider adapter verifies a unique visible Send control.'
-                  : !frameTargetCanWake
-                    ? 'This registered field supports draft insertion only. On and Auto are unavailable until the provider wake adapter verifies this composer and its Send control.'
+                  : !selectedFrameTarget
+                    ? 'The selected typing target belongs to a different browser tab. Drag-select the composer in this displayed frame before binding or arming it.'
+                    : !frameTargetCanWake
+                      ? 'This registered field supports draft insertion only. On and Auto are unavailable until the provider wake adapter verifies this composer and its Send control.'
                     : frameWakeBindingState==='other-group'
                       ? 'Another group has a separately registered input on this host. Return to that group and manage it before binding this composer.'
                       : frameWakeBindingState==='other-target'
