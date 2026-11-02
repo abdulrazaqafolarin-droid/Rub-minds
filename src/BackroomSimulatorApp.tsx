@@ -466,17 +466,30 @@ export default function BackroomApp() {
     if(!alreadyConfirmed && !window.confirm('Permanently revoke this AI input binding? Its pending and leased wake events will be cancelled. The host remains registered, but this input must be selected and bound again before wake can be enabled.'))return false;
     setHostBusy(true);
     try{
-      // Stop the local worker first where reachable. Server-side binding revoke
-      // remains authoritative if the computer is offline or the browser lost its grant ID.
-      try{if(hostToken)await hostApi('/v1/browser/wake/bindings/revoke',{method:'POST',body:{bindingId:binding.bindingId}});}catch{}
+      // Stop the local grant and poller first. The owner-authenticated server
+      // revoke below still cancels queued work if the local host is unreachable,
+      // but cannot prove that an already-running local action has stopped.
+      let localStopConfirmed=false;
+      try{
+        if(hostToken){
+          const local=await hostApi<{revoked:boolean}>('/v1/browser/wake/bindings/revoke',{
+            method:'POST',body:{bindingId:binding.bindingId}
+          });
+          localStopConfirmed=local.revoked===true;
+        }
+      }catch{}
       const {data,error:revokeError}=await supabase.functions.invoke('backroom-config/revoke-binding',{
         body:{bindingId:binding.bindingId}
       });
       if(revokeError||data?.ok!==true||data?.revoked!==true)
         throw new Error('Input binding was not revoked. Check ownership and retry.');
+      if(!localStopConfirmed){
+        setHostMessage('The server revoked this binding and cancelled queued jobs, but the paired local host did not confirm that polling and any in-flight action have stopped. This mode change is not marked complete. Reconnect to that host and use Emergency Stop before retrying.');
+        return false;
+      }
       setHostedWakeBinding(null);
       setHostedWakeGrantId('');
-      setHostMessage('AI input binding revoked on the server; its pending wakes were cancelled. Select the intended composer and bind it again.');
+      setHostMessage('Off confirmed: the paired local host stopped its wake poller and the server revoked the binding and cancelled pending jobs.');
       return true;
     }catch(error){
       setHostMessage(error instanceof Error?error.message:'Input binding revocation failed.');
