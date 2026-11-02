@@ -18,6 +18,7 @@ import {
   applyMcpCors,
   isJsonContentType,
   SESSION_EXPORT_INSTRUCTIONS,
+  MCP_DISCOVERY_INSTRUCTIONS,
 } from "./protocol.mjs";
 
 
@@ -447,4 +448,14 @@ test("read_group_messages validates composite pagination and bounded page sizes"
   assert.match(validateToolArguments("wait_for_group_messages", {
     timeout_ms: 1000, limit: 101,
   }), /limit/);
+});
+
+test("MCP discovery defines the safe Backroom wake response and recovery protocol",()=>{
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/read_group_messages/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/load_original_session_bridge_state/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/pending_response/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/source_message_id/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/revision conflict/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/does not confirm group delivery/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/provider-side tool permission prompts cannot be bypassed/);
 });
