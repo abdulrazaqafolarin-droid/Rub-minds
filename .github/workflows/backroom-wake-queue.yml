@@ -94,10 +94,18 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261029090000_backroom_wake_queue.sql
+      - name: Apply durable MCP bridge-state migration
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261101221132_mcp_bridge_state.sql
       - name: Apply explicit 24-hour Auto grant migration
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261102221500_backroom_wake_grant_24h_auto_consent.sql
+      - name: Revoke participant wake bindings when an MCP session leaves
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261102223000_revoke_backroom_wake_on_mcp_leave.sql
       - name: Test idempotency, claims, leases, retry, cancellation and least privilege
         env:
           PGPASSWORD: postgres
@@ -122,3 +130,7 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/tests/group_task_coordination.sql
+      - name: Verify private MCP bridge-state and atomic participant-leave security
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/tests/mcp_bridge_state.sql
