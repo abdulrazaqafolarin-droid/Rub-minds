@@ -1510,8 +1510,23 @@ async fn submit_terminal_input(
         });
     }
 
-    // A pending Enter dialog must not outlive Emergency Stop.
-    let _execution_guard = lock_execution_generation(&state, approval_generation)?;
+    // A pending Enter dialog must not outlive Emergency Stop. Only clear
+    // the exact pending confirmation owned by this request: a fresh session
+    // may legitimately reuse the same ID after a later explicit start.
+    let _execution_guard = match lock_execution_generation(&state, approval_generation) {
+        Ok(guard) => guard,
+        Err(error) => {
+            if let Ok(mut pending) = state.terminal_submit_ready.lock() {
+                if matches!(
+                    pending.get(&session_id),
+                    Some(TerminalSubmitState::Confirming(current)) if *current == expires_at
+                ) {
+                    pending.remove(&session_id);
+                }
+            }
+            return Err(error);
+        }
+    };
 
     // Re-check the time-limited control grant after the native dialog. Hold
     // its mutex through the final write so a concurrent revocation cannot race
