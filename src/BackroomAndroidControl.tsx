@@ -678,7 +678,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         </button>
       </div>
       <p role="status">{remoteTextStatus}</p>
-      <small>Selection identifies one real editable, visible, non-password field using accessibility metadata only. Tap that exact field on the phone before insertion. Draft insertion requires the phone keyboard and local typing permission. Nothing is submitted; no Enter action exists.</small>
+      <small>Selection overlays the live app frame and resolves to one real editable, visible, non-password accessibility field in the selected foreground app. Backroom does not read the conversation text. This native Android frame is draft-only: it inserts unsent text with the locally approved keyboard and cannot press Send or invoke an IME action. Off / On / Auto unattended wake is currently supported only for managed browser tabs.</small>
     </div> : null}
     <div className="br-android-stream-actions">
       {!sessionId
