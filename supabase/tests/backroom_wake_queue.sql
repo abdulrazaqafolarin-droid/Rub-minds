@@ -159,11 +159,19 @@ begin
       '70000000-0000-4000-8000-00000000000d'::uuid,86400) then
     raise exception 'A live MCP handle may be extended by the owner explicit 24-hour Auto consent';
   end if;
-  if not exists(select 1 from public.rub_minds_mcp_sessions
-      where session_digest=repeat('6',64)
-        and expires_at > pg_catalog.clock_timestamp()+interval '23 hours 59 minutes'
-        and expires_at <= pg_catalog.clock_timestamp()+interval '24 hours') then
-    raise exception 'The exact authorized MCP session must be extended to its Auto grant expiry';
+  if not exists(
+    select 1
+    from public.rub_minds_mcp_sessions s
+    join public.agent_connections ac
+      on ac.credential_digest=s.agent_credential_digest
+     and ac.room_id=s.room_id
+     and ac.participant_id=s.participant_id
+     and ac.owner_id=v_owner
+    where s.session_digest=repeat('6',64)
+      and s.expires_at=ac.expires_at
+      and ac.expires_at > pg_catalog.clock_timestamp()+interval '47 hours 59 minutes'
+  ) then
+    raise exception 'The MCP session must remain valid only until its exact invitation credential expires';
   end if;
   if not public.deactivate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
       '70000000-0000-4000-8000-00000000000d'::uuid) then
@@ -210,11 +218,19 @@ begin
     raise exception '24-hour Auto consent expiry must be persisted exactly within its bound';
   end if;
 
-  if not exists(select 1 from public.rub_minds_mcp_sessions
-      where session_digest=repeat('6',64)
-        and expires_at > pg_catalog.clock_timestamp()+interval '23 hours 59 minutes'
-        and expires_at <= pg_catalog.clock_timestamp()+interval '24 hours') then
-    raise exception 'The exact live MCP session must be extended to the explicitly approved Auto grant expiry';
+  if not exists(
+    select 1
+    from public.rub_minds_mcp_sessions s
+    join public.agent_connections ac
+      on ac.credential_digest=s.agent_credential_digest
+     and ac.room_id=s.room_id
+     and ac.participant_id=s.participant_id
+     and ac.owner_id=v_owner
+    where s.session_digest=repeat('6',64)
+      and s.expires_at=ac.expires_at
+      and ac.expires_at > pg_catalog.clock_timestamp()+interval '47 hours 59 minutes'
+  ) then
+    raise exception 'Each bounded Auto grant must leave the MCP handle valid until its exact credential expiry';
   end if;
   v_conflict := false;
   begin
