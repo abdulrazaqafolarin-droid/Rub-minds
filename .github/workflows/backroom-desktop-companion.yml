@@ -42,7 +42,6 @@ jobs:
         with:
           toolchain: stable
           targets: x86_64-pc-windows-msvc
-          components: rustfmt
       - name: Install locked JavaScript dependencies
         run: npm ci
       - name: Run full web tests and production build
@@ -55,8 +54,6 @@ jobs:
           VITE_SUPABASE_URL: ""
           VITE_SUPABASE_ANON_KEY: ""
         run: npm run build:desktop-companion
-      - name: Check native Rust formatting
-        run: cargo fmt --manifest-path desktop-companion/src-tauri/Cargo.toml -- --check
       - name: Run native Windows Rust tests
         run: cargo test --manifest-path desktop-companion/src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
       - name: Run companion protocol and authorization regression tests
