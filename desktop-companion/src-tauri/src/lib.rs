@@ -1653,18 +1653,59 @@ fn emergency_stop_inner(state: &AppState) -> Result<(), String> {
     state.terminal_submit_ready.lock().map_err(|_| "Terminal submit state unavailable")?.clear();
     let sessions = std::mem::take(&mut *state.terminals.lock().map_err(|_| "Terminal registry unavailable")?);
     state.control_grants.lock().map_err(|_| "Control state unavailable")?.clear();
-    for (_, session) in sessions {
-        let _ = session.child.lock().map(|mut child| child.kill());
+
+    let mut failures = Vec::new();
+    let mut failed_sessions = HashMap::new();
+    for (session_id, session) in sessions {
+        let stopped = match session.child.lock() {
+            Ok(mut child) => match child.try_wait() {
+                Ok(Some(_)) => true,
+                _ => child.kill().is_ok(),
+            },
+            Err(_) => false,
+        };
+        if !stopped {
+            failures.push(format!("terminal session {session_id}"));
+            failed_sessions.insert(session_id, session);
+        }
     }
+    if !failed_sessions.is_empty() {
+        state.terminals.lock().map_err(|_| "Terminal registry unavailable")?
+            .extend(failed_sessions);
+    }
+
     let processes = std::mem::take(&mut *state.desktop_processes.lock().map_err(|_| "Desktop process registry unavailable")?);
-    for (_, mut child) in processes {
-        let _ = child.kill();
+    let mut failed_processes = HashMap::new();
+    let mut failed_pids = std::collections::HashSet::new();
+    for (pid, mut child) in processes {
+        let stopped = match child.try_wait() {
+            Ok(Some(_)) => true,
+            _ => child.kill().is_ok(),
+        };
+        if !stopped {
+            failures.push(format!("desktop process {pid}"));
+            failed_pids.insert(pid);
+            failed_processes.insert(pid, child);
+        }
     }
-    state.launched_app_ids.lock().map_err(|_| "App identity registry unavailable")?.clear();
+    if !failed_processes.is_empty() {
+        state.desktop_processes.lock().map_err(|_| "Desktop process registry unavailable")?
+            .extend(failed_processes);
+    }
+    state.launched_app_ids.lock().map_err(|_| "App identity registry unavailable")?
+        .retain(|_, pid| failed_pids.contains(pid));
+
     // Keep the generation mutex held until cleanup is complete so no native
     // action can slip between the generation change and resource teardown.
     drop(generation);
-    Ok(())
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Emergency Stop could not confirm termination for: {}. The remaining targets are retained for another stop attempt.",
+            failures.join(", ")
+        ))
+    }
 }
 
 #[tauri::command]
