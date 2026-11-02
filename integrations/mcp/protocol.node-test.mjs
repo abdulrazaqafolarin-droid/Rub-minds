@@ -451,7 +451,8 @@ test("read_group_messages validates composite pagination and bounded page sizes"
 });
 
 test("MCP discovery defines the safe Backroom wake response and recovery protocol",()=>{
-  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/read_group_messages/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/read_group_message/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/Event UUID/);
   assert.match(MCP_DISCOVERY_INSTRUCTIONS,/load_original_session_bridge_state/);
   assert.match(MCP_DISCOVERY_INSTRUCTIONS,/pending_response/);
   assert.match(MCP_DISCOVERY_INSTRUCTIONS,/source_message_id/);
