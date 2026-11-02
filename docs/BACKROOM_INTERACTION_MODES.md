@@ -30,7 +30,7 @@ A provider may still require its own confirmation before a write-capable MCP too
 
 ## What a successful wake means
 
-A wake queue acknowledgement confirms that the trigger was submitted and the composer cleared. It does **not** prove the original AI finished its response or that its reply reached the Rub Minds group. That end-to-end response delivery still requires the separately configured original-session bridge and its durable cursor/pending-response handling.
+A wake queue acknowledgement confirms that the trigger was submitted and the composer cleared. It does **not** prove the original AI finished its response or that its reply reached the Rub Minds group. Group delivery is a second step performed by the selected AI conversation through its joined Rub Minds MCP tools. The AI must confirm `send_group_message` and persist its cursor/pending-response state before claiming the reply was delivered. The durable wake queue currently records trigger submission separately; it does not receive a final per-event response-delivery acknowledgement.
 
 ## Acceptance checklist
 
