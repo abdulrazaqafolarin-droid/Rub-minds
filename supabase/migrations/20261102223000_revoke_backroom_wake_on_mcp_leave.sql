@@ -1,7 +1,5 @@
--- Leaving a Rub Minds group must revoke that exact MCP session's Backroom
--- composer authorization and cancel its pending/leased wake jobs atomically.
--- Queue admission takes the same per-session advisory lock, so no enqueue can
--- pass authorization concurrently and appear after this cleanup.
+-- Keep local Auto wake authority aligned with the exact joined MCP session.
+-- This supersedes the earlier bridge-session terminator after Backroom tables exist.
 create or replace function public.terminate_rub_minds_mcp_bridge_session(
   p_session_digest text,
   p_expected_ciphertext text,
@@ -27,8 +25,8 @@ begin
     raise exception using errcode = '22023', message = 'Invalid MCP bridge session termination parameters';
   end if;
 
-  -- Match enqueue_backroom_wake_job's admission lock. This serializes Leave
-  -- against a concurrent Realtime-triggered wake enqueue for the same session.
+  -- Match enqueue_backroom_wake_job's admission lock so a concurrent enqueue
+  -- cannot insert a job after the leave transaction has cancelled the queue.
   perform pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtextextended(p_session_digest, 0)
   );
@@ -71,29 +69,31 @@ begin
     );
   end if;
 
-  if p_credential_digest is not null then
-    update public.agent_connections
-    set revoked_at = pg_catalog.clock_timestamp()
-    where credential_digest = p_credential_digest
-      and revoked_at is null;
-  end if;
-
   v_terminated_at := pg_catalog.clock_timestamp();
 
-  -- Mark bindings revoked, not merely wake-disabled. A local host's next
-  -- authenticated claim will then receive 401 and stop its in-memory poller.
+  if p_credential_digest is not null then
+    update public.agent_connections
+    set revoked_at = v_terminated_at
+    where credential_digest = p_credential_digest and revoked_at is null;
+  end if;
+
+  -- The participant credential is revoked by leave_group, so every hosted
+  -- composer binding belonging to this room participant must be disabled,
+  -- including other MCP handles that shared the same AI participant.
   update public.backroom_input_bindings
   set wake_enabled = false,
       wake_last_revoked_grant_id = coalesce(wake_grant_id, wake_last_revoked_grant_id),
       wake_grant_id = null, confirmed_at = null, wake_expires_at = null,
       revoked_at = coalesce(revoked_at, v_terminated_at), updated_at = v_terminated_at
-  where session_digest = p_session_digest and revoked_at is null;
+  where room_id = v_session.room_id and participant_id = v_session.participant_id
+    and revoked_at is null;
 
   update public.backroom_wake_jobs
   set state = 'cancelled', lease_owner = null, lease_token_hash = null,
       lease_expires_at = null, last_error_code = 'authorization_denied',
       updated_at = v_terminated_at
-  where session_digest = p_session_digest and state in ('pending','leased');
+  where room_id = v_session.room_id and participant_id = v_session.participant_id
+    and state in ('pending','leased');
 
   update public.rub_minds_mcp_sessions
   set agent_credential_ciphertext = null,
