@@ -41,11 +41,18 @@ jobs:
         with:
           toolchain: stable
           targets: x86_64-pc-windows-msvc
+          components: rustfmt
       - name: Install locked JavaScript dependencies
         run: npm ci
       - name: Run full web tests and production build
+        env:
+          VITE_SUPABASE_URL: ""
+          VITE_SUPABASE_ANON_KEY: ""
         run: npm run build
       - name: Build the bundled companion WebView
+        env:
+          VITE_SUPABASE_URL: ""
+          VITE_SUPABASE_ANON_KEY: ""
         run: npm run build:desktop-companion
       - name: Check native Rust formatting
         run: cargo fmt --manifest-path desktop-companion/src-tauri/Cargo.toml -- --check
@@ -71,6 +78,7 @@ jobs:
             "run_id=$env:GITHUB_RUN_ID"
             "target=x86_64-pc-windows-msvc"
             "artifact=rub-minds-backroom-companion.exe"
+            "backend_configuration=empty; local-launch-and-native-build-verification-only"
             "size_bytes=$size"
             "sha256=$hash"
           ) | Set-Content -Path "desktop-companion/src-tauri/target/x86_64-pc-windows-msvc/release/acceptance-manifest.txt" -Encoding utf8
