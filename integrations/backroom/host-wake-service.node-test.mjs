@@ -416,3 +416,33 @@ test('default local wake service reports the Production gateway host for mismatc
   await rm(dir,{recursive:true,force:true});
  }
 });
+
+test('explicit Auto grant can activate the remote queue for the full 24-hour window',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'backroom-24h-grant-'));
+ try{
+  const bodies=[];
+  const service=createHostWakeService({
+   identity:{hostId,hostToken},browserRuntime:runtime(),
+   journalDirectory:join(dir,'journal'),gatewayUrl:trustedUrl,
+   fetchImpl:async(url,options)=>{
+    bodies.push({url,body:JSON.parse(options.body)});
+    const data=url.endsWith('/activate')?{ok:true,activated:true}:
+      url.endsWith('/deactivate')?{ok:true,deactivated:true}:{ok:true,leases:[]};
+    return new Response(JSON.stringify(data),{status:200});
+   }
+  });
+  service.configure({sessionDigest,bindingId,publishableKey});
+  const grantId='40000000-0000-4000-8000-0000000000bc';
+  const groupId='40000000-0000-4000-8000-000000000044';
+  const participantId='40000000-0000-4000-8000-000000000055';
+  const sessionId='40000000-0000-4000-8000-000000000066';
+  await service.activateAndStart({grantId,expiresAt:Date.now()+86_400_000,scope:{
+   hostId,bindingId,groupId,participantId,sessionId
+  }},{bindingId,roomId:groupId,participantId,sessionId});
+  const activation=bodies.find(item=>item.url.endsWith('/activate'));
+  assert.ok(activation);
+  assert.ok(activation.body.ttlSeconds<=86400&&activation.body.ttlSeconds>=86380,
+    'server activation receives the nearly complete 24-hour local grant lifetime');
+  await service.stop();
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
