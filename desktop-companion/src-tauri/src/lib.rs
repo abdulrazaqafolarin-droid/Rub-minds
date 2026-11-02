@@ -319,7 +319,6 @@ async fn revoke_desktop_device(
        body.get("status").and_then(Value::as_str) != Some("revoked") {
         return Err("Rub Minds did not confirm computer revocation. The device credential remains stored.".into());
     }
-    emergency_stop(state)?;
     clear_device_credentials()?;
     Ok(())
 }
