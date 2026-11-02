@@ -150,6 +150,30 @@ begin
     raise exception 'New grant must be deactivatable';
   end if;
 
+  -- One explicit Auto consent may persist for up to 24 hours, never longer.
+  if not public.activate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
+      '70000000-0000-4000-8000-00000000000b'::uuid,86400) then
+    raise exception 'A new 24-hour Auto grant must activate';
+  end if;
+  if not exists(select 1 from public.backroom_input_bindings where id=v_binding_6
+      and wake_grant_id='70000000-0000-4000-8000-00000000000b'::uuid
+      and wake_expires_at > pg_catalog.clock_timestamp()+interval '23 hours 59 minutes'
+      and wake_expires_at <= pg_catalog.clock_timestamp()+interval '24 hours') then
+    raise exception '24-hour Auto consent expiry must be persisted exactly within its bound';
+  end if;
+  v_conflict := false;
+  begin
+    perform public.activate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
+      '70000000-0000-4000-8000-00000000000c'::uuid,86401);
+  exception when others then
+    v_conflict := true;
+  end;
+  if not v_conflict then raise exception 'Auto consent beyond 24 hours must be rejected'; end if;
+  if not public.deactivate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
+      '70000000-0000-4000-8000-00000000000b'::uuid) then
+    raise exception '24-hour Auto grant must be revocable';
+  end if;
+
   -- Recovery after a host crash: a stale, expired grant must not block fresh consent.
   update public.backroom_input_bindings
   set wake_enabled=true,wake_grant_id='70000000-0000-4000-8000-000000000009'::uuid,
