@@ -833,7 +833,7 @@ export default function BackroomApp() {
     try{
       if(!supabase||!hostInfo.enrollmentDigest)throw new Error('Owner-authenticated host registration is missing. Re-pair before enabling Auto.');
       const {data:renewedHost,error:renewHostError}=await supabase.functions.invoke('backroom-config/host',{
-        body:{hostId:hostInfo.hostId,credentialDigest:hostInfo.enrollmentDigest,ttlSeconds:Math.max(86400,Math.ceil(sessionBoundTtlMs/1000)+3600)}
+        body:{hostId:hostInfo.hostId,credentialDigest:hostInfo.enrollmentDigest,ttlSeconds:Math.min(604800,Math.max(86400,Math.ceil(sessionBoundTtlMs/1000)+3600))}
       });
       if(renewHostError||renewedHost?.ok!==true)throw new Error('Could not renew the owner-authorized host lease for the 24-hour Auto session.');
       const grant=await hostApi<{grantId:string;expiresAt:number}>('/v1/browser/wake/grants',{
