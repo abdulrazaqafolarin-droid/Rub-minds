@@ -98,7 +98,7 @@ async function findSession(sessionId: string) {
   if (!/^[a-f0-9]{64}$/.test(sessionId)) return null;
   const digest = await sha256(sessionId);
   const { data, error } = await db.from("rub_minds_mcp_sessions")
-    .select("session_digest, agent_credential_ciphertext, room_id, participant_id, expires_at, terminated_at")
+    .select("session_digest, agent_credential_ciphertext, agent_credential_digest, room_id, participant_id, expires_at, terminated_at")
     .eq("session_digest", digest)
     .gt("expires_at", new Date().toISOString())
     .is("terminated_at", null)
@@ -274,11 +274,34 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
   if (name === "join_group") {
     if (typeof session.agent_credential_ciphertext === "string") {
       const existingCredential = await decryptWithKeyRing(session.agent_credential_ciphertext, credentialEncryptionKey, previousEncryptionKeys, session.session_digest as string);
+      const existingCredentialDigest = await sha256(existingCredential);
       const { data: activeConnection, error: activeConnectionError } = await db.from("agent_connections")
-        .select("id").eq("credential_digest", await sha256(existingCredential))
+        .select("id").eq("credential_digest", existingCredentialDigest)
         .is("revoked_at", null).gt("expires_at", new Date().toISOString()).maybeSingle();
       if (activeConnectionError) throw new Error("Could not verify the existing AI participant session.");
-      if (activeConnection) return { joined: true, room_id: session.room_id, participant_id: session.participant_id, note: "This MCP session is already joined to an active group.", post_join_next_step: "Ask the session owner for consent unless already explicitly authorized. If consent is given, call prepare_session_export with confirm_export=true; otherwise do not capture. Never post raw session history to the group." };
+      if (activeConnection) {
+        // Backfill the exact invitation-credential digest for sessions created
+        // before this column existed. This is safe only because the credential
+        // was decrypted from this same live MCP row and independently matched
+        // to an unrevoked, unexpired agent_connections row above.
+        if (session.agent_credential_digest !== existingCredentialDigest) {
+          if (session.agent_credential_digest !== null && session.agent_credential_digest !== undefined) {
+            throw new Error("The stored invitation credential digest does not match this MCP session.");
+          }
+          const { data: upgraded, error: upgradeError } = await db.from("rub_minds_mcp_sessions")
+            .update({ agent_credential_digest: existingCredentialDigest })
+            .eq("session_digest", session.session_digest as string)
+            .eq("agent_credential_ciphertext", session.agent_credential_ciphertext as string)
+            .is("agent_credential_digest", null)
+            .is("terminated_at", null)
+            .gt("expires_at", new Date().toISOString())
+            .select("session_digest").maybeSingle();
+          if (upgradeError || !upgraded) {
+            throw new Error("Could not safely backfill this MCP session's invitation credential identity. Refresh the session and retry.");
+          }
+        }
+        return { joined: true, room_id: session.room_id, participant_id: session.participant_id, note: "This MCP session is already joined to an active group.", post_join_next_step: "The exact invitation credential identity has been verified for Backroom's owner-authorized session features. Ask the session owner for consent unless already explicitly authorized. If consent is given, call prepare_session_export with confirm_export=true; otherwise do not capture. Never post raw session history to the group." };
+      }
       // The previous provider credential is no longer live. Remove its private
       // cursor/pending reply before allowing this same MCP handle to join again,
       // otherwise the next participant could inherit state from the old binding.
