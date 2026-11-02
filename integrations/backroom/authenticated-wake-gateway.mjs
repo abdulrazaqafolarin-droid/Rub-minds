@@ -55,7 +55,7 @@ export function createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,a
       const scope=await authorize(input??{},false);
       if(!scope)return Object.freeze({ok:false,reason:'unauthorized'});
       if(!UUID.test(input.grantId??'')||!Number.isSafeInteger(input.ttlSeconds)||
-         input.ttlSeconds<60||input.ttlSeconds>900)return invalidRequest();
+         input.ttlSeconds<60||input.ttlSeconds>86400)return invalidRequest();
       return Object.freeze({ok:true,activated:await activateBinding({...scope,grantId:input.grantId,ttlSeconds:input.ttlSeconds})});
     },
     async deactivate(input) {
