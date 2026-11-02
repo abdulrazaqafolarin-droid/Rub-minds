@@ -18,16 +18,74 @@ function setup(options={}) {
  const authority=new WakeAuthorizationAuthority({maxGrantMs:60_000});
  const grant=authority.createGrant({confirmed:true,hostId:ids.hostId,groupId:ids.roomId,participantId:ids.participantId,sessionId:ids.sessionId,spaceId:ids.spaceId,bindingId:ids.bindingId,targetId:ids.targetId,identityFingerprint:ids.targetIdentityFingerprint,targetRevision:1,ttlMs:60_000});
  const guard=new LocalExecutionGuard({host:{hostId:ids.hostId,deviceLabel:'test desktop',surfaces:['windows_app'],operations:['draft','wake']},isConnected:async()=>options.connected!==false,permission:async()=>options.permitted!==false,adapter:{probe:async()=>({connected:options.connected!==false,focused:options.focused!==false,sessionId:ids.sessionId,appId:'claude',surface:'windows_app',identityFingerprint:ids.targetIdentityFingerprint,locatorKinds:['accessibility']}),execute:async({command})=>{writes++;return {state:'completed',verified:true,result:{drafted:true,submitted:false,textHash:command.text.length}};}}});
- const dispatcher=new BackroomDispatcher({registry,adapter:guard,authorize:async command=>command.operation==='wake'?authority.verify(command.wakeGrantId,approvalContext(command),{consume:true}):true});
+ const dispatcher=new BackroomDispatcher({registry,adapter:guard,authorize:async (command,options={})=>command.operation==='wake'?authority.verify(command.wakeGrantId,approvalContext(command),{consume:options.deferEffectAuthorization!==true}):true});
  const calls=[];const store={async retry(a){calls.push({name:'retry',a});return 'pending';},async acknowledge(a){calls.push({name:'ack',a});return options.ack!==false;}};
  const base={lease:lease(),store,dispatcher,targetRegistry:registry,hostId:ids.hostId,binding,participant,sessionDigest:ids.sessionDigest,composerEmpty:true,foregroundSessionId:ids.sessionId,approval:{grantId:grant.grantId},verifyApproval:async(ticket,context)=>options.verify!==false&&authority.verify(ticket?.grantId,context,{consume:false})};
  return {registry,target,guard,dispatcher,store,calls,base,authority,grant,writes:()=>writes};
 }
 test('claimed lease resolves the exact identity fingerprint and builds only draft command',()=>{const s=setup();const m=commandFromClaimedWake({lease:s.base.lease,targetRegistry:s.registry,hostId:ids.hostId,binding,participant,sessionDigest:ids.sessionDigest,wakeGrantId:'grant-1'});assert.equal(m.target.identityFingerprint,ids.targetIdentityFingerprint);assert.equal(m.command.operation,'wake');assert.equal(m.command.roomId,ids.roomId);assert.equal(m.command.participantId,ids.participantId);assert.equal(m.command.bindingId,ids.bindingId);assert.ok(m.command.text.startsWith('@RMconnects\n'));});
-test('durable lease -> registered target -> local dispatcher -> host guard drafts once, never sends',async()=>{const s=setup();const result=await dispatchClaimedWake(s.base);assert.deepEqual(result,{state:'completed',reason:null,acknowledged:true});assert.equal(s.writes(),1);assert.equal(s.calls[0].name,'ack');assert.equal(s.calls[0].a.outcome,'acknowledged');});
+test('durable lease -> preflight -> seal -> one-shot grant -> provider effect -> acknowledgement',async()=>{
+ const s=setup();let seals=0,consumes=0;
+ const result=await dispatchClaimedWake({...s.base,
+  executionSeal:async()=>{seals++;return true;},
+  consumeApproval:async(ticket,context)=>{consumes++;return s.authority.verify(ticket?.grantId,context,{consume:true});}
+ });
+ assert.deepEqual(result,{state:'completed',reason:null,acknowledged:true});
+ assert.equal(seals,1);assert.equal(consumes,1);assert.equal(s.writes(),1);
+ assert.equal(s.calls[0].name,'ack');assert.equal(s.calls[0].a.outcome,'acknowledged');
+});
 test('occupied composer, wrong focus/session and unavailable session retry rather than overwrite',async()=>{for(const change of [{composerEmpty:false},{foregroundSessionId:'other'},{participant:{...participant,status:'busy'}}]){const s=setup();const out=await dispatchClaimedWake({...s.base,...change});assert.equal(out.state,'deferred');assert.equal(s.writes(),0);assert.equal(s.calls[0].name,'retry');}});
 test('invalid or replayed approval is ignored without writing and is not retried',async()=>{const s=setup({verify:false});const out=await dispatchClaimedWake(s.base);assert.equal(out.state,'ignored');assert.equal(out.reason,'wake-authorization-invalid-or-replayed');assert.equal(s.writes(),0);assert.equal(s.calls[0].name,'ack');assert.equal(s.calls[0].a.outcome,'ignored');});
 test('binding to wrong group/session and stale target revision never write',async()=>{const s=setup();const out=await dispatchClaimedWake({...s.base,binding:{...binding,groupId:'other'}});assert.equal(out.state,'ignored');assert.equal(out.reason,'target-or-session-binding-stale');assert.equal(s.writes(),0);assert.equal(s.calls[0].a.outcome,'ignored');const t=setup();t.registry.rebind(ids.targetId,{...t.target,locatorValue:'replacement'},{expectedRevision:1});const stale=await dispatchClaimedWake(t.base);assert.equal(stale.state,'ignored');assert.equal(t.writes(),0);});
-test('disconnected or unfocused host is blocked before the input adapter',async()=>{for(const options of [{connected:false},{focused:false},{permitted:false}]){const s=setup(options);const out=await dispatchClaimedWake(s.base);assert.equal(s.writes(),0);assert.ok(['deferred','ignored'].includes(out.state));}});
+test('local connection, permission and focus preflight failures retry without consuming a seal or grant',async()=>{
+ for(const options of [{connected:false},{focused:false},{permitted:false}]){
+  const s=setup(options);let seals=0,consumes=0;
+  const out=await dispatchClaimedWake({...s.base,
+   executionSeal:async()=>{seals++;return true;},
+   consumeApproval:async(ticket,context)=>{consumes++;return s.authority.verify(ticket?.grantId,context,{consume:true});}
+  });
+  assert.equal(s.writes(),0);assert.equal(seals,0);assert.equal(consumes,0);
+  assert.equal(out.state,'deferred');assert.equal(s.calls[0].name,'retry');
+ }
+});
 test('missing approval waits via retry; no false acknowledgement',async()=>{const s=setup();const out=await dispatchClaimedWake({...s.base,approval:null});assert.equal(out.state,'deferred');assert.equal(out.reason,'wake-authorization-required');assert.equal(s.writes(),0);assert.equal(s.calls[0].name,'retry');});
 test('acknowledgement race is surfaced without blindly replaying effect',async()=>{const s=setup({ack:false});const out=await dispatchClaimedWake(s.base);assert.equal(out.state,'lease-lost');assert.equal(out.acknowledged,false);assert.equal(s.writes(),1);});
+
+test('duplicate execution seal prevents grant consumption and any provider effect',async()=>{
+ const s=setup();let consumeCalls=0;
+ const out=await dispatchClaimedWake({...s.base,
+  executionSeal:async()=>false,
+  consumeApproval:async()=>{consumeCalls++;return true;}
+ });
+ assert.equal(out.state,'ignored');
+ assert.equal(out.reason,'execution_seal_denied');
+ assert.equal(consumeCalls,0);
+ assert.equal(s.writes(),0);
+ assert.equal(s.calls[0].name,'ack');
+ assert.equal(s.calls[0].a.outcome,'ignored');
+});
+
+test('failure after the seal is never queued for automatic replay',async()=>{
+ const s=setup();let seals=0,consumes=0;
+ const wakeGuard=s.guard;
+ const adapterError={code:'BACKROOM_PREFLIGHT'};
+ const replacement=new LocalExecutionGuard({
+  host:{hostId:ids.hostId,deviceLabel:'test desktop',surfaces:['windows_app'],operations:['draft','wake']},
+  isConnected:async()=>true,permission:async()=>true,
+  adapter:{probe:async()=>({connected:true,focused:true,sessionId:ids.sessionId,appId:'claude',surface:'windows_app',identityFingerprint:ids.targetIdentityFingerprint,locatorKinds:['accessibility']}),
+   execute:async()=>{throw adapterError;}}
+ });
+ const dispatcher=new BackroomDispatcher({
+  registry:s.registry,adapter:replacement,
+  authorize:async(command,options={})=>s.authority.verify(command.wakeGrantId,approvalContext(command),{consume:options.deferEffectAuthorization!==true})
+ });
+ const out=await dispatchClaimedWake({...s.base,dispatcher,
+  executionSeal:async()=>{seals++;return true;},
+  consumeApproval:async(ticket,context)=>{consumes++;return s.authority.verify(ticket?.grantId,context,{consume:true});}
+ });
+ assert.equal(seals,1);assert.equal(consumes,1);
+ assert.equal(out.state,'ignored');
+ assert.equal(s.calls[0].name,'ack');
+ assert.equal(s.calls[0].a.outcome,'ignored');
+ assert.equal(s.writes(),0);
+});
