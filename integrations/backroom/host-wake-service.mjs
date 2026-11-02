@@ -126,16 +126,27 @@ export function createHostWakeService({
    ...(fetchImpl===undefined?{}:{fetchImpl}),
    verifyLocalGrant:grant=>browserRuntime.verifyRemoteWakeActivation(grant)
   });
-  const poller=createBackroomWakePoller({
-   store:remote,browserRuntime,hostId:identity.hostId,
-   bindingId:config.bindingId,sessionDigest:config.sessionDigest,
-   executionJournal:journal
-  });
   const entry={
-   remote,poller,publishableKey:config.publishableKey,
+   remote,poller:null,publishableKey:config.publishableKey,
    scope:Object.freeze({bindingId:config.bindingId,sessionDigest:config.sessionDigest}),
    activeGrantId:null,pendingGrantId:null,expiryTimer:null,activationPromise:null,activationGrantId:null
   };
+  const poller=createBackroomWakePoller({
+   store:remote,browserRuntime,hostId:identity.hostId,
+   bindingId:config.bindingId,sessionDigest:config.sessionDigest,
+   executionJournal:journal,
+   onResult:result=>{
+    if(result?.state!=='unauthorized')return;
+    // The owner revoked the binding, the AI left, or its session/credential
+    // expired. The authenticated gateway is authoritative; stop the local
+    // poller and discard the in-memory local grant instead of retrying forever.
+    if(entry.expiryTimer){clearTimeout(entry.expiryTimer);entry.expiryTimer=null;}
+    try{browserRuntime.revokeWakeBinding?.(entry.scope.bindingId);}catch{}
+    entry.activeGrantId=null;
+    entry.pendingGrantId=null;
+   }
+  });
+  entry.poller=poller;
   bindings.set(config.bindingId,entry);
   return Object.freeze({configured:true,bindingId:config.bindingId,existing:false});
  }
