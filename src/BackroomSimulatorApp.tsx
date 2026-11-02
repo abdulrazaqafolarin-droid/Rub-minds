@@ -856,29 +856,37 @@ export default function BackroomApp() {
   }
   async function chooseWakeMode(nextMode: WakeInteractionMode) {
     const currentRoomBinding = hostedWakeBinding?.roomId === room?.id ? hostedWakeBinding : null;
+    const currentFrameBinding = currentRoomBinding && selectedFrameTarget &&
+      currentRoomBinding.targetId === selectedFrameTarget.id ? currentRoomBinding : null;
     if (nextMode === 'off') {
-      if (currentRoomBinding) {
-        if (!window.confirm('Switching to Off permanently revokes this AI input binding and cancels its pending wake events. You can register it again later. Continue?')) return;
+      if (currentFrameBinding) {
+        if (!window.confirm('Switching this frame to Off permanently revokes its input binding and cancels pending wake events. Continue?')) return;
         const revoked = await revokeHostedWakeBinding(true);
         if (revoked) setSelectedWakeMode('off');
         return;
       }
       setSelectedWakeMode('off');
-      setHostMessage('Interaction mode is Off for this group. No input binding is armed here; other groups’ independently registered bindings are unchanged.');
+      setHostMessage(currentRoomBinding
+        ? 'Off is selected for the displayed frame. The separately bound composer on another browser target is unchanged; switch to that frame or use its explicit revoke action to turn it Off.'
+        : 'Interaction mode is Off for the displayed frame. No input binding is armed here; other groups’ bindings are unchanged.');
       return;
     }
     const requiredMode = participationModeForInteractionMode(nextMode);
     if (!requiredMode) return;
-    if (currentRoomBinding && needsWakeBindingRebind(nextMode, currentRoomBinding.participationMode)) {
-      const oldMode = currentRoomBinding.participationMode
-        ? interactionModeForParticipationMode(currentRoomBinding.participationMode) || 'the existing'
+    if (currentRoomBinding && !currentFrameBinding) {
+      setHostMessage('This group already has a binding for another browser target. Switch to that target or explicitly revoke it before binding a different frame.');
+      return;
+    }
+    if (currentFrameBinding && needsWakeBindingRebind(nextMode, currentFrameBinding.participationMode)) {
+      const oldMode = currentFrameBinding.participationMode
+        ? interactionModeForParticipationMode(currentFrameBinding.participationMode) || 'the existing'
         : 'the existing';
-      if (!window.confirm('Changing from ' + oldMode + ' to ' + nextMode.toUpperCase() + ' requires revoking the old binding and cancelling its queued wakes. Continue?')) return;
+      if (!window.confirm('Changing from ' + oldMode + ' to ' + nextMode.toUpperCase() + ' requires revoking this frame’s binding and cancelling its queued wakes. Continue?')) return;
       const revoked = await revokeHostedWakeBinding(true);
       if (!revoked) return;
     }
     setSelectedWakeMode(nextMode);
-    setHostMessage(nextMode.toUpperCase() + ' selected. Register or arm the exact browser composer to activate this mode.');
+    setHostMessage(nextMode.toUpperCase() + ' selected. Register or arm the exact composer in the displayed browser frame to activate this mode.');
   }
 
   async function revokeHostedWake() {
