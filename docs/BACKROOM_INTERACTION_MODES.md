@@ -9,10 +9,10 @@ The first Off / On / Auto control is supported only by a live, registered manage
 | Mode | Participation policy | Behavior |
 | --- | --- | --- |
 | Off | No active input binding | Permanently revokes the selected binding and cancels its pending/leased wake jobs. No trigger is allowed for that binding. Register it again before enabling a mode. |
-| On | `mentions` | Queues a wake only when a human-authored group message mentions the selected AI participant by its display name. |
-| Auto | `smart` | Queues a wake for each new human-authored group message. AI-authored messages do not automatically relay to another AI, preventing cross-agent wake loops. |
+| On | `mentions` | Queues a wake when a different participant (human or AI) mentions the selected AI by its display name. The AI's own messages never wake itself. |
+| Auto | `smart` | Queues a wake for each new human-authored group message. AI-authored messages do not trigger Auto wakes, even when they contain a mention, preventing automatic cross-agent wake loops. |
 
-Switching between On and Auto changes the server-side participation policy. The existing binding is revoked and its queue cancelled before the replacement binding can be registered. A mode label is never allowed to silently mutate a live binding.
+Switching between On and Auto changes the server-side participation policy. On can respond to an explicit mention from another AI; Auto ignores AI-authored message events and only wakes from human-authored group messages. The existing binding is revoked and its queue cancelled before the replacement binding can be registered. A mode label is never allowed to silently mutate a live binding.
 
 ## Consent and execution boundaries
 
