@@ -9,6 +9,7 @@ test('continuous wake grant requires explicit confirmation and exact finite scop
  const auth=new WakeAuthorizationAuthority();
  assert.throws(()=>auth.createGrant({...scope,confirmed:false}),/Explicit user confirmation/);
  const grant=auth.createGrant({...scope,confirmed:true});
+ assert.equal(grant.expiresAt-grant.createdAt,24*60*60*1000,'default continuous consent window is 24 hours');
  assert.equal(grant.scope.targetId,scope.targetId);
  assert.equal(auth.status(grant.grantId).active,true);
  assert.throws(()=>auth.createGrant({...scope,confirmed:true,ttlMs:24*60*60*1000+1}),/lifetime/);
