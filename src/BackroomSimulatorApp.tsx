@@ -380,7 +380,7 @@ export default function BackroomApp() {
   const currentBrowserTarget = current?.pageId
     ? roomBrowserTargets.find(target => target.pageId === current.pageId) : undefined;
   const selectedWakeParticipationMode = participationModeForInteractionMode(selectedWakeMode);
-  const wakeBindingNeedsRebind = Boolean(hostedWakeBinding && selectedWakeParticipationMode &&
+  const wakeBindingNeedsRebind = Boolean(hostedWakeBinding?.roomId===room?.id && selectedWakeParticipationMode &&
     needsWakeBindingRebind(selectedWakeMode, hostedWakeBinding.participationMode));
   const frameWakeBinding = hostedWakeBinding?.roomId===room?.id && hostedWakeBinding.targetId===selectedBrowserTarget
     ? hostedWakeBinding : null;
@@ -400,6 +400,14 @@ export default function BackroomApp() {
   const frameCanArm = Boolean(frameWakeBindingState==='bound' && frameTargetCanWake &&
     hostInfo?.connected && selectedWakeParticipationMode &&
     frameWakeBinding?.participationMode===selectedWakeParticipationMode);
+  useEffect(() => {
+    bindingStatusRequestRef.current++;
+    setWakeBindingStatusKnown(false);
+    setSelectedWakeMode('off');
+    setHostedAiSessions([]);
+    setSelectedHostedSession('');
+    setHostedWakeGrantId('');
+  }, [room?.id]);
   useEffect(() => {
     setLiveViewEnabled(false);
     setLiveGrantId('');
