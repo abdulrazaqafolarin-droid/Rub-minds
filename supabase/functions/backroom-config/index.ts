@@ -66,25 +66,35 @@ Deno.serve(async req=>{
     .eq('id',value.roomId).eq('owner_id',ownerId).maybeSingle();
    if(roomError||!ownedRoom)return json(403,{ok:false,reason:'not_room_owner'},origin);
    const now=new Date().toISOString();
-   const [participants,connections,sessions]=await Promise.all([
+   const [participants,sessions]=await Promise.all([
     db.from('participants').select('id,display_name,kind,status').eq('room_id',value.roomId)
       .in('kind',['original_session','model','external_agent'])
       .in('status',['connected','active','autonomous']).limit(100),
-    db.from('agent_connections').select('participant_id').eq('room_id',value.roomId)
-      .eq('owner_id',ownerId).is('revoked_at',null).gt('expires_at',now).limit(100),
-    db.from('rub_minds_mcp_sessions').select('session_digest,participant_id,expires_at')
+    db.from('rub_minds_mcp_sessions').select('session_digest,agent_credential_digest,participant_id,expires_at')
       .eq('room_id',value.roomId).is('terminated_at',null)
       .not('agent_credential_ciphertext','is',null).gt('expires_at',now).limit(100)
    ]);
-   if(participants.error||connections.error||sessions.error)
+   if(participants.error||sessions.error)
     return json(503,{ok:false,reason:'service_unavailable'},origin);
    const names=new Map((participants.data??[]).map(p=>[p.id,p.display_name]));
-   const joined=new Set((connections.data??[]).map(c=>c.participant_id));
+   const credentialDigests=[...new Set((sessions.data??[])
+    .map(s=>s.agent_credential_digest)
+    .filter(digest=>typeof digest==='string'&&/^[a-f0-9]{64}$/.test(digest)))];
+   const connections=credentialDigests.length
+    ? await db.from('agent_connections').select('credential_digest,expires_at')
+       .eq('room_id',value.roomId).eq('owner_id',ownerId)
+       .is('revoked_at',null).gt('expires_at',now)
+       .in('credential_digest',credentialDigests)
+    : {data:[],error:null};
+   if(connections.error)
+    return json(503,{ok:false,reason:'service_unavailable'},origin);
+   const validCredentials=new Map((connections.data??[]).map(c=>[c.credential_digest,c.expires_at]));
    return json(200,{ok:true,sessions:(sessions.data??[])
-    .filter(s=>names.has(s.participant_id)&&joined.has(s.participant_id))
+    .filter(s=>names.has(s.participant_id)&&typeof s.agent_credential_digest==='string'&&validCredentials.has(s.agent_credential_digest))
     .slice(0,30).map(s=>({participantId:s.participant_id,
       displayName:names.get(s.participant_id),
-      sessionDigest:s.session_digest,expiresAt:s.expires_at}))},origin);
+      sessionDigest:s.session_digest,expiresAt:s.expires_at,
+      credentialExpiresAt:validCredentials.get(s.agent_credential_digest)}))},origin);
   }
   if(parsed.pathname.endsWith('/binding-status')){
    let input;
