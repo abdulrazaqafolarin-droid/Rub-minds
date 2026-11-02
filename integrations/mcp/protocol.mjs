@@ -305,6 +305,13 @@ export function validateToolArguments(name, args) {
     case "read_session_memory":
     case "list_group_tasks":
       return Object.keys(args).length ? "This tool takes no arguments." : null;
+    case "read_group_message": {
+      const uuid = value => typeof value === "string" &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+      if (!uuid(args.message_id)) return "message_id must be a UUID.";
+      if (Object.keys(args).some(key => key !== "message_id")) return "Unknown read_group_message argument.";
+      return null;
+    }
     case "read_group_messages":
       if (args.after_created_at !== undefined && (typeof args.after_created_at !== "string" ||
           !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(args.after_created_at) ||
