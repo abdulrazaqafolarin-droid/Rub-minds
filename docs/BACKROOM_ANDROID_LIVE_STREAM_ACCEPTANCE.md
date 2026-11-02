@@ -36,6 +36,7 @@ The APK is debug-signed and is not a production release. The merged-manifest aud
 | Projection revoke | Stop sharing from Android system UI | The companion closes the stream and the Phone Frame reports loss |
 | Network loss | Interrupt network connectivity long enough to exceed the bounded heartbeat grace | The phone ends the session; no stale session remains active |
 | Stop/restart | Stop locally and remotely, then start a new session | Both stop routes clean up; a new session does not inherit old peer or request state |
+| Process recreation | Force-stop/restart the companion while a session is active | MediaProjection, WebRTC, touch and remote-keyboard grants are not restored; a new Android system consent and local re-arm are required |
 
 **Compatibility boundary:** app-window sharing was introduced with Android 14 QPR2. API 34 alone does not prove that an OEM build exposes the app-only picker. The companion cannot independently inspect which picker target the phone user selected. If the intended app-only target is not offered, cancel instead of sharing the entire phone.
 
@@ -46,7 +47,7 @@ The APK is debug-signed and is not a production release. The merged-manifest aud
 3. On the laptop, test tap, swipe and long-press on safe, reversible UI controls. Each gesture must carry a unique UUID and return an explicit Android completion/rejection acknowledgement.
 4. Confirm input is rejected when the app/window/session changes, the signer grant no longer matches, the source becomes hidden, or local consent expires.
 5. Tap **Disarm remote touch now** on the phone. The video must continue in view-only mode while the Phone Frame immediately loses touch capability.
-6. Disable/interupt Accessibility. View-only capture may continue; touch must be revoked.
+6. Disable or interrupt Accessibility. View-only capture may continue; touch must be revoked.
 7. Confirm local and remote stop, projection revocation, device revocation and session expiry all clear the touch grant.
 
 Never use this test on payments, purchases, sending messages or other irreversible actions.
