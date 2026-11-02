@@ -1591,7 +1591,6 @@ fn revoke_control_inner(state: &AppState, session_id: &str) -> Result<(), String
     Ok(())
 }
 
-#[tauri::command]
 fn emergency_stop_inner(state: &AppState) -> Result<(), String> {
     // Serialize the entire stop with new launches, PTY creation and native
     // input. Bumping the generation invalidates any native approval dialog
