@@ -293,6 +293,10 @@ async fn revoke_desktop_device(
     access_token: String,
     room_id: String,
 ) -> Result<(), String> {
+    // This command is also callable directly through native IPC. Stop local
+    // execution before contacting the network; a failed revoke request must
+    // never leave a running terminal or app under a now-revoking device.
+    emergency_stop_inner(&state)?;
     let device_id = vault_get("device-id")?.ok_or("This computer has no saved device identity")?;
     if vault_get("device-token")?.is_none() {
         return Err("This computer is not registered".into());
@@ -1173,6 +1177,8 @@ fn verify_selected_editable_target(
 
 #[tauri::command]
 fn select_draft_target(state: State<'_, AppState>, session_id: String, mut target: DraftTarget) -> Result<SelectedTargetSummary, String> {
+    let _execution_guard = state.execution_generation.lock()
+        .map_err(|_| "Native execution state is unavailable")?;
     control_granted(&state, &session_id)?;
     draft_granted(&state, &session_id)?;
 
@@ -1238,6 +1244,8 @@ struct SelectedTargetSummary {
 
 #[tauri::command]
 fn clear_draft_target(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+    let _execution_guard = state.execution_generation.lock()
+        .map_err(|_| "Native execution state is unavailable")?;
     // Clearing a target is a revocation-only action. It remains available while
     // computer control is approved even if the separate draft grant has expired.
     control_granted(&state, &session_id)?;
@@ -1249,6 +1257,8 @@ fn clear_draft_target(state: State<'_, AppState>, session_id: String) -> Result<
 
 #[tauri::command]
 fn stage_draft_request(state: State<'_, AppState>, session_id: String, text: String) -> Result<String, String> {
+    let _execution_guard = state.execution_generation.lock()
+        .map_err(|_| "Native execution state is unavailable")?;
     control_granted(&state, &session_id)?;
     draft_granted(&state, &session_id)?;
     if text.trim().is_empty() || text.chars().count() > MAX_DRAFT_CHARS || text.chars().any(char::is_control) {
