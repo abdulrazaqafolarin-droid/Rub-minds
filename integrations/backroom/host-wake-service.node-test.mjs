@@ -15,7 +15,8 @@ function runtime(){
  return {hostId,running:true,dispatcher:{enqueue(){},step(){},status(){}},
   verifyRemoteWakeActivation:async()=>true,
   resolveClaimedWakeContext:async()=>null,
-  verifyClaimedWakeGrant:async()=>false};
+  verifyClaimedWakeGrant:async()=>false,
+  consumeClaimedWakeGrant:async()=>false};
 }
 test('host service rejects attacker-selected HTTPS URL before constructing a remote store',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'backroom-pinned-gateway-'));
