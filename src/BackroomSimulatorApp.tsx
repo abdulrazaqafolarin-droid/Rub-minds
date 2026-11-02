@@ -739,9 +739,14 @@ export default function BackroomApp() {
       setHostMessage('The selected mode does not match this registered input. Revoke and re-register the binding before arming it.');
       return;
     }
-    if(!window.confirm('Enable the selected original AI conversation to receive only canonical @RMconnects event triggers for up to 5 minutes? This may press Send in that selected AI chat.'))return;
+    if(!window.confirm('Enable the selected original AI conversation to receive canonical @RMconnects event triggers automatically for up to 24 hours? This can press Send in that exact selected AI chat without per-message confirmation. It is limited to six triggers per minute. You can revoke it or use Emergency Stop at any time.'))return;
     setHostBusy(true);
     try{
+      if(!supabase||!hostInfo.enrollmentDigest)throw new Error('Owner-authenticated host registration is missing. Re-pair before enabling Auto.');
+      const {data:renewedHost,error:renewHostError}=await supabase.functions.invoke('backroom-config/host',{
+        body:{hostId:hostInfo.hostId,credentialDigest:hostInfo.enrollmentDigest,ttlSeconds:172800}
+      });
+      if(renewHostError||renewedHost?.ok!==true)throw new Error('Could not renew the owner-authorized host lease for the 24-hour Auto session.');
       const grant=await hostApi<{grantId:string;expiresAt:number}>('/v1/browser/wake/grants',{
         method:'POST',body:{
           targetId:binding.targetId,roomId:binding.roomId,
@@ -1285,7 +1290,7 @@ export default function BackroomApp() {
           ? <button className="br-danger-action" disabled={hostBusy || browserBusy} onClick={() => void chooseWakeMode('off')}>Turn Off and revoke binding</button>
           : selectedWakeMode==='off'
             ? <span className="br-browser-caption">Off is not armed. Choose On or Auto, then register the intended input.</span>
-            : <button className="br-primary" disabled={hostBusy || browserBusy || hostedWakeBinding.targetId!==selectedBrowserTarget} onClick={() => void enableHostedWake()}>Arm {selectedWakeMode.toUpperCase()} for 5 minutes</button>}
+            : <button className="br-primary" disabled={hostBusy || browserBusy || hostedWakeBinding.targetId!==selectedBrowserTarget} onClick={() => void enableHostedWake()}>Arm {selectedWakeMode.toUpperCase()} for 24 hours</button>}
     </div>
     {!hostedWakeBinding.requiresRevoke && <div className="br-modal-actions"><button className="br-secondary" disabled={hostBusy || browserBusy} onClick={() => void revokeHostedWakeBinding()}>Permanently unbind this AI input</button></div>}
   </>}
