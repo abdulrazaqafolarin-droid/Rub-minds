@@ -37,6 +37,7 @@ as $function$
 declare
   v_binding public.backroom_input_bindings%rowtype;
   v_session public.rub_minds_mcp_sessions%rowtype;
+  v_credential_expires_at timestamptz;
   v_now timestamptz := pg_catalog.clock_timestamp();
 begin
   if p_host_id is null
@@ -115,16 +116,17 @@ begin
   -- Match the exact invitation credential this MCP session joined with.
   -- Another active connection for this participant must not extend this
   -- session beyond the credential actually encrypted into the session row.
-  if not exists (
-    select 1
-    from public.agent_connections ac
-    where ac.credential_digest = v_session.agent_credential_digest
-      and ac.room_id = v_binding.room_id
-      and ac.participant_id = v_binding.participant_id
-      and ac.owner_id = v_binding.owner_id
-      and ac.revoked_at is null
-      and ac.expires_at > v_now + pg_catalog.make_interval(secs => p_ttl_seconds)
-  ) then
+  select ac.expires_at
+  into v_credential_expires_at
+  from public.agent_connections ac
+  where ac.credential_digest = v_session.agent_credential_digest
+    and ac.room_id = v_binding.room_id
+    and ac.participant_id = v_binding.participant_id
+    and ac.owner_id = v_binding.owner_id
+    and ac.revoked_at is null
+    and ac.expires_at > v_now + pg_catalog.make_interval(secs => p_ttl_seconds);
+
+  if not found then
     return false;
   end if;
 
@@ -142,13 +144,11 @@ begin
     return false;
   end if;
 
-  -- The explicit local approval may extend this still-live MCP handle, but
-  -- never beyond the exact invitation credential checked above.
+  -- Keep this exact MCP handle usable until its invitation credential expires,
+  -- so a later Auto grant can be re-armed with fresh local approval.
+  -- This does not extend the provider credential or this 24-hour wake grant.
   update public.rub_minds_mcp_sessions
-  set expires_at = greatest(
-        expires_at,
-        v_now + pg_catalog.make_interval(secs => p_ttl_seconds)
-      ),
+  set expires_at = greatest(expires_at, v_credential_expires_at),
       last_seen_at = v_now
   where session_digest = p_session_digest
     and terminated_at is null
