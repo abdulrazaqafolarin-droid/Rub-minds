@@ -938,6 +938,7 @@ async fn grant_draft_typing(app: AppHandle, state: State<'_, AppState>, session_
 fn set_capture_geometry(
     state: State<'_, AppState>,
     session_id: String,
+    expected_generation: u64,
     frame_width: u32,
     frame_height: u32,
     screen_width_css: u32,
@@ -948,6 +949,9 @@ fn set_capture_geometry(
     display_surface: String,
     app_id: Option<String>,
 ) -> Result<(), String> {
+    // The browser captures this generation before opening Android/OS capture
+    // consent. A picker returning after Emergency Stop cannot resurrect a view.
+    let _execution_guard = lock_execution_generation(&state, expected_generation)?;
     if !valid_session_id(&session_id)
         || !(320..=16_384).contains(&frame_width)
         || !(200..=16_384).contains(&frame_height)
@@ -1073,6 +1077,11 @@ fn map_key(value: &str) -> Option<Key> {
             Key::Unicode(ch)
         }
     })
+}
+
+#[tauri::command]
+fn get_execution_generation(state: State<'_, AppState>) -> Result<u64, String> {
+    current_execution_generation(&state)
 }
 
 #[tauri::command]
@@ -1663,7 +1672,7 @@ pub fn run() {
             device_identity, register_desktop_device, desktop_device_status, sync_desktop_app_inventory, revoke_desktop_device, close_desktop_session,
             pick_and_register_app, list_registered_apps, launch_registered_app, stop_registered_app,
             grant_control, revoke_control, grant_draft_typing, set_capture_geometry,
-            dispatch_input, select_draft_target, clear_draft_target, stage_draft_request, list_pending_drafts,
+            get_execution_generation, dispatch_input, select_draft_target, clear_draft_target, stage_draft_request, list_pending_drafts,
             approve_draft_request, deny_draft_request, start_terminal, write_terminal, submit_terminal_input,
             resize_terminal, stop_terminal, emergency_stop
         ])
