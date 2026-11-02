@@ -218,7 +218,7 @@ export function createBackroomHostServer({
         hostId: session.hostId, label: session.clientLabel, expiresAt: session.expiresAt,
         ...(enrollmentDigest ? { enrollmentDigest } : {}),
         ...(typeof wakeGatewayHost === "string" ? { wakeGatewayHost } : {}),
-        ...(wakeBindings.length ? { wakeBindings } : {}),
+        ...(Array.isArray(wakeServiceStatus?.bindings) ? { wakeBindings } : {}),
         protocolVersion: PROTOCOL_VERSION, connected: true, executionReady,
         browserPages: runtimeStatus.pages,
         capabilities: runtimeStatus.capabilities,
