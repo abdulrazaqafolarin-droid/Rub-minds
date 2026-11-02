@@ -97,6 +97,16 @@
 .br-live-drag{position:absolute;inset:0;z-index:2;touch-action:none;cursor:crosshair;outline:none}
 .br-live-drag:focus-visible{outline:2px solid #b6aaff;outline-offset:-4px}
 .br-live-selection{position:absolute;z-index:3;pointer-events:none;border:2px solid #b9abff;background:#9a8cff36;box-shadow:0 0 0 1px #29214b}
+.br-live-mode-control{padding:12px 13px;border-top:1px solid #273750;background:#101b2d;display:grid;gap:7px}
+.br-live-mode-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.br-live-mode-head b,.br-live-mode-head small{display:block}
+.br-live-mode-head b{font-size:11px;color:#e7edfb}
+.br-live-mode-head small{font-size:9px;color:#91a4c2;margin-top:3px}
+.br-live-mode-control label{font-size:10px;color:#aebdd4;font-weight:700}
+.br-live-mode-control select{width:100%;min-height:36px;padding:8px 10px;border:1px solid #40516e;border-radius:8px;background:#17243a;color:#edf2ff;font-size:11px}
+.br-live-mode-control select:disabled{opacity:.55;cursor:not-allowed}
+.br-live-mode-control p{margin:0;color:#b8c5db;font-size:10px;line-height:1.5}
+.br-live-mode-control>small{color:#8194b1;font-size:9px;line-height:1.5}
 .br-live-caption{padding:11px 13px;border-top:1px solid #273750;color:#91a4c2;font-size:10px;line-height:1.6}
 .br-live-placeholder{min-height:300px;margin-top:24px;border:1px dashed #43516b;border-radius:13px;background:#101a2b;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:10px;padding:25px;color:#bbc9df}
 .br-live-placeholder svg{color:#a99fff}
