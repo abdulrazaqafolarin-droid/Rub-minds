@@ -521,6 +521,12 @@ export function createBackroomHostServer({
               writeJson(response, 400, { error: "invalid_wake_scope" }, cors);
               return;
             }
+            const wakeTtlMs=input.ttlMs??300000;
+            const wakeMaxPerMinute=input.maxPerMinute??6;
+            if(!Number.isSafeInteger(wakeTtlMs)||wakeTtlMs<60000||wakeTtlMs>86400000||
+               !Number.isSafeInteger(wakeMaxPerMinute)||wakeMaxPerMinute<1||wakeMaxPerMinute>6){
+              writeJson(response,400,{error:"invalid_wake_scope"},cors);return;
+            }
             const target = (await browser.listTargets()).find(item =>
               item.id === input.targetId && item.roomId === input.roomId && item.operations?.includes("wake") && item.wakeAvailable === true);
             if (!target) {
@@ -531,8 +537,8 @@ export function createBackroomHostServer({
               operation: "browser.wake.enable", targetId: target.id, pageId: target.pageId,
               roomId: input.roomId, participantId: input.participantId, sessionId: input.sessionId,
               bindingId: input.bindingId, site: target.site, title: target.title,
-              capabilities: ["wake"], ttlMs: input.ttlMs ?? 300000,
-              maxPerMinute: input.maxPerMinute ?? 6,
+              capabilities: ["wake"], ttlMs: wakeTtlMs,
+              maxPerMinute: wakeMaxPerMinute,
             });
             if (locallyApproved !== true) {
               writeJson(response, 403, { error: "trusted_local_browser_wake_approval_denied" }, cors);
@@ -541,8 +547,7 @@ export function createBackroomHostServer({
             const grant = await browser.enableContinuousWake({
               targetId: input.targetId, roomId: input.roomId, participantId: input.participantId,
               sessionId: input.sessionId, bindingId: input.bindingId, confirmed: true,
-              ...(input.ttlMs === undefined ? {} : { ttlMs: input.ttlMs }),
-              ...(input.maxPerMinute === undefined ? {} : { maxPerMinute: input.maxPerMinute }),
+              ttlMs: wakeTtlMs, maxPerMinute: wakeMaxPerMinute,
             });
             if(wakeService){
               try {
@@ -709,8 +714,13 @@ const authorizeLocalWorkspaceAction = createSerializedLocalApproval(async action
     process.stdout.write("\n\n[Rub Minds Backroom local approval]\n");
     process.stdout.write("This request originated from a local workspace adapter. Review every field before approving:\n");
     process.stdout.write(JSON.stringify(action, null, 2) + "\n");
-    const answer = await readline.question("Type APPROVE ONCE to permit only this operation (anything else denies): ");
-    return answer.trim() === "APPROVE ONCE";
+    const isContinuousBrowserWake=action?.operation==="browser.wake.enable";
+    if(isContinuousBrowserWake){
+      process.stdout.write("WARNING: this enables automatic canonical wake submissions in one exact AI conversation. It can press that chat's Send control without a per-message prompt. Review the exact group, target, session, TTL and six-per-minute limit above.\n");
+    }
+    const approvalPhrase=isContinuousBrowserWake?"ENABLE AUTO":"APPROVE ONCE";
+    const answer = await readline.question("Type "+approvalPhrase+" to permit only this exact operation and scope (anything else denies): ");
+    return answer.trim() === approvalPhrase;
   } finally {
     readline.close();
   }
