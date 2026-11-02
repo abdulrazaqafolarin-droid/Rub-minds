@@ -218,6 +218,7 @@ export default function BackroomApp() {
   const [hostedWakeBinding,setHostedWakeBinding] = useState<HostedWakeBinding | null>(null);
   const [hostedWakeGrantId,setHostedWakeGrantId] = useState('');
   const [selectedWakeMode,setSelectedWakeMode] = useState<WakeInteractionMode>('off');
+  const [wakeBindingStatusKnown,setWakeBindingStatusKnown] = useState(false);
   const bindingStatusRequestRef = useRef(0);
   const selectionGeneration = useRef(0);
   const activeBrowserSelection = useRef<PendingBrowserSelection | null>(null);
@@ -545,17 +546,16 @@ export default function BackroomApp() {
   async function restoreHostedWakeBinding(roomId: string, selectedSession: HostedAiSession) {
     if (!supabase) return;
     const requestId = ++bindingStatusRequestRef.current;
+    setWakeBindingStatusKnown(false);
     const {data,error} = await supabase.functions.invoke('backroom-config/binding-status',{
       body:{roomId,participantId:selectedSession.participantId,sessionDigest:selectedSession.sessionDigest}
     });
     if (requestId !== bindingStatusRequestRef.current) return;
     if(error || data?.ok!==true || !Array.isArray(data.bindings)) {
-      setHostedWakeBinding(null);
-      setHostedWakeGrantId('');
-      setSelectedWakeMode('off');
-      setHostMessage('Could not restore this AI input’s authoritative wake status. Treat it as unknown and do not arm another binding until the status check succeeds.');
+      setHostMessage('Wake status is UNKNOWN because the owner-authenticated server check failed. Existing state has been preserved; do not register or arm another binding until status can be restored.');
       return;
     }
+    setWakeBindingStatusKnown(true);
     const row=data.bindings.find((value:unknown)=>{
       if(!value||typeof value!=='object'||Array.isArray(value))return false;
       const item=value as Record<string,unknown>;
@@ -627,8 +627,8 @@ export default function BackroomApp() {
       if(sessions[0]) await restoreHostedWakeBinding(room.id,sessions[0]);
       else {
         bindingStatusRequestRef.current++;
-        setHostedWakeBinding(null);setHostedWakeGrantId('');setSelectedWakeMode('off');
-        setHostMessage('No live joined AI MCP sessions were found in this group.');
+        setWakeBindingStatusKnown(false);
+        setHostMessage('No live joined AI MCP session was found. Existing wake bindings are not assumed Off; reconnect the original AI session and restore its owner-scoped status before changing modes.');
       }
     }catch(error){
       setHostMessage(error instanceof Error?error.message:'AI session discovery failed.');
@@ -1275,7 +1275,7 @@ export default function BackroomApp() {
 {browserNotice && <div className="br-host-message" role="status">{browserNotice}</div>}</div>
 <div className="br-warning"><ShieldCheck size={19}/><div><b>AI interaction modes</b><p>Off submits no wake triggers. On wakes this AI only when another participant mentions it by display name. Auto wakes it for every new human-authored group message and ignores AI-authored message events. Auto submits only the fixed @RMconnects trigger, not the group message text. Both active modes require one explicit local consent approval for up to 24 hours and are capped at six triggers per minute. The paired host must remain online; switching Off revokes the binding. The selected original AI conversation must already have the Rub Minds MCP server connected and authorized to read/post group messages; provider-side tool confirmations cannot be bypassed.</p></div></div>
 <label htmlFor="br-ai-interaction-mode">AI interaction mode</label>
-<select id="br-ai-interaction-mode" value={selectedWakeMode} onChange={event => void chooseWakeMode(event.target.value as WakeInteractionMode)} disabled={hostBusy || browserBusy}>
+<select id="br-ai-interaction-mode" value={selectedWakeMode} onChange={event => void chooseWakeMode(event.target.value as WakeInteractionMode)} disabled={hostBusy || browserBusy || !wakeBindingStatusKnown}>
   <option value="off">Off — no automatic wake</option>
   <option value="on">On — wake only when mentioned</option>
   <option value="auto">Auto — wake on human group messages</option>
@@ -1286,7 +1286,7 @@ export default function BackroomApp() {
     <label htmlFor="br-hosted-ai-session">Joined AI conversation</label>
     <select id="br-hosted-ai-session" value={selectedHostedSession} onChange={e=>{const digest=e.target.value;setSelectedHostedSession(digest);const selected=hostedAiSessions.find(s=>s.sessionDigest===digest);if(selected&&room?.id)void restoreHostedWakeBinding(room.id,selected);}}>{hostedAiSessions.map(s=><option key={s.sessionDigest} value={s.sessionDigest}>{s.displayName} · {s.participantId.slice(0,8)}</option>)}</select>
     <p>Selected local input: {browserTargets.find(t=>t.id===selectedBrowserTarget)?.title || 'Select a managed browser target before binding.'}</p>
-    <div className="br-modal-actions"><button className="br-secondary" onClick={() => void bindHostedWakeInput()} disabled={hostBusy || browserBusy || !selectedBrowserTarget || selectedWakeMode==='off'}>Register inactive {selectedWakeMode==='auto'?'Auto':'On'} input binding</button></div>
+    <div className="br-modal-actions"><button className="br-secondary" onClick={() => void bindHostedWakeInput()} disabled={hostBusy || browserBusy || !wakeBindingStatusKnown || !selectedBrowserTarget || selectedWakeMode==='off'}>Register inactive {selectedWakeMode==='auto'?'Auto':'On'} input binding</button></div>
   </>}
   {hostedWakeBinding && hostedWakeBinding.roomId===room.id && <>
     <div className="br-detail"><span>Wake status</span><b>{hostedWakeBinding.requiresRevoke?'Existing binding · revoke before rebind':wakeBindingNeedsRebind?'Mode change · rebind required':hostedWakeBinding.serverWakeEnabled&&!hostedWakeBinding.localPollingConfirmed?'Server grant stale · revoke required':(hostedWakeGrantId||hostedWakeBinding.wakeEnabled)?selectedWakeMode.toUpperCase()+' armed · up to 24 hours':selectedWakeMode==='off'?'Off · no wake grant':selectedWakeMode.toUpperCase()+' selected · not armed'}</b></div>
@@ -1295,9 +1295,11 @@ export default function BackroomApp() {
         ? <button className="br-danger-action" disabled={hostBusy || browserBusy} onClick={() => void revokeHostedWakeBinding()}>Revoke binding to apply selected mode</button>
         : (hostedWakeGrantId || hostedWakeBinding.wakeEnabled || hostedWakeBinding.serverWakeEnabled)
           ? <button className="br-danger-action" disabled={hostBusy || browserBusy} onClick={() => void chooseWakeMode('off')}>Turn Off and revoke binding</button>
+          : !wakeBindingStatusKnown
+            ? <span className="br-browser-caption">Wake status is unknown. Restore the exact joined AI session status before changing modes or creating another binding.</span>
           : selectedWakeMode==='off'
             ? <span className="br-browser-caption">Off is not armed. Choose On or Auto, then register the intended input.</span>
-            : <button className="br-primary" disabled={hostBusy || browserBusy || hostedWakeBinding.targetId!==selectedBrowserTarget} onClick={() => void enableHostedWake()}>Arm {selectedWakeMode.toUpperCase()} for 24 hours</button>}
+            : <button className="br-primary" disabled={hostBusy || browserBusy || !wakeBindingStatusKnown || hostedWakeBinding.targetId!==selectedBrowserTarget} onClick={() => void enableHostedWake()}>Arm {selectedWakeMode.toUpperCase()} for 24 hours</button>}
     </div>
     {!hostedWakeBinding.requiresRevoke && <div className="br-modal-actions"><button className="br-secondary" disabled={hostBusy || browserBusy} onClick={() => void revokeHostedWakeBinding()}>Permanently unbind this AI input</button></div>}
   </>}
