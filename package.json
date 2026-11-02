@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "prebuild": "npm run test:runtime && npm run test:backroom && npm run test:external-workspaces && npm run test:companion",
+    "prebuild": "npm run test:runtime && npm run test:backroom && npm run test:mcp && npm run test:external-workspaces && npm run test:companion",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",
