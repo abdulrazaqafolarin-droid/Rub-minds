@@ -14,6 +14,7 @@ declare
   v_constraint_count integer;
   v_session_fk text;
   v_rejoin_definition text;
+  v_termination_definition text;
 begin
   if v_table is null then
     raise exception 'Bridge-state table is missing';
@@ -181,6 +182,16 @@ begin
       and pg_catalog.has_function_privilege('service_role', p.oid, 'EXECUTE')
   ) then
     raise exception 'MCP termination RPC must be service-role-only SECURITY DEFINER with empty search_path';
+  end if;
+
+  select pg_catalog.lower(pg_catalog.pg_get_functiondef(
+    'public.terminate_rub_minds_mcp_bridge_session(text,text,text,timestamp with time zone)'::regprocedure
+  )) into v_termination_definition;
+  if position('pg_advisory_xact_lock' in v_termination_definition)=0
+     or position('backroom_input_bindings' in v_termination_definition)=0
+     or position('backroom_wake_jobs' in v_termination_definition)=0
+     or position('state = ''cancelled''' in v_termination_definition)=0 then
+    raise exception 'MCP Leave must serialize with enqueue and revoke Backroom bindings and queued/leased wakes';
   end if;
 end;
 $bridge_state_security$;
