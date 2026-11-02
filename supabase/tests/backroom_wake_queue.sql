@@ -150,6 +150,29 @@ begin
     raise exception 'New grant must be deactivatable';
   end if;
 
+  -- Auto may never outlive the joined MCP session or participant credential.
+  update public.rub_minds_mcp_sessions
+  set expires_at=pg_catalog.clock_timestamp()+interval '12 hours'
+  where session_digest=repeat('6',64);
+  if public.activate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
+      '70000000-0000-4000-8000-00000000000d'::uuid,86400) then
+    raise exception 'A 24-hour Auto grant must not outlive its joined MCP session';
+  end if;
+
+  update public.rub_minds_mcp_sessions
+  set expires_at=pg_catalog.clock_timestamp()+interval '48 hours'
+  where session_digest=repeat('6',64);
+  update public.agent_connections
+  set expires_at=pg_catalog.clock_timestamp()+interval '12 hours'
+  where room_id=v_room and participant_id=v_participant;
+  if public.activate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
+      '70000000-0000-4000-8000-00000000000e'::uuid,86400) then
+    raise exception 'A 24-hour Auto grant must not outlive its AI participant credential';
+  end if;
+  update public.agent_connections
+  set expires_at=pg_catalog.clock_timestamp()+interval '48 hours'
+  where room_id=v_room and participant_id=v_participant;
+
   -- The paired owner host lease must outlive the entire Auto consent window.
   if not exists(select 1 from public.backroom_hosts where host_id=v_host_test
       and expires_at > pg_catalog.clock_timestamp()+interval '24 hours') then
