@@ -222,7 +222,7 @@ function LiveBrowserPreview({ frame, appName, onSelectRegion, wakeMode, onWakeMo
       {bindingState==='armed'
         ? <button type="button" className="br-danger-action br-live-mode-action" onClick={onOff} disabled={wakeModeDisabled}>Turn Off and revoke this binding</button>
         : bindingState==='stale' || bindingState==='needs-rebind' || bindingState==='other-target' || bindingState==='other-group'
-          ? <button type="button" className="br-danger-action br-live-mode-action" onClick={onRevoke} disabled={wakeModeDisabled}>Revoke current binding</button>
+          ? <button type="button" className="br-danger-action br-live-mode-action" onClick={onRevoke} disabled={wakeModeDisabled}>{bindingState==='other-group'?'Revoke binding from another group':bindingState==='other-target'?'Revoke binding from previous browser target':'Revoke current binding'}</button>
           : bindingState==='bound'
             ? <button type="button" className="br-primary br-live-mode-action" onClick={onArm} disabled={!canArm || wakeModeDisabled}>Arm {wakeMode.toUpperCase()} — local approval</button>
             : <button type="button" className="br-primary br-live-mode-action" onClick={onBind} disabled={!canBind || wakeModeDisabled || wakeMode==='off'}>Bind this composer to the selected AI</button>}
