@@ -67,15 +67,30 @@ begin
       and ac.expires_at > v_now + pg_catalog.make_interval(secs => p_ttl_seconds)
   ) then return false; end if;
 
-  if not exists (
-    select 1 from public.rub_minds_mcp_sessions ms
-    where ms.session_digest = p_session_digest
-      and ms.room_id = v_binding.room_id
-      and ms.participant_id = v_binding.participant_id
-      and ms.terminated_at is null
-      and ms.expires_at > v_now + pg_catalog.make_interval(secs => p_ttl_seconds)
-      and ms.agent_credential_ciphertext is not null
-  ) then return false; end if;
+  -- The MCP handle is initially issued with a 24-hour lifetime. The
+  -- explicit, owner-approved Auto grant may extend this exact live handle,
+  -- but never beyond the existing AI credential/invitation expiry checked above.
+  -- Lock/update the parent session so a concurrent leave/revoke cannot race
+  -- this extension; the session must still be live at the instant of activation.
+  update public.rub_minds_mcp_sessions ms
+  set expires_at = greatest(ms.expires_at,
+        v_now + pg_catalog.make_interval(secs => p_ttl_seconds)),
+      last_seen_at = v_now
+  where ms.session_digest = p_session_digest
+    and ms.room_id = v_binding.room_id
+    and ms.participant_id = v_binding.participant_id
+    and ms.terminated_at is null
+    and ms.expires_at > v_now
+    and ms.agent_credential_ciphertext is not null
+    and exists (
+      select 1 from public.agent_connections ac
+      where ac.room_id = v_binding.room_id
+        and ac.participant_id = v_binding.participant_id
+        and ac.owner_id = v_binding.owner_id
+        and ac.revoked_at is null
+        and ac.expires_at > v_now + pg_catalog.make_interval(secs => p_ttl_seconds)
+    );
+  if not found then return false; end if;
 
   update public.backroom_input_bindings
   set wake_enabled = true, wake_grant_id = p_grant_id,
