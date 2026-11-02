@@ -502,12 +502,17 @@ export function createBackroomHostServer({
             const stopStatus=await wakeService?.stop?.(input.bindingId);
             const serviceStopConfirmed=Array.isArray(stopStatus?.bindings)&&
               stopStatus.bindings.some(item=>item?.bindingId===input.bindingId&&item.stopped===true);
-            // No local record is not proof of a stopped worker. After a host
-            // restart the server binding may still be live, but the in-memory
-            // poller/grant has disappeared; report that state as unconfirmed.
-            const localPollingStopped=grantRevoked||serviceStopConfirmed;
+            const inventory=wakeService?.status?.bindings;
+            const inventoryTrusted=Array.isArray(inventory)&&inventory.every(item=>
+              item&&typeof item.bindingId==="string"&&typeof item.polling==="boolean"&&
+              typeof item.consentActive==="boolean"&&typeof item.deactivationPending==="boolean");
+            // A reachable host with a complete local inventory can prove that
+            // no worker exists for this binding after a process restart. An
+            // absent or malformed inventory remains unknown and fails closed.
+            const noLocalWorker=inventoryTrusted&&!inventory.some(item=>item.bindingId===input.bindingId);
+            const localPollingStopped=grantRevoked||serviceStopConfirmed||noLocalWorker;
             writeJson(response,200,{revoked:localPollingStopped,localPollingStopped,grantRevoked,
-              remoteDeactivationConfirmed:stopStatus?.remotelyDeactivated===true,
+              noLocalWorker,remoteDeactivationConfirmed:stopStatus?.remotelyDeactivated===true,
               remoteDeactivationPending:stopStatus?.remotelyDeactivated===false},cors);
             return;
           }
