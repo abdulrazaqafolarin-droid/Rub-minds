@@ -83,7 +83,7 @@ test('malformed acknowledgement and retry identifiers never reach privileged RPC
  assert.equal(calls.length,0);
 });
 
-test('inactive consent can only be activated by a correctly authenticated host for a short grant',async()=>{
+test('inactive consent can only be activated by a correctly authenticated host for a grant up to 24 hours',async()=>{
  const calls=[];
  const bindingRecord={bindingId,hostId,ownerId,sessionDigest,wakeEnabled:false,
   confirmedAt:null,wakeExpiresAt:null,revokedAt:null};
@@ -96,12 +96,12 @@ test('inactive consent can only be activated by a correctly authenticated host f
  });
  const grantId='40000000-0000-4000-8000-000000000066';
  assert.deepEqual(await gateway.claim(scope),{ok:false,reason:'unauthorized'});
- assert.deepEqual(await gateway.activate({...scope,grantId,ttlSeconds:300}),{ok:true,activated:true});
+ assert.deepEqual(await gateway.activate({...scope,grantId,ttlSeconds:86400}),{ok:true,activated:true});
  assert.equal(calls.length,1);
  assert.equal(calls[0].hostToken,undefined);
- assert.equal(calls[0].ttlSeconds,300);
+ assert.equal(calls[0].ttlSeconds,86400);
  assert.deepEqual(await gateway.activate({...scope,hostToken:'c'.repeat(64),grantId,ttlSeconds:300}),{ok:false,reason:'unauthorized'});
- assert.deepEqual(await gateway.activate({...scope,grantId,ttlSeconds:901}),{ok:false,reason:'invalid_request'});
+ assert.deepEqual(await gateway.activate({...scope,grantId,ttlSeconds:86401}),{ok:false,reason:'invalid_request'});
  assert.equal(calls.length,1);
 });
 
