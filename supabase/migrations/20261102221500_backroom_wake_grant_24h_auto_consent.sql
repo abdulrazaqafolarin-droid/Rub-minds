@@ -1,3 +1,6 @@
+alter table public.rub_minds_mcp_sessions
+  add column if not exists agent_credential_digest text;
+
 -- A user-confirmed Auto participation session may remain active for up to 24 hours.
 -- The existing binding scope, owner/session checks, row lock, grant idempotency,
 -- and atomic queue cancellation remain unchanged.
@@ -74,9 +77,59 @@ begin
       and p.status in ('connected','active','autonomous')
   ) then return false; end if;
 
+  -- Match the exact invitation credential that this MCP session joined
+  -- with; another unexpired connection for the same participant must not extend
+  -- this session beyond its own credential's lifetime.
+  if v_session.agent_credential_digest is null or
+     v_session.agent_credential_digest !~ '^[a-f0-9]{64}
+
+  -- The MCP handle is initially issued with a 24-hour lifetime. The
+  -- explicit, owner-approved Auto grant may extend this exact locked live handle,
+  -- but never beyond the active AI participant credential/invitation expiry checked
+  -- below. The parent row was locked before the child binding to match Leave.
+  if v_session.room_id is distinct from v_binding.room_id
+    or v_session.participant_id is distinct from v_binding.participant_id then
+    return false;
+  end if;
   if not exists (
     select 1 from public.agent_connections ac
     where ac.room_id = v_binding.room_id
+      and ac.participant_id = v_binding.participant_id
+      and ac.owner_id = v_binding.owner_id
+      and ac.revoked_at is null
+      and ac.expires_at > v_now + pg_catalog.make_interval(secs => p_ttl_seconds)
+  ) then return false; end if;
+
+  update public.rub_minds_mcp_sessions
+  set expires_at = greatest(expires_at,
+        v_now + pg_catalog.make_interval(secs => p_ttl_seconds)),
+      last_seen_at = v_now
+  where session_digest = p_session_digest
+    and terminated_at is null
+    and expires_at > v_now
+    and agent_credential_ciphertext is not null;
+  if not found then return false; end if;
+
+  update public.backroom_input_bindings
+  set wake_enabled = true, wake_grant_id = p_grant_id,
+      wake_last_revoked_grant_id = null, confirmed_at = v_now,
+      wake_expires_at = v_now + pg_catalog.make_interval(secs => p_ttl_seconds),
+      updated_at = v_now
+  where id = p_binding_id;
+
+  return true;
+end;
+$function$;
+
+revoke all on function public.activate_backroom_wake_grant(text,text,uuid,uuid,integer) from public, anon, authenticated;
+grant execute on function public.activate_backroom_wake_grant(text,text,uuid,uuid,integer) to service_role;
+ then
+    return false;
+  end if;
+  if not exists (
+    select 1 from public.agent_connections ac
+    where ac.credential_digest = v_session.agent_credential_digest
+      and ac.room_id = v_binding.room_id
       and ac.participant_id = v_binding.participant_id
       and ac.owner_id = v_binding.owner_id
       and ac.revoked_at is null
