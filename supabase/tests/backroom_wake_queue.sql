@@ -43,16 +43,16 @@ begin
   insert into public.agent_connections(room_id,participant_id,owner_id,credential_digest,expires_at,revoked_at)
   values (v_room,v_participant,v_owner,repeat('a',64),pg_catalog.clock_timestamp()+interval '48 hours',null);
 
-  insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,room_id,participant_id,expires_at,terminated_at)
+  insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,agent_credential_digest,room_id,participant_id,expires_at,terminated_at)
   values
-    (repeat('b',64),'ci-ciphertext-b',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
-    (repeat('c',64),'ci-ciphertext-c',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
-    (repeat('d',64),'ci-ciphertext-d',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
-    (repeat('e',64),'ci-ciphertext-e',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
-    (repeat('f',64),'ci-ciphertext-f',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',pg_catalog.clock_timestamp()),
-    (repeat('6',64),'ci-ciphertext-6',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
-  insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,room_id,participant_id,expires_at,terminated_at)
-    values (repeat('7',64),'ci-ciphertext-7',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
+    (repeat('b',64),'ci-ciphertext-b',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
+    (repeat('c',64),'ci-ciphertext-c',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
+    (repeat('d',64),'ci-ciphertext-d',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
+    (repeat('e',64),'ci-ciphertext-e',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
+    (repeat('f',64),'ci-ciphertext-f',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',pg_catalog.clock_timestamp()),
+    (repeat('6',64),'ci-ciphertext-6',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
+  insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,agent_credential_digest,room_id,participant_id,expires_at,terminated_at)
+    values (repeat('7',64),'ci-ciphertext-7',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
 
   insert into public.backroom_hosts(host_id,owner_id,credential_digest,expires_at,revoked_at)
   values (v_host_test,v_owner,repeat('1',64),pg_catalog.clock_timestamp()+interval '48 hours',null),
@@ -150,17 +150,36 @@ begin
     raise exception 'New grant must be deactivatable';
   end if;
 
-  -- Auto may never outlive the joined MCP session or participant credential.
+  -- A locally approved Auto session may extend this still-live MCP handle,
+  -- but only to the exact invitation credential's expiry and never past 24 hours.
   update public.rub_minds_mcp_sessions
   set expires_at=pg_catalog.clock_timestamp()+interval '12 hours'
   where session_digest=repeat('6',64);
-  if public.activate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
+  if not public.activate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
       '70000000-0000-4000-8000-00000000000d'::uuid,86400) then
-    raise exception 'A 24-hour Auto grant must not outlive its joined MCP session';
+    raise exception 'A live MCP handle may be extended by the owner explicit 24-hour Auto consent';
+  end if;
+  if not exists(select 1 from public.rub_minds_mcp_sessions
+      where session_digest=repeat('6',64)
+        and expires_at > pg_catalog.clock_timestamp()+interval '23 hours 59 minutes'
+        and expires_at <= pg_catalog.clock_timestamp()+interval '24 hours') then
+    raise exception 'The exact authorized MCP session must be extended to its Auto grant expiry';
+  end if;
+  if not public.deactivate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
+      '70000000-0000-4000-8000-00000000000d'::uuid) then
+    raise exception 'The session-extension grant must be revocable';
   end if;
 
+  -- A different active credential for the same participant cannot extend this session.
   update public.rub_minds_mcp_sessions
-  set expires_at=pg_catalog.clock_timestamp()+interval '48 hours'
+  set agent_credential_digest=repeat('9',64)
+  where session_digest=repeat('6',64);
+  if public.activate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
+      '70000000-0000-4000-8000-00000000000f'::uuid,86400) then
+    raise exception 'Auto must use the exact invitation credential bound to the MCP session';
+  end if;
+  update public.rub_minds_mcp_sessions
+  set agent_credential_digest=repeat('a',64)
   where session_digest=repeat('6',64);
   update public.agent_connections
   set expires_at=pg_catalog.clock_timestamp()+interval '12 hours'
@@ -171,7 +190,7 @@ begin
   end if;
   update public.agent_connections
   set expires_at=pg_catalog.clock_timestamp()+interval '48 hours'
-  where room_id=v_room and participant_id=v_participant;
+  where room_id=v_room and participant_id=v_participant and credential_digest=repeat('a',64);
 
   -- The paired owner host lease must outlive the entire Auto consent window.
   if not exists(select 1 from public.backroom_hosts where host_id=v_host_test
@@ -455,8 +474,8 @@ begin
     (v_trigger_human,v_trigger_room,v_owner,'TestHuman','human','connected');
   insert into public.agent_connections(room_id,participant_id,owner_id,credential_digest,expires_at,revoked_at)
   values (v_trigger_room,v_trigger_ai,v_owner,repeat('8',64),pg_catalog.clock_timestamp()+interval '1 hour',null);
-  insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,room_id,participant_id,expires_at,terminated_at)
-  values (repeat('8',64),'ci-ciphertext-trigger',v_trigger_room,v_trigger_ai,pg_catalog.clock_timestamp()+interval '1 hour',null);
+  insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,agent_credential_digest,room_id,participant_id,expires_at,terminated_at)
+  values (repeat('8',64),'ci-ciphertext-trigger',repeat('8',64),v_trigger_room,v_trigger_ai,pg_catalog.clock_timestamp()+interval '1 hour',null);
   insert into public.backroom_input_bindings(
     id,owner_id,room_id,participant_id,host_id,session_digest,space_id,session_id,target_id,
     target_identity_fingerprint,target_revision,surface,locator_kind,locator_value,participation_mode,
