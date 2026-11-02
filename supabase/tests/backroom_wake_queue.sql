@@ -55,7 +55,7 @@ begin
     values (repeat('7',64),'ci-ciphertext-7',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
 
   insert into public.backroom_hosts(host_id,owner_id,credential_digest,expires_at,revoked_at)
-  values (v_host_test,v_owner,repeat('1',64),pg_catalog.clock_timestamp()+interval '1 hour',null),
+  values (v_host_test,v_owner,repeat('1',64),pg_catalog.clock_timestamp()+interval '48 hours',null),
          (v_host_capacity,v_owner,repeat('2',64),pg_catalog.clock_timestamp()+interval '1 hour',null);
 
   insert into public.backroom_input_bindings(
@@ -148,6 +148,12 @@ begin
   if not public.deactivate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
       '70000000-0000-4000-8000-000000000008'::uuid) then
     raise exception 'New grant must be deactivatable';
+  end if;
+
+  -- The paired owner host lease must outlive the entire Auto consent window.
+  if not exists(select 1 from public.backroom_hosts where host_id=v_host_test
+      and expires_at > pg_catalog.clock_timestamp()+interval '24 hours') then
+    raise exception '24-hour Auto host lease fixture must remain valid for the entire consent window';
   end if;
 
   -- One explicit Auto consent may persist for up to 24 hours, never longer.
