@@ -63,7 +63,8 @@ begin
     where ac.room_id = v_binding.room_id
       and ac.participant_id = v_binding.participant_id
       and ac.owner_id = v_binding.owner_id
-      and ac.revoked_at is null and ac.expires_at > v_now
+      and ac.revoked_at is null
+      and ac.expires_at > v_now + pg_catalog.make_interval(secs => p_ttl_seconds)
   ) then return false; end if;
 
   if not exists (
@@ -71,7 +72,8 @@ begin
     where ms.session_digest = p_session_digest
       and ms.room_id = v_binding.room_id
       and ms.participant_id = v_binding.participant_id
-      and ms.terminated_at is null and ms.expires_at > v_now
+      and ms.terminated_at is null
+      and ms.expires_at > v_now + pg_catalog.make_interval(secs => p_ttl_seconds)
       and ms.agent_credential_ciphertext is not null
   ) then return false; end if;
 
