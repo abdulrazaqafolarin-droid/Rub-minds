@@ -106,3 +106,5 @@ It runs the source/manifest policy tests, Kotlin unit tests, the actual merged-h
 - A real Windows build, installer launch, PowerShell control, screen share, native confirmation and drag-select draft flow are release gates. Passing Node protocol tests is not a substitute for this device-level test.
 
 Do not claim the desktop companion is production-ready until the Windows integration matrix is completed and CI has a successful native build.
+
+Emergency Stop runs the native local shutdown before best-effort peer/network cleanup. Native launch and terminal approvals are generation-bound: an approval left open across Emergency Stop cannot create a process afterward. The focused ordering and stale-approval regression tests are included in `npm run test:companion` and the Windows CI lane.
