@@ -37,6 +37,7 @@ Record each item as PASS, FAIL or NOT RUN, with a short note or screenshot/log r
 | Session expiry | Allow a disposable test session to expire | Commands are rejected and local session resources are cleaned up |
 | Emergency Stop | Start a tracked Notepad process and PTY, then invoke Emergency Stop | Grants and draft state clear; tracked direct-child app processes and PTYs stop; further commands are rejected |
 | Pending-approval invalidation | Open a native launch/terminal approval, trigger Emergency Stop through the approved local/device-revocation path, then accept the old dialog | The old approval is rejected; it cannot create a new process or PTY after Emergency Stop returns |
+| Capture-picker invalidation | Open the OS screen-share picker, trigger Emergency Stop on the companion, then complete the old picker | The stale picker result is rejected; it cannot create a new capture/input session or publish an offer |
 | Screen capture | Share a monitor and, separately, a single window | Window sharing stays view-only; input is enabled only for a verified whole-monitor capture with separate approval |
 | Network loss | Test on a normal network, then a restrictive network if available | Connection state is truthful; no session is shown as connected when WebRTC is not connected |
 
