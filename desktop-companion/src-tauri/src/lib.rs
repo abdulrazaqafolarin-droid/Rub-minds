@@ -839,6 +839,7 @@ fn check_input_rate(state: &AppState) -> Result<(), String> {
 
 #[tauri::command]
 async fn grant_control(app: AppHandle, state: State<'_, AppState>, session_id: String, seconds: u64) -> Result<(), String> {
+    let approval_generation = current_execution_generation(&state)?;
     if !valid_session_id(&session_id) { return Err("Invalid session".into()); }
     let has_live_capture = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
         .contains_key(&session_id);
@@ -852,6 +853,9 @@ async fn grant_control(app: AppHandle, state: State<'_, AppState>, session_id: S
         "Allow this group to control local session {} for up to {} seconds? Pointer, keyboard, and terminal input may reach the selected application.",
         session_id, seconds.clamp(30, 600)
     )).await?;
+
+    // Do not let an old OS dialog recreate control after Emergency Stop.
+    let _execution_guard = lock_execution_generation(&state, approval_generation)?;
 
     // Revalidate after the user has answered the OS prompt. Hold the control
     // lock while checking liveness so a competing revoke/stop cannot install a
@@ -871,6 +875,8 @@ async fn grant_control(app: AppHandle, state: State<'_, AppState>, session_id: S
 
 #[tauri::command]
 fn revoke_control(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+    let _execution_guard = state.execution_generation.lock()
+        .map_err(|_| "Native execution state is unavailable")?;
     state.control_grants.lock().map_err(|_| "Control state unavailable")?.remove(&session_id);
     state.draft_grants.lock().map_err(|_| "Draft state unavailable")?.remove(&session_id);
     state.terminal_submit_ready.lock().map_err(|_| "Terminal submit state unavailable")?.remove(&session_id);
@@ -883,6 +889,7 @@ fn revoke_control(state: State<'_, AppState>, session_id: String) -> Result<(), 
 
 #[tauri::command]
 async fn grant_draft_typing(app: AppHandle, state: State<'_, AppState>, session_id: String, seconds: u64) -> Result<(), String> {
+    let approval_generation = current_execution_generation(&state)?;
     control_granted(&state, &session_id)?;
     let has_live_capture = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
         .contains_key(&session_id);
@@ -901,9 +908,11 @@ async fn grant_draft_typing(app: AppHandle, state: State<'_, AppState>, session_
         "{}\n\nPermission expires after {} seconds.", approval_message, seconds.clamp(30, 120)
     )).await?;
 
-    // The screen/terminal could be stopped or its control grant revoked while
-    // the native approval dialog was open. Serialize the final recheck and
-    // draft-grant insert against revoke_control/stop_terminal.
+    // The screen/terminal could be stopped or Emergency Stop could complete
+    // while the native approval dialog was open. Never recreate an old grant.
+    let _execution_guard = lock_execution_generation(&state, approval_generation)?;
+
+    // Serialize the final recheck and draft-grant insert against revocation.
     let mut control = state.control_grants.lock().map_err(|_| "Control state unavailable")?;
     match control.get(&session_id) {
         Some(expires_at) if *expires_at > Instant::now() => {}
@@ -1568,6 +1577,8 @@ async fn submit_terminal_input(
 
 #[tauri::command]
 fn resize_terminal(state: State<'_, AppState>, session_id: String, cols: u16, rows: u16) -> Result<(), String> {
+    let _execution_guard = state.execution_generation.lock()
+        .map_err(|_| "Native execution state is unavailable")?;
     control_granted(&state, &session_id)?;
     if !(20..=300).contains(&cols) || !(5..=120).contains(&rows) {
         return Err("Terminal dimensions are outside the supported range".into());
@@ -1582,6 +1593,8 @@ fn resize_terminal(state: State<'_, AppState>, session_id: String, cols: u16, ro
 
 #[tauri::command]
 fn stop_terminal(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
+    let _execution_guard = state.execution_generation.lock()
+        .map_err(|_| "Native execution state is unavailable")?;
     revoke_control_inner(&state, &session_id)?;
     let session = state.terminals.lock().map_err(|_| "Terminal registry unavailable")?
         .remove(&session_id).ok_or("Terminal session is already closed")?;
