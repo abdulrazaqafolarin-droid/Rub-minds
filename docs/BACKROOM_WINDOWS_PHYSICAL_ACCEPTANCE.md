@@ -6,7 +6,7 @@ This matrix verifies the native Tauri companion on a real Windows 10/11 x64 comp
 
 ## Build under test
 
-The CI workflow is being strengthened to run Rust formatting, execute the native Rust test suite on Windows, link the x64 MSVC release executable and upload that executable with a SHA-256 provenance file. Download the artifact from the successful workflow run for the exact commit being tested. Record the commit, run ID and executable SHA-256 before launch.
+The Windows CI workflow is configured to execute the native Rust test suite on Windows, link the x64 MSVC release executable and upload that executable with a SHA-256 provenance file. It does not currently run a separate Rust-formatting check. Download the artifact from the successful workflow run for the exact commit being tested. Record the commit, run ID and executable SHA-256 before launch.
 
 The CI build does not receive a Rub Minds Supabase URL or publishable key. It proves native build/packaging readiness and permits a local launch check, but it is not a connected device build. Full sign-in, registration, group authorization, remote terminal and Backroom collaboration require a separately configured build against an approved isolated staging project. Do not use production for this acceptance, and never embed a service-role key.
 
