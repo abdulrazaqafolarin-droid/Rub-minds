@@ -113,10 +113,15 @@ function parseHostStatus(value: unknown, expectedHostId?: string): HostStatus {
   };
 }
 
-function LiveBrowserPreview({ frame, appName, onSelectRegion }: {
+function LiveBrowserPreview({ frame, appName, onSelectRegion, wakeMode, onWakeModeChange, wakeModeDisabled, wakeModeStatus, onFindSessions }: {
   frame: BrowserViewFrame;
   appName: string;
   onSelectRegion: (frameId: string, region: Rect) => void;
+  wakeMode: WakeInteractionMode;
+  onWakeModeChange: (mode: WakeInteractionMode) => void;
+  wakeModeDisabled: boolean;
+  wakeModeStatus: string;
+  onFindSessions: () => void;
 }) {
   const [start, setStart] = useState<{ x: number; y: number; frameId: string } | null>(null);
   const [drag, setDrag] = useState<Rect | null>(null);
@@ -183,7 +188,21 @@ function LiveBrowserPreview({ frame, appName, onSelectRegion }: {
         width: rectangle.width + '%', height: rectangle.height + '%',
       }} />}
     </div>
-    <div className="br-live-caption">Read-only visual snapshots are refreshed locally. Drag around one visible empty editable field; Backroom resolves the region against the live DOM and rejects stale, ambiguous or occupied targets.</div>
+    <div className="br-live-mode-control">
+      <div className="br-live-mode-head">
+        <div><b>AI participation</b><small>Choose how this exact composer joins the group</small></div>
+        <button type="button" className="br-secondary" onClick={onFindSessions} disabled={wakeModeDisabled}>Find joined AI</button>
+      </div>
+      <label htmlFor="br-frame-wake-mode">Interaction mode</label>
+      <select id="br-frame-wake-mode" value={wakeMode} onChange={event => onWakeModeChange(event.target.value as WakeInteractionMode)} disabled={wakeModeDisabled}>
+        <option value="off">Off — no automatic triggers</option>
+        <option value="on">On — wake only when mentioned</option>
+        <option value="auto">Auto — wake on human group messages</option>
+      </select>
+      <p>{wakeModeStatus}</p>
+      <small>Auto sends only the fixed @RMconnects trigger to this registered managed-browser composer. It does not copy the group message into the AI chat. The AI must already be joined to Rub Minds through MCP. Native Android and Windows app frames still support verified draft insertion only.</small>
+    </div>
+    <div className="br-live-caption">Read-only snapshots are refreshed locally. Drag around one visible empty editable composer in this frame; Backroom resolves the region against the live DOM and rejects stale, ambiguous or occupied targets. The frame mode above applies to this managed-browser surface only.</div>
   </div>;
 }
 
@@ -1247,7 +1266,23 @@ export default function BackroomApp() {
         {!current ? <div className="br-empty-card"><div className="br-empty-symbol"><Layers3 size={34}/></div><h2>Give every AI its own space.</h2><p>Connect the original AI apps and sessions on your phone, desktop, terminal or managed browser. Each surface appears only when its real local runtime is registered and reachable.</p><button className="br-primary" onClick={() => setAdding(true)}><Plus size={16}/> Create your first space</button><div className="br-platforms">{surfaces.map(s => { const Icon = iconFor(s.id); return <span key={s.id} title={s.name}><Icon size={18}/></span>; })}</div></div> :
         <div className="br-workspace-grid"><section className="br-panel br-stage"><div className="br-panel-head"><div><span className="br-eyebrow">ACTIVE SPACE</span><h2>{current.name}</h2><p>{current.app || surfaces.find(s => s.id === current.surface)?.detail}</p></div><button className="br-icon-button" aria-label="Remove this local space" title="Remove local space" onClick={() => { if (!confirm('Remove this saved app session from Backroom? This will not close the app on your computer.')) return; save(spaces.filter(s => s.id !== current.id)); setActive(''); }}><Trash2 size={17}/></button></div>{current.pageId
           ? liveViewEnabled && liveFrame
-            ? <LiveBrowserPreview key={current.id} frame={liveFrame} appName={current.app || current.name} onSelectRegion={(frameId, region) => void registerLiveRegion(frameId, region)}/>
+            ? <LiveBrowserPreview key={current.id} frame={liveFrame} appName={current.app || current.name}
+              wakeMode={selectedWakeMode}
+              onWakeModeChange={mode => void chooseWakeMode(mode)}
+              wakeModeDisabled={hostBusy || browserBusy || !wakeBindingStatusKnown}
+              wakeModeStatus={!wakeBindingStatusKnown
+                ? 'Find the exact joined AI session first so Backroom can restore its server-side mode and local poller state.'
+                : hostedWakeBinding?.roomId===room.id && hostedWakeBinding.targetId===selectedBrowserTarget
+                  ? hostedWakeBinding.serverWakeEnabled && !hostedWakeBinding.localPollingConfirmed
+                    ? 'A server grant exists but the paired host did not confirm its poller. Revoke or restart/re-pair before enabling this target.'
+                    : hostedWakeBinding.wakeEnabled
+                      ? selectedWakeMode.toUpperCase() + ' is active on this exact managed-browser target.'
+                      : selectedWakeMode.toUpperCase() + ' is selected but not armed. Open host settings to register the joined AI and approve the bounded grant.'
+                  : selectedWakeMode==='off'
+                    ? 'Off: this frame has no active automatic wake binding.'
+                    : selectedWakeMode.toUpperCase() + ' selected. Register this exact frame composer to activate it.'}
+              onFindSessions={() => void discoverHostedAiSessions()}
+              onSelectRegion={(frameId, region) => void registerLiveRegion(frameId, region)}/>
             : <div className="br-live-placeholder" role="status"><Monitor size={28}/><b>{liveViewEnabled ? 'Connecting to the selected browser tab…' : 'Live view paused'}</b><p>{hostInfo?.capabilities.browserView ? 'Enable the read-only local view to display the actual managed tab here. Its screenshots are not stored or uploaded.' : 'This paired host does not advertise the browser-view adapter. Update and restart the local host.'}</p></div>
           : <div className="br-live-placeholder" role="status">
               <Monitor size={28}/><b>No verified app session</b>
@@ -1277,13 +1312,7 @@ export default function BackroomApp() {
 {roomBrowserTargets.length>0 && <><label className="br-browser-field-label" htmlFor="br-browser-target">Registered typing area</label><select id="br-browser-target" value={selectedBrowserTarget} onChange={e=>setSelectedBrowserTarget(e.target.value)}><option value="">Choose a typing target</option>{roomBrowserTargets.map(t=><option key={t.id} value={t.id}>{t.site} · {t.title}</option>)}</select><div className="br-browser-target-actions"><button className="br-secondary" onClick={() => void removeBrowserTarget()} disabled={browserBusy || !roomBrowserTargets.some(t => t.id === selectedBrowserTarget)}>Remove selected target</button></div><label className="br-browser-field-label" htmlFor="br-group-message">Source group message (optional)</label><select id="br-group-message" value={selectedGroupMessageId} onChange={e => { const id = e.target.value; setSelectedGroupMessageId(id); const message = groupMessages.find(m => m.id === id); if (message) setBrowserDraftText(message.body); }}><option value="">Write a manual draft instead</option>{groupMessages.map(m => <option key={m.id} value={m.id}>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · {m.body.slice(0, 90).replace(/\s+/g, ' ')}</option>)}</select><label className="br-browser-field-label" htmlFor="br-browser-draft">Text to draft (not sent)</label><textarea id="br-browser-draft" rows={3} maxLength={10000} value={browserDraftText} onChange={e=>setBrowserDraftText(e.target.value)} placeholder="Write the exact text to insert into the selected composer…"/><button className="br-primary br-browser-draft" onClick={() => void draftToBrowser()} disabled={browserBusy || !roomBrowserTargets.some(t => t.id === selectedBrowserTarget) || !browserDraftText.trim()}>Insert draft — never send <ArrowRight size={15}/></button><p className="br-browser-caption">Target registration stores the selector locally. Text is inserted only after confirmation, only into an empty input, and is read back to verify success.</p></>}
 <button className="br-secondary br-browser-stop" onClick={() => void stopManagedBrowser()} disabled={browserBusy}>Close managed browser</button></>}
 {browserNotice && <div className="br-host-message" role="status">{browserNotice}</div>}</div>
-<div className="br-warning"><ShieldCheck size={19}/><div><b>AI interaction modes</b><p>Off submits no wake triggers. On wakes this AI only when another participant mentions it by display name. Auto wakes it for every new human-authored group message and ignores AI-authored message events. Auto submits only the fixed @RMconnects trigger, not the group message text. Both active modes require one explicit local consent approval for up to 24 hours and are capped at six triggers per minute. The paired host must remain online; switching Off revokes the binding. The selected original AI conversation must already have the Rub Minds MCP server connected and authorized to read/post group messages; provider-side tool confirmations cannot be bypassed.</p></div></div>
-<label htmlFor="br-ai-interaction-mode">AI interaction mode</label>
-<select id="br-ai-interaction-mode" value={selectedWakeMode} onChange={event => void chooseWakeMode(event.target.value as WakeInteractionMode)} disabled={hostBusy || browserBusy || !wakeBindingStatusKnown}>
-  <option value="off">Off — no automatic wake</option>
-  <option value="on">On — wake only when mentioned</option>
-  <option value="auto">Auto — wake on human group messages</option>
-</select>
+<div className="br-browser-caption">Choose Off / On / Auto beside the live composer frame. On requires an explicit mention; Auto wakes on human-authored group messages. Both use only the canonical trigger and require local consent.</div>
 {room?.id && hostInfo.enrollmentDigest && <div>
   <div className="br-modal-actions"><button className="br-secondary" onClick={() => void discoverHostedAiSessions()} disabled={hostBusy || browserBusy}>Find joined AI sessions</button></div>
   {hostedAiSessions.length>0 && <>
