@@ -246,15 +246,17 @@ export class BrowserHostRuntime {
     this.wakeAuthority = new WakeAuthorizationAuthority();
     this.dispatcher = new BackroomDispatcher({
       registry: this.registry,
-      adapter: { execute: async ({ command, target }) => {
+      adapter: { execute: async ({ command, target, beforeEffect }) => {
         const binding = this.#bindings.get(target.id);
         if (!binding) throw Object.assign(new Error("Target unavailable"), { code: "BACKROOM_PREFLIGHT" });
         const guard = command.operation === "wake" ? binding.wakeGuard : binding.guard;
         if (!guard) throw Object.assign(new Error("Operation unavailable for this selected target"), { code: "BACKROOM_PREFLIGHT" });
-        return guard.execute({ command, target });
+        return guard.execute({ command, target, ...(beforeEffect ? { beforeEffect } : {}) });
       }},
-      authorize: async command => command.operation === "wake"
-        ? this.wakeAuthority.verify(command.wakeGrantId, approvalContext(command), { consume: true })
+      authorize: async (command, options = {}) => command.operation === "wake"
+        ? this.wakeAuthority.verify(command.wakeGrantId, approvalContext(command), {
+            consume: options.deferEffectAuthorization !== true,
+          })
         : true,
     });
     this.chromiumProvider = chromiumProvider;
@@ -1157,6 +1159,9 @@ export class BrowserHostRuntime {
   }
   verifyClaimedWakeGrant(approval,context) {
     return this.wakeAuthority.verify(approval?.grantId,context,{consume:false});
+  }
+  consumeClaimedWakeGrant(approval,context) {
+    return this.wakeAuthority.verify(approval?.grantId,context,{consume:true});
   }
 
   /** Revoke the host-local grant associated with one hosted binding without needing a target ID. */
