@@ -16,7 +16,7 @@ Switching between On and Auto changes the server-side participation policy. On c
 
 ## Consent and execution boundaries
 
-On and Auto are both explicitly armed by the local host approval flow. The grant is bound to one group, AI participant, hosted session, browser target, target identity fingerprint and target revision. It expires after five minutes and is limited to six wake triggers per minute. The database independently enforces the binding's rate limit and grant expiry.
+On and Auto are both explicitly armed by the local host approval flow. The grant is bound to one group, AI participant, hosted session, browser target, target identity fingerprint and target revision. One local approval arms a session for up to 24 hours; it is not renewed past that deadline. The local host must stay online, and a host restart destroys the in-memory grant and requires fresh local approval. The rate limit remains six wake triggers per minute. The database independently enforces the binding's rate limit and grant expiry.
 
 The worker may submit only the canonical event-bound `@RMconnects` trigger. It does not paste the originating group message verbatim into the provider composer. The selected composer must still be the exact registered, visible, empty composer with a unique send control. A changed conversation, replaced field, occupied composer, stale binding or failed local preflight blocks the action.
 
@@ -28,14 +28,16 @@ A wake queue acknowledgement confirms that the trigger was submitted and the com
 
 ## Acceptance checklist
 
-1. Register a ChatGPT or Claude managed-browser composer in one group and choose On. Confirm that the local host asks for approval before the five-minute grant starts.
+1. Register a ChatGPT or Claude managed-browser composer in one group and choose On. Confirm that the local host asks for approval before the 24-hour grant starts.
 2. Send a human message without mentioning the AI. On must not wake it.
 3. Mention the AI by its participant display name. On should enqueue a canonical trigger for that event.
 4. Change to Auto. Confirm the old binding is revoked before the new smart-mode binding is created. An ordinary human group message should now enqueue a trigger.
 5. Send an AI-authored message. Auto must not relay it automatically to another AI.
 6. Choose Off. Confirm the binding is revoked and pending/leased jobs are cancelled. Verify that no more provider trigger is submitted.
-7. Leave Auto armed until expiry. Verify polling/consent stops after the five-minute grant and the owner must explicitly arm it again.
+7. Leave Auto armed until expiry. Verify polling/consent stops after the 24-hour grant and the owner must explicitly arm it again.
 8. Exceed the six-wakes-per-minute bound. Additional triggers must be denied by the server-side rate limit.
 9. Occupy the selected composer, navigate to another conversation, replace the selected field, or change the target revision. The host must fail closed without typing or retargeting.
+10. Keep Auto active for the full 24-hour consent window. Confirm polling continues without per-message approval, the rate cap stays at six per minute, and the grant does not silently extend past its deadline.
+11. Restart the host during an active grant. The in-memory local grant must be lost, the restored UI must show the server/local mismatch, and no trigger may resume until fresh local approval.
 
 This acceptance checklist is not a claim that those live-provider/device tests have already been performed.
