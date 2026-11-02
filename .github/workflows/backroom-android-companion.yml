@@ -20,6 +20,7 @@ on:
       - 'src/BackroomDevicesApp.tsx'
       - 'src/backroom-cloud.css'
       - 'docs/BACKROOM_ANDROID_GUEST_RUNTIME_ACCEPTANCE.md'
+      - 'docs/BACKROOM_ANDROID_LIVE_STREAM_ACCEPTANCE.md'
   push:
     branches: [main, feat/backroom-virtualized-execution, feat/backroom-android-live-app-stream]
     paths:
@@ -31,6 +32,7 @@ on:
       - 'src/BackroomDevicesApp.tsx'
       - 'src/backroom-cloud.css'
       - 'docs/BACKROOM_ANDROID_GUEST_RUNTIME_ACCEPTANCE.md'
+      - 'docs/BACKROOM_ANDROID_LIVE_STREAM_ACCEPTANCE.md'
   workflow_dispatch:
 
 jobs:
@@ -51,7 +53,7 @@ jobs:
       - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
         with:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
-      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - uses: gradle/actions/setup-gradle@8da46c539cd8fe6ab27ca75128919a18d757604c # v6.4.1
         with:
           gradle-version: '8.10.2'
           cache-provider: basic
@@ -60,6 +62,62 @@ jobs:
       - name: Run Android unit tests and merged-manifest gate
         working-directory: android-companion
         run: gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:auditDebugGuestHostManifest
-      - name: Build Android companion APK
+      - name: Build compile-verification APK (no backend credentials)
         working-directory: android-companion
+        env:
+          SUPABASE_URL: ""
+          SUPABASE_PUBLISHABLE_KEY: ""
         run: gradle --no-daemon --stacktrace :app:assembleDebug
+      - name: Verify and fingerprint compile-verification APK
+        working-directory: android-companion
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="app/build/outputs/apk/debug/app-debug.apk"
+          report="app/build/reports/guest-host-manifest/debug.txt"
+          verification="app/build/outputs/apksigner-verification.txt"
+          provenance="app/build/outputs/acceptance-manifest.txt"
+          apksigner="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+
+          test -s "$apk" || { echo "Debug APK missing or empty: $apk" >&2; exit 1; }
+          test -s "$report" || { echo "Merged-manifest audit report missing or empty: $report" >&2; exit 1; }
+          test -x "$apksigner" || { echo "Pinned apksigner missing: $apksigner" >&2; exit 1; }
+
+          "$apksigner" verify --verbose --print-certs "$apk" > "$verification"
+          apk_sha="$(sha256sum "$apk" | awk '{print $1}')"
+          manifest_sha="$(sed -n 's/^manifestSha256=//p' "$report" | head -n 1)"
+          signer_sha="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$verification" | head -n 1 | tr '[:upper:]' '[:lower:]')"
+          apk_size="$(stat -c '%s' "$apk")"
+
+          test -n "$apk_sha"
+          test -n "$manifest_sha" || { echo "Manifest digest missing from audit report." >&2; exit 1; }
+          test -n "$signer_sha" || { cat "$verification"; echo "APK signer digest missing." >&2; exit 1; }
+
+          {
+            echo "repository=$GITHUB_REPOSITORY"
+            echo "commit=$GITHUB_SHA"
+            echo "run_id=$GITHUB_RUN_ID"
+            echo "application_id=app.rubminds.companion"
+            echo "variant=debug"
+            echo "backend_configuration=empty; package-installation-and-manifest-checks-only; cannot-pair-or-stream"
+            echo "apk_size_bytes=$apk_size"
+            echo "apk_sha256=$apk_sha"
+            echo "signer_certificate_sha256=$signer_sha"
+            echo "merged_manifest_sha256=$manifest_sha"
+          } > "$provenance"
+
+          cat "$provenance"
+          echo ""
+          echo "APK signature verification:"
+          cat "$verification"
+      - name: Upload Android compile-verification APK and provenance
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rub-minds-android-compile-verification-${{ github.sha }}
+          path: |
+            android-companion/app/build/outputs/apk/debug/app-debug.apk
+            android-companion/app/build/reports/guest-host-manifest/debug.txt
+            android-companion/app/build/outputs/apksigner-verification.txt
+            android-companion/app/build/outputs/acceptance-manifest.txt
+          if-no-files-found: error
+          retention-days: 7
