@@ -671,7 +671,7 @@ export default function BackroomApp() {
     const requiredMode = participationModeForInteractionMode(nextMode);
     if (!requiredMode) return;
     if (hostedWakeBinding && needsWakeBindingRebind(nextMode, hostedWakeBinding.participationMode)) {
-      if (!window.confirm('Changing from ' + (interactionModeForParticipationMode(hostedWakeBinding.participationMode ?? '') || 'the existing') + ' to ' + nextMode.toUpperCase() + ' requires revoking the old binding and cancelling its queued wakes. Continue?')) return;
+      if (!window.confirm('Changing from ' + (hostedWakeBinding.participationMode ? interactionModeForParticipationMode(hostedWakeBinding.participationMode) || 'the existing' : 'the existing') + ' to ' + nextMode.toUpperCase() + ' requires revoking the old binding and cancelling its queued wakes. Continue?')) return;
       const revoked = await revokeHostedWakeBinding(true);
       if (!revoked) return;
     }
