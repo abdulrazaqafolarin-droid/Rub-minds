@@ -1,6 +1,6 @@
 # Backroom Windows companion — physical acceptance
 
-Status: **Windows CI test coverage is green; linked release-build and physical host acceptance are pending this acceptance branch's CI and a real Windows workstation test.**
+Status: **The earlier PR #62 Windows test lane passed; this acceptance branch adds a linked release artifact and Emergency Stop race protections, which still require exact-head CI. Physical host acceptance remains pending.**
 
 This matrix verifies the native Tauri companion on a real Windows 10/11 x64 computer. A successful GitHub-hosted Windows job is not physical-device acceptance.
 
@@ -36,10 +36,11 @@ Record each item as PASS, FAIL or NOT RUN, with a short note or screenshot/log r
 | Revocation | Revoke the device from the owner-controlled Backroom device list during a test session | Active sessions stop, local control grants clear and stored device credentials are removed |
 | Session expiry | Allow a disposable test session to expire | Commands are rejected and local session resources are cleaned up |
 | Emergency Stop | Start a tracked Notepad process and PTY, then invoke Emergency Stop | Grants and draft state clear; tracked direct-child app processes and PTYs stop; further commands are rejected |
+| Pending-approval invalidation | Open a native launch/terminal approval, trigger Emergency Stop through the approved local/device-revocation path, then accept the old dialog | The old approval is rejected; it cannot create a new process or PTY after Emergency Stop returns |
 | Screen capture | Share a monitor and, separately, a single window | Window sharing stays view-only; input is enabled only for a verified whole-monitor capture with separate approval |
 | Network loss | Test on a normal network, then a restrictive network if available | Connection state is truthful; no session is shown as connected when WebRTC is not connected |
 
-The native Emergency Stop is scoped to tracked Backroom-launched direct-child processes, PTYs, grants and draft state. It does not guarantee termination of every helper process spawned by an application. The current WebRTC configuration is STUN-only; networks requiring TURN relay may prevent media connection even while account/device status is online.
+The native Emergency Stop is scoped to tracked Backroom-launched direct-child processes, PTYs, grants and draft state. It invalidates pre-existing approval generations and serializes native launches/input with shutdown. It does not guarantee termination of every helper process spawned by an application. The current WebRTC configuration is STUN-only; networks requiring TURN relay may prevent media connection even while account/device status is online.
 
 ## Evidence record
 
