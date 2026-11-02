@@ -446,3 +446,35 @@ test('explicit Auto grant can activate the remote queue for the full 24-hour win
   await service.stop();
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('server-side binding/session revocation stops the local poller and destroys its in-memory grant',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'backroom-revoked-session-stop-'));
+ try{
+  const revoked=[];
+  const localRuntime={...runtime(),revokeWakeBinding:id=>{revoked.push(id);return true;}};
+  const service=createHostWakeService({
+   identity:{hostId,hostToken},browserRuntime:localRuntime,
+   journalDirectory:join(dir,'journal'),gatewayUrl:trustedUrl,
+   fetchImpl:async url=>{
+    if(url.endsWith('/activate'))return new Response(JSON.stringify({ok:true,activated:true}),{status:200});
+    if(url.endsWith('/claim'))return new Response(JSON.stringify({ok:false,reason:'unauthorized'}),{status:401});
+    if(url.endsWith('/deactivate'))return new Response(JSON.stringify({ok:true,deactivated:true}),{status:200});
+    return new Response(JSON.stringify({ok:true,leases:[]}),{status:200});
+   }
+  });
+  service.configure({sessionDigest,bindingId,publishableKey});
+  const grantId='40000000-0000-4000-8000-0000000000bd';
+  const groupId='40000000-0000-4000-8000-000000000044';
+  const participantId='40000000-0000-4000-8000-000000000055';
+  const sessionId='40000000-0000-4000-8000-000000000066';
+  await service.activateAndStart({grantId,expiresAt:Date.now()+300000,scope:{
+   hostId,bindingId,groupId,participantId,sessionId
+  }},{bindingId,roomId:groupId,participantId,sessionId});
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assert.deepEqual(revoked,[bindingId]);
+  assert.equal(service.status.bindings[0].polling,false);
+  assert.equal(service.status.bindings[0].consentActive,false);
+  assert.equal(service.status.bindings[0].deactivationPending,false);
+  await service.stop();
+ }finally{await rm(dir,{recursive:true,force:true});}
+});
