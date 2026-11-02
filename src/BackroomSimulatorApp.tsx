@@ -17,7 +17,7 @@ type BrowserPageRow = { pageId: string; title: string; site: string; canSelect: 
 type BrowserTargetRow = { id: string; pageId: string; roomId: string; title: string; site: string; surface: string; operations: string[]; wakeAvailable?: boolean; spaceId?: string; sessionId?: string; identityFingerprint?: string; revision?: number; locatorKind?: string; locatorValue?: string };
 type HostedAiSession = { participantId: string; displayName: string; sessionDigest: string; expiresAt: string };
 type WakeInteractionMode = 'off' | 'on' | 'auto';
-type HostedWakeBinding = { bindingId: string; roomId: string; participantId: string; sessionId: string; targetId: string; sessionDigest: string; participationMode?: 'mentions' | 'smart'; wakeEnabled?: boolean; requiresRevoke?: boolean };
+type HostedWakeBinding = { bindingId: string; roomId: string; participantId: string; sessionId: string; targetId: string; sessionDigest: string; participationMode?: 'mentions' | 'smart' | 'task'; wakeEnabled?: boolean; wakeExpiresAt?: string | null; requiresRevoke?: boolean };
 type PendingBrowserSelection = { pageId: string; roomId: string; generation: number; attemptId: string | null };
 const surfaces: { id: Surface; name: string; detail: string }[] = [
   { id: 'browser_tab', name: 'Browser session', detail: 'ChatGPT, Claude and other browser conversations' },
@@ -205,6 +205,7 @@ export default function BackroomApp() {
   const [hostedWakeBinding,setHostedWakeBinding] = useState<HostedWakeBinding | null>(null);
   const [hostedWakeGrantId,setHostedWakeGrantId] = useState('');
   const [selectedWakeMode,setSelectedWakeMode] = useState<WakeInteractionMode>('off');
+  const bindingStatusRequestRef = useRef(0);
   const selectionGeneration = useRef(0);
   const activeBrowserSelection = useRef<PendingBrowserSelection | null>(null);
   const [roomId, setRoomId] = useState(() => new URLSearchParams(location.search).get('room') || '');
@@ -528,6 +529,56 @@ export default function BackroomApp() {
     } finally {setHostBusy(false);}
   }
 
+  async function restoreHostedWakeBinding(roomId: string, selectedSession: HostedAiSession) {
+    if (!supabase) return;
+    const requestId = ++bindingStatusRequestRef.current;
+    const {data,error} = await supabase.functions.invoke('backroom-config/binding-status',{
+      body:{roomId,participantId:selectedSession.participantId,sessionDigest:selectedSession.sessionDigest}
+    });
+    if (requestId !== bindingStatusRequestRef.current) return;
+    if(error || data?.ok!==true || !Array.isArray(data.bindings)) {
+      setHostedWakeBinding(null);
+      setHostedWakeGrantId('');
+      setSelectedWakeMode('off');
+      setHostMessage('Could not restore this AI input’s authoritative wake status. Treat it as unknown and do not arm another binding until the status check succeeds.');
+      return;
+    }
+    const row=data.bindings.find((value:unknown)=>{
+      if(!value||typeof value!=='object'||Array.isArray(value))return false;
+      const item=value as Record<string,unknown>;
+      return item.participantId===selectedSession.participantId &&
+        typeof item.bindingId==='string' && typeof item.sessionId==='string' &&
+        typeof item.targetId==='string' && ['mentions','smart','task'].includes(String(item.participationMode));
+    }) as Record<string,unknown>|undefined;
+    setHostedWakeGrantId('');
+    if(!row) {
+      setHostedWakeBinding(null);
+      setSelectedWakeMode('off');
+      setHostMessage('No active input binding exists for this exact AI session. Select On or Auto and register the intended composer.');
+      return;
+    }
+    const participationMode=row.participationMode as 'mentions'|'smart'|'task';
+    const interactionMode=interactionModeForParticipationMode(participationMode);
+    const binding: HostedWakeBinding={
+      bindingId:String(row.bindingId),roomId,participantId:selectedSession.participantId,
+      sessionId:String(row.sessionId),targetId:String(row.targetId),sessionDigest:selectedSession.sessionDigest,
+      participationMode,wakeEnabled:row.wakeEnabled===true,
+      wakeExpiresAt:typeof row.wakeExpiresAt==='string'?row.wakeExpiresAt:null,
+      requiresRevoke:interactionMode===null
+    };
+    setHostedWakeBinding(binding);
+    setSelectedWakeMode(interactionMode==='on'||interactionMode==='auto'?interactionMode:'off');
+    if(roomBrowserTargets.some(target=>target.id===binding.targetId))setSelectedBrowserTarget(binding.targetId);
+    if(interactionMode===null) {
+      setHostMessage('This binding uses a task-only policy that is not exposed by the Off / On / Auto control. Revoke it before creating a supported mode.');
+    } else if(binding.wakeEnabled) {
+      const expiry=binding.wakeExpiresAt?Date.parse(binding.wakeExpiresAt):NaN;
+      setHostMessage(`${interactionMode.toUpperCase()} server grant is active for this exact AI session${Number.isFinite(expiry)?' until '+new Date(expiry).toLocaleTimeString():''}. Confirm the local host is still polling before relying on automatic participation.`);
+    } else {
+      setHostMessage(`${interactionMode.toUpperCase()} binding restored. It is not currently armed; local consent is required to start its five-minute wake grant.`);
+    }
+  }
+
   async function discoverHostedAiSessions() {
     if (!supabase || !room?.id || !user) return;
     setHostBusy(true);
@@ -545,7 +596,12 @@ export default function BackroomApp() {
       }) as HostedAiSession[];
       setHostedAiSessions(sessions);
       setSelectedHostedSession(sessions[0]?.sessionDigest??'');
-      setHostMessage(sessions.length+' authorized live AI session(s) found. Select the intended original AI conversation.');
+      if(sessions[0]) await restoreHostedWakeBinding(room.id,sessions[0]);
+      else {
+        bindingStatusRequestRef.current++;
+        setHostedWakeBinding(null);setHostedWakeGrantId('');setSelectedWakeMode('off');
+        setHostMessage('No live joined AI MCP sessions were found in this group.');
+      }
     }catch(error){
       setHostMessage(error instanceof Error?error.message:'AI session discovery failed.');
     }finally{setHostBusy(false);}
@@ -667,6 +723,7 @@ export default function BackroomApp() {
       });
       if(typeof grant.grantId!=='string')throw new Error('Local wake grant was not confirmed.');
       setHostedWakeGrantId(grant.grantId);
+      setHostedWakeBinding(current=>current?{...current,wakeEnabled:true,wakeExpiresAt:new Date(Date.now()+300000).toISOString()}:current);
       setHostMessage(selectedWakeMode.toUpperCase() + ' enabled for this one selected AI input. The local grant expires after five minutes and is limited to six wake triggers per minute.');
     }catch(error){
       setHostMessage(error instanceof Error?error.message:'Wake activation failed and must be retried with consent.');
@@ -1187,16 +1244,16 @@ export default function BackroomApp() {
   <div className="br-modal-actions"><button className="br-secondary" onClick={() => void discoverHostedAiSessions()} disabled={hostBusy || browserBusy}>Find joined AI sessions</button></div>
   {hostedAiSessions.length>0 && <>
     <label htmlFor="br-hosted-ai-session">Joined AI conversation</label>
-    <select id="br-hosted-ai-session" value={selectedHostedSession} onChange={e=>setSelectedHostedSession(e.target.value)}>{hostedAiSessions.map(s=><option key={s.sessionDigest} value={s.sessionDigest}>{s.displayName} · {s.participantId.slice(0,8)}</option>)}</select>
+    <select id="br-hosted-ai-session" value={selectedHostedSession} onChange={e=>{const digest=e.target.value;setSelectedHostedSession(digest);const selected=hostedAiSessions.find(s=>s.sessionDigest===digest);if(selected&&room?.id)void restoreHostedWakeBinding(room.id,selected);}}>{hostedAiSessions.map(s=><option key={s.sessionDigest} value={s.sessionDigest}>{s.displayName} · {s.participantId.slice(0,8)}</option>)}</select>
     <p>Selected local input: {browserTargets.find(t=>t.id===selectedBrowserTarget)?.title || 'Select a managed browser target before binding.'}</p>
     <div className="br-modal-actions"><button className="br-secondary" onClick={() => void bindHostedWakeInput()} disabled={hostBusy || browserBusy || !selectedBrowserTarget || selectedWakeMode==='off'}>Register inactive {selectedWakeMode==='auto'?'Auto':'On'} input binding</button></div>
   </>}
   {hostedWakeBinding && hostedWakeBinding.roomId===room.id && <>
-    <div className="br-detail"><span>Wake status</span><b>{hostedWakeBinding.requiresRevoke?'Existing binding · revoke before rebind':wakeBindingNeedsRebind?'Mode change · rebind required':hostedWakeGrantId?selectedWakeMode.toUpperCase()+' armed · time-limited':selectedWakeMode==='off'?'Off · no wake grant':selectedWakeMode.toUpperCase()+' selected · not armed'}</b></div>
+    <div className="br-detail"><span>Wake status</span><b>{hostedWakeBinding.requiresRevoke?'Existing binding · revoke before rebind':wakeBindingNeedsRebind?'Mode change · rebind required':(hostedWakeGrantId||hostedWakeBinding.wakeEnabled)?selectedWakeMode.toUpperCase()+' armed · time-limited':selectedWakeMode==='off'?'Off · no wake grant':selectedWakeMode.toUpperCase()+' selected · not armed'}</b></div>
     <div className="br-modal-actions">
       {hostedWakeBinding.requiresRevoke || wakeBindingNeedsRebind
         ? <button className="br-danger-action" disabled={hostBusy || browserBusy} onClick={() => void revokeHostedWakeBinding()}>Revoke binding to apply selected mode</button>
-        : hostedWakeGrantId
+        : (hostedWakeGrantId || hostedWakeBinding.wakeEnabled)
           ? <button className="br-danger-action" disabled={hostBusy || browserBusy} onClick={() => void chooseWakeMode('off')}>Turn Off and revoke binding</button>
           : selectedWakeMode==='off'
             ? <span className="br-browser-caption">Off is not armed. Choose On or Auto, then register the intended input.</span>
