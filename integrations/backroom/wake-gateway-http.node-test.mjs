@@ -93,7 +93,7 @@ test('activation and deactivation routes accept only exact scoped grant operatio
  const grantId='40000000-0000-4000-8000-000000000066';
  const activation=await handler(request('https://example.test/functions/v1/backroom-wake/activate',{body:{
   hostId:valid.hostId,bindingId:valid.bindingId,sessionDigest:valid.sessionDigest,
-  grantId,ttlSeconds:300}}));
+  grantId,ttlSeconds:86400}}));
  assert.equal(activation.status,200);
  const revoked=await handler(request('https://example.test/functions/v1/backroom-wake/deactivate',{body:{
   hostId:valid.hostId,bindingId:valid.bindingId,sessionDigest:valid.sessionDigest,grantId}}));
