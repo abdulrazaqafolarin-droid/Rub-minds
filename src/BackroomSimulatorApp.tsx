@@ -572,10 +572,23 @@ export default function BackroomApp() {
     }
     const participationMode=row.participationMode as 'mentions'|'smart'|'task';
     const interactionMode=interactionModeForParticipationMode(participationMode);
+    let localPollingConfirmed=false;
+    try {
+      if(hostToken&&hostInfo?.connected) {
+        const localStatus=await hostApi<unknown>('/v1/host');
+        const parsed=parseHostStatus(localStatus,hostInfo.hostId);
+        setHostInfo(parsed);
+        const localBinding=parsed.wakeBindings?.find(item=>item.bindingId===String(row.bindingId));
+        localPollingConfirmed=localBinding?.polling===true&&localBinding.consentActive===true&&localBinding.deactivationPending===false;
+      }
+    } catch { localPollingConfirmed=false; }
+    if(requestId!==bindingStatusRequestRef.current)return;
+    const serverWakeEnabled=row.wakeEnabled===true;
     const binding: HostedWakeBinding={
       bindingId:String(row.bindingId),roomId,participantId:selectedSession.participantId,
       sessionId:String(row.sessionId),targetId:String(row.targetId),sessionDigest:selectedSession.sessionDigest,
-      participationMode,wakeEnabled:row.wakeEnabled===true,
+      participationMode,wakeEnabled:serverWakeEnabled&&localPollingConfirmed,
+      serverWakeEnabled,localPollingConfirmed,
       wakeExpiresAt:typeof row.wakeExpiresAt==='string'?row.wakeExpiresAt:null,
       requiresRevoke:interactionMode===null
     };
@@ -584,9 +597,11 @@ export default function BackroomApp() {
     if(roomBrowserTargets.some(target=>target.id===binding.targetId))setSelectedBrowserTarget(binding.targetId);
     if(interactionMode===null) {
       setHostMessage('This binding uses a task-only policy that is not exposed by the Off / On / Auto control. Revoke it before creating a supported mode.');
+    } else if(serverWakeEnabled&&!localPollingConfirmed) {
+      setHostMessage('The server still has a live wake grant, but the paired host did not confirm an active local poller. Do not treat Auto as running. Turn Off to revoke the stale grant, or reconnect/restart the intended host and check again.');
     } else if(binding.wakeEnabled) {
       const expiry=binding.wakeExpiresAt?Date.parse(binding.wakeExpiresAt):NaN;
-      setHostMessage(`${interactionMode.toUpperCase()} server grant is active for this exact AI session${Number.isFinite(expiry)?' until '+new Date(expiry).toLocaleTimeString():''}. Confirm the local host is still polling before relying on automatic participation.`);
+      setHostMessage(`${interactionMode.toUpperCase()} is active on the paired host for this exact AI session${Number.isFinite(expiry)?' until '+new Date(expiry).toLocaleTimeString():''}.`);
     } else {
       setHostMessage(`${interactionMode.toUpperCase()} binding restored. It is not currently armed; local consent is required to start its five-minute wake grant.`);
     }
