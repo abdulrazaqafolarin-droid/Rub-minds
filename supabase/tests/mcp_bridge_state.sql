@@ -206,14 +206,14 @@ begin
   select pg_catalog.lower(pg_catalog.pg_get_functiondef(
     'public.activate_backroom_wake_grant(text,text,uuid,uuid,integer)'::regprocedure
   )) into v_activation_definition;
-  v_session_from := pg_catalog.position('from public.rub_minds_mcp_sessions' in v_activation_definition);
-  v_binding_from := pg_catalog.position('from public.backroom_input_bindings' in v_activation_definition);
-  if pg_catalog.position('pg_advisory_xact_lock' in v_activation_definition)=0
+  v_session_from := pg_catalog.strpos(v_activation_definition,'from public.rub_minds_mcp_sessions');
+  v_binding_from := pg_catalog.strpos(v_activation_definition,'from public.backroom_input_bindings');
+  if pg_catalog.strpos(v_activation_definition,'pg_advisory_xact_lock')=0
      or v_session_from=0 or v_binding_from=0 or v_session_from>=v_binding_from then
     raise exception 'Wake activation must lock the MCP parent before the input binding';
   end if;
-  v_session_lock := pg_catalog.position('for update' in pg_catalog.substr(v_activation_definition,v_session_from));
-  v_binding_lock := pg_catalog.position('for update' in pg_catalog.substr(v_activation_definition,v_binding_from));
+  v_session_lock := pg_catalog.strpos(pg_catalog.substr(v_activation_definition,v_session_from),'for update');
+  v_binding_lock := pg_catalog.strpos(pg_catalog.substr(v_activation_definition,v_binding_from),'for update');
   if v_session_lock=0 or v_binding_lock=0 or
      v_session_from+v_session_lock-1 >= v_binding_from+v_binding_lock-1 then
     raise exception 'Wake activation must lock both the MCP parent and binding in parent-first order';
