@@ -12,7 +12,8 @@ export function createBackroomWakePoller({
  if(!Number.isSafeInteger(intervalMs)||intervalMs<1000||intervalMs>60000)
   throw new RangeError('Wake polling interval must be 1–60 seconds');
  if(browserRuntime.hostId!==hostId||typeof browserRuntime.resolveClaimedWakeContext!=='function'||
-   typeof browserRuntime.verifyClaimedWakeGrant!=='function'||!browserRuntime.dispatcher)
+   typeof browserRuntime.verifyClaimedWakeGrant!=='function'||typeof browserRuntime.consumeClaimedWakeGrant!=='function'||
+   !browserRuntime.dispatcher)
   throw new TypeError('Browser host identity/dispatcher mismatch');
  let stopped=true,pending=null,sleepAbort=null;
  async function once(){
@@ -25,7 +26,8 @@ export function createBackroomWakePoller({
       store,hostId,sessionDigest,bindingId,limit:1,
       dispatcher:browserRuntime.dispatcher,executionJournal,
       resolveContext:scope=>browserRuntime.resolveClaimedWakeContext(scope),
-      verifyApproval:(approval,context)=>browserRuntime.verifyClaimedWakeGrant(approval,context)
+      verifyApproval:(approval,context)=>browserRuntime.verifyClaimedWakeGrant(approval,context),
+      consumeApproval:(approval,context)=>browserRuntime.consumeClaimedWakeGrant(approval,context)
     })});
    }catch(error){
     if(error?.code==='REMOTE_BACKROOM_UNAUTHORIZED'){
