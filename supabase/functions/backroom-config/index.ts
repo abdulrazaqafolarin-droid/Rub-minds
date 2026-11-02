@@ -4,7 +4,7 @@
  * enable wake. Requires the draft private queue migration.
  */
 import {createClient} from 'npm:@supabase/supabase-js@2';
-import {validateHostEnrollment,validatePendingWakeBinding} from '../../../integrations/backroom/host-enrollment-policy.mjs';
+import {validateHostEnrollment,validatePendingWakeBinding,validateBindingStatusQuery} from '../../../integrations/backroom/host-enrollment-policy.mjs';
 import {classifyExistingBinding} from '../../../integrations/backroom/binding-registration-policy.mjs';
 import {resolveOwnerFromJwt} from '../../../integrations/backroom/owner-jwt.mjs';
 
@@ -46,7 +46,7 @@ Deno.serve(async req=>{
   }});
  }
  const parsed=new URL(req.url);
- if(req.method!=='POST'||parsed.search||parsed.hash||!['/functions/v1/backroom-config/host','/functions/v1/backroom-config/binding','/functions/v1/backroom-config/sessions','/functions/v1/backroom-config/revoke-host','/functions/v1/backroom-config/revoke-binding','/backroom-config/host','/backroom-config/binding','/backroom-config/sessions','/backroom-config/revoke-host','/backroom-config/revoke-binding','/host','/binding','/sessions','/revoke-host','/revoke-binding'].includes(parsed.pathname))
+ if(req.method!=='POST'||parsed.search||parsed.hash||!['/functions/v1/backroom-config/host','/functions/v1/backroom-config/binding','/functions/v1/backroom-config/sessions','/functions/v1/backroom-config/binding-status','/functions/v1/backroom-config/revoke-host','/functions/v1/backroom-config/revoke-binding','/backroom-config/host','/backroom-config/binding','/backroom-config/sessions','/backroom-config/binding-status','/backroom-config/revoke-host','/backroom-config/revoke-binding','/host','/binding','/sessions','/binding-status','/revoke-host','/revoke-binding'].includes(parsed.pathname))
   return json(404,{ok:false,reason:'not_found'},origin);
  if(req.headers.get('content-type')?.toLowerCase()!=='application/json')
   return json(415,{ok:false,reason:'unsupported_type'},origin);
@@ -85,6 +85,31 @@ Deno.serve(async req=>{
     .slice(0,30).map(s=>({participantId:s.participant_id,
       displayName:names.get(s.participant_id),
       sessionDigest:s.session_digest,expiresAt:s.expires_at}))},origin);
+  }
+  if(parsed.pathname.endsWith('/binding-status')){
+   let input;
+   try{input=validateBindingStatusQuery(value);}catch{return json(400,{ok:false,reason:'invalid_binding_status_query'},origin);}
+   const {data:ownedRoom,error:roomError}=await db.from('rooms').select('id')
+    .eq('id',input.roomId).eq('owner_id',ownerId).maybeSingle();
+   if(roomError)return json(503,{ok:false,reason:'service_unavailable'},origin);
+   if(!ownedRoom)return json(403,{ok:false,reason:'not_room_owner'},origin);
+   let query=db.from('backroom_input_bindings')
+    .select('id,participant_id,host_id,session_id,space_id,target_id,target_identity_fingerprint,target_revision,surface,participation_mode,wake_enabled,wake_expires_at,confirmed_at,revoked_at')
+    .eq('owner_id',ownerId).eq('room_id',input.roomId).is('revoked_at',null)
+    .order('updated_at',{ascending:false}).limit(10);
+   if(input.participantId)query=query.eq('participant_id',input.participantId);
+   const {data,error}=await query;
+   if(error)return json(503,{ok:false,reason:'service_unavailable'},origin);
+   const now=Date.now();
+   const bindings=(data??[]).map(row=>({
+    bindingId:row.id,participantId:row.participant_id,hostId:row.host_id,
+    sessionId:row.session_id,spaceId:row.space_id,targetId:row.target_id,
+    targetIdentityFingerprint:row.target_identity_fingerprint,targetRevision:row.target_revision,
+    surface:row.surface,participationMode:row.participation_mode,
+    wakeEnabled:row.wake_enabled===true&&typeof row.wake_expires_at==='string'&&Date.parse(row.wake_expires_at)>now,
+    wakeExpiresAt:row.wake_expires_at,confirmedAt:row.confirmed_at
+   }));
+   return json(200,{ok:true,bindings},origin);
   }
   if(parsed.pathname.endsWith('/revoke-host')){
    if(!value||typeof value.hostId!=='string'||!/^[a-f0-9-]{36}$/i.test(value.hostId)||
