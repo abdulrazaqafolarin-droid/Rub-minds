@@ -73,6 +73,9 @@ export async function dispatchClaimedWake(input){
  const store=input?.store,dispatcher=input?.dispatcher;
  if(!store||typeof store.retry!=='function'||typeof store.acknowledge!=='function')throw new TypeError('Durable wake store required');
  if(!dispatcher||typeof dispatcher.enqueue!=='function'||typeof dispatcher.status!=='function'||typeof dispatcher.step!=='function')throw new TypeError('BackroomDispatcher required');
+ const hasExecutionSeal=input?.executionSeal!==undefined||input?.consumeApproval!==undefined;
+ if(hasExecutionSeal&&(typeof input.executionSeal!=='function'||typeof input.consumeApproval!=='function'))
+  throw new TypeError('Execution seal and one-shot grant consumer must be supplied together');
  if(input?.approval==null||typeof input.verifyApproval!=='function')return queueRetry(store,lease,'approval_required','wake-authorization-required');
  const wakeGrantId=input.approval?.grantId;
  let mapped;
@@ -100,12 +103,24 @@ export async function dispatchClaimedWake(input){
   return queueRetry(store,lease,'transport_error','dispatcher-enqueue-failed');
  }
  if(!status||typeof status.state!=='string')return queueRetry(store,lease,'transport_error','invalid-dispatcher-status');
+ let executionSealAttempted=false;
+ const beforeEffect=hasExecutionSeal?async()=>{
+  executionSealAttempted=true;
+  // The local host must reserve the durable one-time seal, then consume the
+  // exact in-memory grant. This callback runs only after the guard's live
+  // app/composer and local permission checks have succeeded.
+  const sealed=await input.executionSeal(mapped.command);
+  if(sealed!==true)return false;
+  return (await input.consumeApproval(input.approval,approvalContext(mapped.command)))===true;
+ }:undefined;
  if(['queued','awaiting_approval'].includes(status.state)) {
-  try {status=await dispatcher.step(mapped.command.id,{approved:true});}
+  try {status=await dispatcher.step(mapped.command.id,{approved:true,...(beforeEffect?{beforeEffect}:{})});}
   catch {return queueAck(store,lease,'ignored','dispatcher-outcome-unknown');}
  }
  if(status?.state==='completed')return queueAck(store,lease,'acknowledged',null);
- if(status?.state==='failed'&&status.reason==='device_preflight_denied') {
+ if(status?.state==='failed'&&status.reason==='device_preflight_denied'&&!executionSealAttempted) {
+  // The local guard denied before the seal/grant hook ran, so this lease can
+  // safely be retried without risking a duplicate provider submission.
   return queueRetry(store,lease,'target_unavailable','host-preflight-denied');
  }
  // Ambiguous/failed effects must not be blindly replayed. Mark the wake ignored;
