@@ -603,7 +603,7 @@ export default function BackroomApp() {
       const expiry=binding.wakeExpiresAt?Date.parse(binding.wakeExpiresAt):NaN;
       setHostMessage(`${interactionMode.toUpperCase()} is active on the paired host for this exact AI session${Number.isFinite(expiry)?' until '+new Date(expiry).toLocaleTimeString():''}.`);
     } else {
-      setHostMessage(`${interactionMode.toUpperCase()} binding restored. It is not currently armed; local consent is required to start its five-minute wake grant.`);
+      setHostMessage(`${interactionMode.toUpperCase()} binding restored. It is not currently armed; local consent is required to start its bounded wake grant.`);
     }
   }
 
@@ -739,25 +739,32 @@ export default function BackroomApp() {
       setHostMessage('The selected mode does not match this registered input. Revoke and re-register the binding before arming it.');
       return;
     }
+    const joinedSession=hostedAiSessions.find(session=>session.sessionDigest===binding.sessionDigest&&session.participantId===binding.participantId);
+    const sessionExpiry=typeof joinedSession?.expiresAt==='string'?Date.parse(joinedSession.expiresAt):NaN;
+    const sessionBoundTtlMs=Math.min(86400000,Math.floor(sessionExpiry-Date.now()-15000));
+    if(!Number.isFinite(sessionBoundTtlMs)||sessionBoundTtlMs<60000) {
+      setHostMessage('This joined AI session expires too soon for continuous Auto. Reconnect or rejoin the original AI session, refresh the joined-session list, then arm it again.');
+      return;
+    }
     if(!window.confirm('Enable the selected original AI conversation to receive canonical @RMconnects event triggers automatically for up to 24 hours? This can press Send in that exact selected AI chat without per-message confirmation. It is limited to six triggers per minute. You can revoke it or use Emergency Stop at any time.'))return;
     setHostBusy(true);
     try{
       if(!supabase||!hostInfo.enrollmentDigest)throw new Error('Owner-authenticated host registration is missing. Re-pair before enabling Auto.');
       const {data:renewedHost,error:renewHostError}=await supabase.functions.invoke('backroom-config/host',{
-        body:{hostId:hostInfo.hostId,credentialDigest:hostInfo.enrollmentDigest,ttlSeconds:172800}
+        body:{hostId:hostInfo.hostId,credentialDigest:hostInfo.enrollmentDigest,ttlSeconds:Math.max(86400,Math.ceil(sessionBoundTtlMs/1000)+3600)}
       });
       if(renewHostError||renewedHost?.ok!==true)throw new Error('Could not renew the owner-authorized host lease for the 24-hour Auto session.');
       const grant=await hostApi<{grantId:string;expiresAt:number}>('/v1/browser/wake/grants',{
         method:'POST',body:{
           targetId:binding.targetId,roomId:binding.roomId,
           participantId:binding.participantId,sessionId:binding.sessionId,
-          bindingId:binding.bindingId,confirmed:true,ttlMs:86400000,maxPerMinute:6
+          bindingId:binding.bindingId,confirmed:true,ttlMs:sessionBoundTtlMs,maxPerMinute:6
         }
       });
       if(typeof grant.grantId!=='string')throw new Error('Local wake grant was not confirmed.');
       setHostedWakeGrantId(grant.grantId);
       setHostedWakeBinding(current=>current?{...current,wakeEnabled:true,wakeExpiresAt:new Date(grant.expiresAt).toISOString()}:current);
-      setHostMessage(selectedWakeMode.toUpperCase() + ' enabled for this one selected AI input. The local grant expires after 24 hours and is limited to six wake triggers per minute.');
+      setHostMessage(selectedWakeMode.toUpperCase() + ' enabled for this one selected AI input until ' + new Date(grant.expiresAt).toLocaleString() + '. The local host remains scoped to six wake triggers per minute.');
     }catch(error){
       setHostMessage(error instanceof Error?error.message:'Wake activation failed and must be retried with consent.');
     }finally{setHostBusy(false);}
@@ -806,7 +813,7 @@ export default function BackroomApp() {
       setHostedWakeBinding(previous=>previous?{...previous,wakeEnabled:false}:previous);
       setHostMessage(result.remoteDeactivationConfirmed===true
         ? 'Wake grant revoked; local polling stopped and hosted consent deactivation confirmed.'
-        : 'Wake grant revoked locally and polling stopped, but the server did not confirm remote deactivation. The old consent expires within 5 minutes. For immediate server-side cancellation, revoke this input binding.');
+        : 'Wake grant revoked locally and polling stopped, but the server did not confirm remote deactivation. The old consent expires within 24 hours. For immediate server-side cancellation, revoke this input binding.');
 
     }catch(error){
       setHostMessage(error instanceof Error?error.message:'Could not confirm wake revocation. Use Emergency Stop.');
