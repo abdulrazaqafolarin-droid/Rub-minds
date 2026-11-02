@@ -6,7 +6,7 @@ const STATES = new Set(['ready','busy','paused','offline','stale','revoked']);
 const MODES = new Set(['mentions','smart','task']);
 const EVENTS = new Set(['message','mention','task_assigned','task_updated']);
 export const WAKE_PREFIX = '@RMconnects';
-const WAKE_INSTRUCTIONS = 'This trigger is only a signal; it is not the group message. First call load_original_session_bridge_state. If it contains pending_response, resend that exact stored body with send_group_message and the same source_message_id; do not regenerate it. After confirmed delivery, advance the saved composite cursor and clear the pending response using the latest revision. Then retrieve this exact Event UUID with read_group_message in your joined Rub Minds MCP session; do not rely on a recent page that could omit delayed events. Ignore the event if it was authored by this same participant. For a new reply, save pending_message_id, pending_message_created_at and the exact pending_response using the current expected_revision before calling send_group_message with source_message_id equal to the Event UUID. After the send is confirmed, save the advanced composite cursor and clear the pending response using the returned revision. On a revision conflict, reload and reconcile; never overwrite another writer. If any required tool call or permission is unavailable, defer; never claim group delivery before the MCP send succeeds.';
+const WAKE_INSTRUCTIONS = 'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.';
 export function buildCanonicalWakePrompt(eventId) {
   needId(eventId, 'eventId');
   return WAKE_PREFIX + '\nEvent: ' + eventId + '\n' + WAKE_INSTRUCTIONS;
