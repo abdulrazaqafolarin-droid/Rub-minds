@@ -374,7 +374,7 @@ begin
   v_ok := public.ack_backroom_wake_job(v_claim_retry.out_job_id,v_host_test,repeat('6',64),v_binding_6,v_claim_retry.out_lease_token,'acknowledged');
   if v_ok then raise exception 'Revoked agent connections must not acknowledge outstanding leases'; end if;
   update public.agent_connections set revoked_at=null where participant_id=v_participant;
-  update public.rub_minds_mcp_sessions set terminated_at=pg_catalog.clock_timestamp() where session_digest=repeat('6',64);
+  -- Session6 termination is exercised below through the atomic MCP Leave RPC.
 
   v_cancel_job := public.enqueue_backroom_wake_job(
     repeat('3',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-3',repeat('d',64),
@@ -619,6 +619,52 @@ begin
   select count(*) into v_count from public.claim_backroom_wake_jobs(
     v_host_capacity,repeat('7',64),v_binding_7,5,30);
   if v_count <> 0 then raise exception 'A revoked host must not reclaim cancelled wakes'; end if;
+
+  -- MCP Leave is a full consent revocation boundary, including a leased trigger.
+  v_first := public.enqueue_backroom_wake_job(
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('leave-pending','UTF8')),'hex'),
+    v_owner,v_room,v_participant,v_host_test,'space-1','session-6',repeat('6',64),
+    v_binding_6,'target-6','fingerprint-6',1,'leave-pending-event',
+    '@RMconnects'||chr(10)||'Event: leave-pending-event'||chr(10)||
+    'Retrieve this exact Event UUID with read_group_message in your joined Rub Minds MCP session; do not rely on a recent page that could omit delayed events. Use send_group_message with source_message_id equal to the Event UUID for idempotent group delivery. Only after the send is confirmed, save the advanced cursor with save_original_session_bridge_state. If any required tool call or permission is unavailable, defer; never claim group delivery before the MCP send succeeds.',3600);
+  insert into public.rub_minds_mcp_bridge_state(session_digest,room_id,participant_id)
+  values (repeat('6',64),v_room,v_participant);
+  select public.terminate_rub_minds_mcp_bridge_session(
+    repeat('6',64),'ci-ciphertext-6',repeat('a',64),
+    pg_catalog.clock_timestamp()+interval '24 hours'
+  ) into v_first;
+  if (v_first->>'terminated') <> 'true' or (v_first->>'already_terminated') <> 'false' then
+    raise exception 'MCP Leave must atomically terminate the exact joined session';
+  end if;
+  if exists(select 1 from public.backroom_input_bindings
+      where room_id=v_room and participant_id=v_participant
+        and (revoked_at is null or wake_enabled or wake_grant_id is not null
+          or confirmed_at is not null or wake_expires_at is not null)) then
+    raise exception 'MCP Leave must revoke every Backroom input binding for the participant';
+  end if;
+  if exists(select 1 from public.backroom_wake_jobs
+      where room_id=v_room and participant_id=v_participant and state in ('pending','leased')) then
+    raise exception 'MCP Leave must cancel pending and leased Backroom triggers';
+  end if;
+  if exists(select 1 from public.backroom_wake_jobs
+      where id=(v_retry_job->>'job_id')::uuid and state<>'cancelled') then
+    raise exception 'MCP Leave must cancel an already leased trigger';
+  end if;
+  if exists(select 1 from public.rub_minds_mcp_bridge_state where session_digest=repeat('6',64)) then
+    raise exception 'MCP Leave must clear its private cursor and pending-response state';
+  end if;
+  if exists(select 1 from public.agent_connections where credential_digest=repeat('a',64) and revoked_at is null) then
+    raise exception 'MCP Leave must revoke the participant credential';
+  end if;
+  select count(*) into v_count from public.claim_backroom_wake_jobs(
+    v_host_test,repeat('6',64),v_binding_6,5,30);
+  if v_count <> 0 then raise exception 'A participant who left must not claim more wakes'; end if;
+  select public.terminate_rub_minds_mcp_bridge_session(
+    repeat('6',64),null,null,pg_catalog.clock_timestamp()+interval '24 hours'
+  ) into v_first;
+  if (v_first->>'terminated') <> 'true' or (v_first->>'already_terminated') <> 'true' then
+    raise exception 'Repeated MCP Leave must idempotently confirm and preserve revocation';
+  end if;
 
 end;
 $test$;
