@@ -821,3 +821,42 @@ test("paired host status reports exact local wake poller state without leaking g
   assert.equal(JSON.stringify(value).includes("a".repeat(64)),false);
  },{wakeService});
 });
+
+test("binding revoke does not claim local stop when a restarted host has no in-memory grant or poller",async()=>{
+ const bindingId="52345678-1234-4234-9234-123456789012";
+ const browserRuntime={
+  status:()=>({running:true,pages:1,capabilities:{browserCanonicalWake:true}}),
+  revokeWakeBinding:()=>false
+ };
+ const wakeService={stop:async()=>({stopped:true,bindings:[],remotelyDeactivated:null})};
+ await withHost(async({base,origin})=>{
+  const credentials=await(await pair(base,origin)).json();
+  const headers={Origin:origin,Authorization:"Bearer "+credentials.sessionToken,"Content-Type":"application/json"};
+  const response=await fetch(base+"/v1/browser/wake/bindings/revoke",{method:"POST",headers,body:JSON.stringify({bindingId})});
+  assert.equal(response.status,200);
+  assert.deepEqual(await response.json(),{
+   revoked:false,localPollingStopped:false,grantRevoked:false,
+   remoteDeactivationConfirmed:false,remoteDeactivationPending:false
+  });
+ },{browserRuntime,wakeService});
+});
+
+test("binding revoke confirms local stop only for the exact poller it stopped",async()=>{
+ const bindingId="52345678-1234-4234-9234-123456789013";
+ const otherBindingId="52345678-1234-4234-9234-123456789014";
+ const browserRuntime={
+  status:()=>({running:true,pages:1,capabilities:{browserCanonicalWake:true}}),
+  revokeWakeBinding:()=>false
+ };
+ const wakeService={stop:async id=>({stopped:true,bindings:[{bindingId:otherBindingId,stopped:true},{bindingId:id,stopped:true}],remotelyDeactivated:true})};
+ await withHost(async({base,origin})=>{
+  const credentials=await(await pair(base,origin)).json();
+  const headers={Origin:origin,Authorization:"Bearer "+credentials.sessionToken,"Content-Type":"application/json"};
+  const response=await fetch(base+"/v1/browser/wake/bindings/revoke",{method:"POST",headers,body:JSON.stringify({bindingId})});
+  assert.equal(response.status,200);
+  assert.deepEqual(await response.json(),{
+   revoked:true,localPollingStopped:true,grantRevoked:false,
+   remoteDeactivationConfirmed:true,remoteDeactivationPending:false
+  });
+ },{browserRuntime,wakeService});
+});
