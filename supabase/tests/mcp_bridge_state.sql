@@ -15,6 +15,11 @@ declare
   v_session_fk text;
   v_rejoin_definition text;
   v_termination_definition text;
+  v_activation_definition text;
+  v_session_from integer;
+  v_binding_from integer;
+  v_session_lock integer;
+  v_binding_lock integer;
 begin
   if v_table is null then
     raise exception 'Bridge-state table is missing';
@@ -192,6 +197,26 @@ begin
      or position('backroom_wake_jobs' in v_termination_definition)=0
      or position('state = ''cancelled''' in v_termination_definition)=0 then
     raise exception 'MCP Leave must serialize with enqueue and revoke Backroom bindings and queued/leased wakes';
+  end if;
+
+  -- Auto activation and Leave must take locks in the same parent-first order.
+  if pg_catalog.to_regprocedure('public.activate_backroom_wake_grant(text,text,uuid,uuid,integer)') is null then
+    raise exception 'Backroom wake activation RPC is missing';
+  end if;
+  select pg_catalog.lower(pg_catalog.pg_get_functiondef(
+    'public.activate_backroom_wake_grant(text,text,uuid,uuid,integer)'::regprocedure
+  )) into v_activation_definition;
+  v_session_from := pg_catalog.position('from public.rub_minds_mcp_sessions' in v_activation_definition);
+  v_binding_from := pg_catalog.position('from public.backroom_input_bindings' in v_activation_definition);
+  if pg_catalog.position('pg_advisory_xact_lock' in v_activation_definition)=0
+     or v_session_from=0 or v_binding_from=0 or v_session_from>=v_binding_from then
+    raise exception 'Wake activation must lock the MCP parent before the input binding';
+  end if;
+  v_session_lock := pg_catalog.position('for update' in pg_catalog.substr(v_activation_definition,v_session_from));
+  v_binding_lock := pg_catalog.position('for update' in pg_catalog.substr(v_activation_definition,v_binding_from));
+  if v_session_lock=0 or v_binding_lock=0 or
+     v_session_from+v_session_lock-1 >= v_binding_from+v_binding_lock-1 then
+    raise exception 'Wake activation must lock both the MCP parent and binding in parent-first order';
   end if;
 end;
 $bridge_state_security$;
