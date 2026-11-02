@@ -463,20 +463,30 @@ async function startViewSession(payload){
     notify('The screen is visible, but input is view-only because the selected capture could not be bound safely: '+error.message,'error');
   }
   const pc=new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302','stun:stun.cloudflare.com:3478']}]});
-  state.peers.set(sessionId,{pc,stream,channel:null,canControl,terminalId:null,createdAt:Date.now(),lastHeartbeat:Date.now()});
+  state.peers.set(sessionId,{pc,stream,channel:null,canControl,terminalId:null,createdAt:Date.now(),lastHeartbeat:Date.now(),executionGeneration:expectedGeneration});
   startPeerWatchdog();
+  const assertCaptureCurrent=async()=>{
+    const currentGeneration=await invoke('get_execution_generation');
+    if(currentGeneration!==expectedGeneration||state.peers.get(sessionId)?.pc!==pc){
+      throw new Error('Emergency Stop ended this screen-share request. Start a new request to share again.');
+    }
+  };
   for(const mediaTrack of stream.getTracks())pc.addTrack(mediaTrack,stream);
   pc.ondatachannel=event=>{
-    const channel=event.channel;state.peers.get(sessionId).channel=channel;
-    channel.onmessage=event=>void handlePeerData(sessionId,event.data);
+    const peer=state.peers.get(sessionId);
+    if(!peer||peer.pc!==pc){event.channel.close();return;}
+    peer.channel=event.channel;
+    event.channel.onmessage=event=>void handlePeerData(sessionId,event.data);
   };
   // The answer carries the completed ICE candidate set in its SDP.
   pc.onconnectionstatechange=()=>{if(['failed','closed','disconnected'].includes(pc.connectionState))void stopPeer(sessionId);};
   track.addEventListener('ended',()=>void stopPeer(sessionId));
   await pc.setRemoteDescription({type:'offer',sdp:payload.offer.sdp});
+  await assertCaptureCurrent();
   for(const candidate of takeIceCandidates(state.pendingCandidates,sessionId)){try{await pc.addIceCandidate(candidate);}catch{}}
   const answer=await pc.createAnswer();await pc.setLocalDescription(answer);
   await waitForIceGatheringComplete(pc);
+  await assertCaptureCurrent();
   await publishSignal(sessionId,{answer:pc.localDescription.toJSON(),canControl});
   await publish('response',{requestId:payload.requestId,ok:true,sessionId,capability:'view'});
   state.streams.set(sessionId,stream);
