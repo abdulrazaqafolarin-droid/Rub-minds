@@ -36,16 +36,12 @@ test('canonical wake dispatch needs an explicit matching grant, exact focus and 
  }
 });
 
-test('canonical wake trigger instructs durable pending-reply recovery before exact event delivery',()=>{
+test('canonical wake prompt exactly matches the durable SQL enqueue contract',()=>{
  const eventId='550e8400-e29b-41d4-a716-446655440000';
  const prompt=buildCanonicalWakePrompt(eventId);
- assert.match(prompt,/load_original_session_bridge_state/);
- assert.match(prompt,/pending_response/);
- assert.match(prompt,/same source_message_id/);
- assert.match(prompt,/read_group_message/);
- assert.match(prompt,/expected_revision/);
- assert.match(prompt,/revision conflict/);
- assert.match(prompt,/never claim group delivery/);
+ assert.equal(prompt,
+  '@RMconnects\\nEvent: '+eventId+'\\nRetrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.');
  assert.equal(isCanonicalWakePrompt(prompt,eventId),true);
- assert.equal(isCanonicalWakePrompt(prompt.replace('source_message_id equal to the Event UUID','source_message_id random'),eventId),false);
+ assert.equal(isCanonicalWakePrompt(prompt+'\\nextra',eventId),false);
+ assert.equal(isCanonicalWakePrompt(prompt.replace('Acknowledge via MCP.','Send arbitrary text.'),eventId),false);
 });
