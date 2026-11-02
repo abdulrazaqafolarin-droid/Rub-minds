@@ -498,10 +498,17 @@ export function createBackroomHostServer({
               Object.keys(input).some(key=>key!=="bindingId")){
               writeJson(response,400,{error:"invalid_wake_binding_scope"},cors);return;
             }
-            const grantRevoked=browser.revokeWakeBinding(input.bindingId);
+            const grantRevoked=browser.revokeWakeBinding(input.bindingId)===true;
             const stopStatus=await wakeService?.stop?.(input.bindingId);
-            writeJson(response,200,{revoked:true,grantRevoked,
-              remoteDeactivationConfirmed:stopStatus?.remotelyDeactivated===true},cors);
+            const serviceStopConfirmed=Array.isArray(stopStatus?.bindings)&&
+              stopStatus.bindings.some(item=>item?.bindingId===input.bindingId&&item.stopped===true);
+            // No local record is not proof of a stopped worker. After a host
+            // restart the server binding may still be live, but the in-memory
+            // poller/grant has disappeared; report that state as unconfirmed.
+            const localPollingStopped=grantRevoked||serviceStopConfirmed;
+            writeJson(response,200,{revoked:localPollingStopped,localPollingStopped,grantRevoked,
+              remoteDeactivationConfirmed:stopStatus?.remotelyDeactivated===true,
+              remoteDeactivationPending:stopStatus?.remotelyDeactivated===false},cors);
             return;
           }
           if (url.pathname === "/v1/browser/wake/grants") {
