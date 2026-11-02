@@ -202,11 +202,23 @@ export function createBackroomHostServer({
       if (!session) { writeJson(response, 401, { error: "host_session_invalid" }, cors); return; }
       const runtimeStatus = browser.status();
       const executionReady = Object.values(runtimeStatus.capabilities).some(Boolean);
-      const wakeGatewayHost = wakeService?.status?.gatewayHost;
+      const wakeServiceStatus = wakeService?.status;
+      const wakeGatewayHost = wakeServiceStatus?.gatewayHost;
+      const wakeBindings = Array.isArray(wakeServiceStatus?.bindings)
+        ? wakeServiceStatus.bindings.filter(item =>
+          item && typeof item.bindingId === "string" && /^[a-f0-9-]{36}$/i.test(item.bindingId) &&
+          typeof item.polling === "boolean" && typeof item.consentActive === "boolean" &&
+          typeof item.deactivationPending === "boolean"
+        ).slice(0, 10).map(item => ({
+          bindingId: item.bindingId, polling: item.polling,
+          consentActive: item.consentActive, deactivationPending: item.deactivationPending,
+        }))
+        : [];
       writeJson(response, 200, {
         hostId: session.hostId, label: session.clientLabel, expiresAt: session.expiresAt,
         ...(enrollmentDigest ? { enrollmentDigest } : {}),
         ...(typeof wakeGatewayHost === "string" ? { wakeGatewayHost } : {}),
+        ...(wakeBindings.length ? { wakeBindings } : {}),
         protocolVersion: PROTOCOL_VERSION, connected: true, executionReady,
         browserPages: runtimeStatus.pages,
         capabilities: runtimeStatus.capabilities,
