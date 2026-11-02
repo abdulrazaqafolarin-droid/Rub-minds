@@ -539,6 +539,10 @@ export default function BackroomApp() {
   }
   async function bindHostedWakeInput() {
     if (!supabase || !room?.id || !hostInfo?.connected || !hostToken) return;
+    if (hostedWakeBinding && hostedWakeBinding.roomId !== room.id) {
+      setHostMessage('This view is still tracking a binding from another group. Reopen that group to manage or revoke it before registering another binding here.');
+      return;
+    }
     const participationMode=participationModeForInteractionMode(selectedWakeMode);
     if (!participationMode) {
       setHostMessage('Wake is Off. Choose On or Auto before registering an AI input binding.');
@@ -656,22 +660,25 @@ export default function BackroomApp() {
     }finally{setHostBusy(false);}
   }
   async function chooseWakeMode(nextMode: WakeInteractionMode) {
+    const currentRoomBinding = hostedWakeBinding?.roomId === room?.id ? hostedWakeBinding : null;
     if (nextMode === 'off') {
-      if (hostedWakeBinding) {
+      if (currentRoomBinding) {
         if (!window.confirm('Switching to Off permanently revokes this AI input binding and cancels its pending wake events. You can register it again later. Continue?')) return;
         const revoked = await revokeHostedWakeBinding(true);
         if (revoked) setSelectedWakeMode('off');
         return;
       }
-      if (hostedWakeGrantId) await revokeHostedWake();
       setSelectedWakeMode('off');
-      setHostMessage('Interaction mode is Off. No AI wake triggers are armed.');
+      setHostMessage('Interaction mode is Off for this group. No input binding is armed here; other groups’ independently registered bindings are unchanged.');
       return;
     }
     const requiredMode = participationModeForInteractionMode(nextMode);
     if (!requiredMode) return;
-    if (hostedWakeBinding && needsWakeBindingRebind(nextMode, hostedWakeBinding.participationMode)) {
-      if (!window.confirm('Changing from ' + (hostedWakeBinding.participationMode ? interactionModeForParticipationMode(hostedWakeBinding.participationMode) || 'the existing' : 'the existing') + ' to ' + nextMode.toUpperCase() + ' requires revoking the old binding and cancelling its queued wakes. Continue?')) return;
+    if (currentRoomBinding && needsWakeBindingRebind(nextMode, currentRoomBinding.participationMode)) {
+      const oldMode = currentRoomBinding.participationMode
+        ? interactionModeForParticipationMode(currentRoomBinding.participationMode) || 'the existing'
+        : 'the existing';
+      if (!window.confirm('Changing from ' + oldMode + ' to ' + nextMode.toUpperCase() + ' requires revoking the old binding and cancelling its queued wakes. Continue?')) return;
       const revoked = await revokeHostedWakeBinding(true);
       if (!revoked) return;
     }
