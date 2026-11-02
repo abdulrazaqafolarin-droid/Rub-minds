@@ -14,6 +14,42 @@ For a physical test, download the artifact from the **same commit's** successful
 
 The APK is debug-signed and is not a production release. The merged-manifest audit must pass; the final merged manifest currently uses a narrow permission allowlist and exact exported-component allowlist. The current source gate validates the final merged APK manifest, not only the app's source manifest.
 
+### Build the separately configured staging APK
+
+Run this only from the repository on the Windows build machine after the staging migration and Edge Function have been deliberately deployed to the isolated staging Supabase project. Use the staging project's HTTPS URL and its publishable/anon key. Do not use the production project and never use a service-role/secret key.
+
+In PowerShell, set the two values in the current session without committing them:
+
+```powershell
+$env:SUPABASE_URL = 'https://<staging-project-ref>.supabase.co'
+$env:SUPABASE_PUBLISHABLE_KEY = '<staging-publishable-or-anon-key>'
+
+if (-not $env:SUPABASE_URL.StartsWith('https://')) {
+    throw 'A staging HTTPS Supabase URL is required.'
+}
+if ([string]::IsNullOrWhiteSpace($env:SUPABASE_PUBLISHABLE_KEY)) {
+    throw 'The staging publishable/anon key is required.'
+}
+
+Push-Location .\android-companion
+try {
+    gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:auditDebugGuestHostManifest :app:assembleDebug
+    if ($LASTEXITCODE -ne 0) { throw 'Android staging build or acceptance tests failed.' }
+
+    $apk = '.\app\build\outputs\apk\debug\app-debug.apk'
+    $audit = '.\app\build\reports\guest-host-manifest\debug.txt'
+    if (-not (Test-Path $apk -PathType Leaf)) { throw 'Staging APK was not produced.' }
+    if (-not (Test-Path $audit -PathType Leaf)) { throw 'Merged-manifest audit report is missing.' }
+
+    Get-FileHash $apk -Algorithm SHA256
+    Get-Content $audit
+} finally {
+    Pop-Location
+}
+```
+
+Record the APK SHA-256 beside the handset evidence. The environment values are read by Gradle and embedded as the app's public Supabase client configuration; they are not secrets. Do not paste them into an issue or commit them. Confirm the URL is the isolated staging project before building. Rebuild after any migration/function change, and do not reuse the empty-backend CI APK for pairing or streaming.
+
 ## Required setup
 
 1. Use two devices. The TECNO KL4 is the capture source. Open the Backroom Phone Frame on a separate Windows laptop or another device.
