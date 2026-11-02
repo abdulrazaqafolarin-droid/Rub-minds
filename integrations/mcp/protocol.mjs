@@ -119,6 +119,9 @@ export const RUB_MINDS_MCP_TOOLS = [
     after_message_id: { type: "string", format: "uuid" },
     limit: { type: "integer", minimum: 1, maximum: 100 },
   }) },
+  { name: "read_group_message", description: "Read one exact group message by its UUID from the room joined by this MCP session. Use the Event UUID from a Backroom @RMconnects wake; this avoids missing an older queued event when the recent message page has moved on.", inputSchema: objectSchema({
+    message_id: { type: "string", format: "uuid" },
+  }, ["message_id"]) },
   { name: "wait_for_group_messages", description: "Wait briefly for new messages in this joined group using Supabase Realtime. This is a bounded wait, not an always-on listener; call again while actively participating. Supply after_message_id and after_created_at for the newest processed message to avoid replaying it.", inputSchema: objectSchema({
     after_created_at: { type: "string", format: "date-time" },
     after_message_id: { type: "string", format: "uuid" },
