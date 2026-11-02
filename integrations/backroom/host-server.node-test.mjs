@@ -802,6 +802,18 @@ test("paired host status reports only the trusted wake gateway hostname",async()
  },{wakeService});
 });
 
+test("paired host status preserves an authoritative empty wake inventory after process restart",async()=>{
+ const gatewayHost="tzcuuynmviiuactafpld.supabase.co";
+ const wakeService={get status(){return {configured:false,count:0,bindings:[],gatewayHost};}};
+ await withHost(async({base,origin})=>{
+  const credentials=await(await pair(base,origin)).json();
+  const response=await fetch(base+"/v1/host",{headers:{Origin:origin,Authorization:"Bearer "+credentials.sessionToken}});
+  assert.equal(response.status,200);
+  const value=await response.json();
+  assert.deepEqual(value.wakeBindings,[]);
+ },{wakeService});
+});
+
 test("paired host status reports exact local wake poller state without leaking grant credentials",async()=>{
  const bindingId="42345678-1234-4234-9234-123456789012";
  const gatewayHost="tzcuuynmviiuactafpld.supabase.co";
