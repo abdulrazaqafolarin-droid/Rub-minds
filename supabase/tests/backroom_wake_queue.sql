@@ -41,7 +41,7 @@ begin
   insert into public.rooms(id,owner_id,title) values (v_room,v_owner,'Backroom wake queue test room');
   insert into public.participants(id,room_id,display_name,kind,status) values (v_participant,v_room,'Test Backroom Agent','external_agent','active');
   insert into public.agent_connections(room_id,participant_id,owner_id,credential_digest,expires_at,revoked_at)
-  values (v_room,v_participant,v_owner,repeat('a',64),pg_catalog.clock_timestamp()+interval '1 hour',null);
+  values (v_room,v_participant,v_owner,repeat('a',64),pg_catalog.clock_timestamp()+interval '48 hours',null);
 
   insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,room_id,participant_id,expires_at,terminated_at)
   values
@@ -189,6 +189,13 @@ begin
       and wake_expires_at > pg_catalog.clock_timestamp()+interval '23 hours 59 minutes'
       and wake_expires_at <= pg_catalog.clock_timestamp()+interval '24 hours') then
     raise exception '24-hour Auto consent expiry must be persisted exactly within its bound';
+  end if;
+
+  if not exists(select 1 from public.rub_minds_mcp_sessions
+      where session_digest=repeat('6',64)
+        and expires_at > pg_catalog.clock_timestamp()+interval '23 hours 59 minutes'
+        and expires_at <= pg_catalog.clock_timestamp()+interval '24 hours') then
+    raise exception 'The exact live MCP session must be extended to the explicitly approved Auto grant expiry';
   end if;
   v_conflict := false;
   begin
