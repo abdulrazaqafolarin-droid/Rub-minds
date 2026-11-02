@@ -661,7 +661,7 @@ begin
     v_owner,v_room,v_participant,v_host_test,'space-1','session-6',repeat('6',64),
     v_binding_6,'target-6','fingerprint-6',1,'leave-pending-event',
     '@RMconnects'||chr(10)||'Event: leave-pending-event'||chr(10)||
-    'Retrieve this exact Event UUID with read_group_message in your joined Rub Minds MCP session; do not rely on a recent page that could omit delayed events. Use send_group_message with source_message_id equal to the Event UUID for idempotent group delivery. Only after the send is confirmed, save the advanced cursor with save_original_session_bridge_state. If any required tool call or permission is unavailable, defer; never claim group delivery before the MCP send succeeds.',3600);
+    'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   insert into public.rub_minds_mcp_bridge_state(session_digest,room_id,participant_id)
   values (repeat('6',64),v_room,v_participant);
   select public.terminate_rub_minds_mcp_bridge_session(
