@@ -17,9 +17,16 @@ function label(value,name,max=256){
 function uuid(value,name){if(typeof value!=='string'||!UUID.test(value))throw new TypeError('Invalid '+name);return value;}
 export function validateBindingStatusQuery(raw){
  const v=object(raw);
- keys(v,['roomId','participantId']);
+ keys(v,['roomId','participantId','sessionDigest']);
  const result={roomId:uuid(v.roomId,'roomId')};
- if(v.participantId!==undefined)result.participantId=uuid(v.participantId,'participantId');
+ if((v.participantId===undefined)!==(v.sessionDigest===undefined))
+  throw new TypeError('participantId and sessionDigest must be supplied together');
+ if(v.participantId!==undefined){
+  result.participantId=uuid(v.participantId,'participantId');
+  if(typeof v.sessionDigest!=='string'||!HEX64.test(v.sessionDigest))
+   throw new TypeError('Invalid sessionDigest');
+  result.sessionDigest=v.sessionDigest;
+ }
  return Object.freeze(result);
 }
 export function validateHostEnrollment(raw){
