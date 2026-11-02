@@ -22,6 +22,7 @@ on:
       - 'integrations/backroom/desktop-target-selection.node-test.mjs'
       - 'integrations/backroom/video-selection-overlay.mjs'
       - 'integrations/backroom/video-selection-overlay.node-test.mjs'
+      - 'integrations/backroom/emergency-stop-orchestrator.*'
       - 'package.json'
       - 'package-lock.json'
 
