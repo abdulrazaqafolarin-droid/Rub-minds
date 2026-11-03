@@ -24,7 +24,7 @@ const lease={
  jobId:ids.jobId,leaseToken:ids.leaseToken,eventId:'event_123',
  roomId:ids.roomId,bindingId:ids.bindingId,hostId:ids.hostId,
  sessionId:'mcp-session-1',targetId:'native-target-1',
- targetIdentityFingerprint:'fingerprint-1',targetRevision:4,
+ targetIdentityFingerprint:'fingerprint-1',providerConversationIdentityDigest:'c'.repeat(64),targetRevision:4,
  prompt,promptDigest:digest,expiresAt:now+60_000,
 };
 const scope={
@@ -33,6 +33,7 @@ const scope={
  targetId:lease.targetId,targetRevision:lease.targetRevision,surface:'android_app',
  appId:'com.example.chat',identityFingerprint:lease.targetIdentityFingerprint,
  composerIdentityDigest:'a'.repeat(64),sendControlIdentityDigest:'b'.repeat(64),
+  providerConversationIdentityDigest:lease.providerConversationIdentityDigest,
 };
 const digestPrompt=value=>createHash('sha256').update(value,'utf8').digest('hex');
 const create=(overrides={},options={})=>createNativeWakeHandoff(
@@ -43,6 +44,8 @@ function submitted(){return {
  composerIdentityRevalidated:true,sendControlIdentityRevalidated:true,
  composerIdentityDigest:scope.composerIdentityDigest,
  sendControlIdentityDigest:scope.sendControlIdentityDigest,
+ providerConversationIdentityRevalidated:true,
+ providerConversationIdentityDigest:scope.providerConversationIdentityDigest,
  sendInvoked:true,composerCleared:true,
 };}
 function receiver(){
@@ -77,6 +80,7 @@ test('rejects a target/room/device/session/binding scope mismatch before handoff
   s=>s.bindingId='75000000-0000-4000-8000-000000000099',
   s=>s.targetRevision+=1,
   s=>s.identityFingerprint='replacement',
+   s=>s.providerConversationIdentityDigest='d'.repeat(64),
  ]){const s={...scope};mutate(s);assert.throws(()=>createNativeWakeHandoff(lease,s,{now}),/scope mismatch/);}
  const foreign={...scope,deviceId:'72000000-0000-4000-8000-000000000099'};
  assert.equal(validateNativeWakeHandoff(create(),foreign,{now}),null);
@@ -90,6 +94,7 @@ test('rejects message text, wrong event prompt and prompt-digest tampering',()=>
  const h=create();
  assert.equal(validateNativeWakeHandoff({...h,prompt:'hello'},scope,{now}),null);
  assert.equal(validateNativeWakeHandoff({...h,promptDigest:'0'.repeat(64)},scope,{now}),null);
+ assert.equal(validateNativeWakeHandoff({...h,providerConversationIdentityDigest:'0'.repeat(64)},scope,{now}),null);
  assert.equal(validateNativeWakeHandoff({...h,providerConversationIdentityDigest:'0'.repeat(64)},scope,{now}),null);
  assert.equal(validateNativeWakeHandoff({...h,messageBody:'private text'},scope,{now}),null);
  assert.equal(validateNativeWakeHandoff({...h,leaseToken:lease.leaseToken},scope,{now}),null);
@@ -144,6 +149,8 @@ test('submitted result requires prompt readback, unchanged identities, Send and 
   {composerCleared:false},{sendInvoked:false},{promptInserted:false},
   {promptReadbackVerified:false},{composerIdentityRevalidated:false},
   {sendControlIdentityRevalidated:false},
+   {providerConversationIdentityRevalidated:false},
+   {providerConversationIdentityDigest:'f'.repeat(64)},
  ])assert.throws(()=>createNativeWakeHandoffResult(h,{...submitted(),...override}),/Invalid/);
  const r=receiver();r.accept(h);
  const ack=r.settle(h.handoffId,submitted());
