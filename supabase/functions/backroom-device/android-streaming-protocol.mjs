@@ -9,12 +9,6 @@ const MAX_REQUEST_AGE_MS = 30_000;
 const MAX_NATIVE_HANDOFF_TTL_MS = 20_000;
 const ANDROID_NATIVE_SURFACE = "android_app";
 const NATIVE_RESULT_STATES = new Set(["preflight_denied", "submitted", "needs_review"]);
-const NATIVE_RESULT_KEYS = [
-  "version", "kind", "handoffId", "jobId", "deviceId", "roomId", "screenSessionId",
-  "bindingId", "targetId", "targetRevision", "state", "promptInserted", "sendInvoked",
-  "composerCleared", "promptReadbackVerified", "composerIdentityRevalidated",
-  "sendControlIdentityRevalidated", "composerIdentityDigest", "sendControlIdentityDigest", "reason",
-];
 
 function exactKeys(value, keys) {
   return !!value && typeof value === "object" && !Array.isArray(value) &&
@@ -137,12 +131,14 @@ export function validateAndroidNativeWakeResult(result, handoff) {
       (result.reason !== undefined && !reasons.has(result.reason))) return false;
 
   if (result.state === "preflight_denied") {
-    return result.promptInserted === false && result.sendInvoked === false &&
+    return result.reason !== undefined &&
+      result.promptInserted === false && result.sendInvoked === false &&
       result.composerCleared === false &&
       verificationEvidence.every(key => result[key] === undefined);
   }
   if (result.state === "submitted") {
-    return result.promptInserted === true && result.sendInvoked === true &&
+    return result.reason === undefined &&
+      result.promptInserted === true && result.sendInvoked === true &&
       result.composerCleared === true && result.promptReadbackVerified === true &&
       result.composerIdentityRevalidated === true && result.sendControlIdentityRevalidated === true &&
       result.composerIdentityDigest === handoff?.composerIdentityDigest &&
@@ -151,7 +147,8 @@ export function validateAndroidNativeWakeResult(result, handoff) {
   }
   // An ambiguous post-seal result is terminal review, never a safe retry.
   // It may not claim the stronger successful read-back/revalidation evidence.
-  return result.composerCleared === false && verificationEvidence.every(key => result[key] === undefined);
+  return result.reason !== undefined && result.composerCleared === false &&
+    verificationEvidence.every(key => result[key] === undefined);
 }
 
 export function validateAndroidCommandAck(value) {
