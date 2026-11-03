@@ -2,7 +2,9 @@
 
 Status: **The baseline PR #62 Android unit-test, merged-manifest and debug-APK jobs passed. The new artifact-export workflow has not yet executed on its exact PR head (failed jobs returned no runner logs), so no artifact is available; physical handset acceptance is pending.**
 
-This checklist covers the Android real-app mirror, remote touch and remote text entry into the currently focused phone field. It does not certify Android guest virtualization, isolated app data, guest-only frames or accessibility field discovery.
+This checklist covers the Android real-app mirror, remote touch, drag-select accessibility composer targeting, local Send-control discovery/revalidation and remote draft insertion. It does not certify Android guest virtualization, isolated app data or guest-only frames. Send-control discovery is a read-only capability check: it never invokes the Send control and does not enable native Android On / Auto.
+
+**Current source/acceptance boundary — 2026-11-03:** the companion source now selects one editable composer and may discover one unique nearby Send control using local accessibility metadata. The Backroom Phone Frame can request a read-only recheck of the same composer and Send-node identities while the composer is focused. The control identity is hashed before it leaves the phone; labels and editor/message contents are not sent to Rub Minds. These are source changes, not physical handset acceptance. The latest GitHub Actions Android job failed before runner steps/logs were exposed, so the current Android Gradle/JUnit suite has not been verified on this head. No phone-side Send click adapter, durable group wake-queue consumer or local native Auto consent is connected.
 
 ## Exact CI artifact and build boundary
 
@@ -88,8 +90,22 @@ Record the APK SHA-256 beside the handset evidence. The environment values are r
 
 Never use this test on payments, purchases, sending messages or other irreversible actions.
 
-## Phone keyboard and remote text entry
+## Drag-select composer and Send-control discovery
 
+This is a local inspection step, not a message-submission test. Run it only with a harmless test app/conversation and do not press Send.
+
+1. Keep the locally approved test app visible, start the app-window stream and enable the companion's Accessibility service after reviewing its on-phone description.
+2. Select **Drag-select typing area** in the Phone Frame and drag around only the actual editable composer. The phone must resolve exactly one visible, enabled, editable, non-password node in the selected foreground package.
+3. Observe the result. The phone may report one nearby Send control only if exactly one visible, enabled, clickable node has an exact Send label (Send, Send message, or Send prompt) or an unlabelled resource ID with a Send segment. Generic labels such as Submit, Share or Send feedback must not be accepted.
+4. Confirm the candidate is inside the active app window and near the selected composer horizontally and vertically. A control in another app, outside the app bounds, far from the composer, disabled, hidden or ambiguous must remain unverified.
+5. Press **Recheck Send control**. Keep the exact composer focused. The phone must revalidate the same composer identity and the same Send-control identity against the current accessibility tree. A replaced composer, changed Send node, hidden/disabled button, changed app, lost Accessibility permission, or unfocused composer must fail closed.
+6. Confirm that selection and recheck do not click/tap the Send control, insert text, change the conversation, or submit a message. The acknowledgement may return only a boolean/reason and hashed target identity; accessible labels and editor/message contents stay on the phone.
+7. Replace or remove the Send button, navigate to another screen, focus another field, switch apps, disable Accessibility and repeat the recheck. It must report that the control is no longer verified. Re-select the intended composer before any future use.
+8. Record a PASS only when each positive and negative case is observed on the physical handset. Source inspection and policy tests alone are not acceptance.
+
+**Release boundary:** native Send detection/revalidation is not native Send execution. The current Android path remains draft-only (`commitText`). No Android command in this slice invokes `ACTION_CLICK`, an IME action, Enter, or Send. Do not enable Off / On / Auto for this native frame until a device-bound durable wake consumer, exact-target preflight, separate phone-side local wake consent, one-time execution seal and no-replay recovery are implemented and accepted.
+
+## Phone keyboard and remote text entry
 The Android app-window stream does not include the OS keyboard surface. The input path is instead a dedicated text composer in the Backroom Phone Frame connected to the phone's **Rub Minds keyboard** (an Android IME). The user can also type locally using the selected Rub Minds keyboard. This is separate from tap/swipe control and requires a separate local consent.
 
 1. On the phone, open Android Settings and enable **Rub Minds draft keyboard**.
@@ -112,7 +128,7 @@ The Android app-window stream does not include the OS keyboard surface. The inpu
 - Password fields and unsupported/sensitive editor types are denied. Multiline characters are limited to multiline editors. Maximum request size is 4,000 characters.
 - Session/package binding, bounded replay tracking and a per-request acknowledgement prevent a stale or replayed request from being reported as a fresh insertion.
 - If the data channel closes before an acknowledgement, the UI explicitly warns that insertion may already have occurred. Inspect the phone field before retrying; an automatic retry could duplicate text.
-- This is focused-field text insertion, not accessibility field discovery, drag-select targeting, editor readback or a general-purpose remote keyboard takeover.
+- This is focused-field text insertion, not editor readback or a general-purpose remote keyboard takeover. Drag-select composer targeting is a separate local Accessibility feature; Send-control discovery/revalidation is read-only and does not submit.
 
 ## Evidence record
 
