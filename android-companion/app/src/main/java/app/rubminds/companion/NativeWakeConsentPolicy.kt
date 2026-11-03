@@ -29,7 +29,8 @@ data class NativeWakeExecutionRequest(
     val sendTargetId: String,
     val targetRevision: Int,
     val handoffIssuedAtMillis: Long,
-    val handoffExpiresAtMillis: Long
+    val handoffExpiresAtMillis: Long,
+    val providerConversationIdentityDigest: String = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 )
 
 data class NativeWakeExecutionReservation(
@@ -48,7 +49,9 @@ data class NativeWakeExecutionReservation(
     val sendTargetId: String,
     val targetRevision: Int,
     val reservedAtMillis: Long,
-    val grantExpiresAtMillis: Long
+    val grantExpiresAtMillis: Long,
+    // Legacy rows are accepted only for replay-ledger preservation; new requests never accept this sentinel.
+    val providerConversationIdentityDigest: String = LEGACY_CONVERSATION_SCOPE
 )
 
 data class NativeWakeReservationDecision(
@@ -95,6 +98,7 @@ object NativeWakeConsentPolicy {
     const val MAX_GRANT_TTL_MILLIS = 24L * 60L * 60L * 1000L
     const val MIN_GRANT_TTL_MILLIS = 60L * 1000L
     const val MAX_HANDOFF_TTL_MILLIS = 20_000L
+    const val LEGACY_CONVERSATION_SCOPE = "legacy_unscoped"
     const val MAX_HANDOFF_CLOCK_SKEW_MILLIS = 3_000L
     const val MAX_WAKES_PER_MINUTE = 6
     const val MAX_REPLAY_RECORDS = 4096
@@ -174,6 +178,8 @@ object NativeWakeConsentPolicy {
             AppGrantPolicy.isValidSigningCertificateSha256(row.signingCertificateSha256) &&
             targetId.matches(row.composerTargetId) &&
             targetId.matches(row.sendTargetId) &&
+            (row.providerConversationIdentityDigest == LEGACY_CONVERSATION_SCOPE ||
+                targetId.matches(row.providerConversationIdentityDigest)) &&
             row.targetRevision > 0 &&
             row.reservedAtMillis > 0L &&
             row.grantExpiresAtMillis > row.reservedAtMillis &&
@@ -223,6 +229,7 @@ object NativeWakeConsentPolicy {
             !eventId.matches(request.eventId) ||
             !targetId.matches(request.composerTargetId) ||
             !targetId.matches(request.sendTargetId) ||
+            !targetId.matches(request.providerConversationIdentityDigest) ||
             request.targetRevision < 1
         ) return denied("native_wake_scope_invalid")
 
@@ -270,7 +277,8 @@ object NativeWakeConsentPolicy {
             sendTargetId = request.sendTargetId,
             targetRevision = request.targetRevision,
             reservedAtMillis = nowMillis,
-            grantExpiresAtMillis = grant.expiresAtMillis
+            grantExpiresAtMillis = grant.expiresAtMillis,
+            providerConversationIdentityDigest = request.providerConversationIdentityDigest
         )
         return NativeWakeReservationDecision(
             true, "native_wake_execution_sealed", retained + reservation
