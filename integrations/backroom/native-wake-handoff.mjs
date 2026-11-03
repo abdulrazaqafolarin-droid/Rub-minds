@@ -32,32 +32,33 @@ function exactKeys(value,keys){
 }
 function validLease(lease){
  return exactKeys(lease,['jobId','leaseToken','eventId','roomId','bindingId','hostId','sessionId',
-  'targetId','targetIdentityFingerprint','targetRevision','prompt','promptDigest','expiresAt'])&&
+  'targetId','targetIdentityFingerprint','providerConversationIdentityDigest','targetRevision','prompt','promptDigest','expiresAt'])&&
   UUID.test(lease.jobId??'')&&validId(lease.eventId)&&
   UUID.test(lease.leaseToken??'')&&UUID.test(lease.roomId??'')&&
   UUID.test(lease.bindingId??'')&&nonempty(lease.hostId,128)&&
   nonempty(lease.sessionId,256)&&nonempty(lease.targetId,128)&&
-  nonempty(lease.targetIdentityFingerprint)&&Number.isSafeInteger(lease.targetRevision)&&lease.targetRevision>0&&
+  nonempty(lease.targetIdentityFingerprint)&&HEX.test(lease.providerConversationIdentityDigest??'')&&Number.isSafeInteger(lease.targetRevision)&&lease.targetRevision>0&&
   Number.isSafeInteger(lease.expiresAt)&&isCanonicalWakePrompt(lease.prompt,lease.eventId)&&
   HEX.test(lease.promptDigest??'')&&sha256(lease.prompt)===lease.promptDigest;
 }
 function validScope(scope){
  return exactKeys(scope,['deviceId','roomId','screenSessionId','bindingId','hostId','sessionId',
   'targetId','targetRevision','surface','appId','identityFingerprint','composerIdentityDigest',
-  'sendControlIdentityDigest'])&&
+  'sendControlIdentityDigest','providerConversationIdentityDigest'])&&
   UUID.test(scope.deviceId??'')&&UUID.test(scope.roomId??'')&&
   UUID.test(scope.screenSessionId??'')&&UUID.test(scope.bindingId??'')&&
   nonempty(scope.hostId,128)&&nonempty(scope.sessionId,256)&&
   nonempty(scope.targetId,128)&&Number.isSafeInteger(scope.targetRevision)&&scope.targetRevision>0&&
   SURFACES.has(scope.surface)&&nonempty(scope.appId,256)&&
   nonempty(scope.identityFingerprint)&&HEX.test(scope.composerIdentityDigest??'')&&
-  HEX.test(scope.sendControlIdentityDigest??'');
+  HEX.test(scope.sendControlIdentityDigest??'')&&HEX.test(scope.providerConversationIdentityDigest??'');
 }
 function leaseMatchesScope(lease,scope){
  return lease.hostId===scope.hostId&&lease.roomId===scope.roomId&&
   lease.bindingId===scope.bindingId&&lease.sessionId===scope.sessionId&&
   lease.targetId===scope.targetId&&lease.targetRevision===scope.targetRevision&&
-  lease.targetIdentityFingerprint===scope.identityFingerprint;
+  lease.targetIdentityFingerprint===scope.identityFingerprint&&
+  lease.providerConversationIdentityDigest===scope.providerConversationIdentityDigest;
 }
 function buildScopeFields(scope){
  return {
