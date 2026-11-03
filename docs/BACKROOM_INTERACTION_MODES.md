@@ -1,5 +1,7 @@
 # Backroom interaction modes
 
+> The end-to-end relationship between group events, selected composers, draft insertion, wake authorization and native device delivery is mapped in [Backroom group-to-composer wake flow](BACKROOM_GROUP_TO_COMPOSER_WAKE_FLOW.md).
+
 ## Scope
 
 The first Off / On / Auto control is supported only by a live, registered managed-browser composer whose local host reports canonical wake capability. It is not a general-purpose automatic typing switch for native Windows apps, Android apps, terminals, or arbitrary desktop windows. Those surfaces retain their separate manual draft and local-approval flows.
