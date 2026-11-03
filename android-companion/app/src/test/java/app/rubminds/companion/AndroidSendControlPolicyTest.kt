@@ -1,0 +1,97 @@
+package app.rubminds.companion
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class AndroidSendControlPolicyTest {
+    private val root = ComposerScreenRect(0, 0, 1_000, 1_800)
+    private val composer = ComposerScreenRect(100, 1_450, 900, 1_700)
+
+    private fun candidate(
+        id: String = "a".repeat(64),
+        packageName: String = "com.example.chat",
+        bounds: ComposerScreenRect = ComposerScreenRect(820, 1_630, 960, 1_700),
+        label: String = "Send",
+        resourceId: String = "com.example.chat:id/send_button",
+        clickable: Boolean = true,
+        enabled: Boolean = true,
+        visible: Boolean = true
+    ) = SendControlCandidate(
+        id, packageName, bounds, label, resourceId, clickable, enabled, visible
+    )
+
+    @Test fun acceptsOneVisibleEnabledClickableSendControlBesideTheSelectedComposer() {
+        val result = AndroidSendControlPolicy.choose(
+            listOf(candidate()), "com.example.chat", root, composer
+        )
+        assertEquals("unique_send_control_verified", result.reason)
+        assertNotNull(result.candidate)
+    }
+
+    @Test fun acceptsExactAccessibleSendLabelsAndAnUnlabelledSendResourceId() {
+        for (label in listOf("Send", " send message ", "SEND PROMPT")) {
+            val result = AndroidSendControlPolicy.choose(
+                listOf(candidate(label = label)), "com.example.chat", root, composer
+            )
+            assertEquals("unique_send_control_verified", result.reason)
+        }
+        val resourceOnly = candidate(label = "", resourceId = "com.example.chat:id/composer_send")
+        assertTrue(AndroidSendControlPolicy.choose(
+            listOf(resourceOnly), "com.example.chat", root, composer
+        ).candidate != null)
+    }
+
+    @Test fun rejectsGenericOrMisleadingAccessibleNames() {
+        for (label in listOf("Send feedback", "Submit", "Share", "Send to email", "New message")) {
+            val result = AndroidSendControlPolicy.choose(
+                listOf(candidate(label = label, resourceId = "")), "com.example.chat", root, composer
+            )
+            assertNull(result.candidate)
+        }
+    }
+
+    @Test fun requiresExactPackageAndLiveClickableEnabledVisibleControl() {
+        val invalid = listOf(
+            candidate(packageName = "com.example.other"),
+            candidate(clickable = false),
+            candidate(enabled = false),
+            candidate(visible = false),
+            candidate(id = "not-a-sha256")
+        )
+        val result = AndroidSendControlPolicy.choose(
+            invalid, "com.example.chat", root, composer
+        )
+        assertNull(result.candidate)
+        assertEquals("unique_nearby_send_control_not_found", result.reason)
+    }
+
+    @Test fun rejectsControlsOutsideTheAppWindowOrFarFromTheSelectedComposer() {
+        val outside = candidate(bounds = ComposerScreenRect(1_010, 1_630, 1_080, 1_700))
+        val distant = candidate(bounds = ComposerScreenRect(820, 100, 960, 160))
+        val result = AndroidSendControlPolicy.choose(
+            listOf(outside, distant), "com.example.chat", root, composer
+        )
+        assertNull(result.candidate)
+    }
+
+    @Test fun refusesMultipleMatchingSendControlsInsteadOfGuessing() {
+        val result = AndroidSendControlPolicy.choose(
+            listOf(candidate(id = "a".repeat(64)), candidate(id = "b".repeat(64))),
+            "com.example.chat", root, composer
+        )
+        assertNull(result.candidate)
+        assertEquals("multiple_send_controls_ambiguous", result.reason)
+    }
+
+    @Test fun malformedWindowOrComposerBoundsFailClosed() {
+        val badRoot = ComposerScreenRect(0, 0, 0, 1_800)
+        val result = AndroidSendControlPolicy.choose(
+            listOf(candidate()), "com.example.chat", badRoot, composer
+        )
+        assertNull(result.candidate)
+        assertEquals("invalid_app_or_composer_bounds", result.reason)
+    }
+}
