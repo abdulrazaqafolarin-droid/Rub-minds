@@ -164,7 +164,7 @@ Do not mark physical acceptance complete from source inspection, unit tests or a
 Android guest virtualization remains a separate gate: this implementation mirrors a real installed app. It does not create an isolated guest process/data container or render a guest-only virtual display.
 
 
-## Provider-conversation isolation acceptance — not yet implemented
+## Provider-conversation isolation acceptance — protocol implemented; provider adapters unavailable
 
 | Scenario | Required behavior | Current status |
 |---|---|---|
