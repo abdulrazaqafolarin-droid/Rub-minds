@@ -187,3 +187,15 @@ test('Backroom capability copy reports the missing group forwarder rather than a
   assert.match(devicesUi, /Not available · group forwarding missing/);
   assert.doesNotMatch(devicesUi, /Not available · wake queue not connected/);
 });
+
+test('native consent and one-shot journal mutations share a process-wide lock across store instances', () => {
+  assert.match(store, /STORE_LOCK = Any\(\)/);
+  for (const name of ['confirmGrant', 'activeGrant', 'revoke', 'revokePackage', 'revokeDevice', 'reserveExecution']) {
+    const start = store.indexOf(`fun ${name}(`);
+    assert.notEqual(start, -1, `missing ${name}`);
+    const end = store.indexOf('\n    }', start);
+    assert.notEqual(end, -1, `missing end for ${name}`);
+    assert.match(store.slice(start, end), /synchronized\(STORE_LOCK\)/, `${name} must use the shared store lock`);
+  }
+  assert.doesNotMatch(store, /@Synchronized/);
+});
