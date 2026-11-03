@@ -106,3 +106,47 @@ test("wake execution seal is not acquired when local app preflight fails", async
   assert.equal(sealCalls, 0);
   assert.equal(effectCalls, 0);
 });
+
+test("native wake cannot execute without a durable one-time seal callback", async () => {
+  let effectCalls = 0;
+  const wakeHost = { ...host, operations: ["wake"] };
+  const wakeCommand = { ...command, operation: "wake", eventId: "event-1", text: buildCanonicalWakePrompt("event-1") };
+  const guard = new LocalExecutionGuard({
+    host: wakeHost,
+    isConnected: async () => true,
+    permission: async () => true,
+    adapter: {
+      probe: async () => probe,
+      execute: async () => { effectCalls++; return { state: "completed", verified: true }; },
+    },
+  });
+  await assert.rejects(
+    () => guard.execute({ command: wakeCommand, target }),
+    /native wake requires a durable execution seal/,
+  );
+  assert.equal(effectCalls, 0);
+});
+
+test("native wake adapter receives explicit proof that the seal hook completed", async () => {
+  let observedSeal = null;
+  const wakeHost = { ...host, operations: ["wake"] };
+  const wakeCommand = { ...command, operation: "wake", eventId: "event-1", text: buildCanonicalWakePrompt("event-1") };
+  const guard = new LocalExecutionGuard({
+    host: wakeHost,
+    isConnected: async () => true,
+    permission: async () => true,
+    adapter: {
+      probe: async () => probe,
+      execute: async ({ executionSealReserved }) => {
+        observedSeal = executionSealReserved;
+        return { state: "completed", verified: true };
+      },
+    },
+  });
+  await guard.execute({
+    command: wakeCommand,
+    target,
+    beforeEffect: async () => true,
+  });
+  assert.equal(observedSeal, true);
+});
