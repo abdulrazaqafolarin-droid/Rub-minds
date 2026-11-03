@@ -274,10 +274,14 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 false
             }
             if (!bounds.isEmpty && clickActionAvailable) {
-                val label = listOf(
-                    node.text?.toString().orEmpty(),
-                    node.contentDescription?.toString().orEmpty()
-                ).filter { it.isNotBlank() }.distinct().joinToString(" ").take(120)
+                val textLabel = node.text?.toString().orEmpty().take(120)
+                val descriptionLabel = node.contentDescription?.toString().orEmpty().take(120)
+                val label = when {
+                    AndroidSendControlPolicy.isRecognizedLabel(textLabel) -> textLabel
+                    AndroidSendControlPolicy.isRecognizedLabel(descriptionLabel) -> descriptionLabel
+                    textLabel.isNotBlank() -> textLabel
+                    else -> descriptionLabel
+                }
                 candidates += SendControlCandidate(
                     targetId = composerTargetId(node, packageName),
                     packageName = packageName,
