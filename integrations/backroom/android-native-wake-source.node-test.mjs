@@ -10,6 +10,8 @@ const handoffPolicy = await read('../../android-companion/app/src/main/java/app/
 const handoffTest = await read('../../android-companion/app/src/test/java/app/rubminds/companion/AndroidNativeWakeHandoffPolicyTest.kt');
 const bindingPolicy = await read('../../android-companion/app/src/main/java/app/rubminds/companion/NativeWakeBindingPolicy.kt');
 const bindingPolicyTest = await read('../../android-companion/app/src/test/java/app/rubminds/companion/NativeWakeBindingPolicyTest.kt');
+const providerConversation = await read('../../android-companion/app/src/main/java/app/rubminds/companion/ProviderConversationIdentity.kt');
+const providerConversationTest = await read('../../android-companion/app/src/test/java/app/rubminds/companion/ProviderConversationIdentityPolicyTest.kt');
 const consent = await read('../../android-companion/app/src/main/java/app/rubminds/companion/NativeWakeConsentPolicy.kt');
 const store = await read('../../android-companion/app/src/main/java/app/rubminds/companion/AndroidNativeWakeConsentStore.kt');
 const activity = await read('../../android-companion/app/src/main/java/app/rubminds/companion/MainActivity.kt');
@@ -246,4 +248,24 @@ test('native Send is serialized against session and composer-target invalidation
   assert.match(awaitClear, /bindingGenerationAtStart/);
   assert.match(bindingPolicy, /expectedGeneration == currentGeneration/);
   assert.match(bindingPolicyTest, /nativeWakeRequiresTheExactUninterruptedSessionAndTargetBinding/);
+});
+
+
+test('native wake fails closed without provider conversation identity and carries only its digest', () => {
+  assert.match(providerConversation, /private val adapters: Map<String, ProviderConversationIdentityAdapter> = emptyMap\(\)/);
+  assert.match(providerConversation, /fun activeConversationStableId/);
+  assert.match(providerConversation, /MessageDigest\.getInstance\("SHA-256"\)/);
+  assert.match(providerConversation, /fun matches\(expectedDigest: String\?, currentDigest: String\?\)/);
+  assert.match(providerConversationTest, /providerAndConversationIdentityAreHashedLocallyAndDifferentThreadsDoNotMatch/);
+  assert.match(providerConversationTest, /noUnverifiedProviderAdapterIsReportedAsConversationCapable/);
+  assert.match(bindingPolicy, /expectedProviderConversationDigest/);
+  assert.match(bindingPolicy, /ProviderConversationIdentityPolicy\.matches/);
+  assert.match(handoffPolicy, /providerConversationIdentityDigest/);
+  assert.match(service, /ProviderConversationIdentityResolver\.resolve\(packageName, root\)/);
+  assert.match(service, /ProviderConversationIdentityResolver\.resolve\(request\.packageName, root\)/);
+  assert.match(service, /currentProviderConversationIdentityDigest\(request\.packageName\)/);
+  assert.match(service, /boundProviderConversationIdentityDigest = null/);
+  assert.match(screen, /isBoundToProviderConversation\(/);
+  assert.match(screen, /providerConversationIdentityUnavailable/);
+  assert.match(ime, /isSelectedComposerEmpty/);
 });
