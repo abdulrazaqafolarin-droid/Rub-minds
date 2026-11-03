@@ -47,6 +47,19 @@ The native wake grant is distinct from app selection, remote touch, general draf
 
 The future native worker checks this grant non-consumingly as part of `LocalExecutionGuard.permission`. Its `beforeEffect` callback uses `reserveNativeWakeExecution` to reserve the durable `FileWakeExecutionJournal` seal first and then consume the exact native grant. A duplicate seal or invalid/expired grant blocks Send. If grant consumption fails after reservation, the seal remains; the job is not replayed. This helper is source-level only: no Android/Windows local approval screen or device-bound wake consumer is wired yet.
 
+
+## Durable dispatch integration verification — 2026-11-03
+
+The adapter has now been exercised through the real source-level `dispatchClaimedWake` path with a registered `TargetRegistry`, `BackroomDispatcher`, `LocalExecutionGuard` and a claimed event lease. The integration test verifies:
+
+- The wake grant is checked before local inspection; device connectivity/permission and the live foreground composer/Send preflight occur before sealing.
+- The durable one-time seal is reserved before the one-shot grant is consumed, and both happen before the native adapter is called.
+- A failed focus/composer preflight returns the lease to the retry path without sealing or consuming the grant.
+- A Send with no confirmed composer-clear result, or a native channel failure after sealing, is acknowledged as ignored/needs-review and is not retried.
+- Only the canonical event-bound prompt is passed to the platform driver; the original group-message body is not passed through the native adapter.
+
+The focused Node 22 sandbox run of the shared guard, adapter policy and durable-dispatch integration tests passed **27/27**. This did not load an actual Android Accessibility/IME or Windows UIA driver. The separate `NativeWakeAuthorizationAuthority` policy suite remains an independent process-local grant test and should be included in the next combined check.
+
 ## Current implementation boundary
 
 - Implemented: shared `NativeCanonicalWakeAdapter`, fail-closed `LocalExecutionGuard` seal requirement for native wake, and Node policy/regression tests.
