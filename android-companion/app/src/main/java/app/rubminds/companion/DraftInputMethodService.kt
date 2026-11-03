@@ -291,6 +291,10 @@ class DraftInputMethodService : InputMethodService() {
                 request.sessionId, request.packageName, request.composerTargetId
             )
         ) return denied("selected_composer_not_empty_or_changed")
+        if (!AndroidTouchAccessibilityService.isBoundToProviderConversation(
+                request.sessionId, request.packageName, request.providerConversationIdentityDigest
+            )
+        ) return denied("provider_conversation_identity_unavailable_or_changed")
 
         // Persist the one-shot seal only after the exact app, signer, editor,
         // selected composer, and local 24-hour native-wake grant are rechecked.
@@ -309,6 +313,15 @@ class DraftInputMethodService : InputMethodService() {
         // not insert a now-stale trigger.
         if (request.handoffExpiresAtMillis <= System.currentTimeMillis()) {
             return NativeWakeInsertResult(NativeWakeInsertState.NEEDS_REVIEW, "native_wake_handoff_expired_after_seal")
+        }
+        if (!AndroidTouchAccessibilityService.isBoundToProviderConversation(
+                request.sessionId, request.packageName, request.providerConversationIdentityDigest
+            )
+        ) {
+            return NativeWakeInsertResult(
+                NativeWakeInsertState.NEEDS_REVIEW,
+                "provider_conversation_identity_changed_after_seal"
+            )
         }
 
         // Once the seal exists, every uncertain insertion outcome is terminal:
