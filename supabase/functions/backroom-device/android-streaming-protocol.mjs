@@ -7,7 +7,7 @@ const PACKAGE = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/;
 const MAX_SDP_CHARS = 65_536;
 const MAX_REQUEST_AGE_MS = 30_000;
 const MAX_NATIVE_HANDOFF_TTL_MS = 20_000;
-const NATIVE_SURFACES = new Set(["android_app", "windows_app", "desktop_app"]);
+const ANDROID_NATIVE_SURFACE = "android_app";
 const NATIVE_RESULT_STATES = new Set(["preflight_denied", "submitted", "needs_review"]);
 const NATIVE_RESULT_KEYS = [
   "version", "kind", "handoffId", "jobId", "deviceId", "roomId", "screenSessionId",
@@ -83,7 +83,7 @@ export function validateAndroidNativeWakeHandoff(value, { now = Date.now(), cloc
       !UUID.test(value.bindingId ?? "") || !isNonempty(value.sessionId, 256) ||
       !isNonempty(value.targetId, 128) ||
       !Number.isSafeInteger(value.targetRevision) || value.targetRevision < 1 ||
-      !NATIVE_SURFACES.has(value.surface) || !isPackageName(value.appId) ||
+      value.surface !== ANDROID_NATIVE_SURFACE || !isPackageName(value.appId) ||
       !isNonempty(value.identityFingerprint) ||
       !HEX.test(value.composerIdentityDigest ?? "") ||
       !HEX.test(value.sendControlIdentityDigest ?? "") ||
