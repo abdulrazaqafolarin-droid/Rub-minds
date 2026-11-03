@@ -82,7 +82,7 @@ export function createNativeWakeHandoff(lease,scope,{now=Date.now(),handoffId=ra
  const handoff=Object.freeze({
   version:1,kind:'native_wake_trigger',handoffId:handoffId.toLowerCase(),
   jobId:lease.jobId.toLowerCase(),eventId:lease.eventId,
-  ...buildScopeFields(scope),leaseToken:lease.leaseToken.toLowerCase(),
+  ...buildScopeFields(scope),leaseTokenDigest:sha256(lease.leaseToken),
   prompt:buildCanonicalWakePrompt(lease.eventId),promptDigest:lease.promptDigest,
   issuedAt:now,leaseExpiresAt:lease.expiresAt,expiresAt,
  });
@@ -93,7 +93,7 @@ const HANDOFF_KEYS=[
  'version','kind','handoffId','jobId','eventId','deviceId','roomId','screenSessionId',
  'hostId','bindingId','sessionId','targetId','targetRevision','surface','appId',
  'identityFingerprint','composerIdentityDigest','sendControlIdentityDigest',
- 'leaseToken','prompt','promptDigest','issuedAt','leaseExpiresAt','expiresAt',
+ 'leaseTokenDigest','prompt','promptDigest','issuedAt','leaseExpiresAt','expiresAt',
 ];
 export function validateNativeWakeHandoff(payload,expected,{now=Date.now(),clockSkewMs=3_000}={}){
  if(!exactKeys(payload,HANDOFF_KEYS)||!validScope(expected)||
@@ -176,8 +176,13 @@ const RESULT_KEYS=new Set([
  'composerCleared','promptReadbackVerified','composerIdentityRevalidated',
  'sendControlIdentityRevalidated','composerIdentityDigest','sendControlIdentityDigest','reason',
 ]);
+const REQUIRED_RESULT_KEYS=[
+ 'version','kind','handoffId','jobId','deviceId','roomId','screenSessionId',
+ 'bindingId','targetId','targetRevision','state','promptInserted','sendInvoked','composerCleared',
+];
 export function validateNativeWakeHandoffResult(result,handoff){
  if(!result||typeof result!=='object'||Array.isArray(result)||
+  !REQUIRED_RESULT_KEYS.every(key=>Object.hasOwn(result,key))||
   Object.keys(result).some(key=>!RESULT_KEYS.has(key))||
   result.version!==1||result.kind!=='native_wake_result'||
   result.handoffId!==handoff?.handoffId||result.jobId!==handoff?.jobId||
@@ -218,7 +223,8 @@ export class NativeWakeHandoffReceiver {
   }
   if(job.terminal||job.activeHandoffId||job.attempts>=MAX_ATTEMPTS_PER_JOB||
     job.leaseTokens.has(handoff.leaseToken))return null;
-  job.leaseTokens.add(handoff.leaseToken);
+  if(job.leaseTokens.has(handoff.leaseTokenDigest))return null;
+  job.leaseTokens.add(handoff.leaseTokenDigest);
   job.attempts+=1;job.activeHandoffId=handoff.handoffId;
   this.#handoffs.set(handoff.handoffId,{jobId:handoff.jobId,state:'accepted',handoff});
   return handoff;
