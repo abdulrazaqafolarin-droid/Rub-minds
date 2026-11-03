@@ -337,7 +337,8 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         val expectedPackage = boundPackageName
         if (expectedSession != request.sessionId || expectedPackage != request.packageName ||
             !UUID_PATTERN.matches(request.deviceId) ||
-            !UUID_PATTERN.matches(request.sessionId)
+            !UUID_PATTERN.matches(request.sessionId) ||
+            request.handoffExpiresAtMillis <= System.currentTimeMillis()
         ) return false
         synchronized(this) {
             if (nativeWakeInFlight) return false
@@ -370,6 +371,10 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 }
             }
 
+            if (request.handoffExpiresAtMillis <= System.currentTimeMillis()) {
+                finish(NativeWakeSubmissionState.PRECHECK_DENIED, "native_wake_handoff_expired_before_execution")
+                return@post
+            }
             if (boundSessionId != request.sessionId || boundPackageName != request.packageName ||
                 !isServiceEnabled(this)
             ) {
@@ -579,7 +584,10 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                         AndroidSendControlPolicy.isRecognizedResourceId(exactSendNode.viewIdResourceName.orEmpty())
                     if (recognizedLabel || fallbackResource) {
                         sendControlIdentityRevalidated = true
-                        exactSendNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        // This final deadline check sits immediately before the
+                        // only native Send side effect, after node/label checks.
+                        if (request.handoffExpiresAtMillis <= System.currentTimeMillis()) false
+                        else exactSendNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                     } else false
                 }
             } catch (_: SecurityException) {
@@ -588,7 +596,12 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 exactSendNode.recycle()
             }
             if (!invoked) {
-                finish(NativeWakeSubmissionState.NEEDS_REVIEW, "native_send_action_unconfirmed")
+                finish(
+                    NativeWakeSubmissionState.NEEDS_REVIEW,
+                    if (request.handoffExpiresAtMillis <= System.currentTimeMillis())
+                        "native_wake_handoff_expired_after_seal"
+                    else "native_send_action_unconfirmed"
+                )
                 return@post
             }
             sendInvoked = true
