@@ -1085,6 +1085,15 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         fun isSelectedComposerEmpty(sessionId: String, packageName: String, targetId: String): Boolean =
             instance?.isSelectedComposerEmpty(sessionId, packageName, targetId) == true
 
+        fun isBoundToProviderConversation(
+            sessionId: String,
+            packageName: String,
+            providerConversationIdentityDigest: String
+        ): Boolean = instance?.isBoundToProviderConversation(
+            sessionId, packageName, providerConversationIdentityDigest
+        ) == true
+
+
         fun submitCanonicalWake(
             request: NativeWakeExecutionRequest,
             onResult: (NativeWakeSubmissionResult) -> Unit
