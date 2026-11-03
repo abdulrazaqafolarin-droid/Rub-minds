@@ -102,6 +102,16 @@ class NativeWakeConsentPolicyTest {
         assertEquals("native_wake_replay_ledger_corrupt", result.reason)
     }
 
+    @Test fun aFutureDatedReplayRecordCorruptsTheJournalAndFailsClosed() {
+        val future = NativeWakeExecutionReservation(
+            grantId, "future_event", deviceId, sessionId, packageName, signer,
+            "b".repeat(64), "c".repeat(64), 1, now + 1L, now + 60_000
+        )
+        val result = NativeWakeConsentPolicy.reserveExecution(grant(), request(), listOf(future), now)
+        assertFalse(result.allowed)
+        assertEquals("native_wake_replay_ledger_corrupt", result.reason)
+    }
+
     @Test fun sixWakesPerMinuteIsTheHardLocalCeiling() {
         var rows = emptyList<NativeWakeExecutionReservation>()
         repeat(NativeWakeConsentPolicy.MAX_WAKES_PER_MINUTE) { index ->
