@@ -271,6 +271,7 @@ test('native wake fails closed without provider conversation identity and carrie
   assert.match(service, /currentProviderConversationIdentityDigest\(request\.packageName\)/);
   assert.match(service, /boundProviderConversationIdentityDigest = null/);
   assert.match(screen, /isBoundToProviderConversation\(/);
+  assert.match(service, /fun isBoundToProviderConversation\([\s\S]*?instance\?\.isBoundToProviderConversation\(/);
   assert.match(screen, /providerConversationIdentityUnavailable/);
   assert.match(screen, /provider_conversation.*conversation_scope_unavailable/);
   const ack = method(screen, '    private fun acknowledgeNativeWake(', '    private fun processCommand(');
