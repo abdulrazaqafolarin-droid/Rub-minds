@@ -35,6 +35,22 @@ class AppGrantPolicyTest {
         assertFalse(AppGrantPolicy.canInsertDraft(selectedGrant.copy(packageName = ""), "", signingDigest, normalTextInput))
     }
 
+    @Test fun composerSelectionRequiresEitherDraftGrantOrSeparateNativeWakeConsent() {
+        assertTrue(AppGrantPolicy.canSelectComposerTarget(selectedGrant, signingDigest, false))
+        assertTrue(AppGrantPolicy.canSelectComposerTarget(
+            selectedGrant.copy(allowDraftInsertion = false), signingDigest, true
+        ))
+        assertFalse(AppGrantPolicy.canSelectComposerTarget(
+            selectedGrant.copy(allowDraftInsertion = false), signingDigest, false
+        ))
+        assertFalse(AppGrantPolicy.canSelectComposerTarget(
+            selectedGrant.copy(allowLaunch = false, allowDraftInsertion = false), signingDigest, true
+        ))
+        assertFalse(AppGrantPolicy.canSelectComposerTarget(
+            selectedGrant.copy(allowDraftInsertion = false), "b".repeat(64), true
+        ))
+    }
+
     @Test fun sensitiveTextVariationsAreAlwaysDenied() {
         val passwordTypes = listOf(
             InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
