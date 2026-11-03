@@ -15,6 +15,11 @@ data class NativeWakeGrant(
 
 data class NativeWakeExecutionRequest(
     val grantId: String,
+    val jobId: String,
+    val hostId: String,
+    val roomId: String,
+    val bindingId: String,
+    val leaseTokenDigest: String,
     val deviceId: String,
     val sessionId: String,
     val packageName: String,
@@ -28,6 +33,11 @@ data class NativeWakeExecutionRequest(
 data class NativeWakeExecutionReservation(
     val grantId: String,
     val eventId: String,
+    val jobId: String,
+    val hostId: String,
+    val roomId: String,
+    val bindingId: String,
+    val leaseTokenDigest: String,
     val deviceId: String,
     val sessionId: String,
     val packageName: String,
@@ -136,6 +146,11 @@ object NativeWakeConsentPolicy {
 
     fun isValidReservation(row: NativeWakeExecutionReservation): Boolean =
         uuid.matches(row.grantId) &&
+            uuid.matches(row.jobId) &&
+            uuid.matches(row.hostId) &&
+            uuid.matches(row.roomId) &&
+            uuid.matches(row.bindingId) &&
+            Regex("^[a-f0-9]{64}$").matches(row.leaseTokenDigest) &&
             uuid.matches(row.deviceId) &&
             uuid.matches(row.sessionId) &&
             eventId.matches(row.eventId) &&
@@ -162,6 +177,11 @@ object NativeWakeConsentPolicy {
                 request.signingCertificateSha256, nowMillis
             )) return denied("native_wake_grant_inactive")
         if (request.grantId != grant?.grantId ||
+            !uuid.matches(request.jobId) ||
+            !uuid.matches(request.hostId) ||
+            !uuid.matches(request.roomId) ||
+            !uuid.matches(request.bindingId) ||
+            !Regex("^[a-f0-9]{64}$").matches(request.leaseTokenDigest) ||
             !uuid.matches(request.sessionId) ||
             !eventId.matches(request.eventId) ||
             !targetId.matches(request.composerTargetId) ||
@@ -177,11 +197,20 @@ object NativeWakeConsentPolicy {
                 nowMillis >= row.reservedAtMillis &&
                 nowMillis - row.reservedAtMillis <= REPLAY_RETENTION_MILLIS
         }
-        if (retained.any { it.grantId == grant.grantId && it.eventId == request.eventId }) {
+        // The same durable queue event/job/lease remains spent even if the
+        // owner revokes and re-arms local consent with a new grant ID.
+        if (retained.any {
+            it.deviceId == request.deviceId &&
+                it.roomId == request.roomId &&
+                it.bindingId == request.bindingId &&
+                (it.jobId == request.jobId || it.eventId == request.eventId ||
+                    it.leaseTokenDigest == request.leaseTokenDigest)
+        }) {
             return denied("native_wake_event_already_reserved", retained)
         }
         val recent = retained.count {
-            it.grantId == grant.grantId &&
+            it.deviceId == request.deviceId && it.roomId == request.roomId &&
+                it.bindingId == request.bindingId &&
                 it.reservedAtMillis > nowMillis - 60_000L &&
                 it.reservedAtMillis <= nowMillis
         }
@@ -191,6 +220,11 @@ object NativeWakeConsentPolicy {
         val reservation = NativeWakeExecutionReservation(
             grantId = grant.grantId,
             eventId = request.eventId,
+            jobId = request.jobId,
+            hostId = request.hostId,
+            roomId = request.roomId,
+            bindingId = request.bindingId,
+            leaseTokenDigest = request.leaseTokenDigest,
             deviceId = request.deviceId,
             sessionId = request.sessionId,
             packageName = request.packageName,
