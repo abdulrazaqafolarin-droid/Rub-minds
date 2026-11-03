@@ -147,8 +147,13 @@ test("native wake result requires matching handoff scope and complete evidence f
     promptReadbackVerified: true, composerIdentityRevalidated: true,
     sendControlIdentityRevalidated: true,
     composerIdentityDigest, sendControlIdentityDigest,
+    providerConversationIdentityRevalidated: true, providerConversationIdentityDigest,
   };
   assert.equal(validateAndroidNativeWakeResult(result, handoff), true);
+  assert.equal(validateAndroidNativeWakeResult({ ...result, providerConversationIdentityRevalidated: false }, handoff), false);
+  assert.equal(validateAndroidNativeWakeResult({ ...result, providerConversationIdentityDigest: "f".repeat(64) }, handoff), false);
+  const { providerConversationIdentityDigest: _missingConversationDigest, ...missingConversationDigest } = result;
+  assert.equal(validateAndroidNativeWakeResult(missingConversationDigest, handoff), false);
   assert.equal(validateAndroidNativeWakeResult({ ...result, targetRevision: 99 }, handoff), false);
   assert.equal(validateAndroidNativeWakeResult({ ...result, sendInvoked: false }, handoff), false);
   assert.equal(validateAndroidNativeWakeResult({ ...result, composerIdentityDigest: "e".repeat(64) }, handoff), false);
