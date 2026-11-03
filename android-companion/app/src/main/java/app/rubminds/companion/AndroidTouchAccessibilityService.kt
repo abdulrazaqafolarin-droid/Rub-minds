@@ -563,7 +563,10 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                         request.packageName, boundPackageName,
                         request.composerTargetId, boundComposerTargetId,
                         request.sendTargetId, boundSendTargetId,
-                    request.providerConversationIdentityDigest, boundProviderConversationIdentityDigest
+                        request.providerConversationIdentityDigest, boundProviderConversationIdentityDigest
+                    ) || !ProviderConversationIdentityPolicy.matches(
+                        request.providerConversationIdentityDigest,
+                        currentProviderConversationIdentityDigest(request.packageName)
                     )
                 ) {
                     null
