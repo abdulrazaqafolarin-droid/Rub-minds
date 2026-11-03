@@ -666,6 +666,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             awaitComposerClear(
                 handler = handler,
                 request = request,
+                bindingGenerationAtStart = bindingGenerationAtStart,
                 deadlineMillis = android.os.SystemClock.elapsedRealtime() + NATIVE_WAKE_CLEAR_TIMEOUT_MS,
                 onComplete = { cleared ->
                     composerCleared = cleared
@@ -686,6 +687,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
     private fun awaitComposerClear(
         handler: Handler,
         request: NativeWakeExecutionRequest,
+        bindingGenerationAtStart: Long,
         deadlineMillis: Long,
         onComplete: (Boolean) -> Unit
     ) {
@@ -709,7 +711,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             val root = try { rootInActiveWindow } catch (_: SecurityException) { null }
             if (root == null) {
                 if (android.os.SystemClock.elapsedRealtime() >= deadlineMillis) onComplete(false)
-                else awaitComposerClear(handler, request, deadlineMillis, onComplete)
+                else awaitComposerClear(handler, request, bindingGenerationAtStart, deadlineMillis, onComplete)
                 return@postDelayed
             }
             val cleared = try {
@@ -732,7 +734,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             } else if (android.os.SystemClock.elapsedRealtime() >= deadlineMillis) {
                 onComplete(false)
             } else {
-                awaitComposerClear(handler, request, deadlineMillis, onComplete)
+                awaitComposerClear(handler, request, bindingGenerationAtStart, deadlineMillis, onComplete)
             }
         }, NATIVE_WAKE_CLEAR_POLL_MS)
     }
