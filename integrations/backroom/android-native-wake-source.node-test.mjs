@@ -221,6 +221,11 @@ test('native Send is serialized against session and composer-target invalidation
   const bind = method(service, '    fun bindSession(sessionId: String, packageName: String): Boolean {', '    fun dispatchRemoteBack(');
   assert.match(bind, /synchronized\(this\)[\s\S]*nativeBindingGeneration\+\+/);
 
+  const interrupt = method(service, '    override fun onInterrupt()', '    override fun onDestroy()');
+  assert.match(interrupt, /nativeBindingGeneration\+\+/);
+  assert.match(interrupt, /boundProviderConversationIdentityDigest = null/);
+  assert.match(interrupt, /boundSessionId = null/);
+
   const select = method(service, '    fun selectComposerTarget(', '    fun revalidateSelectedSendControl(');
   assert.match(select, /nativeBindingGeneration\+\+/);
   assert.match(select, /nativeBindingGeneration != selectionGeneration/);
