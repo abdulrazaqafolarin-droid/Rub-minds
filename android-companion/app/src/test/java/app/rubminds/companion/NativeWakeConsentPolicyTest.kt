@@ -42,10 +42,12 @@ class NativeWakeConsentPolicyTest {
         composer: String = "b".repeat(64),
         send: String = "c".repeat(64),
         revision: Int = 2,
+        handoffIssuedAt: Long = now,
         handoffExpiresAt: Long = now + NativeWakeConsentPolicy.MAX_HANDOFF_TTL_MILLIS
     ) = NativeWakeExecutionRequest(
         grantId, job, host, room, binding, leaseDigest,
-        device, sessionId, app, signing, event, composer, send, revision, handoffExpiresAt
+        device, sessionId, app, signing, event, composer, send, revision,
+        handoffIssuedAt, handoffExpiresAt
     )
 
     @Test fun canonicalWakePromptIsEventBoundAndCannotCarryGroupMessageText() {
@@ -117,6 +119,40 @@ class NativeWakeConsentPolicyTest {
             emptyList(), now
         )
         assertTrue(live.allowed)
+    }
+
+    @Test fun validFutureIssuedHandoffWithinClockSkewIsNotFalselyRejected() {
+        val withinSkew = NativeWakeConsentPolicy.reserveExecution(
+            grant(),
+            request(
+                handoffIssuedAt = now + 2_000L,
+                handoffExpiresAt = now + 22_000L
+            ),
+            emptyList(),
+            now
+        )
+        assertTrue(withinSkew.allowed)
+
+        val beyondSkew = NativeWakeConsentPolicy.reserveExecution(
+            grant(),
+            request(
+                handoffIssuedAt = now + NativeWakeConsentPolicy.MAX_HANDOFF_CLOCK_SKEW_MILLIS + 1L,
+                handoffExpiresAt = now + NativeWakeConsentPolicy.MAX_HANDOFF_CLOCK_SKEW_MILLIS + 20_001L
+            ),
+            emptyList(),
+            now
+        )
+        assertFalse(beyondSkew.allowed)
+        assertEquals("native_wake_handoff_expired", beyondSkew.reason)
+
+        val ttlMismatch = NativeWakeConsentPolicy.reserveExecution(
+            grant(),
+            request(handoffIssuedAt = now - 1_000L, handoffExpiresAt = now + 19_001L),
+            emptyList(),
+            now
+        )
+        assertFalse(ttlMismatch.allowed)
+        assertEquals("native_wake_handoff_expired", ttlMismatch.reason)
     }
 
     @Test fun executionSealMustMatchGrantAndCurrentNativeTarget() {
