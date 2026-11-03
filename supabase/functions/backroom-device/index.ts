@@ -783,10 +783,16 @@ Deno.serve(async req => {
       const isControlCommand = row.command?.action === 'request_control';
       const isNativeWakeCommand = row.command?.action === 'native_wake_trigger';
       if (isNativeWakeCommand) {
+        // A first ACK must arrive inside the handoff's short live window.
+        // A duplicate ACK for an already-committed row is checked structurally
+        // and against the stored result, so a late network retry stays idempotent.
+        const handoffNow = row.status === 'acked'
+          ? (Number.isSafeInteger(row.command.nativeWakeHandoff?.issuedAt)
+              ? row.command.nativeWakeHandoff.issuedAt : Date.now())
+          : Date.now();
         const handoff = validateAndroidNativeWakeHandoff(row.command.nativeWakeHandoff, {
-          now: Number.isSafeInteger(row.command.nativeWakeHandoff?.issuedAt)
-            ? row.command.nativeWakeHandoff.issuedAt : Date.now(),
-          clockSkewMs: 0,
+          now: handoffNow,
+          clockSkewMs: row.status === 'acked' ? 0 : 3_000,
         });
         if (!handoff || !ack.nativeWakeResult ||
             ack.sessionId !== handoff.screenSessionId ||
@@ -816,19 +822,33 @@ Deno.serve(async req => {
         });
       };
       const broadcastNativeWakeResult = async () => {
-        if (!isNativeWakeCommand) return;
+        if (!isNativeWakeCommand || !nativeWakeHandoff || !ack.nativeWakeResult) return;
+        // The room Realtime event carries outcome metadata only. Exact composer /
+        // Send digests remain in the service-role-only result_payload receipt.
         await broadcastPrivateDeviceEvent({
           projectUrl: url, apiKey: serviceKey, deviceId: current.device_id,
           event: 'android_native_wake_result',
           payload: {
             deviceId: current.device_id, roomId: row.room_id,
             requestId: ack.requestId, sessionId: ack.sessionId,
-            nativeWakeResult: ack.nativeWakeResult,
+            handoffId: nativeWakeHandoff.handoffId, jobId: nativeWakeHandoff.jobId,
+            state: ack.nativeWakeResult.state,
+            ok: ack.nativeWakeResult.state === 'submitted',
+            ...(ack.nativeWakeResult.reason ? { reason: ack.nativeWakeResult.reason } : {}),
           },
         });
       };
-      const sameNativeWakeResult = (left, right) =>
-        JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+      const stableJson = (value: unknown): string => {
+        if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+        if (value && typeof value === 'object') {
+          const entries = Object.entries(value as Record<string, unknown>)
+            .sort(([left], [right]) => left.localeCompare(right));
+          return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(',')}}`;
+        }
+        return JSON.stringify(value) ?? 'undefined';
+      };
+      const sameNativeWakeResult = (left: unknown, right: unknown) =>
+        stableJson(left ?? null) === stableJson(right ?? null);
 
       // The phone may retry an ACK after a transient HTTP/Realtime failure. Do not
       // reject a duplicate ACK: repeat the room-scoped result broadcast idempotently.
