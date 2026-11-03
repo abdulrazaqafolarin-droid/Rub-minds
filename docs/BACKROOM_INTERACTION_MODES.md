@@ -18,7 +18,7 @@ This is a **contract, not an enabled device capability**. No Android or Windows 
 
 ### Native wake contract verification — 2026-11-03
 
-The native adapter now compares opaque SHA-256 composer and Send-control identity digests captured during preflight with the digests returned after the post-seal recheck. Target ID and target revision must also remain exact. The shared adapter was exercised through `dispatchClaimedWake`: 27/27 focused Node 22 tests passed, covering the seal/consume ordering, safe retry before the seal, and no replay after uncertain Send. This is policy/dispatcher verification only; no native platform Send driver or device queue consumer is wired.
+The native adapter now compares opaque SHA-256 composer and Send-control identity digests captured during preflight with the digests returned after the post-seal recheck. Target ID and target revision must also remain exact. The adapter was exercised through `dispatchClaimedWake`: the seal/consume ordering, safe preflight retry and no replay after uncertain Send are covered. A new `native_wake_trigger` envelope now defines a 20-second-bounded handoff to one paired device and active screen session. The raw durable lease token stays on the trusted worker; only its digest crosses the handoff. The receiver rejects scope mismatch/replay and treats an uncertain post-send outcome as terminal review. The combined guard, adapter, grant, dispatch and handoff policy suite passed **49/49 focused Node 22.16.0 tests**. This remains a contract only: there is no server forwarder, device-authenticated wake queue consumer, Android/Windows native driver or physical acceptance.
 
 ## Modes
 
