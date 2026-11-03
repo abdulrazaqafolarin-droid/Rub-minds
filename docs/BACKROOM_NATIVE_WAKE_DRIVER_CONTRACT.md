@@ -68,6 +68,16 @@ The receiver-side state machine deduplicates handoffs per job and one-way lease-
 
 This is a tested **handoff contract**, not yet a connected device queue. The trusted host worker still needs a server-mediated forwarder that validates its original durable lease and creates a queue item for the paired device. The companion must poll that queue with its device credential, validate the exact active screen session and target, and then call this receiver. Android/Windows native consumers are not wired yet. This module does not authenticate Realtime/WebRTC origins, claim durable leases, grant local consent or invoke OS Send. Keep native Send and native Off / On / Auto unavailable until those integrations are complete.
 
+## Android local wake-consent foundation — 2026-11-03
+
+The Android companion now has a separate `NativeWakeConsentPolicy` and `AndroidNativeWakeConsentStore`. A user can explicitly pre-authorize native @RMconnects wake for one selected app on one paired device. The local grant is bound to the device UUID, app package and APK signing-certificate digest, expires after at most 24 hours, and is independently revocable. It does not reuse the app-launch, remote-touch or draft-typing grant.
+
+Before a future native Send driver may act, the Android store also requires a synchronous `commit()` of a one-shot execution reservation bound to the group event ID, current screen session, app signer, composer identity digest, Send identity digest and target revision. An event is permanently non-replayable during the grant window even if the selected target changes after an uncertain attempt. The local policy enforces at most six reservations per rolling minute, a bounded 4,096-entry replay ledger and fail-closed handling for malformed or future-dated ledger entries. Device credential revocation removes the device's grant records and local replay ledger.
+
+The companion's app-list UI includes a distinct checkbox and a system confirmation dialog explaining exactly what this future permission covers. The UI also states that **native wake delivery and automatic Send are not connected in this build**. Saving the grant does not send anything. No accessibility `ACTION_CLICK`, native Send or cloud queue consumer was added by this consent slice.
+
+Verification status: ten Android JUnit policy cases were added. They have **not yet executed**: the GitHub Android and validation jobs failed before runner allocation (`runner_id=0`, zero steps), and the available isolated Node sandbox has no Java/Kotlin/Gradle toolchain. The source was reviewed, but do not mark the Android build or physical-device acceptance as passed until a real Android runner executes the Gradle unit-test and assemble tasks.
+
 ## Current implementation boundary
 
 - Implemented: shared `NativeCanonicalWakeAdapter`, fail-closed `LocalExecutionGuard` seal requirement for native wake, process-local native grant/seal helper, strict device handoff/result schema and bounded replay-aware receiver policy; 49 focused Node regressions pass.
