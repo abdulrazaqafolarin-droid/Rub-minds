@@ -38,6 +38,13 @@ The full composer identity, Send-control identity, accessibility labels, editor 
 
 The native wake grant is distinct from app selection, remote touch, general draft typing and the browser wake grant. The device must retain the exact local approval and revoke it on expiry, app/session change, device stop or explicit Off. The durable journal is also separate from the group response's MCP pending-response state.
 
+
+## Separate native local authorization
+
+`NativeWakeAuthorizationAuthority` now provides a process-local grant that is independent from the browser `WakeAuthorizationAuthority`, remote touch, and general draft-typing permission. Its scope includes the native device/host, group, AI participant, exact MCP session, binding, app identity, selected target ID and target revision. It requires an explicit local-confirmation signal from the trusted native UI, expires within the bounded consent window, enforces its own six-per-minute limit and consumes each stable event command once.
+
+The future native worker checks this grant non-consumingly as part of `LocalExecutionGuard.permission`. Its `beforeEffect` callback uses `reserveNativeWakeExecution` to reserve the durable `FileWakeExecutionJournal` seal first and then consume the exact native grant. A duplicate seal or invalid/expired grant blocks Send. If grant consumption fails after reservation, the seal remains; the job is not replayed. This helper is source-level only: no Android/Windows local approval screen or device-bound wake consumer is wired yet.
+
 ## Current implementation boundary
 
 - Implemented: shared `NativeCanonicalWakeAdapter`, fail-closed `LocalExecutionGuard` seal requirement for native wake, and Node policy/regression tests.
