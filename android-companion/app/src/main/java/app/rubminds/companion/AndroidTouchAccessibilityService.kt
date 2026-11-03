@@ -247,7 +247,13 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                     }
                 }
                 if (!committed) return ComposerSelectionDecision(null, "session_or_selection_changed")
-                return ComposerSelectionDecision(selected, "selected", null, "accessibility_tree_too_large")
+                return ComposerSelectionDecision(
+                    selected,
+                    "selected",
+                    null,
+                    "accessibility_tree_too_large",
+                    ProviderConversationIdentityPolicy.isValidDigest(providerConversationDigest)
+                )
             }
             val sendDecision = AndroidSendControlPolicy.choose(
                 sendCandidates,
@@ -271,7 +277,8 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 selected,
                 "selected",
                 sendDecision.candidate,
-                sendDecision.reason
+                sendDecision.reason,
+                ProviderConversationIdentityPolicy.isValidDigest(providerConversationDigest)
             )
         } finally {
             root.recycle()
