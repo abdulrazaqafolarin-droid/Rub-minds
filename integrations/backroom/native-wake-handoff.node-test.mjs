@@ -167,6 +167,15 @@ test('submitted result requires prompt readback, unchanged identities, Send and 
  assert.equal(r.accept(create({leaseToken:'71000000-0000-4000-8000-000000000002'},{handoffId:'77000000-0000-4000-8000-000000000002'})),null);
 });
 
+test('receiver rejects submitted evidence for a different provider conversation even when composer and Send match',()=>{
+ const r=receiver(),h=create();
+ assert.ok(r.accept(h));
+ const switched={...submitted(),providerConversationIdentityDigest:'f'.repeat(64)};
+ assert.equal(r.settle(h.handoffId,switched),null);
+ assert.equal(r.status(h.jobId).active,true);
+ assert.equal(r.status(h.jobId).terminal,false);
+});
+
 test('conversation-scope preflight reason survives the handoff result envelope',()=>{
  const h=create();
  const ack=createNativeWakeHandoffResult(h,{
