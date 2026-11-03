@@ -38,6 +38,7 @@ class MainActivity : Activity() {
     private val executor = Executors.newSingleThreadExecutor()
     private lateinit var store: AppGrantStore
     private lateinit var vault: DeviceCredentialVault
+    private lateinit var nativeWakeConsentStore: AndroidNativeWakeConsentStore
     private var cloudApi: CloudDeviceApi? = null
     private lateinit var appList: LinearLayout
     private lateinit var pairingCodeInput: EditText
@@ -53,7 +54,7 @@ class MainActivity : Activity() {
     private val workProfileButtons = mutableMapOf<String, Button>()
     private val launchGrants = linkedMapOf<String, String>()
     private val draftGrants = linkedSetOf<String>()
-    private val appRows = mutableMapOf<String, Pair<CheckBox, CheckBox>>()
+    private val appRows = mutableMapOf<String, Triple<CheckBox, CheckBox, CheckBox>>()
     private var apps: List<LaunchableApp> = emptyList()
     private var busy = false
 
@@ -61,6 +62,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         store = AppGrantStore(this)
         vault = DeviceCredentialVault(this)
+        nativeWakeConsentStore = AndroidNativeWakeConsentStore(this)
         consentPrefs = getSharedPreferences("backroom_cloud_consent", MODE_PRIVATE)
         cloudApi = try { CloudDeviceApi() } catch (_: Exception) { null }
         store.all().forEach {
@@ -431,6 +433,7 @@ class MainActivity : Activity() {
             signerChanges.forEach { app ->
                 launchGrants.remove(app.packageName)
                 draftGrants.remove(app.packageName)
+                vault.deviceId()?.let { nativeWakeConsentStore.revokePackage(it, app.packageName) }
             }
             store.save(launchGrants.map { (packageName, digest) ->
                 AppGrant(packageName, digest, allowLaunch = true, allowDraftInsertion = packageName in draftGrants)
@@ -469,6 +472,9 @@ class MainActivity : Activity() {
                         draftGrants.remove(app.packageName)
                         appRows[app.packageName]?.second?.isChecked = false
                         appRows[app.packageName]?.second?.isEnabled = false
+                        vault.deviceId()?.let { nativeWakeConsentStore.revokePackage(it, app.packageName) }
+                        appRows[app.packageName]?.third?.isChecked = false
+                        appRows[app.packageName]?.third?.isEnabled = false
                     }
                 }
             }
@@ -484,6 +490,30 @@ class MainActivity : Activity() {
                 }
             }
             row.addView(draft)
+            val deviceId = vault.deviceId()
+            val wakeEnabled = selected && digest != null && deviceId != null &&
+                nativeWakeConsentStore.activeGrant(deviceId, app.packageName, digest) != null
+            val wakeConsent = CheckBox(this).apply {
+                text = "Pre-authorize native @RMconnects wake + Send for 24 hours"
+                isChecked = wakeEnabled
+                isEnabled = selected && digest != null && deviceId != null
+                setOnCheckedChangeListener { _, checked ->
+                    if (checked) {
+                        confirmNativeWakeConsent(app.packageName, digest ?: "")
+                    } else {
+                        if (deviceId != null && digest != null) {
+                            nativeWakeConsentStore.revoke(deviceId, app.packageName, digest)
+                        }
+                    }
+                }
+            }
+            row.addView(wakeConsent)
+            row.addView(TextView(this).apply {
+                text = "Separate from draft typing. This saves local consent only; native wake delivery and automatic Send are not connected in this build."
+                textSize = 10f
+                setTextColor(0xff7b5b24.toInt())
+                setPadding(dp(8), 0, dp(8), dp(4))
+            })
             row.addView(Button(this).apply {
                 text = "Open on this phone"
                 // This is a deliberate local action, never a cloud-issued remote launch.
@@ -507,8 +537,57 @@ class MainActivity : Activity() {
             row.addView(android.view.View(this).apply { setBackgroundColor(0xffe2e6ef.toInt()) },
                 LinearLayout.LayoutParams(-1, dp(1)))
             appList.addView(row)
-            appRows[app.packageName] = add to draft
+            appRows[app.packageName] = Triple(add, draft, wakeConsent)
         }
+    }
+
+    private fun confirmNativeWakeConsent(packageName: String, signerSha256: String) {
+        val deviceId = vault.deviceId()
+        if (deviceId.isNullOrBlank()) {
+            Toast.makeText(this, "Pair this phone to a Rub Minds group before saving native wake consent.", Toast.LENGTH_LONG).show()
+            drawAppRows()
+            return
+        }
+        val grant = store.get(packageName, signerSha256)
+        if (!AppGrantPolicy.canLaunch(grant, signerSha256) ||
+            launchGrants[packageName] != signerSha256
+        ) {
+            Toast.makeText(this, "Save the selected app and verify its signing identity first.", Toast.LENGTH_LONG).show()
+            drawAppRows()
+            return
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Pre-authorize native AI wake for this app?")
+            .setMessage(
+                "This separate local consent is bound to this phone, the selected app and its current signing certificate for up to 24 hours. In a future connected native-wake build it will permit only the fixed @RMconnects event trigger to be inserted into the exact composer you select and sent through its uniquely verified Send control. It does not authorize arbitrary messages, group-message text injection, remote touch or ordinary draft typing.\n\nImportant: native wake delivery and native Send are not connected in this build. Saving this consent will not trigger any action in ChatGPT, Claude or another app."
+            )
+            .setNegativeButton("Cancel") { _, _ -> drawAppRows() }
+            .setPositiveButton("Save local consent for 24 hours") { _, _ ->
+                val currentDeviceId = vault.deviceId()
+                val currentSigner = AppIdentity.signingCertificateSha256(this, packageName)
+                val currentGrant = currentSigner?.let { store.get(packageName, it) }
+                if (currentDeviceId != deviceId || currentSigner != signerSha256 ||
+                    launchGrants[packageName] != signerSha256 ||
+                    !AppGrantPolicy.canLaunch(currentGrant, currentSigner)
+                ) {
+                    Toast.makeText(this, "Phone or app identity changed. Native wake consent was not saved.", Toast.LENGTH_LONG).show()
+                    drawAppRows()
+                    return@setPositiveButton
+                }
+                val saved = nativeWakeConsentStore.confirmGrant(
+                    deviceId = deviceId,
+                    packageName = packageName,
+                    signer = signerSha256,
+                    localConfirmation = true
+                )
+                if (saved == null) {
+                    Toast.makeText(this, "Native wake consent could not be created.", Toast.LENGTH_LONG).show()
+                } else {
+                    Toast.makeText(this, "Local native-wake consent saved for 24 hours. Automatic wake and Send remain unavailable until device integration is completed.", Toast.LENGTH_LONG).show()
+                }
+                drawAppRows()
+            }
+            .show()
     }
 
     private fun confirmWorkProfileAppLaunch(packageName: String, signerSha256: String) {
