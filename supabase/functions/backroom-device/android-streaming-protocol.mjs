@@ -111,6 +111,7 @@ export function validateAndroidNativeWakeResult(result, handoff) {
   const verificationEvidence = [
     "promptReadbackVerified", "composerIdentityRevalidated", "sendControlIdentityRevalidated",
     "composerIdentityDigest", "sendControlIdentityDigest",
+    "providerConversationIdentityRevalidated", "providerConversationIdentityDigest",
   ];
   const optional = [...verificationEvidence, "reason"];
   const reasons = new Set([
@@ -144,7 +145,10 @@ export function validateAndroidNativeWakeResult(result, handoff) {
       result.composerIdentityRevalidated === true && result.sendControlIdentityRevalidated === true &&
       result.composerIdentityDigest === handoff?.composerIdentityDigest &&
       result.sendControlIdentityDigest === handoff?.sendControlIdentityDigest &&
-      HEX.test(result.composerIdentityDigest ?? "") && HEX.test(result.sendControlIdentityDigest ?? "");
+      result.providerConversationIdentityRevalidated === true &&
+      result.providerConversationIdentityDigest === handoff?.providerConversationIdentityDigest &&
+      HEX.test(result.composerIdentityDigest ?? "") && HEX.test(result.sendControlIdentityDigest ?? "") &&
+      HEX.test(result.providerConversationIdentityDigest ?? "");
   }
   // An ambiguous post-seal result is terminal review, never a safe retry.
   // It may not claim the stronger successful read-back/revalidation evidence.
