@@ -183,7 +183,8 @@ test("native wake needs-review is terminal evidence and cannot claim a safe retr
   };
   assert.equal(validateAndroidNativeWakeResult(review, handoff), true);
   assert.equal(validateAndroidNativeWakeResult({ ...review, promptReadbackVerified: false }, handoff), false);
-  assert.equal(validateAndroidNativeWakeResult({ ...review, sendInvoked: true, composerCleared: true }, handoff), true);
+  assert.equal(validateAndroidNativeWakeResult({ ...review, sendInvoked: true, composerCleared: false }, handoff), true);
+  assert.equal(validateAndroidNativeWakeResult({ ...review, sendInvoked: true, composerCleared: true }, handoff), false);
   assert.equal(validateAndroidNativeWakeResult({ ...review, reason: "private_editor_text" }, handoff), false);
 });
 
