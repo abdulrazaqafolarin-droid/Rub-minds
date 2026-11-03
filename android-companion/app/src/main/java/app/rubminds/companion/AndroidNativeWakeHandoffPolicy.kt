@@ -167,6 +167,7 @@ object AndroidNativeWakeHandoffPolicy {
             signingCertificateSha256 = signer,
             composerTargetId = composerDigest,
             sendTargetId = sendDigest,
+            providerConversationIdentityDigest = providerConversationDigest,
             leaseTokenDigest = leaseDigest,
             issuedAtMillis = issuedAt,
             leaseExpiresAtMillis = leaseExpiresAt,
