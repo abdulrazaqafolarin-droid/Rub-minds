@@ -93,7 +93,7 @@ export function createNativeWakeHandoff(lease,scope,{now=Date.now(),handoffId=ra
 const HANDOFF_KEYS=[
  'version','kind','handoffId','jobId','eventId','deviceId','roomId','screenSessionId',
  'hostId','bindingId','sessionId','targetId','targetRevision','surface','appId',
- 'identityFingerprint','composerIdentityDigest','sendControlIdentityDigest',
+ 'identityFingerprint','composerIdentityDigest','sendControlIdentityDigest','providerConversationIdentityDigest',
  'leaseTokenDigest','prompt','promptDigest','issuedAt','leaseExpiresAt','expiresAt',
 ];
 export function validateNativeWakeHandoff(payload,expected,{now=Date.now(),clockSkewMs=3_000}={}){
@@ -105,6 +105,7 @@ export function validateNativeWakeHandoff(payload,expected,{now=Date.now(),clock
   !nonempty(payload.targetId,128)||!Number.isSafeInteger(payload.targetRevision)||payload.targetRevision<1||
   !nonempty(payload.appId,256)||!nonempty(payload.identityFingerprint)||
   !HEX.test(payload.composerIdentityDigest??'')||!HEX.test(payload.sendControlIdentityDigest??'')||
+  !HEX.test(payload.providerConversationIdentityDigest??'')||
   !SURFACES.has(payload.surface)||!isCanonicalWakePrompt(payload.prompt,payload.eventId)||
   !HEX.test(payload.promptDigest??'')||sha256(payload.prompt)!==payload.promptDigest||
   !Number.isSafeInteger(payload.issuedAt)||!Number.isSafeInteger(payload.leaseExpiresAt)||
@@ -122,14 +123,15 @@ export function validateNativeWakeHandoff(payload,expected,{now=Date.now(),clock
   payload.targetRevision!==expected.targetRevision||payload.surface!==expected.surface||
   payload.appId!==expected.appId||payload.identityFingerprint!==expected.identityFingerprint||
   payload.composerIdentityDigest!==expected.composerIdentityDigest.toLowerCase()||
-  payload.sendControlIdentityDigest!==expected.sendControlIdentityDigest.toLowerCase())return null;
+  payload.sendControlIdentityDigest!==expected.sendControlIdentityDigest.toLowerCase()||
+  payload.providerConversationIdentityDigest!==expected.providerConversationIdentityDigest.toLowerCase())return null;
  return Object.freeze({...payload});
 }
 
 function validateOutcome(result){
  const allowed=['state','promptInserted','sendInvoked','composerCleared','promptReadbackVerified',
   'composerIdentityRevalidated','sendControlIdentityRevalidated','composerIdentityDigest',
-  'sendControlIdentityDigest','reason'];
+  'sendControlIdentityDigest','providerConversationIdentityRevalidated','providerConversationIdentityDigest','reason'];
  if(!result||typeof result!=='object'||Array.isArray(result)||
   Object.keys(result).some(key=>!allowed.includes(key))||
   !['preflight_denied','submitted','needs_review'].includes(result.state)||
@@ -143,7 +145,8 @@ function validateOutcome(result){
   return result.promptInserted===true&&result.sendInvoked===true&&result.composerCleared===true&&
    result.promptReadbackVerified===true&&result.composerIdentityRevalidated===true&&
    result.sendControlIdentityRevalidated===true&&HEX.test(result.composerIdentityDigest??'')&&
-   HEX.test(result.sendControlIdentityDigest??'');
+   HEX.test(result.sendControlIdentityDigest??'')&&result.providerConversationIdentityRevalidated===true&&
+   HEX.test(result.providerConversationIdentityDigest??'');
  return true;
 }
 
@@ -153,7 +156,8 @@ export function createNativeWakeHandoffResult(handoff,result){
   !UUID.test(handoff.screenSessionId??'')||!validateOutcome(result)||
   (result.state==='submitted'&&(
    result.composerIdentityDigest!==handoff.composerIdentityDigest||
-   result.sendControlIdentityDigest!==handoff.sendControlIdentityDigest)))
+   result.sendControlIdentityDigest!==handoff.sendControlIdentityDigest||
+   result.providerConversationIdentityDigest!==handoff.providerConversationIdentityDigest)))
   throw new TypeError('Invalid native wake handoff result');
  return Object.freeze({
   version:1,kind:'native_wake_result',handoffId:handoff.handoffId,
@@ -165,8 +169,10 @@ export function createNativeWakeHandoffResult(handoff,result){
   ...(result.state==='submitted'?{
    promptReadbackVerified:true,composerIdentityRevalidated:true,
    sendControlIdentityRevalidated:true,
+   providerConversationIdentityRevalidated:true,
    composerIdentityDigest:handoff.composerIdentityDigest,
    sendControlIdentityDigest:handoff.sendControlIdentityDigest,
+   providerConversationIdentityDigest:handoff.providerConversationIdentityDigest,
   }:{}),
   ...(result.reason?{reason:result.reason}:{}),
  });
@@ -174,14 +180,15 @@ export function createNativeWakeHandoffResult(handoff,result){
 function outcomeFromHandoffResult(result){
  const keys=['state','promptInserted','sendInvoked','composerCleared','promptReadbackVerified',
   'composerIdentityRevalidated','sendControlIdentityRevalidated','composerIdentityDigest',
-  'sendControlIdentityDigest','reason'];
+  'sendControlIdentityDigest','providerConversationIdentityRevalidated','providerConversationIdentityDigest','reason'];
  return Object.fromEntries(keys.filter(key=>Object.hasOwn(result,key)).map(key=>[key,result[key]]));
 }
 const RESULT_KEYS=new Set([
  'version','kind','handoffId','jobId','deviceId','roomId','screenSessionId',
  'bindingId','targetId','targetRevision','state','promptInserted','sendInvoked',
  'composerCleared','promptReadbackVerified','composerIdentityRevalidated',
- 'sendControlIdentityRevalidated','composerIdentityDigest','sendControlIdentityDigest','reason',
+ 'sendControlIdentityRevalidated','composerIdentityDigest','sendControlIdentityDigest',
+ 'providerConversationIdentityRevalidated','providerConversationIdentityDigest','reason',
 ]);
 const REQUIRED_RESULT_KEYS=[
  'version','kind','handoffId','jobId','deviceId','roomId','screenSessionId',
@@ -201,11 +208,15 @@ export function validateNativeWakeHandoffResult(result,handoff){
   result.promptReadbackVerified!==true||result.composerIdentityRevalidated!==true||
   result.sendControlIdentityRevalidated!==true||
   result.composerIdentityDigest!==handoff.composerIdentityDigest||
-  result.sendControlIdentityDigest!==handoff.sendControlIdentityDigest))return false;
+  result.sendControlIdentityDigest!==handoff.sendControlIdentityDigest||
+  result.providerConversationIdentityRevalidated!==true||
+  result.providerConversationIdentityDigest!==handoff.providerConversationIdentityDigest))return false;
  if(result.state!=='submitted'&&(
   result.promptReadbackVerified!==undefined||result.composerIdentityRevalidated!==undefined||
   result.sendControlIdentityRevalidated!==undefined||
-  result.composerIdentityDigest!==undefined||result.sendControlIdentityDigest!==undefined))return false;
+  result.composerIdentityDigest!==undefined||result.sendControlIdentityDigest!==undefined||
+  result.providerConversationIdentityRevalidated!==undefined||
+  result.providerConversationIdentityDigest!==undefined))return false;
  return true;
 }
 
