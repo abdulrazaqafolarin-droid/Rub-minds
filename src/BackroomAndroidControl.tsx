@@ -272,15 +272,15 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
               ? acknowledgement.sendReason.replaceAll('_', ' ')
               : 'phone companion update required';
             setSendControlStatus(sendVerified
-              ? 'One unique Send control is verified locally for this composer. Automated wake is not armed.'
+              ? 'One unique Send control was found and bound at selection time. Recheck it before any follow-on use; automated wake is not armed.'
               : 'Send control not verified: ' + sendReason + '.');
             setSelectionPreview(null);
             setSelectionMode(false);
             setRemoteTextStatus(sendVerified
-              ? 'Composer selected and Send control verified. Focus the exact field on the phone before inserting a draft. Native sending still requires the durable wake queue and separate local wake consent.'
+              ? 'Composer selected and Send control found. Focus the exact field on the phone before inserting a draft. Use Recheck Send control to confirm the same node is still present. Native sending still requires the durable wake queue and separate local wake consent.'
               : 'Composer selected. Tap that exact field on the phone so it is focused, then insert a draft.');
             notify(sendVerified
-              ? 'Android verified one editable composer and one nearby Send control. No message was sent.'
+              ? 'Android found one editable composer and one nearby Send control at selection time. No message was sent.'
               : 'Android selected one real editable composer in the approved app. No unique Send control was verified.');
           } else {
             clearComposerTarget(false);
@@ -759,7 +759,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     {sessionId ? <div className="br-android-keyboard">
       <div className="br-android-composer-head">
         <b>Original app composer</b>
-        <span>{composerTargetId ? (sendControlVerified ? 'Composer + Send verified' : 'Composer selected · draft only') : 'No target selected'}</span>
+        <span>{composerTargetId ? (sendControlVerified ? 'Composer + Send found' : 'Composer selected · draft only') : 'No target selected'}</span>
       </div>
       <div className="br-android-composer-actions">
         <button type="button" onClick={() => {
