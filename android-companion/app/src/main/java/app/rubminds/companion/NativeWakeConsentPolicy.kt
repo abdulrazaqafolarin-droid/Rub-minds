@@ -199,7 +199,8 @@ object NativeWakeConsentPolicy {
                 request.signingCertificateSha256, nowMillis
             )) return denied("native_wake_grant_inactive")
         if (request.handoffExpiresAtMillis <= nowMillis ||
-            request.handoffExpiresAtMillis - nowMillis > MAX_HANDOFF_TTL_MILLIS
+            request.handoffExpiresAtMillis - nowMillis > MAX_HANDOFF_TTL_MILLIS ||
+            request.handoffExpiresAtMillis > (grant?.expiresAtMillis ?: 0L)
         ) return denied("native_wake_handoff_expired")
         if (request.grantId != grant?.grantId ||
             !uuid.matches(request.jobId) ||
