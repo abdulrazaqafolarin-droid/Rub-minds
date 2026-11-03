@@ -49,7 +49,16 @@ test('local connection, permission and focus preflight failures retry without co
  }
 });
 test('missing approval waits via retry; no false acknowledgement',async()=>{const s=setup();const out=await dispatchClaimedWake({...s.base,approval:null});assert.equal(out.state,'deferred');assert.equal(out.reason,'wake-authorization-required');assert.equal(s.writes(),0);assert.equal(s.calls[0].name,'retry');});
-test('acknowledgement race is surfaced without blindly replaying effect',async()=>{const s=setup({ack:false});const out=await dispatchClaimedWake(s.base);assert.equal(out.state,'lease-lost');assert.equal(out.acknowledged,false);assert.equal(s.writes(),1);});
+test('acknowledgement race is surfaced without blindly replaying effect',async()=>{
+ const s=setup({ack:false});
+ const out=await dispatchClaimedWake({...s.base,
+  executionSeal:async()=>true,
+  consumeApproval:async(ticket,context)=>s.authority.verify(ticket?.grantId,context,{consume:true})
+ });
+ assert.equal(out.state,'lease-lost');
+ assert.equal(out.acknowledged,false);
+ assert.equal(s.writes(),1);
+});
 
 test('a duplicate execution seal prevents grant consumption and any provider effect',async()=>{
  const s=setup();let consumeCalls=0;
