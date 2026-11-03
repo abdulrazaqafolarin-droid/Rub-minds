@@ -21,19 +21,19 @@ class AndroidNativeWakeConsentStore(context: Context) {
         nowMillis: Long = System.currentTimeMillis()
     ): NativeWakeGrant? {
         synchronized(STORE_LOCK) {
-        val grant = NativeWakeConsentPolicy.createGrant(
-            grantId = UUID.randomUUID().toString(),
-            deviceId = deviceId,
-            packageName = packageName,
-            signer = signer,
-            nowMillis = nowMillis,
-            localConfirmation = localConfirmation
-        ) ?: return null
-        val committed = preferences.edit()
-            .putString(grantKey(deviceId, packageName, signer), encodeGrant(grant))
-            .commit()
-        check(committed) { "Could not persist native wake consent." }
-        return grant
+            val grant = NativeWakeConsentPolicy.createGrant(
+                grantId = UUID.randomUUID().toString(),
+                deviceId = deviceId,
+                packageName = packageName,
+                signer = signer,
+                nowMillis = nowMillis,
+                localConfirmation = localConfirmation
+            ) ?: return null
+            val committed = preferences.edit()
+                .putString(grantKey(deviceId, packageName, signer), encodeGrant(grant))
+                .commit()
+            check(committed) { "Could not persist native wake consent." }
+            return grant
         }
     }
 
@@ -44,12 +44,12 @@ class AndroidNativeWakeConsentStore(context: Context) {
         nowMillis: Long = System.currentTimeMillis()
     ): NativeWakeGrant? {
         synchronized(STORE_LOCK) {
-        val key = grantKey(deviceId, packageName, signer)
-        val raw = preferences.getString(key, null) ?: return null
-        val grant = decodeGrant(raw)
-        if (!NativeWakeConsentPolicy.isGrantActive(grant, deviceId, packageName, signer, nowMillis)) {
-            check(preferences.edit().remove(key).commit()) { "Could not clear expired native wake consent." }
-            return null
+            val key = grantKey(deviceId, packageName, signer)
+            val raw = preferences.getString(key, null) ?: return null
+            val grant = decodeGrant(raw)
+            if (!NativeWakeConsentPolicy.isGrantActive(grant, deviceId, packageName, signer, nowMillis)) {
+                check(preferences.edit().remove(key).commit()) { "Could not clear expired native wake consent." }
+                return null
         }
         return grant
         }
@@ -57,29 +57,29 @@ class AndroidNativeWakeConsentStore(context: Context) {
 
     fun revoke(deviceId: String, packageName: String, signer: String): Boolean {
         synchronized(STORE_LOCK) {
-        val key = grantKey(deviceId, packageName, signer)
-        if (!preferences.contains(key)) return false
-        check(preferences.edit().remove(key).commit()) { "Could not revoke native wake consent." }
-        return true
+            val key = grantKey(deviceId, packageName, signer)
+            if (!preferences.contains(key)) return false
+            check(preferences.edit().remove(key).commit()) { "Could not revoke native wake consent." }
+            return true
         }
     }
 
     fun revokePackage(deviceId: String, packageName: String): Int {
         synchronized(STORE_LOCK) {
-        val prefix = "$deviceId|$packageName|"
-        val editor = preferences.edit()
-        val keys = preferences.all().keys.filter { it.startsWith(prefix) }
-        keys.forEach { key -> editor.remove(key) }
-        if (keys.isEmpty()) return 0
-        check(editor.commit()) { "Could not revoke package native wake consent." }
-        return keys.size
+            val prefix = "$deviceId|$packageName|"
+            val editor = preferences.edit()
+            val keys = preferences.all().keys.filter { it.startsWith(prefix) }
+            keys.forEach { key -> editor.remove(key) }
+            if (keys.isEmpty()) return 0
+            check(editor.commit()) { "Could not revoke package native wake consent." }
+            return keys.size
         }
     }
 
     fun revokeDevice(deviceId: String): Int {
         synchronized(STORE_LOCK) {
-        if (!deviceId.matches(Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"))) {
-            return 0
+            if (!deviceId.matches(Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"))) {
+                return 0
         }
         val prefix = "grant|$deviceId|"
         val editor = preferences.edit()
@@ -104,15 +104,15 @@ class AndroidNativeWakeConsentStore(context: Context) {
         nowMillis: Long = System.currentTimeMillis()
     ): NativeWakeReservationDecision {
         synchronized(STORE_LOCK) {
-        val grant = activeGrant(
-            request.deviceId, request.packageName,
-            request.signingCertificateSha256, nowMillis
-        ) ?: return NativeWakeReservationDecision(false, "native_wake_grant_inactive", emptyList())
+            val grant = activeGrant(
+                request.deviceId, request.packageName,
+                request.signingCertificateSha256, nowMillis
+            ) ?: return NativeWakeReservationDecision(false, "native_wake_grant_inactive", emptyList())
 
-        val rawRows = preferences.getStringSet(KEY_RESERVATIONS, emptySet()).orEmpty()
-        val parsed = rawRows.mapNotNull(::decodeReservation)
-        if (parsed.size != rawRows.size) {
-            return NativeWakeReservationDecision(false, "native_wake_replay_ledger_corrupt", parsed)
+            val rawRows = preferences.getStringSet(KEY_RESERVATIONS, emptySet()).orEmpty()
+            val parsed = rawRows.mapNotNull(::decodeReservation)
+            if (parsed.size != rawRows.size) {
+                return NativeWakeReservationDecision(false, "native_wake_replay_ledger_corrupt", parsed)
         }
         val decision = NativeWakeConsentPolicy.reserveExecution(grant, request, parsed, nowMillis)
         if (!decision.allowed) return decision
