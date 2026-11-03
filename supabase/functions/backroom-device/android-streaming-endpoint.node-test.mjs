@@ -291,3 +291,41 @@ test("Phone Frame renders the gated Back action only when the local touch grant 
   assert.ok(browser.includes("acknowledgement.kind === 'navigation_ack'"));
   assert.match(browser, /Android dispatched Back in the selected app/);
 });
+
+test("native wake ACK is bound to the stored Android device, room, session, request and canonical handoff", async () => {
+  const endpoint = await read("supabase/functions/backroom-device/index.ts");
+  const handler = endpoint.slice(
+    endpoint.indexOf("if (action === 'android/ack')"),
+    endpoint.indexOf("if (action === 'desktop/inventory')")
+  );
+  assert.match(handler, /row\.command\.deviceId !== current\.device_id/);
+  assert.match(handler, /row\.command\.roomId !== row\.room_id/);
+  assert.match(handler, /row\.command\.sessionId !== row\.session_id/);
+  assert.match(handler, /row\.command\.requestId !== row\.request_id/);
+  assert.match(handler, /row\.command\.appPackageName !== handoff\.appId/);
+  assert.match(handler, /validateAndroidNativeWakeResult\(ack\.nativeWakeResult, handoff\)/);
+  assert.match(handler, /native_wake_preflight_denied/);
+  assert.match(handler, /native_wake_needs_review/);
+  assert.match(handler, /native_wake_submitted/);
+  assert.match(handler, /row\.status !== 'leased'/);
+});
+
+test("native wake ACK stores bounded evidence privately and broadcasts no target identity digests", async () => {
+  const endpoint = await read("supabase/functions/backroom-device/index.ts");
+  const migration = await read("supabase/migrations/20261103133000_backroom_android_native_wake_result_evidence.sql");
+  const handler = endpoint.slice(
+    endpoint.indexOf("if (action === 'android/ack')"),
+    endpoint.indexOf("if (action === 'desktop/inventory')")
+  );
+  const broadcastStart = handler.indexOf("const broadcastNativeWakeResult");
+  const broadcastEnd = handler.indexOf("const stableJson", broadcastStart);
+  const broadcast = handler.slice(broadcastStart, broadcastEnd);
+  assert.match(migration, /add column if not exists result_payload jsonb/);
+  assert.match(migration, /octet_length\(result_payload::text\) <= 8192/);
+  assert.match(endpoint, /result_payload: ack\.nativeWakeResult \?\? null/);
+  assert.match(handler, /sameNativeWakeResult\(row\.result_payload, ack\.nativeWakeResult \?\? null\)/);
+  assert.match(broadcast, /event: 'android_native_wake_result'/);
+  assert.match(broadcast, /handoffId: nativeWakeHandoff\.handoffId/);
+  assert.match(broadcast, /state: ack\.nativeWakeResult\.state/);
+  assert.doesNotMatch(broadcast, /composerIdentityDigest|sendControlIdentityDigest|nativeWakeResult: ack\.nativeWakeResult/);
+});
