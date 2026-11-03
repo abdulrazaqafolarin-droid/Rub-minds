@@ -32,6 +32,8 @@ function validRevision(value) {
   return Number.isSafeInteger(value) && value > 0;
 }
 
+const IDENTITY_DIGEST = /^[a-f0-9]{64}$/;
+
 function probeIsReady(result, expected) {
   return !!result && typeof result === 'object' && !Array.isArray(result) &&
     result.connected === true && result.focused === true &&
@@ -41,6 +43,11 @@ function probeIsReady(result, expected) {
     result.sendControlEnabled === true &&
     result.sendControlVisible === true &&
     result.sendControlIdentityVerified === true &&
+    result.targetId === expected.targetId &&
+    result.targetRevision === expected.targetRevision &&
+    result.locatorKind === 'accessibility' &&
+    IDENTITY_DIGEST.test(result.composerIdentityDigest || '') &&
+    IDENTITY_DIGEST.test(result.sendControlIdentityDigest || '') &&
     result.surface === expected.surface &&
     result.appId === expected.appId &&
     result.sessionId === expected.sessionId &&
@@ -129,6 +136,8 @@ export class NativeCanonicalWakeAdapter {
     try {
       const state = await this.#driver.inspectWakeTarget({ target: scopeFor(target) });
       if (!probeIsReady(state, {
+        targetId: this.#targetId,
+        targetRevision: this.#targetRevision,
         surface: this.#surface,
         appId: this.#appId,
         sessionId: this.#sessionId,
@@ -143,6 +152,11 @@ export class NativeCanonicalWakeAdapter {
       return Object.freeze({
         connected: true,
         focused: true,
+        targetId: this.#targetId,
+        targetRevision: this.#targetRevision,
+        locatorKind: 'accessibility',
+        composerIdentityDigest: state.composerIdentityDigest,
+        sendControlIdentityDigest: state.sendControlIdentityDigest,
         surface: this.#surface,
         appId: this.#appId,
         sessionId: this.#sessionId,
@@ -180,6 +194,11 @@ export class NativeCanonicalWakeAdapter {
         verifiedProbe.appId !== this.#appId ||
         verifiedProbe.sessionId !== this.#sessionId ||
         verifiedProbe.identityFingerprint !== this.#identityFingerprint ||
+        verifiedProbe.targetId !== this.#targetId ||
+        verifiedProbe.targetRevision !== this.#targetRevision ||
+        verifiedProbe.locatorKind !== 'accessibility' ||
+        !IDENTITY_DIGEST.test(verifiedProbe.composerIdentityDigest || '') ||
+        !IDENTITY_DIGEST.test(verifiedProbe.sendControlIdentityDigest || '') ||
         !Array.isArray(verifiedProbe.locatorKinds) ||
         !verifiedProbe.locatorKinds.includes('accessibility')) {
       throw new Error('Native wake execution requires a successful LocalExecutionGuard preflight');
@@ -224,6 +243,10 @@ export class NativeCanonicalWakeAdapter {
         !Array.isArray(outcome) &&
         outcome.state === 'submitted' &&
         outcome.eventId === command.eventId &&
+        outcome.targetId === this.#targetId &&
+        outcome.targetRevision === this.#targetRevision &&
+        outcome.composerIdentityDigest === verifiedProbe.composerIdentityDigest &&
+        outcome.sendControlIdentityDigest === verifiedProbe.sendControlIdentityDigest &&
         outcome.promptInserted === true &&
         outcome.promptReadbackVerified === true &&
         outcome.composerIdentityRevalidated === true &&
