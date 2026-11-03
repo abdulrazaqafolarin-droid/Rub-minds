@@ -433,7 +433,7 @@ class MainActivity : Activity() {
             signerChanges.forEach { app ->
                 launchGrants.remove(app.packageName)
                 draftGrants.remove(app.packageName)
-                vault.deviceId()?.let { nativeWakeConsentStore.revokePackage(it, app.packageName) }
+                pairedDeviceId()?.let { nativeWakeConsentStore.revokePackage(it, app.packageName) }
             }
             store.save(launchGrants.map { (packageName, digest) ->
                 AppGrant(packageName, digest, allowLaunch = true, allowDraftInsertion = packageName in draftGrants)
@@ -467,13 +467,13 @@ class MainActivity : Activity() {
                     if (checked && digest != null) {
                         launchGrants[app.packageName] = digest
                         appRows[app.packageName]?.second?.isEnabled = true
-                        appRows[app.packageName]?.third?.isEnabled = vault.deviceId() != null
+                        appRows[app.packageName]?.third?.isEnabled = pairedDeviceId() != null
                     } else {
                         launchGrants.remove(app.packageName)
                         draftGrants.remove(app.packageName)
                         appRows[app.packageName]?.second?.isChecked = false
                         appRows[app.packageName]?.second?.isEnabled = false
-                        vault.deviceId()?.let { nativeWakeConsentStore.revokePackage(it, app.packageName) }
+                        pairedDeviceId()?.let { nativeWakeConsentStore.revokePackage(it, app.packageName) }
                         appRows[app.packageName]?.third?.isChecked = false
                         appRows[app.packageName]?.third?.isEnabled = false
                     }
@@ -491,7 +491,7 @@ class MainActivity : Activity() {
                 }
             }
             row.addView(draft)
-            val deviceId = vault.deviceId()
+            val deviceId = pairedDeviceId()
             val wakeEnabled = selected && digest != null && deviceId != null &&
                 nativeWakeConsentStore.activeGrant(deviceId, app.packageName, digest) != null
             val wakeConsent = CheckBox(this).apply {
@@ -543,7 +543,7 @@ class MainActivity : Activity() {
     }
 
     private fun confirmNativeWakeConsent(packageName: String, signerSha256: String) {
-        val deviceId = vault.deviceId()
+        val deviceId = pairedDeviceId()
         if (deviceId.isNullOrBlank()) {
             Toast.makeText(this, "Pair this phone to a Rub Minds group before saving native wake consent.", Toast.LENGTH_LONG).show()
             drawAppRows()
@@ -564,7 +564,7 @@ class MainActivity : Activity() {
             )
             .setNegativeButton("Cancel") { _, _ -> drawAppRows() }
             .setPositiveButton("Save local consent for 24 hours") { _, _ ->
-                val currentDeviceId = vault.deviceId()
+                val currentDeviceId = pairedDeviceId()
                 val currentSigner = AppIdentity.signingCertificateSha256(this, packageName)
                 val currentGrant = currentSigner?.let { store.get(packageName, it) }
                 if (currentDeviceId != deviceId || currentSigner != signerSha256 ||
@@ -901,8 +901,14 @@ class MainActivity : Activity() {
         return rows
     }
 
+    private fun pairedDeviceId(): String? {
+        val credential = vault.token() ?: return null
+        if (!credential.matches(Regex("^[a-f0-9]{64}$"))) return null
+        return vault.deviceId()
+    }
+
     private fun clearDeviceCredentialAndWakeConsent() {
-        vault.deviceId()?.let { nativeWakeConsentStore.revokeDevice(it) }
+        pairedDeviceId()?.let { nativeWakeConsentStore.revokeDevice(it) }
         vault.clear()
     }
 
@@ -920,7 +926,7 @@ class MainActivity : Activity() {
             row.first.isEnabled = !value && hasSigner
             row.second.isEnabled = !value && row.first.isChecked
             row.third.isEnabled = !value && row.first.isChecked &&
-                app?.signingCertificateSha256 != null && vault.deviceId() != null
+                app?.signingCertificateSha256 != null && pairedDeviceId() != null
         }
         workProfileButtons.forEach { (packageName, button) ->
             button.isEnabled = !value && apps.any { it.packageName == packageName && it.signingCertificateSha256 != null && launchGrants[packageName] == it.signingCertificateSha256 }
