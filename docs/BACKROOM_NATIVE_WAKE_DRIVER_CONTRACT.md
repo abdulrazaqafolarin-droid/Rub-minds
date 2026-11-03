@@ -60,6 +60,14 @@ The adapter has now been exercised through the real source-level `dispatchClaime
 
 The focused Node 22 sandbox run of the shared guard, adapter policy and durable-dispatch integration tests passed **27/27**. This did not load an actual Android Accessibility/IME or Windows UIA driver. The separate `NativeWakeAuthorizationAuthority` policy suite remains an independent process-local grant test and should be included in the next combined check.
 
+## Device-bound handoff contract — 2026-11-03
+
+A separate `native_wake_trigger` envelope now defines the short-lived handoff from a trusted durable-queue worker to a selected native companion. It is deliberately distinct from Android `remote_text` (draft insertion) and from screen-stream control messages. The envelope includes the one durable job/event/lease, paired device ID, room, exact active screen-session ID, binding, AI MCP session, target ID/revision, app identity, previously inspected composer/Send identity digests, canonical fixed prompt and bounded expiry. It rejects additional fields—including group-message bodies and generated AI response text.
+
+The receiver-side state machine deduplicates handoffs per job and lease token. A preflight denial is retryable only when the composer was untouched and Send was not invoked, and only a new lease token may be accepted. A confirmed submission requires prompt readback, unchanged composer/Send identity digests, Send invocation and composer-clear confirmation. Any other post-handoff result is terminal `needs_review`, never an automatic replay. Receiver state is bounded and fails closed at capacity.
+
+This is a tested **handoff contract**, not yet a connected device queue. The sender must still obtain its lease from a device-authenticated server claim path, and Android/Windows need native consumers that validate the selected session and call this receiver. This module does not authenticate Realtime/WebRTC origins, claim durable leases, grant local consent or invoke OS Send. Keep native Send and native Off / On / Auto unavailable until those integrations are complete.
+
 ## Current implementation boundary
 
 - Implemented: shared `NativeCanonicalWakeAdapter`, fail-closed `LocalExecutionGuard` seal requirement for native wake, and Node policy/regression tests.
