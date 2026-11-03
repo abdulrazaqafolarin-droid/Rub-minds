@@ -175,6 +175,35 @@ pub fn choose_send_control(candidates: Vec<SendControlIdentity>) -> SendControlI
     }
 }
 
+pub fn inspect_send_control(composer: &EditableTargetIdentity) -> SendControlInspection {
+    #[cfg(target_os = "windows")]
+    {
+        let composer = composer.clone();
+        return thread::spawn(move || windows_impl::inspect_send_control(&composer))
+            .join()
+            .unwrap_or(SendControlInspection { candidate: None, reason: "uia_inspection_worker_failed" });
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = composer;
+        SendControlInspection { candidate: None, reason: "windows_accessibility_driver_unavailable" }
+    }
+}
+
+pub fn revalidate_send_control(
+    composer: &EditableTargetIdentity,
+    expected_send: &SendControlIdentity,
+) -> SendControlInspection {
+    let current = inspect_send_control(composer);
+    if current.candidate.as_ref() == Some(expected_send) {
+        return current;
+    }
+    if current.candidate.is_some() {
+        return SendControlInspection { candidate: None, reason: "send_control_identity_changed" };
+    }
+    current
+}
+
 pub fn inspect_at(x: i32, y: i32) -> Result<(EditableTargetIdentity, String), String> {
     #[cfg(target_os = "windows")]
     {
@@ -284,7 +313,9 @@ pub fn set_value_exact(
 #[cfg(target_os = "windows")]
 mod windows_impl {
     use super::{
-        validate_post_write_value, validate_target_metadata, validate_target_properties, EditableTargetIdentity,
+        validate_post_write_value, validate_send_control_candidate, validate_target_metadata,
+        validate_target_properties, EditableTargetIdentity, SendControlIdentity,
+        SendControlInspection,
     };
     use uiautomation::{
         actions::{Text, Value},
@@ -474,6 +505,133 @@ mod windows_impl {
             return Err("The foreground window is not the unique Backroom-launched application window. Restore that app and retry.".into());
         }
         Ok(selected)
+    }
+
+    fn half_open_bounds(element: &UIElement) -> Result<[i32; 4], String> {
+        let rect = element.get_bounding_rectangle()
+            .map_err(|_| "Could not verify accessibility control bounds".to_string())?;
+        let bounds = [
+            rect.get_left(),
+            rect.get_top(),
+            rect.get_right().saturating_add(1),
+            rect.get_bottom().saturating_add(1),
+        ];
+        if bounds[2] <= bounds[0] || bounds[3] <= bounds[1] {
+            return Err("The accessibility control has invalid bounds".into());
+        }
+        Ok(bounds)
+    }
+
+    fn focused_composer_window(
+        automation: &UIAutomation,
+        expected: &EditableTargetIdentity,
+    ) -> Result<(UIElement, [i32; 4]), String> {
+        let walker = automation.get_control_view_walker()
+            .map_err(|_| "Windows accessibility tree is unavailable".to_string())?;
+        let focused = automation.get_focused_element()
+            .map_err(|_| "Windows could not identify the focused composer".to_string())?;
+        let composer = editable_ancestor(automation, focused)?;
+        let (current, value) = inspect_element(&composer, true)?;
+        if &current != expected || !value.is_empty() {
+            return Err("The selected composer is no longer the exact focused empty field".into());
+        }
+
+        let mut current = composer;
+        for _ in 0..MAX_PARENT_DEPTH * 2 {
+            if current.get_control_type().ok() == Some(ControlType::Window) {
+                let bounds = half_open_bounds(&current)?;
+                if current.get_process_id().ok() != Some(expected.process_id) {
+                    return Err("The focused composer is no longer inside its selected application window".into());
+                }
+                return Ok((current, bounds));
+            }
+            current = walker.get_parent(&current)
+                .map_err(|_| "Could not locate the selected composer's application window".to_string())?;
+        }
+        Err("The focused composer has no verifiable application window".into())
+    }
+
+    fn collect_send_candidates(
+        walker: &uiautomation::UITreeWalker,
+        element: &UIElement,
+        process_id: u32,
+        window_bounds: [i32; 4],
+        composer_bounds: [i32; 4],
+        depth: usize,
+        visited: &mut usize,
+        candidates: &mut Vec<SendControlIdentity>,
+    ) -> Result<(), String> {
+        if depth > 48 {
+            return Err("accessibility_tree_depth_exceeded".into());
+        }
+        *visited += 1;
+        if *visited > 4_096 {
+            return Err("accessibility_tree_too_large".into());
+        }
+
+        if element.get_process_id().ok() == Some(process_id)
+            && element.get_control_type().ok() == Some(ControlType::Button)
+        {
+            let enabled = element.is_enabled().unwrap_or(false);
+            let offscreen = element.is_offscreen().unwrap_or(true);
+            let name = element.get_name().unwrap_or_default();
+            let automation_id = element.get_automation_id().unwrap_or_default();
+            let bounds = half_open_bounds(element).unwrap_or([0, 0, 0, 0]);
+            if validate_send_control_candidate(
+                "Button", enabled, offscreen, true, &name, &automation_id,
+                window_bounds, composer_bounds, bounds,
+            ).is_ok() {
+                let runtime_id = element.get_runtime_id()
+                    .map_err(|_| "Send control has no stable accessibility identity".to_string())?;
+                let class_name = element.get_classname()
+                    .map_err(|_| "Could not identify the Send control class".to_string())?;
+                if !runtime_id.is_empty() && !class_name.trim().is_empty() {
+                    candidates.push(SendControlIdentity {
+                        process_id,
+                        runtime_id,
+                        class_name,
+                        accessible_name: name,
+                        automation_id,
+                        bounds,
+                    });
+                }
+            }
+        }
+
+        let mut child = walker.get_first_child(element).ok();
+        while let Some(node) = child {
+            collect_send_candidates(
+                walker, &node, process_id, window_bounds, composer_bounds,
+                depth + 1, visited, candidates,
+            )?;
+            child = walker.get_next_sibling(&node).ok();
+        }
+        Ok(())
+    }
+
+    pub fn inspect_send_control(composer: &EditableTargetIdentity) -> SendControlInspection {
+        let automation = match UIAutomation::new() {
+            Ok(value) => value,
+            Err(_) => return SendControlInspection { candidate: None, reason: "uia_unavailable" },
+        };
+        let (window, window_bounds) = match focused_composer_window(&automation, composer) {
+            Ok(value) => value,
+            Err(_) => return SendControlInspection { candidate: None, reason: "composer_not_focused_or_window_changed" },
+        };
+        let walker = match automation.get_control_view_walker() {
+            Ok(value) => value,
+            Err(_) => return SendControlInspection { candidate: None, reason: "accessibility_tree_unavailable" },
+        };
+        let composer_bounds = composer.bounds;
+        let mut visited = 0usize;
+        let mut candidates = Vec::new();
+        if collect_send_candidates(
+            &walker, &window, composer.process_id, window_bounds, composer_bounds,
+            0, &mut visited, &mut candidates,
+        ).is_err() {
+            return SendControlInspection { candidate: None, reason: "accessibility_tree_incomplete" };
+        }
+        super::choose_send_control(candidates)
     }
 
     pub fn inspect_at(x: i32, y: i32) -> Result<(EditableTargetIdentity, String), String> {
