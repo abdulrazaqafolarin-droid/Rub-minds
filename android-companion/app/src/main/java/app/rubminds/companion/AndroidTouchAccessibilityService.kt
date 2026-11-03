@@ -426,6 +426,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             var promptReadbackVerified = false
             var composerIdentityRevalidated = false
             var sendControlIdentityRevalidated = false
+            var providerConversationIdentityRevalidated = false
 
             fun finish(state: NativeWakeSubmissionState, reason: String) {
                 synchronized(this) { nativeWakeInFlight = false }
@@ -439,6 +440,9 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                         promptReadbackVerified = promptReadbackVerified,
                         composerIdentityRevalidated = composerIdentityRevalidated,
                         sendControlIdentityRevalidated = sendControlIdentityRevalidated,
+                        providerConversationIdentityRevalidated = providerConversationIdentityRevalidated,
+                        providerConversationIdentityDigest = if (providerConversationIdentityRevalidated)
+                            request.providerConversationIdentityDigest else null,
                         composerIdentityDigest = if (composerIdentityRevalidated) request.composerTargetId else null,
                         sendControlIdentityDigest = if (sendControlIdentityRevalidated) request.sendTargetId else null
                     ))
@@ -735,6 +739,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 deadlineMillis = android.os.SystemClock.elapsedRealtime() + NATIVE_WAKE_CLEAR_TIMEOUT_MS,
                 onComplete = { cleared ->
                     composerCleared = cleared
+                    providerConversationIdentityRevalidated = cleared
                     finish(
                         if (cleared) NativeWakeSubmissionState.SUBMITTED else NativeWakeSubmissionState.NEEDS_REVIEW,
                         if (cleared) "canonical_trigger_sent_composer_cleared" else "send_outcome_needs_review"
