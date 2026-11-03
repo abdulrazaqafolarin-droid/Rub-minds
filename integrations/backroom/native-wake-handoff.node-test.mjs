@@ -90,6 +90,7 @@ test('rejects message text, wrong event prompt and prompt-digest tampering',()=>
  const h=create();
  assert.equal(validateNativeWakeHandoff({...h,prompt:'hello'},scope,{now}),null);
  assert.equal(validateNativeWakeHandoff({...h,promptDigest:'0'.repeat(64)},scope,{now}),null);
+ assert.equal(validateNativeWakeHandoff({...h,providerConversationIdentityDigest:'0'.repeat(64)},scope,{now}),null);
  assert.equal(validateNativeWakeHandoff({...h,messageBody:'private text'},scope,{now}),null);
  assert.equal(validateNativeWakeHandoff({...h,leaseToken:lease.leaseToken},scope,{now}),null);
  assert.equal(validateNativeWakeHandoff({...h,leaseTokenDigest:'bad'},scope,{now}),null);
