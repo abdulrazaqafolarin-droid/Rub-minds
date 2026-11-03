@@ -315,8 +315,9 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
           const returnedTarget = typeof acknowledgement.sendTargetId === 'string' &&
             /^[a-f0-9]{64}$/.test(acknowledgement.sendTargetId)
               ? acknowledgement.sendTargetId : '';
+          const sendIdentityChanged = Boolean(returnedTarget && returnedTarget !== sendTargetRef.current);
           const remainsSameTarget = acknowledgement.available === true &&
-            Boolean(returnedTarget) && returnedTarget === sendTargetRef.current &&
+            Boolean(returnedTarget) && !sendIdentityChanged &&
             Boolean(composerTargetRef.current);
           setSendControlVerified(remainsSameTarget);
           if (!remainsSameTarget) {
@@ -326,7 +327,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
           setSendControlStatus(remainsSameTarget
             ? 'Rechecked: the same unique Send control is still available beside the focused composer. No action was taken.'
             : 'Recheck failed: ' + acknowledgement.reason.replaceAll('_', ' ') +
-              (returnedTarget && returnedTarget !== sendTargetRef.current
+              (sendIdentityChanged
                 ? '. The Send control identity changed; select the composer again.' : '.'));
           notify(remainsSameTarget
             ? 'Native Send control rechecked successfully. No message was sent.'
