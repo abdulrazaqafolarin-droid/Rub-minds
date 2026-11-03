@@ -39,6 +39,8 @@ const create=(overrides={},options={})=>createNativeWakeHandoff(
 function submitted(){return {
  state:'submitted',promptInserted:true,promptReadbackVerified:true,
  composerIdentityRevalidated:true,sendControlIdentityRevalidated:true,
+ composerIdentityDigest:scope.composerIdentityDigest,
+ sendControlIdentityDigest:scope.sendControlIdentityDigest,
  sendInvoked:true,composerCleared:true,
 };}
 function receiver(){
@@ -55,7 +57,7 @@ test('creates an immutable short-lived handoff containing only a canonical event
  assert.equal(Object.isFrozen(handoff),true);
  assert.equal('messageBody' in handoff,false);
  assert.equal('responseBody' in handoff,false);
- assert.equal(validateNativeWakeHandoff(handoff,scope,{now}),handoff);
+ assert.deepEqual(validateNativeWakeHandoff(handoff,scope,{now}),handoff);
 });
 
 test('handoff expiry never exceeds the original durable lease expiry',()=>{
@@ -135,11 +137,7 @@ test('submitted result requires prompt readback, unchanged identities, Send and 
   {sendControlIdentityRevalidated:false},
  ])assert.throws(()=>createNativeWakeHandoffResult(h,{...submitted(),...override}),/Invalid/);
  const r=receiver();r.accept(h);
- const ack=r.settle(h.handoffId,{
-  ...submitted(),
-  composerIdentityDigest:scope.composerIdentityDigest,
-  sendControlIdentityDigest:scope.sendControlIdentityDigest,
- });
+ const ack=r.settle(h.handoffId,submitted());
  assert.equal(ack.state,'submitted');
  assert.equal(validateNativeWakeHandoffResult(ack,h),true);
  assert.equal(r.status(h.jobId).terminal,true);
