@@ -143,7 +143,7 @@ class MainActivity : Activity() {
             setPadding(0, dp(12), 0, dp(3))
         })
         cloudCard.addView(TextView(this).apply {
-            text = "Internet: connects to Rub Minds over encrypted HTTPS for pairing, selected-app metadata and short-lived stream commands. App discovery shows launchable apps Android exposes to this profile. All Files Access is not requested because streaming does not clone app data; that permission would not unlock other apps' private data. Screen capture is approved through Android's system picker for each share. Accessibility is optional, must be enabled by you in Settings, and is used only for foreground-package checks and locally armed touch gestures; app text and the accessibility tree are not uploaded."
+            text = "Internet: connects to Rub Minds over encrypted HTTPS for pairing, selected-app metadata and short-lived stream commands. App discovery shows launchable apps Android exposes to this profile. All Files Access is not requested because streaming does not clone app data; that permission would not unlock other apps' private data. Screen capture is approved through Android's system picker for each share. Accessibility is optional and must be enabled by you in Settings. It verifies the foreground app, drag-selected composer and nearby Send control, and dispatches locally armed touch gestures. In the separate native-wake path, the selected composer value is inspected on this phone only to confirm it is empty, contains the exact fixed @RMconnects event trigger, and clears after Send. The accessibility tree, composer value and conversation contents are never uploaded to Rub Minds."
             textSize = 11f
             setTextColor(0xff405070.toInt())
         })
