@@ -21,9 +21,11 @@ const now=100_000;
 const prompt=buildCanonicalWakePrompt('event_123');
 const digest=createHash('sha256').update(prompt,'utf8').digest('hex');
 const lease={
- ...ids,eventId:'event_123',sessionId:'mcp-session-1',targetId:'native-target-1',
- targetIdentityFingerprint:'fingerprint-1',targetRevision:4,prompt,promptDigest:digest,
- expiresAt:now+60_000,
+ jobId:ids.jobId,leaseToken:ids.leaseToken,eventId:'event_123',
+ roomId:ids.roomId,bindingId:ids.bindingId,hostId:ids.hostId,
+ sessionId:'mcp-session-1',targetId:'native-target-1',
+ targetIdentityFingerprint:'fingerprint-1',targetRevision:4,
+ prompt,promptDigest:digest,expiresAt:now+60_000,
 };
 const scope={
  deviceId:ids.deviceId,roomId:ids.roomId,screenSessionId:ids.screenSessionId,
