@@ -48,6 +48,11 @@ class NativeWakeBindingPolicyTest {
         assertFalse(isCurrent(conversation = null))
     }
 
+    @Test fun reusedComposerAndSendNodesCannotAuthorizeADifferentProviderConversation() {
+        assertTrue(isCurrent())
+        assertFalse(isCurrent(conversation = "9".repeat(64)))
+    }
+
     @Test fun emptyExpectedBindingValuesCanNeverAuthorizeNativeSend() {
         assertFalse(NativeWakeBindingPolicy.isCurrent(
             expectedGeneration = 7L,
