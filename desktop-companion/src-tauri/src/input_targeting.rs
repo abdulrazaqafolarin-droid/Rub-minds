@@ -109,6 +109,16 @@ pub fn is_recognized_send_label(name: &str, automation_id: &str) -> bool {
         return false;
     }
 
+    // Reject misleading action identities even when a camel-case prefix
+    // would otherwise split them into a standalone "send" token.
+    let normalized_id = automation_id.to_lowercase();
+    if ["resend", "email", "feedback", "share", "forward", "reply"]
+        .iter()
+        .any(|forbidden| normalized_id.contains(forbidden))
+    {
+        return false;
+    }
+
     let chars: Vec<char> = automation_id.chars().collect();
     let mut token = String::new();
     let mut tokens = Vec::<String>::new();
@@ -320,7 +330,8 @@ mod windows_impl {
     use uiautomation::{
         actions::{Text, Value},
         controls::{DocumentControl, EditControl},
-        types::{ControlType, Point, TextAttribute},
+        types::{ControlType, Point, TextAttribute, TreeScope, UIProperty},
+        variants::Variant,
         UIAutomation, UIElement,
     };
 
@@ -585,61 +596,78 @@ mod windows_impl {
     }
 
     fn collect_send_candidates(
-        walker: &uiautomation::UITreeWalker,
-        element: &UIElement,
+        automation: &UIAutomation,
+        window: &UIElement,
         process_id: u32,
         window_bounds: [i32; 4],
         composer_bounds: [i32; 4],
-        depth: usize,
-        visited: &mut usize,
-        candidates: &mut Vec<SendControlIdentity>,
-    ) -> Result<(), String> {
-        if depth > 48 {
-            return Err("accessibility_tree_depth_exceeded".into());
-        }
-        *visited += 1;
-        if *visited > 4_096 {
-            return Err("accessibility_tree_too_large".into());
+    ) -> Result<Vec<SendControlIdentity>, String> {
+        // Use the provider's descendant FindAll operation rather than a
+        // best-effort child/sibling walk. A failed query is not a partial
+        // "unique" result; it invalidates the whole read-only capability check.
+        let button_condition = automation.create_property_condition(
+            UIProperty::ControlType,
+            Variant::from(ControlType::Button as i32),
+            None,
+        ).map_err(|_| "Could not create the UI Automation Button query".to_string())?;
+        let buttons = window.find_all(TreeScope::Descendants, &button_condition)
+            .map_err(|_| "The selected app accessibility tree could not be read completely".to_string())?;
+        if buttons.len() > 4_096 {
+            return Err("The selected app contains too many accessible buttons to verify safely".into());
         }
 
-        if element.get_process_id().ok() == Some(process_id)
-            && element.get_control_type().ok() == Some(ControlType::Button)
-        {
-            let enabled = element.is_enabled().unwrap_or(false);
-            let offscreen = element.is_offscreen().unwrap_or(true);
-            let name = element.get_name().unwrap_or_default();
-            let automation_id = element.get_automation_id().unwrap_or_default();
-            let bounds = half_open_bounds(element).unwrap_or([0, 0, 0, 0]);
-            if validate_send_control_candidate(
-                "Button", enabled, offscreen, true, &name, &automation_id,
-                window_bounds, composer_bounds, bounds,
-            ).is_ok() {
-                let runtime_id = element.get_runtime_id()
-                    .map_err(|_| "Send control has no stable accessibility identity".to_string())?;
-                let class_name = element.get_classname()
-                    .map_err(|_| "Could not identify the Send control class".to_string())?;
-                if !runtime_id.is_empty() && !class_name.trim().is_empty() {
-                    candidates.push(SendControlIdentity {
-                        process_id,
-                        runtime_id,
-                        class_name,
-                        accessible_name: name,
-                        automation_id,
-                        bounds,
-                    });
-                }
+        let mut candidates = Vec::new();
+        for element in buttons {
+            let candidate_process = element.get_process_id()
+                .map_err(|_| "Could not verify the Send candidate process".to_string())?;
+            if candidate_process != process_id {
+                continue;
             }
-        }
 
-        let mut child = walker.get_first_child(element).ok();
-        while let Some(node) = child {
-            collect_send_candidates(
-                walker, &node, process_id, window_bounds, composer_bounds,
-                depth + 1, visited, candidates,
-            )?;
-            child = walker.get_next_sibling(&node).ok();
+            // A failed property read must not be converted into an empty label
+            // or a guessed default. That could let an unreadable button be
+            // mistaken for a uniquely identified Send action.
+            let enabled = element.is_enabled()
+                .map_err(|_| "Could not verify whether a candidate button is enabled".to_string())?;
+            let offscreen = element.is_offscreen()
+                .map_err(|_| "Could not verify candidate button visibility".to_string())?;
+            let name = element.get_name()
+                .map_err(|_| "Could not read a candidate button's accessible name".to_string())?;
+            let automation_id = element.get_automation_id()
+                .map_err(|_| "Could not read a candidate button's AutomationId".to_string())?;
+            let bounds = half_open_bounds(&element)?;
+
+            if validate_send_control_candidate(
+                "Button",
+                enabled,
+                offscreen,
+                true,
+                &name,
+                &automation_id,
+                window_bounds,
+                composer_bounds,
+                bounds,
+            ).is_err() {
+                continue;
+            }
+
+            let runtime_id = element.get_runtime_id()
+                .map_err(|_| "Send control has no stable accessibility identity".to_string())?;
+            let class_name = element.get_classname()
+                .map_err(|_| "Could not identify the Send control class".to_string())?;
+            if runtime_id.is_empty() || class_name.trim().is_empty() {
+                return Err("The Send control has an incomplete accessibility identity".into());
+            }
+            candidates.push(SendControlIdentity {
+                process_id,
+                runtime_id,
+                class_name,
+                accessible_name: name,
+                automation_id,
+                bounds,
+            });
         }
-        Ok(())
+        Ok(candidates)
     }
 
     pub fn inspect_send_control(composer: &EditableTargetIdentity) -> SendControlInspection {
@@ -651,19 +679,12 @@ mod windows_impl {
             Ok(value) => value,
             Err(_) => return SendControlInspection { candidate: None, reason: "composer_or_foreground_window_changed" },
         };
-        let walker = match automation.get_control_view_walker() {
-            Ok(value) => value,
-            Err(_) => return SendControlInspection { candidate: None, reason: "accessibility_tree_unavailable" },
+        let candidates = match collect_send_candidates(
+            &automation, &window, composer.process_id, window_bounds, composer.bounds,
+        ) {
+            Ok(candidates) => candidates,
+            Err(_) => return SendControlInspection { candidate: None, reason: "accessibility_tree_incomplete" },
         };
-        let composer_bounds = composer.bounds;
-        let mut visited = 0usize;
-        let mut candidates = Vec::new();
-        if collect_send_candidates(
-            &walker, &window, composer.process_id, window_bounds, composer_bounds,
-            0, &mut visited, &mut candidates,
-        ).is_err() {
-            return SendControlInspection { candidate: None, reason: "accessibility_tree_incomplete" };
-        }
         super::choose_send_control(candidates)
     }
 
@@ -852,6 +873,10 @@ mod tests {
         assert!(!recognized("Submit", "send_button"));
         assert!(!recognized("", "sendbutton"));
         assert!(!recognized("", "resend_button"));
+        assert!(!recognized("", "reSendButton"));
+        assert!(!recognized("", "sendToEmail"));
+        assert!(!recognized("", "composerSendFeedback"));
+        assert!(!recognized("", "sendToShare"));
     }
 
     #[test]
