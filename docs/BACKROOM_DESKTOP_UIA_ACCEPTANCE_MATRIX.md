@@ -1,6 +1,6 @@
 # Backroom desktop UI Automation acceptance matrix
 
-Status: Windows UI Automation targeting is implemented in the feature branch. Physical Windows acceptance and CI compilation are still pending.
+Status: Windows UI Automation composer targeting plus local Send-control discovery/revalidation are implemented in source on the feature branch. Physical Windows acceptance, Rust tests and CI compilation are still pending.
 
 ## Automated validation gates
 
@@ -49,6 +49,35 @@ Run on a real Windows 10/11 desktop with the installed Backroom companion, paire
 
 Also verify whole-monitor capture geometry at 100%, 125%, 150% and 200% display scaling where available, plus a second monitor with a non-zero origin.
 
+## Read-only Send-control discovery and revalidation — 2026-11-03
+
+The desktop companion now inspects the selected app's UI Automation tree locally after an editable composer has been selected. A candidate is accepted only when it is a visible, enabled Button in the same process and app window, has an exact accessible name of Send / Send message / Send prompt (or an unlabelled AutomationId with Send as a distinct token), and lies near the composer in both axes. Zero matches and multiple matches remain unverified. Generic Submit, Share, Send feedback and Resend labels are rejected.
+
+The complete Send-control identity (process ID, runtime ID, class, accessible name, AutomationId and bounds) remains in native Rust memory. DraftTarget skips both composer and Send identities during serialization; a native unit test asserts that neither identity, the selection ID nor the AutomationId can appear in its JSON representation. The WebView receives only the selected composer selection ID, a boolean and a bounded reason.
+
+The **Recheck Send control** button sends only the selection ID and a one-use request ID. The local host rechecks that the same selected empty composer remains in the foreground app window and compares the currently discovered Send control with the original native identity. A stale composer/window, replaced or moved button, a missing/disabled/hidden button, an incomplete accessibility tree or multiple matches fails closed and invalidates the saved Send identity. A fresh drag is required to rediscover it.
+
+This operation is read-only. It does not call UIA Invoke, click a button, send Enter, submit a prompt or grant autonomous execution. Draft insertion remains under the existing separate local OS approval and one-shot target verification. Off / On / Auto for native Windows apps remains unavailable; the durable group wake queue, local native Auto grant, one-time execution seal and no-replay recovery are not connected to this surface.
+
+### Physical Windows Send-control acceptance matrix (NOT RUN)
+
+| Scenario | Required result |
+|---|---|
+| One labelled Send Button near the selected empty Edit/Document | Discovery reports one candidate; no click or text change |
+| One Send Message / Send Prompt Button | Accepted as an exact accessible name |
+| Empty accessible name with AutomationId token `send` | Accepted only when `send` is a distinct token (e.g. `sendButton`, `composer_send_button`) |
+| Submit, Share, Send feedback, Send to email, Resend | Rejected as misleading/non-exact labels |
+| Disabled, off-screen or non-Button control | Rejected |
+| Button in another process or outside selected app window | Rejected |
+| Button far from composer horizontally or vertically | Rejected |
+| No matching Send control | Draft-only status |
+| Two matching Send controls | Ambiguous; neither is selected |
+| Composer content becomes non-empty, app loses foreground, composer moves/replaces | Recheck fails and invalidates the Send identity |
+| Send button is removed, disabled, hidden, moved or replaced | Recheck fails; no automatic rebinding |
+| Duplicate/replayed recheck request or stale selection ID | Rejected without changing the current selection |
+| Successful discovery and successful recheck | Status only; never invoke, click, Enter or Send |
+
+Record physical results only after running the matrix on a real Windows 10/11 computer and an approved disposable app/group. Current CI run `41617291457` still failed with `runner_id=0`, empty runner name and no job steps, so no Rust/MSVC compiler result is available for this exact revision.
 ## Safety and lifecycle guarantees
 
 - The drag rectangle must be at least 65% covered by one resolved editable control. A centre-point hit with a rectangle spanning neighbouring controls is rejected.
