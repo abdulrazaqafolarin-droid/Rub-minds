@@ -65,7 +65,7 @@ export function validateAndroidNativeWakeHandoff(value, { now = Date.now(), cloc
     "version", "kind", "handoffId", "jobId", "eventId", "deviceId", "roomId", "screenSessionId",
     "hostId", "bindingId", "sessionId", "targetId", "targetRevision", "surface", "appId",
     "identityFingerprint", "composerIdentityDigest", "sendControlIdentityDigest",
-    "leaseTokenDigest", "prompt", "promptDigest", "issuedAt", "leaseExpiresAt", "expiresAt",
+    "providerConversationIdentityDigest", "leaseTokenDigest", "prompt", "promptDigest", "issuedAt", "leaseExpiresAt", "expiresAt",
   ];
   const expectedPrompt = value && typeof value === "object" ? canonicalWakePrompt(value.eventId) : null;
   if (!exactKeys(value, keys) ||
@@ -81,6 +81,7 @@ export function validateAndroidNativeWakeHandoff(value, { now = Date.now(), cloc
       !isNonempty(value.identityFingerprint) ||
       !HEX.test(value.composerIdentityDigest ?? "") ||
       !HEX.test(value.sendControlIdentityDigest ?? "") ||
+      !HEX.test(value.providerConversationIdentityDigest ?? "") ||
       !HEX.test(value.leaseTokenDigest ?? "") ||
       value.prompt !== expectedPrompt || !HEX.test(value.promptDigest ?? "") ||
       sha256(value.prompt) !== value.promptDigest ||
@@ -114,7 +115,7 @@ export function validateAndroidNativeWakeResult(result, handoff) {
   const optional = [...verificationEvidence, "reason"];
   const reasons = new Set([
     "foreground_changed", "composer_not_empty", "composer_identity_changed",
-    "send_control_unavailable", "send_identity_changed", "permission_denied",
+    "send_control_unavailable", "send_identity_changed", "conversation_scope_unavailable", "permission_denied",
     "device_disconnected", "send_unconfirmed", "outcome_unknown", "other",
   ]);
   if (!result || typeof result !== "object" || Array.isArray(result) ||
