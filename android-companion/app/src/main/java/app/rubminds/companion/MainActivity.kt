@@ -467,6 +467,7 @@ class MainActivity : Activity() {
                     if (checked && digest != null) {
                         launchGrants[app.packageName] = digest
                         appRows[app.packageName]?.second?.isEnabled = true
+                        appRows[app.packageName]?.third?.isEnabled = vault.deviceId() != null
                     } else {
                         launchGrants.remove(app.packageName)
                         draftGrants.remove(app.packageName)
