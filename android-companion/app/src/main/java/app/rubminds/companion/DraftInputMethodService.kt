@@ -295,7 +295,14 @@ class DraftInputMethodService : InputMethodService() {
         // Persist the one-shot seal only after the exact app, signer, editor,
         // selected composer, and local 24-hour native-wake grant are rechecked.
         val seal = AndroidNativeWakeConsentStore(this).reserveExecution(request)
-        if (!seal.allowed) return denied(seal.reason)
+        if (!seal.allowed) {
+            val state = if (NativeWakeConsentPolicy.isTerminalReservationDenial(seal.reason)) {
+                NativeWakeInsertState.NEEDS_REVIEW
+            } else {
+                NativeWakeInsertState.PRECHECK_DENIED
+            }
+            return NativeWakeInsertResult(state, seal.reason)
+        }
 
         // Once the seal exists, every uncertain insertion outcome is terminal:
         // the caller must not retry this event automatically.
