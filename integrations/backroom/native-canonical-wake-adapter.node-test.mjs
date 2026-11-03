@@ -8,6 +8,7 @@ const target = Object.freeze({
   id: 'native-target-1', roomId: 'room-1', hostId: 'host-1', spaceId: 'space-1',
   sessionId: 'session-1', appId: 'com.example.chat',
   identityFingerprint: 'foreground-app-fingerprint',
+  providerConversationIdentityDigest: 'e'.repeat(64),
   surface: 'android_app', locatorKind: 'accessibility',
   locatorValue: 'native-composer-opaque', revision: 3,
 });
@@ -15,6 +16,7 @@ const command = Object.freeze({
   id: 'wake_job_123', eventId: 'message_123',
   roomId: target.roomId, hostId: target.hostId, spaceId: target.spaceId,
   sessionId: target.sessionId, identityFingerprint: target.identityFingerprint,
+  providerConversationIdentityDigest: target.providerConversationIdentityDigest,
   targetId: target.id, targetRevision: target.revision, operation: 'wake',
   text: buildCanonicalWakePrompt('message_123'),
 });
@@ -24,12 +26,14 @@ function readyState() {
     connected: true, focused: true, composerEmpty: true,
     composerIdentityVerified: true, sendControlUnique: true,
     sendControlEnabled: true, sendControlVisible: true,
-    sendControlIdentityVerified: true, targetId: target.id,
+    sendControlIdentityVerified: true, providerConversationIdentityVerified: true, targetId: target.id,
     targetRevision: target.revision, locatorKind: 'accessibility',
     composerIdentityDigest: 'a'.repeat(64), sendControlIdentityDigest: 'b'.repeat(64),
+    providerConversationIdentityDigest: target.providerConversationIdentityDigest, providerConversationIdentityRevalidated: true,
     surface: target.surface,
     appId: target.appId, sessionId: target.sessionId,
     identityFingerprint: target.identityFingerprint,
+    providerConversationIdentityDigest: target.providerConversationIdentityDigest,
   };
 }
 
@@ -60,6 +64,7 @@ function fixture({ inspect = readyState, submit, surface = target.surface } = {}
     driver, targetId: target.id, roomId: target.roomId, hostId: target.hostId,
     spaceId: target.spaceId, surface, appId: target.appId,
     sessionId: target.sessionId, identityFingerprint: target.identityFingerprint,
+    providerConversationIdentityDigest: target.providerConversationIdentityDigest,
     locatorValue: target.locatorValue, targetRevision: target.revision,
   });
   const guard = new LocalExecutionGuard({
@@ -85,6 +90,9 @@ test('probe requires a foreground empty composer and the same unique verified Se
     state => { state.sendControlIdentityVerified = false; },
     state => { state.composerIdentityDigest = 'not-a-digest'; },
     state => { state.sendControlIdentityDigest = 'not-a-digest'; },
+    state => { state.providerConversationIdentityVerified = false; },
+    state => { state.providerConversationIdentityDigest = 'not-a-digest'; },
+
     state => { state.targetId = 'another-target'; },
     state => { state.targetRevision = target.revision + 1; },
     state => { state.identityFingerprint = 'other-app'; },
@@ -127,6 +135,8 @@ test('driver receives only the fixed canonical prompt and the native target scop
   assert.equal(request.target.targetRevision, target.revision);
   assert.equal(request.automaticRetry, false);
   assert.equal(request.requireSendControlIdentityRecheck, true);
+  assert.equal(request.requireProviderConversationIdentityRecheck, true);
+  assert.equal(request.providerConversationIdentityDigest, target.providerConversationIdentityDigest);
   assert.equal(preflight.target.targetRevision, target.revision);
   assert.equal('text' in request, false);
 });
