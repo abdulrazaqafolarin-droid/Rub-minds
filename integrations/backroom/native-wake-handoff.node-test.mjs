@@ -73,13 +73,15 @@ test('handoff expiry never exceeds the original durable lease expiry',()=>{
 test('rejects a target/room/device/session/binding scope mismatch before handoff creation',()=>{
  assert.throws(()=>create({}, {now, handoffId:'invalid'}),/identity or clock/);
  for(const mutate of [
-  s=>s.deviceId='72000000-0000-4000-8000-000000000099',
   s=>s.roomId='73000000-0000-4000-8000-000000000099',
-  s=>s.screenSessionId='74000000-0000-4000-8000-000000000099',
   s=>s.bindingId='75000000-0000-4000-8000-000000000099',
   s=>s.targetRevision+=1,
   s=>s.identityFingerprint='replacement',
  ]){const s={...scope};mutate(s);assert.throws(()=>createNativeWakeHandoff(lease,s,{now}),/scope mismatch/);}
+ const foreign={...scope,deviceId:'72000000-0000-4000-8000-000000000099'};
+ assert.equal(validateNativeWakeHandoff(create(),foreign,{now}),null);
+ const otherStream={...scope,screenSessionId:'74000000-0000-4000-8000-000000000099'};
+ assert.equal(validateNativeWakeHandoff(create(),otherStream,{now}),null);
 });
 
 test('rejects message text, wrong event prompt and prompt-digest tampering',()=>{
