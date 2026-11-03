@@ -76,7 +76,9 @@ data class NativeWakeSubmissionResult(
     val composerIdentityRevalidated: Boolean = false,
     val sendControlIdentityRevalidated: Boolean = false,
     val composerIdentityDigest: String? = null,
-    val sendControlIdentityDigest: String? = null
+    val sendControlIdentityDigest: String? = null,
+    val providerConversationIdentityRevalidated: Boolean = false,
+    val providerConversationIdentityDigest: String? = null
 )
 
 enum class NativeWakeInsertState {
