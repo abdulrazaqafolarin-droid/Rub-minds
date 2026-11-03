@@ -100,10 +100,25 @@ object NativeWakeConsentPolicy {
             AppGrantPolicy.isValidPackageName(grant.packageName) &&
             AppGrantPolicy.isValidSigningCertificateSha256(grant.signingCertificateSha256) &&
             grant.grantedAtMillis > 0L &&
+            grant.grantedAtMillis <= nowMillis &&
             grant.expiresAtMillis > nowMillis &&
             grant.expiresAtMillis > grant.grantedAtMillis &&
             grant.expiresAtMillis - grant.grantedAtMillis <= MAX_GRANT_TTL_MILLIS
     }
+
+    fun isValidReservation(row: NativeWakeExecutionReservation): Boolean =
+        uuid.matches(row.grantId) &&
+            uuid.matches(row.deviceId) &&
+            uuid.matches(row.sessionId) &&
+            eventId.matches(row.eventId) &&
+            AppGrantPolicy.isValidPackageName(row.packageName) &&
+            AppGrantPolicy.isValidSigningCertificateSha256(row.signingCertificateSha256) &&
+            targetId.matches(row.composerTargetId) &&
+            targetId.matches(row.sendTargetId) &&
+            row.targetRevision > 0 &&
+            row.reservedAtMillis > 0L &&
+            row.grantExpiresAtMillis > row.reservedAtMillis &&
+            row.grantExpiresAtMillis - row.reservedAtMillis <= MAX_GRANT_TTL_MILLIS
 
     fun reserveExecution(
         grant: NativeWakeGrant?,
@@ -126,6 +141,9 @@ object NativeWakeConsentPolicy {
             request.targetRevision < 1
         ) return denied("native_wake_scope_invalid")
 
+        if (existing.any { !isValidReservation(it) }) {
+            return denied("native_wake_replay_ledger_corrupt")
+        }
         val retained = existing.filter { row ->
             row.grantExpiresAtMillis > nowMillis &&
                 nowMillis >= row.reservedAtMillis &&
