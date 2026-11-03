@@ -267,5 +267,14 @@ test('native wake fails closed without provider conversation identity and carrie
   assert.match(service, /boundProviderConversationIdentityDigest = null/);
   assert.match(screen, /isBoundToProviderConversation\(/);
   assert.match(screen, /providerConversationIdentityUnavailable/);
+  const ack = method(screen, '    private fun acknowledgeNativeWake(', '    private fun processCommand(');
+  assert.match(ack, /providerConversationIdentityRevalidated/);
+  assert.match(ack, /providerConversationDigest != handoff\.providerConversationIdentityDigest/);
+  assert.match(ack, /providerConversationIdentityDigest/);
+
+  const clearVerification = method(service, '    private fun awaitComposerClear(', '    private fun findNodeByTargetId(');
+  assert.match(clearVerification, /ProviderConversationIdentityPolicy\.matches/);
+  assert.match(service, /providerConversationIdentityRevalidated = cleared/);
+  assert.match(service, /providerConversationIdentityDigest = if \(providerConversationIdentityRevalidated\)/);
   assert.match(ime, /isSelectedComposerEmpty/);
 });
