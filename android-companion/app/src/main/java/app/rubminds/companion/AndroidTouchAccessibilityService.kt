@@ -216,6 +216,21 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             val sendTraversal = intArrayOf(0, 0)
             collectSendControlCandidates(root, packageName, sendCandidates, sendTraversal)
             if (sendTraversal[1] != 0) {
+                val committed = synchronized(this) {
+                    if (nativeBindingGeneration != selectionGeneration ||
+                        boundSessionId != sessionId || boundPackageName != packageName
+                    ) {
+                        false
+                    } else {
+                        // Keep the verified composer available for ordinary draft
+                        // insertion. Native wake remains unavailable without a
+                        // complete, unique Send-control scan.
+                        boundComposerTargetId = selected.targetId
+                        boundSendTargetId = null
+                        true
+                    }
+                }
+                if (!committed) return ComposerSelectionDecision(null, "session_or_selection_changed")
                 return ComposerSelectionDecision(selected, "selected", null, "accessibility_tree_too_large")
             }
             val sendDecision = AndroidSendControlPolicy.choose(
