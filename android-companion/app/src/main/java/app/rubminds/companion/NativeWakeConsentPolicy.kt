@@ -63,7 +63,15 @@ enum class NativeWakeSubmissionState {
 
 data class NativeWakeSubmissionResult(
     val state: NativeWakeSubmissionState,
-    val reason: String
+    val reason: String,
+    val promptInserted: Boolean = false,
+    val sendInvoked: Boolean = false,
+    val composerCleared: Boolean = false,
+    val promptReadbackVerified: Boolean = false,
+    val composerIdentityRevalidated: Boolean = false,
+    val sendControlIdentityRevalidated: Boolean = false,
+    val composerIdentityDigest: String? = null,
+    val sendControlIdentityDigest: String? = null
 )
 
 enum class NativeWakeInsertState {
