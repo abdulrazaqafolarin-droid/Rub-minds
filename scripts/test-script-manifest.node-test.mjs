@@ -91,3 +91,11 @@ test('local Playwright runner isolates its browser profile and environment',asyn
  assert.doesNotMatch(runner,/connectOverCDP/);
  assert.match(runner,/controller\.signal\.aborted\s*&&\s*error\?\.name\s*===\s*"AbortError"/);
 });
+
+test('Android native-wake source, Edge protocol and ACK suites stay wired into CI', async () => {
+  const androidWorkflow = await readFile(resolve(root, '.github/workflows/backroom-android-companion.yml'), 'utf8');
+  assert.ok(androidWorkflow.includes('supabase/functions/backroom-device/android-streaming-protocol.node-test.mjs'));
+  assert.ok(androidWorkflow.includes('supabase/functions/backroom-device/android-streaming-endpoint.node-test.mjs'));
+  assert.ok(manifest.scripts?.['test:backroom']?.includes('integrations/backroom/android-native-wake-source.node-test.mjs'));
+  assert.ok(manifest.scripts?.['test:companion']?.includes('integrations/backroom/android-native-wake-source.node-test.mjs'));
+});
