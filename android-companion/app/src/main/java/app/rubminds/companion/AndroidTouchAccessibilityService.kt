@@ -153,6 +153,14 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun canSelectComposerForApp(packageName: String, signer: String): Boolean {
+        val grant = AppGrantStore(this).get(packageName, signer)
+        val deviceId = DeviceCredentialVault(this).deviceId()
+        val nativeWakeConsent = deviceId != null &&
+            AndroidNativeWakeConsentStore(this).activeGrant(deviceId, packageName, signer) != null
+        return AppGrantPolicy.canSelectComposerTarget(grant, signer, nativeWakeConsent)
+    }
+
     fun selectComposerTarget(
         sessionId: String,
         packageName: String,
@@ -172,10 +180,8 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             }
             val signer = AppIdentity.signingCertificateSha256(this, packageName)
                 ?: return ComposerSelectionDecision(null, "app_signer_unavailable")
-            val grant = AppGrantStore(this).get(packageName, signer)
-                ?: return ComposerSelectionDecision(null, "app_not_locally_approved")
-            if (!grant.allowDraftInsertion || !AppGrantPolicy.canLaunch(grant, signer)) {
-                return ComposerSelectionDecision(null, "draft_insertion_not_locally_approved")
+            if (!canSelectComposerForApp(packageName, signer)) {
+                return ComposerSelectionDecision(null, "composer_selection_not_locally_approved")
             }
 
             val rootBounds = Rect()
@@ -240,10 +246,8 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             }
             val signer = AppIdentity.signingCertificateSha256(this, packageName)
                 ?: return SendControlDecision(null, "app_signer_unavailable")
-            val grant = AppGrantStore(this).get(packageName, signer)
-                ?: return SendControlDecision(null, "app_not_locally_approved")
-            if (!grant.allowDraftInsertion || !AppGrantPolicy.canLaunch(grant, signer)) {
-                return SendControlDecision(null, "draft_insertion_not_locally_approved")
+            if (!canSelectComposerForApp(packageName, signer)) {
+                return SendControlDecision(null, "composer_selection_not_locally_approved")
             }
 
             val focused = try { root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) }
