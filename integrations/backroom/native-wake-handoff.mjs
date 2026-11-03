@@ -261,7 +261,8 @@ export class NativeWakeHandoffReceiver {
   if(!validateOutcome(evidence)||
    (evidence.state==='submitted'&&(
     evidence.composerIdentityDigest!==accepted.composerIdentityDigest||
-    evidence.sendControlIdentityDigest!==accepted.sendControlIdentityDigest)))return null;
+    evidence.sendControlIdentityDigest!==accepted.sendControlIdentityDigest||
+    evidence.providerConversationIdentityDigest!==accepted.providerConversationIdentityDigest)))return null;
   const ack=Object.freeze({
    version:1,kind:'native_wake_result',...handoffScope,
    state:evidence.state,promptInserted:evidence.promptInserted,
@@ -272,6 +273,8 @@ export class NativeWakeHandoffReceiver {
     sendControlIdentityRevalidated:evidence.sendControlIdentityRevalidated,
     composerIdentityDigest:evidence.composerIdentityDigest,
     sendControlIdentityDigest:evidence.sendControlIdentityDigest,
+    providerConversationIdentityRevalidated:evidence.providerConversationIdentityRevalidated,
+    providerConversationIdentityDigest:evidence.providerConversationIdentityDigest,
    }:{}),
    ...(evidence.reason?{reason:evidence.reason}:{}),
   });
