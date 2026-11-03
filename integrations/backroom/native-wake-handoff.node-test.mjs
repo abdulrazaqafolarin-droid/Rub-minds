@@ -162,6 +162,16 @@ test('submitted result requires prompt readback, unchanged identities, Send and 
  assert.equal(r.accept(create({leaseToken:'71000000-0000-4000-8000-000000000002'},{handoffId:'77000000-0000-4000-8000-000000000002'})),null);
 });
 
+test('conversation-scope preflight reason survives the handoff result envelope',()=>{
+ const h=create();
+ const ack=createNativeWakeHandoffResult(h,{
+  state:'preflight_denied',promptInserted:false,sendInvoked:false,
+  composerCleared:false,reason:'conversation_scope_unavailable',
+ });
+ assert.equal(ack.reason,'conversation_scope_unavailable');
+ assert.equal(validateNativeWakeHandoffResult(ack,h),true);
+});
+
 test('uncertain outcomes are terminal and never permit an automatic second handoff',()=>{
  const r=receiver(),h=create();r.accept(h);
  const ack=r.settle(h.handoffId,{
