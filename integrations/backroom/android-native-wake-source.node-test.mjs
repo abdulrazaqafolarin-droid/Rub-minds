@@ -8,6 +8,8 @@ const ime = await read('../../android-companion/app/src/main/java/app/rubminds/c
 const screen = await read('../../android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt');
 const handoffPolicy = await read('../../android-companion/app/src/main/java/app/rubminds/companion/AndroidNativeWakeHandoffPolicy.kt');
 const handoffTest = await read('../../android-companion/app/src/test/java/app/rubminds/companion/AndroidNativeWakeHandoffPolicyTest.kt');
+const bindingPolicy = await read('../../android-companion/app/src/main/java/app/rubminds/companion/NativeWakeBindingPolicy.kt');
+const bindingPolicyTest = await read('../../android-companion/app/src/test/java/app/rubminds/companion/NativeWakeBindingPolicyTest.kt');
 const consent = await read('../../android-companion/app/src/main/java/app/rubminds/companion/NativeWakeConsentPolicy.kt');
 const store = await read('../../android-companion/app/src/main/java/app/rubminds/companion/AndroidNativeWakeConsentStore.kt');
 const activity = await read('../../android-companion/app/src/main/java/app/rubminds/companion/MainActivity.kt');
@@ -208,4 +210,32 @@ test('Android issuer-skew regression preserves issue time and rejects skew beyon
   assert.match(handoffTest, /acceptsFutureIssuedHandoffWithinTheValidatedClockSkewAndPreservesItsTimestamp/);
   assert.match(handoffTest, /now \+ 2_000L/);
   assert.match(handoffTest, /now \+ 22_000L/);
+});
+
+
+test('native Send is serialized against session and composer-target invalidation', () => {
+  const bind = method(service, '    fun bindSession(sessionId: String, packageName: String): Boolean {', '    fun dispatchRemoteBack(');
+  assert.match(bind, /synchronized\(this\)[\s\S]*nativeBindingGeneration\+\+/);
+
+  const select = method(service, '    fun selectComposerTarget(', '    fun revalidateSelectedSendControl(');
+  assert.match(select, /nativeBindingGeneration\+\+/);
+  assert.match(select, /nativeBindingGeneration != selectionGeneration/);
+
+  const clear = method(service, '    fun clearSelectedComposer()', '    /**\n     * Device-local native submit path');
+  assert.match(clear, /synchronized\(this\)/);
+  assert.match(clear, /nativeBindingGeneration\+\+/);
+
+  const submit = method(service, '    fun submitCanonicalWake(', '    private fun awaitComposerClear(');
+  assert.match(submit, /bindingGenerationAtStart/);
+  assert.match(submit, /NativeWakeBindingPolicy\.isCurrent/);
+  assert.match(submit, /DraftInputMethodService\.insertNativeWakeTrigger\(request\)/);
+  assert.match(submit, /synchronized\(this\)[\s\S]*?performAction\(AccessibilityNodeInfo\.ACTION_CLICK\)/);
+
+  const clearActive = method(service, '        fun clearActiveSession(', '        fun selectComposerTarget(');
+  assert.match(clearActive, /synchronized\(current\)[\s\S]*nativeBindingGeneration\+\+/);
+
+  const awaitClear = method(service, '    private fun awaitComposerClear(', '    private fun findNodeByTargetId(');
+  assert.match(awaitClear, /bindingGenerationAtStart/);
+  assert.match(bindingPolicy, /expectedGeneration == currentGeneration/);
+  assert.match(bindingPolicyTest, /nativeWakeRequiresTheExactUninterruptedSessionAndTargetBinding/);
 });
