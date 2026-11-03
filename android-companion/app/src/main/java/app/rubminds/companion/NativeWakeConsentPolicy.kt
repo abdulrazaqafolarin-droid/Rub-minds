@@ -45,6 +45,17 @@ data class NativeWakeReservationDecision(
     val reservations: List<NativeWakeExecutionReservation>
 )
 
+enum class NativeWakeInsertState {
+    PRECHECK_DENIED,
+    INSERTED,
+    NEEDS_REVIEW
+}
+
+data class NativeWakeInsertResult(
+    val state: NativeWakeInsertState,
+    val reason: String
+)
+
 object NativeWakeConsentPolicy {
     const val MAX_GRANT_TTL_MILLIS = 24L * 60L * 60L * 1000L
     const val MIN_GRANT_TTL_MILLIS = 60L * 1000L
