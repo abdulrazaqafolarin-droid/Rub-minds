@@ -150,12 +150,13 @@ class AndroidNativeWakeConsentStore(context: Context) {
         row.grantId, row.eventId, row.jobId, row.hostId, row.roomId, row.bindingId,
         row.leaseTokenDigest, row.deviceId, row.sessionId, row.packageName,
         row.signingCertificateSha256, row.composerTargetId, row.sendTargetId,
-        row.targetRevision, row.reservedAtMillis, row.grantExpiresAtMillis
+        row.targetRevision, row.reservedAtMillis, row.grantExpiresAtMillis,
+        row.providerConversationIdentityDigest
     ).joinToString("\t")
 
     private fun decodeReservation(value: String): NativeWakeExecutionReservation? {
         val fields = value.split('\t')
-        if (fields.size != 16) return null
+        if (fields.size !in 16..17) return null
         return runCatching {
             NativeWakeExecutionReservation(
                 grantId = fields[0], eventId = fields[1], jobId = fields[2],
@@ -164,7 +165,9 @@ class AndroidNativeWakeConsentStore(context: Context) {
                 packageName = fields[9], signingCertificateSha256 = fields[10],
                 composerTargetId = fields[11], sendTargetId = fields[12],
                 targetRevision = fields[13].toInt(), reservedAtMillis = fields[14].toLong(),
-                grantExpiresAtMillis = fields[15].toLong()
+                grantExpiresAtMillis = fields[15].toLong(),
+                providerConversationIdentityDigest = fields.getOrNull(16)
+                    ?: NativeWakeConsentPolicy.LEGACY_CONVERSATION_SCOPE
             )
         }.getOrNull()
     }
