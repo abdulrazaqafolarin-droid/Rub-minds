@@ -22,6 +22,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
     @Volatile private var boundPackageName: String? = null
     @Volatile private var gestureInFlight = false
     @Volatile private var boundComposerTargetId: String? = null
+    @Volatile private var boundSendTargetId: String? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -65,6 +66,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         boundSessionId = sessionId
         boundPackageName = packageName
         boundComposerTargetId = null
+        boundSendTargetId = null
         return true
     }
 
@@ -154,6 +156,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         selection: NormalizedComposerSelection
     ): ComposerSelectionDecision {
         boundComposerTargetId = null
+        boundSendTargetId = null
         if (boundSessionId != sessionId || boundPackageName != packageName) {
             return ComposerSelectionDecision(null, "session_or_app_mismatch")
         }
@@ -183,8 +186,33 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             collectComposerCandidates(root, packageName, candidates, traversal)
             if (traversal[1] != 0) return ComposerSelectionDecision(null, "accessibility_tree_too_large")
             val decision = AndroidComposerTargetPolicy.choose(candidates, packageName, selectedBounds)
-            if (decision.candidate != null) boundComposerTargetId = decision.candidate.targetId
-            return decision
+            val selected = decision.candidate ?: return decision
+            boundComposerTargetId = selected.targetId
+
+            // Inspect only local accessibility metadata. The app's conversation
+            // text and editor contents are never read or uploaded. A Send control
+            // is exposed only when one exact, nearby, enabled click target exists.
+            val sendCandidates = mutableListOf<SendControlCandidate>()
+            val sendTraversal = intArrayOf(0, 0)
+            collectSendControlCandidates(root, packageName, sendCandidates, sendTraversal)
+            if (sendTraversal[1] != 0) {
+                return ComposerSelectionDecision(selected, "selected", null, "accessibility_tree_too_large")
+            }
+            val rootBounds = Rect()
+            root.getBoundsInScreen(rootBounds)
+            val sendDecision = AndroidSendControlPolicy.choose(
+                sendCandidates,
+                packageName,
+                ComposerScreenRect(rootBounds.left, rootBounds.top, rootBounds.right, rootBounds.bottom),
+                selected.bounds
+            )
+            boundSendTargetId = sendDecision.candidate?.targetId
+            return ComposerSelectionDecision(
+                selected,
+                "selected",
+                sendDecision.candidate,
+                sendDecision.reason
+            )
         } finally {
             root.recycle()
         }
@@ -220,6 +248,57 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
 
     fun clearSelectedComposer() {
         boundComposerTargetId = null
+        boundSendTargetId = null
+    }
+
+    private fun collectSendControlCandidates(
+        node: AccessibilityNodeInfo,
+        packageName: String,
+        candidates: MutableList<SendControlCandidate>,
+        traversal: IntArray
+    ) {
+        if (traversal[1] != 0) return
+        traversal[0] += 1
+        if (traversal[0] > MAX_COMPOSER_TREE_NODES) {
+            traversal[1] = 1
+            return
+        }
+        if (node.packageName?.toString() == packageName &&
+            node.isClickable && node.isEnabled && node.isVisibleToUser
+        ) {
+            val bounds = Rect()
+            node.getBoundsInScreen(bounds)
+            val clickActionAvailable = try {
+                node.actionList.any { action -> action.id == AccessibilityNodeInfo.ACTION_CLICK }
+            } catch (_: SecurityException) {
+                false
+            }
+            if (!bounds.isEmpty && clickActionAvailable) {
+                val label = listOf(
+                    node.text?.toString().orEmpty(),
+                    node.contentDescription?.toString().orEmpty()
+                ).filter { it.isNotBlank() }.distinct().joinToString(" ").take(120)
+                candidates += SendControlCandidate(
+                    targetId = composerTargetId(node, packageName),
+                    packageName = packageName,
+                    bounds = ComposerScreenRect(bounds.left, bounds.top, bounds.right, bounds.bottom),
+                    label = label,
+                    resourceId = node.viewIdResourceName.orEmpty(),
+                    clickable = node.isClickable,
+                    enabled = node.isEnabled,
+                    visible = node.isVisibleToUser
+                )
+            }
+        }
+        for (index in 0 until node.childCount.coerceAtMost(MAX_COMPOSER_TREE_NODES)) {
+            if (traversal[1] != 0) return
+            val child = try { node.getChild(index) } catch (_: SecurityException) { null } ?: continue
+            try {
+                collectSendControlCandidates(child, packageName, candidates, traversal)
+            } finally {
+                child.recycle()
+            }
+        }
     }
 
     private fun collectComposerCandidates(
@@ -319,6 +398,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 current.boundSessionId = null
                 current.boundPackageName = null
                 current.boundComposerTargetId = null
+                current.boundSendTargetId = null
             }
         }
 
