@@ -177,5 +177,6 @@ class AndroidNativeWakeHandoffPolicyTest {
         assertEquals(send, request.sendTargetId)
         assertEquals(leaseDigest, request.leaseTokenDigest)
         assertEquals(7, request.targetRevision)
+        assertEquals(accepted.expiresAtMillis, request.handoffExpiresAtMillis)
     }
 }
