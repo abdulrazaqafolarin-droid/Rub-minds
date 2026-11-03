@@ -24,6 +24,8 @@ The native wake adapter must not reuse the generic draft adapter. A draft is ord
 
 `NativeCanonicalWakeAdapter` supports only `android_app`, `windows_app` and `desktop_app` targets with an `accessibility` locator. Its constructor pins the group, host, space, target ID/revision, app, session and foreground identity. A target revision or scope change requires a fresh registration.
 
+The preflight returns opaque SHA-256 digests for the selected composer identity and Send-control identity, along with the exact target ID/revision. The adapter requires those digests to be echoed unchanged after the post-seal recheck. A driver cannot satisfy the contract by returning generic `true` flags for a replacement field or button.
+
 The platform driver implements:
 
 - `inspectWakeTarget({ target })`: returns only bounded booleans and app/session identity. It must attest a connected, focused target; an empty composer whose exact identity still matches; and exactly one visible, enabled, nearby Send control whose identity still matches. Full node/UIA identities remain native-local.
