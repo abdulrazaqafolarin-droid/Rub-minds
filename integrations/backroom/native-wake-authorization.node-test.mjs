@@ -17,6 +17,7 @@ const ids = {
   surface:'android_app',
   appId:'com.example.chat',
   identityFingerprint:'foreground-app-fingerprint',
+  providerConversationIdentityDigest:'e'.repeat(64),
   targetRevision:2,
 };
 const target = Object.freeze({
