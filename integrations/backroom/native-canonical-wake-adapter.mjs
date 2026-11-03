@@ -43,11 +43,14 @@ function probeIsReady(result, expected) {
     result.sendControlEnabled === true &&
     result.sendControlVisible === true &&
     result.sendControlIdentityVerified === true &&
+    result.providerConversationIdentityVerified === true
     result.targetId === expected.targetId &&
     result.targetRevision === expected.targetRevision &&
     result.locatorKind === 'accessibility' &&
     IDENTITY_DIGEST.test(result.composerIdentityDigest || '') &&
     IDENTITY_DIGEST.test(result.sendControlIdentityDigest || '') &&
+    result.providerConversationIdentityDigest === expected.providerConversationIdentityDigest &&
+    IDENTITY_DIGEST.test(result.providerConversationIdentityDigest || '')
     result.surface === expected.surface &&
     result.appId === expected.appId &&
     result.sessionId === expected.sessionId &&
@@ -64,6 +67,7 @@ function scopeFor(target) {
     appId: target.appId,
     surface: target.surface,
     identityFingerprint: target.identityFingerprint,
+    providerConversationIdentityDigest: target.providerConversationIdentityDigest,
     locatorKind: target.locatorKind,
     locatorValue: target.locatorValue,
     targetRevision: target.revision,
@@ -82,12 +86,13 @@ export class NativeCanonicalWakeAdapter {
   #identityFingerprint;
   #locatorValue;
   #targetRevision;
+  #providerConversationIdentityDigest;
   #attemptedJobs = new Map();
   #inFlightJobs = new Set();
 
   constructor({
     driver, targetId, roomId, hostId, spaceId, surface, appId,
-    sessionId, identityFingerprint, locatorValue, targetRevision,
+    sessionId, identityFingerprint, locatorValue, targetRevision, providerConversationIdentityDigest,
   } = {}) {
     if (!NATIVE_SURFACES.has(surface)) {
       throw new TypeError('Native wake surface is not supported');
@@ -95,7 +100,8 @@ export class NativeCanonicalWakeAdapter {
     if ([
       targetId, roomId, hostId, spaceId, appId, sessionId,
       identityFingerprint, locatorValue,
-    ].some(value => !text(value)) || !validRevision(targetRevision)) {
+    ] .some(value => !text(value)) || !validRevision(targetRevision) ||
+        !IDENTITY_DIGEST.test(providerConversationIdentityDigest || '')) {
       throw new TypeError('Native wake target identity is incomplete');
     }
     if (!driver || typeof driver.inspectWakeTarget !== 'function' ||
@@ -113,6 +119,7 @@ export class NativeCanonicalWakeAdapter {
     this.#identityFingerprint = identityFingerprint;
     this.#locatorValue = locatorValue;
     this.#targetRevision = targetRevision;
+    this.#providerConversationIdentityDigest = providerConversationIdentityDigest;
   }
 
   #targetMatches(target) {
@@ -121,6 +128,7 @@ export class NativeCanonicalWakeAdapter {
       target.spaceId === this.#spaceId && target.surface === this.#surface &&
       target.appId === this.#appId && target.sessionId === this.#sessionId &&
       target.identityFingerprint === this.#identityFingerprint &&
+      target.providerConversationIdentityDigest === this.#providerConversationIdentityDigest &&
       target.locatorKind === 'accessibility' &&
       target.locatorValue === this.#locatorValue &&
       target.revision === this.#targetRevision &&
@@ -142,6 +150,7 @@ export class NativeCanonicalWakeAdapter {
         appId: this.#appId,
         sessionId: this.#sessionId,
         identityFingerprint: this.#identityFingerprint,
+        providerConversationIdentityDigest: this.#providerConversationIdentityDigest,
       })) {
         return Object.freeze({
           connected: false,
@@ -177,6 +186,7 @@ export class NativeCanonicalWakeAdapter {
         command.roomId !== target.roomId || command.hostId !== target.hostId ||
         command.spaceId !== target.spaceId || command.sessionId !== target.sessionId ||
         command.identityFingerprint !== target.identityFingerprint ||
+        command.providerConversationIdentityDigest !== this.#providerConversationIdentityDigest ||
         !validId(command.eventId) || !validId(command.id) ||
         !isCanonicalWakePrompt(command.text, command.eventId)) {
       throw new Error(
@@ -194,11 +204,14 @@ export class NativeCanonicalWakeAdapter {
         verifiedProbe.appId !== this.#appId ||
         verifiedProbe.sessionId !== this.#sessionId ||
         verifiedProbe.identityFingerprint !== this.#identityFingerprint ||
+        verifiedProbe.providerConversationIdentityVerified !== true ||
+        verifiedProbe.providerConversationIdentityDigest !== this.#providerConversationIdentityDigest ||
         verifiedProbe.targetId !== this.#targetId ||
         verifiedProbe.targetRevision !== this.#targetRevision ||
         verifiedProbe.locatorKind !== 'accessibility' ||
         !IDENTITY_DIGEST.test(verifiedProbe.composerIdentityDigest || '') ||
         !IDENTITY_DIGEST.test(verifiedProbe.sendControlIdentityDigest || '') ||
+        !IDENTITY_DIGEST.test(verifiedProbe.providerConversationIdentityDigest || '') ||
         !Array.isArray(verifiedProbe.locatorKinds) ||
         !verifiedProbe.locatorKinds.includes('accessibility')) {
       throw new Error('Native wake execution requires a successful LocalExecutionGuard preflight');
@@ -233,6 +246,8 @@ export class NativeCanonicalWakeAdapter {
         prompt,
         requireComposerIdentityRecheck: true,
         requireSendControlIdentityRecheck: true,
+        requireProviderConversationIdentityRecheck: true,
+        providerConversationIdentityDigest: this.#providerConversationIdentityDigest,
         requireEmptyComposerBeforeInsert: true,
         requireExactPromptReadback: true,
         requireComposerClearAfterSend: true,
@@ -247,6 +262,8 @@ export class NativeCanonicalWakeAdapter {
         outcome.targetRevision === this.#targetRevision &&
         outcome.composerIdentityDigest === verifiedProbe.composerIdentityDigest &&
         outcome.sendControlIdentityDigest === verifiedProbe.sendControlIdentityDigest &&
+        outcome.providerConversationIdentityRevalidated === true &&
+        outcome.providerConversationIdentityDigest === this.#providerConversationIdentityDigest &&
         outcome.promptInserted === true &&
         outcome.promptReadbackVerified === true &&
         outcome.composerIdentityRevalidated === true &&
@@ -271,6 +288,8 @@ export class NativeCanonicalWakeAdapter {
         result: Object.freeze({
           triggerSubmitted: true,
           confirmation: 'composer_cleared',
+          providerConversationIdentityRevalidated: true,
+          providerConversationIdentityDigest: this.#providerConversationIdentityDigest,
           eventId: command.eventId,
         }),
       });
