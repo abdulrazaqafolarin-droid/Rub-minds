@@ -10,7 +10,7 @@
  * Grants disappear on process restart. Each event command is consumed once,
  * and a grant has its own bounded wake rate limit.
  */
-import {createHash, randomUUID} from 'node:crypto';
+import {randomUUID} from 'node:crypto';
 import {isCanonicalWakePrompt, validId} from './coordination-core.mjs';
 
 const NATIVE_SURFACES = new Set(['desktop_app', 'windows_app', 'android_app']);
@@ -18,7 +18,6 @@ const ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const HEX = /^[a-f0-9]{64}$/;
 const MIN_TTL_MS = 60_000;
 const MAX_TTL_MS = 24 * 60 * 60_000;
-const sha256 = value => createHash('sha256').update(value, 'utf8').digest('hex');
 
 function requiredId(value, name) {
   if (!validId(value)) throw new TypeError('Invalid ' + name);
