@@ -54,6 +54,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         boundSessionId = null
         boundPackageName = null
         boundComposerTargetId = null
+        boundSendTargetId = null
         synchronized(this) { gestureInFlight = false }
         AndroidScreenShareService.revokeLocalTouch(applicationContext)
         super.onDestroy()
@@ -198,8 +199,6 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             if (sendTraversal[1] != 0) {
                 return ComposerSelectionDecision(selected, "selected", null, "accessibility_tree_too_large")
             }
-            val rootBounds = Rect()
-            root.getBoundsInScreen(rootBounds)
             val sendDecision = AndroidSendControlPolicy.choose(
                 sendCandidates,
                 packageName,
