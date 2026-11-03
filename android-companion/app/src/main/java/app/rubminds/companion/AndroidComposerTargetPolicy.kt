@@ -136,6 +136,7 @@ object AndroidSendControlPolicy {
             return SendControlDecision(null, "invalid_app_or_composer_bounds")
         }
         val maxVerticalGap = maxOf(96, composerBounds.height * 3, rootBounds.height / 10)
+        val maxHorizontalGap = maxOf(96, composerBounds.width / 2, rootBounds.width / 10)
         val matches = candidates.filter { candidate ->
             if (candidate.packageName != packageName ||
                 !candidate.clickable || !candidate.enabled || !candidate.visible ||
@@ -159,7 +160,14 @@ object AndroidSendControlPolicy {
                     candidate.bounds.top - composerBounds.bottom
                 else -> 0
             }
-            verticalGap <= maxVerticalGap
+            val horizontalGap = when {
+                candidate.bounds.right < composerBounds.left ->
+                    composerBounds.left - candidate.bounds.right
+                candidate.bounds.left > composerBounds.right ->
+                    candidate.bounds.left - composerBounds.right
+                else -> 0
+            }
+            verticalGap <= maxVerticalGap && horizontalGap <= maxHorizontalGap
         }
         return when (matches.size) {
             0 -> SendControlDecision(null, "unique_nearby_send_control_not_found")
