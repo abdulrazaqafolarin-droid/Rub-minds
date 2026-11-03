@@ -55,7 +55,53 @@ test('existing WebRTC remote_text remains draft-only and cannot invoke native Se
   );
   assert.match(remoteBranch, /DraftInputMethodService\.insertRemoteText/);
   assert.doesNotMatch(remoteBranch, /insertNativeWakeTrigger|submitCanonicalWake|ACTION_CLICK|performAction/);
-  assert.doesNotMatch(screen, /native_wake_trigger|submitCanonicalWake/);
+});
+
+test('native_wake_trigger is dispatched only by the device queue, separately from remote_text', () => {
+  const commandDispatcher = method(
+    screen,
+    'private fun processCommand(token: String, command: JSONObject)',
+    '    private fun invalidatePeerDisconnectTimer()'
+  );
+  assert.match(commandDispatcher, /"native_wake_trigger" -> processNativeWakeTrigger/);
+  const nativeDispatch = method(
+    screen,
+    'private fun processNativeWakeTrigger(',
+    '    private fun safeNativeWakeReason('
+  );
+  assert.match(nativeDispatch, /AndroidNativeWakeHandoffPolicy\.validate/);
+  assert.match(nativeDispatch, /DeviceCredentialVault\(this\)\.deviceId\(\)/);
+  assert.match(nativeDispatch, /activeSessionId != screenSessionId/);
+  assert.match(nativeDispatch, /activeRoomId != roomId/);
+  assert.match(nativeDispatch, /activeAppPackage != appPackage/);
+  assert.match(nativeDispatch, /currentForegroundPackage\(\) != appPackage/);
+  assert.match(nativeDispatch, /AndroidNativeWakeConsentStore\(this\)\.activeGrant/);
+  assert.match(nativeDispatch, /AndroidTouchAccessibilityService\.submitCanonicalWake/);
+  assert.doesNotMatch(nativeDispatch, /remote_text|insertRemoteText/);
+});
+
+test('a replayed local one-shot seal cannot be reported as a retryable preflight denial', () => {
+  const nativeInsert = method(
+    ime,
+    'private fun insertNativeWakeTrigger(request: NativeWakeExecutionRequest)',
+    '    companion object {'
+  );
+  assert.match(consent, /fun isTerminalReservationDenial\(reason: String\)/);
+  assert.match(nativeInsert, /isTerminalReservationDenial\(seal\.reason\)/);
+  assert.match(nativeInsert, /NativeWakeInsertState\.NEEDS_REVIEW/);
+});
+
+test('native wake ACK uses normalized reasons and successful identity evidence only', () => {
+  const acknowledge = method(
+    screen,
+    'private fun acknowledgeNativeWake(',
+    '    private fun processCommand('
+  );
+  assert.match(acknowledge, /safeNativeWakeReason\(result\.reason\)/);
+  assert.match(acknowledge, /if \(state == "submitted"\)/);
+  assert.match(acknowledge, /composerIdentityDigest/);
+  assert.match(acknowledge, /sendControlIdentityDigest/);
+  assert.doesNotMatch(acknowledge, /result\.reason\.take\(120\)/);
 });
 
 test('native Send path rechecks composer and Send identity from the final snapshot before ACTION_CLICK', () => {
