@@ -190,9 +190,9 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             val selected = decision.candidate ?: return decision
             boundComposerTargetId = selected.targetId
 
-            // Inspect only local accessibility metadata. The app's conversation
-            // text and editor contents are never read or uploaded. A Send control
-            // is exposed only when one exact, nearby, enabled click target exists.
+            // Inspect clickable-node accessibility metadata locally to identify
+            // a nearby Send control. Labels and editor/message contents are never
+            // included in the response or transmitted away from this device.
             val sendCandidates = mutableListOf<SendControlCandidate>()
             val sendTraversal = intArrayOf(0, 0)
             collectSendControlCandidates(root, packageName, sendCandidates, sendTraversal)
