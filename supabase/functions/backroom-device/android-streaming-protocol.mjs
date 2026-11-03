@@ -113,10 +113,11 @@ export function validateAndroidNativeWakeResult(result, handoff) {
     "version", "kind", "handoffId", "jobId", "deviceId", "roomId", "screenSessionId",
     "bindingId", "targetId", "targetRevision", "state", "promptInserted", "sendInvoked", "composerCleared",
   ];
-  const optional = [
+  const verificationEvidence = [
     "promptReadbackVerified", "composerIdentityRevalidated", "sendControlIdentityRevalidated",
-    "composerIdentityDigest", "sendControlIdentityDigest", "reason",
+    "composerIdentityDigest", "sendControlIdentityDigest",
   ];
+  const optional = [...verificationEvidence, "reason"];
   const reasons = new Set([
     "foreground_changed", "composer_not_empty", "composer_identity_changed",
     "send_control_unavailable", "send_identity_changed", "permission_denied",
@@ -138,7 +139,7 @@ export function validateAndroidNativeWakeResult(result, handoff) {
   if (result.state === "preflight_denied") {
     return result.promptInserted === false && result.sendInvoked === false &&
       result.composerCleared === false &&
-      optional.every(key => result[key] === undefined);
+      verificationEvidence.every(key => result[key] === undefined);
   }
   if (result.state === "submitted") {
     return result.promptInserted === true && result.sendInvoked === true &&
