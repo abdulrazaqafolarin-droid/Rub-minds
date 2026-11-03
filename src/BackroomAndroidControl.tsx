@@ -665,7 +665,9 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         sendTargetId: sendTarget,
       }));
     } catch {
-      window.clearTimeout(sendControlCheckTimerRef.current);
+      if (sendControlCheckTimerRef.current !== null) {
+        window.clearTimeout(sendControlCheckTimerRef.current);
+      }
       sendControlCheckTimerRef.current = null;
       pendingSendControlCheckRef.current = '';
       setSendControlCheckPending(false);
