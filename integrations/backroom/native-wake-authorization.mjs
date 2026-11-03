@@ -207,6 +207,7 @@ export async function reserveNativeWakeExecution({
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(journalRecord.hostId ?? '') ||
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(journalRecord.bindingId ?? '') ||
       !HEX.test(journalRecord.sessionDigest ?? '') || !ID.test(journalRecord.targetId ?? '')) {
+      !HEX.test(journalRecord.providerConversationIdentityDigest ?? '') ||
     throw new TypeError('Invalid native wake journal scope');
   }
   if (!command || command.operation !== 'wake' ||
@@ -214,7 +215,9 @@ export async function reserveNativeWakeExecution({
       command.hostId !== journalRecord.hostId ||
       command.bindingId !== journalRecord.bindingId ||
       command.targetId !== journalRecord.targetId ||
-      target?.id !== journalRecord.targetId) {
+      command.providerConversationIdentityDigest !== journalRecord.providerConversationIdentityDigest ||
+      target?.id !== journalRecord.targetId ||
+      target?.providerConversationIdentityDigest !== journalRecord.providerConversationIdentityDigest) {
     throw new Error('Native wake job does not match its durable journal scope');
   }
 
