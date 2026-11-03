@@ -160,7 +160,10 @@ test('local UI warns that saving consent does not activate remote automatic Send
   assert.match(activity, /val credential = vault\.token\(\) \?: return null/);
 });
 test('the 20-second native handoff deadline is carried to the driver and rechecked before seal, insertion and Send', () => {
+  assert.match(handoffPolicy, /handoffIssuedAtMillis = issuedAtMillis/);
   assert.match(handoffPolicy, /handoffExpiresAtMillis = expiresAtMillis/);
+  assert.match(consent, /MAX_HANDOFF_CLOCK_SKEW_MILLIS = 3_000L/);
+  assert.match(consent, /handoffExpiresAt - handoffIssuedAt > MAX_HANDOFF_TTL_MILLIS/);
   assert.match(consent, /MAX_HANDOFF_TTL_MILLIS = 20_000L/);
   assert.match(consent, /request\.handoffExpiresAtMillis <= nowMillis/);
   const nativeInsert = method(
