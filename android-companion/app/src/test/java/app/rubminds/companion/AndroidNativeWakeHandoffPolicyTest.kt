@@ -94,6 +94,17 @@ class AndroidNativeWakeHandoffPolicyTest {
         assertEquals(screenSessionId, accepted?.screenSessionId)
     }
 
+    @Test fun acceptsFutureIssuedHandoffWithinTheValidatedClockSkewAndPreservesItsTimestamp() {
+        val future = command()
+        handoff(future).put("issuedAt", now + 2_000L).put("expiresAt", now + 22_000L)
+        future.put("issuedAt", now + 2_000L)
+        val accepted = validate(future)
+        assertNotNull(accepted)
+        val request = accepted!!.toExecutionRequest("123e4567-e89b-42d3-a456-426614174009")
+        assertEquals(now + 2_000L, request.handoffIssuedAtMillis)
+        assertEquals(now + 22_000L, request.handoffExpiresAtMillis)
+    }
+
     @Test fun rejectsWrongDeviceRoomOrActiveScreenSession() {
         val original = command()
         assertNull(AndroidNativeWakeHandoffPolicy.validate(original, "123e4567-e89b-42d3-a456-426614174099", roomId, screenSessionId, appPackage, signer, now))
