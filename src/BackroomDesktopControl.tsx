@@ -434,7 +434,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
         draftAttemptRef.current='';
         targetAttemptRef.current='';
         setSelection(null);
-        setTargetStatus('');
+        setTargetStatus('');clearSendControlState();
         try{sendData({kind:'clear_target'});}
         catch(error){flash('Draft finished, but the target could not be cleared. Stopping this remote session for safety.',true);void stopActivePeer();return;}
         flash(message.ok===true
@@ -685,9 +685,9 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
             <div className="br-desktop-toolbar">
               <span>{videoReady?'Live computer display':'View request pending'}{coordinateControl?' · monitor geometry verified':' · view-only until capture geometry is verified'}</span>
               <button type="button" onClick={()=>void requestControl()} disabled={!videoReady||!coordinateControl||controlGranted}>Request control</button>
-              <button type="button" onClick={()=>{setTargetStatus('');setSelection(null);dragRef.current=null;targetAttemptRef.current='';draftAttemptRef.current='';try{sendData({kind:'clear_target'});}catch(error){flash('Could not clear the previous typing target. Stopping this remote session for safety.',true);void stopActivePeer();}setSelectMode(v=>!v);}} disabled={!controlGranted||!draftGranted||!selectedIsWindows||!videoReady}>{selectMode?'Cancel area selection':selectedIsWindows?'Drag-select typing area':'Typing-area targeting unavailable on this OS'}</button>
+              <button type="button" onClick={()=>{setTargetStatus('');setSelection(null);dragRef.current=null;targetAttemptRef.current='';draftAttemptRef.current='';clearSendControlState();try{sendData({kind:'clear_target'});}catch(error){flash('Could not clear the previous typing target. Stopping this remote session for safety.',true);void stopActivePeer();}setSelectMode(v=>!v);}} disabled={!controlGranted||!draftGranted||!selectedIsWindows||!videoReady}>{selectMode?'Cancel area selection':selectedIsWindows?'Drag-select typing area':'Typing-area targeting unavailable on this OS'}</button>
               <button type="button" onClick={()=>void requestDraftPermission()} disabled={!controlGranted||draftGranted||!selectedIsWindows}><TextCursorInput size={13}/> Request typing permission</button>
-              {sendControlSelectionRef.current&&<button type="button" onClick={recheckSendControl} disabled={!videoReady||!draftGranted||sendControlRechecking}>
+              {sendControlFound&&sendControlSelectionRef.current&&<button type="button" onClick={recheckSendControl} disabled={!videoReady||!draftGranted||sendControlRechecking}>
                 {sendControlRechecking?'Rechecking Send…':'Recheck Send control'}
               </button>}
             </div>
