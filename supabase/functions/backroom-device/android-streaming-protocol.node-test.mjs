@@ -157,11 +157,13 @@ test("native wake preflight denial cannot claim any side effect and ACK remains 
     version: 1, kind: "native_wake_result", handoffId, jobId, deviceId, roomId,
     screenSessionId: sessionId, bindingId, targetId: handoff.targetId, targetRevision: handoff.targetRevision,
     state: "preflight_denied", promptInserted: false, sendInvoked: false, composerCleared: false,
-    promptReadbackVerified: false, composerIdentityRevalidated: false,
-    sendControlIdentityRevalidated: false, reason: "native_wake_grant_inactive",
+    reason: "permission_denied",
   };
   assert.equal(validateAndroidNativeWakeResult(nativeWakeResult, handoff), true);
   assert.equal(validateAndroidNativeWakeResult({ ...nativeWakeResult, sendInvoked: true }, handoff), false);
+  assert.equal(validateAndroidNativeWakeResult({
+    ...nativeWakeResult, promptReadbackVerified: false,
+  }, handoff), false);
   assert.equal(validateAndroidCommandAck({
     commandId, requestId, sessionId, result: "native_wake_preflight_denied", nativeWakeResult,
   })?.nativeWakeResult?.state, "preflight_denied");
@@ -169,4 +171,33 @@ test("native wake preflight denial cannot claim any side effect and ACK remains 
     commandId, requestId, sessionId, result: "native_wake_preflight_denied",
     nativeWakeResult, ignored: "extra",
   }), null);
+});
+
+test("native wake needs-review is terminal evidence and cannot claim a safe retry", () => {
+  const handoff = nativeHandoff();
+  const review = {
+    version: 1, kind: "native_wake_result", handoffId, jobId, deviceId, roomId,
+    screenSessionId: sessionId, bindingId, targetId: handoff.targetId, targetRevision: handoff.targetRevision,
+    state: "needs_review", promptInserted: true, sendInvoked: false, composerCleared: false,
+    reason: "outcome_unknown",
+  };
+  assert.equal(validateAndroidNativeWakeResult(review, handoff), true);
+  assert.equal(validateAndroidNativeWakeResult({ ...review, promptReadbackVerified: false }, handoff), false);
+  assert.equal(validateAndroidNativeWakeResult({ ...review, sendInvoked: true, composerCleared: true }, handoff), true);
+  assert.equal(validateAndroidNativeWakeResult({ ...review, reason: "private_editor_text" }, handoff), false);
+});
+
+test("ordinary command rows cannot smuggle a native wake handoff or arbitrary action", () => {
+  const row = {
+    id: commandId, device_id: deviceId, room_id: roomId, session_id: sessionId,
+    request_id: requestId,
+    command: { deviceId, roomId, sessionId, requestId, issuedAt: now,
+      command: "request_control", appPackageName },
+  };
+  assert.equal(mapAndroidQueuedCommand({
+    ...row, command: { ...row.command, action: "native_wake_trigger", nativeWakeHandoff: nativeHandoff() },
+  }, { now }), null);
+  assert.equal(mapAndroidQueuedCommand({
+    ...row, command: { ...row.command, command: "send_text", text: "private data" },
+  }, { now }), null);
 });
