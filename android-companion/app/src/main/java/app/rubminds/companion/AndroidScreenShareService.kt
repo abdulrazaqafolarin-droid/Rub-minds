@@ -341,6 +341,7 @@ class AndroidScreenShareService : Service() {
                 value.contains("replay_ledger") || value.contains("insertion_outcome_unknown") ||
                 value.contains("send_outcome") -> "outcome_unknown"
             value.contains("provider_conversation") -> "conversation_scope_unavailable"
+            value.contains("provider_conversation") -> "conversation_scope_unavailable"
             value.contains("foreground") || value.contains("active_app_window") -> "foreground_changed"
             value.contains("not_empty") -> "composer_not_empty"
             value.contains("composer") || value.contains("focus") || value.contains("target") &&
@@ -401,12 +402,19 @@ class AndroidScreenShareService : Service() {
                 ?: return
             val sendDigest = result.sendControlIdentityDigest
                 ?: return
+            val providerConversationDigest = result.providerConversationIdentityDigest
+                ?: return
+            if (!result.providerConversationIdentityRevalidated ||
+                providerConversationDigest != handoff.providerConversationIdentityDigest
+            ) return
             evidence
                 .put("promptReadbackVerified", true)
                 .put("composerIdentityRevalidated", true)
                 .put("sendControlIdentityRevalidated", true)
+                .put("providerConversationIdentityRevalidated", true)
                 .put("composerIdentityDigest", composerDigest)
                 .put("sendControlIdentityDigest", sendDigest)
+                .put("providerConversationIdentityDigest", providerConversationDigest)
         } else {
             val reason = safeNativeWakeReason(result.reason)
             evidence.put("reason", reason)
