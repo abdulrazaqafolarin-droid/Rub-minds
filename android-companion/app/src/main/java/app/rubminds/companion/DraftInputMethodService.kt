@@ -270,6 +270,10 @@ class DraftInputMethodService : InputMethodService() {
         if (boundSessionId != request.sessionId || boundPackageName != request.packageName) {
             return denied("session_or_app_mismatch")
         }
+        if (!AndroidTouchAccessibilityService.isBoundToProviderConversation(
+                request.sessionId, request.packageName, request.providerConversationIdentityDigest
+            )
+        ) return denied("provider_conversation_identity_unavailable_or_changed")
         val prompt = NativeWakeConsentPolicy.canonicalWakePrompt(request.eventId)
             ?: return denied("event_id_invalid")
         val liveEditor = currentInputEditorInfo ?: return denied("phone_text_field_not_focused")
