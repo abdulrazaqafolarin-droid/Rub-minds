@@ -246,3 +246,18 @@ test('identity fingerprints must remain exactly the same after the durable seal'
   assert.equal(f.calls.filter(([kind]) => kind === 'submit').length, 1);
 });
 
+
+
+test('provider conversation switch or missing final conversation proof becomes needs_review', async () => {
+  for (const overrides of [
+    { providerConversationIdentityRevalidated: false },
+    { providerConversationIdentityDigest: 'f'.repeat(64) },
+  ]) {
+    const f = fixture({ submit: async input => submittedOutcome(input, overrides) });
+    const result = await f.guard.execute({
+      command, target, beforeEffect: async () => true,
+    });
+    assert.equal(result.state, 'needs_review');
+    assert.equal(f.adapter.hasAttempted(command.id), true);
+  }
+});
