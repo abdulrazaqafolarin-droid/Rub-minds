@@ -1,5 +1,7 @@
 # Backroom native canonical wake driver contract
 
+> For the upstream group-event, drag-select, binding and downstream MCP response lifecycle around this driver, see [Backroom group-to-composer wake flow](BACKROOM_GROUP_TO_COMPOSER_WAKE_FLOW.md).
+
 Status: **Android device-queue receiver and Accessibility/IME driver are present in source; the trusted host lease-forwarder and Windows native driver remain unconnected.**
 
 This document defines the boundary between the existing group coordination/durable wake system and a future Android or Windows native composer driver. It does not enable native Off / On / Auto, native Send or a new host-server route.
