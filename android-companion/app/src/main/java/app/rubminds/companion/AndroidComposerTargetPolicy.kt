@@ -123,6 +123,9 @@ object AndroidSendControlPolicy {
     private val sendResourceId = Regex("(^|[_-])send([_-]|$)", RegexOption.IGNORE_CASE)
     private val targetIdPattern = Regex("^[a-f0-9]{64}$")
 
+    fun isRecognizedLabel(label: String): Boolean =
+        label.trim().lowercase().replace(Regex("\\s+"), " ") in acceptedLabels
+
     fun choose(
         candidates: List<SendControlCandidate>,
         packageName: String,
@@ -144,11 +147,8 @@ object AndroidSendControlPolicy {
                 candidate.bounds.bottom > rootBounds.bottom
             ) return@filter false
 
-            val normalizedLabel = candidate.label.trim()
-                .lowercase()
-                .replace(Regex("\\s+"), " ")
-            val accessibleNameMatches = normalizedLabel in acceptedLabels
-            val resourceNameMatches = normalizedLabel.isEmpty() &&
+            val accessibleNameMatches = isRecognizedLabel(candidate.label)
+            val resourceNameMatches = candidate.label.isBlank() &&
                 sendResourceId.containsMatchIn(candidate.resourceId.substringAfterLast('/'))
             if (!accessibleNameMatches && !resourceNameMatches) return@filter false
 
