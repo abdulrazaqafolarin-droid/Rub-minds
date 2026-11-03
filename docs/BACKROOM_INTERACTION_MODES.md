@@ -79,10 +79,10 @@ A wake queue acknowledgement confirms that the trigger was submitted and the com
 7. Leave Auto armed until expiry. Verify polling/consent stops after the 24-hour grant and the owner must explicitly arm it again.
 8. Exceed the six-wakes-per-minute bound. Additional triggers must be denied by the server-side rate limit.
 9. Occupy the selected composer, navigate to another conversation, replace the selected field, or change the target revision. The host must fail closed without typing or retargeting.
-14. Change app focus or revoke local permission before the final preflight. The queue should retry without consuming the grant or writing an execution seal. Crash or lose the send acknowledgement after the seal; the same job must not click Send again.
-10. Keep Auto active for the full 24-hour consent window. Confirm polling continues without per-message approval, the rate cap stays at six per minute, and the grant does not silently extend past its deadline.
-11. Restart the host during an active grant. The in-memory local grant must be lost, the restored UI must show the server/local mismatch, and no trigger may resume until fresh local approval.
-12. Delay a queued message until more than 100 later messages have been posted. The awakened AI must still fetch the exact triggering event with `read_group_message` by UUID rather than relying on the latest page.
-13. Interrupt the AI after it creates a response but before `send_group_message` confirms. It must retry the same pending body with the same source message ID, not regenerate or duplicate the group reply.
+10. Change app focus or revoke local permission before the final preflight. The queue should retry without consuming the grant or writing an execution seal. Crash or lose the send acknowledgement after the seal; the same job must not click Send again.
+11. Keep Auto active for the full 24-hour consent window. Confirm polling continues without per-message approval, the rate cap stays at six per minute, and the grant does not silently extend past its deadline.
+12. Restart the host during an active grant. The in-memory local grant must be lost, the restored UI must show the server/local mismatch, and no trigger may resume until fresh local approval.
+13. Delay a queued message until more than 100 later messages have been posted. The awakened AI must still fetch the exact triggering event with `read_group_message` by UUID rather than relying on the latest page.
+14. Interrupt the AI after it creates a response but before `send_group_message` confirms. It must retry the same pending body with the same source message ID, not regenerate or duplicate the group reply.
 
 This acceptance checklist is not a claim that those live-provider/device tests have already been performed.
