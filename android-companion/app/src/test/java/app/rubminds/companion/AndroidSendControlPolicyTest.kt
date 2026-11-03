@@ -38,15 +38,27 @@ class AndroidSendControlPolicyTest {
             )
             assertEquals("unique_send_control_verified", result.reason)
         }
-        val resourceOnly = candidate(label = "", resourceId = "com.example.chat:id/composer_send")
-        assertTrue(AndroidSendControlPolicy.choose(
-            listOf(resourceOnly), "com.example.chat", root, composer
-        ).candidate != null)
+        for (resourceId in listOf(
+            "com.example.chat:id/composer_send",
+            "com.example.chat:id/sendButton",
+            "com.example.chat:id/buttonSend"
+        )) {
+            val recognized = candidate(label = "", resourceId = resourceId)
+            assertTrue(
+                AndroidSendControlPolicy.choose(
+                    listOf(recognized), "com.example.chat", root, composer
+                ).candidate != null
+            )
+        }
         for (resourceId in listOf(
             "com.example.chat:id/send_to_email",
             "com.example.chat:id/send_feedback_button",
             "com.example.chat:id/share_send_button",
-            "com.example.chat:id/resend_button"
+            "com.example.chat:id/resend_button",
+            "com.example.chat:id/reSendButton",
+            "com.example.chat:id/sendToEmail",
+            "com.example.chat:id/composerSendFeedback",
+            "com.example.chat:id/sendToShare"
         )) {
             val misleading = candidate(label = "", resourceId = resourceId)
             assertNull(AndroidSendControlPolicy.choose(
