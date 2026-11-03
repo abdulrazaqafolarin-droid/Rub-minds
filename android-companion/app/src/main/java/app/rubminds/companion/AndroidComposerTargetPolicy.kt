@@ -24,9 +24,27 @@ data class ComposerCandidate(
     val password: Boolean
 )
 
+data class SendControlCandidate(
+    val targetId: String,
+    val packageName: String,
+    val bounds: ComposerScreenRect,
+    val label: String,
+    val resourceId: String,
+    val clickable: Boolean,
+    val enabled: Boolean,
+    val visible: Boolean
+)
+
+data class SendControlDecision(
+    val candidate: SendControlCandidate?,
+    val reason: String
+)
+
 data class ComposerSelectionDecision(
     val candidate: ComposerCandidate?,
-    val reason: String
+    val reason: String,
+    val sendControl: SendControlCandidate? = null,
+    val sendReason: String = "not_checked"
 )
 
 /**
@@ -91,4 +109,65 @@ object AndroidComposerTargetPolicy {
             else -> ComposerSelectionDecision(null, "multiple_editable_fields_in_selection")
         }
     }
+}
+
+
+/**
+ * Finds a single, explicitly labelled Send control adjacent to the selected
+ * composer. All labels and resource identifiers are inspected locally and are
+ * never returned to the web client. Ambiguous or generic submit-like controls
+ * are rejected rather than guessed.
+ */
+object AndroidSendControlPolicy {
+    private val acceptedLabels = setOf("send", "send message", "send prompt")
+    private val sendResourceId = Regex("(^|[_-])send([_-]|$)", RegexOption.IGNORE_CASE)
+    private val targetIdPattern = Regex("^[a-f0-9]{64}$")
+
+    fun choose(
+        candidates: List<SendControlCandidate>,
+        packageName: String,
+        rootBounds: ComposerScreenRect,
+        composerBounds: ComposerScreenRect
+    ): SendControlDecision {
+        if (!validBounds(rootBounds) || !validBounds(composerBounds)) {
+            return SendControlDecision(null, "invalid_app_or_composer_bounds")
+        }
+        val maxVerticalGap = maxOf(96, composerBounds.height * 3, rootBounds.height / 10)
+        val matches = candidates.filter { candidate ->
+            if (candidate.packageName != packageName ||
+                !candidate.clickable || !candidate.enabled || !candidate.visible ||
+                !targetIdPattern.matches(candidate.targetId) ||
+                !validBounds(candidate.bounds) ||
+                candidate.bounds.left < rootBounds.left ||
+                candidate.bounds.top < rootBounds.top ||
+                candidate.bounds.right > rootBounds.right ||
+                candidate.bounds.bottom > rootBounds.bottom
+            ) return@filter false
+
+            val normalizedLabel = candidate.label.trim()
+                .lowercase()
+                .replace(Regex("\\s+"), " ")
+            val accessibleNameMatches = normalizedLabel in acceptedLabels
+            val resourceNameMatches = normalizedLabel.isEmpty() &&
+                sendResourceId.containsMatchIn(candidate.resourceId.substringAfterLast('/'))
+            if (!accessibleNameMatches && !resourceNameMatches) return@filter false
+
+            val verticalGap = when {
+                candidate.bounds.bottom < composerBounds.top ->
+                    composerBounds.top - candidate.bounds.bottom
+                candidate.bounds.top > composerBounds.bottom ->
+                    candidate.bounds.top - composerBounds.bottom
+                else -> 0
+            }
+            verticalGap <= maxVerticalGap
+        }
+        return when (matches.size) {
+            0 -> SendControlDecision(null, "unique_nearby_send_control_not_found")
+            1 -> SendControlDecision(matches.single(), "unique_send_control_verified")
+            else -> SendControlDecision(null, "multiple_send_controls_ambiguous")
+        }
+    }
+
+    private fun validBounds(bounds: ComposerScreenRect): Boolean =
+        bounds.right > bounds.left && bounds.bottom > bounds.top && bounds.area > 0
 }
