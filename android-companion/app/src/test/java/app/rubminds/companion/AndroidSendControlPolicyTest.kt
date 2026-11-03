@@ -77,6 +77,16 @@ class AndroidSendControlPolicyTest {
         assertNull(result.candidate)
     }
 
+    @Test fun rejectsSendControlsFarAcrossTheComposerRow() {
+        val farRight = candidate(bounds = ComposerScreenRect(990, 1_630, 1_000, 1_700))
+        val farLeft = candidate(bounds = ComposerScreenRect(0, 1_630, 10, 1_700))
+        val result = AndroidSendControlPolicy.choose(
+            listOf(farRight, farLeft), "com.example.chat", root, composer
+        )
+        assertNull(result.candidate)
+        assertEquals("unique_nearby_send_control_not_found", result.reason)
+    }
+
     @Test fun refusesMultipleMatchingSendControlsInsteadOfGuessing() {
         val result = AndroidSendControlPolicy.choose(
             listOf(candidate(id = "a".repeat(64)), candidate(id = "b".repeat(64))),
