@@ -24,6 +24,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const [selectionMode, setSelectionMode] = useState(false);
   const [composerTargetId, setComposerTargetId] = useState('');
   const [sendControlVerified, setSendControlVerified] = useState(false);
+  const [sendControlCheckPending, setSendControlCheckPending] = useState(false);
   const [sendControlStatus, setSendControlStatus] = useState('No native Send control verified.');
   const [selectionPreview, setSelectionPreview] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const [remoteTextBusy, setRemoteTextBusy] = useState(false);
@@ -43,6 +44,8 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const pendingComposerSelectionAcksRef = useRef<Map<string, number>>(new Map());
   const composerTargetRef = useRef('');
   const sendTargetRef = useRef('');
+  const pendingSendControlCheckRef = useRef('');
+  const sendControlCheckTimerRef = useRef<number | null>(null);
   const controlExpiryRef = useRef<number | null>(null);
   const startTimerRef = useRef<number | null>(null);
   const disconnectTimerRef = useRef<number | null>(null);
@@ -65,6 +68,10 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         }));
       } catch { /* Local UI state is cleared even if the peer is disconnected. */ }
     }
+    if (sendControlCheckTimerRef.current !== null) window.clearTimeout(sendControlCheckTimerRef.current);
+    sendControlCheckTimerRef.current = null;
+    pendingSendControlCheckRef.current = '';
+    setSendControlCheckPending(false);
     composerTargetRef.current = '';
     sendTargetRef.current = '';
     setComposerTargetId('');
@@ -81,6 +88,9 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     if (disconnectTimerRef.current !== null) window.clearTimeout(disconnectTimerRef.current);
     if (controlRequestTimerRef.current !== null) window.clearTimeout(controlRequestTimerRef.current);
     controlExpiryRef.current = null; startTimerRef.current = null; disconnectTimerRef.current = null; controlRequestTimerRef.current = null;
+    if (sendControlCheckTimerRef.current !== null) window.clearTimeout(sendControlCheckTimerRef.current);
+    sendControlCheckTimerRef.current = null;
+    pendingSendControlCheckRef.current = '';
     const peer = peerRef.current;
     if (peer) { peer.ontrack = null; peer.onconnectionstatechange = null; peer.close(); }
     peerRef.current = null;
@@ -99,7 +109,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     if (videoRef.current) videoRef.current.srcObject = null;
     sessionRef.current = ''; pointerRef.current = null; pendingControlRequestRef.current = '';
     sourceVisibilityRef.current = null;
-    setSessionId(''); setViewReady(false); setSourceVisible(false); setDataReady(false); setControlGranted(false); setRemoteText(''); setRemoteTextBusy(false); setSelectionMode(false); setComposerTargetId(''); setSendControlVerified(false); setSendControlStatus('No native Send control verified.'); setSelectionPreview(null); setRemoteTextStatus('Select the actual composer in the streamed app before inserting text.'); setBusy(false);
+    setSessionId(''); setViewReady(false); setSourceVisible(false); setDataReady(false); setControlGranted(false); setRemoteText(''); setRemoteTextBusy(false); setSelectionMode(false); setComposerTargetId(''); setSendControlVerified(false); setSendControlCheckPending(false); setSendControlStatus('No native Send control verified.'); setSelectionPreview(null); setRemoteTextStatus('Select the actual composer in the streamed app before inserting text.'); setBusy(false);
   }, []);
 
   const stopRemote = useCallback(async (expectedSession = sessionRef.current) => {
@@ -277,6 +287,32 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
             setRemoteTextStatus('Composer selection rejected: ' + acknowledgement.reason.replaceAll('_', ' ') + '. Drag over exactly one visible, editable, non-password field.');
             notify('Android could not verify one unique editable composer. Select one field, not a broad area or multiple controls.', true);
           }
+          return;
+        }
+        if (acknowledgement.kind === 'send_control_ack' &&
+            typeof acknowledgement.requestId === 'string' &&
+            typeof acknowledgement.available === 'boolean' &&
+            typeof acknowledgement.reason === 'string') {
+          if (acknowledgement.requestId !== pendingSendControlCheckRef.current) return;
+          if (sendControlCheckTimerRef.current !== null) window.clearTimeout(sendControlCheckTimerRef.current);
+          sendControlCheckTimerRef.current = null;
+          pendingSendControlCheckRef.current = '';
+          setSendControlCheckPending(false);
+          const returnedTarget = typeof acknowledgement.sendTargetId === 'string' &&
+            /^[a-f0-9]{64}$/.test(acknowledgement.sendTargetId)
+              ? acknowledgement.sendTargetId : '';
+          const remainsSameTarget = acknowledgement.available === true &&
+            Boolean(returnedTarget) && returnedTarget === sendTargetRef.current &&
+            Boolean(composerTargetRef.current);
+          setSendControlVerified(remainsSameTarget);
+          setSendControlStatus(remainsSameTarget
+            ? 'Rechecked: the same unique Send control is still available beside the focused composer. No action was taken.'
+            : 'Recheck failed: ' + acknowledgement.reason.replaceAll('_', ' ') +
+              (returnedTarget && returnedTarget !== sendTargetRef.current
+                ? '. The Send control identity changed; select the composer again.' : '.'));
+          notify(remainsSameTarget
+            ? 'Native Send control rechecked successfully. No message was sent.'
+            : 'Native Send control is no longer verified. The Android frame remains draft-only.', !remainsSameTarget);
           return;
         }
         if (acknowledgement.kind === 'remote_text_ack' &&
@@ -594,6 +630,50 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     }
   };
 
+  const recheckSendControl = () => {
+    const channel = dataRef.current;
+    const session = sessionRef.current;
+    const composerTarget = composerTargetRef.current;
+    const sendTarget = sendTargetRef.current;
+    if (!session || !channel || channel.readyState !== 'open' ||
+        !composerTarget || !sendTarget || !viewReady || !sourceVisible || !dataReady) {
+      setSendControlVerified(false);
+      setSendControlStatus('Recheck unavailable: the live phone session or selected target is missing.');
+      return;
+    }
+    if (pendingSendControlCheckRef.current) return;
+    const requestId = uuid();
+    pendingSendControlCheckRef.current = requestId;
+    setSendControlCheckPending(true);
+    setSendControlStatus('Rechecking the focused composer and exact Send-control identity on the phone…');
+    sendControlCheckTimerRef.current = window.setTimeout(() => {
+      if (pendingSendControlCheckRef.current !== requestId) return;
+      pendingSendControlCheckRef.current = '';
+      sendControlCheckTimerRef.current = null;
+      setSendControlCheckPending(false);
+      setSendControlVerified(false);
+      setSendControlStatus('Recheck timed out. The Send control is not currently verified; no action was taken.');
+      notify('The phone did not confirm the Send-control recheck. The frame remains draft-only.', true);
+    }, 8_000);
+    try {
+      channel.send(JSON.stringify({
+        kind: 'verify_composer_send',
+        requestId,
+        sessionId: session,
+        appPackageName: appPackage,
+        composerTargetId: composerTarget,
+        sendTargetId: sendTarget,
+      }));
+    } catch {
+      window.clearTimeout(sendControlCheckTimerRef.current);
+      sendControlCheckTimerRef.current = null;
+      pendingSendControlCheckRef.current = '';
+      setSendControlCheckPending(false);
+      setSendControlVerified(false);
+      setSendControlStatus('The phone data channel rejected the Send-control recheck.');
+    }
+  };
+
   const pointerUp = (event: PointerEvent<HTMLDivElement>) => {
     const start = pointerRef.current;
     if (!start || start.pointerId !== event.pointerId) return;
@@ -687,6 +767,10 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
           {selectionMode ? 'Cancel selection' : 'Drag-select typing area'}
         </button>
         {composerTargetId ? <button type="button" onClick={() => { clearComposerTarget(); setRemoteTextStatus('Composer target cleared. Select the exact field again before inserting text.'); }}>Clear target</button> : null}
+        {composerTargetId && sendTargetRef.current ? <button type="button" onClick={recheckSendControl}
+          disabled={!viewReady || !sourceVisible || !dataReady || remoteTextBusy || sendControlCheckPending}>
+          {sendControlCheckPending ? 'Rechecking Send…' : 'Recheck Send control'}
+        </button> : null}
       </div>
       <label htmlFor="br-android-remote-text">Draft for the selected composer</label>
       <textarea id="br-android-remote-text" value={remoteText} maxLength={4_000}
