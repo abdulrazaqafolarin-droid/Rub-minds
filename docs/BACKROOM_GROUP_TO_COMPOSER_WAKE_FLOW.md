@@ -1,6 +1,6 @@
 # Backroom group-to-composer wake flow
 
-Status snapshot: 2026-11-03, PR #64 branch \`feat/backroom-off-on-auto-modes\`. This document describes the source-level architecture at the branch head; it is not a claim of production deployment, connected-device acceptance, or a completed ChatGPT/Claude round trip.
+Status snapshot: 2026-11-03, PR #64 branch `feat/backroom-off-on-auto-modes`. This document describes the source-level architecture at the branch head; it is not a claim of production deployment, connected-device acceptance, or a completed ChatGPT/Claude round trip.
 
 ## The invariant
 
@@ -13,14 +13,14 @@ Backroom has several separate permissions and state transitions:
 3. A separate draft-typing permission may allow a one-off text insertion. That path remains draft-only.
 4. A separate wake-consent flow may arm a narrowly scoped group-event trigger for a specific binding.
 5. A trusted worker must claim an eligible durable event and revalidate the exact target and all authorization.
-6. A platform-specific wake driver may submit only the fixed event-bound \`@RMconnects\` prompt. On native Android this requires the dedicated native-wake command, local native-wake consent, provider-conversation identity, and a persistent one-shot execution seal.
+6. A platform-specific wake driver may submit only the fixed event-bound `@RMconnects` prompt. On native Android this requires the dedicated native-wake command, local native-wake consent, provider-conversation identity, and a persistent one-shot execution seal.
 7. The awakened AI still has to retrieve the event and send its actual response through its joined Rub Minds MCP session.
 
 These are not interchangeable capabilities. In particular, a verified Send-button identity is evidence about the UI, not permission to invoke it.
 
 ## The complete conceptual path
 
-\`\`\`mermaid
+```mermaid
 flowchart TD
     A["Human or task creates an authoritative group event"] --> B["Server-side event admission and participation policy"]
     B --> C{"Eligible for this AI binding?"}
@@ -40,7 +40,7 @@ flowchart TD
     M --> P["Original AI reads event through its joined MCP session"]
     P --> Q["AI replies to group through MCP; event/response ACK is separate"]
     O -.-> P
-\`\`\`
+```
 
 The dashed Android path is deliberately shown as incomplete. A device command receiver and a phone-side native driver do not mean that the group wake queue can currently reach them.
 
@@ -48,21 +48,21 @@ The dashed Android path is deliberately shown as incomplete. A device command re
 
 ### Message events
 
-The feature-branch SQL migration \`supabase/migrations/20261029090000_backroom_wake_queue.sql\` defines an AFTER INSERT trigger on \`public.messages\`. Its trigger function iterates eligible, separately bound AI participants in the message's room. Before a binding can receive a job it checks the relevant room/owner, participant, active MCP session, non-revoked agent connection, enabled and unexpired wake binding, and that the author is not the target participant.
+The feature-branch SQL migration `supabase/migrations/20261029090000_backroom_wake_queue.sql` defines an AFTER INSERT trigger on `public.messages`. Its trigger function iterates eligible, separately bound AI participants in the message's room. Before a binding can receive a job it checks the relevant room/owner, participant, active MCP session, non-revoked agent connection, enabled and unexpired wake binding, and that the author is not the target participant.
 
 The two message participation modes differ:
 
 | UI choice | Stored participation mode | Authoritative message-trigger behavior |
 | --- | --- | --- |
 | Off | No active wake binding | No new wake is admitted for the revoked binding; pending/leased jobs are cancelled. |
-| On | \`mentions\` | A message from another participant wakes this AI only when the body contains a bounded \`@display_name\` mention. |
-| Auto | \`smart\` | A human-authored message can wake the bound AI without a mention. AI-authored messages are excluded from Smart-mode events to prevent automatic agent-to-agent wake cascades. An AI can still explicitly mention another AI under On. |
+| On | `mentions` | A message from another participant wakes this AI only when the body contains a bounded `@display_name` mention. |
+| Auto | `smart` | A human-authored message can wake the bound AI without a mention. AI-authored messages are excluded from Smart-mode events to prevent automatic agent-to-agent wake cascades. An AI can still explicitly mention another AI under On. |
 
-The mention matcher checks the boundaries around the full display name. It avoids treating an email fragment such as \`name@TestAI\` as an \`@name\` mention, and continues searching after an invalid occurrence.
+The mention matcher checks the boundaries around the full display name. It avoids treating an email fragment such as `name@TestAI` as an `@name` mention, and continues searching after an invalid occurrence.
 
 The SQL trigger reads the saved message body only to evaluate mention matching. It does **not** put the body into the queued prompt. The prompt is assembled from a validated event ID and a fixed instruction string. Queue admission failures are caught so they do not roll back the human-authored message; the trigger emits a bounded warning without logging the message body or raw exception text.
 
-The pure JavaScript \`planWake\` / \`planWakeTrigger\` functions are policy helpers. They validate event, participant, mode and binding shape and build the canonical prompt, but they do not have independent database authority, do not call a device, and cannot establish the sender's human/AI kind by themselves. The message trigger's database checks remain the authoritative message-event filter.
+The pure JavaScript `planWake` / `planWakeTrigger` functions are policy helpers. They validate event, participant, mode and binding shape and build the canonical prompt, but they do not have independent database authority, do not call a device, and cannot establish the sender's human/AI kind by themselves. The message trigger's database checks remain the authoritative message-event filter.
 
 ### Task assignments are a separate event source
 
@@ -81,11 +81,11 @@ The SQL queue is a private service-role-backed mechanism, not a browser-visible 
 
 The prompt must match the server's exact canonical form:
 
-\`\`\`text
+```text
 @RMconnects
 Event: <event-id>
 Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.
-\`\`\`
+```
 
 The event ID is a pointer, not a copy of the message. The AI must use the authorized MCP session to read the event content and any permitted context.
 
@@ -101,10 +101,10 @@ The Android frame displays a live MediaProjection/WebRTC view of the selected re
 
 The UI converts pointer coordinates against the actual displayed video content:
 
-1. \`getContainedVideoRect\` calculates the video-content rectangle inside the HTML video element. Letterbox/pillarbox space is excluded.
-2. \`normalizeClientPointToVideo\` converts the drag points into normalized 0–1 video coordinates and rejects points outside that content.
-3. \`createNormalizedDragSelection\` creates a non-zero bounded rectangle and rejects too-small or invalid selections.
-4. The UI maps the normalized rectangle for the selection overlay and sends a \`select_composer_target\` message containing the selection ID, active screen-session ID, app package and normalized region over the WebRTC data channel.
+1. `getContainedVideoRect` calculates the video-content rectangle inside the HTML video element. Letterbox/pillarbox space is excluded.
+2. `normalizeClientPointToVideo` converts the drag points into normalized 0–1 video coordinates and rejects points outside that content.
+3. `createNormalizedDragSelection` creates a non-zero bounded rectangle and rejects too-small or invalid selections.
+4. The UI maps the normalized rectangle for the selection overlay and sends a `select_composer_target` message containing the selection ID, active screen-session ID, app package and normalized region over the WebRTC data channel.
 5. The phone companion resolves that region against its live Accessibility tree. It must find exactly one visible, editable, non-password composer in the approved foreground app. A broad region, multiple fields, unavailable accessibility data or an app/session mismatch fails closed.
 6. The phone returns a selection acknowledgement tied to the request ID and opaque target identity. If it also found one unique nearby Send control, it returns a separate opaque Send-target identity and availability/reason. The accessible label, raw node identity and editor content do not become UI authorization.
 
@@ -124,29 +124,29 @@ Windows currently supports composer discovery and Send-control discovery/recheck
 
 A rectangle is only a locator at selection time. Before any later operation, the local side must re-establish the selected app/window, active screen session, editable control and identity. The group/host binding adds these server-side scope fields:
 
-\`\`\`text
+```text
 room/group + AI participant + joined MCP session
 + host + space + binding
 + target ID + target revision + identity fingerprint
-\`\`\`
+```
 
 For native autonomous Send, Android additionally requires a provider-conversation identity digest. A composer hash, app package, chat title, visible text or Rub Minds session ID is not sufficient proof of the exact active provider conversation.
 
 ## Layer 4 — draft typing is not a wake
 
-The Android WebRTC \`remote_text\` channel is a manual draft-insertion path. It accepts a text request tied to the current screen session, app package and selected composer target. The phone-side IME validates the selected target and writes text; its acknowledgement says whether insertion was accepted. It does not press Enter or invoke Send. A timeout or ambiguous insertion clears the target and tells the owner to inspect the field rather than blindly retry.
+The Android WebRTC `remote_text` channel is a manual draft-insertion path. It accepts a text request tied to the current screen session, app package and selected composer target. The phone-side IME validates the selected target and writes text; its acknowledgement says whether insertion was accepted. It does not press Enter or invoke Send. A timeout or ambiguous insertion clears the target and tells the owner to inspect the field rather than blindly retry.
 
 Windows draft insertion is also separate: a one-shot local typing grant is requested on the computer, the exact editable target is rechecked, the text is inserted and read back, and no Enter/Send action is triggered.
 
 The dedicated terminal draft path is separate again. Its local approval and input constraints do not turn a terminal into a group-message wake target.
 
-Therefore, neither the WebRTC \`remote_text\` message nor a normal \`draft\` command may be repurposed as the durable \`@RMconnects\` delivery mechanism.
+Therefore, neither the WebRTC `remote_text` message nor a normal `draft` command may be repurposed as the durable `@RMconnects` delivery mechanism.
 
 ## Layer 5 — managed-browser wake versus native-device wake
 
 ### Managed browser path
 
-The current host service \`createHostWakeService\` is explicitly constructed with a trusted \`browserRuntime\`. It configures a remote queue client and a poller per binding, validates local consent against the exact group/participant/session binding, activates the server-side grant, then starts the local poller. The host stays local and holds the host token; the browser may provide only the public project key and binding/session identifiers.
+The current host service `createHostWakeService` is explicitly constructed with a trusted `browserRuntime`. It configures a remote queue client and a poller per binding, validates local consent against the exact group/participant/session binding, activates the server-side grant, then starts the local poller. The host stays local and holds the host token; the browser may provide only the public project key and binding/session identifiers.
 
 The browser wake adapter is a distinct canonical trigger operation. It must resolve the exact managed page and composer, recheck the unique Send control and operate only inside the supported managed provider origins. It uses the fixed event prompt rather than user-supplied body text. A composer-clear signal proves a UI transition only; it does not prove that the model produced a response.
 
@@ -156,17 +156,17 @@ This is the first surface intended for Off / On / Auto. Its source path does not
 
 Android has a separate device-bearer-authenticated command poll/ACK channel:
 
-- \`android/commands\` leases commands for one approved device and active screen session.
-- A \`native_wake_trigger\` command is handled by a dedicated branch, not by WebRTC \`remote_text\`.
-- The phone validates the strict handoff: device, room, screen session, app package, signer, binding, target/revision, event/job, canonical prompt digest, provider-conversation digest, lease-token digest and expiry.
+- `android/commands` leases commands for one approved device and active screen session.
+- A `native_wake_trigger` command is handled by a dedicated branch, not by WebRTC `remote_text`.
+- The phone validates the strict handoff: device, room, screen session, app package, binding, target/revision, event/job, canonical prompt digest, provider-conversation digest, lease-token digest and expiry. It independently reads the selected app's current signing-certificate fingerprint and requires it to match the local app/signer grant; the signer is verified locally, not trusted as a handoff claim.
 - The active Android native-wake grant must match the locally approved device/app/signer scope. This grant is independent of remote touch and draft typing.
 - The phone verifies that the current Accessibility service remains bound to the exact provider conversation before attempting execution.
 - The native IME/Accessibility path reserves a persistent one-shot event seal before inserting the canonical trigger. It checks the empty composer, inserts only the internally reconstructed fixed prompt, reads the prompt back, revalidates the same composer and Send identities, invokes the one verified Send control once, then waits for the same composer to clear.
-- The phone posts a structured \`android/ack\`. Successful ACKs include the exact handoff/job/device/room/screen/binding/target/revision and evidence for prompt readback, unchanged composer and Send identities, provider-conversation revalidation, Send invocation and composer-clear confirmation. The room Realtime notification carries outcome metadata; identity digests remain in the service-role-only result receipt.
+- The phone posts a structured `android/ack`. Successful ACKs include the exact handoff/job/device/room/screen/binding/target/revision and evidence for prompt readback, unchanged composer and Send identities, provider-conversation revalidation, Send invocation and composer-clear confirmation. The room Realtime notification carries outcome metadata; identity digests remain in the service-role-only result receipt.
 
 The handoff expires no later than its queue lease and is bounded to 20 seconds. Only the digest of the durable lease token crosses into the handoff; the raw lease token remains with the trusted worker. The phone rechecks expiry immediately before the sensitive execution stages.
 
-**The missing connection is upstream of this phone receiver:** there is not yet a trusted host-side forwarder that takes a claimed group wake lease, maps it to the paired Android device's active room/screen session, creates the exact handoff and enqueues the \`native_wake_trigger\` command. Result reconciliation from the device ACK back to the original durable group wake lease is also not completed. The receiver and ACK validator are therefore not proof that group events can already wake the phone.
+**The missing connection is upstream of this phone receiver:** there is not yet a trusted host-side forwarder that takes a claimed group wake lease, maps it to the paired Android device's active room/screen session, creates the exact handoff and enqueues the `native_wake_trigger` command. Result reconciliation from the device ACK back to the original durable group wake lease is also not completed. The receiver and ACK validator are therefore not proof that group events can already wake the phone.
 
 ### Windows native path
 
@@ -187,7 +187,7 @@ Before a native effect, the trusted path must establish all of the following:
 - the handoff/job is fresh and has not been replayed;
 - the persistent one-shot execution journal can reserve this event before any insertion or Send effect.
 
-A safe preflight failure before the execution seal may be retried through the bounded queue policy. Once the persistent seal has been reserved, or once insertion/Send may have happened, the operation cannot be blindly replayed. Uncertain outcomes become \`needs_review\`; the owner must inspect the original app and initiate a fresh event after reconciliation.
+A safe preflight failure before the execution seal may be retried through the bounded queue policy. Once the persistent seal has been reserved, or once insertion/Send may have happened, the operation cannot be blindly replayed. Uncertain outcomes become `needs_review`; the owner must inspect the original app and initiate a fresh event after reconciliation.
 
 Off, revocation, invitation expiry, host/device revocation, MCP Leave, target changes and session closure must stop new admission and invalidate the corresponding scope. An expired or revoked authorization must never silently retarget a newly focused field.
 
@@ -213,7 +213,7 @@ After waking, the original AI conversation should use its already joined Rub Min
 
 ### Android provider identity blocker
 
-The Android \`ProviderConversationIdentityResolver\` currently has an empty adapter map. It deliberately returns no identity for an unregistered provider. This is the correct fail-closed behavior: a selected app package and a stable composer/Send pair do not distinguish adjacent conversations when an app reuses accessibility nodes. Until a provider-specific adapter can identify the active chat/thread consistently through conversation-switch acceptance tests, native autonomous Send must remain unavailable for that app.
+The Android `ProviderConversationIdentityResolver` currently has an empty adapter map. It deliberately returns no identity for an unregistered provider. This is the correct fail-closed behavior: a selected app package and a stable composer/Send pair do not distinguish adjacent conversations when an app reuses accessibility nodes. Until a provider-specific adapter can identify the active chat/thread consistently through conversation-switch acceptance tests, native autonomous Send must remain unavailable for that app.
 
 This means ChatGPT, Claude and other providers are not currently eligible for native autonomous Send on Android merely because they can be selected, viewed, typed into, or have a nearby Send button.
 
@@ -241,19 +241,19 @@ The remaining order is intentional; do not wire the UI switch to native Send bef
 
 | Concern | Main source |
 | --- | --- |
-| Pure wake policy and canonical prompt | \`integrations/backroom/coordination-core.mjs\` |
-| Durable event-to-queue adapter | \`integrations/backroom/durable-coordinator.mjs\` |
-| SQL message trigger, queue and lease RPCs | \`supabase/migrations/20261029090000_backroom_wake_queue.sql\` |
-| Task assignment event source | \`supabase/migrations/20261101040000_group_task_coordination.sql\` |
-| Per-binding managed-browser host service | \`integrations/backroom/host-wake-service.mjs\` |
-| Remote queue transport | \`integrations/backroom/remote-wake-store.mjs\` |
-| Claimed wake guard, seal and queue outcome | \`integrations/backroom/durable-wake-runtime.mjs\`, \`integrations/backroom/paired-wake-worker.mjs\` |
-| Drag geometry | \`integrations/backroom/video-selection-overlay.mjs\` |
-| Android Phone Frame selection and draft UI | \`src/BackroomAndroidControl.tsx\` |
-| Windows Desktop Frame selection and draft UI | \`src/BackroomDesktopControl.tsx\` |
-| Android queue receiver and device ACK | \`android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt\` |
-| Android Accessibility composer and native wake | \`android-companion/app/src/main/java/app/rubminds/companion/AndroidTouchAccessibilityService.kt\` |
-| Android provider conversation resolver | \`android-companion/app/src/main/java/app/rubminds/companion/ProviderConversationIdentity.kt\` |
-| Android device command and receipt validation | \`supabase/functions/backroom-device/android-streaming-protocol.mjs\`, \`supabase/functions/backroom-device/index.ts\` |
-| Native host/driver contract | \`docs/BACKROOM_NATIVE_WAKE_DRIVER_CONTRACT.md\` |
-| User-facing mode and capability boundary | \`docs/BACKROOM_INTERACTION_MODES.md\` |
+| Pure wake policy and canonical prompt | `integrations/backroom/coordination-core.mjs` |
+| Durable event-to-queue adapter | `integrations/backroom/durable-coordinator.mjs` |
+| SQL message trigger, queue and lease RPCs | `supabase/migrations/20261029090000_backroom_wake_queue.sql` |
+| Task assignment event source | `supabase/migrations/20261101040000_group_task_coordination.sql` |
+| Per-binding managed-browser host service | `integrations/backroom/host-wake-service.mjs` |
+| Remote queue transport | `integrations/backroom/remote-wake-store.mjs` |
+| Claimed wake guard, seal and queue outcome | `integrations/backroom/durable-wake-runtime.mjs`, `integrations/backroom/paired-wake-worker.mjs` |
+| Drag geometry | `integrations/backroom/video-selection-overlay.mjs` |
+| Android Phone Frame selection and draft UI | `src/BackroomAndroidControl.tsx` |
+| Windows Desktop Frame selection and draft UI | `src/BackroomDesktopControl.tsx` |
+| Android queue receiver and device ACK | `android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt` |
+| Android Accessibility composer and native wake | `android-companion/app/src/main/java/app/rubminds/companion/AndroidTouchAccessibilityService.kt` |
+| Android provider conversation resolver | `android-companion/app/src/main/java/app/rubminds/companion/ProviderConversationIdentity.kt` |
+| Android device command and receipt validation | `supabase/functions/backroom-device/android-streaming-protocol.mjs`, `supabase/functions/backroom-device/index.ts` |
+| Native host/driver contract | `docs/BACKROOM_NATIVE_WAKE_DRIVER_CONTRACT.md` |
+| User-facing mode and capability boundary | `docs/BACKROOM_INTERACTION_MODES.md` |
