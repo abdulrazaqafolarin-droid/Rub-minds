@@ -229,8 +229,13 @@ test('native Send is serialized against session and composer-target invalidation
   const submit = method(service, '    fun submitCanonicalWake(', '    private fun awaitComposerClear(');
   assert.match(submit, /bindingGenerationAtStart/);
   assert.match(submit, /NativeWakeBindingPolicy\.isCurrent/);
-  assert.match(submit, /DraftInputMethodService\.insertNativeWakeTrigger\(request\)/);
-  assert.match(submit, /synchronized\(this\)[\s\S]*?performAction\(AccessibilityNodeInfo\.ACTION_CLICK\)/);
+  const insertionGuard = method(submit, '            val insertion = synchronized(this)', '            if (insertion == null)');
+  assert.match(insertionGuard, /NativeWakeBindingPolicy\\.isCurrent/);
+  assert.match(insertionGuard, /DraftInputMethodService\\.insertNativeWakeTrigger\\(request\\)/);
+
+  const finalClick = method(submit, '            val invoked = try {', '            if (!invoked)');
+  assert.match(finalClick, /synchronized\\(this\\)[\\s\\S]*performAction\\(AccessibilityNodeInfo\\.ACTION_CLICK\\)/);
+  assert.match(finalClick, /NativeWakeBindingPolicy\\.isCurrent/);
 
   const clearActive = method(service, '        fun clearActiveSession(', '        fun selectComposerTarget(');
   assert.match(clearActive, /synchronized\(current\)[\s\S]*nativeBindingGeneration\+\+/);
