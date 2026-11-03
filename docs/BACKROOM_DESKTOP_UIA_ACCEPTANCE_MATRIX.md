@@ -51,7 +51,7 @@ Also verify whole-monitor capture geometry at 100%, 125%, 150% and 200% display 
 
 ## Read-only Send-control discovery and revalidation — 2026-11-03
 
-The desktop companion now inspects the selected app's UI Automation tree locally after an editable composer has been selected. A candidate is accepted only when it is a visible, enabled Button in the same process and app window, has an exact accessible name of Send / Send message / Send prompt (or an unlabelled AutomationId with Send as a distinct token), and lies near the composer in both axes. Zero matches and multiple matches remain unverified. Generic Submit, Share, Send feedback and Resend labels are rejected.
+The desktop companion now inspects the selected app's UI Automation tree locally after an editable composer has been selected. It uses one descendant `FindAll` query scoped to Button controls rather than a best-effort child/sibling scan. A query failure, more than 4,096 Buttons, or an unreadable required property invalidates the whole check; a partial scan can never be reported as a unique Send control. A candidate is accepted only when it is a visible, enabled Button in the same process and app window, has an exact accessible name of Send / Send message / Send prompt (or an unlabelled AutomationId with Send as a distinct token), and lies near the composer in both axes. Zero matches and multiple matches remain unverified. Generic Submit, Share, Send feedback, Resend, email, feedback, share, forward or reply resource IDs are rejected.
 
 The complete Send-control identity (process ID, runtime ID, class, accessible name, AutomationId and bounds) remains in native Rust memory. DraftTarget skips both composer and Send identities during serialization; a native unit test asserts that neither identity, the selection ID nor the AutomationId can appear in its JSON representation. The WebView receives only the selected composer selection ID, a boolean and a bounded reason.
 
@@ -60,6 +60,10 @@ The **Recheck Send control** button sends only the selection ID and a one-use re
 This operation is read-only. It does not call UIA Invoke, click a button, send Enter, submit a prompt or grant autonomous execution. Draft insertion remains under the existing separate local OS approval and one-shot target verification. Off / On / Auto for native Windows apps remains unavailable; the durable group wake queue, local native Auto grant, one-time execution seal and no-replay recovery are not connected to this surface.
 
 ### Physical Windows Send-control acceptance matrix (NOT RUN)
+- The Button query must return a complete result set. Simulate an unavailable UIA provider or a malformed/incomplete descendant query; the candidate must be unavailable rather than accepting one result from a partial scan.
+- Verify an app with more than 4,096 descendant Button controls returns `accessibility_tree_incomplete` and exposes no candidate.
+- Verify a Button whose `IsEnabled`, `IsOffscreen`, Name, AutomationId, bounds, process ID, runtime ID or class cannot be read makes the overall scan fail closed.
+- Verify AutomationIds `sendToEmail`, `composerSendFeedback`, `sendToShare`, `forwardSendButton` and `reSendButton` are rejected.
 
 | Scenario | Required result |
 |---|---|
@@ -94,7 +98,7 @@ Record physical results only after running the matrix on a real Windows 10/11 co
 
 - This implementation is Windows-only. Equivalent macOS/Linux accessibility drivers are not implemented.
 - Only Windows UIA Edit or Document controls with writable/readable Value access, or readable Text access plus keyboard focus, are accepted. Unsupported custom editors fail closed.
-- Android's current Phone Frame shows selected-app inventory only. No virtual guest app is rendered there; Android screen capture, accessibility target identification and remote target-bound insertion are not implemented. The phone drag-select overlay must remain unavailable until those components and physical-device acceptance exist.
+- Android's Phone Frame now has source-level live mirror, drag-select composer targeting, and local Send-control discovery/revalidation for a real foreground app. This is not an isolated virtual guest. The Android path remains draft-only and physical-device acceptance for app-window streaming, accessibility target binding, typing and Send-control revalidation is still pending.
 - Claude Code/OpenCode terminals are PTY targets, not UIA text fields. Terminal text-only input and explicit Enter remain separate actions and do not use this desktop drag-select path.
 
 No production migration, merge to `main`, or deployment is part of this acceptance checklist.
