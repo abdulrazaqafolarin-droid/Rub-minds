@@ -30,7 +30,7 @@ data class NativeWakeExecutionRequest(
     val targetRevision: Int,
     val handoffIssuedAtMillis: Long,
     val handoffExpiresAtMillis: Long,
-    val providerConversationIdentityDigest: String = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    val providerConversationIdentityDigest: String
 )
 
 data class NativeWakeExecutionReservation(
