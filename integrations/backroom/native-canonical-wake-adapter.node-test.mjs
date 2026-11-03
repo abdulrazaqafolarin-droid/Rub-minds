@@ -29,11 +29,10 @@ function readyState() {
     sendControlIdentityVerified: true, providerConversationIdentityVerified: true, targetId: target.id,
     targetRevision: target.revision, locatorKind: 'accessibility',
     composerIdentityDigest: 'a'.repeat(64), sendControlIdentityDigest: 'b'.repeat(64),
-    providerConversationIdentityDigest: target.providerConversationIdentityDigest, providerConversationIdentityRevalidated: true,
+    providerConversationIdentityDigest: target.providerConversationIdentityDigest,
     surface: target.surface,
     appId: target.appId, sessionId: target.sessionId,
     identityFingerprint: target.identityFingerprint,
-    providerConversationIdentityDigest: target.providerConversationIdentityDigest,
   };
 }
 
@@ -42,6 +41,8 @@ function submittedOutcome(input, overrides = {}) {
     state: 'submitted', eventId: input.eventId,
     targetId: input.target.targetId, targetRevision: input.target.targetRevision,
     composerIdentityDigest: 'a'.repeat(64), sendControlIdentityDigest: 'b'.repeat(64),
+    providerConversationIdentityRevalidated: true,
+    providerConversationIdentityDigest: target.providerConversationIdentityDigest,
     promptInserted: true, promptReadbackVerified: true,
     composerIdentityRevalidated: true, sendControlIdentityRevalidated: true,
     sendInvoked: true, composerCleared: true, ...overrides,
