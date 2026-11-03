@@ -345,9 +345,29 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         }
         val handler = Handler(Looper.getMainLooper())
         val posted = handler.post {
+            var promptInserted = false
+            var sendInvoked = false
+            var composerCleared = false
+            var promptReadbackVerified = false
+            var composerIdentityRevalidated = false
+            var sendControlIdentityRevalidated = false
+
             fun finish(state: NativeWakeSubmissionState, reason: String) {
                 synchronized(this) { nativeWakeInFlight = false }
-                runCatching { onResult(NativeWakeSubmissionResult(state, reason)) }
+                runCatching {
+                    onResult(NativeWakeSubmissionResult(
+                        state = state,
+                        reason = reason,
+                        promptInserted = promptInserted,
+                        sendInvoked = sendInvoked,
+                        composerCleared = composerCleared,
+                        promptReadbackVerified = promptReadbackVerified,
+                        composerIdentityRevalidated = composerIdentityRevalidated,
+                        sendControlIdentityRevalidated = sendControlIdentityRevalidated,
+                        composerIdentityDigest = if (composerIdentityRevalidated) request.composerTargetId else null,
+                        sendControlIdentityDigest = if (sendControlIdentityRevalidated) request.sendTargetId else null
+                    ))
+                }
             }
 
             if (boundSessionId != request.sessionId || boundPackageName != request.packageName ||
@@ -447,7 +467,9 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                     finish(NativeWakeSubmissionState.NEEDS_REVIEW, insertion.reason)
                     return@post
                 }
-                NativeWakeInsertState.INSERTED -> Unit
+                NativeWakeInsertState.INSERTED -> {
+                    promptInserted = true
+                }
             }
 
             val prompt = NativeWakeConsentPolicy.canonicalWakePrompt(request.eventId)
@@ -457,6 +479,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 finish(NativeWakeSubmissionState.NEEDS_REVIEW, "canonical_trigger_readback_unconfirmed")
                 return@post
             }
+            promptReadbackVerified = true
 
             // Insertion may resize the keyboard/window. Re-identify both the
             // same composer and the same unique Send control after the seal.
@@ -471,6 +494,8 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 finish(NativeWakeSubmissionState.NEEDS_REVIEW, "post_insert_native_target_revalidation_failed")
                 return@post
             }
+            composerIdentityRevalidated = true
+            sendControlIdentityRevalidated = true
 
             val sendRoot = try { rootInActiveWindow } catch (_: SecurityException) { null }
             if (sendRoot == null || !isServiceEnabled(this) ||
@@ -552,8 +577,10 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                         AndroidSendControlPolicy.isRecognizedLabel(descriptionLabel)
                     val fallbackResource = textLabel.isBlank() && descriptionLabel.isBlank() &&
                         AndroidSendControlPolicy.isRecognizedResourceId(exactSendNode.viewIdResourceName.orEmpty())
-                    (recognizedLabel || fallbackResource) &&
+                    if (recognizedLabel || fallbackResource) {
+                        sendControlIdentityRevalidated = true
                         exactSendNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    } else false
                 }
             } catch (_: SecurityException) {
                 false
@@ -564,11 +591,13 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 finish(NativeWakeSubmissionState.NEEDS_REVIEW, "native_send_action_unconfirmed")
                 return@post
             }
+            sendInvoked = true
             awaitComposerClear(
                 handler = handler,
                 request = request,
                 deadlineMillis = android.os.SystemClock.elapsedRealtime() + NATIVE_WAKE_CLEAR_TIMEOUT_MS,
                 onComplete = { cleared ->
+                    composerCleared = cleared
                     finish(
                         if (cleared) NativeWakeSubmissionState.SUBMITTED else NativeWakeSubmissionState.NEEDS_REVIEW,
                         if (cleared) "canonical_trigger_sent_composer_cleared" else "send_outcome_needs_review"
