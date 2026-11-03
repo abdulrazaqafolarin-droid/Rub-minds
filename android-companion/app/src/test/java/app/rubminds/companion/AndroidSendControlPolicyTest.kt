@@ -71,8 +71,10 @@ class AndroidSendControlPolicyTest {
     @Test fun rejectsControlsOutsideTheAppWindowOrFarFromTheSelectedComposer() {
         val outside = candidate(bounds = ComposerScreenRect(1_010, 1_630, 1_080, 1_700))
         val distant = candidate(bounds = ComposerScreenRect(820, 100, 960, 160))
+        val farAcrossRow = candidate(bounds = ComposerScreenRect(900, 1_630, 990, 1_700))
+        val narrowComposer = ComposerScreenRect(100, 1_450, 400, 1_700)
         val result = AndroidSendControlPolicy.choose(
-            listOf(outside, distant), "com.example.chat", root, composer
+            listOf(outside, distant, farAcrossRow), "com.example.chat", root, narrowComposer
         )
         assertNull(result.candidate)
     }
