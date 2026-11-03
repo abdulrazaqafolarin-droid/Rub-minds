@@ -23,6 +23,9 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const [remoteText, setRemoteText] = useState('');
   const [selectionMode, setSelectionMode] = useState(false);
   const [composerTargetId, setComposerTargetId] = useState('');
+  const [sendTargetId, setSendTargetId] = useState('');
+  const [sendControlVerified, setSendControlVerified] = useState(false);
+  const [sendControlStatus, setSendControlStatus] = useState('No native Send control verified.');
   const [selectionPreview, setSelectionPreview] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const [remoteTextBusy, setRemoteTextBusy] = useState(false);
   const [remoteTextStatus, setRemoteTextStatus] = useState('Focus a normal text field in the phone app, then type here.');
@@ -40,6 +43,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const pendingRemoteTextAcksRef = useRef<Map<string, number>>(new Map());
   const pendingComposerSelectionAcksRef = useRef<Map<string, number>>(new Map());
   const composerTargetRef = useRef('');
+  const sendTargetRef = useRef('');
   const controlExpiryRef = useRef<number | null>(null);
   const startTimerRef = useRef<number | null>(null);
   const disconnectTimerRef = useRef<number | null>(null);
@@ -63,7 +67,11 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       } catch { /* Local UI state is cleared even if the peer is disconnected. */ }
     }
     composerTargetRef.current = '';
+    sendTargetRef.current = '';
     setComposerTargetId('');
+    setSendTargetId('');
+    setSendControlVerified(false);
+    setSendControlStatus('No native Send control verified.');
     setSelectionPreview(null);
     setSelectionMode(false);
   }, [appPackage]);
@@ -88,11 +96,12 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     for (const timer of pendingComposerSelectionAcksRef.current.values()) window.clearTimeout(timer);
     pendingComposerSelectionAcksRef.current.clear();
     composerTargetRef.current = '';
+    sendTargetRef.current = '';
     streamRef.current?.getTracks().forEach(track => track.stop()); streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     sessionRef.current = ''; pointerRef.current = null; pendingControlRequestRef.current = '';
     sourceVisibilityRef.current = null;
-    setSessionId(''); setViewReady(false); setSourceVisible(false); setDataReady(false); setControlGranted(false); setRemoteText(''); setRemoteTextBusy(false); setSelectionMode(false); setComposerTargetId(''); setSelectionPreview(null); setRemoteTextStatus('Select the actual composer in the streamed app before inserting text.'); setBusy(false);
+    setSessionId(''); setViewReady(false); setSourceVisible(false); setDataReady(false); setControlGranted(false); setRemoteText(''); setRemoteTextBusy(false); setSelectionMode(false); setComposerTargetId(''); setSendTargetId(''); setSendControlVerified(false); setSendControlStatus('No native Send control verified.'); setSelectionPreview(null); setRemoteTextStatus('Select the actual composer in the streamed app before inserting text.'); setBusy(false);
   }, []);
 
   const stopRemote = useCallback(async (expectedSession = sessionRef.current) => {
@@ -245,10 +254,27 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
               /^[a-f0-9]{64}$/.test(acknowledgement.targetId)) {
             composerTargetRef.current = acknowledgement.targetId;
             setComposerTargetId(acknowledgement.targetId);
+            const sendTarget = typeof acknowledgement.sendTargetId === 'string' &&
+              /^[a-f0-9]{64}$/.test(acknowledgement.sendTargetId)
+                ? acknowledgement.sendTargetId : '';
+            const sendVerified = acknowledgement.sendAvailable === true && Boolean(sendTarget);
+            sendTargetRef.current = sendVerified ? sendTarget : '';
+            setSendTargetId(sendTargetRef.current);
+            setSendControlVerified(sendVerified);
+            const sendReason = typeof acknowledgement.sendReason === 'string'
+              ? acknowledgement.sendReason.replaceAll('_', ' ')
+              : 'phone companion update required';
+            setSendControlStatus(sendVerified
+              ? 'One unique Send control is verified locally for this composer. Automated wake is not armed.'
+              : 'Send control not verified: ' + sendReason + '.');
             setSelectionPreview(null);
             setSelectionMode(false);
-            setRemoteTextStatus('Composer selected. Tap that exact field on the phone so it is focused, then insert a draft.');
-            notify('Android selected one real editable composer in the approved app. Focus that exact field on the phone before inserting a draft.');
+            setRemoteTextStatus(sendVerified
+              ? 'Composer selected and Send control verified. Focus the exact field on the phone before inserting a draft. Native sending still requires the durable wake queue and separate local wake consent.'
+              : 'Composer selected. Tap that exact field on the phone so it is focused, then insert a draft.');
+            notify(sendVerified
+              ? 'Android verified one editable composer and one nearby Send control. No message was sent.'
+              : 'Android selected one real editable composer in the approved app. No unique Send control was verified.');
           } else {
             clearComposerTarget(false);
             setRemoteTextStatus('Composer selection rejected: ' + acknowledgement.reason.replaceAll('_', ' ') + '. Drag over exactly one visible, editable, non-password field.');
@@ -654,7 +680,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     {sessionId ? <div className="br-android-keyboard">
       <div className="br-android-composer-head">
         <b>Original app composer</b>
-        <span>{composerTargetId ? 'Selected and verified' : 'No target selected'}</span>
+        <span>{composerTargetId ? (sendControlVerified ? 'Composer + Send verified' : 'Composer selected · draft only') : 'No target selected'}</span>
       </div>
       <div className="br-android-composer-actions">
         <button type="button" onClick={() => {
@@ -678,7 +704,10 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         </button>
       </div>
       <p role="status">{remoteTextStatus}</p>
-      <small>Selection overlays the live app frame and resolves to one real editable, visible, non-password accessibility field in the selected foreground app. Backroom does not read the conversation text. This native Android frame is draft-only: it inserts unsent text with the locally approved keyboard and cannot press Send or invoke an IME action. Off / On / Auto unattended wake is currently supported only for managed browser tabs.</small>
+      <small>{sendControlVerified
+        ? 'The phone locally verified one unique, enabled Send control near the selected composer. Its accessibility identity stays bound to this app session and is not a permission to click it. Native On / Auto remains disabled until durable event-queue delivery and separate phone-side wake consent are connected.'
+        : 'Selection overlays the live app frame and resolves to one real editable, visible, non-password accessibility field in the selected foreground app. Backroom also checks locally for one nearby, labelled Send control; ambiguous or missing controls stay draft-only. No conversation text is read or uploaded.'}</small>
+      <p className="br-android-stream-disclaimer">{sendControlStatus}</p>
     </div> : null}
     <div className="br-android-stream-actions">
       {!sessionId
