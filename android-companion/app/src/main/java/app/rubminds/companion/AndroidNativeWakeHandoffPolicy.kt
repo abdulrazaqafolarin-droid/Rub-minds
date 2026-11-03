@@ -19,6 +19,7 @@ data class ValidatedAndroidNativeWakeHandoff(
     val signingCertificateSha256: String,
     val composerTargetId: String,
     val sendTargetId: String,
+    val providerConversationIdentityDigest: String,
     val leaseTokenDigest: String,
     val issuedAtMillis: Long,
     val leaseExpiresAtMillis: Long,
@@ -39,6 +40,7 @@ data class ValidatedAndroidNativeWakeHandoff(
             eventId = eventId,
             composerTargetId = composerTargetId,
             sendTargetId = sendTargetId,
+            providerConversationIdentityDigest = providerConversationIdentityDigest,
             targetRevision = targetRevision,
             handoffIssuedAtMillis = issuedAtMillis,
             handoffExpiresAtMillis = expiresAtMillis
@@ -64,7 +66,7 @@ object AndroidNativeWakeHandoffPolicy {
         "version", "kind", "handoffId", "jobId", "eventId", "deviceId", "roomId",
         "screenSessionId", "hostId", "bindingId", "sessionId", "targetId",
         "targetRevision", "surface", "appId", "identityFingerprint",
-        "composerIdentityDigest", "sendControlIdentityDigest", "leaseTokenDigest",
+        "composerIdentityDigest", "sendControlIdentityDigest", "providerConversationIdentityDigest", "leaseTokenDigest",
         "prompt", "promptDigest", "issuedAt", "leaseExpiresAt", "expiresAt"
     )
 
@@ -123,6 +125,7 @@ object AndroidNativeWakeHandoffPolicy {
         val signer = handoff.getString("identityFingerprint")
         val composerDigest = handoff.getString("composerIdentityDigest")
         val sendDigest = handoff.getString("sendControlIdentityDigest")
+        val providerConversationDigest = handoff.getString("providerConversationIdentityDigest")
         val leaseDigest = handoff.getString("leaseTokenDigest")
         val prompt = handoff.getString("prompt")
         val digest = handoff.getString("promptDigest")
@@ -137,6 +140,7 @@ object AndroidNativeWakeHandoffPolicy {
             surface != "android_app" || packageName != expectedPackageName ||
             signer != expectedSignerSha256 ||
             !hex.matches(composerDigest) || !hex.matches(sendDigest) ||
+            !ProviderConversationIdentityPolicy.isValidDigest(providerConversationDigest) ||
             !hex.matches(leaseDigest) || !promptDigest.matches(digest) ||
             prompt != canonicalPrompt(event) || sha256(prompt) != digest ||
             deviceId != expectedDeviceId || roomId != expectedRoomId ||
