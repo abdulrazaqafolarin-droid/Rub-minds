@@ -344,7 +344,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             nativeWakeInFlight = true
         }
         val handler = Handler(Looper.getMainLooper())
-        handler.post {
+        val posted = handler.post {
             fun finish(state: NativeWakeSubmissionState, reason: String) {
                 synchronized(this) { nativeWakeInFlight = false }
                 runCatching { onResult(NativeWakeSubmissionResult(state, reason)) }
@@ -473,8 +473,8 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             }
 
             val sendRoot = try { rootInActiveWindow } catch (_: SecurityException) { null }
-            if (sendRoot == null || sendRoot.packageName?.toString() != request.packageName ||
-                !sendRoot.isVisibleToUser
+            if (sendRoot == null || !isServiceEnabled(this) ||
+                sendRoot.packageName?.toString() != request.packageName || !sendRoot.isVisibleToUser
             ) {
                 sendRoot?.recycle()
                 finish(NativeWakeSubmissionState.NEEDS_REVIEW, "foreground_changed_after_trigger_insert")
@@ -576,6 +576,10 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 }
             )
         }
+        if (!posted) {
+            synchronized(this) { nativeWakeInFlight = false }
+            return false
+        }
         return true
     }
 
@@ -587,6 +591,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
     ) {
         handler.postDelayed({
             if (boundSessionId != request.sessionId || boundPackageName != request.packageName ||
+                !isServiceEnabled(this@AndroidTouchAccessibilityService) ||
                 currentRootPackage() != request.packageName
             ) {
                 onComplete(false)
