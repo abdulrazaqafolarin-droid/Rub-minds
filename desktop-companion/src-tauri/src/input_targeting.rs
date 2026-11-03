@@ -645,4 +645,62 @@ mod tests {
         assert!(super::validate_target_metadata("Edit", true, false, false, false, true).is_ok());
         assert!(super::validate_target_metadata("Document", true, false, false, false, true).is_ok());
     }
+
+    #[test]
+    fn send_labels_are_exact_and_resource_ids_require_a_send_token() {
+        use super::is_recognized_send_label as recognized;
+        for label in ["Send", " send message ", "SEND PROMPT"] {
+            assert!(recognized(label, ""), "{label}");
+        }
+        for label in ["Submit", "Send feedback", "Share", "Send to email", "New message"] {
+            assert!(!recognized(label, ""), "{label}");
+        }
+        assert!(recognized("", "composer_send_button"));
+        assert!(recognized("", "sendButton"));
+        assert!(recognized("", "button-SEND"));
+        assert!(!recognized("Submit", "send_button"));
+        assert!(!recognized("", "sendbutton"));
+        assert!(!recognized("", "resend_button"));
+    }
+
+    #[test]
+    fn send_control_requires_unique_button_in_same_visible_app_window_and_near_composer() {
+        use super::validate_send_control_candidate as validate;
+        let window = [0, 0, 1000, 1800];
+        let composer = [100, 1450, 900, 1700];
+        let send = [820, 1630, 960, 1700];
+        assert!(validate("Button", true, false, true, "Send", "", window, composer, send).is_ok());
+        assert_eq!(validate("Edit", true, false, true, "Send", "", window, composer, send), Err("not_button_control"));
+        assert_eq!(validate("Button", false, false, true, "Send", "", window, composer, send), Err("disabled_control"));
+        assert_eq!(validate("Button", true, true, true, "Send", "", window, composer, send), Err("offscreen_control"));
+        assert_eq!(validate("Button", true, false, false, "Send", "", window, composer, send), Err("different_process"));
+        assert_eq!(validate("Button", true, false, true, "Submit", "", window, composer, send), Err("unrecognized_send_control"));
+        assert_eq!(validate("Button", true, false, true, "Send", "", window, composer, [1001, 1630, 1080, 1700]), Err("outside_selected_app_window"));
+        assert_eq!(validate("Button", true, false, true, "Send", "", window, composer, [820, 100, 960, 160]), Err("send_control_not_near_composer"));
+        let narrow_composer = [100, 1450, 400, 1700];
+        assert_eq!(validate("Button", true, false, true, "Send", "", window, narrow_composer, [900, 1630, 990, 1700]), Err("send_control_not_near_composer"));
+        assert_eq!(validate("Button", true, false, true, "Send", "", window, [10, 10, 10, 20], send), Err("invalid_control_bounds"));
+    }
+
+    #[test]
+    fn ambiguous_send_candidates_are_never_selected() {
+        use super::{choose_send_control, SendControlIdentity};
+        let candidate = |runtime_id: i32| SendControlIdentity {
+            process_id: 42,
+            runtime_id: vec![runtime_id],
+            class_name: "Button".into(),
+            accessible_name: "Send".into(),
+            automation_id: "send_button".into(),
+            bounds: [820, 1630, 960, 1700],
+        };
+        let none = choose_send_control(Vec::new());
+        assert_eq!(none.candidate, None);
+        assert_eq!(none.reason, "unique_nearby_send_control_not_found");
+        let unique = choose_send_control(vec![candidate(1)]);
+        assert_eq!(unique.candidate.unwrap().runtime_id, vec![1]);
+        assert_eq!(unique.reason, "unique_send_control_verified");
+        let ambiguous = choose_send_control(vec![candidate(1), candidate(2)]);
+        assert_eq!(ambiguous.candidate, None);
+        assert_eq!(ambiguous.reason, "multiple_send_controls_ambiguous");
+    }
 }
