@@ -10,6 +10,7 @@ const handoffPolicy = await read('../../android-companion/app/src/main/java/app/
 const consent = await read('../../android-companion/app/src/main/java/app/rubminds/companion/NativeWakeConsentPolicy.kt');
 const store = await read('../../android-companion/app/src/main/java/app/rubminds/companion/AndroidNativeWakeConsentStore.kt');
 const activity = await read('../../android-companion/app/src/main/java/app/rubminds/companion/MainActivity.kt');
+const devicesUi = await read('../../src/BackroomDevicesApp.tsx');
 
 function method(source, start, end) {
   const from = source.indexOf(start);
@@ -177,4 +178,9 @@ test('the 20-second native handoff deadline is carried to the driver and recheck
   const deadlineChecks = [...submit.matchAll(/request\.handoffExpiresAtMillis <= System\.currentTimeMillis\(\)/g)];
   assert.ok(deadlineChecks.length >= 3);
   assert.match(submit, /native_wake_handoff_expired_after_seal/);
+});
+test('Backroom capability copy reports the missing group forwarder rather than a missing phone queue', () => {
+  assert.match(devicesUi, /AI-directed sending \/ native Off · On · Auto/);
+  assert.match(devicesUi, /Not available · group forwarding missing/);
+  assert.doesNotMatch(devicesUi, /Not available · wake queue not connected/);
 });
