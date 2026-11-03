@@ -542,23 +542,46 @@ mod windows_impl {
         }
 
         let mut current = composer;
+        let mut selected_window: Option<(UIElement, [i32; 4], String)> = None;
         for _ in 0..MAX_PARENT_DEPTH * 2 {
             if current.get_control_type().ok() == Some(ControlType::Window) {
                 let bounds = half_open_bounds(&current)?;
                 let handle = current.get_native_window_handle()
-                    .map(|value| value.to_string()).ok();
-                let snapshot = foreground_window_snapshot_for_process(expected.process_id)?;
-                if current.get_process_id().ok() != Some(expected.process_id)
-                    || handle.as_deref() != Some(snapshot.handle.as_str())
-                {
-                    return Err("The selected composer is no longer inside its foreground application window".into());
+                    .map(|value| value.to_string())
+                    .map_err(|_| "The selected app window has no native identity".to_string())?;
+                if current.get_process_id().ok() != Some(expected.process_id) || handle == "0" {
+                    return Err("The selected composer is no longer inside its selected application window".into());
                 }
-                return Ok((current, bounds));
+                selected_window = Some((current.clone(), bounds, handle));
+                break;
             }
             current = walker.get_parent(&current)
                 .map_err(|_| "Could not locate the selected composer's application window".to_string())?;
         }
-        Err("The selected composer has no verifiable application window".into())
+        let (window, bounds, selected_handle) = selected_window
+            .ok_or("The selected composer has no verifiable application window")?;
+
+        // Recheck may be requested from another device, so the target app need
+        // not have the keyboard focus within its composer. Its top-level window
+        // must, however, still be the actual foreground window on this PC.
+        let mut focused = automation.get_focused_element()
+            .map_err(|_| "Windows could not identify the foreground application window".to_string())?;
+        let mut foreground_match = false;
+        for _ in 0..MAX_PARENT_DEPTH * 2 {
+            if focused.get_control_type().ok() == Some(ControlType::Window) {
+                let handle = focused.get_native_window_handle()
+                    .map(|value| value.to_string()).ok();
+                foreground_match = focused.get_process_id().ok() == Some(expected.process_id)
+                    && handle.as_deref() == Some(selected_handle.as_str());
+                break;
+            }
+            focused = walker.get_parent(&focused)
+                .map_err(|_| "The foreground control has no verifiable application window".to_string())?;
+        }
+        if !foreground_match {
+            return Err("The selected app is no longer the foreground application window".into());
+        }
+        Ok((window, bounds))
     }
 
     fn collect_send_candidates(
