@@ -182,7 +182,9 @@ export class NativeWakeAuthorizationAuthority {
         hostId: grant.hostId, groupId: grant.groupId, participantId: grant.participantId,
         sessionId: grant.sessionId, spaceId: grant.spaceId, bindingId: grant.bindingId,
         targetId: grant.targetId, surface: grant.surface, appId: grant.appId,
-        identityFingerprint: grant.identityFingerprint, targetRevision: grant.targetRevision,
+        identityFingerprint: grant.identityFingerprint,
+        providerConversationIdentityDigest: grant.providerConversationIdentityDigest,
+        targetRevision: grant.targetRevision,
       }),
     });
   }
