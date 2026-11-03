@@ -45,6 +45,17 @@ data class NativeWakeReservationDecision(
     val reservations: List<NativeWakeExecutionReservation>
 )
 
+enum class NativeWakeSubmissionState {
+    PRECHECK_DENIED,
+    SUBMITTED,
+    NEEDS_REVIEW
+}
+
+data class NativeWakeSubmissionResult(
+    val state: NativeWakeSubmissionState,
+    val reason: String
+)
+
 enum class NativeWakeInsertState {
     PRECHECK_DENIED,
     INSERTED,
