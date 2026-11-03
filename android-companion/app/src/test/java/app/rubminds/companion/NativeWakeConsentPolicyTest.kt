@@ -46,11 +46,12 @@ class NativeWakeConsentPolicyTest {
         send: String = "c".repeat(64),
         revision: Int = 2,
         handoffIssuedAt: Long = now,
-        handoffExpiresAt: Long = now + NativeWakeConsentPolicy.MAX_HANDOFF_TTL_MILLIS
+        handoffExpiresAt: Long = now + NativeWakeConsentPolicy.MAX_HANDOFF_TTL_MILLIS,
+        conversation: String = "e".repeat(64)
     ) = NativeWakeExecutionRequest(
         grantId, job, host, room, binding, leaseDigest,
         device, sessionId, app, signing, event, composer, send, revision,
-        handoffIssuedAt, handoffExpiresAt
+        handoffIssuedAt, handoffExpiresAt, conversation
     )
 
     @Test fun canonicalWakePromptIsEventBoundAndCannotCarryGroupMessageText() {
@@ -163,6 +164,7 @@ class NativeWakeConsentPolicyTest {
         assertTrue(result.allowed)
         assertEquals("native_wake_execution_sealed", result.reason)
         assertEquals(1, result.reservations.size)
+        assertEquals("e".repeat(64), result.reservations.single().providerConversationIdentityDigest)
         assertFalse(NativeWakeConsentPolicy.reserveExecution(grant(), request(device = "72000000-0000-4000-8000-000000000002"), emptyList(), now).allowed)
         assertFalse(NativeWakeConsentPolicy.reserveExecution(grant(), request(app = "com.example.other"), emptyList(), now).allowed)
         assertFalse(NativeWakeConsentPolicy.reserveExecution(grant(), request(signing = "d".repeat(64)), emptyList(), now).allowed)
@@ -267,7 +269,8 @@ class NativeWakeConsentPolicyTest {
             request(event = ""),
             request(event = "x".repeat(129)),
             request(composer = "not-a-digest"),
-            request(send = "not-a-digest")
+            request(send = "not-a-digest"),
+            request(conversation = "not-a-digest")
         )
         bad.forEach { input ->
             assertFalse(NativeWakeConsentPolicy.reserveExecution(grant(), input, emptyList(), now).allowed)
