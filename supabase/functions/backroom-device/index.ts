@@ -783,18 +783,21 @@ Deno.serve(async req => {
       const isControlCommand = row.command?.action === 'request_control';
       const isNativeWakeCommand = row.command?.action === 'native_wake_trigger';
       if (isNativeWakeCommand) {
-        // A first ACK must arrive inside the handoff's short live window.
-        // A duplicate ACK for an already-committed row is checked structurally
-        // and against the stored result, so a late network retry stays idempotent.
-        const handoffNow = row.status === 'acked'
-          ? (Number.isSafeInteger(row.command.nativeWakeHandoff?.issuedAt)
-              ? row.command.nativeWakeHandoff.issuedAt : Date.now())
-          : Date.now();
+        // Re-validate the immutable handoff at its issue time. The device
+        // checked its 20-second expiry before execution; the independent DB
+        // command lease bounds how late its completion ACK may arrive.
+        const handoffIssuedAt = row.command.nativeWakeHandoff?.issuedAt;
         const handoff = validateAndroidNativeWakeHandoff(row.command.nativeWakeHandoff, {
-          now: handoffNow,
-          clockSkewMs: row.status === 'acked' ? 0 : 3_000,
+          now: Number.isSafeInteger(handoffIssuedAt) ? handoffIssuedAt : Date.now(),
+          clockSkewMs: 0,
         });
         if (!handoff || !ack.nativeWakeResult ||
+            row.command.deviceId !== current.device_id ||
+            row.command.roomId !== row.room_id ||
+            row.command.sessionId !== row.session_id ||
+            row.command.requestId !== row.request_id ||
+            row.command.issuedAt !== handoff.issuedAt ||
+            row.command.appPackageName !== handoff.appId ||
             ack.sessionId !== handoff.screenSessionId ||
             handoff.deviceId !== current.device_id || handoff.roomId !== row.room_id ||
             handoff.screenSessionId !== row.session_id ||
