@@ -141,7 +141,7 @@ object NativeWakeConsentPolicy {
             request.targetRevision < 1
         ) return denied("native_wake_scope_invalid")
 
-        if (existing.any { !isValidReservation(it) }) {
+        if (existing.any { !isValidReservation(it) || it.reservedAtMillis > nowMillis }) {
             return denied("native_wake_replay_ledger_corrupt")
         }
         val retained = existing.filter { row ->
