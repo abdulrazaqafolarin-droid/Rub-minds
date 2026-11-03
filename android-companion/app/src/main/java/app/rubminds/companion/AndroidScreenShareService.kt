@@ -297,6 +297,20 @@ class AndroidScreenShareService : Service() {
             return
         }
 
+        if (!AndroidTouchAccessibilityService.isBoundToProviderConversation(
+                screenSessionId, appPackage, handoff.providerConversationIdentityDigest
+            )
+        ) {
+            acknowledgeNativeWake(
+                token, commandId, requestId, screenSessionId, handoff,
+                NativeWakeSubmissionResult(
+                    NativeWakeSubmissionState.PRECHECK_DENIED,
+                    "provider_conversation_identity_unavailable"
+                )
+            )
+            return
+        }
+
         val request = handoff.toExecutionRequest(grant.grantId)
         val accepted = AndroidTouchAccessibilityService.submitCanonicalWake(request) { result ->
             // submitCanonicalWake completes on the Accessibility main thread;
@@ -326,6 +340,7 @@ class AndroidScreenShareService : Service() {
             value.contains("outcome_unknown") || value.contains("already_reserved") ||
                 value.contains("replay_ledger") || value.contains("insertion_outcome_unknown") ||
                 value.contains("send_outcome") -> "outcome_unknown"
+            value.contains("provider_conversation") -> "conversation_scope_unavailable"
             value.contains("foreground") || value.contains("active_app_window") -> "foreground_changed"
             value.contains("not_empty") -> "composer_not_empty"
             value.contains("composer") || value.contains("focus") || value.contains("target") &&
