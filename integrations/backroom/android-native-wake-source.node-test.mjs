@@ -91,6 +91,11 @@ test('native wake consent is device, app and signer bound with a 24-hour cap and
   assert.match(consent, /MAX_WAKES_PER_MINUTE = 6/);
   assert.match(consent, /MAX_REPLAY_RECORDS = 4096/);
   assert.match(consent, /request\.grantId != grant\?\.grantId/);
+  assert.match(consent, /request\.jobId/);
+  assert.match(consent, /request\.roomId/);
+  assert.match(consent, /request\.bindingId/);
+  assert.match(consent, /request\.leaseTokenDigest/);
+  assert.match(store, /row\.jobId, row\.hostId, row\.roomId, row\.bindingId/);
   assert.match(consent, /it\.grantId == grant\.grantId && it\.eventId == request\.eventId/);
   assert.match(store, /\.commit\(\)/);
   assert.match(store, /fun revokeDevice\(deviceId: String\)/);
