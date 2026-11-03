@@ -1,15 +1,44 @@
+import { createHash } from "node:crypto";
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const HEX = /^[a-f0-9]{64}$/;
+const EVENT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+const PACKAGE = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/;
 const MAX_SDP_CHARS = 65_536;
 const MAX_REQUEST_AGE_MS = 30_000;
+const MAX_NATIVE_HANDOFF_TTL_MS = 20_000;
+const NATIVE_SURFACES = new Set(["android_app", "windows_app", "desktop_app"]);
+const NATIVE_RESULT_STATES = new Set(["preflight_denied", "submitted", "needs_review"]);
+const NATIVE_RESULT_KEYS = [
+  "version", "kind", "handoffId", "jobId", "deviceId", "roomId", "screenSessionId",
+  "bindingId", "targetId", "targetRevision", "state", "promptInserted", "sendInvoked",
+  "composerCleared", "promptReadbackVerified", "composerIdentityRevalidated",
+  "sendControlIdentityRevalidated", "composerIdentityDigest", "sendControlIdentityDigest", "reason",
+];
 
-const isUuid = value => typeof value === "string" && UUID.test(value);
-const isPackageName = value => typeof value === "string" && value.length <= 255 &&
-  value.split(".").length >= 2 &&
-  value.split(".").every(part => /^[A-Za-z][A-Za-z0-9_]*$/.test(part));
-const exactKeys = (value, allowed, required = allowed) =>
-  !!value && typeof value === "object" && !Array.isArray(value) &&
-  Object.keys(value).every(key => allowed.includes(key)) &&
-  required.every(key => Object.hasOwn(value, key));
+function exactKeys(value, keys) {
+  return !!value && typeof value === "object" && !Array.isArray(value) &&
+    Object.keys(value).length === keys.length && Object.keys(value).every(key => keys.includes(key));
+}
+
+function isPackageName(value) {
+  return typeof value === "string" && value.length <= 255 && PACKAGE.test(value);
+}
+
+function isNonempty(value, max = 512) {
+  return typeof value === "string" && value.trim().length > 0 && value.length <= max &&
+    !/[\u0000-\u001f\u007f-\u009f]/.test(value);
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function canonicalWakePrompt(eventId) {
+  return EVENT_ID.test(eventId)
+    ? `@RMconnects\nEvent: ${eventId}\nRetrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.`
+    : null;
+}
 
 function validSdp(sdp) {
   return typeof sdp === "string" && sdp.length >= 8 &&
@@ -18,59 +47,153 @@ function validSdp(sdp) {
 
 export function validateAndroidSessionStart(value, { now = Date.now() } = {}) {
   const keys = ["deviceId", "roomId", "requestId", "issuedAt", "sessionId", "appPackageName", "offer"];
-  if (!exactKeys(value, keys) || !isUuid(value.deviceId) || !isUuid(value.roomId) ||
-      !isUuid(value.requestId) || !isUuid(value.sessionId) ||
+  if (!exactKeys(value, keys) || !UUID.test(value.deviceId ?? "") || !UUID.test(value.roomId ?? "") ||
+      !UUID.test(value.requestId ?? "") || !UUID.test(value.sessionId ?? "") ||
       !Number.isSafeInteger(value.issuedAt) || !Number.isSafeInteger(now) ||
       Math.abs(now - value.issuedAt) > MAX_REQUEST_AGE_MS ||
-      typeof value.appPackageName !== "string" || !isPackageName(value.appPackageName) ||
-      !exactKeys(value.offer, ["sdp"]) || !validSdp(value.offer.sdp)) return null;
+      !isPackageName(value.appPackageName) || !exactKeys(value.offer, ["sdp"]) || !validSdp(value.offer.sdp)) return null;
   return Object.freeze({ ...value, offer: Object.freeze({ ...value.offer }) });
 }
 
 export function validateAndroidDeviceCommand(value, { now = Date.now() } = {}) {
   const keys = ["deviceId", "roomId", "requestId", "issuedAt", "sessionId", "command", "appPackageName"];
-  if (!exactKeys(value, keys) || !isUuid(value.deviceId) || !isUuid(value.roomId) ||
-      !isUuid(value.requestId) || !isUuid(value.sessionId) ||
+  if (!exactKeys(value, keys) || !UUID.test(value.deviceId ?? "") || !UUID.test(value.roomId ?? "") ||
+      !UUID.test(value.requestId ?? "") || !UUID.test(value.sessionId ?? "") ||
       !Number.isSafeInteger(value.issuedAt) || !Number.isSafeInteger(now) ||
       Math.abs(now - value.issuedAt) > MAX_REQUEST_AGE_MS ||
       !["request_control", "stop_session"].includes(value.command) ||
-      typeof value.appPackageName !== "string" || !isPackageName(value.appPackageName)) return null;
+      !isPackageName(value.appPackageName)) return null;
+  return Object.freeze({ ...value });
+}
+
+export function validateAndroidNativeWakeHandoff(value, { now = Date.now(), clockSkewMs = 3_000 } = {}) {
+  const keys = [
+    "version", "kind", "handoffId", "jobId", "eventId", "deviceId", "roomId", "screenSessionId",
+    "hostId", "bindingId", "sessionId", "targetId", "targetRevision", "surface", "appId",
+    "identityFingerprint", "composerIdentityDigest", "sendControlIdentityDigest",
+    "leaseTokenDigest", "prompt", "promptDigest", "issuedAt", "leaseExpiresAt", "expiresAt",
+  ];
+  const expectedPrompt = value && typeof value === "object" ? canonicalWakePrompt(value.eventId) : null;
+  if (!exactKeys(value, keys) ||
+      value.version !== 1 || value.kind !== "native_wake_trigger" ||
+      !UUID.test(value.handoffId ?? "") || !UUID.test(value.jobId ?? "") ||
+      !EVENT_ID.test(value.eventId ?? "") ||
+      !UUID.test(value.deviceId ?? "") || !UUID.test(value.roomId ?? "") ||
+      !UUID.test(value.screenSessionId ?? "") || !UUID.test(value.hostId ?? "") ||
+      !UUID.test(value.bindingId ?? "") || !isNonempty(value.sessionId, 256) ||
+      !isNonempty(value.targetId, 128) ||
+      !Number.isSafeInteger(value.targetRevision) || value.targetRevision < 1 ||
+      !NATIVE_SURFACES.has(value.surface) || !isPackageName(value.appId) ||
+      !isNonempty(value.identityFingerprint) ||
+      !HEX.test(value.composerIdentityDigest ?? "") ||
+      !HEX.test(value.sendControlIdentityDigest ?? "") ||
+      !HEX.test(value.leaseTokenDigest ?? "") ||
+      value.prompt !== expectedPrompt || !HEX.test(value.promptDigest ?? "") ||
+      sha256(value.prompt) !== value.promptDigest ||
+      !Number.isSafeInteger(value.issuedAt) || !Number.isSafeInteger(value.leaseExpiresAt) ||
+      !Number.isSafeInteger(value.expiresAt) || !Number.isSafeInteger(now) ||
+      !Number.isSafeInteger(clockSkewMs) || clockSkewMs < 0 || clockSkewMs > 10_000 ||
+      value.issuedAt > now + clockSkewMs || value.expiresAt <= now ||
+      value.leaseExpiresAt <= now || value.expiresAt > value.leaseExpiresAt ||
+      value.expiresAt - value.issuedAt > MAX_NATIVE_HANDOFF_TTL_MS ||
+      value.issuedAt >= value.leaseExpiresAt) return null;
   return Object.freeze({ ...value });
 }
 
 export function validateAndroidSignal(value) {
   if (!value || typeof value !== "object" || Array.isArray(value) ||
-      !isUuid(value.sessionId) || !exactKeys(value, ["sessionId", "answer", "canControl"], ["sessionId", "answer", "canControl"]) ||
+      !UUID.test(value.sessionId ?? "") || !exactKeys(value, ["sessionId", "answer", "canControl"]) ||
       !exactKeys(value.answer, ["type", "sdp"]) || value.answer.type !== "answer" ||
       !validSdp(value.answer.sdp) || typeof value.canControl !== "boolean") return null;
   return Object.freeze({ ...value, answer: Object.freeze({ ...value.answer }) });
 }
 
+export function validateAndroidNativeWakeResult(result, handoff) {
+  if (!exactKeys(result, Object.keys(result ?? {})) ||
+      Object.keys(result).some(key => !NATIVE_RESULT_KEYS.includes(key)) ||
+      !["version", "kind", "handoffId", "jobId", "deviceId", "roomId", "screenSessionId",
+        "bindingId", "targetId", "targetRevision", "state", "promptInserted", "sendInvoked",
+        "composerCleared", "promptReadbackVerified", "composerIdentityRevalidated",
+        "sendControlIdentityRevalidated"].every(key => Object.hasOwn(result, key)) ||
+      result.version !== 1 || result.kind !== "native_wake_result" ||
+      result.handoffId !== handoff?.handoffId || result.jobId !== handoff?.jobId ||
+      result.deviceId !== handoff?.deviceId || result.roomId !== handoff?.roomId ||
+      result.screenSessionId !== handoff?.screenSessionId || result.bindingId !== handoff?.bindingId ||
+      result.targetId !== handoff?.targetId || result.targetRevision !== handoff?.targetRevision ||
+      !NATIVE_RESULT_STATES.has(result.state) ||
+      !["promptInserted", "sendInvoked", "composerCleared", "promptReadbackVerified",
+        "composerIdentityRevalidated", "sendControlIdentityRevalidated"].every(key => typeof result[key] === "boolean") ||
+      (result.reason !== undefined && !isNonempty(result.reason, 120))) return false;
+
+  if (result.state === "preflight_denied") {
+    return result.promptInserted === false && result.sendInvoked === false &&
+      result.composerCleared === false && result.promptReadbackVerified === false &&
+      result.composerIdentityRevalidated === false && result.sendControlIdentityRevalidated === false &&
+      result.composerIdentityDigest === undefined && result.sendControlIdentityDigest === undefined;
+  }
+  if (result.state === "submitted") {
+    return result.promptInserted === true && result.sendInvoked === true &&
+      result.composerCleared === true && result.promptReadbackVerified === true &&
+      result.composerIdentityRevalidated === true && result.sendControlIdentityRevalidated === true &&
+      result.composerIdentityDigest === handoff?.composerIdentityDigest &&
+      result.sendControlIdentityDigest === handoff?.sendControlIdentityDigest;
+  }
+  if (result.composerIdentityDigest !== undefined && !HEX.test(result.composerIdentityDigest)) return false;
+  if (result.sendControlIdentityDigest !== undefined && !HEX.test(result.sendControlIdentityDigest)) return false;
+  if (result.composerIdentityDigest !== undefined &&
+      result.composerIdentityDigest !== handoff?.composerIdentityDigest) return false;
+  if (result.sendControlIdentityDigest !== undefined &&
+      result.sendControlIdentityDigest !== handoff?.sendControlIdentityDigest) return false;
+  return true;
+}
+
 export function validateAndroidCommandAck(value) {
+  const allowed = ["commandId", "requestId", "sessionId", "result", "canControl", "nativeWakeResult"];
   if (!value || typeof value !== "object" || Array.isArray(value) ||
-      !exactKeys(value, ["commandId", "requestId", "sessionId", "result", "canControl"], ["commandId", "requestId", "sessionId", "result"]) ||
-      !isUuid(value.commandId) || !isUuid(value.requestId) || !isUuid(value.sessionId) ||
+      !Object.keys(value).every(key => allowed.includes(key)) ||
+      !["commandId", "requestId", "sessionId", "result"].every(key => Object.hasOwn(value, key)) ||
+      !UUID.test(value.commandId ?? "") || !UUID.test(value.requestId ?? "") ||
+      !UUID.test(value.sessionId ?? "") ||
       typeof value.result !== "string" || value.result.length < 1 || value.result.length > 80 ||
-      (value.canControl !== undefined && typeof value.canControl !== "boolean")) return null;
+      (value.canControl !== undefined && typeof value.canControl !== "boolean") ||
+      (value.nativeWakeResult !== undefined &&
+        (!value.nativeWakeResult || typeof value.nativeWakeResult !== "object" || Array.isArray(value.nativeWakeResult)))) return null;
   return Object.freeze({ ...value });
 }
 
 export function validateAndroidSessionClose(value) {
-  if (!exactKeys(value, ["roomId", "sessionId"]) || !isUuid(value.roomId) || !isUuid(value.sessionId)) return null;
+  if (!exactKeys(value, ["roomId", "sessionId"]) || !UUID.test(value.roomId ?? "") || !UUID.test(value.sessionId ?? "")) return null;
   return Object.freeze({ roomId: value.roomId, sessionId: value.sessionId });
 }
 
-export function mapAndroidQueuedCommand(row) {
+export function mapAndroidQueuedCommand(row, { now = Date.now() } = {}) {
   if (!row || typeof row !== "object" || Array.isArray(row) ||
-      !isUuid(row.id) || !isUuid(row.request_id) || !isUuid(row.session_id) ||
-      !isUuid(row.device_id) || !isUuid(row.room_id) ||
+      !UUID.test(row.id ?? "") || !UUID.test(row.request_id ?? "") || !UUID.test(row.session_id ?? "") ||
+      !UUID.test(row.device_id ?? "") || !UUID.test(row.room_id ?? "") ||
       !row.command || typeof row.command !== "object" || Array.isArray(row.command)) return null;
   const command = row.command;
   const action = command.action ?? command.command;
+  if (command.deviceId !== row.device_id || command.roomId !== row.room_id ||
+      !UUID.test(command.requestId ?? "") || command.requestId !== row.request_id) return null;
+
+  if (action === "native_wake_trigger") {
+    const outerKeys = [
+      "action", "deviceId", "roomId", "requestId", "issuedAt", "sessionId",
+      "appPackageName", "nativeWakeHandoff",
+    ];
+    const handoff = validateAndroidNativeWakeHandoff(command.nativeWakeHandoff, { now });
+    if (!exactKeys(command, outerKeys) || !handoff ||
+        command.sessionId !== row.session_id || handoff.deviceId !== row.device_id ||
+        handoff.roomId !== row.room_id || handoff.screenSessionId !== row.session_id ||
+        command.sessionId !== handoff.screenSessionId || command.issuedAt !== handoff.issuedAt ||
+        command.appPackageName !== handoff.appId) return null;
+    return Object.freeze({
+      ...command, action, commandId: row.id, requestId: row.request_id,
+      sessionId: row.session_id, nativeWakeHandoff: handoff,
+    });
+  }
+
   if (!["view_offer", "request_control", "stop_session"].includes(action) ||
-      command.deviceId !== row.device_id || command.roomId !== row.room_id ||
-      command.sessionId !== row.session_id || !isUuid(command.requestId) ||
-      command.requestId !== row.request_id || typeof command.appPackageName !== "string" ||
       !isPackageName(command.appPackageName)) return null;
   if (action === "view_offer" && (!exactKeys(command.offer, ["sdp"]) || !validSdp(command.offer.sdp))) return null;
   return Object.freeze({
