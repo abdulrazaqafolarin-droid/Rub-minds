@@ -20,6 +20,10 @@ This is a **contract, not an enabled device capability**. No Android or Windows 
 
 The native adapter now compares opaque SHA-256 composer and Send-control identity digests captured during preflight with the digests returned after the post-seal recheck. Target ID and target revision must also remain exact. The adapter was exercised through `dispatchClaimedWake`: the seal/consume ordering, safe preflight retry and no replay after uncertain Send are covered. A new `native_wake_trigger` envelope now defines a 20-second-bounded handoff to one paired device and active screen session. The raw durable lease token stays on the trusted worker; only its digest crosses the handoff. The receiver rejects scope mismatch/replay and treats an uncertain post-send outcome as terminal review. The combined guard, adapter, grant, dispatch and handoff policy suite passed **49/49 focused Node 22.16.0 tests**. This remains a contract only: there is no server forwarder, device-authenticated wake queue consumer, Android/Windows native driver or physical acceptance.
 
+### Android local native-wake consent foundation — 2026-11-03
+
+The Android allowlist now has a separate local pre-authorization for a future native @RMconnects wake send. It is signer/device bound, expires in 24 hours, and has an independent revoke control. A persistent one-shot local event journal checks the selected screen session and exact composer/Send identity digests, blocks event replay even after target changes, applies a six-per-minute ceiling and fails closed if its ledger is malformed or full. The consent UI clearly warns that the native wake queue and automatic Send are not connected yet; recording consent causes no remote action. Ten JUnit policy cases were added but have not run because the current GitHub Android jobs failed before runner allocation; Android build and physical-device acceptance remain unverified.
+
 ## Modes
 
 | Mode | Participation policy | Behavior |
