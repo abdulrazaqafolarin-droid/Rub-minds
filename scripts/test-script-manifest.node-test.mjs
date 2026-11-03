@@ -28,9 +28,11 @@ test('critical Backroom test suites remain registered in runtime and queue scrip
  const required={
   'test:runtime':['integrations/backroom/host-wake-service.node-test.mjs',
    'integrations/backroom/host-identity.node-test.mjs',
-   'integrations/backroom/multi-surface-execution.node-test.mjs'],
+   'integrations/backroom/multi-surface-execution.node-test.mjs',
+   'integrations/backroom/native-wake-handoff.node-test.mjs'],
   'test:backroom':['integrations/backroom/host-server.node-test.mjs',
-   'integrations/backroom/multi-surface-execution.node-test.mjs'],
+   'integrations/backroom/multi-surface-execution.node-test.mjs',
+   'integrations/backroom/native-wake-handoff.node-test.mjs'],
   'test:durable-queue':['integrations/backroom/host-wake-service.node-test.mjs',
    'integrations/backroom/host-identity.node-test.mjs']
  };
@@ -48,7 +50,8 @@ test('focused Backroom test commands cover multi-surface and hosted lifecycle co
  assert.equal(typeof multi,'string','Missing focused multi-surface test command');
  for(const path of ['integrations/backroom/multi-surface-execution.node-test.mjs',
   'integrations/backroom/native-accessibility-adapter.node-test.mjs',
-  'integrations/backroom/terminal-draft-adapter.node-test.mjs'])
+  'integrations/backroom/terminal-draft-adapter.node-test.mjs',
+  'integrations/backroom/native-wake-handoff.node-test.mjs'])
   assert.ok(multi.includes(path),'test:multi-surface must include '+path);
  const lifecycle=manifest.scripts?.['test:host-lifecycle'];
  assert.equal(typeof lifecycle,'string','Missing focused host lifecycle test command');
