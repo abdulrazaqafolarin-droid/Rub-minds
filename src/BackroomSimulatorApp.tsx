@@ -206,12 +206,18 @@ function LiveBrowserPreview({ frame, appName, onSelectRegion, wakeMode, onWakeMo
         <div><b>AI participation</b><small>Choose how this exact composer joins the group</small></div>
         <button type="button" className="br-secondary" onClick={onFindSessions} disabled={findSessionsDisabled}>Find joined AI</button>
       </div>
-      <label htmlFor="br-frame-wake-mode">Interaction mode</label>
-      <select id="br-frame-wake-mode" value={wakeMode} onChange={event => onWakeModeChange(event.target.value as WakeInteractionMode)} disabled={wakeModeDisabled}>
-        <option value="off">Off — no automatic triggers</option>
-        <option value="on" disabled={!wakeCapable}>On — wake only when mentioned</option>
-        <option value="auto" disabled={!wakeCapable}>Auto — wake on human group messages</option>
-      </select>
+      <div id="br-frame-wake-mode-label" className="br-live-mode-label">Interaction mode</div>
+      <div id="br-frame-wake-mode" className="br-live-mode-switch" role="group" aria-labelledby="br-frame-wake-mode-label">
+        <button type="button" className={'br-live-mode-option' + (wakeMode==='off'?' is-selected':'')} data-mode="off" aria-pressed={wakeMode==='off'} onClick={()=>onWakeModeChange('off')} disabled={wakeModeDisabled}>
+          <b>Off</b><small>No triggers</small>
+        </button>
+        <button type="button" className={'br-live-mode-option' + (wakeMode==='on'?' is-selected':'')} data-mode="on" aria-pressed={wakeMode==='on'} onClick={()=>onWakeModeChange('on')} disabled={wakeModeDisabled || !wakeCapable}>
+          <b>On</b><small>When mentioned</small>
+        </button>
+        <button type="button" className={'br-live-mode-option' + (wakeMode==='auto'?' is-selected':'')} data-mode="auto" aria-pressed={wakeMode==='auto'} onClick={()=>onWakeModeChange('auto')} disabled={wakeModeDisabled || !wakeCapable}>
+          <b>Auto</b><small>Human messages</small>
+        </button>
+      </div>
       {sessions.length>0 && <>
         <label htmlFor="br-frame-joined-ai">Joined AI conversation</label>
         <select id="br-frame-joined-ai" value={selectedSessionDigest} onChange={event=>onSelectSession(event.target.value)} disabled={wakeModeDisabled}>
