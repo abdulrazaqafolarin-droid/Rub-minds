@@ -304,6 +304,9 @@ test("native wake ACK is bound to the stored Android device, room, session, requ
   assert.match(handler, /row\.command\.requestId !== row\.request_id/);
   assert.match(handler, /row\.command\.appPackageName !== handoff\.appId/);
   assert.match(handler, /validateAndroidNativeWakeResult\(ack\.nativeWakeResult, handoff\)/);
+  assert.match(handler, /let nativeWakeHandoff: ReturnType/);
+  assert.match(handler, /nativeWakeHandoff = handoff/);
+  assert.match(handler, /nativeWakeHandoff/);
   assert.match(handler, /native_wake_preflight_denied/);
   assert.match(handler, /native_wake_needs_review/);
   assert.match(handler, /native_wake_submitted/);
