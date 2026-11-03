@@ -168,9 +168,9 @@ Android guest virtualization remains a separate gate: this implementation mirror
 
 | Scenario | Required behavior | Current status |
 |---|---|---|
-| Select composer in conversation A, then navigate to B while app reuses the same composer and Send nodes | Old A wake is rejected before trigger insertion and before Send | **Blocked:** provider-conversation identity resolver/digest is not implemented |
-| Navigate from A to B after canonical trigger insertion but before Send | Final conversation-scope recheck rejects; one-shot seal remains terminal and no automatic retry occurs | **Blocked:** provider-conversation identity resolver/digest is not implemented |
-| Navigate away after Send while waiting for composer clear | ACK cannot claim a verified result for a different conversation; ambiguous result becomes needs_review | **Blocked:** provider-conversation identity resolver/digest is not implemented |
-| App exposes no stable conversation identity | App remains draft-only for autonomous native participation, even if composer/Send discovery succeeds | **Required fail-closed behavior** |
+| Select composer in conversation A, then navigate to B while app reuses the same composer and Send nodes | Old A wake is rejected before trigger insertion and before Send | **Policy wired; physical acceptance pending.** No provider adapter is registered, so current apps fail closed before insertion |
+| Navigate from A to B after canonical trigger insertion but before Send | Final conversation-scope recheck rejects; one-shot seal remains terminal and no automatic retry occurs | **Code path wired; provider adapter and physical acceptance pending** |
+| Navigate away after Send while waiting for composer clear | ACK cannot claim a verified result for a different conversation; ambiguous result becomes needs_review | **ACK proof contract wired; provider adapter and physical acceptance pending** |
+| App exposes no stable conversation identity | App remains draft-only for autonomous native participation, even if composer/Send discovery succeeds | **Fail-closed behavior implemented** |
 
-A Rub Minds MCP/AI session ID and an Android screen-share session ID are not provider conversation IDs. The provider-specific resolver must bind the original conversation locally without uploading its title, transcript or message content.
+The Android handoff, native execution request, one-shot journal, binding policy and submitted ACK now carry the same SHA-256 provider-conversation digest. The resolver registry is deliberately empty; no ChatGPT or Claude adapter is being claimed. A Rub Minds MCP/AI session ID and an Android screen-share session ID are not provider conversation IDs. A provider adapter must resolve the original conversation locally without uploading its title, transcript or message content, and must prove that conversation A and B remain distinguishable when the UI reuses the same composer/Send nodes.
