@@ -193,6 +193,8 @@ test('result envelopes cannot cross devices, jobs, screen sessions or targets',(
  assert.equal(validateNativeWakeHandoffResult({...ack,jobId:'70000000-0000-4000-8000-000000000099'},h),false);
  assert.equal(validateNativeWakeHandoffResult({...ack,screenSessionId:'74000000-0000-4000-8000-000000000099'},h),false);
  assert.equal(validateNativeWakeHandoffResult({...ack,targetRevision:99},h),false);
+ assert.equal(validateNativeWakeHandoffResult({...ack,providerConversationIdentityDigest:'d'.repeat(64)},h),false);
+ assert.equal(validateNativeWakeHandoffResult({...ack,providerConversationIdentityRevalidated:false},h),false);
 });
 
 test('receiver bounds state and rejects after its replay ledger is full',()=>{
