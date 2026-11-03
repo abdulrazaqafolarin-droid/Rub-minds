@@ -236,7 +236,11 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         for (const timer of pendingComposerSelectionAcksRef.current.values()) window.clearTimeout(timer);
         pendingComposerSelectionAcksRef.current.clear();
         composerTargetRef.current = '';
-        setComposerTargetId(''); setSelectionPreview(null); setSelectionMode(false);
+        sendTargetRef.current = '';
+        setComposerTargetId(''); setSendControlVerified(false);
+        setProviderConversationIdentityAvailable(false);
+        setSendControlStatus('No native Send control verified.');
+        setSelectionPreview(null); setSelectionMode(false);
         setRemoteTextBusy(false);
         setRemoteTextStatus('Phone data channel closed before acknowledgement. Check the phone field before retrying; the text may already have been inserted.');
       };
@@ -315,6 +319,10 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
             Boolean(returnedTarget) && returnedTarget === sendTargetRef.current &&
             Boolean(composerTargetRef.current);
           setSendControlVerified(remainsSameTarget);
+          if (!remainsSameTarget) {
+            setProviderConversationIdentityAvailable(false);
+            sendTargetRef.current = '';
+          }
           setSendControlStatus(remainsSameTarget
             ? 'Rechecked: the same unique Send control is still available beside the focused composer. No action was taken.'
             : 'Recheck failed: ' + acknowledgement.reason.replaceAll('_', ' ') +
@@ -648,6 +656,8 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     if (!session || !channel || channel.readyState !== 'open' ||
         !composerTarget || !sendTarget || !viewReady || !sourceVisible || !dataReady) {
       setSendControlVerified(false);
+      setProviderConversationIdentityAvailable(false);
+      sendTargetRef.current = '';
       setSendControlStatus('Recheck unavailable: the live phone session or selected target is missing.');
       return;
     }
@@ -662,6 +672,8 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       sendControlCheckTimerRef.current = null;
       setSendControlCheckPending(false);
       setSendControlVerified(false);
+      setProviderConversationIdentityAvailable(false);
+      sendTargetRef.current = '';
       setSendControlStatus('Recheck timed out. The Send control is not currently verified; no action was taken.');
       notify('The phone did not confirm the Send-control recheck. The frame remains draft-only.', true);
     }, 8_000);
@@ -682,6 +694,8 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       pendingSendControlCheckRef.current = '';
       setSendControlCheckPending(false);
       setSendControlVerified(false);
+      setProviderConversationIdentityAvailable(false);
+      sendTargetRef.current = '';
       setSendControlStatus('The phone data channel rejected the Send-control recheck.');
     }
   };
