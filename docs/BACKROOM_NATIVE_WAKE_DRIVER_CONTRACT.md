@@ -6,7 +6,7 @@ This document defines the boundary between the existing group coordination/durab
 
 ## Why a separate native adapter exists
 
-The managed-browser wake path already knows how to submit the canonical `@RMconnects` event prompt. The native Windows and Android frames currently discover and revalidate composer and Send-control identities, but their execution path is still draft-only.
+The managed-browser wake path already knows how to submit the canonical `@RMconnects` event prompt. Android now has a source-level internal submission routine that inserts the canonical event prompt through the Rub Minds IME and invokes the same-snapshot revalidated Send node after the local grant and one-shot seal. Windows still has read-only UIA Send discovery/revalidation. The Android routine is not connected to a device-authenticated durable queue consumer or any WebRTC command.
 
 The native wake adapter must not reuse the generic draft adapter. A draft is ordinary text insertion under a one-shot typing approval. A wake is a special event-bound operation that may invoke exactly one verified Send control after a separate device-scoped local permission and persistent execution seal.
 
@@ -74,16 +74,22 @@ The Android companion now has a separate `NativeWakeConsentPolicy` and `AndroidN
 
 Before a future native Send driver may act, the Android store also requires a synchronous `commit()` of a one-shot execution reservation bound to the group event ID, current screen session, app signer, composer identity digest, Send identity digest and target revision. An event is permanently non-replayable during the grant window even if the selected target changes after an uncertain attempt. The local policy enforces at most six reservations per rolling minute, a bounded 4,096-entry replay ledger and fail-closed handling for malformed or future-dated ledger entries. Device credential revocation removes the device's grant records and local replay ledger.
 
-The companion's app-list UI includes a distinct checkbox and a system confirmation dialog explaining exactly what this future permission covers. The UI also states that **native wake delivery and automatic Send are not connected in this build**. Saving the grant does not send anything. No accessibility `ACTION_CLICK`, native Send or cloud queue consumer was added by this consent slice.
+The companion's app-list UI includes a distinct checkbox and a system confirmation dialog explaining exactly what this permission covers. The UI states that **native wake delivery and automatic Send are not connected in this build**. Saving the grant does not send anything. Android now contains an internal `submitCanonicalWake` routine; it is not exposed through the existing WebRTC `remote_text` handler, and there is no authenticated device queue caller. The routine checks the selected composer, uses the fixed event prompt only, persists the one-shot seal before insertion, rechecks the composer and unique Send control from the same final accessibility snapshot, invokes only that node, and treats uncertain post-seal results as `needs_review`. It waits for the same composer to clear. This is source code only; no Kotlin build or physical Send has been verified.
 
 Verification status: ten Android JUnit policy cases were added. They have **not yet executed**: the GitHub Android and validation jobs failed before runner allocation (`runner_id=0`, zero steps), and the available isolated Node sandbox has no Java/Kotlin/Gradle toolchain. The source was reviewed, but do not mark the Android build or physical-device acceptance as passed until a real Android runner executes the Gradle unit-test and assemble tasks.
+
+
+### Android composer-readback boundary — 2026-11-03
+
+The Android native-wake driver performs narrowly scoped **local-only** reads of the currently selected composer value. It checks that the field is empty before the one-shot seal, that it contains exactly the canonical event prompt after IME insertion, and that the same composer clears after the Send action. These reads stay inside the phone's Accessibility/IME processes; no editor text, accessibility tree, group-message body or conversation history is sent to Rub Minds. This is a different permission and operation from ordinary `remote_text`, which remains draft insertion only and does not read or submit the field. The UI and acceptance text must describe this limited local readback accurately.
 
 ## Current implementation boundary
 
 - Implemented: shared `NativeCanonicalWakeAdapter`, fail-closed `LocalExecutionGuard` seal requirement for native wake, process-local native grant/seal helper, strict device handoff/result schema and bounded replay-aware receiver policy; 49 focused Node regressions pass.
-- Not implemented: Android accessibility/IME driver for canonical prompt insertion and Send invocation; Windows UIA driver for canonical prompt insertion and Send invocation; device-bound durable queue consumer; native wake-grant UI/lifecycle; physical device tests.
+- Implemented in source, not connected: Android accessibility/IME routine for canonical prompt insertion, same-snapshot Send invocation and composer-clear confirmation; Android local 24-hour wake consent and one-shot replay journal.
+- Not implemented: device-authenticated durable queue consumer/forwarder; Windows UIA canonical wake driver and separate local grant/seal; native Off / On / Auto activation; physical device tests.
 - The existing Android `remote_text` data-channel message is still a general draft-insertion path and is not an authenticated durable-wake lease. It must not be extended to click Send.
-- The existing Windows and Android Send-control discovery/recheck operations remain read-only. No native Send action is exposed by this contract alone.
+- Windows Send-control discovery/recheck remains read-only. Android's new Send routine is internal source only; no route or queue calls it yet.
 - The host-server bootstrap, its remote routes and production backend remain unchanged and deferred.
 
 Do not enable native On or Auto until both platform drivers, the device-bound lease consumer, separate local consent, durable no-replay behavior and physical acceptance are complete.
