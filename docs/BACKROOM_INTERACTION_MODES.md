@@ -86,3 +86,8 @@ A wake queue acknowledgement confirms that the trigger was submitted and the com
 14. Interrupt the AI after it creates a response but before `send_group_message` confirms. It must retry the same pending body with the same source message ID, not regenerate or duplicate the group reply.
 
 This acceptance checklist is not a claim that those live-provider/device tests have already been performed.
+
+
+## Native provider conversation scope — additional blocker
+
+The native app binding currently proves app/signer + selected composer + Send control + screen-share session. It does not prove the provider conversation ID. ChatGPT/Claude and other apps can reuse the same composer/Send accessibility nodes when the user switches chats, so the unchanged node digests do not establish that the original AI conversation remains active. App-level native-wake consent is therefore not conversation consent. Native app Off / On / Auto must remain unavailable until a provider-specific conversation identity digest is locally resolved and revalidated at selection, before insertion, before Send and during result confirmation. Unsupported/ambiguous providers remain draft-only. The native group-to-device forwarder and ACK reconciliation are also still missing.
