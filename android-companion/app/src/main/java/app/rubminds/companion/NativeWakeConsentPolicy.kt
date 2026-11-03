@@ -171,6 +171,18 @@ object NativeWakeConsentPolicy {
             row.grantExpiresAtMillis > row.reservedAtMillis &&
             row.grantExpiresAtMillis - row.reservedAtMillis <= MAX_GRANT_TTL_MILLIS
 
+    /**
+     * Re-seeing an existing event/job/lease seal is not a fresh preflight
+     * denial: the prior device action may have happened and its ACK may have
+     * been lost. Treat it as terminal review rather than opening a retry.
+     */
+    fun isTerminalReservationDenial(reason: String): Boolean = reason in setOf(
+        "native_wake_event_already_reserved",
+        "native_wake_replay_ledger_corrupt",
+        "native_wake_replay_ledger_full",
+        "native_wake_seal_persistence_failed"
+    )
+
     fun reserveExecution(
         grant: NativeWakeGrant?,
         request: NativeWakeExecutionRequest,
