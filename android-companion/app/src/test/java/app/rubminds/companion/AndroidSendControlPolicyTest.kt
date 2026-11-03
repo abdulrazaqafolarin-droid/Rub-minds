@@ -42,6 +42,17 @@ class AndroidSendControlPolicyTest {
         assertTrue(AndroidSendControlPolicy.choose(
             listOf(resourceOnly), "com.example.chat", root, composer
         ).candidate != null)
+        for (resourceId in listOf(
+            "com.example.chat:id/send_to_email",
+            "com.example.chat:id/send_feedback_button",
+            "com.example.chat:id/share_send_button",
+            "com.example.chat:id/resend_button"
+        )) {
+            val misleading = candidate(label = "", resourceId = resourceId)
+            assertNull(AndroidSendControlPolicy.choose(
+                listOf(misleading), "com.example.chat", root, composer
+            ).candidate)
+        }
     }
 
     @Test fun rejectsGenericOrMisleadingAccessibleNames() {
