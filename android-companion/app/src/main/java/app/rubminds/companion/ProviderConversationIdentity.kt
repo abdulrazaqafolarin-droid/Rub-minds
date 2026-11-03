@@ -17,11 +17,11 @@ internal object ProviderConversationIdentityPolicy {
     private val forbidden = Regex("[\\u0000-\\u001f\\u007f-\\u009f]")
 
     fun digest(packageName: String, stableConversationId: String?): String? {
-        if (packageName.isBlank() || packageName.length > 255 ||
+        if (!AppGrantPolicy.isValidPackageName(packageName) || packageName.length > 255 ||
             stableConversationId.isNullOrBlank() || stableConversationId.length > 1_024 ||
             forbidden.containsMatchIn(stableConversationId)
         ) return null
-        val value = "$packageName\\u0000$stableConversationId"
+        val value = "${packageName.length}:$packageName${stableConversationId.length}:$stableConversationId"
         return MessageDigest.getInstance("SHA-256")
             .digest(value.toByteArray(Charsets.UTF_8))
             .joinToString("") { byte -> "%02x".format(byte) }
@@ -46,7 +46,9 @@ internal object ProviderConversationIdentityResolver {
     fun supports(packageName: String): Boolean = adapters.containsKey(packageName)
 
     fun resolve(packageName: String, root: AccessibilityNodeInfo?): String? {
-        if (root == null) return null
+        if (root == null || !AppGrantPolicy.isValidPackageName(packageName) ||
+            !root.isVisibleToUser || root.packageName?.toString() != packageName
+        ) return null
         val adapter = adapters[packageName] ?: return null
         val stableId = runCatching { adapter.activeConversationStableId(root) }.getOrNull()
         return ProviderConversationIdentityPolicy.digest(packageName, stableId)
