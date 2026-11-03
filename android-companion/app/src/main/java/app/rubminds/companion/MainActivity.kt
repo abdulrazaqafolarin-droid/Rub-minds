@@ -791,7 +791,7 @@ class MainActivity : Activity() {
                 if (error is CloudDeviceApiException &&
                     error.action == "pair/claim" &&
                     (error.statusCode == 400 || error.statusCode == 409)
-                ) vault.clear()
+                ) clearDeviceCredentialAndWakeConsent()
                 runOnUiThread { setBusy(false, error.message ?: "Device pairing failed.") }
             }
         }
@@ -820,7 +820,7 @@ class MainActivity : Activity() {
                 } else if (state == "pending") {
                     runOnUiThread { setBusy(false, "Waiting for the Rub Minds group owner to approve this phone.") }
                 } else {
-                    vault.clear()
+                    clearDeviceCredentialAndWakeConsent()
                     consentPrefs.edit().putBoolean("selected_app_inventory", false).apply()
                     runOnUiThread {
                         pairConsent.isChecked = false
@@ -830,7 +830,7 @@ class MainActivity : Activity() {
             } catch (error: Exception) {
                 val message = error.message ?: "Could not check the cloud device status."
                 if (message.contains("authentication expired", ignoreCase = true)) {
-                    vault.clear()
+                    clearDeviceCredentialAndWakeConsent()
                     consentPrefs.edit().putBoolean("selected_app_inventory", false).apply()
                 }
                 runOnUiThread {
@@ -859,7 +859,7 @@ class MainActivity : Activity() {
                 val status = cloudClient().status(token)
                 val state = status.optString("status")
                 if (state == "revoked") {
-                    vault.clear()
+                    clearDeviceCredentialAndWakeConsent()
                     consentPrefs.edit().putBoolean("selected_app_inventory", false).apply()
                     runOnUiThread {
                         pairConsent.isChecked = false
@@ -901,6 +901,11 @@ class MainActivity : Activity() {
         return rows
     }
 
+    private fun clearDeviceCredentialAndWakeConsent() {
+        vault.deviceId()?.let { nativeWakeConsentStore.revokeDevice(it) }
+        vault.clear()
+    }
+
     private fun cloudClient(): CloudDeviceApi =
         cloudApi ?: throw IllegalStateException("This companion build is missing the Rub Minds cloud URL or publishable key.")
 
@@ -910,9 +915,12 @@ class MainActivity : Activity() {
         if (::saveButton.isInitialized) saveButton.isEnabled = !value
         if (::pairConsent.isInitialized) pairConsent.isEnabled = !value
         appRows.forEach { (packageName, row) ->
-            val hasSigner = apps.any { it.packageName == packageName && it.signingCertificateSha256 != null }
+            val app = apps.firstOrNull { it.packageName == packageName }
+            val hasSigner = app?.signingCertificateSha256 != null
             row.first.isEnabled = !value && hasSigner
             row.second.isEnabled = !value && row.first.isChecked
+            row.third.isEnabled = !value && row.first.isChecked &&
+                app?.signingCertificateSha256 != null && vault.deviceId() != null
         }
         workProfileButtons.forEach { (packageName, button) ->
             button.isEnabled = !value && apps.any { it.packageName == packageName && it.signingCertificateSha256 != null && launchGrants[packageName] == it.signingCertificateSha256 }
