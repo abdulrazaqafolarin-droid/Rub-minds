@@ -19,7 +19,7 @@ class NativeWakeConsentPolicyTest {
         app: String = packageName,
         signing: String = signer,
         expiresAt: Long = now + NativeWakeConsentPolicy.MAX_GRANT_TTL_MILLIS
-    ) = NativeWakeGrant(grantId, device, app, signing, now - 1_000L, expiresAt)
+    ) = NativeWakeGrant(grantId, device, app, signing, now, expiresAt)
 
     private fun request(
         event: String = "70000000-0000-4000-8000-000000000001",
@@ -67,6 +67,11 @@ class NativeWakeConsentPolicyTest {
         assertFalse(NativeWakeConsentPolicy.isGrantActive(grant(device = "bad"), deviceId, packageName, signer, now))
     }
 
+    @Test fun aGrantCreatedInTheFutureIsNotYetUsable() {
+        val future = grant().copy(grantedAtMillis = now + 1L)
+        assertFalse(NativeWakeConsentPolicy.isGrantActive(future, deviceId, packageName, signer, now))
+    }
+
     @Test fun executionSealMustMatchGrantAndCurrentNativeTarget() {
         val result = NativeWakeConsentPolicy.reserveExecution(grant(), request(), emptyList(), now)
         assertTrue(result.allowed)
@@ -85,6 +90,16 @@ class NativeWakeConsentPolicyTest {
         val duplicate = NativeWakeConsentPolicy.reserveExecution(grant(), changedTarget, first.reservations, now + 1_000)
         assertFalse(duplicate.allowed)
         assertEquals("native_wake_event_already_reserved", duplicate.reason)
+    }
+
+    @Test fun corruptExistingReplayRowsFailClosed() {
+        val corrupt = NativeWakeExecutionReservation(
+            grantId, "bad event with spaces", deviceId, sessionId, packageName, signer,
+            "b".repeat(64), "c".repeat(64), 1, now, now + 60_000
+        )
+        val result = NativeWakeConsentPolicy.reserveExecution(grant(), request(), listOf(corrupt), now)
+        assertFalse(result.allowed)
+        assertEquals("native_wake_replay_ledger_corrupt", result.reason)
     }
 
     @Test fun sixWakesPerMinuteIsTheHardLocalCeiling() {
