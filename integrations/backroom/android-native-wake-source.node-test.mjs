@@ -191,7 +191,7 @@ test('the 20-second native handoff deadline is carried to the driver and recheck
 });
 test('Backroom capability copy reports the missing group forwarder rather than a missing phone queue', () => {
   assert.match(devicesUi, /AI-directed sending \/ native Off · On · Auto/);
-  assert.match(devicesUi, /Not available · conversation scope \+ group forwarding missing/);
+  assert.match(devicesUi, /Not available · provider adapters \\+ group forwarding missing/);
   assert.doesNotMatch(devicesUi, /Not available · wake queue not connected/);
 });
 
