@@ -701,7 +701,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                             request.packageName, boundPackageName,
                             request.composerTargetId, boundComposerTargetId,
                             request.sendTargetId, boundSendTargetId,
-                    request.providerConversationIdentityDigest, boundProviderConversationIdentityDigest
+                            request.providerConversationIdentityDigest, boundProviderConversationIdentityDigest
                         ) || currentRootPackage() != request.packageName ||
                         !ProviderConversationIdentityPolicy.matches(
                             request.providerConversationIdentityDigest,
