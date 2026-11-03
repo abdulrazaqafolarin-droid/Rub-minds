@@ -900,9 +900,14 @@ Deno.serve(async req => {
       if (!Array.isArray(data) || data.length !== 1) {
         // A second delivery can win the compare-and-swap after the broadcast.
         const { data: latest } = await db.from('backroom_android_commands')
-          .select('status,result').eq('id', ack.commandId).eq('device_id', current.device_id).maybeSingle();
-        if (latest?.status === 'acked' && latest.result === ack.result) {
+          .select('status,result,result_payload')
+          .eq('id', ack.commandId).eq('device_id', current.device_id).maybeSingle();
+        if (latest?.status === 'acked' && latest.result === ack.result &&
+            sameNativeWakeResult(latest.result_payload, ack.nativeWakeResult ?? null)) {
           return json(200, { ok: true, acked: true, replayed: true }, origin);
+        }
+        if (latest?.status === 'acked') {
+          return json(409, fail('android_ack_result_conflict'), origin);
         }
         return json(409, fail('android_command_lease_expired'), origin);
       }
