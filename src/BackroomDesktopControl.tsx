@@ -30,6 +30,9 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const [selectMode,setSelectMode] = useState(false);
   const [selection,setSelection] = useState<DragRect|null>(null);
   const [targetStatus,setTargetStatus] = useState('');
+  const [sendControlFound,setSendControlFound] = useState(false);
+  const [sendControlRechecking,setSendControlRechecking] = useState(false);
+  const [sendControlStatus,setSendControlStatus] = useState('No Send control verified.');
   const [draft,setDraft] = useState('');
   const [terminalSession,setTerminalSession] = useState('');
   const [terminalPeerId,setTerminalPeerId] = useState('');
@@ -51,6 +54,8 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const frameRef=useRef<HTMLDivElement|null>(null);
   const dragRef=useRef<{x:number;y:number;pointerId:number}|null>(null);
   const targetAttemptRef=useRef('');
+  const sendControlSelectionRef=useRef('');
+  const sendControlRequestRef=useRef('');
   const draftAttemptRef=useRef('');
   const terminalActionRef=useRef<{requestId:string;action:'draft'|'submit';text?:string}|null>(null);
   const draftGrantTimerRef=useRef<number|null>(null);
@@ -180,7 +185,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     if(videoRef.current)videoRef.current.srcObject=null;
     setVideoReady(false);setScreenSession('');screenSessionRef.current='';terminalPeerRef.current='';setControlGranted(false);setDraftGranted(false);
     terminalActionRef.current=null;setTerminalDraftSending(false);setTerminalDraftReady(false);setTerminalActionUncertain(false);
-    setCoordinateControl(false);setSelectMode(false);setSelection(null);setTargetStatus('');dragRef.current=null;targetAttemptRef.current='';draftAttemptRef.current='';
+    setCoordinateControl(false);setSelectMode(false);setSelection(null);setTargetStatus('');setSendControlFound(false);setSendControlRechecking(false);setSendControlStatus('No Send control verified.');sendControlSelectionRef.current='';sendControlRequestRef.current='';dragRef.current=null;targetAttemptRef.current='';draftAttemptRef.current='';
   },[]);
 
   // Keep a stream received before React mounts the video element; attach it once
@@ -393,9 +398,37 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
         if(typeof message.requestId!=='string'||message.requestId!==targetAttemptRef.current)return;
         const ok=message.ok===true;
         const reason=typeof message.reason==='string'?message.reason:'The selected area could not be verified.';
+        const selectionId=typeof message.selectionId==='string'&&isUuid(message.selectionId)?message.selectionId:'';
+        targetAttemptRef.current='';
+        sendControlSelectionRef.current=ok?selectionId:'';
+        setSendControlFound(ok&&selectionId.length>0&&message.sendAvailable===true);
+        setSendControlRechecking(false);
+        sendControlRequestRef.current='';
+        const sendReason=typeof message.sendReason==='string'?message.sendReason.replaceAll('_',' '):'not checked';
+        setSendControlStatus(ok&&message.sendAvailable===true
+          ?'One unique nearby Send control was found locally. Recheck its identity before using this capability.'
+          :'No unique nearby Send control found: '+sendReason+'.');
         setTargetStatus(ok?'Verified editable field · '+reason:'Target rejected · '+reason);
-        if(!ok){setSelection(null);targetAttemptRef.current='';}
-        flash(ok?'The selected area is a verified empty editable field.':reason,!ok);
+        if(!ok){setSelection(null);targetAttemptRef.current='';sendControlSelectionRef.current='';}
+        flash(ok
+          ?(message.sendAvailable===true
+            ?'The editable composer and one nearby Send control were found. No message was sent.'
+            :'The editable composer is verified. No unique Send control was found; the frame remains draft-only.')
+          :reason,!ok);
+      }else if(message.kind==='send_control_result'){
+        if(typeof message.requestId!=='string'||message.requestId!==sendControlRequestRef.current||
+          typeof message.selectionId!=='string'||message.selectionId!==sendControlSelectionRef.current)return;
+        sendControlRequestRef.current='';
+        setSendControlRechecking(false);
+        const available=message.available===true;
+        const reason=typeof message.reason==='string'?message.reason.replaceAll('_',' '):'no confirmation returned';
+        setSendControlFound(available);
+        setSendControlStatus(available
+          ?'Rechecked: the same Send control identity is still present beside the selected composer. No action was taken.'
+          :'Recheck failed: '+reason+'. The native frame remains draft-only; select the composer again to rediscover a control.');
+        flash(available
+          ?'The same Send control was rechecked successfully. Nothing was clicked or sent.'
+          :'The Send control is no longer verified. Nothing was clicked or sent.',!available);
       }else if(message.kind==='draft_result'){
         if(typeof message.requestId!=='string'||message.requestId!==draftAttemptRef.current)return;
         draftAttemptRef.current='';
@@ -468,6 +501,30 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     const data=dataRef.current;if(!data||data.readyState!=='open')throw new Error('Interactive data channel is not ready.');
     data.send(JSON.stringify(message));
   };
+  const clearSendControlState=()=>{
+    sendControlSelectionRef.current='';
+    sendControlRequestRef.current='';
+    setSendControlFound(false);
+    setSendControlRechecking(false);
+    setSendControlStatus('No Send control verified.');
+  };
+  const recheckSendControl=()=>{
+    const selectionId=sendControlSelectionRef.current;
+    if(!selectionId||!screenSessionRef.current||!draftGranted||sendControlRequestRef.current)return;
+    const requestId=uuid();
+    sendControlRequestRef.current=requestId;
+    setSendControlRechecking(true);
+    setSendControlStatus('Rechecking the exact local UI Automation Send-control identity…');
+    try{
+      sendData({kind:'verify_send_control',requestId,selectionId});
+    }catch(error){
+      sendControlRequestRef.current='';
+      setSendControlRechecking(false);
+      setSendControlFound(false);
+      setSendControlStatus('The local computer could not receive the recheck request.');
+      flash(error instanceof Error?error.message:'Could not request Send-control recheck.',true);
+    }
+  };
   const hasActiveDraftTarget=()=>Boolean(
     selection||targetAttemptRef.current||draftAttemptRef.current||
     targetStatus.startsWith('Verified editable field ·')||
@@ -479,7 +536,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       e.preventDefault();
       const point=normalized(e.clientX,e.clientY);
       if(!point)return flash('Wait for the live display to finish loading, then drag inside the visible screen.',true);
-      setTargetStatus('');setSelection(null);targetAttemptRef.current='';draftAttemptRef.current='';
+      setTargetStatus('');setSelection(null);targetAttemptRef.current='';draftAttemptRef.current='';clearSendControlState();
       try{sendData({kind:'clear_target'});}
       catch(error){flash('Could not clear the previous typing target. Stopping this remote session for safety.',true);void stopActivePeer();return;}
       dragRef.current={...point,pointerId:e.pointerId};e.currentTarget.setPointerCapture(e.pointerId);return;
@@ -489,7 +546,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     if(hasActiveDraftTarget()){
       targetAttemptRef.current='';draftAttemptRef.current='';
       setSelection(null);
-      setTargetStatus('Manual computer interaction changed the typing target. Drag-select it again before requesting a draft.');
+      setTargetStatus('Manual computer interaction changed the typing target. Drag-select it again before requesting a draft.');clearSendControlState();
       try{sendData({kind:'clear_target'});}
       catch(error){flash('Could not clear the previous typing target. Stopping this remote session for safety.',true);void stopActivePeer();return;}
     }
@@ -513,7 +570,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       const target=createNormalizedDragSelection(start,p);
       if(!target){setSelection(null);setTargetStatus('');return flash('Drag a larger rectangle over the exact typing area.',true);}
       const requestId=uuid();targetAttemptRef.current=requestId;
-      setSelection(target);setTargetStatus('Checking the selected area against Windows accessibility…');
+      clearSendControlState();setSelection(target);setTargetStatus('Checking the selected area against Windows accessibility…');
       try{sendData({kind:'select_target',requestId,target});flash('Checking that the selected area resolves to one empty editable field or multi-line editor.');}
       catch(error){
         targetAttemptRef.current='';setSelection(null);
@@ -531,14 +588,14 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     dragRef.current=null;
     targetAttemptRef.current='';
     setSelection(null);
-    setTargetStatus('Drag cancelled. No typing target is selected.');
+    setTargetStatus('Drag cancelled. No typing target is selected.');clearSendControlState();
   };
   const keyDown=(e:KeyboardEvent<HTMLDivElement>)=>{
     if(!controlGranted||!dataRef.current||e.ctrlKey||e.metaKey||e.altKey)return;
     e.preventDefault();
     if(selection||targetStatus||draftAttemptRef.current){
       targetAttemptRef.current='';draftAttemptRef.current='';setSelection(null);
-      setTargetStatus('Manual computer interaction changed the typing target. Drag-select it again before requesting a draft.');
+      setTargetStatus('Manual computer interaction changed the typing target. Drag-select it again before requesting a draft.');clearSendControlState();
       try{sendData({kind:'clear_target'});}
       catch(error){flash('Could not clear the previous typing target. Stopping this remote session for safety.',true);void stopActivePeer();return;}
     }
@@ -630,14 +687,18 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
               <button type="button" onClick={()=>void requestControl()} disabled={!videoReady||!coordinateControl||controlGranted}>Request control</button>
               <button type="button" onClick={()=>{setTargetStatus('');setSelection(null);dragRef.current=null;targetAttemptRef.current='';draftAttemptRef.current='';try{sendData({kind:'clear_target'});}catch(error){flash('Could not clear the previous typing target. Stopping this remote session for safety.',true);void stopActivePeer();}setSelectMode(v=>!v);}} disabled={!controlGranted||!draftGranted||!selectedIsWindows||!videoReady}>{selectMode?'Cancel area selection':selectedIsWindows?'Drag-select typing area':'Typing-area targeting unavailable on this OS'}</button>
               <button type="button" onClick={()=>void requestDraftPermission()} disabled={!controlGranted||draftGranted||!selectedIsWindows}><TextCursorInput size={13}/> Request typing permission</button>
+              {sendControlSelectionRef.current&&<button type="button" onClick={recheckSendControl} disabled={!videoReady||!draftGranted||sendControlRechecking}>
+                {sendControlRechecking?'Rechecking Send…':'Recheck Send control'}
+              </button>}
             </div>
             {!selectedIsWindows&&<div className="br-desktop-caption" role="status">This computer can still use supported desktop and terminal features, but verified drag-select text targeting is not implemented for this operating system yet. Windows UI Automation targeting is currently supported.</div>}
             {targetStatus&&<div className="br-desktop-caption" role="status">{targetStatus}</div>}
+            {sendControlStatus&&<div className="br-desktop-caption" role="status">{sendControlStatus}</div>}
             {controlGranted&&draftGranted&&<div className="br-desktop-draft">
               <textarea value={draft} onChange={e=>setDraft(e.target.value)} rows={2} maxLength={4000} placeholder="Write the text to insert in the selected area. It will never press Enter or Send."/>
               <button type="button" onClick={requestDraft} disabled={!selectedIsWindows||!selection||!targetStatus.startsWith('Verified editable field ·')||!draft.trim()}>Request draft insertion</button>
             </div>}
-            {controlGranted&&<div className="br-desktop-caption">The drag overlay is mapped to the visible video content and Windows UI Automation resolves it to one exact editable field inside the selected app window. Draft typing has a separate local approval and never sends or presses Enter. Native Windows app Auto wake is not enabled yet; Off / On / Auto currently applies to managed browser composers only.</div>}
+            {controlGranted&&<div className="br-desktop-caption">The drag overlay is mapped to the visible video content and Windows UI Automation resolves it to one exact editable field inside the selected app window. A unique nearby Send control may be discovered and rechecked locally; this is read-only and never invokes it. Draft typing has a separate local approval and never sends or presses Enter. Native Windows app Auto wake is not enabled yet; Off / On / Auto currently applies to managed browser composers only.</div>}
           </div>}
           {(terminalSession||terminalPeerId)&&<div className="br-terminal-remote">
             <div className="br-terminal-remote-head"><SquareTerminal size={15}/> Native terminal · actual computer</div>
