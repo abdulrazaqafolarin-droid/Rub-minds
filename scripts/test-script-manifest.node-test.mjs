@@ -34,7 +34,8 @@ test('critical Backroom test suites remain registered in runtime and queue scrip
    'integrations/backroom/multi-surface-execution.node-test.mjs',
    'integrations/backroom/native-wake-handoff.node-test.mjs'],
   'test:durable-queue':['integrations/backroom/host-wake-service.node-test.mjs',
-   'integrations/backroom/host-identity.node-test.mjs']
+   'integrations/backroom/host-identity.node-test.mjs'],
+  'test:companion':['integrations/backroom/android-native-wake-source.node-test.mjs']
  };
  for(const [name,paths] of Object.entries(required)){
   const command=manifest.scripts?.[name];
