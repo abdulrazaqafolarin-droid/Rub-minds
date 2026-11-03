@@ -160,6 +160,8 @@ test('submitted result requires prompt readback, unchanged identities, Send and 
  const r=receiver();r.accept(h);
  const ack=r.settle(h.handoffId,submitted());
  assert.equal(ack.state,'submitted');
+ assert.equal(ack.providerConversationIdentityRevalidated,true);
+ assert.equal(ack.providerConversationIdentityDigest,h.providerConversationIdentityDigest);
  assert.equal(validateNativeWakeHandoffResult(ack,h),true);
  assert.equal(r.status(h.jobId).terminal,true);
  assert.equal(r.accept(create({leaseToken:'71000000-0000-4000-8000-000000000002'},{handoffId:'77000000-0000-4000-8000-000000000002'})),null);
