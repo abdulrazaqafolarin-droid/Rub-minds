@@ -206,8 +206,8 @@ export async function reserveNativeWakeExecution({
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(journalRecord.jobId ?? '') ||
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(journalRecord.hostId ?? '') ||
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(journalRecord.bindingId ?? '') ||
-      !HEX.test(journalRecord.sessionDigest ?? '') || !ID.test(journalRecord.targetId ?? '')) {
-      !HEX.test(journalRecord.providerConversationIdentityDigest ?? '') ||
+      !HEX.test(journalRecord.sessionDigest ?? '') || !ID.test(journalRecord.targetId ?? '') ||
+      !HEX.test(journalRecord.providerConversationIdentityDigest ?? '')) {
     throw new TypeError('Invalid native wake journal scope');
   }
   if (!command || command.operation !== 'wake' ||
