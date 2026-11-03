@@ -6,15 +6,15 @@ The first Off / On / Auto control is supported only by a live, registered manage
 
 ## Native app-frame capability boundary — 2026-11-03
 
-The Windows desktop frame and Android Phone Frame now have source-level drag-select composer targeting and local discovery/revalidation of a single nearby Send control. Windows keeps the full UI Automation identity in native Rust memory; Android keeps the accessibility-node identity in the phone service. Both report only bounded availability/reason status to the Backroom frame. The recheck never clicks, invokes, presses Enter or submits.
+The Windows desktop frame and Android Phone Frame have source-level drag-select composer targeting and local discovery/revalidation of one nearby Send control. Windows keeps full UI Automation identity in native Rust memory; Android keeps accessibility-node identity on the phone. Both expose only bounded discovery/recheck status to the Backroom frame. Android additionally has an internal, unconnected native-wake routine that can insert only the fixed event trigger and click the same-snapshot verified Send node after separate local consent and a persistent event seal. This routine is not reachable from the existing WebRTC draft channel.
 
-This is not the Off / On / Auto execution path. Both native frames remain draft-only and require their existing local typing approval. Native message sending, queue consumption, a device-bound wake grant, one-time execution seal, duplicate-action recovery and physical device acceptance are still outstanding. Do not present a successful Send-control recheck as permission to send or as native Auto support.
+This is not the native Off / On / Auto execution path. Android's internal Send routine is present in source but there is no durable device-queue consumer or trusted caller, so no autonomous phone send can occur in the current app flow. Windows remains read-only for Send. The Android local wake grant and persistent one-shot event seal are separate from app-launch, touch and draft-typing permission. Physical Android Send and Windows Send remain unaccepted.
 
 ## Native canonical-wake adapter contract — 2026-11-03
 
 A shared `NativeCanonicalWakeAdapter` interface and Node regression tests now define how an already-authorized durable event wake can be executed by a future Android or Windows accessibility driver. The interface binds one native target revision and requires the exact empty composer plus one unique, visible, enabled and identity-verified Send control. It accepts only the canonical event-bound `@RMconnects` prompt, requires proof that the durable one-time execution seal and one-shot local grant were acquired, and reports success only after the same composer clears.
 
-This is a **contract, not an enabled device capability**. No Android or Windows platform driver implements the contract yet; a separate process-local native wake-grant authority and seal/consume helper now exist as source contracts, but no Android/Windows local approval screen or device-bound durable queue consumer is connected. The Android WebRTC `remote_text` channel remains draft-only and must not be used to transport durable wake jobs or invoke Send. Native Send, native Off / On / Auto, host-server composition, production backend changes and physical acceptance remain unavailable/deferred.
+This is a **partially implemented source path, not an enabled device capability**. Android has a separate local approval screen, 24-hour app/signer-bound grant, persistent one-shot event seal, canonical-prompt IME insertion and internal same-snapshot Send driver. No device-authenticated durable queue consumer/forwarder is connected, so this routine is not called by the group coordinator. Windows has no native Send driver. The Android WebRTC `remote_text` channel remains draft-only and must not be used to transport durable wake jobs or invoke Send. Native Off / On / Auto, host-server composition, production backend changes and physical acceptance remain unavailable/deferred.
 
 ### Native wake contract verification — 2026-11-03
 
@@ -22,7 +22,11 @@ The native adapter now compares opaque SHA-256 composer and Send-control identit
 
 ### Android local native-wake consent foundation — 2026-11-03
 
-The Android allowlist now has a separate local pre-authorization for a future native @RMconnects wake send. It is signer/device bound, expires in 24 hours, and has an independent revoke control. A persistent one-shot local event journal checks the selected screen session and exact composer/Send identity digests, blocks event replay even after target changes, applies a six-per-minute ceiling and fails closed if its ledger is malformed or full. The consent UI clearly warns that the native wake queue and automatic Send are not connected yet; recording consent causes no remote action. Ten JUnit policy cases were added but have not run because the current GitHub Android jobs failed before runner allocation; Android build and physical-device acceptance remain unverified.
+The Android allowlist now has a separate local pre-authorization for a future native @RMconnects wake send. It is signer/device bound, expires in 24 hours, and has an independent revoke control. A persistent one-shot local event journal checks the selected screen session and exact composer/Send identity digests, blocks event replay even after target changes, applies a six-per-minute ceiling and fails closed if its ledger is malformed or full. The consent UI clearly warns that the native wake queue and automatic Send are not connected yet; recording consent causes no remote action. Twelve JUnit policy cases and seven Node source-boundary tests were added. The seven Node tests passed in isolated Node 22. The Kotlin JUnit suite and Android build remain unexecuted because GitHub's Android jobs failed before runner allocation; physical-device acceptance remains unverified.
+
+### Android composer privacy clarification — 2026-11-03
+
+The native-wake driver reads the selected composer value locally to check empty-before, exact canonical-trigger-after-insertion, and clear-after-Send states. Those values are not returned in a device acknowledgement, uploaded to Rub Minds, or used to read conversation history. The Android UI now explains this narrow local readback instead of claiming that the selected composer is never read.
 
 ## Modes
 
