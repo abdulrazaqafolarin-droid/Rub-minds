@@ -35,7 +35,8 @@ function validRevision(value) {
 }
 function targetScope(target) {
   return !!target && target.locatorKind === 'accessibility' &&
-    target.surface && NATIVE_SURFACES.has(target.surface);
+    target.surface && NATIVE_SURFACES.has(target.surface) &&
+    HEX.test(target.providerConversationIdentityDigest ?? '');
 }
 
 export class NativeWakeAuthorizationAuthority {
@@ -69,9 +70,11 @@ export class NativeWakeAuthorizationAuthority {
       surface: input.surface,
       appId: nonempty(input.appId, 'appId', 256),
       identityFingerprint: nonempty(input.identityFingerprint, 'identityFingerprint'),
+      providerConversationIdentityDigest: input.providerConversationIdentityDigest,
       targetRevision: input.targetRevision,
     };
-    if (!NATIVE_SURFACES.has(scope.surface) || !validRevision(scope.targetRevision)) {
+    if (!NATIVE_SURFACES.has(scope.surface) || !validRevision(scope.targetRevision) ||
+        !HEX.test(scope.providerConversationIdentityDigest ?? '')) {
       throw new TypeError('Invalid native wake target surface or revision');
     }
     const ttlMs = input.ttlMs === undefined ? this.maxGrantMs : input.ttlMs;
@@ -110,6 +113,7 @@ export class NativeWakeAuthorizationAuthority {
         target.surface !== grant.surface ||
         target.appId !== grant.appId ||
         target.identityFingerprint !== grant.identityFingerprint ||
+        target.providerConversationIdentityDigest !== grant.providerConversationIdentityDigest ||
         target.revision !== grant.targetRevision ||
         target.locatorKind !== 'accessibility' ||
         target.id !== grant.targetId ||
@@ -126,6 +130,7 @@ export class NativeWakeAuthorizationAuthority {
         command.targetId !== grant.targetId ||
         command.targetRevision !== grant.targetRevision ||
         command.identityFingerprint !== grant.identityFingerprint ||
+        command.providerConversationIdentityDigest !== grant.providerConversationIdentityDigest ||
         grant.usedCommands.has(command.id)) {
       return false;
     }
