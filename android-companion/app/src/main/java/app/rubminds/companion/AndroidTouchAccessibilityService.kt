@@ -23,6 +23,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
     @Volatile private var gestureInFlight = false
     @Volatile private var boundComposerTargetId: String? = null
     @Volatile private var boundSendTargetId: String? = null
+    @Volatile private var nativeWakeInFlight = false
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -55,6 +56,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         boundPackageName = null
         boundComposerTargetId = null
         boundSendTargetId = null
+        nativeWakeInFlight = false
         synchronized(this) { gestureInFlight = false }
         AndroidScreenShareService.revokeLocalTouch(applicationContext)
         super.onDestroy()
@@ -317,6 +319,325 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         boundSendTargetId = null
     }
 
+    /**
+     * Device-local native submit path. It accepts only an event ID and the
+     * opaque identities created by the local drag selection; no caller text
+     * or Send label crosses this API. It is intentionally NOT called from the
+     * WebRTC remote_text handler or from a browser/WebView command.
+     */
+    fun submitCanonicalWake(
+        request: NativeWakeExecutionRequest,
+        onResult: (NativeWakeSubmissionResult) -> Unit
+    ): Boolean {
+        val expectedSession = boundSessionId
+        val expectedPackage = boundPackageName
+        if (expectedSession != request.sessionId || expectedPackage != request.packageName ||
+            !UUID_PATTERN.matches(request.deviceId) ||
+            !UUID_PATTERN.matches(request.sessionId)
+        ) return false
+        synchronized(this) {
+            if (nativeWakeInFlight) return false
+            nativeWakeInFlight = true
+        }
+        val handler = Handler(Looper.getMainLooper())
+        handler.post {
+            fun finish(state: NativeWakeSubmissionState, reason: String) {
+                synchronized(this) { nativeWakeInFlight = false }
+                runCatching { onResult(NativeWakeSubmissionResult(state, reason)) }
+            }
+
+            if (boundSessionId != request.sessionId || boundPackageName != request.packageName ||
+                !isServiceEnabled(this)
+            ) {
+                finish(NativeWakeSubmissionState.PRECHECK_DENIED, "native_session_or_accessibility_unavailable")
+                return@post
+            }
+            val root = try { rootInActiveWindow } catch (_: SecurityException) { null }
+            if (root == null) {
+                finish(NativeWakeSubmissionState.PRECHECK_DENIED, "active_app_window_unavailable")
+                return@post
+            }
+            val preflight = try {
+                if (!root.isVisibleToUser || root.packageName?.toString() != request.packageName) {
+                    finish(NativeWakeSubmissionState.PRECHECK_DENIED, "selected_app_not_foreground")
+                    return@post
+                }
+                val signer = AppIdentity.signingCertificateSha256(this, request.packageName)
+                val grant = signer?.let { AppGrantStore(this).get(request.packageName, it) }
+                if (signer != request.signingCertificateSha256 ||
+                    !AppGrantPolicy.canLaunch(grant, signer)
+                ) {
+                    finish(NativeWakeSubmissionState.PRECHECK_DENIED, "app_or_signer_not_locally_approved")
+                    return@post
+                }
+                if (!isSelectedComposerEmpty(request.sessionId, request.packageName, request.composerTargetId)) {
+                    finish(NativeWakeSubmissionState.PRECHECK_DENIED, "selected_composer_not_empty_or_changed")
+                    return@post
+                }
+
+                val focused = try { root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) }
+                    catch (_: SecurityException) { null }
+                    ?: run {
+                        finish(NativeWakeSubmissionState.PRECHECK_DENIED, "selected_composer_not_focused")
+                        return@post
+                    }
+                val composerBounds = try {
+                    if (!focused.isEditable || !focused.isEnabled || !focused.isVisibleToUser ||
+                        focused.isPassword || focused.packageName?.toString() != request.packageName ||
+                        composerTargetId(focused, request.packageName) != request.composerTargetId
+                    ) {
+                        finish(NativeWakeSubmissionState.PRECHECK_DENIED, "selected_composer_changed")
+                        return@post
+                    }
+                    val bounds = Rect()
+                    focused.getBoundsInScreen(bounds)
+                    if (bounds.isEmpty) {
+                        finish(NativeWakeSubmissionState.PRECHECK_DENIED, "selected_composer_bounds_unavailable")
+                        return@post
+                    }
+                    ComposerScreenRect(bounds.left, bounds.top, bounds.right, bounds.bottom)
+                } finally {
+                    focused.recycle()
+                }
+
+                val rootBounds = Rect()
+                root.getBoundsInScreen(rootBounds)
+                val candidates = mutableListOf<SendControlCandidate>()
+                val traversal = intArrayOf(0, 0)
+                collectSendControlCandidates(root, request.packageName, candidates, traversal)
+                if (traversal[1] != 0) {
+                    finish(NativeWakeSubmissionState.PRECHECK_DENIED, "accessibility_tree_too_large")
+                    return@post
+                }
+                val decision = AndroidSendControlPolicy.choose(
+                    candidates,
+                    request.packageName,
+                    ComposerScreenRect(rootBounds.left, rootBounds.top, rootBounds.right, rootBounds.bottom),
+                    composerBounds
+                )
+                if (decision.candidate?.targetId != request.sendTargetId) {
+                    finish(NativeWakeSubmissionState.PRECHECK_DENIED, "selected_send_control_changed")
+                    return@post
+                }
+                decision.candidate
+            } finally {
+                root.recycle()
+            }
+
+            if (!DraftInputMethodService.isEnabledAndSelected(this)) {
+                finish(NativeWakeSubmissionState.PRECHECK_DENIED, "rub_minds_keyboard_not_selected")
+                return@post
+            }
+            if (preflight == null) {
+                finish(NativeWakeSubmissionState.PRECHECK_DENIED, "selected_send_control_unavailable")
+                return@post
+            }
+
+            val insertion = DraftInputMethodService.insertNativeWakeTrigger(request)
+            when (insertion.state) {
+                NativeWakeInsertState.PRECHECK_DENIED -> {
+                    finish(NativeWakeSubmissionState.PRECHECK_DENIED, insertion.reason)
+                    return@post
+                }
+                NativeWakeInsertState.NEEDS_REVIEW -> {
+                    finish(NativeWakeSubmissionState.NEEDS_REVIEW, insertion.reason)
+                    return@post
+                }
+                NativeWakeInsertState.INSERTED -> Unit
+            }
+
+            val prompt = NativeWakeConsentPolicy.canonicalWakePrompt(request.eventId)
+            if (prompt == null || !isSelectedComposerText(request.sessionId, request.packageName,
+                    request.composerTargetId, prompt)
+            ) {
+                finish(NativeWakeSubmissionState.NEEDS_REVIEW, "canonical_trigger_readback_unconfirmed")
+                return@post
+            }
+
+            // Insertion may resize the keyboard/window. Re-identify both the
+            // same composer and the same unique Send control after the seal.
+            val finalSend = revalidateSelectedSendControl(
+                request.sessionId, request.packageName,
+                request.composerTargetId, request.sendTargetId
+            )
+            if (finalSend.candidate?.targetId != request.sendTargetId ||
+                !isSelectedComposerText(request.sessionId, request.packageName,
+                    request.composerTargetId, prompt)
+            ) {
+                finish(NativeWakeSubmissionState.NEEDS_REVIEW, "post_insert_native_target_revalidation_failed")
+                return@post
+            }
+
+            val sendRoot = try { rootInActiveWindow } catch (_: SecurityException) { null }
+            if (sendRoot == null || sendRoot.packageName?.toString() != request.packageName ||
+                !sendRoot.isVisibleToUser
+            ) {
+                sendRoot?.recycle()
+                finish(NativeWakeSubmissionState.NEEDS_REVIEW, "foreground_changed_after_trigger_insert")
+                return@post
+            }
+            val sendNode = try {
+                findNodeByTargetId(sendRoot, request.packageName, request.sendTargetId)
+            } finally {
+                sendRoot.recycle()
+            }
+            if (sendNode == null) {
+                finish(NativeWakeSubmissionState.NEEDS_REVIEW, "same_send_control_node_not_found_after_insert")
+                return@post
+            }
+            val invoked = try {
+                if (!sendNode.refresh() || sendNode.packageName?.toString() != request.packageName ||
+                    !sendNode.isClickable || !sendNode.isEnabled || !sendNode.isVisibleToUser ||
+                    composerTargetId(sendNode, request.packageName) != request.sendTargetId ||
+                    sendNode.actionList.none { it.id == AccessibilityNodeInfo.ACTION_CLICK }
+                ) {
+                    false
+                } else {
+                    sendNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                }
+            } catch (_: SecurityException) {
+                false
+            } finally {
+                sendNode.recycle()
+            }
+            if (!invoked) {
+                finish(NativeWakeSubmissionState.NEEDS_REVIEW, "native_send_action_unconfirmed")
+                return@post
+            }
+            awaitComposerClear(
+                handler = handler,
+                request = request,
+                deadlineMillis = android.os.SystemClock.elapsedRealtime() + NATIVE_WAKE_CLEAR_TIMEOUT_MS,
+                onComplete = { cleared ->
+                    finish(
+                        if (cleared) NativeWakeSubmissionState.SUBMITTED else NativeWakeSubmissionState.NEEDS_REVIEW,
+                        if (cleared) "canonical_trigger_sent_composer_cleared" else "send_outcome_needs_review"
+                    )
+                }
+            )
+        }
+        return true
+    }
+
+    private fun awaitComposerClear(
+        handler: Handler,
+        request: NativeWakeExecutionRequest,
+        deadlineMillis: Long,
+        onComplete: (Boolean) -> Unit
+    ) {
+        handler.postDelayed({
+            if (boundSessionId != request.sessionId || boundPackageName != request.packageName ||
+                currentRootPackage() != request.packageName
+            ) {
+                onComplete(false)
+                return@postDelayed
+            }
+            val root = try { rootInActiveWindow } catch (_: SecurityException) { null }
+            if (root == null) {
+                if (android.os.SystemClock.elapsedRealtime() >= deadlineMillis) onComplete(false)
+                else awaitComposerClear(handler, request, deadlineMillis, onComplete)
+                return@postDelayed
+            }
+            val cleared = try {
+                val composer = findNodeByTargetId(root, request.packageName, request.composerTargetId)
+                if (composer == null) {
+                    false
+                } else try {
+                    composer.isEditable && composer.isEnabled && composer.isVisibleToUser &&
+                        composer.packageName?.toString() == request.packageName &&
+                        composerTargetId(composer, request.packageName) == request.composerTargetId &&
+                        composer.text?.toString() == ""
+                } finally {
+                    composer.recycle()
+                }
+            } finally {
+                root.recycle()
+            }
+            if (cleared) {
+                onComplete(true)
+            } else if (android.os.SystemClock.elapsedRealtime() >= deadlineMillis) {
+                onComplete(false)
+            } else {
+                awaitComposerClear(handler, request, deadlineMillis, onComplete)
+            }
+        }, NATIVE_WAKE_CLEAR_POLL_MS)
+    }
+
+    private fun findNodeByTargetId(
+        root: AccessibilityNodeInfo,
+        packageName: String,
+        targetId: String
+    ): AccessibilityNodeInfo? {
+        var visited = 0
+        fun search(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+            visited += 1
+            if (visited > MAX_COMPOSER_TREE_NODES) return null
+            if (node.packageName?.toString() == packageName &&
+                composerTargetId(node, packageName) == targetId
+            ) return AccessibilityNodeInfo.obtain(node)
+            for (index in 0 until node.childCount.coerceAtMost(MAX_COMPOSER_TREE_NODES)) {
+                val child = try { node.getChild(index) } catch (_: SecurityException) { null } ?: continue
+                val found = try { search(child) } finally { child.recycle() }
+                if (found != null) return found
+            }
+            return null
+        }
+        return search(root)
+    }
+
+    fun isSelectedComposerEmpty(sessionId: String, packageName: String, targetId: String): Boolean {
+        if (boundSessionId != sessionId || boundPackageName != packageName ||
+            boundComposerTargetId != targetId || !isServiceEnabled(this)
+        ) return false
+        val root = try { rootInActiveWindow } catch (_: SecurityException) { null } ?: return false
+        try {
+            if (!root.isVisibleToUser || root.packageName?.toString() != packageName) return false
+            val focused = try { root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) }
+                catch (_: SecurityException) { null } ?: return false
+            try {
+                if (!focused.isEditable || !focused.isEnabled || !focused.isVisibleToUser ||
+                    focused.isPassword || focused.packageName?.toString() != packageName ||
+                    composerTargetId(focused, packageName) != targetId
+                ) return false
+                // Empty must be explicit. A null/unreadable value is not treated
+                // as empty; no editor content is transmitted off this device.
+                return focused.text?.toString() == ""
+            } finally {
+                focused.recycle()
+            }
+        } finally {
+            root.recycle()
+        }
+    }
+
+    fun isSelectedComposerText(
+        sessionId: String,
+        packageName: String,
+        targetId: String,
+        expectedText: String
+    ): Boolean {
+        if (boundSessionId != sessionId || boundPackageName != packageName ||
+            boundComposerTargetId != targetId || !isServiceEnabled(this)
+        ) return false
+        val root = try { rootInActiveWindow } catch (_: SecurityException) { null } ?: return false
+        try {
+            if (!root.isVisibleToUser || root.packageName?.toString() != packageName) return false
+            val focused = try { root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) }
+                catch (_: SecurityException) { null } ?: return false
+            try {
+                if (!focused.isEditable || !focused.isEnabled || !focused.isVisibleToUser ||
+                    focused.isPassword || focused.packageName?.toString() != packageName ||
+                    composerTargetId(focused, packageName) != targetId
+                ) return false
+                return focused.text?.toString() == expectedText
+            } finally {
+                focused.recycle()
+            }
+        } finally {
+            root.recycle()
+        }
+    }
+
     private fun collectSendControlCandidates(
         node: AccessibilityNodeInfo,
         packageName: String,
@@ -441,6 +762,8 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
     companion object {
         @Volatile private var instance: AndroidTouchAccessibilityService? = null
         private const val MAX_COMPOSER_TREE_NODES = 160
+        private const val NATIVE_WAKE_CLEAR_TIMEOUT_MS = 8_000L
+        private const val NATIVE_WAKE_CLEAR_POLL_MS = 250L
 
         fun isServiceEnabled(context: Context): Boolean {
             val expected = ComponentName(context, AndroidTouchAccessibilityService::class.java).flattenToString()
@@ -490,6 +813,14 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
 
         fun isSelectedComposerFocused(sessionId: String, packageName: String, targetId: String): Boolean =
             instance?.isSelectedComposerFocused(sessionId, packageName, targetId) == true
+
+        fun isSelectedComposerEmpty(sessionId: String, packageName: String, targetId: String): Boolean =
+            instance?.isSelectedComposerEmpty(sessionId, packageName, targetId) == true
+
+        fun submitCanonicalWake(
+            request: NativeWakeExecutionRequest,
+            onResult: (NativeWakeSubmissionResult) -> Unit
+        ): Boolean = instance?.submitCanonicalWake(request, onResult) == true
 
         fun clearSelectedComposer() {
             instance?.clearSelectedComposer()
