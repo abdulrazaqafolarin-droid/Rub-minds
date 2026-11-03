@@ -9,6 +9,7 @@ class NativeWakeBindingPolicyTest {
     private val packageName = "com.example.chat"
     private val composerId = "a".repeat(64)
     private val sendId = "b".repeat(64)
+    private val conversationDigest = "f".repeat(64)
 
     private fun isCurrent(
         generation: Long = 7L,
@@ -16,7 +17,8 @@ class NativeWakeBindingPolicyTest {
         session: String? = sessionId,
         app: String? = packageName,
         composer: String? = composerId,
-        send: String? = sendId
+        send: String? = sendId,
+        conversation: String? = conversationDigest
     ) = NativeWakeBindingPolicy.isCurrent(
         expectedGeneration = generation,
         currentGeneration = currentGeneration,
@@ -27,7 +29,9 @@ class NativeWakeBindingPolicyTest {
         expectedComposerTargetId = composerId,
         currentComposerTargetId = composer,
         expectedSendTargetId = sendId,
-        currentSendTargetId = send
+        currentSendTargetId = send,
+        expectedProviderConversationDigest = conversationDigest,
+        currentProviderConversationDigest = conversation
     )
 
     @Test fun nativeWakeRequiresTheExactUninterruptedSessionAndTargetBinding() {
@@ -40,6 +44,8 @@ class NativeWakeBindingPolicyTest {
         assertFalse(isCurrent(send = "d".repeat(64)))
         assertFalse(isCurrent(composer = null))
         assertFalse(isCurrent(send = null))
+        assertFalse(isCurrent(conversation = "e".repeat(64)))
+        assertFalse(isCurrent(conversation = null))
     }
 
     @Test fun emptyExpectedBindingValuesCanNeverAuthorizeNativeSend() {
@@ -53,7 +59,9 @@ class NativeWakeBindingPolicyTest {
             expectedComposerTargetId = composerId,
             currentComposerTargetId = composerId,
             expectedSendTargetId = sendId,
-            currentSendTargetId = sendId
+            currentSendTargetId = sendId,
+            expectedProviderConversationDigest = conversationDigest,
+            currentProviderConversationDigest = conversationDigest
         ))
         assertFalse(NativeWakeBindingPolicy.isCurrent(
             expectedGeneration = 7L,
@@ -65,7 +73,9 @@ class NativeWakeBindingPolicyTest {
             expectedComposerTargetId = composerId,
             currentComposerTargetId = composerId,
             expectedSendTargetId = "",
-            currentSendTargetId = ""
+            currentSendTargetId = "",
+            expectedProviderConversationDigest = conversationDigest,
+            currentProviderConversationDigest = conversationDigest
         ))
     }
 }
