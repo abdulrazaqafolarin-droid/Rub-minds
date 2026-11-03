@@ -16,7 +16,7 @@ const HEX=/^[a-f0-9]{64}$/;
 const SURFACES=new Set(['android_app','windows_app','desktop_app']);
 const REASONS=new Set([
  'foreground_changed','composer_not_empty','composer_identity_changed',
- 'send_control_unavailable','send_identity_changed','permission_denied',
+ 'send_control_unavailable','send_identity_changed','conversation_scope_unavailable','permission_denied',
  'device_disconnected','send_unconfirmed','outcome_unknown','other',
 ]);
 const MAX_HANDOFF_TTL_MS=20_000;
@@ -69,6 +69,7 @@ function buildScopeFields(scope){
   appId:scope.appId,identityFingerprint:scope.identityFingerprint,
   composerIdentityDigest:scope.composerIdentityDigest.toLowerCase(),
   sendControlIdentityDigest:scope.sendControlIdentityDigest.toLowerCase(),
+  providerConversationIdentityDigest:scope.providerConversationIdentityDigest.toLowerCase(),
  };
 }
 
