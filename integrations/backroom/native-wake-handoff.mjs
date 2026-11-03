@@ -99,7 +99,7 @@ export function validateNativeWakeHandoff(payload,expected,{now=Date.now(),clock
  if(!exactKeys(payload,HANDOFF_KEYS)||!validScope(expected)||
   payload.version!==1||payload.kind!=='native_wake_trigger'||
   !UUID.test(payload.handoffId??'')||!UUID.test(payload.jobId??'')||
-  !validId(payload.eventId)||!UUID.test(payload.leaseToken??'')||
+  !validId(payload.eventId)||!HEX.test(payload.leaseTokenDigest??'')||
   !nonempty(payload.hostId,128)||!nonempty(payload.sessionId,256)||
   !nonempty(payload.targetId,128)||!Number.isSafeInteger(payload.targetRevision)||payload.targetRevision<1||
   !nonempty(payload.appId,256)||!nonempty(payload.identityFingerprint)||
@@ -221,8 +221,7 @@ export class NativeWakeHandoffReceiver {
    job={activeHandoffId:null,terminal:false,attempts:0,leaseTokens:new Set()};
    this.#jobs.set(handoff.jobId,job);
   }
-  if(job.terminal||job.activeHandoffId||job.attempts>=MAX_ATTEMPTS_PER_JOB||
-    job.leaseTokens.has(handoff.leaseToken))return null;
+  if(job.terminal||job.activeHandoffId||job.attempts>=MAX_ATTEMPTS_PER_JOB)return null;
   if(job.leaseTokens.has(handoff.leaseTokenDigest))return null;
   job.leaseTokens.add(handoff.leaseTokenDigest);
   job.attempts+=1;job.activeHandoffId=handoff.handoffId;
