@@ -51,7 +51,7 @@ data class NativeWakeExecutionReservation(
     val reservedAtMillis: Long,
     val grantExpiresAtMillis: Long,
     // Legacy rows are accepted only for replay-ledger preservation; new requests never accept this sentinel.
-    val providerConversationIdentityDigest: String = LEGACY_CONVERSATION_SCOPE
+    val providerConversationIdentityDigest: String = NativeWakeConsentPolicy.LEGACY_CONVERSATION_SCOPE
 )
 
 data class NativeWakeReservationDecision(
