@@ -1,0 +1,162 @@
+package app.rubminds.companion
+
+/**
+ * Pure local authorization policy for autonomous native @RMconnects wake sends.
+ * This is deliberately independent from touch and draft-typing permissions.
+ */
+data class NativeWakeGrant(
+    val grantId: String,
+    val deviceId: String,
+    val packageName: String,
+    val signingCertificateSha256: String,
+    val grantedAtMillis: Long,
+    val expiresAtMillis: Long
+)
+
+data class NativeWakeExecutionRequest(
+    val grantId: String,
+    val deviceId: String,
+    val sessionId: String,
+    val packageName: String,
+    val signingCertificateSha256: String,
+    val eventId: String,
+    val composerTargetId: String,
+    val sendTargetId: String,
+    val targetRevision: Int
+)
+
+data class NativeWakeExecutionReservation(
+    val grantId: String,
+    val eventId: String,
+    val deviceId: String,
+    val sessionId: String,
+    val packageName: String,
+    val signingCertificateSha256: String,
+    val composerTargetId: String,
+    val sendTargetId: String,
+    val targetRevision: Int,
+    val reservedAtMillis: Long,
+    val grantExpiresAtMillis: Long
+)
+
+data class NativeWakeReservationDecision(
+    val allowed: Boolean,
+    val reason: String,
+    val reservations: List<NativeWakeExecutionReservation>
+)
+
+object NativeWakeConsentPolicy {
+    const val MAX_GRANT_TTL_MILLIS = 24L * 60L * 60L * 1000L
+    const val MIN_GRANT_TTL_MILLIS = 60L * 1000L
+    const val MAX_WAKES_PER_MINUTE = 6
+    const val MAX_REPLAY_RECORDS = 4096
+    const val REPLAY_RETENTION_MILLIS = MAX_GRANT_TTL_MILLIS
+
+    private val uuid = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+    private val eventId = Regex("^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+    private val targetId = Regex("^[a-f0-9]{64}$")
+
+    fun createGrant(
+        grantId: String,
+        deviceId: String,
+        packageName: String,
+        signer: String,
+        nowMillis: Long,
+        ttlMillis: Long = MAX_GRANT_TTL_MILLIS,
+        localConfirmation: Boolean
+    ): NativeWakeGrant? {
+        if (!localConfirmation || !uuid.matches(grantId) || !uuid.matches(deviceId) ||
+            !AppGrantPolicy.isValidPackageName(packageName) ||
+            !AppGrantPolicy.isValidSigningCertificateSha256(signer) ||
+            nowMillis <= 0L || ttlMillis !in MIN_GRANT_TTL_MILLIS..MAX_GRANT_TTL_MILLIS ||
+            nowMillis > Long.MAX_VALUE - ttlMillis
+        ) return null
+        return NativeWakeGrant(
+            grantId = grantId,
+            deviceId = deviceId,
+            packageName = packageName,
+            signingCertificateSha256 = signer,
+            grantedAtMillis = nowMillis,
+            expiresAtMillis = nowMillis + ttlMillis
+        )
+    }
+
+    fun isGrantActive(
+        grant: NativeWakeGrant?,
+        deviceId: String?,
+        packageName: String?,
+        signer: String?,
+        nowMillis: Long
+    ): Boolean {
+        if (grant == null || deviceId.isNullOrBlank() || packageName.isNullOrBlank() ||
+            signer.isNullOrBlank() || nowMillis <= 0L
+        ) return false
+        return uuid.matches(grant.grantId) &&
+            uuid.matches(grant.deviceId) &&
+            uuid.matches(deviceId) &&
+            grant.deviceId == deviceId &&
+            grant.packageName == packageName &&
+            grant.signingCertificateSha256 == signer &&
+            AppGrantPolicy.isValidPackageName(grant.packageName) &&
+            AppGrantPolicy.isValidSigningCertificateSha256(grant.signingCertificateSha256) &&
+            grant.grantedAtMillis > 0L &&
+            grant.expiresAtMillis > nowMillis &&
+            grant.expiresAtMillis > grant.grantedAtMillis &&
+            grant.expiresAtMillis - grant.grantedAtMillis <= MAX_GRANT_TTL_MILLIS
+    }
+
+    fun reserveExecution(
+        grant: NativeWakeGrant?,
+        request: NativeWakeExecutionRequest,
+        existing: Collection<NativeWakeExecutionReservation>,
+        nowMillis: Long
+    ): NativeWakeReservationDecision {
+        fun denied(reason: String, rows: List<NativeWakeExecutionReservation> = existing.toList()) =
+            NativeWakeReservationDecision(false, reason, rows)
+
+        if (!isGrantActive(
+                grant, request.deviceId, request.packageName,
+                request.signingCertificateSha256, nowMillis
+            )) return denied("native_wake_grant_inactive")
+        if (request.grantId != grant?.grantId ||
+            !uuid.matches(request.sessionId) ||
+            !eventId.matches(request.eventId) ||
+            !targetId.matches(request.composerTargetId) ||
+            !targetId.matches(request.sendTargetId) ||
+            request.targetRevision < 1
+        ) return denied("native_wake_scope_invalid")
+
+        val retained = existing.filter { row ->
+            row.grantExpiresAtMillis > nowMillis &&
+                nowMillis >= row.reservedAtMillis &&
+                nowMillis - row.reservedAtMillis <= REPLAY_RETENTION_MILLIS
+        }
+        if (retained.any { it.grantId == grant.grantId && it.eventId == request.eventId }) {
+            return denied("native_wake_event_already_reserved", retained)
+        }
+        val recent = retained.count {
+            it.grantId == grant.grantId &&
+                it.reservedAtMillis > nowMillis - 60_000L &&
+                it.reservedAtMillis <= nowMillis
+        }
+        if (recent >= MAX_WAKES_PER_MINUTE) return denied("native_wake_rate_limited", retained)
+        if (retained.size >= MAX_REPLAY_RECORDS) return denied("native_wake_replay_ledger_full", retained)
+
+        val reservation = NativeWakeExecutionReservation(
+            grantId = grant.grantId,
+            eventId = request.eventId,
+            deviceId = request.deviceId,
+            sessionId = request.sessionId,
+            packageName = request.packageName,
+            signingCertificateSha256 = request.signingCertificateSha256,
+            composerTargetId = request.composerTargetId,
+            sendTargetId = request.sendTargetId,
+            targetRevision = request.targetRevision,
+            reservedAtMillis = nowMillis,
+            grantExpiresAtMillis = grant.expiresAtMillis
+        )
+        return NativeWakeReservationDecision(
+            true, "native_wake_execution_sealed", retained + reservation
+        )
+    }
+}
