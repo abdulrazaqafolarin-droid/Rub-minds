@@ -476,29 +476,85 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 finish(NativeWakeSubmissionState.NEEDS_REVIEW, "foreground_changed_after_trigger_insert")
                 return@post
             }
-            val sendNode = try {
-                findNodeByTargetId(sendRoot, request.packageName, request.sendTargetId)
+
+            // Composer, Send candidate, and the exact node to invoke are all
+            // resolved from this same fresh accessibility-root snapshot.
+            var sendNode: AccessibilityNodeInfo? = null
+            try {
+                val focused = try { sendRoot.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) }
+                    catch (_: SecurityException) { null }
+                    ?: run {
+                        finish(NativeWakeSubmissionState.NEEDS_REVIEW, "composer_focus_lost_before_send")
+                        return@post
+                    }
+                val composerBounds = try {
+                    if (!focused.isEditable || !focused.isEnabled || !focused.isVisibleToUser ||
+                        focused.isPassword || focused.packageName?.toString() != request.packageName ||
+                        composerTargetId(focused, request.packageName) != request.composerTargetId ||
+                        focused.text?.toString() != prompt
+                    ) {
+                        finish(NativeWakeSubmissionState.NEEDS_REVIEW, "composer_identity_or_prompt_changed_before_send")
+                        return@post
+                    }
+                    val bounds = Rect()
+                    focused.getBoundsInScreen(bounds)
+                    if (bounds.isEmpty) {
+                        finish(NativeWakeSubmissionState.NEEDS_REVIEW, "composer_bounds_lost_before_send")
+                        return@post
+                    }
+                    ComposerScreenRect(bounds.left, bounds.top, bounds.right, bounds.bottom)
+                } finally {
+                    focused.recycle()
+                }
+                val rootBounds = Rect()
+                sendRoot.getBoundsInScreen(rootBounds)
+                val candidates = mutableListOf<SendControlCandidate>()
+                val traversal = intArrayOf(0, 0)
+                collectSendControlCandidates(sendRoot, request.packageName, candidates, traversal)
+                if (traversal[1] != 0) {
+                    finish(NativeWakeSubmissionState.NEEDS_REVIEW, "accessibility_tree_changed_before_send")
+                    return@post
+                }
+                val currentSend = AndroidSendControlPolicy.choose(
+                    candidates,
+                    request.packageName,
+                    ComposerScreenRect(rootBounds.left, rootBounds.top, rootBounds.right, rootBounds.bottom),
+                    composerBounds
+                )
+                if (currentSend.candidate?.targetId != request.sendTargetId) {
+                    finish(NativeWakeSubmissionState.NEEDS_REVIEW, "same_unique_send_control_not_present_before_click")
+                    return@post
+                }
+                sendNode = findNodeByTargetId(sendRoot, request.packageName, request.sendTargetId)
             } finally {
                 sendRoot.recycle()
             }
-            if (sendNode == null) {
+            val exactSendNode = sendNode
+            if (exactSendNode == null) {
                 finish(NativeWakeSubmissionState.NEEDS_REVIEW, "same_send_control_node_not_found_after_insert")
                 return@post
             }
             val invoked = try {
-                if (!sendNode.refresh() || sendNode.packageName?.toString() != request.packageName ||
-                    !sendNode.isClickable || !sendNode.isEnabled || !sendNode.isVisibleToUser ||
-                    composerTargetId(sendNode, request.packageName) != request.sendTargetId ||
-                    sendNode.actionList.none { it.id == AccessibilityNodeInfo.ACTION_CLICK }
+                if (!exactSendNode.refresh() || exactSendNode.packageName?.toString() != request.packageName ||
+                    !exactSendNode.isClickable || !exactSendNode.isEnabled || !exactSendNode.isVisibleToUser ||
+                    composerTargetId(exactSendNode, request.packageName) != request.sendTargetId ||
+                    exactSendNode.actionList.none { it.id == AccessibilityNodeInfo.ACTION_CLICK }
                 ) {
                     false
                 } else {
-                    sendNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    val textLabel = exactSendNode.text?.toString().orEmpty()
+                    val descriptionLabel = exactSendNode.contentDescription?.toString().orEmpty()
+                    val recognizedLabel = AndroidSendControlPolicy.isRecognizedLabel(textLabel) ||
+                        AndroidSendControlPolicy.isRecognizedLabel(descriptionLabel)
+                    val fallbackResource = textLabel.isBlank() && descriptionLabel.isBlank() &&
+                        AndroidSendControlPolicy.isRecognizedResourceId(exactSendNode.viewIdResourceName.orEmpty())
+                    (recognizedLabel || fallbackResource) &&
+                        exactSendNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                 }
             } catch (_: SecurityException) {
                 false
             } finally {
-                sendNode.recycle()
+                exactSendNode.recycle()
             }
             if (!invoked) {
                 finish(NativeWakeSubmissionState.NEEDS_REVIEW, "native_send_action_unconfirmed")
