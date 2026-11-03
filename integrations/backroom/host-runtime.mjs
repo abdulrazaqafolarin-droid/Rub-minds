@@ -5,6 +5,7 @@
  */
 const KINDS = new Set(["browser_tab","desktop_app","windows_app","terminal","android_app"]);
 const OPS = new Set(["draft","wake","submit","read_result"]);
+const NATIVE_WAKE_SURFACES = new Set(["desktop_app","windows_app","android_app"]);
 const isText = value => typeof value === "string" && value.length > 0;
 import {isCanonicalWakePrompt} from "./coordination-core.mjs";
 function denyBeforeEffect(message) {
@@ -50,6 +51,13 @@ export class LocalExecutionGuard {
     if (!this.host.surfaces.includes(target.surface) || !this.host.operations.includes(command.operation)) {
       denyBeforeEffect("host capability missing");
     }
+    const nativeWake = command.operation === "wake" && NATIVE_WAKE_SURFACES.has(target.surface);
+    // Native Send is a one-shot side effect. A native wake cannot proceed on a
+    // standing permission or a UI boolean alone: the durable journal and the
+    // exact local wake grant must both be acquired immediately before effect.
+    if (nativeWake && beforeEffect === undefined) {
+      denyBeforeEffect("native wake requires a durable execution seal");
+    }
     if (!(await this.isConnected(this.host.hostId))) denyBeforeEffect("host offline");
     if ((await this.permission({ command, target })) !== true) denyBeforeEffect("permission denied");
     const live = await this.adapter.probe({ target, operation: command.operation });
@@ -61,6 +69,7 @@ export class LocalExecutionGuard {
     }
     // A durable wake seal and one-shot grant consumption happen only after
     // local connection, permission and focus preflight, immediately before UI.
+    let executionSealReserved = false;
     if (beforeEffect !== undefined) {
       if (typeof beforeEffect !== "function") denyBeforeEffect("invalid execution seal callback");
       let permitted = false;
@@ -70,10 +79,13 @@ export class LocalExecutionGuard {
         error.code = "BACKROOM_EXECUTION_SEAL_DENIED";
         throw error;
       }
+      executionSealReserved = true;
     }
     // The adapter must check identity again immediately before any OS effect.
     // A successful result is only accepted with explicit verification evidence.
-    const outcome = await this.adapter.execute({ command, target, verifiedProbe: live });
+    const outcome = await this.adapter.execute({
+      command, target, verifiedProbe: live, executionSealReserved,
+    });
     if (!outcome || outcome.state !== "completed" || outcome.verified !== true) {
       return { state: "needs_review", result: null };
     }
