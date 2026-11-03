@@ -34,6 +34,18 @@ class NativeWakeConsentPolicyTest {
         composer, send, revision
     )
 
+    @Test fun canonicalWakePromptIsEventBoundAndCannotCarryGroupMessageText() {
+        val prompt = NativeWakeConsentPolicy.canonicalWakePrompt("70000000-0000-4000-8000-000000000001")
+        assertEquals(
+            "@RMconnects\nEvent: 70000000-0000-4000-8000-000000000001\n" +
+                "Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.",
+            prompt
+        )
+        assertEquals(null, NativeWakeConsentPolicy.canonicalWakePrompt(""))
+        assertEquals(null, NativeWakeConsentPolicy.canonicalWakePrompt("message body with spaces"))
+        assertEquals(null, NativeWakeConsentPolicy.canonicalWakePrompt("x".repeat(129)))
+    }
+
     @Test fun requiresExplicitLocalConfirmationAndCapsConsentAtTwentyFourHours() {
         assertEquals(null, NativeWakeConsentPolicy.createGrant(
             grantId, deviceId, packageName, signer, now, localConfirmation = false
