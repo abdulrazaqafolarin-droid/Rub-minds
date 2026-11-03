@@ -786,6 +786,7 @@ class AndroidScreenShareService : Service() {
             .put("reason", decision.reason)
             .put("sendAvailable", decision.sendControl != null)
             .put("sendReason", decision.sendReason)
+            .put("providerConversationIdentityAvailable", decision.providerConversationIdentityAvailable)
         decision.candidate?.let { payload.put("targetId", it.targetId) }
         decision.sendControl?.let { payload.put("sendTargetId", it.targetId) }
         runCatching { channel.send(DataChannel.Buffer(ByteBuffer.wrap(payload.toString().toByteArray(Charsets.UTF_8)), false)) }
