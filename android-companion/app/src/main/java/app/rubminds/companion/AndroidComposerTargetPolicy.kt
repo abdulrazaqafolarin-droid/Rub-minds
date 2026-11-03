@@ -121,10 +121,17 @@ object AndroidComposerTargetPolicy {
 object AndroidSendControlPolicy {
     private val acceptedLabels = setOf("send", "send message", "send prompt")
     private val sendResourceId = Regex("(^|[_-])send([_-]|$)", RegexOption.IGNORE_CASE)
+    private val rejectedResourceTokens = setOf("resend", "email", "feedback", "share", "forward", "reply")
     private val targetIdPattern = Regex("^[a-f0-9]{64}$")
 
     fun isRecognizedLabel(label: String): Boolean =
         label.trim().lowercase().replace(Regex("\\s+"), " ") in acceptedLabels
+
+    fun isRecognizedResourceId(resourceId: String): Boolean {
+        val resourceName = resourceId.substringAfterLast('/').lowercase()
+        return sendResourceId.containsMatchIn(resourceName) &&
+            rejectedResourceTokens.none { token -> resourceName.contains(token) }
+    }
 
     fun choose(
         candidates: List<SendControlCandidate>,
@@ -150,7 +157,7 @@ object AndroidSendControlPolicy {
 
             val accessibleNameMatches = isRecognizedLabel(candidate.label)
             val resourceNameMatches = candidate.label.isBlank() &&
-                sendResourceId.containsMatchIn(candidate.resourceId.substringAfterLast('/'))
+                isRecognizedResourceId(candidate.resourceId)
             if (!accessibleNameMatches && !resourceNameMatches) return@filter false
 
             val verticalGap = when {
