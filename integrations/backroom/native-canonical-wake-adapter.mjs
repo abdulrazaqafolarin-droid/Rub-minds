@@ -43,14 +43,14 @@ function probeIsReady(result, expected) {
     result.sendControlEnabled === true &&
     result.sendControlVisible === true &&
     result.sendControlIdentityVerified === true &&
-    result.providerConversationIdentityVerified === true
+    result.providerConversationIdentityVerified === true &&
     result.targetId === expected.targetId &&
     result.targetRevision === expected.targetRevision &&
     result.locatorKind === 'accessibility' &&
     IDENTITY_DIGEST.test(result.composerIdentityDigest || '') &&
     IDENTITY_DIGEST.test(result.sendControlIdentityDigest || '') &&
     result.providerConversationIdentityDigest === expected.providerConversationIdentityDigest &&
-    IDENTITY_DIGEST.test(result.providerConversationIdentityDigest || '')
+    IDENTITY_DIGEST.test(result.providerConversationIdentityDigest || '') &&
     result.surface === expected.surface &&
     result.appId === expected.appId &&
     result.sessionId === expected.sessionId &&
