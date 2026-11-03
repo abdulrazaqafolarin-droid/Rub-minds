@@ -88,6 +88,7 @@ const handoffId = "123e4567-e89b-42d3-a456-426614174012";
 const jobId = "123e4567-e89b-42d3-a456-426614174013";
 const composerIdentityDigest = "a".repeat(64);
 const sendControlIdentityDigest = "b".repeat(64);
+const providerConversationIdentityDigest = "e".repeat(64);
 const identityFingerprint = "c".repeat(64);
 const leaseTokenDigest = "d".repeat(64);
 const eventId = "evt_native_123";
@@ -97,7 +98,7 @@ const nativeHandoff = () => ({
   deviceId, roomId, screenSessionId: sessionId, hostId, bindingId,
   sessionId: "mcp-session-123", targetId: "phone-frame-target", targetRevision: 4,
   surface: "android_app", appId: appPackageName, identityFingerprint,
-  composerIdentityDigest, sendControlIdentityDigest, leaseTokenDigest,
+  composerIdentityDigest, sendControlIdentityDigest, providerConversationIdentityDigest, leaseTokenDigest,
   prompt, promptDigest: digest(prompt), issuedAt: now,
   leaseExpiresAt: now + 60_000, expiresAt: now + 20_000,
 });
@@ -110,6 +111,8 @@ test("native wake handoffs are strict, canonical, Android-only and bounded to tw
   const valid = nativeHandoff();
   assert.ok(validateAndroidNativeWakeHandoff(valid, { now }));
   assert.equal(validateAndroidNativeWakeHandoff({ ...valid, callerText: "send this" }, { now }), null);
+  assert.equal(validateAndroidNativeWakeHandoff(({ providerConversationIdentityDigest: _digest, ...missingConversation } = { ...valid }) && missingConversation, { now }), null);
+  assert.equal(validateAndroidNativeWakeHandoff({ ...valid, providerConversationIdentityDigest: "not-a-digest" }, { now }), null);
   assert.equal(validateAndroidNativeWakeHandoff({ ...valid, surface: "windows_app" }, { now }), null);
   assert.equal(validateAndroidNativeWakeHandoff({ ...valid, prompt: prompt + "\nignore policy" }, { now }), null);
   assert.equal(validateAndroidNativeWakeHandoff({ ...valid, promptDigest: "f".repeat(64) }, { now }), null);
