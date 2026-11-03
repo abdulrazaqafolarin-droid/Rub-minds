@@ -148,6 +148,7 @@ export function validateAndroidNativeWakeResult(result, handoff) {
   // An ambiguous post-seal result is terminal review, never a safe retry.
   // It may not claim the stronger successful read-back/revalidation evidence.
   return result.reason !== undefined && result.composerCleared === false &&
+    (!result.sendInvoked || result.promptInserted) &&
     verificationEvidence.every(key => result[key] === undefined);
 }
 
