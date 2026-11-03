@@ -120,7 +120,7 @@ object AndroidComposerTargetPolicy {
  */
 object AndroidSendControlPolicy {
     private val acceptedLabels = setOf("send", "send message", "send prompt")
-    private val rejectedResourceTokens = setOf("email", "feedback", "share", "forward", "reply")
+    private val rejectedResourceSubstrings = setOf("resend", "email", "feedback", "share", "forward", "reply")
     private val targetIdPattern = Regex("^[a-f0-9]{64}$")
 
     fun isRecognizedLabel(label: String): Boolean =
@@ -129,7 +129,7 @@ object AndroidSendControlPolicy {
     fun isRecognizedResourceId(resourceId: String): Boolean {
         val leaf = resourceId.substringAfterLast('/').substringAfterLast(':')
         val lowercaseLeaf = leaf.lowercase()
-        if (lowercaseLeaf.contains("resend")) return false
+        if (rejectedResourceSubstrings.any { lowercaseLeaf.contains(it) }) return false
         val camelSeparated = Regex("([a-z0-9])([A-Z])").replace(leaf) { match ->
             "${match.groupValues[1]}_${match.groupValues[2]}"
         }
@@ -137,7 +137,7 @@ object AndroidSendControlPolicy {
             .split(Regex("[^A-Za-z0-9]+"))
             .filter { it.isNotBlank() }
             .map { it.lowercase() }
-        return "send" in tokens && rejectedResourceTokens.none { it in tokens }
+        return "send" in tokens
     }
 
     fun choose(
