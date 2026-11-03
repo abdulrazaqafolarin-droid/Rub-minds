@@ -320,6 +320,27 @@ class AndroidScreenShareService : Service() {
         }
     }
 
+    private fun safeNativeWakeReason(reason: String): String {
+        val value = reason.lowercase()
+        return when {
+            value.contains("outcome_unknown") || value.contains("already_reserved") ||
+                value.contains("replay_ledger") || value.contains("insertion_outcome_unknown") ||
+                value.contains("send_outcome") -> "outcome_unknown"
+            value.contains("foreground") || value.contains("active_app_window") -> "foreground_changed"
+            value.contains("not_empty") -> "composer_not_empty"
+            value.contains("composer") || value.contains("focus") || value.contains("target") &&
+                !value.contains("send") -> "composer_identity_changed"
+            value.contains("send_control_unavailable") || value.contains("send_control") &&
+                value.contains("unavailable") -> "send_control_unavailable"
+            value.contains("send") && value.contains("changed") -> "send_identity_changed"
+            value.contains("send") -> "send_unconfirmed"
+            value.contains("grant") || value.contains("permission") || value.contains("signer") ||
+                value.contains("approved") -> "permission_denied"
+            value.contains("device") || value.contains("session") -> "device_disconnected"
+            else -> "other"
+        }
+    }
+
     private fun acknowledgeNativeWake(
         token: String,
         commandId: String,
@@ -356,12 +377,25 @@ class AndroidScreenShareService : Service() {
             .put("promptInserted", result.promptInserted)
             .put("sendInvoked", result.sendInvoked)
             .put("composerCleared", result.composerCleared)
-            .put("promptReadbackVerified", result.promptReadbackVerified)
-            .put("composerIdentityRevalidated", result.composerIdentityRevalidated)
-            .put("sendControlIdentityRevalidated", result.sendControlIdentityRevalidated)
-        result.composerIdentityDigest?.let { evidence.put("composerIdentityDigest", it) }
-        result.sendControlIdentityDigest?.let { evidence.put("sendControlIdentityDigest", it) }
-        if (result.reason.isNotBlank()) evidence.put("reason", result.reason.take(120))
+
+        // Only a fully confirmed submission carries the stronger read-back and
+        // same-target revalidation claims. Preflight denials and ambiguous
+        // outcomes never masquerade as a verified send.
+        if (state == "submitted") {
+            val composerDigest = result.composerIdentityDigest
+                ?: return
+            val sendDigest = result.sendControlIdentityDigest
+                ?: return
+            evidence
+                .put("promptReadbackVerified", true)
+                .put("composerIdentityRevalidated", true)
+                .put("sendControlIdentityRevalidated", true)
+                .put("composerIdentityDigest", composerDigest)
+                .put("sendControlIdentityDigest", sendDigest)
+        } else {
+            val reason = safeNativeWakeReason(result.reason)
+            evidence.put("reason", reason)
+        }
         try {
             api?.post(
                 "android/ack",
