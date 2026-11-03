@@ -277,4 +277,10 @@ test('native wake fails closed without provider conversation identity and carrie
   assert.match(service, /providerConversationIdentityRevalidated = cleared/);
   assert.match(service, /providerConversationIdentityDigest = if \(providerConversationIdentityRevalidated\)/);
   assert.match(ime, /isSelectedComposerEmpty/);
+  assert.equal((ime.match(/isBoundToProviderConversation\(/g) || []).length, 2);
+  assert.match(store, /row.providerConversationIdentityDigest/);
+  assert.match(store, /providerConversationIdentityDigest = fields.getOrNull\(16\)/);
+  assert.match(store, /fields.size !in 16\.\.17/);
+  assert.match(consent, /val providerConversationIdentityDigest: String/);
+  assert.doesNotMatch(consent, /providerConversationIdentityDigest: String =/);
 });
