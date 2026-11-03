@@ -188,7 +188,13 @@ class NativeWakeConsentPolicyTest {
         assertTrue(result.allowed)
         assertEquals(1, result.reservations.size)
         val full = List(NativeWakeConsentPolicy.MAX_REPLAY_RECORDS) { index ->
-            expired.copy(jobId = jobUuid(index + 100), eventId = "old_$index", grantExpiresAtMillis = now + 60_000, reservedAtMillis = now)
+            expired.copy(
+                jobId = jobUuid(index + 100),
+                eventId = "old_$index",
+                leaseTokenDigest = index.toString().padStart(64, '0'),
+                grantExpiresAtMillis = now + 60_000,
+                reservedAtMillis = now
+            )
         }
         val blocked = NativeWakeConsentPolicy.reserveExecution(grant(), request(), full, now)
         assertFalse(blocked.allowed)
