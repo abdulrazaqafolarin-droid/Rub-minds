@@ -4,6 +4,12 @@
 
 The first Off / On / Auto control is supported only by a live, registered managed-browser composer whose local host reports canonical wake capability. It is not a general-purpose automatic typing switch for native Windows apps, Android apps, terminals, or arbitrary desktop windows. Those surfaces retain their separate manual draft and local-approval flows.
 
+## Native app-frame capability boundary — 2026-11-03
+
+The Windows desktop frame and Android Phone Frame now have source-level drag-select composer targeting and local discovery/revalidation of a single nearby Send control. Windows keeps the full UI Automation identity in native Rust memory; Android keeps the accessibility-node identity in the phone service. Both report only bounded availability/reason status to the Backroom frame. The recheck never clicks, invokes, presses Enter or submits.
+
+This is not the Off / On / Auto execution path. Both native frames remain draft-only and require their existing local typing approval. Native message sending, queue consumption, a device-bound wake grant, one-time execution seal, duplicate-action recovery and physical device acceptance are still outstanding. Do not present a successful Send-control recheck as permission to send or as native Auto support.
+
 ## Modes
 
 | Mode | Participation policy | Behavior |
