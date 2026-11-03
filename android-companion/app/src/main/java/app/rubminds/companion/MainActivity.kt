@@ -495,7 +495,7 @@ class MainActivity : Activity() {
             val wakeEnabled = selected && digest != null && deviceId != null &&
                 nativeWakeConsentStore.activeGrant(deviceId, app.packageName, digest) != null
             val wakeConsent = CheckBox(this).apply {
-                text = "Pre-authorize native @RMconnects wake + Send for 24 hours"
+                text = "Pre-authorize app-level native @RMconnects wake for 24 hours"
                 isChecked = wakeEnabled
                 isEnabled = selected && digest != null && deviceId != null
                 setOnCheckedChangeListener { _, checked ->
@@ -510,7 +510,7 @@ class MainActivity : Activity() {
             }
             row.addView(wakeConsent)
             row.addView(TextView(this).apply {
-                text = "Separate from draft typing. The phone-side queue consumer exists, but no group-wake producer currently forwards group events into it; saving consent alone triggers no action."
+                text = "App/signer-level consent only; it does not pin a particular ChatGPT/Claude conversation. Native autonomous sending stays unavailable until a provider-specific adapter can re-identify the same active conversation after navigation, and trusted group-to-device forwarding with result reconciliation is connected. Saving consent alone triggers no action."
                 textSize = 10f
                 setTextColor(0xff7b5b24.toInt())
                 setPadding(dp(8), 0, dp(8), dp(4))
@@ -558,12 +558,12 @@ class MainActivity : Activity() {
             return
         }
         android.app.AlertDialog.Builder(this)
-            .setTitle("Pre-authorize native AI wake for this app?")
+            .setTitle("Pre-authorize app-level native AI wake for this app?")
             .setMessage(
-                "This separate local consent is bound to this phone, the selected app and its current signing certificate for up to 24 hours. It authorizes only a properly scoped, event-bound @RMconnects handoff to insert the fixed trigger into the exact composer you select and send it through its uniquely verified Send control. It does not authorize arbitrary messages, group-message text injection, remote touch or ordinary draft typing.\n\nImportant: the phone-side native-wake queue consumer exists, but Rub Minds does not yet forward group wake events into that device queue. Saving this consent alone will not trigger any action in ChatGPT, Claude or another app."
+                "This separate local consent is bound to this phone, selected app and signing certificate for up to 24 hours. It is app-level permission only: it does not identify or pin a specific AI conversation/thread. A future native trigger must prove that the same provider conversation is still active after navigation, in addition to rechecking the selected composer and Send control. If an app cannot expose a stable conversation identity, native autonomous Send must remain unavailable for that app.\n\nThe phone-side queue consumer exists, but the provider-conversation identity adapter and trusted group-to-device forwarding/result reconciliation are not complete. Saving this consent alone will not trigger any action in ChatGPT, Claude or another app. It does not authorize arbitrary messages, message-body injection, remote touch or ordinary draft typing."
             )
             .setNegativeButton("Cancel") { _, _ -> drawAppRows() }
-            .setPositiveButton("Save local consent for 24 hours") { _, _ ->
+            .setPositiveButton("Save app-level consent for 24 hours") { _, _ ->
                 val currentDeviceId = pairedDeviceId()
                 val currentSigner = AppIdentity.signingCertificateSha256(this, packageName)
                 val currentGrant = currentSigner?.let { store.get(packageName, it) }
@@ -584,7 +584,7 @@ class MainActivity : Activity() {
                 if (saved == null) {
                     Toast.makeText(this, "Native wake consent could not be created.", Toast.LENGTH_LONG).show()
                 } else {
-                    Toast.makeText(this, "Local native-wake consent saved for 24 hours. Group-triggered wake remains unavailable until group-to-device forwarding and result reconciliation are connected.", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, "App-level native-wake consent saved for 24 hours. Native autonomous sending remains unavailable until provider-conversation identity verification and group-to-device forwarding/result reconciliation are implemented.", Toast.LENGTH_LONG).show()
                 }
                 drawAppRows()
             }
