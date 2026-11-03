@@ -81,7 +81,7 @@ This operation is read-only. It does not call UIA Invoke, click a button, send E
 | Duplicate/replayed recheck request or stale selection ID | Rejected without changing the current selection |
 | Successful discovery and successful recheck | Status only; never invoke, click, Enter or Send |
 
-Record physical results only after running the matrix on a real Windows 10/11 computer and an approved disposable app/group. Latest exact-head CI run `41618613375` (Windows) and `41618613370` (Android) failed before runner allocation (`runner_id=0`, empty runner name, no job steps); the durable SQL and main validation jobs did the same. No Rust/MSVC compiler result or Android Gradle result is available for this exact revision.
+Record physical results only after running the matrix on a real Windows 10/11 computer and an approved disposable app/group. Latest exact-head CI run `41618724844` (Windows) and `41618724559` (Android) failed before runner allocation (`runner_id=0`, empty runner name, no job steps); the durable SQL and main validation jobs did the same. No Rust/MSVC compiler result or Android Gradle result is available for this exact revision.
 ## Safety and lifecycle guarantees
 
 - The drag rectangle must be at least 65% covered by one resolved editable control. A centre-point hit with a rectangle spanning neighbouring controls is rejected.
