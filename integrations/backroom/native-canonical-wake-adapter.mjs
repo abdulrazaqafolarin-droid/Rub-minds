@@ -170,6 +170,8 @@ export class NativeCanonicalWakeAdapter {
         appId: this.#appId,
         sessionId: this.#sessionId,
         identityFingerprint: this.#identityFingerprint,
+        providerConversationIdentityVerified: state.providerConversationIdentityVerified,
+        providerConversationIdentityDigest: this.#providerConversationIdentityDigest,
         locatorKinds: Object.freeze(['accessibility']),
         nativeWakeReady: true,
       });
