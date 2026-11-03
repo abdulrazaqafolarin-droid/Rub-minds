@@ -7,6 +7,7 @@ const service = await read('../../android-companion/app/src/main/java/app/rubmin
 const ime = await read('../../android-companion/app/src/main/java/app/rubminds/companion/DraftInputMethodService.kt');
 const screen = await read('../../android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt');
 const handoffPolicy = await read('../../android-companion/app/src/main/java/app/rubminds/companion/AndroidNativeWakeHandoffPolicy.kt');
+const handoffTest = await read('../../android-companion/app/src/test/java/app/rubminds/companion/AndroidNativeWakeHandoffPolicyTest.kt');
 const consent = await read('../../android-companion/app/src/main/java/app/rubminds/companion/NativeWakeConsentPolicy.kt');
 const store = await read('../../android-companion/app/src/main/java/app/rubminds/companion/AndroidNativeWakeConsentStore.kt');
 const activity = await read('../../android-companion/app/src/main/java/app/rubminds/companion/MainActivity.kt');
@@ -198,4 +199,13 @@ test('native consent and one-shot journal mutations share a process-wide lock ac
     assert.match(store.slice(start, end), /synchronized\(STORE_LOCK\)/, `${name} must use the shared store lock`);
   }
   assert.doesNotMatch(store, /@Synchronized/);
+});
+
+test('Android issuer-skew regression preserves issue time and rejects skew beyond three seconds', () => {
+  assert.match(handoffPolicy, /handoffIssuedAtMillis = issuedAtMillis/);
+  assert.match(consent, /MAX_HANDOFF_CLOCK_SKEW_MILLIS = 3_000L/);
+  assert.match(consent, /handoffExpiresAt - handoffIssuedAt > MAX_HANDOFF_TTL_MILLIS/);
+  assert.match(handoffTest, /acceptsFutureIssuedHandoffWithinTheValidatedClockSkewAndPreservesItsTimestamp/);
+  assert.match(handoffTest, /now \+ 2_000L/);
+  assert.match(handoffTest, /now \+ 22_000L/);
 });
