@@ -10,6 +10,11 @@ class NativeWakeConsentPolicyTest {
     private val deviceId = "72000000-0000-4000-8000-000000000001"
     private val grantId = "75000000-0000-4000-8000-000000000001"
     private val sessionId = "74000000-0000-4000-8000-000000000001"
+    private val jobId = "76000000-0000-4000-8000-000000000001"
+    private val hostId = "77000000-0000-4000-8000-000000000001"
+    private val roomId = "78000000-0000-4000-8000-000000000001"
+    private val bindingId = "79000000-0000-4000-8000-000000000001"
+    private val leaseTokenDigest = "d".repeat(64)
     private val packageName = "com.example.chat"
     private val signer = "a".repeat(64)
     private val now = 1_800_000_000_000L
@@ -23,6 +28,11 @@ class NativeWakeConsentPolicyTest {
 
     private fun request(
         event: String = "70000000-0000-4000-8000-000000000001",
+        job: String = jobId,
+        host: String = hostId,
+        room: String = roomId,
+        binding: String = bindingId,
+        leaseDigest: String = leaseTokenDigest,
         device: String = deviceId,
         app: String = packageName,
         signing: String = signer,
@@ -30,8 +40,8 @@ class NativeWakeConsentPolicyTest {
         send: String = "c".repeat(64),
         revision: Int = 2
     ) = NativeWakeExecutionRequest(
-        grantId, device, sessionId, app, signing, event,
-        composer, send, revision
+        grantId, job, host, room, binding, leaseDigest,
+        device, sessionId, app, signing, event, composer, send, revision
     )
 
     @Test fun canonicalWakePromptIsEventBoundAndCannotCarryGroupMessageText() {
@@ -104,9 +114,31 @@ class NativeWakeConsentPolicyTest {
         assertEquals("native_wake_event_already_reserved", duplicate.reason)
     }
 
+    @Test fun rearmingLocalConsentCannotReplayTheSameDurableEventOrJob() {
+        val first = NativeWakeConsentPolicy.reserveExecution(grant(), request(), emptyList(), now)
+        assertTrue(first.allowed)
+        val renewedGrant = grantId.replace("0001", "0002")
+        val renewed = NativeWakeGrant(
+            renewedGrant, deviceId, packageName, signer,
+            now + 1_000L, now + 60L * 60L * 1000L
+        )
+        val duplicateEvent = NativeWakeConsentPolicy.reserveExecution(
+            renewed, request(job = "76000000-0000-4000-8000-000000000002"),
+            first.reservations, now + 2_000L
+        )
+        assertFalse(duplicateEvent.allowed)
+        assertEquals("native_wake_event_already_reserved", duplicateEvent.reason)
+        val duplicateJob = NativeWakeConsentPolicy.reserveExecution(
+            renewed, request(event = "another_event"), first.reservations, now + 2_000L
+        )
+        assertFalse(duplicateJob.allowed)
+        assertEquals("native_wake_event_already_reserved", duplicateJob.reason)
+    }
+
     @Test fun corruptExistingReplayRowsFailClosed() {
         val corrupt = NativeWakeExecutionReservation(
-            grantId, "bad event with spaces", deviceId, sessionId, packageName, signer,
+            grantId, "bad event with spaces", jobId, hostId, roomId, bindingId,
+            leaseTokenDigest, deviceId, sessionId, packageName, signer,
             "b".repeat(64), "c".repeat(64), 1, now, now + 60_000
         )
         val result = NativeWakeConsentPolicy.reserveExecution(grant(), request(), listOf(corrupt), now)
@@ -116,7 +148,8 @@ class NativeWakeConsentPolicyTest {
 
     @Test fun aFutureDatedReplayRecordCorruptsTheJournalAndFailsClosed() {
         val future = NativeWakeExecutionReservation(
-            grantId, "future_event", deviceId, sessionId, packageName, signer,
+            grantId, "future_event", jobId, hostId, roomId, bindingId,
+            leaseTokenDigest, deviceId, sessionId, packageName, signer,
             "b".repeat(64), "c".repeat(64), 1, now + 1L, now + 60_000
         )
         val result = NativeWakeConsentPolicy.reserveExecution(grant(), request(), listOf(future), now)
@@ -142,7 +175,8 @@ class NativeWakeConsentPolicyTest {
 
     @Test fun expiredReplayRowsArePrunedButLiveJournalCapacityFailsClosed() {
         val expired = NativeWakeExecutionReservation(
-            grantId, "old_event", deviceId, sessionId, packageName, signer,
+            grantId, "old_event", jobId, hostId, roomId, bindingId,
+            leaseTokenDigest, deviceId, sessionId, packageName, signer,
             "b".repeat(64), "c".repeat(64), 1,
             now - NativeWakeConsentPolicy.REPLAY_RETENTION_MILLIS - 1,
             now - 1
