@@ -13,7 +13,6 @@ import {buildCanonicalWakePrompt,isCanonicalWakePrompt,validId} from './coordina
 
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HEX=/^[a-f0-9]{64}$/;
-const ID=/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const SURFACES=new Set(['android_app','windows_app','desktop_app']);
 const REASONS=new Set([
  'foreground_changed','composer_not_empty','composer_identity_changed',
@@ -32,7 +31,8 @@ function exactKeys(value,keys){
   Object.keys(value).length===keys.length&&Object.keys(value).every(key=>keys.includes(key));
 }
 function validLease(lease){
- return !!lease&&typeof lease==='object'&&!Array.isArray(lease)&&
+ return exactKeys(lease,['jobId','leaseToken','eventId','roomId','bindingId','hostId','sessionId',
+  'targetId','targetIdentityFingerprint','targetRevision','prompt','promptDigest','expiresAt'])&&
   UUID.test(lease.jobId??'')&&validId(lease.eventId)&&
   UUID.test(lease.leaseToken??'')&&UUID.test(lease.roomId??'')&&
   UUID.test(lease.bindingId??'')&&nonempty(lease.hostId,128)&&
@@ -42,7 +42,9 @@ function validLease(lease){
   HEX.test(lease.promptDigest??'')&&sha256(lease.prompt)===lease.promptDigest;
 }
 function validScope(scope){
- return !!scope&&typeof scope==='object'&&!Array.isArray(scope)&&
+ return exactKeys(scope,['deviceId','roomId','screenSessionId','bindingId','hostId','sessionId',
+  'targetId','targetRevision','surface','appId','identityFingerprint','composerIdentityDigest',
+  'sendControlIdentityDigest'])&&
   UUID.test(scope.deviceId??'')&&UUID.test(scope.roomId??'')&&
   UUID.test(scope.screenSessionId??'')&&UUID.test(scope.bindingId??'')&&
   nonempty(scope.hostId,128)&&nonempty(scope.sessionId,256)&&
