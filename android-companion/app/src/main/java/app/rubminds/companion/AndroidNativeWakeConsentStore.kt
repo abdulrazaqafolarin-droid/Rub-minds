@@ -66,9 +66,25 @@ class AndroidNativeWakeConsentStore(context: Context) {
         val prefix = "$deviceId|$packageName|"
         val editor = preferences.edit()
         val keys = preferences.all().keys.filter { it.startsWith(prefix) }
-        keys.forEach(editor::remove)
+        keys.forEach { key -> editor.remove(key) }
         if (keys.isEmpty()) return 0
         check(editor.commit()) { "Could not revoke package native wake consent." }
+        return keys.size
+    }
+
+    @Synchronized
+    fun revokeDevice(deviceId: String): Int {
+        if (!deviceId.matches(Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"))) {
+            return 0
+        }
+        val prefix = "grant|$deviceId|"
+        val editor = preferences.edit()
+        val keys = preferences.all().keys.filter { it.startsWith(prefix) }
+        keys.forEach { key -> editor.remove(key) }
+        // This Android companion installation is paired to one device ID.
+        // Revoking that identity also retires its one-shot event journal.
+        editor.remove(KEY_RESERVATIONS)
+        check(editor.commit()) { "Could not revoke this device's native wake state." }
         return keys.size
     }
 
