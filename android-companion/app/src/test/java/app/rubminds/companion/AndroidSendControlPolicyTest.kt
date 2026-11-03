@@ -58,7 +58,9 @@ class AndroidSendControlPolicyTest {
             "com.example.chat:id/reSendButton",
             "com.example.chat:id/sendToEmail",
             "com.example.chat:id/composerSendFeedback",
-            "com.example.chat:id/sendToShare"
+            "com.example.chat:id/sendToShare",
+            "com.example.chat:id/sendEmailButton",
+            "com.example.chat:id/sendFeedbackButton"
         )) {
             val misleading = candidate(label = "", resourceId = resourceId)
             assertNull(AndroidSendControlPolicy.choose(
