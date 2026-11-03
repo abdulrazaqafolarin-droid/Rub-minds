@@ -109,42 +109,48 @@ export function validateAndroidSignal(value) {
 }
 
 export function validateAndroidNativeWakeResult(result, handoff) {
-  if (!exactKeys(result, Object.keys(result ?? {})) ||
-      Object.keys(result).some(key => !NATIVE_RESULT_KEYS.includes(key)) ||
-      !["version", "kind", "handoffId", "jobId", "deviceId", "roomId", "screenSessionId",
-        "bindingId", "targetId", "targetRevision", "state", "promptInserted", "sendInvoked",
-        "composerCleared", "promptReadbackVerified", "composerIdentityRevalidated",
-        "sendControlIdentityRevalidated"].every(key => Object.hasOwn(result, key)) ||
+  const required = [
+    "version", "kind", "handoffId", "jobId", "deviceId", "roomId", "screenSessionId",
+    "bindingId", "targetId", "targetRevision", "state", "promptInserted", "sendInvoked", "composerCleared",
+  ];
+  const optional = [
+    "promptReadbackVerified", "composerIdentityRevalidated", "sendControlIdentityRevalidated",
+    "composerIdentityDigest", "sendControlIdentityDigest", "reason",
+  ];
+  const reasons = new Set([
+    "foreground_changed", "composer_not_empty", "composer_identity_changed",
+    "send_control_unavailable", "send_identity_changed", "permission_denied",
+    "device_disconnected", "send_unconfirmed", "outcome_unknown", "other",
+  ]);
+  if (!result || typeof result !== "object" || Array.isArray(result) ||
+      Object.keys(result).some(key => ![...required, ...optional].includes(key)) ||
+      !required.every(key => Object.hasOwn(result, key)) ||
       result.version !== 1 || result.kind !== "native_wake_result" ||
       result.handoffId !== handoff?.handoffId || result.jobId !== handoff?.jobId ||
       result.deviceId !== handoff?.deviceId || result.roomId !== handoff?.roomId ||
       result.screenSessionId !== handoff?.screenSessionId || result.bindingId !== handoff?.bindingId ||
       result.targetId !== handoff?.targetId || result.targetRevision !== handoff?.targetRevision ||
       !NATIVE_RESULT_STATES.has(result.state) ||
-      !["promptInserted", "sendInvoked", "composerCleared", "promptReadbackVerified",
-        "composerIdentityRevalidated", "sendControlIdentityRevalidated"].every(key => typeof result[key] === "boolean") ||
-      (result.reason !== undefined && !isNonempty(result.reason, 120))) return false;
+      typeof result.promptInserted !== "boolean" || typeof result.sendInvoked !== "boolean" ||
+      typeof result.composerCleared !== "boolean" ||
+      (result.reason !== undefined && !reasons.has(result.reason))) return false;
 
   if (result.state === "preflight_denied") {
     return result.promptInserted === false && result.sendInvoked === false &&
-      result.composerCleared === false && result.promptReadbackVerified === false &&
-      result.composerIdentityRevalidated === false && result.sendControlIdentityRevalidated === false &&
-      result.composerIdentityDigest === undefined && result.sendControlIdentityDigest === undefined;
+      result.composerCleared === false &&
+      optional.every(key => result[key] === undefined);
   }
   if (result.state === "submitted") {
     return result.promptInserted === true && result.sendInvoked === true &&
       result.composerCleared === true && result.promptReadbackVerified === true &&
       result.composerIdentityRevalidated === true && result.sendControlIdentityRevalidated === true &&
       result.composerIdentityDigest === handoff?.composerIdentityDigest &&
-      result.sendControlIdentityDigest === handoff?.sendControlIdentityDigest;
+      result.sendControlIdentityDigest === handoff?.sendControlIdentityDigest &&
+      HEX.test(result.composerIdentityDigest ?? "") && HEX.test(result.sendControlIdentityDigest ?? "");
   }
-  if (result.composerIdentityDigest !== undefined && !HEX.test(result.composerIdentityDigest)) return false;
-  if (result.sendControlIdentityDigest !== undefined && !HEX.test(result.sendControlIdentityDigest)) return false;
-  if (result.composerIdentityDigest !== undefined &&
-      result.composerIdentityDigest !== handoff?.composerIdentityDigest) return false;
-  if (result.sendControlIdentityDigest !== undefined &&
-      result.sendControlIdentityDigest !== handoff?.sendControlIdentityDigest) return false;
-  return true;
+  // An ambiguous post-seal result is terminal review, never a safe retry.
+  // It may not claim the stronger successful read-back/revalidation evidence.
+  return optional.every(key => result[key] === undefined);
 }
 
 export function validateAndroidCommandAck(value) {
