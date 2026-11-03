@@ -19,6 +19,9 @@ class NativeWakeConsentPolicyTest {
     private val signer = "a".repeat(64)
     private val now = 1_800_000_000_000L
 
+    private fun jobUuid(index: Int) =
+        "76000000-0000-4000-8000-${index.toString().padStart(12, '0')}"
+
     private fun grant(
         device: String = deviceId,
         app: String = packageName,
@@ -161,7 +164,7 @@ class NativeWakeConsentPolicyTest {
         var rows = emptyList<NativeWakeExecutionReservation>()
         repeat(NativeWakeConsentPolicy.MAX_WAKES_PER_MINUTE) { index ->
             val decision = NativeWakeConsentPolicy.reserveExecution(
-                grant(), request(event = "event_$index"), rows, now + index * 1_000L
+                grant(), request(event = "event_$index", job = jobUuid(index + 1)), rows, now + index * 1_000L
             )
             assertTrue(decision.allowed)
             rows = decision.reservations
@@ -185,7 +188,7 @@ class NativeWakeConsentPolicyTest {
         assertTrue(result.allowed)
         assertEquals(1, result.reservations.size)
         val full = List(NativeWakeConsentPolicy.MAX_REPLAY_RECORDS) { index ->
-            expired.copy(eventId = "old_$index", grantExpiresAtMillis = now + 60_000, reservedAtMillis = now)
+            expired.copy(jobId = jobUuid(index + 100), eventId = "old_$index", grantExpiresAtMillis = now + 60_000, reservedAtMillis = now)
         }
         val blocked = NativeWakeConsentPolicy.reserveExecution(grant(), request(), full, now)
         assertFalse(blocked.allowed)
