@@ -87,6 +87,10 @@ data class NativeWakeInsertResult(
     val reason: String
 )
 
+internal object NativeWakeJournalLock {
+    val monitor = Any()
+}
+
 object NativeWakeConsentPolicy {
     const val MAX_GRANT_TTL_MILLIS = 24L * 60L * 60L * 1000L
     const val MIN_GRANT_TTL_MILLIS = 60L * 1000L
