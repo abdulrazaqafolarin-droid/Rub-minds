@@ -278,7 +278,12 @@ test('native wake fails closed without provider conversation identity and carrie
   assert.match(service, /providerConversationIdentityRevalidated = cleared/);
   assert.match(service, /providerConversationIdentityDigest = if \(providerConversationIdentityRevalidated\)/);
   assert.match(ime, /isSelectedComposerEmpty/);
-  assert.equal((ime.match(/isBoundToProviderConversation\(/g) || []).length, 2);
+  assert.equal((ime.match(/isBoundToProviderConversation\(/g) || []).length, 3);
+  assert.match(ime, /provider_conversation_identity_changed_after_seal/);
+  const serviceSubmit = method(service, '    fun submitCanonicalWake(', '    private fun awaitComposerClear(');
+  const insertionGuard = method(serviceSubmit, '            val insertion = synchronized(this)', '            if (insertion == null)');
+  assert.match(insertionGuard, /currentProviderConversationIdentityDigest\(request\.packageName\)/);
+  assert.match(insertionGuard, /DraftInputMethodService\.insertNativeWakeTrigger\(request\)/);
   assert.match(store, /row.providerConversationIdentityDigest/);
   assert.match(store, /providerConversationIdentityDigest = fields.getOrNull\(16\)/);
   assert.match(store, /fields.size !in 16\.\.17/);
