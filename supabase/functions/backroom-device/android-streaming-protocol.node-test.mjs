@@ -149,6 +149,7 @@ test("native wake result requires matching handoff scope and complete evidence f
   assert.equal(validateAndroidNativeWakeResult({ ...result, sendInvoked: false }, handoff), false);
   assert.equal(validateAndroidNativeWakeResult({ ...result, composerIdentityDigest: "e".repeat(64) }, handoff), false);
   assert.equal(validateAndroidNativeWakeResult({ ...result, editorText: "private" }, handoff), false);
+  assert.equal(validateAndroidNativeWakeResult({ ...result, reason: "other" }, handoff), false);
 });
 
 test("native wake preflight denial cannot claim any side effect and ACK remains exact", () => {
@@ -161,6 +162,8 @@ test("native wake preflight denial cannot claim any side effect and ACK remains 
   };
   assert.equal(validateAndroidNativeWakeResult(nativeWakeResult, handoff), true);
   assert.equal(validateAndroidNativeWakeResult({ ...nativeWakeResult, sendInvoked: true }, handoff), false);
+  const { reason: _denialReason, ...missingReason } = nativeWakeResult;
+  assert.equal(validateAndroidNativeWakeResult(missingReason, handoff), false);
   assert.equal(validateAndroidNativeWakeResult({
     ...nativeWakeResult, promptReadbackVerified: false,
   }, handoff), false);
@@ -186,6 +189,8 @@ test("native wake needs-review is terminal evidence and cannot claim a safe retr
   assert.equal(validateAndroidNativeWakeResult({ ...review, sendInvoked: true, composerCleared: false }, handoff), true);
   assert.equal(validateAndroidNativeWakeResult({ ...review, sendInvoked: true, composerCleared: true }, handoff), false);
   assert.equal(validateAndroidNativeWakeResult({ ...review, reason: "private_editor_text" }, handoff), false);
+  const { reason: _reviewReason, ...missingReviewReason } = review;
+  assert.equal(validateAndroidNativeWakeResult(missingReviewReason, handoff), false);
 });
 
 test("ordinary command rows cannot smuggle a native wake handoff or arbitrary action", () => {
