@@ -6,6 +6,7 @@ const read = path => readFile(new URL(path, import.meta.url), 'utf8');
 const service = await read('../../android-companion/app/src/main/java/app/rubminds/companion/AndroidTouchAccessibilityService.kt');
 const ime = await read('../../android-companion/app/src/main/java/app/rubminds/companion/DraftInputMethodService.kt');
 const screen = await read('../../android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt');
+const handoffPolicy = await read('../../android-companion/app/src/main/java/app/rubminds/companion/AndroidNativeWakeHandoffPolicy.kt');
 const consent = await read('../../android-companion/app/src/main/java/app/rubminds/companion/NativeWakeConsentPolicy.kt');
 const store = await read('../../android-companion/app/src/main/java/app/rubminds/companion/AndroidNativeWakeConsentStore.kt');
 const activity = await read('../../android-companion/app/src/main/java/app/rubminds/companion/MainActivity.kt');
@@ -154,4 +155,24 @@ test('local UI warns that saving consent does not activate remote automatic Send
   assert.match(activity, /will not trigger any action in ChatGPT, Claude or another app/i);
   assert.match(activity, /private fun pairedDeviceId\(\)/);
   assert.match(activity, /val credential = vault\.token\(\) \?: return null/);
+});
+test('the 20-second native handoff deadline is carried to the driver and rechecked before seal, insertion and Send', () => {
+  assert.match(handoffPolicy, /handoffExpiresAtMillis = expiresAtMillis/);
+  assert.match(consent, /MAX_HANDOFF_TTL_MILLIS = 20_000L/);
+  assert.match(consent, /request\.handoffExpiresAtMillis <= nowMillis/);
+  const nativeInsert = method(
+    ime,
+    'private fun insertNativeWakeTrigger(request: NativeWakeExecutionRequest)',
+    '    companion object {'
+  );
+  assert.match(nativeInsert, /reserveExecution\(request\)/);
+  assert.match(nativeInsert, /request\.handoffExpiresAtMillis <= System\.currentTimeMillis\(\)/);
+  const submit = method(
+    service,
+    'fun submitCanonicalWake(',
+    '    private fun awaitComposerClear('
+  );
+  const deadlineChecks = [...submit.matchAll(/request\.handoffExpiresAtMillis <= System\.currentTimeMillis\(\)/g)];
+  assert.ok(deadlineChecks.length >= 3);
+  assert.match(submit, /native_wake_handoff_expired_after_seal/);
 });
