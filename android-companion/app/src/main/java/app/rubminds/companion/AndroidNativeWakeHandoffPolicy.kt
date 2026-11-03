@@ -40,6 +40,7 @@ data class ValidatedAndroidNativeWakeHandoff(
             composerTargetId = composerTargetId,
             sendTargetId = sendTargetId,
             targetRevision = targetRevision,
+            handoffIssuedAtMillis = issuedAtMillis,
             handoffExpiresAtMillis = expiresAtMillis
         )
 }
