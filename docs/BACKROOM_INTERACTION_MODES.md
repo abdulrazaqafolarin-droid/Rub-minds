@@ -14,7 +14,7 @@ This is not the Off / On / Auto execution path. Both native frames remain draft-
 
 A shared `NativeCanonicalWakeAdapter` interface and Node regression tests now define how an already-authorized durable event wake can be executed by a future Android or Windows accessibility driver. The interface binds one native target revision and requires the exact empty composer plus one unique, visible, enabled and identity-verified Send control. It accepts only the canonical event-bound `@RMconnects` prompt, requires proof that the durable one-time execution seal and one-shot local grant were acquired, and reports success only after the same composer clears.
 
-This is a **contract, not an enabled device capability**. No Android or Windows platform driver implements the contract yet; no device-bound durable queue consumer or separate native wake-grant lifecycle is connected. The Android WebRTC `remote_text` channel remains draft-only and must not be used to transport durable wake jobs or invoke Send. Native Send, native Off / On / Auto, host-server composition, production backend changes and physical acceptance remain unavailable/deferred.
+This is a **contract, not an enabled device capability**. No Android or Windows platform driver implements the contract yet; a separate process-local native wake-grant authority and seal/consume helper now exist as source contracts, but no Android/Windows local approval screen or device-bound durable queue consumer is connected. The Android WebRTC `remote_text` channel remains draft-only and must not be used to transport durable wake jobs or invoke Send. Native Send, native Off / On / Auto, host-server composition, production backend changes and physical acceptance remain unavailable/deferred.
 
 ## Modes
 
