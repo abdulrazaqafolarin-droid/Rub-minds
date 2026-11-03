@@ -162,3 +162,15 @@ Record one row per test, with PASS/FAIL/NOT RUN and supporting evidence.
 Do not mark physical acceptance complete from source inspection, unit tests or a successful APK build. Do not apply the migration, deploy the Edge Function, or modify production Vercel/Supabase as part of this acceptance. Keep the PR draft until the handset matrix and a separately approved staging test pass.
 
 Android guest virtualization remains a separate gate: this implementation mirrors a real installed app. It does not create an isolated guest process/data container or render a guest-only virtual display.
+
+
+## Provider-conversation isolation acceptance — not yet implemented
+
+| Scenario | Required behavior | Current status |
+|---|---|---|
+| Select composer in conversation A, then navigate to B while app reuses the same composer and Send nodes | Old A wake is rejected before trigger insertion and before Send | **Blocked:** provider-conversation identity resolver/digest is not implemented |
+| Navigate from A to B after canonical trigger insertion but before Send | Final conversation-scope recheck rejects; one-shot seal remains terminal and no automatic retry occurs | **Blocked:** provider-conversation identity resolver/digest is not implemented |
+| Navigate away after Send while waiting for composer clear | ACK cannot claim a verified result for a different conversation; ambiguous result becomes needs_review | **Blocked:** provider-conversation identity resolver/digest is not implemented |
+| App exposes no stable conversation identity | App remains draft-only for autonomous native participation, even if composer/Send discovery succeeds | **Required fail-closed behavior** |
+
+A Rub Minds MCP/AI session ID and an Android screen-share session ID are not provider conversation IDs. The provider-specific resolver must bind the original conversation locally without uploading its title, transcript or message content.
