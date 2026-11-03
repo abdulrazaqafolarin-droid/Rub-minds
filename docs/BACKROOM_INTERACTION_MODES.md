@@ -10,6 +10,12 @@ The Windows desktop frame and Android Phone Frame now have source-level drag-sel
 
 This is not the Off / On / Auto execution path. Both native frames remain draft-only and require their existing local typing approval. Native message sending, queue consumption, a device-bound wake grant, one-time execution seal, duplicate-action recovery and physical device acceptance are still outstanding. Do not present a successful Send-control recheck as permission to send or as native Auto support.
 
+## Native canonical-wake adapter contract — 2026-11-03
+
+A shared `NativeCanonicalWakeAdapter` interface and Node regression tests now define how an already-authorized durable event wake can be executed by a future Android or Windows accessibility driver. The interface binds one native target revision and requires the exact empty composer plus one unique, visible, enabled and identity-verified Send control. It accepts only the canonical event-bound `@RMconnects` prompt, requires proof that the durable one-time execution seal and one-shot local grant were acquired, and reports success only after the same composer clears.
+
+This is a **contract, not an enabled device capability**. No Android or Windows platform driver implements the contract yet; no device-bound durable queue consumer or separate native wake-grant lifecycle is connected. The Android WebRTC `remote_text` channel remains draft-only and must not be used to transport durable wake jobs or invoke Send. Native Send, native Off / On / Auto, host-server composition, production backend changes and physical acceptance remain unavailable/deferred.
+
 ## Modes
 
 | Mode | Participation policy | Behavior |
