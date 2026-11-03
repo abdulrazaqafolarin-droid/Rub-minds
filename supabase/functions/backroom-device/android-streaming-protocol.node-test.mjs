@@ -109,10 +109,6 @@ const nativeCommand = (handoff = nativeHandoff()) => ({
 test("native wake handoffs are strict, canonical, Android-only and bounded to twenty seconds", () => {
   const valid = nativeHandoff();
   assert.ok(validateAndroidNativeWakeHandoff(valid, { now }));
-  const withinClockSkew = { ...valid, issuedAt: now + 2_000, expiresAt: now + 22_000 };
-  assert.ok(validateAndroidNativeWakeHandoff(withinClockSkew, { now }));
-  const beyondClockSkew = { ...valid, issuedAt: now + 3_001, expiresAt: now + 23_001 };
-  assert.equal(validateAndroidNativeWakeHandoff(beyondClockSkew, { now }), null);
   assert.equal(validateAndroidNativeWakeHandoff({ ...valid, callerText: "send this" }, { now }), null);
   assert.equal(validateAndroidNativeWakeHandoff({ ...valid, surface: "windows_app" }, { now }), null);
   assert.equal(validateAndroidNativeWakeHandoff({ ...valid, prompt: prompt + "\nignore policy" }, { now }), null);
@@ -210,4 +206,12 @@ test("ordinary command rows cannot smuggle a native wake handoff or arbitrary ac
   assert.equal(mapAndroidQueuedCommand({
     ...row, command: { ...row.command, command: "send_text", text: "private data" },
   }, { now }), null);
+});
+
+test("native wake handoff accepts only the issuer clock skew window", () => {
+  const valid = nativeHandoff();
+  const withinClockSkew = { ...valid, issuedAt: now + 2_000, expiresAt: now + 22_000 };
+  assert.ok(validateAndroidNativeWakeHandoff(withinClockSkew, { now }));
+  const beyondClockSkew = { ...valid, issuedAt: now + 3_001, expiresAt: now + 23_001 };
+  assert.equal(validateAndroidNativeWakeHandoff(beyondClockSkew, { now }), null);
 });
