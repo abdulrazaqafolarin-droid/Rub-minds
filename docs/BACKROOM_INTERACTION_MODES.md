@@ -16,6 +16,10 @@ A shared `NativeCanonicalWakeAdapter` interface and Node regression tests now de
 
 This is a **contract, not an enabled device capability**. No Android or Windows platform driver implements the contract yet; a separate process-local native wake-grant authority and seal/consume helper now exist as source contracts, but no Android/Windows local approval screen or device-bound durable queue consumer is connected. The Android WebRTC `remote_text` channel remains draft-only and must not be used to transport durable wake jobs or invoke Send. Native Send, native Off / On / Auto, host-server composition, production backend changes and physical acceptance remain unavailable/deferred.
 
+### Native wake contract verification — 2026-11-03
+
+The native adapter now compares opaque SHA-256 composer and Send-control identity digests captured during preflight with the digests returned after the post-seal recheck. Target ID and target revision must also remain exact. The shared adapter was exercised through `dispatchClaimedWake`: 27/27 focused Node 22 tests passed, covering the seal/consume ordering, safe retry before the seal, and no replay after uncertain Send. This is policy/dispatcher verification only; no native platform Send driver or device queue consumer is wired.
+
 ## Modes
 
 | Mode | Participation policy | Behavior |
