@@ -16,6 +16,8 @@ const consent = await read('../../android-companion/app/src/main/java/app/rubmin
 const store = await read('../../android-companion/app/src/main/java/app/rubminds/companion/AndroidNativeWakeConsentStore.kt');
 const activity = await read('../../android-companion/app/src/main/java/app/rubminds/companion/MainActivity.kt');
 const devicesUi = await read('../../src/BackroomDevicesApp.tsx');
+const androidFrameUi = await read('../../src/BackroomAndroidControl.tsx');
+const composerPolicy = await read('../../android-companion/app/src/main/java/app/rubminds/companion/AndroidComposerTargetPolicy.kt');
 
 function method(source, start, end) {
   const from = source.indexOf(start);
@@ -295,4 +297,18 @@ test('native wake fails closed without provider conversation identity and carrie
   assert.match(store, /fields.size !in 16\.\.17/);
   assert.match(consent, /val providerConversationIdentityDigest: String/);
   assert.doesNotMatch(consent, /providerConversationIdentityDigest: String =/);
+});
+test('composer selection distinguishes Send discovery from provider-conversation readiness without exporting its digest', () => {
+  assert.match(composerPolicy, /providerConversationIdentityAvailable: Boolean = false/);
+  assert.match(service, /ProviderConversationIdentityPolicy\.isValidDigest\(providerConversationDigest\)/);
+  const composerAck = method(
+    screen,
+    'private fun sendComposerTargetAcknowledgement(',
+    'private fun sendSendControlVerificationAcknowledgement('
+  );
+  assert.match(composerAck, /providerConversationIdentityAvailable/);
+  assert.doesNotMatch(composerAck, /providerConversationIdentityDigest|providerConversationDigest/);
+  assert.match(androidFrameUi, /acknowledgement\.providerConversationIdentityAvailable === true/);
+  assert.match(androidFrameUi, /native wake blocked/);
+  assert.match(androidFrameUi, /does not expose a verified stable conversation identity/);
 });
