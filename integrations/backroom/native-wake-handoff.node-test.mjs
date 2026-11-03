@@ -58,6 +58,7 @@ test('creates an immutable short-lived handoff containing only a canonical event
  assert.equal(handoff.version,1);
  assert.equal(handoff.prompt,prompt);
  assert.equal(handoff.promptDigest,digestPrompt(prompt));
+ assert.equal(handoff.providerConversationIdentityDigest,scope.providerConversationIdentityDigest);
  assert.equal(handoff.leaseTokenDigest,digestPrompt(lease.leaseToken));
  assert.equal('leaseToken' in handoff,false);
  assert.equal(handoff.expiresAt,now+20_000);
@@ -74,6 +75,7 @@ test('handoff expiry never exceeds the original durable lease expiry',()=>{
 });
 
 test('rejects a target/room/device/session/binding scope mismatch before handoff creation',()=>{
+ // The provider-conversation digest is bound to both the lease and device scope.
  assert.throws(()=>create({}, {now, handoffId:'invalid'}),/identity or clock/);
  for(const mutate of [
   s=>s.roomId='73000000-0000-4000-8000-000000000099',
