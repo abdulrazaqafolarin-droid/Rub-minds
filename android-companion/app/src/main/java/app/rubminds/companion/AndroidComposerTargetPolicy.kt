@@ -44,7 +44,8 @@ data class ComposerSelectionDecision(
     val candidate: ComposerCandidate?,
     val reason: String,
     val sendControl: SendControlCandidate? = null,
-    val sendReason: String = "not_checked"
+    val sendReason: String = "not_checked",
+    val providerConversationIdentityAvailable: Boolean = false
 )
 
 /**
