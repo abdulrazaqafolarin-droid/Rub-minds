@@ -53,6 +53,8 @@ test('creates an immutable short-lived handoff containing only a canonical event
  assert.equal(handoff.version,1);
  assert.equal(handoff.prompt,prompt);
  assert.equal(handoff.promptDigest,digestPrompt(prompt));
+ assert.equal(handoff.leaseTokenDigest,digestPrompt(lease.leaseToken));
+ assert.equal('leaseToken' in handoff,false);
  assert.equal(handoff.expiresAt,now+20_000);
  assert.equal(Object.isFrozen(handoff),true);
  assert.equal('messageBody' in handoff,false);
@@ -85,6 +87,8 @@ test('rejects message text, wrong event prompt and prompt-digest tampering',()=>
  assert.equal(validateNativeWakeHandoff({...h,prompt:'hello'},scope,{now}),null);
  assert.equal(validateNativeWakeHandoff({...h,promptDigest:'0'.repeat(64)},scope,{now}),null);
  assert.equal(validateNativeWakeHandoff({...h,messageBody:'private text'},scope,{now}),null);
+ assert.equal(validateNativeWakeHandoff({...h,leaseToken:lease.leaseToken},scope,{now}),null);
+ assert.equal(validateNativeWakeHandoff({...h,leaseTokenDigest:'bad'},scope,{now}),null);
 });
 
 test('rejects unsupported surface, stale/future handoffs and lease-expiry extension',()=>{
