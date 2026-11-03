@@ -27,7 +27,8 @@ data class NativeWakeExecutionRequest(
     val eventId: String,
     val composerTargetId: String,
     val sendTargetId: String,
-    val targetRevision: Int
+    val targetRevision: Int,
+    val handoffExpiresAtMillis: Long
 )
 
 data class NativeWakeExecutionReservation(
@@ -88,6 +89,7 @@ data class NativeWakeInsertResult(
 object NativeWakeConsentPolicy {
     const val MAX_GRANT_TTL_MILLIS = 24L * 60L * 60L * 1000L
     const val MIN_GRANT_TTL_MILLIS = 60L * 1000L
+    const val MAX_HANDOFF_TTL_MILLIS = 20_000L
     const val MAX_WAKES_PER_MINUTE = 6
     const val MAX_REPLAY_RECORDS = 4096
     const val REPLAY_RETENTION_MILLIS = MAX_GRANT_TTL_MILLIS
@@ -196,6 +198,9 @@ object NativeWakeConsentPolicy {
                 grant, request.deviceId, request.packageName,
                 request.signingCertificateSha256, nowMillis
             )) return denied("native_wake_grant_inactive")
+        if (request.handoffExpiresAtMillis <= nowMillis ||
+            request.handoffExpiresAtMillis - nowMillis > MAX_HANDOFF_TTL_MILLIS
+        ) return denied("native_wake_handoff_expired")
         if (request.grantId != grant?.grantId ||
             !uuid.matches(request.jobId) ||
             !uuid.matches(request.hostId) ||
