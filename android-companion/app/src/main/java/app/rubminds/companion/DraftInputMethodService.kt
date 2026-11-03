@@ -304,6 +304,13 @@ class DraftInputMethodService : InputMethodService() {
             return NativeWakeInsertResult(state, seal.reason)
         }
 
+        // The handoff deadline is checked again after the durable seal. If
+        // it expired while the IME was being entered, retain the seal and do
+        // not insert a now-stale trigger.
+        if (request.handoffExpiresAtMillis <= System.currentTimeMillis()) {
+            return NativeWakeInsertResult(NativeWakeInsertState.NEEDS_REVIEW, "native_wake_handoff_expired_after_seal")
+        }
+
         // Once the seal exists, every uncertain insertion outcome is terminal:
         // the caller must not retry this event automatically.
         return try {
