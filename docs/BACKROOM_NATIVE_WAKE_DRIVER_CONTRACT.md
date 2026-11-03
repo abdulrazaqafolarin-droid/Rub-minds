@@ -94,3 +94,18 @@ The Android native-wake driver performs narrowly scoped **local-only** reads of 
 - The host-server bootstrap, its remote routes and production backend remain unchanged and deferred.
 
 Do not enable native On or Auto until the trusted host forwarder and result reconciliation, Android queue/driver path, Windows native driver, separate local consent, durable no-replay behavior and physical acceptance are complete.
+
+
+## Windows UI Automation Send-driver boundary — 2026-11-03
+
+The Windows companion currently implements **read-only** Send discovery and recheck:
+
+- `select_draft_target` stores the full `SendControlIdentity` (process ID, runtime ID, class, accessible name, AutomationId and bounds) in native Rust state; it serializes only the generated selection ID plus an availability flag/reason to the WebView.
+- `recheck_draft_send_control` requires the same session and selection ID, revalidates the empty composer and foreground app, and compares the exact Send identity. It explicitly does not call UIA Invoke or a mouse click.
+- The current generic draft-approval path consumes the selection and writes text only. It never presses Enter, invokes Send or retries an uncertain write.
+
+The pinned `uiautomation = 0.25.1` crate exposes an `actions::Invoke` trait implemented for `ButtonControl`, and a `UIInvokePattern::invoke()` method. This is the appropriate native UI Automation primitive for a future button action; Microsoft describes Invoke as activating the control's single unambiguous action. References: [uiautomation 0.25.1 Invoke trait](https://docs.rs/uiautomation/0.25.1/uiautomation/actions/trait.Invoke.html), [UIInvokePattern](https://docs.rs/uiautomation/0.25.1/uiautomation/patterns/struct.UIInvokePattern.html), and [Microsoft UI Automation Invoke](https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomationinvokepattern-invoke).
+
+A future Windows driver must not simply call Invoke on the previously cached identity. It must, after a durable one-shot seal, obtain a fresh UIA snapshot and prove all of the following within that operation: the selected Backroom-launched foreground window is unchanged; the same composer identity now contains exactly the canonical event prompt; exactly one nearby visible/enabled Send button remains; the fresh button's complete identity equals the drag-time identity; and the same resolved button supports Invoke. It must then invoke that exact button, read the same composer locally until it clears or times out, and return explicit structured evidence. The complete UIA identity and composer text remain native-local.
+
+Still required before implementing/enabling this action: a Windows-native 24-hour app/signer/target-scoped consent grant; a persistent one-shot event/job/lease journal with concurrency and crash/no-replay semantics; an authenticated device-bound handoff from the trusted group-wake producer; a bounded ACK/result path back to group coordination; and physical Windows acceptance. A WebView caller must never be able to supply an arbitrary prompt or bypass the signed handoff/local-consent checks through direct Tauri IPC. Until those exist, Windows Send recheck remains read-only and Windows native Off / On / Auto remains unavailable.
