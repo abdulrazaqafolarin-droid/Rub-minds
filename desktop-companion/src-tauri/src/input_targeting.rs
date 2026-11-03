@@ -64,6 +64,117 @@ pub struct EditableTargetIdentity {
     pub bounds: [i32; 4],
 }
 
+/// Exact local UI Automation identity of a possible Send control.
+/// Accessible name and automation ID remain in the native process only.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SendControlIdentity {
+    pub process_id: u32,
+    pub runtime_id: Vec<i32>,
+    pub class_name: String,
+    pub accessible_name: String,
+    pub automation_id: String,
+    pub bounds: [i32; 4],
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SendControlInspection {
+    pub candidate: Option<SendControlIdentity>,
+    pub reason: &'static str,
+}
+
+fn rect_is_valid(rect: [i32; 4]) -> bool {
+    rect[2] > rect[0] && rect[3] > rect[1]
+}
+
+fn rect_inside(inner: [i32; 4], outer: [i32; 4]) -> bool {
+    rect_is_valid(inner) && rect_is_valid(outer)
+        && inner[0] >= outer[0] && inner[1] >= outer[1]
+        && inner[2] <= outer[2] && inner[3] <= outer[3]
+}
+
+fn axis_gap(a_start: i32, a_end: i32, b_start: i32, b_end: i32) -> i64 {
+    if a_end < b_start { i64::from(b_start) - i64::from(a_end) }
+    else if b_end < a_start { i64::from(a_start) - i64::from(b_end) }
+    else { 0 }
+}
+
+/// Button names must be exact. Resource IDs are used only when the accessible
+/// name is empty, and only when "send" is its own identifier token.
+pub fn is_recognized_send_label(name: &str, automation_id: &str) -> bool {
+    let normalized = name.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    if matches!(normalized.as_str(), "send" | "send message" | "send prompt") {
+        return true;
+    }
+    if !name.trim().is_empty() || automation_id.trim().is_empty() {
+        return false;
+    }
+
+    let chars: Vec<char> = automation_id.chars().collect();
+    let mut token = String::new();
+    let mut tokens = Vec::<String>::new();
+    for (index, ch) in chars.iter().copied().enumerate() {
+        if !ch.is_ascii_alphanumeric() {
+            if !token.is_empty() { tokens.push(std::mem::take(&mut token)); }
+            continue;
+        }
+        if ch.is_ascii_uppercase() && !token.is_empty()
+            && chars.get(index.wrapping_sub(1)).is_some_and(|previous| previous.is_ascii_lowercase() || previous.is_ascii_digit())
+        {
+            tokens.push(std::mem::take(&mut token));
+        }
+        token.push(ch.to_ascii_lowercase());
+    }
+    if !token.is_empty() { tokens.push(token); }
+    tokens.iter().any(|item| item == "send")
+}
+
+pub fn validate_send_control_candidate(
+    control_type: &str,
+    enabled: bool,
+    offscreen: bool,
+    same_process: bool,
+    name: &str,
+    automation_id: &str,
+    window_bounds: [i32; 4],
+    composer_bounds: [i32; 4],
+    candidate_bounds: [i32; 4],
+) -> Result<(), &'static str> {
+    if control_type != "Button" { return Err("not_button_control"); }
+    if !enabled { return Err("disabled_control"); }
+    if offscreen { return Err("offscreen_control"); }
+    if !same_process { return Err("different_process"); }
+    if !rect_is_valid(window_bounds) || !rect_is_valid(composer_bounds) || !rect_is_valid(candidate_bounds) {
+        return Err("invalid_control_bounds");
+    }
+    if !rect_inside(candidate_bounds, window_bounds) { return Err("outside_selected_app_window"); }
+    if !is_recognized_send_label(name, automation_id) { return Err("unrecognized_send_control"); }
+
+    let composer_width = i64::from(composer_bounds[2]) - i64::from(composer_bounds[0]);
+    let composer_height = i64::from(composer_bounds[3]) - i64::from(composer_bounds[1]);
+    let window_width = i64::from(window_bounds[2]) - i64::from(window_bounds[0]);
+    let window_height = i64::from(window_bounds[3]) - i64::from(window_bounds[1]);
+    let max_horizontal_gap = 96_i64.max(composer_width / 2).max(window_width / 10);
+    let max_vertical_gap = 96_i64.max(composer_height * 3).max(window_height / 10);
+    let horizontal_gap = axis_gap(
+        composer_bounds[0], composer_bounds[2], candidate_bounds[0], candidate_bounds[2],
+    );
+    let vertical_gap = axis_gap(
+        composer_bounds[1], composer_bounds[3], candidate_bounds[1], candidate_bounds[3],
+    );
+    if horizontal_gap > max_horizontal_gap || vertical_gap > max_vertical_gap {
+        return Err("send_control_not_near_composer");
+    }
+    Ok(())
+}
+
+pub fn choose_send_control(candidates: Vec<SendControlIdentity>) -> SendControlInspection {
+    match candidates.len() {
+        0 => SendControlInspection { candidate: None, reason: "unique_nearby_send_control_not_found" },
+        1 => SendControlInspection { candidate: candidates.into_iter().next(), reason: "unique_send_control_verified" },
+        _ => SendControlInspection { candidate: None, reason: "multiple_send_controls_ambiguous" },
+    }
+}
+
 pub fn inspect_at(x: i32, y: i32) -> Result<(EditableTargetIdentity, String), String> {
     #[cfg(target_os = "windows")]
     {
