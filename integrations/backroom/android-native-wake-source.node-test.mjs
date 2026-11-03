@@ -151,7 +151,9 @@ test('native wake consent is device, app and signer bound with a 24-hour cap and
 
 test('local UI warns that saving consent does not activate remote automatic Send', () => {
   assert.match(activity, /Save local consent for 24 hours/);
-  assert.match(activity, /native wake delivery and automatic Send are not connected in this build/i);
+  assert.match(activity, /phone-side native-wake queue consumer exists/i);
+  assert.match(activity, /does not yet forward group wake events into that device queue/i);
+  assert.match(activity, /Saving this consent alone will not trigger any action/i);
   assert.match(activity, /will not trigger any action in ChatGPT, Claude or another app/i);
   assert.match(activity, /private fun pairedDeviceId\(\)/);
   assert.match(activity, /val credential = vault\.token\(\) \?: return null/);
