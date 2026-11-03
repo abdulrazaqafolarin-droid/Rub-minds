@@ -598,6 +598,30 @@ class AndroidScreenShareService : Service() {
         runCatching { channel.send(DataChannel.Buffer(ByteBuffer.wrap(payload.toString().toByteArray(Charsets.UTF_8)), false)) }
     }
 
+    private fun sendSendControlVerificationAcknowledgement(
+        channel: DataChannel,
+        sessionId: String,
+        requestId: String,
+        decision: SendControlDecision
+    ) {
+        if (!UUID_PATTERN.matches(sessionId) || !UUID_PATTERN.matches(requestId) ||
+            channel.state() != DataChannel.State.OPEN || activeSessionId != sessionId ||
+            dataChannel !== channel
+        ) return
+        val payload = JSONObject()
+            .put("kind", "send_control_ack")
+            .put("sessionId", sessionId)
+            .put("requestId", requestId)
+            .put("available", decision.candidate != null)
+            .put("reason", decision.reason)
+        decision.candidate?.let { payload.put("sendTargetId", it.targetId) }
+        runCatching {
+            channel.send(DataChannel.Buffer(
+                ByteBuffer.wrap(payload.toString().toByteArray(Charsets.UTF_8)), false
+            ))
+        }
+    }
+
     private fun sendRemoteTextAcknowledgement(
         channel: DataChannel,
         sessionId: String,
@@ -739,6 +763,48 @@ class AndroidScreenShareService : Service() {
                             AndroidTouchAccessibilityService.selectComposerTarget(sessionId, appPackage, selection)
                         }
                         sendComposerTargetAcknowledgement(channel, sessionId, selectionId, decision)
+                    }
+                    return
+                }
+                if (input.optString("kind") == "verify_composer_send") {
+                    val requestId = input.optString("requestId")
+                    val composerTargetId = input.optString("composerTargetId")
+                    val sendTargetId = input.optString("sendTargetId")
+                    if (!UUID_PATTERN.matches(requestId) ||
+                        input.optString("sessionId") != sessionId ||
+                        input.optString("appPackageName") != appPackage
+                    ) return
+                    val allowedKeys = setOf(
+                        "kind", "requestId", "sessionId", "appPackageName",
+                        "composerTargetId", "sendTargetId"
+                    )
+                    if (input.keys().asSequence().toSet() != allowedKeys ||
+                        !Regex("^[a-f0-9]{64}$").matches(composerTargetId) ||
+                        !Regex("^[a-f0-9]{64}$").matches(sendTargetId)
+                    ) {
+                        sendSendControlVerificationAcknowledgement(
+                            channel, sessionId, requestId,
+                            SendControlDecision(null, "invalid_request")
+                        )
+                        return
+                    }
+                    if (!claimRemoteTextRequest(requestId)) {
+                        sendSendControlVerificationAcknowledgement(
+                            channel, sessionId, requestId,
+                            SendControlDecision(null, "request_replayed_or_rate_limited")
+                        )
+                        return
+                    }
+                    mainHandler.post {
+                        val decision = if (stopping || !capturedContentVisible ||
+                            activeSessionId != sessionId || activeAppPackage != appPackage) {
+                            SendControlDecision(null, "session_not_active")
+                        } else {
+                            AndroidTouchAccessibilityService.revalidateSelectedSendControl(
+                                sessionId, appPackage, composerTargetId, sendTargetId
+                            )
+                        }
+                        sendSendControlVerificationAcknowledgement(channel, sessionId, requestId, decision)
                     }
                     return
                 }
