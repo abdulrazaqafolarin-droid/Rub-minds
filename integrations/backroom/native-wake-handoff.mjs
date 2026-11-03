@@ -124,7 +124,11 @@ export function validateNativeWakeHandoff(payload,expected,{now=Date.now(),clock
 }
 
 function validateOutcome(result){
- if(!result||typeof result!=='object'||Array.isArray(result)||
+ const allowed=['state','promptInserted','sendInvoked','composerCleared','promptReadbackVerified',
+  'composerIdentityRevalidated','sendControlIdentityRevalidated','composerIdentityDigest',
+  'sendControlIdentityDigest','reason'];
+ if(!exactKeys(result,Object.keys(result??{}))||Object.keys(result??{}).some(key=>!allowed.includes(key))||
+  !result||typeof result!=='object'||Array.isArray(result)||
   !['preflight_denied','submitted','needs_review'].includes(result.state)||
   typeof result.promptInserted!=='boolean'||typeof result.sendInvoked!=='boolean'||
   typeof result.composerCleared!=='boolean'||
@@ -135,14 +139,18 @@ function validateOutcome(result){
  if(result.state==='submitted')
   return result.promptInserted===true&&result.sendInvoked===true&&result.composerCleared===true&&
    result.promptReadbackVerified===true&&result.composerIdentityRevalidated===true&&
-   result.sendControlIdentityRevalidated===true;
+   result.sendControlIdentityRevalidated===true&&HEX.test(result.composerIdentityDigest??'')&&
+   HEX.test(result.sendControlIdentityDigest??'');
  return true;
 }
 
 export function createNativeWakeHandoffResult(handoff,result){
  if(!handoff||!UUID.test(handoff.handoffId??'')||!UUID.test(handoff.jobId??'')||
   !UUID.test(handoff.deviceId??'')||!UUID.test(handoff.roomId??'')||
-  !UUID.test(handoff.screenSessionId??'')||!validOutcomeWithScope(result))
+  !UUID.test(handoff.screenSessionId??'')||!validateOutcome(result)||
+  (result.state==='submitted'&&(
+   result.composerIdentityDigest!==handoff.composerIdentityDigest||
+   result.sendControlIdentityDigest!==handoff.sendControlIdentityDigest)))
   throw new TypeError('Invalid native wake handoff result');
  return Object.freeze({
   version:1,kind:'native_wake_result',handoffId:handoff.handoffId,
@@ -160,12 +168,6 @@ export function createNativeWakeHandoffResult(handoff,result){
   ...(result.reason?{reason:result.reason}:{}),
  });
 }
-function validOutcomeWithScope(result){
- return validateOutcome(result)&&
-  (result.state!=='submitted'||
-   (result.composerIdentityDigest===undefined&&result.sendControlIdentityDigest===undefined));
-}
-
 const RESULT_KEYS=new Set([
  'version','kind','handoffId','jobId','deviceId','roomId','screenSessionId',
  'bindingId','targetId','targetRevision','state','promptInserted','sendInvoked',
@@ -216,21 +218,24 @@ export class NativeWakeHandoffReceiver {
     job.leaseTokens.has(handoff.leaseToken))return null;
   job.leaseTokens.add(handoff.leaseToken);
   job.attempts+=1;job.activeHandoffId=handoff.handoffId;
-  this.#handoffs.set(handoff.handoffId,{jobId:handoff.jobId,state:'accepted'});
+  this.#handoffs.set(handoff.handoffId,{jobId:handoff.jobId,state:'accepted',handoff});
   return handoff;
  }
  settle(handoffId,result){
   const entry=this.#handoffs.get(handoffId),job=entry?this.#jobs.get(entry.jobId):null;
   if(!entry||entry.state!=='accepted'||!job||job.activeHandoffId!==handoffId)return null;
-  const handoffScope={
-   handoffId,jobId:entry.jobId,deviceId:this.#expected.deviceId.toLowerCase(),
-   roomId:this.#expected.roomId.toLowerCase(),screenSessionId:this.#expected.screenSessionId.toLowerCase(),
-   bindingId:this.#expected.bindingId.toLowerCase(),targetId:this.#expected.targetId,
-   targetRevision:this.#expected.targetRevision,composerIdentityDigest:this.#expected.composerIdentityDigest.toLowerCase(),
-   sendControlIdentityDigest:this.#expected.sendControlIdentityDigest.toLowerCase(),
-  };
-  // The caller must supply the exact identity evidence from the accepted handoff.
+  const accepted=entry.handoff;
   const evidence=result&&typeof result==='object'&&!Array.isArray(result)?result:{};
+  const handoffScope={
+   handoffId,jobId:entry.jobId,deviceId:accepted.deviceId,
+   roomId:accepted.roomId,screenSessionId:accepted.screenSessionId,
+   bindingId:accepted.bindingId,targetId:accepted.targetId,
+   targetRevision:accepted.targetRevision,
+  };
+  if(!validateOutcome(evidence)||
+   (evidence.state==='submitted'&&(
+    evidence.composerIdentityDigest!==accepted.composerIdentityDigest||
+    evidence.sendControlIdentityDigest!==accepted.sendControlIdentityDigest)))return null;
   const ack=Object.freeze({
    version:1,kind:'native_wake_result',...handoffScope,
    state:evidence.state,promptInserted:evidence.promptInserted,
@@ -244,11 +249,7 @@ export class NativeWakeHandoffReceiver {
    }:{}),
    ...(evidence.reason?{reason:evidence.reason}:{}),
   });
-  // Use the result constructor's strict policy, then validate the scoped ACK.
-  if(!validateOutcome(evidence)||!validateNativeWakeHandoffResult(ack,{
-   ...handoffScope,composerIdentityDigest:this.#expected.composerIdentityDigest.toLowerCase(),
-   sendControlIdentityDigest:this.#expected.sendControlIdentityDigest.toLowerCase(),
-  }))return null;
+  if(!validateNativeWakeHandoffResult(ack,accepted))return null;
   entry.state=evidence.state;
   if(evidence.state==='preflight_denied')job.activeHandoffId=null;
   else {job.activeHandoffId=null;job.terminal=true;}
