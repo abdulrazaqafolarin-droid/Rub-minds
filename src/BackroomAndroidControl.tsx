@@ -23,7 +23,6 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const [remoteText, setRemoteText] = useState('');
   const [selectionMode, setSelectionMode] = useState(false);
   const [composerTargetId, setComposerTargetId] = useState('');
-  const [sendTargetId, setSendTargetId] = useState('');
   const [sendControlVerified, setSendControlVerified] = useState(false);
   const [sendControlStatus, setSendControlStatus] = useState('No native Send control verified.');
   const [selectionPreview, setSelectionPreview] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
@@ -69,7 +68,6 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     composerTargetRef.current = '';
     sendTargetRef.current = '';
     setComposerTargetId('');
-    setSendTargetId('');
     setSendControlVerified(false);
     setSendControlStatus('No native Send control verified.');
     setSelectionPreview(null);
@@ -101,7 +99,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     if (videoRef.current) videoRef.current.srcObject = null;
     sessionRef.current = ''; pointerRef.current = null; pendingControlRequestRef.current = '';
     sourceVisibilityRef.current = null;
-    setSessionId(''); setViewReady(false); setSourceVisible(false); setDataReady(false); setControlGranted(false); setRemoteText(''); setRemoteTextBusy(false); setSelectionMode(false); setComposerTargetId(''); setSendTargetId(''); setSendControlVerified(false); setSendControlStatus('No native Send control verified.'); setSelectionPreview(null); setRemoteTextStatus('Select the actual composer in the streamed app before inserting text.'); setBusy(false);
+    setSessionId(''); setViewReady(false); setSourceVisible(false); setDataReady(false); setControlGranted(false); setRemoteText(''); setRemoteTextBusy(false); setSelectionMode(false); setComposerTargetId(''); setSendControlVerified(false); setSendControlStatus('No native Send control verified.'); setSelectionPreview(null); setRemoteTextStatus('Select the actual composer in the streamed app before inserting text.'); setBusy(false);
   }, []);
 
   const stopRemote = useCallback(async (expectedSession = sessionRef.current) => {
@@ -259,7 +257,6 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
                 ? acknowledgement.sendTargetId : '';
             const sendVerified = acknowledgement.sendAvailable === true && Boolean(sendTarget);
             sendTargetRef.current = sendVerified ? sendTarget : '';
-            setSendTargetId(sendTargetRef.current);
             setSendControlVerified(sendVerified);
             const sendReason = typeof acknowledgement.sendReason === 'string'
               ? acknowledgement.sendReason.replaceAll('_', ' ')
