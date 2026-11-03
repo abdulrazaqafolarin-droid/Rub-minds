@@ -141,21 +141,24 @@ class AndroidNativeWakeConsentStore(context: Context) {
     }
 
     private fun encodeReservation(row: NativeWakeExecutionReservation): String = listOf(
-        row.grantId, row.eventId, row.deviceId, row.sessionId, row.packageName,
+        row.grantId, row.eventId, row.jobId, row.hostId, row.roomId, row.bindingId,
+        row.leaseTokenDigest, row.deviceId, row.sessionId, row.packageName,
         row.signingCertificateSha256, row.composerTargetId, row.sendTargetId,
         row.targetRevision, row.reservedAtMillis, row.grantExpiresAtMillis
     ).joinToString("\t")
 
     private fun decodeReservation(value: String): NativeWakeExecutionReservation? {
         val fields = value.split('\t')
-        if (fields.size != 11) return null
+        if (fields.size != 16) return null
         return runCatching {
             NativeWakeExecutionReservation(
-                grantId = fields[0], eventId = fields[1], deviceId = fields[2],
-                sessionId = fields[3], packageName = fields[4],
-                signingCertificateSha256 = fields[5], composerTargetId = fields[6],
-                sendTargetId = fields[7], targetRevision = fields[8].toInt(),
-                reservedAtMillis = fields[9].toLong(), grantExpiresAtMillis = fields[10].toLong()
+                grantId = fields[0], eventId = fields[1], jobId = fields[2],
+                hostId = fields[3], roomId = fields[4], bindingId = fields[5],
+                leaseTokenDigest = fields[6], deviceId = fields[7], sessionId = fields[8],
+                packageName = fields[9], signingCertificateSha256 = fields[10],
+                composerTargetId = fields[11], sendTargetId = fields[12],
+                targetRevision = fields[13].toInt(), reservedAtMillis = fields[14].toLong(),
+                grantExpiresAtMillis = fields[15].toLong()
             )
         }.getOrNull()
     }
