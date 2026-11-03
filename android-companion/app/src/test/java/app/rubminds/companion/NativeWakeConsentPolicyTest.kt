@@ -284,7 +284,6 @@ class NativeWakeConsentPolicyTest {
         assertFalse(NativeWakeConsentPolicy.isTerminalReservationDenial("native_wake_scope_invalid"))
     }
 
-}
 
     @Test fun sharedJournalMonitorSerializesConcurrentCriticalSections() {
         val ready = CountDownLatch(2)
@@ -312,3 +311,5 @@ class NativeWakeConsentPolicyTest {
         assertTrue(completed.await(3, TimeUnit.SECONDS))
         assertEquals(1, maximumActive.get())
     }
+
+}
