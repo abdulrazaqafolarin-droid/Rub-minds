@@ -24,9 +24,23 @@ function readyState() {
     connected: true, focused: true, composerEmpty: true,
     composerIdentityVerified: true, sendControlUnique: true,
     sendControlEnabled: true, sendControlVisible: true,
-    sendControlIdentityVerified: true, surface: target.surface,
+    sendControlIdentityVerified: true, targetId: target.id,
+    targetRevision: target.revision, locatorKind: 'accessibility',
+    composerIdentityDigest: 'a'.repeat(64), sendControlIdentityDigest: 'b'.repeat(64),
+    surface: target.surface,
     appId: target.appId, sessionId: target.sessionId,
     identityFingerprint: target.identityFingerprint,
+  };
+}
+
+function submittedOutcome(input, overrides = {}) {
+  return {
+    state: 'submitted', eventId: input.eventId,
+    targetId: input.target.targetId, targetRevision: input.target.targetRevision,
+    composerIdentityDigest: 'a'.repeat(64), sendControlIdentityDigest: 'b'.repeat(64),
+    promptInserted: true, promptReadbackVerified: true,
+    composerIdentityRevalidated: true, sendControlIdentityRevalidated: true,
+    sendInvoked: true, composerCleared: true, ...overrides,
   };
 }
 
@@ -39,11 +53,7 @@ function fixture({ inspect = readyState, submit, surface = target.surface } = {}
     },
     async submitCanonicalWake(input) {
       calls.push(['submit', input]);
-      return submit ? submit(input) : {
-        state: 'submitted', eventId: input.eventId, promptInserted: true,
-        promptReadbackVerified: true, composerIdentityRevalidated: true,
-        sendControlIdentityRevalidated: true, sendInvoked: true, composerCleared: true,
-      };
+      return submit ? submit(input) : submittedOutcome(input);
     },
   };
   const adapter = new NativeCanonicalWakeAdapter({
@@ -73,6 +83,10 @@ test('probe requires a foreground empty composer and the same unique verified Se
     state => { state.sendControlEnabled = false; },
     state => { state.sendControlVisible = false; },
     state => { state.sendControlIdentityVerified = false; },
+    state => { state.composerIdentityDigest = 'not-a-digest'; },
+    state => { state.sendControlIdentityDigest = 'not-a-digest'; },
+    state => { state.targetId = 'another-target'; },
+    state => { state.targetRevision = target.revision + 1; },
     state => { state.identityFingerprint = 'other-app'; },
   ]) {
     const state = readyState(); mutate(state);
@@ -106,12 +120,14 @@ test('driver receives only the fixed canonical prompt and the native target scop
   });
   assert.equal(outcome.state, 'completed');
   const request = f.calls.find(([kind]) => kind === 'submit')[1];
+  const preflight = f.calls.find(([kind]) => kind === 'inspect')[1];
   assert.equal(request.prompt, buildCanonicalWakePrompt(command.eventId));
   assert.equal(request.eventId, command.eventId);
   assert.equal(request.target.targetId, target.id);
   assert.equal(request.target.targetRevision, target.revision);
   assert.equal(request.automaticRetry, false);
   assert.equal(request.requireSendControlIdentityRecheck, true);
+  assert.equal(preflight.target.targetRevision, target.revision);
   assert.equal('text' in request, false);
 });
 
@@ -176,11 +192,8 @@ test('seal denial blocks the native Send operation', async () => {
 });
 
 test('composer-clear confirmation is required; an ambiguous Send becomes needs_review', async () => {
-  const f = fixture({ submit: async input => ({
-    state: 'submitted', eventId: input.eventId, promptInserted: true,
-    promptReadbackVerified: true, composerIdentityRevalidated: true,
-    sendControlIdentityRevalidated: true, sendInvoked: true, composerCleared: false,
-  }) });
+  const f = fixture({ submit: async input =>
+    submittedOutcome(input, { composerCleared: false }) });
   const result = await f.guard.execute({
     command, target, beforeEffect: async () => true,
   });
@@ -189,11 +202,8 @@ test('composer-clear confirmation is required; an ambiguous Send becomes needs_r
 });
 
 test('the durable one-time seal prevents a second attempt after an uncertain native Send', async () => {
-  const f = fixture({ submit: async input => ({
-    state: 'submitted', eventId: input.eventId, promptInserted: true,
-    promptReadbackVerified: true, composerIdentityRevalidated: true,
-    sendControlIdentityRevalidated: true, sendInvoked: true, composerCleared: false,
-  }) });
+  const f = fixture({ submit: async input =>
+    submittedOutcome(input, { composerCleared: false }) });
   let reservations = 0;
   const reserve = async () => { reservations += 1; return reservations === 1; };
   const first = await f.guard.execute({ command, target, beforeEffect: reserve });
@@ -212,3 +222,17 @@ test('a device exception after the seal is converted into needs_review, never a 
   assert.equal(result.result, null);
   assert.equal(f.adapter.hasAttempted(command.id), true);
 });
+test('identity fingerprints must remain exactly the same after the durable seal', async () => {
+  const f = fixture({
+    submit: async input => submittedOutcome(input, {
+      composerIdentityDigest: 'c'.repeat(64),
+    }),
+  });
+  const result = await f.guard.execute({
+    command, target, beforeEffect: async () => true,
+  });
+  assert.equal(result.state, 'needs_review');
+  assert.equal(result.result, null);
+  assert.equal(f.calls.filter(([kind]) => kind === 'submit').length, 1);
+});
+
