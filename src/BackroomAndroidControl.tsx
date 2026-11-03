@@ -788,8 +788,8 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       </div>
       <p role="status">{remoteTextStatus}</p>
       <small>{sendControlVerified
-        ? 'The phone locally verified one unique, enabled Send control near the selected composer. Its accessibility identity stays bound to this app session and is not a permission to click it. Native On / Auto remains disabled until durable event-queue delivery and separate phone-side wake consent are connected.'
-        : 'Selection overlays the live app frame and resolves to one real editable, visible, non-password accessibility field in the selected foreground app. Backroom also checks locally for one nearby, labelled Send control; ambiguous or missing controls stay draft-only. No conversation text is read or uploaded.'}</small>
+        ? 'The phone locally verified one unique, enabled Send control near the selected composer. Its hashed accessibility identity stays bound to this app session and is not permission to click it. Labels and editor/message contents are never transmitted to Rub Minds. Native On / Auto remains disabled until durable event-queue delivery and separate phone-side wake consent are connected.'
+        : 'Selection resolves to one editable, visible, non-password field in the selected foreground app. The phone checks nearby accessibility metadata locally for one Send control; ambiguous or missing controls stay draft-only. Labels and editor/message contents are never transmitted to Rub Minds.'}</small>
       <p className="br-android-stream-disclaimer">{sendControlStatus}</p>
     </div> : null}
     <div className="br-android-stream-actions">
