@@ -55,6 +55,12 @@ object NativeWakeConsentPolicy {
     private val uuid = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
     private val eventId = Regex("^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
     private val targetId = Regex("^[a-f0-9]{64}$")
+    private val eventIdPattern = Regex("^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+
+    fun canonicalWakePrompt(eventId: String): String? {
+        if (!eventId.matches(eventIdPattern)) return null
+        return "@RMconnects\nEvent: $eventId\nRetrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP."
+    }
 
     fun createGrant(
         grantId: String,
