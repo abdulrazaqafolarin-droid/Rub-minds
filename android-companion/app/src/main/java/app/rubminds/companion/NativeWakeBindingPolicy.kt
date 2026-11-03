@@ -15,7 +15,9 @@ internal object NativeWakeBindingPolicy {
         expectedComposerTargetId: String,
         currentComposerTargetId: String?,
         expectedSendTargetId: String,
-        currentSendTargetId: String?
+        currentSendTargetId: String?,
+        expectedProviderConversationDigest: String,
+        currentProviderConversationDigest: String?
     ): Boolean =
         expectedGeneration == currentGeneration &&
             expectedSessionId.isNotBlank() &&
@@ -25,5 +27,8 @@ internal object NativeWakeBindingPolicy {
             expectedComposerTargetId.isNotBlank() &&
             currentComposerTargetId == expectedComposerTargetId &&
             expectedSendTargetId.isNotBlank() &&
-            currentSendTargetId == expectedSendTargetId
+            currentSendTargetId == expectedSendTargetId &&
+            ProviderConversationIdentityPolicy.matches(
+                expectedProviderConversationDigest, currentProviderConversationDigest
+            )
 }
