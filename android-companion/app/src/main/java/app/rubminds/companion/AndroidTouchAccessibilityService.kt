@@ -23,6 +23,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
     @Volatile private var gestureInFlight = false
     @Volatile private var boundComposerTargetId: String? = null
     @Volatile private var boundSendTargetId: String? = null
+    @Volatile private var boundProviderConversationIdentityDigest: String? = null
     // Mutated and read under this service's monitor. It invalidates queued native
     // wake work when the selected session or composer binding is replaced/revoked.
     private var nativeBindingGeneration: Long = 0L
@@ -61,6 +62,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             boundPackageName = null
             boundComposerTargetId = null
             boundSendTargetId = null
+            boundProviderConversationIdentityDigest = null
             nativeWakeInFlight = false
             gestureInFlight = false
         }
@@ -80,6 +82,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             boundPackageName = packageName
             boundComposerTargetId = null
             boundSendTargetId = null
+            boundProviderConversationIdentityDigest = null
         }
         return true
     }
@@ -183,6 +186,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             nativeBindingGeneration++
             boundComposerTargetId = null
             boundSendTargetId = null
+            boundProviderConversationIdentityDigest = null
             nativeBindingGeneration
         }
         if (!isServiceEnabled(this)) return ComposerSelectionDecision(null, "accessibility_service_not_enabled")
@@ -192,6 +196,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             if (!root.isVisibleToUser || root.packageName?.toString() != packageName) {
                 return ComposerSelectionDecision(null, "selected_app_not_foreground")
             }
+            val providerConversationDigest = ProviderConversationIdentityResolver.resolve(packageName, root)
             val signer = AppIdentity.signingCertificateSha256(this, packageName)
                 ?: return ComposerSelectionDecision(null, "app_signer_unavailable")
             if (!canSelectComposerForApp(packageName, signer)) {
@@ -227,6 +232,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                         // complete, unique Send-control scan.
                         boundComposerTargetId = selected.targetId
                         boundSendTargetId = null
+                        boundProviderConversationIdentityDigest = providerConversationDigest
                         true
                     }
                 }
@@ -249,6 +255,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 }
                 boundComposerTargetId = selected.targetId
                 boundSendTargetId = sendDecision.candidate?.targetId
+                boundProviderConversationIdentityDigest = providerConversationDigest
             }
             return ComposerSelectionDecision(
                 selected,
@@ -358,6 +365,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             nativeBindingGeneration++
             boundComposerTargetId = null
             boundSendTargetId = null
+            boundProviderConversationIdentityDigest = null
         }
     }
 
@@ -367,6 +375,29 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
      * or Send label crosses this API. It is intentionally NOT called from the
      * WebRTC remote_text handler or from a browser/WebView command.
      */
+    private fun currentProviderConversationIdentityDigest(packageName: String): String? {
+        val root = try { rootInActiveWindow } catch (_: SecurityException) { null } ?: return null
+        return try {
+            if (!root.isVisibleToUser || root.packageName?.toString() != packageName) null
+            else ProviderConversationIdentityResolver.resolve(packageName, root)
+        } finally {
+            root.recycle()
+        }
+    }
+
+    fun isBoundToProviderConversation(
+        sessionId: String,
+        packageName: String,
+        providerConversationIdentityDigest: String
+    ): Boolean = synchronized(this) {
+        boundSessionId == sessionId && boundPackageName == packageName &&
+            ProviderConversationIdentityPolicy.matches(
+                providerConversationIdentityDigest, boundProviderConversationIdentityDigest
+            ) && ProviderConversationIdentityPolicy.matches(
+                providerConversationIdentityDigest, currentProviderConversationIdentityDigest(packageName)
+            )
+    }
+
     fun submitCanonicalWake(
         request: NativeWakeExecutionRequest,
         onResult: (NativeWakeSubmissionResult) -> Unit
@@ -378,6 +409,10 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 request.handoffExpiresAtMillis <= System.currentTimeMillis() ||
                 boundComposerTargetId != request.composerTargetId ||
                 boundSendTargetId != request.sendTargetId ||
+                !ProviderConversationIdentityPolicy.isValidDigest(request.providerConversationIdentityDigest) ||
+                !ProviderConversationIdentityPolicy.matches(
+                    request.providerConversationIdentityDigest, boundProviderConversationIdentityDigest
+                ) ||
                 nativeWakeInFlight
             ) return false
             nativeWakeInFlight = true
@@ -416,7 +451,8 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                     request.sessionId, boundSessionId,
                     request.packageName, boundPackageName,
                     request.composerTargetId, boundComposerTargetId,
-                    request.sendTargetId, boundSendTargetId
+                    request.sendTargetId, boundSendTargetId,
+                    request.providerConversationIdentityDigest, boundProviderConversationIdentityDigest
                 )
             }
             if (request.handoffExpiresAtMillis <= System.currentTimeMillis()) {
@@ -435,6 +471,14 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             val preflight = try {
                 if (!root.isVisibleToUser || root.packageName?.toString() != request.packageName) {
                     finish(NativeWakeSubmissionState.PRECHECK_DENIED, "selected_app_not_foreground")
+                    return@post
+                }
+                if (!ProviderConversationIdentityPolicy.matches(
+                        request.providerConversationIdentityDigest,
+                        ProviderConversationIdentityResolver.resolve(request.packageName, root)
+                    )
+                ) {
+                    finish(NativeWakeSubmissionState.PRECHECK_DENIED, "provider_conversation_identity_unavailable_or_changed")
                     return@post
                 }
                 val signer = AppIdentity.signingCertificateSha256(this, request.packageName)
@@ -514,7 +558,8 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                         request.sessionId, boundSessionId,
                         request.packageName, boundPackageName,
                         request.composerTargetId, boundComposerTargetId,
-                        request.sendTargetId, boundSendTargetId
+                        request.sendTargetId, boundSendTargetId,
+                    request.providerConversationIdentityDigest, boundProviderConversationIdentityDigest
                     )
                 ) {
                     null
@@ -638,8 +683,13 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                             request.sessionId, boundSessionId,
                             request.packageName, boundPackageName,
                             request.composerTargetId, boundComposerTargetId,
-                            request.sendTargetId, boundSendTargetId
+                            request.sendTargetId, boundSendTargetId,
+                    request.providerConversationIdentityDigest, boundProviderConversationIdentityDigest
                         ) || currentRootPackage() != request.packageName ||
+                        !ProviderConversationIdentityPolicy.matches(
+                            request.providerConversationIdentityDigest,
+                            currentProviderConversationIdentityDigest(request.packageName)
+                        ) ||
                         !exactSendNode.refresh() || exactSendNode.packageName?.toString() != request.packageName ||
                         !exactSendNode.isClickable || !exactSendNode.isEnabled || !exactSendNode.isVisibleToUser ||
                         composerTargetId(exactSendNode, request.packageName) != request.sendTargetId ||
@@ -713,10 +763,15 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                     request.sessionId, boundSessionId,
                     request.packageName, boundPackageName,
                     request.composerTargetId, boundComposerTargetId,
-                    request.sendTargetId, boundSendTargetId
+                    request.sendTargetId, boundSendTargetId,
+                    request.providerConversationIdentityDigest, boundProviderConversationIdentityDigest
                 )
             }
             if (!bindingStillCurrent ||
+                !ProviderConversationIdentityPolicy.matches(
+                    request.providerConversationIdentityDigest,
+                    currentProviderConversationIdentityDigest(request.packageName)
+                ) ||
                 !isServiceEnabled(this@AndroidTouchAccessibilityService) ||
                 currentRootPackage() != request.packageName
             ) {
@@ -985,6 +1040,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                     current.boundPackageName = null
                     current.boundComposerTargetId = null
                     current.boundSendTargetId = null
+                    current.boundProviderConversationIdentityDigest = null
                 }
             }
         }
