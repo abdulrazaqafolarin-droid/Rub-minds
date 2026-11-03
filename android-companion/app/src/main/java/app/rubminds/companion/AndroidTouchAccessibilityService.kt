@@ -217,6 +217,73 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         }
     }
 
+    fun revalidateSelectedSendControl(
+        sessionId: String,
+        packageName: String,
+        composerTargetId: String,
+        sendTargetId: String
+    ): SendControlDecision {
+        if (boundSessionId != sessionId || boundPackageName != packageName ||
+            boundComposerTargetId != composerTargetId || boundSendTargetId != sendTargetId ||
+            !Regex("^[a-f0-9]{64}$").matches(composerTargetId) ||
+            !Regex("^[a-f0-9]{64}$").matches(sendTargetId)
+        ) return SendControlDecision(null, "selection_identity_changed")
+        if (!isServiceEnabled(this)) return SendControlDecision(null, "accessibility_service_not_enabled")
+
+        val root = try { rootInActiveWindow } catch (_: SecurityException) { null }
+            ?: return SendControlDecision(null, "active_app_window_unavailable")
+        try {
+            if (!root.isVisibleToUser || root.packageName?.toString() != packageName) {
+                return SendControlDecision(null, "selected_app_not_foreground")
+            }
+            val signer = AppIdentity.signingCertificateSha256(this, packageName)
+                ?: return SendControlDecision(null, "app_signer_unavailable")
+            val grant = AppGrantStore(this).get(packageName, signer)
+                ?: return SendControlDecision(null, "app_not_locally_approved")
+            if (!grant.allowDraftInsertion || !AppGrantPolicy.canLaunch(grant, signer)) {
+                return SendControlDecision(null, "draft_insertion_not_locally_approved")
+            }
+
+            val focused = try { root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) }
+                catch (_: SecurityException) { null }
+                ?: return SendControlDecision(null, "selected_composer_not_focused")
+            val focusedBounds = try {
+                if (!focused.isEditable || !focused.isEnabled || !focused.isVisibleToUser ||
+                    focused.isPassword || focused.packageName?.toString() != packageName ||
+                    composerTargetId(focused, packageName) != composerTargetId
+                ) return SendControlDecision(null, "selected_composer_changed")
+                val bounds = Rect()
+                focused.getBoundsInScreen(bounds)
+                if (bounds.isEmpty) return SendControlDecision(null, "selected_composer_bounds_unavailable")
+                ComposerScreenRect(bounds.left, bounds.top, bounds.right, bounds.bottom)
+            } finally {
+                focused.recycle()
+            }
+
+            val rootBounds = Rect()
+            root.getBoundsInScreen(rootBounds)
+            val candidates = mutableListOf<SendControlCandidate>()
+            val traversal = intArrayOf(0, 0)
+            collectSendControlCandidates(root, packageName, candidates, traversal)
+            if (traversal[1] != 0) {
+                return SendControlDecision(null, "accessibility_tree_too_large")
+            }
+            val current = AndroidSendControlPolicy.choose(
+                candidates,
+                packageName,
+                ComposerScreenRect(rootBounds.left, rootBounds.top, rootBounds.right, rootBounds.bottom),
+                focusedBounds
+            )
+            if (current.candidate?.targetId != sendTargetId) {
+                return SendControlDecision(null,
+                    if (current.candidate == null) current.reason else "send_control_identity_changed")
+            }
+            return current
+        } finally {
+            root.recycle()
+        }
+    }
+
     fun isSelectedComposerFocused(sessionId: String, packageName: String, targetId: String): Boolean {
         if (boundSessionId != sessionId || boundPackageName != packageName ||
             boundComposerTargetId != targetId || !isServiceEnabled(this)
@@ -411,6 +478,15 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             selection: NormalizedComposerSelection
         ): ComposerSelectionDecision = instance?.selectComposerTarget(sessionId, packageName, selection)
             ?: ComposerSelectionDecision(null, "accessibility_service_not_connected")
+
+        fun revalidateSelectedSendControl(
+            sessionId: String,
+            packageName: String,
+            composerTargetId: String,
+            sendTargetId: String
+        ): SendControlDecision = instance?.revalidateSelectedSendControl(
+            sessionId, packageName, composerTargetId, sendTargetId
+        ) ?: SendControlDecision(null, "accessibility_service_not_connected")
 
         fun isSelectedComposerFocused(sessionId: String, packageName: String, targetId: String): Boolean =
             instance?.isSelectedComposerFocused(sessionId, packageName, targetId) == true
