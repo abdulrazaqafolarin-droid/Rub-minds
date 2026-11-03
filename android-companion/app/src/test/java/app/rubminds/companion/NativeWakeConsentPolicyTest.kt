@@ -41,10 +41,11 @@ class NativeWakeConsentPolicyTest {
         signing: String = signer,
         composer: String = "b".repeat(64),
         send: String = "c".repeat(64),
-        revision: Int = 2
+        revision: Int = 2,
+        handoffExpiresAt: Long = now + NativeWakeConsentPolicy.MAX_HANDOFF_TTL_MILLIS
     ) = NativeWakeExecutionRequest(
         grantId, job, host, room, binding, leaseDigest,
-        device, sessionId, app, signing, event, composer, send, revision
+        device, sessionId, app, signing, event, composer, send, revision, handoffExpiresAt
     )
 
     @Test fun canonicalWakePromptIsEventBoundAndCannotCarryGroupMessageText() {
@@ -95,6 +96,27 @@ class NativeWakeConsentPolicyTest {
     @Test fun aGrantCreatedInTheFutureIsNotYetUsable() {
         val future = grant().copy(grantedAtMillis = now + 1L)
         assertFalse(NativeWakeConsentPolicy.isGrantActive(future, deviceId, packageName, signer, now))
+    }
+
+    @Test fun expiredOrOverlongHandoffCannotReserveTheOneShotExecutionSeal() {
+        val expired = NativeWakeConsentPolicy.reserveExecution(
+            grant(), request(handoffExpiresAt = now), emptyList(), now
+        )
+        assertFalse(expired.allowed)
+        assertEquals("native_wake_handoff_expired", expired.reason)
+
+        val tooLong = NativeWakeConsentPolicy.reserveExecution(
+            grant(), request(handoffExpiresAt = now + NativeWakeConsentPolicy.MAX_HANDOFF_TTL_MILLIS + 1L),
+            emptyList(), now
+        )
+        assertFalse(tooLong.allowed)
+        assertEquals("native_wake_handoff_expired", tooLong.reason)
+
+        val live = NativeWakeConsentPolicy.reserveExecution(
+            grant(), request(handoffExpiresAt = now + NativeWakeConsentPolicy.MAX_HANDOFF_TTL_MILLIS),
+            emptyList(), now
+        )
+        assertTrue(live.allowed)
     }
 
     @Test fun executionSealMustMatchGrantAndCurrentNativeTarget() {
