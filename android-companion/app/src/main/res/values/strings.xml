@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Rub Minds Companion</string>
+    <string name="keyboard_subtype">Draft insertion</string>
+</resources>
