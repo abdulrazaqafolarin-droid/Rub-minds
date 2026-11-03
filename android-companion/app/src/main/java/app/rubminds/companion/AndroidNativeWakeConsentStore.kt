@@ -20,7 +20,7 @@ class AndroidNativeWakeConsentStore(context: Context) {
         localConfirmation: Boolean,
         nowMillis: Long = System.currentTimeMillis()
     ): NativeWakeGrant? {
-        synchronized(STORE_LOCK) {
+        synchronized(NativeWakeJournalLock.monitor) {
             val grant = NativeWakeConsentPolicy.createGrant(
                 grantId = UUID.randomUUID().toString(),
                 deviceId = deviceId,
@@ -43,7 +43,7 @@ class AndroidNativeWakeConsentStore(context: Context) {
         signer: String,
         nowMillis: Long = System.currentTimeMillis()
     ): NativeWakeGrant? {
-        synchronized(STORE_LOCK) {
+        synchronized(NativeWakeJournalLock.monitor) {
             val key = grantKey(deviceId, packageName, signer)
             val raw = preferences.getString(key, null) ?: return null
             val grant = decodeGrant(raw)
@@ -56,7 +56,7 @@ class AndroidNativeWakeConsentStore(context: Context) {
     }
 
     fun revoke(deviceId: String, packageName: String, signer: String): Boolean {
-        synchronized(STORE_LOCK) {
+        synchronized(NativeWakeJournalLock.monitor) {
             val key = grantKey(deviceId, packageName, signer)
             if (!preferences.contains(key)) return false
             check(preferences.edit().remove(key).commit()) { "Could not revoke native wake consent." }
@@ -65,7 +65,7 @@ class AndroidNativeWakeConsentStore(context: Context) {
     }
 
     fun revokePackage(deviceId: String, packageName: String): Int {
-        synchronized(STORE_LOCK) {
+        synchronized(NativeWakeJournalLock.monitor) {
             val prefix = "$deviceId|$packageName|"
             val editor = preferences.edit()
             val keys = preferences.all().keys.filter { it.startsWith(prefix) }
@@ -77,7 +77,7 @@ class AndroidNativeWakeConsentStore(context: Context) {
     }
 
     fun revokeDevice(deviceId: String): Int {
-        synchronized(STORE_LOCK) {
+        synchronized(NativeWakeJournalLock.monitor) {
             if (!deviceId.matches(Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"))) {
                 return 0
         }
@@ -103,7 +103,7 @@ class AndroidNativeWakeConsentStore(context: Context) {
         request: NativeWakeExecutionRequest,
         nowMillis: Long = System.currentTimeMillis()
     ): NativeWakeReservationDecision {
-        synchronized(STORE_LOCK) {
+        synchronized(NativeWakeJournalLock.monitor) {
             val grant = activeGrant(
                 request.deviceId, request.packageName,
                 request.signingCertificateSha256, nowMillis
@@ -170,7 +170,6 @@ class AndroidNativeWakeConsentStore(context: Context) {
     }
 
     private companion object {
-        val STORE_LOCK = Any()
         const val KEY_RESERVATIONS = "execution_reservations"
     }
 }
