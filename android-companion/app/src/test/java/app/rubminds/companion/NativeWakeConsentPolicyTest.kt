@@ -5,6 +5,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 class NativeWakeConsentPolicyTest {
     private val deviceId = "72000000-0000-4000-8000-000000000001"
@@ -282,3 +285,30 @@ class NativeWakeConsentPolicyTest {
     }
 
 }
+
+    @Test fun distinctStoreInstancesShareOneJournalMutationMonitor() {
+        val ready = CountDownLatch(2)
+        val start = CountDownLatch(1)
+        val completed = CountDownLatch(2)
+        val active = AtomicInteger(0)
+        val maximumActive = AtomicInteger(0)
+
+        repeat(2) {
+            Thread {
+                ready.countDown()
+                if (!start.await(2, TimeUnit.SECONDS)) return@Thread
+                synchronized(NativeWakeJournalLock.monitor) {
+                    val concurrent = active.incrementAndGet()
+                    maximumActive.updateAndGet { current -> maxOf(current, concurrent) }
+                    Thread.sleep(40)
+                    active.decrementAndGet()
+                }
+                completed.countDown()
+            }.start()
+        }
+
+        assertTrue(ready.await(2, TimeUnit.SECONDS))
+        start.countDown()
+        assertTrue(completed.await(3, TimeUnit.SECONDS))
+        assertEquals(1, maximumActive.get())
+    }
