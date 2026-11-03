@@ -782,6 +782,7 @@ Deno.serve(async req => {
 
       const isControlCommand = row.command?.action === 'request_control';
       const isNativeWakeCommand = row.command?.action === 'native_wake_trigger';
+      let nativeWakeHandoff: ReturnType<typeof validateAndroidNativeWakeHandoff> = null;
       if (isNativeWakeCommand) {
         // Re-validate the immutable handoff at its issue time. The device
         // checked its 20-second expiry before execution; the independent DB
@@ -804,6 +805,7 @@ Deno.serve(async req => {
             !validateAndroidNativeWakeResult(ack.nativeWakeResult, handoff)) {
           return json(400, fail('invalid_android_native_wake_result'), origin);
         }
+        nativeWakeHandoff = handoff;
         const expectedResult = ack.nativeWakeResult.state === 'submitted'
           ? 'native_wake_submitted'
           : ack.nativeWakeResult.state === 'preflight_denied'
