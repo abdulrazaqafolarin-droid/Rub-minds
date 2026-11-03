@@ -23,6 +23,9 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
     @Volatile private var gestureInFlight = false
     @Volatile private var boundComposerTargetId: String? = null
     @Volatile private var boundSendTargetId: String? = null
+    // Mutated and read under this service's monitor. It invalidates queued native
+    // wake work when the selected session or composer binding is replaced/revoked.
+    private var nativeBindingGeneration: Long = 0L
     @Volatile private var nativeWakeInFlight = false
 
     override fun onServiceConnected() {
@@ -52,12 +55,15 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         if (instance === this) instance = null
-        boundSessionId = null
-        boundPackageName = null
-        boundComposerTargetId = null
-        boundSendTargetId = null
-        nativeWakeInFlight = false
-        synchronized(this) { gestureInFlight = false }
+        synchronized(this) {
+            nativeBindingGeneration++
+            boundSessionId = null
+            boundPackageName = null
+            boundComposerTargetId = null
+            boundSendTargetId = null
+            nativeWakeInFlight = false
+            gestureInFlight = false
+        }
         AndroidScreenShareService.revokeLocalTouch(applicationContext)
         super.onDestroy()
     }
@@ -66,13 +72,17 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         if (currentRootPackage() != packageName) return false
         val digest = AppIdentity.signingCertificateSha256(this, packageName) ?: return false
         if (AppGrantStore(this).get(packageName, digest) == null) return false
-        boundSessionId = sessionId
-        boundPackageName = packageName
-        boundComposerTargetId = null
-        boundSendTargetId = null
+        synchronized(this) {
+            // A session rebind invalidates any already queued native wake work.
+            if (currentRootPackage() != packageName) return false
+            nativeBindingGeneration++
+            boundSessionId = sessionId
+            boundPackageName = packageName
+            boundComposerTargetId = null
+            boundSendTargetId = null
+        }
         return true
     }
-
     fun dispatchRemoteBack(sessionId: String, packageName: String): Boolean {
         if (boundSessionId != sessionId || boundPackageName != packageName ||
             !RemoteTouchGate.isArmed(this) || !isServiceEnabled(this)
@@ -166,10 +176,14 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         packageName: String,
         selection: NormalizedComposerSelection
     ): ComposerSelectionDecision {
-        boundComposerTargetId = null
-        boundSendTargetId = null
-        if (boundSessionId != sessionId || boundPackageName != packageName) {
-            return ComposerSelectionDecision(null, "session_or_app_mismatch")
+        val selectionGeneration = synchronized(this) {
+            if (boundSessionId != sessionId || boundPackageName != packageName) {
+                return ComposerSelectionDecision(null, "session_or_app_mismatch")
+            }
+            nativeBindingGeneration++
+            boundComposerTargetId = null
+            boundSendTargetId = null
+            nativeBindingGeneration
         }
         if (!isServiceEnabled(this)) return ComposerSelectionDecision(null, "accessibility_service_not_enabled")
         val root = try { rootInActiveWindow } catch (_: SecurityException) { null }
@@ -196,11 +210,8 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             if (traversal[1] != 0) return ComposerSelectionDecision(null, "accessibility_tree_too_large")
             val decision = AndroidComposerTargetPolicy.choose(candidates, packageName, selectedBounds)
             val selected = decision.candidate ?: return decision
-            boundComposerTargetId = selected.targetId
 
-            // Inspect clickable-node accessibility metadata locally to identify
-            // a nearby Send control. Labels and editor/message contents are never
-            // included in the response or transmitted away from this device.
+            // Inspect the Send control locally. Do not publish its labels or node identity.
             val sendCandidates = mutableListOf<SendControlCandidate>()
             val sendTraversal = intArrayOf(0, 0)
             collectSendControlCandidates(root, packageName, sendCandidates, sendTraversal)
@@ -213,7 +224,17 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 ComposerScreenRect(rootBounds.left, rootBounds.top, rootBounds.right, rootBounds.bottom),
                 selected.bounds
             )
-            boundSendTargetId = sendDecision.candidate?.targetId
+            synchronized(this) {
+                // A stop, rebind, clear or newer drag while the accessibility tree
+                // was being inspected invalidates this selection result.
+                if (nativeBindingGeneration != selectionGeneration ||
+                    boundSessionId != sessionId || boundPackageName != packageName
+                ) {
+                    return ComposerSelectionDecision(null, "session_or_selection_changed")
+                }
+                boundComposerTargetId = selected.targetId
+                boundSendTargetId = sendDecision.candidate?.targetId
+            }
             return ComposerSelectionDecision(
                 selected,
                 "selected",
@@ -224,7 +245,6 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             root.recycle()
         }
     }
-
     fun revalidateSelectedSendControl(
         sessionId: String,
         packageName: String,
@@ -319,8 +339,11 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
     }
 
     fun clearSelectedComposer() {
-        boundComposerTargetId = null
-        boundSendTargetId = null
+        synchronized(this) {
+            nativeBindingGeneration++
+            boundComposerTargetId = null
+            boundSendTargetId = null
+        }
     }
 
     /**
@@ -333,16 +356,17 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         request: NativeWakeExecutionRequest,
         onResult: (NativeWakeSubmissionResult) -> Unit
     ): Boolean {
-        val expectedSession = boundSessionId
-        val expectedPackage = boundPackageName
-        if (expectedSession != request.sessionId || expectedPackage != request.packageName ||
-            !UUID_PATTERN.matches(request.deviceId) ||
-            !UUID_PATTERN.matches(request.sessionId) ||
-            request.handoffExpiresAtMillis <= System.currentTimeMillis()
-        ) return false
-        synchronized(this) {
-            if (nativeWakeInFlight) return false
+        val bindingGenerationAtStart = synchronized(this) {
+            if (boundSessionId != request.sessionId || boundPackageName != request.packageName ||
+                !UUID_PATTERN.matches(request.deviceId) ||
+                !UUID_PATTERN.matches(request.sessionId) ||
+                request.handoffExpiresAtMillis <= System.currentTimeMillis() ||
+                boundComposerTargetId != request.composerTargetId ||
+                boundSendTargetId != request.sendTargetId ||
+                nativeWakeInFlight
+            ) return false
             nativeWakeInFlight = true
+            nativeBindingGeneration
         }
         val handler = Handler(Looper.getMainLooper())
         val posted = handler.post {
@@ -371,13 +395,20 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 }
             }
 
+            val bindingCurrentAtExecution = synchronized(this) {
+                NativeWakeBindingPolicy.isCurrent(
+                    bindingGenerationAtStart, nativeBindingGeneration,
+                    request.sessionId, boundSessionId,
+                    request.packageName, boundPackageName,
+                    request.composerTargetId, boundComposerTargetId,
+                    request.sendTargetId, boundSendTargetId
+                )
+            }
             if (request.handoffExpiresAtMillis <= System.currentTimeMillis()) {
                 finish(NativeWakeSubmissionState.PRECHECK_DENIED, "native_wake_handoff_expired_before_execution")
                 return@post
             }
-            if (boundSessionId != request.sessionId || boundPackageName != request.packageName ||
-                !isServiceEnabled(this)
-            ) {
+            if (!bindingCurrentAtExecution || !isServiceEnabled(this)) {
                 finish(NativeWakeSubmissionState.PRECHECK_DENIED, "native_session_or_accessibility_unavailable")
                 return@post
             }
@@ -462,7 +493,24 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 return@post
             }
 
-            val insertion = DraftInputMethodService.insertNativeWakeTrigger(request)
+            val insertion = synchronized(this) {
+                if (!NativeWakeBindingPolicy.isCurrent(
+                        bindingGenerationAtStart, nativeBindingGeneration,
+                        request.sessionId, boundSessionId,
+                        request.packageName, boundPackageName,
+                        request.composerTargetId, boundComposerTargetId,
+                        request.sendTargetId, boundSendTargetId
+                    )
+                ) {
+                    null
+                } else {
+                    DraftInputMethodService.insertNativeWakeTrigger(request)
+                }
+            }
+            if (insertion == null) {
+                finish(NativeWakeSubmissionState.PRECHECK_DENIED, "native_session_or_selection_changed_before_insert")
+                return@post
+            }
             when (insertion.state) {
                 NativeWakeInsertState.PRECHECK_DENIED -> {
                     finish(NativeWakeSubmissionState.PRECHECK_DENIED, insertion.reason)
@@ -569,26 +617,36 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 return@post
             }
             val invoked = try {
-                if (!exactSendNode.refresh() || exactSendNode.packageName?.toString() != request.packageName ||
-                    !exactSendNode.isClickable || !exactSendNode.isEnabled || !exactSendNode.isVisibleToUser ||
-                    composerTargetId(exactSendNode, request.packageName) != request.sendTargetId ||
-                    exactSendNode.actionList.none { it.id == AccessibilityNodeInfo.ACTION_CLICK }
-                ) {
-                    false
-                } else {
-                    val textLabel = exactSendNode.text?.toString().orEmpty()
-                    val descriptionLabel = exactSendNode.contentDescription?.toString().orEmpty()
-                    val recognizedLabel = AndroidSendControlPolicy.isRecognizedLabel(textLabel) ||
-                        AndroidSendControlPolicy.isRecognizedLabel(descriptionLabel)
-                    val fallbackResource = textLabel.isBlank() && descriptionLabel.isBlank() &&
-                        AndroidSendControlPolicy.isRecognizedResourceId(exactSendNode.viewIdResourceName.orEmpty())
-                    if (recognizedLabel || fallbackResource) {
-                        sendControlIdentityRevalidated = true
-                        // This final deadline check sits immediately before the
-                        // only native Send side effect, after node/label checks.
-                        if (request.handoffExpiresAtMillis <= System.currentTimeMillis()) false
-                        else exactSendNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    } else false
+                synchronized(this) {
+                    if (!NativeWakeBindingPolicy.isCurrent(
+                            bindingGenerationAtStart, nativeBindingGeneration,
+                            request.sessionId, boundSessionId,
+                            request.packageName, boundPackageName,
+                            request.composerTargetId, boundComposerTargetId,
+                            request.sendTargetId, boundSendTargetId
+                        ) || currentRootPackage() != request.packageName ||
+                        !exactSendNode.refresh() || exactSendNode.packageName?.toString() != request.packageName ||
+                        !exactSendNode.isClickable || !exactSendNode.isEnabled || !exactSendNode.isVisibleToUser ||
+                        composerTargetId(exactSendNode, request.packageName) != request.sendTargetId ||
+                        exactSendNode.actionList.none { it.id == AccessibilityNodeInfo.ACTION_CLICK }
+                    ) {
+                        false
+                    } else {
+                        val textLabel = exactSendNode.text?.toString().orEmpty()
+                        val descriptionLabel = exactSendNode.contentDescription?.toString().orEmpty()
+                        val recognizedLabel = AndroidSendControlPolicy.isRecognizedLabel(textLabel) ||
+                            AndroidSendControlPolicy.isRecognizedLabel(descriptionLabel)
+                        val fallbackResource = textLabel.isBlank() && descriptionLabel.isBlank() &&
+                            AndroidSendControlPolicy.isRecognizedResourceId(exactSendNode.viewIdResourceName.orEmpty())
+                        if (recognizedLabel || fallbackResource) {
+                            sendControlIdentityRevalidated = true
+                            // Session/selection invalidation uses this same monitor.
+                            // The deadline is checked immediately before the only
+                            // native Send side effect.
+                            if (request.handoffExpiresAtMillis <= System.currentTimeMillis()) false
+                            else exactSendNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        } else false
+                    }
                 }
             } catch (_: SecurityException) {
                 false
@@ -632,7 +690,16 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         onComplete: (Boolean) -> Unit
     ) {
         handler.postDelayed({
-            if (boundSessionId != request.sessionId || boundPackageName != request.packageName ||
+            val bindingStillCurrent = synchronized(this@AndroidTouchAccessibilityService) {
+                NativeWakeBindingPolicy.isCurrent(
+                    bindingGenerationAtStart, nativeBindingGeneration,
+                    request.sessionId, boundSessionId,
+                    request.packageName, boundPackageName,
+                    request.composerTargetId, boundComposerTargetId,
+                    request.sendTargetId, boundSendTargetId
+                )
+            }
+            if (!bindingStillCurrent ||
                 !isServiceEnabled(this@AndroidTouchAccessibilityService) ||
                 currentRootPackage() != request.packageName
             ) {
@@ -894,11 +961,14 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
 
         fun clearActiveSession(sessionId: String? = null) {
             val current = instance ?: return
-            if (sessionId == null || current.boundSessionId == sessionId) {
-                current.boundSessionId = null
-                current.boundPackageName = null
-                current.boundComposerTargetId = null
-                current.boundSendTargetId = null
+            synchronized(current) {
+                if (sessionId == null || current.boundSessionId == sessionId) {
+                    current.nativeBindingGeneration++
+                    current.boundSessionId = null
+                    current.boundPackageName = null
+                    current.boundComposerTargetId = null
+                    current.boundSendTargetId = null
+                }
             }
         }
 
