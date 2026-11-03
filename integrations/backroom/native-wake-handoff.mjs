@@ -129,8 +129,8 @@ function validateOutcome(result){
  const allowed=['state','promptInserted','sendInvoked','composerCleared','promptReadbackVerified',
   'composerIdentityRevalidated','sendControlIdentityRevalidated','composerIdentityDigest',
   'sendControlIdentityDigest','reason'];
- if(!exactKeys(result,Object.keys(result??{}))||Object.keys(result??{}).some(key=>!allowed.includes(key))||
-  !result||typeof result!=='object'||Array.isArray(result)||
+ if(!result||typeof result!=='object'||Array.isArray(result)||
+  Object.keys(result).some(key=>!allowed.includes(key))||
   !['preflight_denied','submitted','needs_review'].includes(result.state)||
   typeof result.promptInserted!=='boolean'||typeof result.sendInvoked!=='boolean'||
   typeof result.composerCleared!=='boolean'||
@@ -170,6 +170,12 @@ export function createNativeWakeHandoffResult(handoff,result){
   ...(result.reason?{reason:result.reason}:{}),
  });
 }
+function outcomeFromHandoffResult(result){
+ const keys=['state','promptInserted','sendInvoked','composerCleared','promptReadbackVerified',
+  'composerIdentityRevalidated','sendControlIdentityRevalidated','composerIdentityDigest',
+  'sendControlIdentityDigest','reason'];
+ return Object.fromEntries(keys.filter(key=>Object.hasOwn(result,key)).map(key=>[key,result[key]]));
+}
 const RESULT_KEYS=new Set([
  'version','kind','handoffId','jobId','deviceId','roomId','screenSessionId',
  'bindingId','targetId','targetRevision','state','promptInserted','sendInvoked',
@@ -189,7 +195,7 @@ export function validateNativeWakeHandoffResult(result,handoff){
   result.deviceId!==handoff?.deviceId||result.roomId!==handoff?.roomId||
   result.screenSessionId!==handoff?.screenSessionId||result.bindingId!==handoff?.bindingId||
   result.targetId!==handoff?.targetId||result.targetRevision!==handoff?.targetRevision||
-  !validateOutcome(result))return false;
+  !validateOutcome(outcomeFromHandoffResult(result)))return false;
  if(result.state==='submitted'&&(
   result.promptReadbackVerified!==true||result.composerIdentityRevalidated!==true||
   result.sendControlIdentityRevalidated!==true||
