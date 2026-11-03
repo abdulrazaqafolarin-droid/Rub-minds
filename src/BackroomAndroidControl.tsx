@@ -24,6 +24,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const [selectionMode, setSelectionMode] = useState(false);
   const [composerTargetId, setComposerTargetId] = useState('');
   const [sendControlVerified, setSendControlVerified] = useState(false);
+  const [providerConversationIdentityAvailable, setProviderConversationIdentityAvailable] = useState(false);
   const [sendControlCheckPending, setSendControlCheckPending] = useState(false);
   const [sendControlStatus, setSendControlStatus] = useState('No native Send control verified.');
   const [selectionPreview, setSelectionPreview] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
@@ -76,6 +77,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     sendTargetRef.current = '';
     setComposerTargetId('');
     setSendControlVerified(false);
+    setProviderConversationIdentityAvailable(false);
     setSendControlStatus('No native Send control verified.');
     setSelectionPreview(null);
     setSelectionMode(false);
@@ -109,7 +111,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     if (videoRef.current) videoRef.current.srcObject = null;
     sessionRef.current = ''; pointerRef.current = null; pendingControlRequestRef.current = '';
     sourceVisibilityRef.current = null;
-    setSessionId(''); setViewReady(false); setSourceVisible(false); setDataReady(false); setControlGranted(false); setRemoteText(''); setRemoteTextBusy(false); setSelectionMode(false); setComposerTargetId(''); setSendControlVerified(false); setSendControlCheckPending(false); setSendControlStatus('No native Send control verified.'); setSelectionPreview(null); setRemoteTextStatus('Select the actual composer in the streamed app before inserting text.'); setBusy(false);
+    setSessionId(''); setViewReady(false); setSourceVisible(false); setDataReady(false); setControlGranted(false); setRemoteText(''); setRemoteTextBusy(false); setSelectionMode(false); setComposerTargetId(''); setSendControlVerified(false); setProviderConversationIdentityAvailable(false); setSendControlCheckPending(false); setSendControlStatus('No native Send control verified.'); setSelectionPreview(null); setRemoteTextStatus('Select the actual composer in the streamed app before inserting text.'); setBusy(false);
   }, []);
 
   const stopRemote = useCallback(async (expectedSession = sessionRef.current) => {
@@ -266,21 +268,29 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
               /^[a-f0-9]{64}$/.test(acknowledgement.sendTargetId)
                 ? acknowledgement.sendTargetId : '';
             const sendVerified = acknowledgement.sendAvailable === true && Boolean(sendTarget);
+            const conversationIdentityAvailable = acknowledgement.providerConversationIdentityAvailable === true;
             sendTargetRef.current = sendVerified ? sendTarget : '';
             setSendControlVerified(sendVerified);
+            setProviderConversationIdentityAvailable(conversationIdentityAvailable);
             const sendReason = typeof acknowledgement.sendReason === 'string'
               ? acknowledgement.sendReason.replaceAll('_', ' ')
               : 'phone companion update required';
             setSendControlStatus(sendVerified
-              ? 'One unique Send control was found and bound at selection time. Recheck it before any follow-on use; automated wake is not armed.'
+              ? conversationIdentityAvailable
+                ? 'One unique Send control and a stable provider-conversation identity were found at selection time. Native wake still requires the trusted queue bridge, local consent and a fresh identity recheck.'
+                : 'One unique Send control was found, but this app has no verified stable conversation identity. Native autonomous wake is unavailable; the control is not permission to send.'
               : 'Send control not verified: ' + sendReason + '.');
             setSelectionPreview(null);
             setSelectionMode(false);
             setRemoteTextStatus(sendVerified
-              ? 'Composer selected and Send control found. Focus the exact field on the phone before inserting a draft. Use Recheck Send control to confirm the same node is still present. Native sending still requires the durable wake queue and separate local wake consent.'
+              ? conversationIdentityAvailable
+                ? 'Composer and Send control selected. A provider-conversation identity was detected locally. Focus the exact field before inserting a draft; native wake remains unavailable until the trusted queue bridge and consented execution path are complete.'
+                : 'Composer and Send control selected, but this app does not expose a verified stable conversation identity. Native autonomous wake is blocked; manual draft insertion remains available.'
               : 'Composer selected. Tap that exact field on the phone so it is focused, then insert a draft.');
             notify(sendVerified
-              ? 'Android found one editable composer and one nearby Send control at selection time. No message was sent.'
+              ? conversationIdentityAvailable
+                ? 'Android found one editable composer and one nearby Send control. Conversation identity was detected locally; no message was sent.'
+                : 'Android found the composer and Send control, but cannot verify which provider conversation is active. Native wake is blocked; no message was sent.'
               : 'Android selected one real editable composer in the approved app. No unique Send control was verified.');
           } else {
             clearComposerTarget(false);
@@ -759,7 +769,13 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     {sessionId ? <div className="br-android-keyboard">
       <div className="br-android-composer-head">
         <b>Original app composer</b>
-        <span>{composerTargetId ? (sendControlVerified ? 'Composer + Send found' : 'Composer selected · draft only') : 'No target selected'}</span>
+        <span>{composerTargetId
+          ? sendControlVerified
+            ? providerConversationIdentityAvailable
+              ? 'Composer + Send found · conversation identity detected'
+              : 'Composer + Send found · native wake blocked'
+            : 'Composer selected · draft only'
+          : 'No target selected'}</span>
       </div>
       <div className="br-android-composer-actions">
         <button type="button" onClick={() => {
@@ -788,7 +804,9 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       </div>
       <p role="status">{remoteTextStatus}</p>
       <small>{sendControlVerified
-        ? 'The phone locally verified one unique, enabled Send control near the selected composer. Its hashed accessibility identity stays bound to this app session and is not permission to click it. Labels and editor/message contents are never transmitted to Rub Minds. Native On / Auto remains disabled until durable event-queue delivery and separate phone-side wake consent are connected.'
+        ? providerConversationIdentityAvailable
+          ? 'The phone found one unique Send control and detected a provider-conversation identity locally. The digest stays on the phone. This is not permission to click Send: the trusted queue bridge, local wake consent and execution rechecks are still required. Labels and editor/message contents are never transmitted to Rub Minds.'
+          : 'The phone found one unique Send control, but this app has no verified stable provider-conversation identity. Native autonomous Send is blocked for this app. Manual draft insertion remains available; the control is not permission to click it. Labels and editor/message contents are never transmitted to Rub Minds.'
         : 'Selection resolves to one editable, visible, non-password field in the selected foreground app. The phone checks nearby accessibility metadata locally for one Send control; ambiguous or missing controls stay draft-only. Labels and editor/message contents are never transmitted to Rub Minds.'}</small>
       <p className="br-android-stream-disclaimer">{sendControlStatus}</p>
     </div> : null}
