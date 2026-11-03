@@ -522,33 +522,43 @@ mod windows_impl {
         Ok(bounds)
     }
 
-    fn focused_composer_window(
+    fn selected_composer_window(
         automation: &UIAutomation,
         expected: &EditableTargetIdentity,
     ) -> Result<(UIElement, [i32; 4]), String> {
         let walker = automation.get_control_view_walker()
             .map_err(|_| "Windows accessibility tree is unavailable".to_string())?;
-        let focused = automation.get_focused_element()
-            .map_err(|_| "Windows could not identify the focused composer".to_string())?;
-        let composer = editable_ancestor(automation, focused)?;
+        // Re-resolve the selected empty composer by its saved screen bounds.
+        // Requiring it to be keyboard-focused would make a harmless status
+        // recheck depend on focus being moved away from the companion UI.
+        let x = expected.bounds[0] + (expected.bounds[2] - expected.bounds[0]) / 2;
+        let y = expected.bounds[1] + (expected.bounds[3] - expected.bounds[1]) / 2;
+        let hit = automation.element_from_point(Point::new(x, y))
+            .map_err(|_| "Windows could not re-identify the selected composer".to_string())?;
+        let composer = editable_ancestor(automation, hit)?;
         let (current, value) = inspect_element(&composer, true)?;
         if &current != expected || !value.is_empty() {
-            return Err("The selected composer is no longer the exact focused empty field".into());
+            return Err("The selected composer changed or is no longer empty".into());
         }
 
         let mut current = composer;
         for _ in 0..MAX_PARENT_DEPTH * 2 {
             if current.get_control_type().ok() == Some(ControlType::Window) {
                 let bounds = half_open_bounds(&current)?;
-                if current.get_process_id().ok() != Some(expected.process_id) {
-                    return Err("The focused composer is no longer inside its selected application window".into());
+                let handle = current.get_native_window_handle()
+                    .map(|value| value.to_string()).ok();
+                let snapshot = foreground_window_snapshot_for_process(expected.process_id)?;
+                if current.get_process_id().ok() != Some(expected.process_id)
+                    || handle.as_deref() != Some(snapshot.handle.as_str())
+                {
+                    return Err("The selected composer is no longer inside its foreground application window".into());
                 }
                 return Ok((current, bounds));
             }
             current = walker.get_parent(&current)
                 .map_err(|_| "Could not locate the selected composer's application window".to_string())?;
         }
-        Err("The focused composer has no verifiable application window".into())
+        Err("The selected composer has no verifiable application window".into())
     }
 
     fn collect_send_candidates(
@@ -614,9 +624,9 @@ mod windows_impl {
             Ok(value) => value,
             Err(_) => return SendControlInspection { candidate: None, reason: "uia_unavailable" },
         };
-        let (window, window_bounds) = match focused_composer_window(&automation, composer) {
+        let (window, window_bounds) = match selected_composer_window(&automation, composer) {
             Ok(value) => value,
-            Err(_) => return SendControlInspection { candidate: None, reason: "composer_not_focused_or_window_changed" },
+            Err(_) => return SendControlInspection { candidate: None, reason: "composer_or_foreground_window_changed" },
         };
         let walker = match automation.get_control_view_walker() {
             Ok(value) => value,
