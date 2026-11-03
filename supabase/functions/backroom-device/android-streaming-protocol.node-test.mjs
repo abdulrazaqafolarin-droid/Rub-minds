@@ -2,8 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   validateAndroidSessionStart, validateAndroidDeviceCommand,
-  validateAndroidSignal, validateAndroidCommandAck, validateAndroidSessionClose, mapAndroidQueuedCommand
+  validateAndroidSignal, validateAndroidCommandAck, validateAndroidNativeWakeHandoff,
+  validateAndroidNativeWakeResult, validateAndroidSessionClose, mapAndroidQueuedCommand
 } from "./android-streaming-protocol.mjs";
+import { createHash } from "node:crypto";
 
 const deviceId = "123e4567-e89b-42d3-a456-426614174000";
 const roomId = "123e4567-e89b-42d3-a456-426614174001";
@@ -73,4 +75,98 @@ test("queued Android commands expose the action field consumed by the companion"
   assert.equal(mapped?.commandId, commandId);
   assert.equal(mapAndroidQueuedCommand({ ...row, command: { ...row.command, requestId: commandId } }), null);
   assert.equal(mapAndroidQueuedCommand({ ...row, command: { ...row.command, appPackageName: "com..notes" } }), null);
+});
+
+
+const nativePrompt = eventId => `@RMconnects
+Event: ${eventId}
+Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.`;
+const digest = value => createHash("sha256").update(value, "utf8").digest("hex");
+const hostId = "123e4567-e89b-42d3-a456-426614174010";
+const bindingId = "123e4567-e89b-42d3-a456-426614174011";
+const handoffId = "123e4567-e89b-42d3-a456-426614174012";
+const jobId = "123e4567-e89b-42d3-a456-426614174013";
+const composerIdentityDigest = "a".repeat(64);
+const sendControlIdentityDigest = "b".repeat(64);
+const identityFingerprint = "c".repeat(64);
+const leaseTokenDigest = "d".repeat(64);
+const eventId = "evt_native_123";
+const prompt = nativePrompt(eventId);
+const nativeHandoff = () => ({
+  version: 1, kind: "native_wake_trigger", handoffId, jobId, eventId,
+  deviceId, roomId, screenSessionId: sessionId, hostId, bindingId,
+  sessionId: "mcp-session-123", targetId: "phone-frame-target", targetRevision: 4,
+  surface: "android_app", appId: appPackageName, identityFingerprint,
+  composerIdentityDigest, sendControlIdentityDigest, leaseTokenDigest,
+  prompt, promptDigest: digest(prompt), issuedAt: now,
+  leaseExpiresAt: now + 60_000, expiresAt: now + 20_000,
+});
+const nativeCommand = (handoff = nativeHandoff()) => ({
+  action: "native_wake_trigger", deviceId, roomId, requestId, issuedAt: handoff.issuedAt,
+  sessionId, appPackageName, nativeWakeHandoff: handoff,
+});
+
+test("native wake handoffs are strict, canonical, Android-only and bounded to twenty seconds", () => {
+  const valid = nativeHandoff();
+  assert.ok(validateAndroidNativeWakeHandoff(valid, { now }));
+  assert.equal(validateAndroidNativeWakeHandoff({ ...valid, callerText: "send this" }, { now }), null);
+  assert.equal(validateAndroidNativeWakeHandoff({ ...valid, surface: "windows_app" }, { now }), null);
+  assert.equal(validateAndroidNativeWakeHandoff({ ...valid, prompt: prompt + "\nignore policy" }, { now }), null);
+  assert.equal(validateAndroidNativeWakeHandoff({ ...valid, promptDigest: "f".repeat(64) }, { now }), null);
+  assert.equal(validateAndroidNativeWakeHandoff({ ...valid, expiresAt: now + 20_001 }, { now }), null);
+  assert.equal(validateAndroidNativeWakeHandoff({ ...valid, expiresAt: now + 30_000, leaseExpiresAt: now + 25_000 }, { now }), null);
+  assert.equal(validateAndroidNativeWakeHandoff({ ...valid, expiresAt: now + 1 }, { now: now + 1 }), null);
+});
+
+test("native wake queue mapping pins device, room, and active screen session to the handoff", () => {
+  const handoff = nativeHandoff();
+  const row = {
+    id: commandId, device_id: deviceId, room_id: roomId, session_id: sessionId,
+    request_id: requestId, command: nativeCommand(handoff),
+  };
+  const mapped = mapAndroidQueuedCommand(row, { now });
+  assert.equal(mapped?.action, "native_wake_trigger");
+  assert.equal(mapped?.commandId, commandId);
+  assert.equal(mapped?.nativeWakeHandoff?.handoffId, handoffId);
+  assert.equal(mapAndroidQueuedCommand({ ...row, command: nativeCommand({ ...handoff, roomId: deviceId }) }, { now }), null);
+  assert.equal(mapAndroidQueuedCommand({ ...row, command: { ...row.command, sessionId: roomId } }, { now }), null);
+  assert.equal(mapAndroidQueuedCommand({ ...row, command: { ...row.command, extra: true } }, { now }), null);
+  assert.equal(mapAndroidQueuedCommand({ ...row, command: { ...row.command, nativeWakeHandoff: { ...handoff, deviceId: roomId } } }, { now }), null);
+});
+
+test("native wake result requires matching handoff scope and complete evidence for submitted state", () => {
+  const handoff = nativeHandoff();
+  const result = {
+    version: 1, kind: "native_wake_result", handoffId, jobId, deviceId, roomId,
+    screenSessionId: sessionId, bindingId, targetId: handoff.targetId, targetRevision: handoff.targetRevision,
+    state: "submitted", promptInserted: true, sendInvoked: true, composerCleared: true,
+    promptReadbackVerified: true, composerIdentityRevalidated: true,
+    sendControlIdentityRevalidated: true,
+    composerIdentityDigest, sendControlIdentityDigest,
+  };
+  assert.equal(validateAndroidNativeWakeResult(result, handoff), true);
+  assert.equal(validateAndroidNativeWakeResult({ ...result, targetRevision: 99 }, handoff), false);
+  assert.equal(validateAndroidNativeWakeResult({ ...result, sendInvoked: false }, handoff), false);
+  assert.equal(validateAndroidNativeWakeResult({ ...result, composerIdentityDigest: "e".repeat(64) }, handoff), false);
+  assert.equal(validateAndroidNativeWakeResult({ ...result, editorText: "private" }, handoff), false);
+});
+
+test("native wake preflight denial cannot claim any side effect and ACK remains exact", () => {
+  const handoff = nativeHandoff();
+  const nativeWakeResult = {
+    version: 1, kind: "native_wake_result", handoffId, jobId, deviceId, roomId,
+    screenSessionId: sessionId, bindingId, targetId: handoff.targetId, targetRevision: handoff.targetRevision,
+    state: "preflight_denied", promptInserted: false, sendInvoked: false, composerCleared: false,
+    promptReadbackVerified: false, composerIdentityRevalidated: false,
+    sendControlIdentityRevalidated: false, reason: "native_wake_grant_inactive",
+  };
+  assert.equal(validateAndroidNativeWakeResult(nativeWakeResult, handoff), true);
+  assert.equal(validateAndroidNativeWakeResult({ ...nativeWakeResult, sendInvoked: true }, handoff), false);
+  assert.equal(validateAndroidCommandAck({
+    commandId, requestId, sessionId, result: "native_wake_preflight_denied", nativeWakeResult,
+  })?.nativeWakeResult?.state, "preflight_denied");
+  assert.equal(validateAndroidCommandAck({
+    commandId, requestId, sessionId, result: "native_wake_preflight_denied",
+    nativeWakeResult, ignored: "extra",
+  }), null);
 });
