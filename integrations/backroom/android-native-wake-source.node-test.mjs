@@ -154,10 +154,12 @@ test('native wake consent is device, app and signer bound with a 24-hour cap and
 });
 
 test('local UI warns that saving consent does not activate remote automatic Send', () => {
-  assert.match(activity, /Save local consent for 24 hours/);
+  assert.match(activity, /Save app-level consent for 24 hours/);
   assert.match(activity, /phone-side native-wake queue consumer exists/i);
-  assert.match(activity, /does not yet forward group wake events into that device queue/i);
+  assert.match(activity, /does not identify or pin a specific AI conversation\/thread/i);
   assert.match(activity, /Saving this consent alone will not trigger any action/i);
+  assert.match(activity, /If an app cannot expose a stable conversation identity, native autonomous Send must remain unavailable for that app/i);
+  assert.match(activity, /provider-conversation identity adapter/i);
   assert.match(activity, /will not trigger any action in ChatGPT, Claude or another app/i);
   assert.match(activity, /private fun pairedDeviceId\(\)/);
   assert.match(activity, /val credential = vault\.token\(\) \?: return null/);
@@ -187,7 +189,7 @@ test('the 20-second native handoff deadline is carried to the driver and recheck
 });
 test('Backroom capability copy reports the missing group forwarder rather than a missing phone queue', () => {
   assert.match(devicesUi, /AI-directed sending \/ native Off · On · Auto/);
-  assert.match(devicesUi, /Not available · group forwarding missing/);
+  assert.match(devicesUi, /Not available · conversation scope \+ group forwarding missing/);
   assert.doesNotMatch(devicesUi, /Not available · wake queue not connected/);
 });
 
