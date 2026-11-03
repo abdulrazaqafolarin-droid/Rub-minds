@@ -22,7 +22,8 @@ const ids = {
 const target = Object.freeze({
   id:ids.targetId,roomId:ids.groupId,hostId:ids.hostId,spaceId:ids.spaceId,
   sessionId:ids.sessionId,appId:ids.appId,surface:ids.surface,
-  identityFingerprint:ids.identityFingerprint,locatorKind:'accessibility',
+  identityFingerprint:ids.identityFingerprint,providerConversationIdentityDigest:ids.providerConversationIdentityDigest,
+  locatorKind:'accessibility',
   locatorValue:'opaque-composer-handle',revision:ids.targetRevision,
 });
 function command(overrides={}) {
@@ -33,6 +34,7 @@ function command(overrides={}) {
     sessionId:ids.sessionId,spaceId:ids.spaceId,bindingId:ids.bindingId,
     targetId:ids.targetId,targetRevision:ids.targetRevision,
     identityFingerprint:ids.identityFingerprint,
+    providerConversationIdentityDigest:ids.providerConversationIdentityDigest,
     ...overrides,
   };
 }
@@ -64,6 +66,8 @@ test('grant is scoped to one host, group, AI session, app and target revision',(
   assert.equal(f.authority.verify(f.grant.grantId,{command:command({targetRevision:3}),target}),false);
   assert.equal(f.authority.verify(f.grant.grantId,{command:command(),target:{...target,appId:'other'}}),false);
   assert.equal(f.authority.verify(f.grant.grantId,{command:command(),target:{...target,revision:3}}),false);
+  assert.equal(f.authority.verify(f.grant.grantId,{command:command(),target:{...target,providerConversationIdentityDigest:'f'.repeat(64)}}),false);
+  assert.equal(f.authority.verify(f.grant.grantId,{command:command({providerConversationIdentityDigest:'f'.repeat(64)}),target}),false);
 });
 
 test('only exact canonical event-bound wake prompt is authorized',()=>{
@@ -177,4 +181,15 @@ test('invalid journal scope or mismatched command never reaches the journal',asy
     command:command({targetId:'other'}),target,
   }),/journal scope/);
   assert.equal(calls,0);
+});
+
+
+test('native grant refuses an absent or unverified provider conversation digest', () => {
+  const authority = new NativeWakeAuthorizationAuthority();
+  const { providerConversationIdentityDigest: _missing, ...unscoped } = ids;
+  assert.throws(() => authority.createGrant({ ...unscoped, localConfirmation: true }), /surface or revision/);
+  const f = fixture();
+  assert.equal(f.authority.verify(f.grant.grantId, {
+    command: command({ providerConversationIdentityDigest: undefined }), target,
+  }), false);
 });
