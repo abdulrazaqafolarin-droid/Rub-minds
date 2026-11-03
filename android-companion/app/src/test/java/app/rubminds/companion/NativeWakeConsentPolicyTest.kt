@@ -286,7 +286,7 @@ class NativeWakeConsentPolicyTest {
 
 }
 
-    @Test fun distinctStoreInstancesShareOneJournalMutationMonitor() {
+    @Test fun sharedJournalMonitorSerializesConcurrentCriticalSections() {
         val ready = CountDownLatch(2)
         val start = CountDownLatch(1)
         val completed = CountDownLatch(2)
