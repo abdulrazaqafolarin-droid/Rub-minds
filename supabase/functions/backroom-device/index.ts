@@ -11,7 +11,7 @@ import { validateDesktopApps } from './desktop-app-protocol.mjs';
 import { validateDesktopCommand, validateDesktopSignal } from './desktop-command-protocol.mjs';
 import { validateDesktopSessionClose } from './desktop-session-close-protocol.mjs';
 import { validateDesktopSessionAbandon } from './desktop-session-abandon-protocol.mjs';
-import { validateAndroidSessionStart, validateAndroidDeviceCommand, validateAndroidSignal, validateAndroidCommandAck, validateAndroidSessionClose, mapAndroidQueuedCommand } from './android-streaming-protocol.mjs';
+import { validateAndroidSessionStart, validateAndroidDeviceCommand, validateAndroidSignal, validateAndroidCommandAck, validateAndroidNativeWakeHandoff, validateAndroidNativeWakeResult, validateAndroidSessionClose, mapAndroidQueuedCommand } from './android-streaming-protocol.mjs';
 import { broadcastPrivateDeviceEvent } from './realtime-broadcast.mjs';
 
 const url = Deno.env.get('SUPABASE_URL');
@@ -757,13 +757,15 @@ Deno.serve(async req => {
       if (current.platform !== 'android') return json(409, fail('android_device_required'), origin);
       const ack = validateAndroidCommandAck({
         commandId: input.commandId, requestId: input.requestId, sessionId: input.sessionId,
-        result: input.result, ...(input.canControl !== undefined ? { canControl: input.canControl } : {}),
+        result: input.result,
+        ...(input.canControl !== undefined ? { canControl: input.canControl } : {}),
+        ...(input.nativeWakeResult !== undefined ? { nativeWakeResult: input.nativeWakeResult } : {}),
       });
-      if (!ack || !exactKeys(input, ['action','commandId','requestId','sessionId','result','canControl'], ['action','commandId','requestId','sessionId','result'])) {
+      if (!ack || !exactKeys(input, ['action','commandId','requestId','sessionId','result','canControl','nativeWakeResult'], ['action','commandId','requestId','sessionId','result'])) {
         return json(400, fail('invalid_android_ack'), origin);
       }
       const { data: row, error: lookupError } = await db.from('backroom_android_commands')
-        .select('id,device_id,room_id,session_id,request_id,command,status,lease_until,expires_at,result')
+        .select('id,device_id,room_id,session_id,request_id,command,status,lease_until,expires_at,result,result_payload')
         .eq('id', ack.commandId).eq('device_id', current.device_id)
         .eq('session_id', ack.sessionId).eq('request_id', ack.requestId).maybeSingle();
       if (lookupError) return json(503, fail('android_ack_lookup_failed'), origin);
@@ -779,6 +781,30 @@ Deno.serve(async req => {
       }
 
       const isControlCommand = row.command?.action === 'request_control';
+      const isNativeWakeCommand = row.command?.action === 'native_wake_trigger';
+      if (isNativeWakeCommand) {
+        const handoff = validateAndroidNativeWakeHandoff(row.command.nativeWakeHandoff, {
+          now: Number.isSafeInteger(row.command.nativeWakeHandoff?.issuedAt)
+            ? row.command.nativeWakeHandoff.issuedAt : Date.now(),
+          clockSkewMs: 0,
+        });
+        if (!handoff || !ack.nativeWakeResult ||
+            ack.sessionId !== handoff.screenSessionId ||
+            handoff.deviceId !== current.device_id || handoff.roomId !== row.room_id ||
+            handoff.screenSessionId !== row.session_id ||
+            !validateAndroidNativeWakeResult(ack.nativeWakeResult, handoff)) {
+          return json(400, fail('invalid_android_native_wake_result'), origin);
+        }
+        const expectedResult = ack.nativeWakeResult.state === 'submitted'
+          ? 'native_wake_submitted'
+          : ack.nativeWakeResult.state === 'preflight_denied'
+            ? 'native_wake_preflight_denied' : 'native_wake_needs_review';
+        if (ack.result !== expectedResult || ack.canControl !== undefined) {
+          return json(400, fail('invalid_android_native_wake_ack_state'), origin);
+        }
+      } else if (ack.nativeWakeResult !== undefined) {
+        return json(400, fail('native_wake_result_for_non_wake_command'), origin);
+      }
       const controlGranted = isControlCommand && ack.canControl === true && ack.result === 'control_granted';
       const broadcastControlResult = async () => {
         if (!isControlCommand) return;
@@ -789,13 +815,34 @@ Deno.serve(async req => {
             capability: 'control', ...(controlGranted ? {} : { reason: 'local_touch_permission_missing' }) },
         });
       };
+      const broadcastNativeWakeResult = async () => {
+        if (!isNativeWakeCommand) return;
+        await broadcastPrivateDeviceEvent({
+          projectUrl: url, apiKey: serviceKey, deviceId: current.device_id,
+          event: 'android_native_wake_result',
+          payload: {
+            deviceId: current.device_id, roomId: row.room_id,
+            requestId: ack.requestId, sessionId: ack.sessionId,
+            nativeWakeResult: ack.nativeWakeResult,
+          },
+        });
+      };
+      const sameNativeWakeResult = (left, right) =>
+        JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
 
       // The phone may retry an ACK after a transient HTTP/Realtime failure. Do not
       // reject a duplicate ACK: repeat the room-scoped result broadcast idempotently.
       if (row.status === 'acked') {
-        if (row.result !== ack.result) return json(409, fail('android_ack_result_conflict'), origin);
-        try { await broadcastControlResult(); }
-        catch { return json(503, fail('android_control_result_delivery_failed'), origin); }
+        if (row.result !== ack.result ||
+            !sameNativeWakeResult(row.result_payload, ack.nativeWakeResult ?? null)) {
+          return json(409, fail('android_ack_result_conflict'), origin);
+        }
+        try {
+          await broadcastControlResult();
+          await broadcastNativeWakeResult();
+        } catch {
+          return json(503, fail('android_ack_result_delivery_failed'), origin);
+        }
         return json(200, { ok: true, acked: true, replayed: true }, origin);
       }
       if (row.status !== 'leased' || !row.lease_until || Date.parse(row.lease_until) <= Date.now() ||
@@ -805,12 +852,22 @@ Deno.serve(async req => {
 
       // Publish before committing the ACK. If Realtime is temporarily unavailable,
       // the device keeps the command leased and will retry it after lease expiry.
-      try { await broadcastControlResult(); }
-      catch { return json(503, fail('android_control_result_delivery_failed'), origin); }
+      try {
+        await broadcastControlResult();
+        await broadcastNativeWakeResult();
+      } catch {
+        return json(503, fail(isNativeWakeCommand
+          ? 'android_native_wake_result_delivery_failed'
+          : 'android_control_result_delivery_failed'), origin);
+      }
 
       const ackedAt = new Date().toISOString();
       const { data, error } = await db.from('backroom_android_commands')
-        .update({ status: 'acked', result: ack.result, acked_at: ackedAt, lease_until: null })
+        .update({
+          status: 'acked', result: ack.result,
+          result_payload: ack.nativeWakeResult ?? null,
+          acked_at: ackedAt, lease_until: null
+        })
         .eq('id', ack.commandId).eq('device_id', current.device_id)
         .eq('status', 'leased').gt('lease_until', ackedAt)
         .gt('expires_at', ackedAt).select('id');
@@ -829,7 +886,10 @@ Deno.serve(async req => {
           .eq('session_id', ack.sessionId).eq('device_id', current.device_id)
           .eq('room_id', row.room_id).eq('status', 'active');
       }
-      return json(200, { ok: true, acked: true }, origin);
+      return json(200, {
+        ok: true, acked: true,
+        ...(isNativeWakeCommand ? { nativeWakeResultStored: true } : {}),
+      }, origin);
     }
 
     if (action === 'desktop/inventory') {
