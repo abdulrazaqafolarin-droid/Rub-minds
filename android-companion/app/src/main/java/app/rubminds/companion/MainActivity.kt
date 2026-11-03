@@ -560,7 +560,7 @@ class MainActivity : Activity() {
         android.app.AlertDialog.Builder(this)
             .setTitle("Pre-authorize native AI wake for this app?")
             .setMessage(
-                "This separate local consent is bound to this phone, the selected app and its current signing certificate for up to 24 hours. In a future connected native-wake build it will permit only the fixed @RMconnects event trigger to be inserted into the exact composer you select and sent through its uniquely verified Send control. It does not authorize arbitrary messages, group-message text injection, remote touch or ordinary draft typing.\n\nImportant: the phone-side native-wake queue consumer exists, but Rub Minds does not yet forward group wake events into that device queue. Saving this consent alone will not trigger any action in ChatGPT, Claude or another app."
+                "This separate local consent is bound to this phone, the selected app and its current signing certificate for up to 24 hours. It authorizes only a properly scoped, event-bound @RMconnects handoff to insert the fixed trigger into the exact composer you select and send it through its uniquely verified Send control. It does not authorize arbitrary messages, group-message text injection, remote touch or ordinary draft typing.\n\nImportant: the phone-side native-wake queue consumer exists, but Rub Minds does not yet forward group wake events into that device queue. Saving this consent alone will not trigger any action in ChatGPT, Claude or another app."
             )
             .setNegativeButton("Cancel") { _, _ -> drawAppRows() }
             .setPositiveButton("Save local consent for 24 hours") { _, _ ->
