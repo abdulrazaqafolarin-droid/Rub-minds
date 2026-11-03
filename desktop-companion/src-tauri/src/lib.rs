@@ -1285,8 +1285,22 @@ fn recheck_draft_send_control(
         .get(&session_id).cloned().ok_or("Live screen capture is not active")?;
 
     // Revalidate the same empty composer first, then compare the exact local
-    // Send-node identity. This path never invokes UIA Invoke or a mouse click.
-    verify_selected_editable_target(&state, &geometry, &target)?;
+    // Send-node identity. A failed composer/window preflight invalidates the old
+    // candidate so it cannot later become valid again without a fresh drag.
+    if verify_selected_editable_target(&state, &geometry, &target).is_err() {
+        if let Ok(mut targets) = state.draft_targets.lock() {
+            if let Some(current) = targets.get_mut(&session_id) {
+                if current.selection_id.as_deref() == Some(selection_id.as_str()) {
+                    current.send_control_identity = None;
+                }
+            }
+        }
+        return Ok(SendControlRecheckSummary {
+            available: false,
+            reason: "composer_or_foreground_window_changed".into(),
+        });
+    }
+    // This path never invokes UIA Invoke or a mouse click.
     let inspection = input_targeting::revalidate_send_control(identity, expected_send);
     let available = inspection.candidate.is_some();
     let reason = inspection.reason.to_string();
@@ -1806,6 +1820,40 @@ mod native_input_tests {
             origin_y: 0,
             window_binding: None,
         }
+    }
+
+    #[test]
+    fn serialized_draft_target_never_exposes_local_uia_or_send_identity() {
+        let target = DraftTarget {
+            x: 0.2,
+            y: 0.7,
+            width: 0.3,
+            height: 0.1,
+            identity: Some(EditableTargetIdentity {
+                process_id: 42,
+                runtime_id: vec![1, 2, 3],
+                class_name: "Edit".into(),
+                control_type: "Edit".into(),
+                access_mode: "value".into(),
+                bounds: [10, 20, 300, 80],
+            }),
+            send_control_identity: Some(SendControlIdentity {
+                process_id: 42,
+                runtime_id: vec![4, 5, 6],
+                class_name: "Button".into(),
+                accessible_name: "Send".into(),
+                automation_id: "composer_send_button".into(),
+                bounds: [820, 1630, 960, 1700],
+            }),
+            selection_id: Some("123e4567-e89b-42d3-a456-426614174000".into()),
+        };
+        let serialized = serde_json::to_value(target).unwrap();
+        assert!(serialized.get("identity").is_none());
+        assert!(serialized.get("sendControlIdentity").is_none());
+        assert!(serialized.get("selectionId").is_none());
+        let encoded = serialized.to_string();
+        assert!(!encoded.contains("composer_send_button"));
+        assert!(!encoded.contains("123e4567-e89b-42d3-a456-426614174000"));
     }
 
     #[test]
