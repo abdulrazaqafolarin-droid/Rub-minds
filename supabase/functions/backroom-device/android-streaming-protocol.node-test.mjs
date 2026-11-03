@@ -170,6 +170,9 @@ test("native wake preflight denial cannot claim any side effect and ACK remains 
     reason: "permission_denied",
   };
   assert.equal(validateAndroidNativeWakeResult(nativeWakeResult, handoff), true);
+  assert.equal(validateAndroidNativeWakeResult({
+    ...nativeWakeResult, reason: "conversation_scope_unavailable",
+  }, handoff), true);
   assert.equal(validateAndroidNativeWakeResult({ ...nativeWakeResult, sendInvoked: true }, handoff), false);
   const { reason: _denialReason, ...missingReason } = nativeWakeResult;
   assert.equal(validateAndroidNativeWakeResult(missingReason, handoff), false);
