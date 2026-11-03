@@ -510,7 +510,7 @@ class MainActivity : Activity() {
             }
             row.addView(wakeConsent)
             row.addView(TextView(this).apply {
-                text = "Separate from draft typing. This saves local consent only; native wake delivery and automatic Send are not connected in this build."
+                text = "Separate from draft typing. The phone-side queue consumer exists, but no group-wake producer currently forwards group events into it; saving consent alone triggers no action."
                 textSize = 10f
                 setTextColor(0xff7b5b24.toInt())
                 setPadding(dp(8), 0, dp(8), dp(4))
@@ -560,7 +560,7 @@ class MainActivity : Activity() {
         android.app.AlertDialog.Builder(this)
             .setTitle("Pre-authorize native AI wake for this app?")
             .setMessage(
-                "This separate local consent is bound to this phone, the selected app and its current signing certificate for up to 24 hours. In a future connected native-wake build it will permit only the fixed @RMconnects event trigger to be inserted into the exact composer you select and sent through its uniquely verified Send control. It does not authorize arbitrary messages, group-message text injection, remote touch or ordinary draft typing.\n\nImportant: native wake delivery and native Send are not connected in this build. Saving this consent will not trigger any action in ChatGPT, Claude or another app."
+                "This separate local consent is bound to this phone, the selected app and its current signing certificate for up to 24 hours. In a future connected native-wake build it will permit only the fixed @RMconnects event trigger to be inserted into the exact composer you select and sent through its uniquely verified Send control. It does not authorize arbitrary messages, group-message text injection, remote touch or ordinary draft typing.\n\nImportant: the phone-side native-wake queue consumer exists, but Rub Minds does not yet forward group wake events into that device queue. Saving this consent alone will not trigger any action in ChatGPT, Claude or another app."
             )
             .setNegativeButton("Cancel") { _, _ -> drawAppRows() }
             .setPositiveButton("Save local consent for 24 hours") { _, _ ->
@@ -584,7 +584,7 @@ class MainActivity : Activity() {
                 if (saved == null) {
                     Toast.makeText(this, "Native wake consent could not be created.", Toast.LENGTH_LONG).show()
                 } else {
-                    Toast.makeText(this, "Local native-wake consent saved for 24 hours. Automatic wake and Send remain unavailable until device integration is completed.", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, "Local native-wake consent saved for 24 hours. Group-triggered wake remains unavailable until group-to-device forwarding and result reconciliation are connected.", Toast.LENGTH_LONG).show()
                 }
                 drawAppRows()
             }
