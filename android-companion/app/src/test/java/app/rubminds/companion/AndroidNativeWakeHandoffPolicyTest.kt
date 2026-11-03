@@ -22,6 +22,7 @@ class AndroidNativeWakeHandoffPolicyTest {
     private val composer = "b".repeat(64)
     private val send = "c".repeat(64)
     private val leaseDigest = "d".repeat(64)
+    private val providerConversationDigest = "e".repeat(64)
     private val now = 1_000_000L
 
     private fun prompt(eventId: String) =
@@ -53,6 +54,7 @@ class AndroidNativeWakeHandoffPolicyTest {
             .put("identityFingerprint", signer)
             .put("composerIdentityDigest", composer)
             .put("sendControlIdentityDigest", send)
+            .put("providerConversationIdentityDigest", providerConversationDigest)
             .put("leaseTokenDigest", leaseDigest)
             .put("prompt", canonical)
             .put("promptDigest", sha256(canonical))
@@ -91,6 +93,7 @@ class AndroidNativeWakeHandoffPolicyTest {
         assertEquals("evt_native_123", accepted?.eventId)
         assertEquals(composer, accepted?.composerTargetId)
         assertEquals(send, accepted?.sendTargetId)
+        assertEquals(providerConversationDigest, accepted?.providerConversationIdentityDigest)
         assertEquals(screenSessionId, accepted?.screenSessionId)
     }
 
@@ -186,9 +189,19 @@ class AndroidNativeWakeHandoffPolicyTest {
         assertEquals("mcp-session-123", accepted.aiSessionId)
         assertEquals(composer, request.composerTargetId)
         assertEquals(send, request.sendTargetId)
+        assertEquals(providerConversationDigest, request.providerConversationIdentityDigest)
         assertEquals(leaseDigest, request.leaseTokenDigest)
         assertEquals(7, request.targetRevision)
         assertEquals(accepted.issuedAtMillis, request.handoffIssuedAtMillis)
         assertEquals(accepted.expiresAtMillis, request.handoffExpiresAtMillis)
     }
+    @Test fun rejectsMissingOrMalformedProviderConversationIdentity() {
+        val missing = handoff()
+        missing.remove("providerConversationIdentityDigest")
+        assertNull(validate(JSONObject(command().toString()).put("nativeWakeHandoff", missing)))
+        assertNull(validate(JSONObject(command().toString()).put(
+            "nativeWakeHandoff", handoff().put("providerConversationIdentityDigest", "not-a-digest")
+        )))
+    }
+
 }
