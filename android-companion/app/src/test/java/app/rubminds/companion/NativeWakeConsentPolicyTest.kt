@@ -212,4 +212,15 @@ class NativeWakeConsentPolicyTest {
             assertFalse(NativeWakeConsentPolicy.reserveExecution(grant(), input, emptyList(), now).allowed)
         }
     }
+
+    @Test fun aPreviouslyReservedWakeIsTerminalReviewNotRetryablePreflightDenial() {
+        assertTrue(NativeWakeConsentPolicy.isTerminalReservationDenial("native_wake_event_already_reserved"))
+        assertTrue(NativeWakeConsentPolicy.isTerminalReservationDenial("native_wake_replay_ledger_corrupt"))
+        assertTrue(NativeWakeConsentPolicy.isTerminalReservationDenial("native_wake_replay_ledger_full"))
+        assertTrue(NativeWakeConsentPolicy.isTerminalReservationDenial("native_wake_seal_persistence_failed"))
+        assertFalse(NativeWakeConsentPolicy.isTerminalReservationDenial("native_wake_grant_inactive"))
+        assertFalse(NativeWakeConsentPolicy.isTerminalReservationDenial("native_wake_rate_limited"))
+        assertFalse(NativeWakeConsentPolicy.isTerminalReservationDenial("native_wake_scope_invalid"))
+    }
+
 }
