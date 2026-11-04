@@ -10,6 +10,12 @@ update public.backroom_wake_jobs j
 set provider_conversation_identity_digest=b.provider_conversation_identity_digest
 from public.backroom_input_bindings b
 where b.id=j.binding_id
+  and b.owner_id=j.owner_id and b.room_id=j.room_id
+  and b.participant_id=j.participant_id and b.host_id=j.host_id
+  and b.session_digest=j.session_digest and b.space_id=j.space_id
+  and b.session_id=j.session_id and b.target_id=j.target_id
+  and b.target_identity_fingerprint=j.target_identity_fingerprint
+  and b.target_revision=j.target_revision
   and j.provider_conversation_identity_digest is distinct from b.provider_conversation_identity_digest;
 
 -- Old native work without a verifiable provider conversation is not safe to replay.
