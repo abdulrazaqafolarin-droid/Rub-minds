@@ -131,7 +131,7 @@ export default function BackroomAndroidControl({ device, roomId, onNativeTargetP
     sessionRef.current = ''; pointerRef.current = null; pendingControlRequestRef.current = '';
     sourceVisibilityRef.current = null;
     setSessionId(''); setViewReady(false); setSourceVisible(false); setDataReady(false); setControlGranted(false); setRemoteText(''); setRemoteTextBusy(false); setSelectionMode(false); setComposerTargetId(''); setSendControlVerified(false); setProviderConversationIdentityAvailable(false); setNativeTargetProofBusy(false); setNativeTargetProofStatus('No device-verified conversation proof prepared.'); setSendControlCheckPending(false); setSendControlStatus('No native Send control verified.'); setSelectionPreview(null); setRemoteTextStatus('Select the actual composer in the streamed app before inserting text.'); setBusy(false);
-  }, []);
+  }, [onNativeTargetProof]);
 
   const stopRemote = useCallback(async (expectedSession = sessionRef.current) => {
     if (!supabase || !expectedSession || !device.device_id) {
