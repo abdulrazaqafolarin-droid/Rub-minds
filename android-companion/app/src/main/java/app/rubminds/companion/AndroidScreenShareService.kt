@@ -786,7 +786,12 @@ class AndroidScreenShareService : Service() {
             .put("reason", decision.reason)
             .put("sendAvailable", decision.sendControl != null)
             .put("sendReason", decision.sendReason)
-            .put("providerConversationIdentityAvailable", decision.providerConversationIdentityAvailable)
+            .put("providerConversationIdentityAvailable", decision.providerConversationIdentityDigest?.let {
+                ProviderConversationIdentityPolicy.isValidDigest(it)
+            } == true)
+        decision.providerConversationIdentityDigest
+            ?.takeIf { ProviderConversationIdentityPolicy.isValidDigest(it) }
+            ?.let { payload.put("providerConversationIdentityDigest", it) }
         decision.candidate?.let { payload.put("targetId", it.targetId) }
         decision.sendControl?.let { payload.put("sendTargetId", it.targetId) }
         runCatching { channel.send(DataChannel.Buffer(ByteBuffer.wrap(payload.toString().toByteArray(Charsets.UTF_8)), false)) }
@@ -808,6 +813,12 @@ class AndroidScreenShareService : Service() {
             .put("requestId", requestId)
             .put("available", decision.candidate != null)
             .put("reason", decision.reason)
+            .put("providerConversationIdentityAvailable", decision.providerConversationIdentityDigest?.let {
+                ProviderConversationIdentityPolicy.isValidDigest(it)
+            } == true)
+        decision.providerConversationIdentityDigest
+            ?.takeIf { ProviderConversationIdentityPolicy.isValidDigest(it) }
+            ?.let { payload.put("providerConversationIdentityDigest", it) }
         decision.candidate?.let { payload.put("sendTargetId", it.targetId) }
         runCatching {
             channel.send(DataChannel.Buffer(
