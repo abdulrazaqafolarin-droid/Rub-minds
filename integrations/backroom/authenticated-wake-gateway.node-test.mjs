@@ -13,12 +13,12 @@ const expiresAt='2030-01-01T00:00:00.000Z';
 const scope={hostId,hostToken:token,bindingId,sessionDigest};
 const jobId='40000000-0000-4000-8000-000000000033';
 const leaseToken='40000000-0000-4000-8000-000000000044';
-function setup({host={},binding={},now=()=>Date.parse('2026-10-29T00:00:00Z'),activateBinding=async()=>true,deactivateBinding=async()=>true}={}) {
+function setup({host={},binding={},leases=[],now=()=>Date.parse('2026-10-29T00:00:00Z'),activateBinding=async()=>true,deactivateBinding=async()=>true}={}) {
  const calls=[];
  const hostRecord={hostId,ownerId,credentialDigest,expiresAt,revokedAt:null,...host};
  const bindingRecord={bindingId,hostId,ownerId,sessionDigest,wakeEnabled:true,confirmedAt:'2026-10-28T00:00:00Z',wakeExpiresAt:expiresAt,revokedAt:null,...binding};
  const store={
-  claim:async args=>{calls.push(['claim',args]);return [];},
+  claim:async args=>{calls.push(['claim',args]);return leases;},
   acknowledge:async args=>{calls.push(['acknowledge',args]);return true;},
   retry:async args=>{calls.push(['retry',args]);return 'pending';}
  };
@@ -41,6 +41,23 @@ test('claim passes the exact provider conversation digest from the authenticated
  const {gateway,calls}=setup({binding:{providerConversationIdentityDigest:digest}});
  assert.deepEqual(await gateway.claim({...scope,limit:1}),{ok:true,leases:[]});
  assert.deepEqual(calls[0],['claim',{hostId,bindingId,sessionDigest,providerConversationIdentityDigest:digest,limit:1}]);
+});
+
+test('claim rejects a lease whose provider digest differs from the authenticated binding',async()=>{
+ const digest='d'.repeat(64);
+ const forgedLease={hostId,sessionDigest,bindingId,jobId,leaseToken,providerConversationIdentityDigest:'e'.repeat(64)};
+ const {gateway,calls}=setup({binding:{providerConversationIdentityDigest:digest},leases:[forgedLease]});
+ await assert.rejects(()=>gateway.claim({...scope,limit:1}),/does not match the authenticated input binding/);
+ assert.equal(calls.length,1);
+});
+
+test('claim accepts a lease only when its provider digest matches the binding digest',async()=>{
+ const digest='d'.repeat(64);
+ const lease={hostId,sessionDigest,bindingId,jobId,leaseToken,providerConversationIdentityDigest:digest};
+ const {gateway}=setup({binding:{providerConversationIdentityDigest:digest},leases:[lease]});
+ const result=await gateway.claim({...scope,limit:1});
+ assert.equal(result.ok,true);
+ assert.equal(result.leases[0].providerConversationIdentityDigest,digest);
 });
 
 test('wrong token, host, binding, session digest denied without private RPC',async()=>{
