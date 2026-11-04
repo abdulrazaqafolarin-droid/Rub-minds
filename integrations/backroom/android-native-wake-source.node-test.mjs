@@ -113,6 +113,25 @@ test('native wake ACK uses normalized reasons and successful identity evidence o
   assert.doesNotMatch(acknowledge, /result\.reason\.take\(120\)/);
 });
 
+test('provider-conversation digest never crosses the Android WebRTC browser boundary', () => {
+  const selectionAck = method(
+    screen,
+    'private fun sendComposerTargetAcknowledgement(',
+    '    private fun sendSendControlVerificationAcknowledgement('
+  );
+  const sendRecheckAck = method(
+    screen,
+    'private fun sendSendControlVerificationAcknowledgement(',
+    '    private fun sendRemoteTextAcknowledgement('
+  );
+  assert.match(selectionAck, /providerConversationIdentityAvailable/);
+  assert.doesNotMatch(selectionAck, /payload\.put\("providerConversationIdentityDigest"/);
+  assert.match(sendRecheckAck, /providerConversationIdentityMatchesSelection/);
+  assert.doesNotMatch(sendRecheckAck, /payload\.put\("providerConversationIdentityDigest"/);
+  assert.doesNotMatch(androidFrameUi, /providerConversationIdentityDigest/);
+  assert.match(service, /ProviderConversationIdentityPolicy\.matches\([\s\S]*boundProviderConversationIdentityDigest/);
+});
+
 test('native Send path rechecks composer and Send identity from the final snapshot before ACTION_CLICK', () => {
   const submit = method(
     service,
