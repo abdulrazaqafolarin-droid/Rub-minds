@@ -145,6 +145,7 @@ comment on table public.backroom_android_native_target_proofs is
 create or replace function public.register_backroom_android_native_binding(
   p_proof_id uuid,
   p_owner_id uuid,
+  p_room_id uuid,
   p_participant_id uuid,
   p_host_id text,
   p_session_digest text,
@@ -162,7 +163,7 @@ declare
   v_binding_id uuid;
   v_now timestamptz := pg_catalog.clock_timestamp();
 begin
-  if p_proof_id is null or p_owner_id is null or p_participant_id is null
+  if p_proof_id is null or p_owner_id is null or p_room_id is null or p_participant_id is null
     or p_host_id is null or char_length(btrim(p_host_id)) not between 1 and 128
     or p_session_digest is null or p_session_digest !~ '^[0-9a-f]{64}$'
     or p_space_id is null or char_length(btrim(p_space_id)) not between 1 and 128
@@ -180,6 +181,9 @@ begin
     raise exception 'Android native target proof is missing, expired or already consumed';
   end if;
 
+  if v_proof.room_id is distinct from p_room_id then
+    raise exception 'Android target proof belongs to a different room';
+  end if;
   if not exists (select 1 from public.rooms r where r.id = v_proof.room_id and r.owner_id = p_owner_id) then
     raise exception 'Android target proof belongs to a different room owner';
   end if;
@@ -261,10 +265,10 @@ begin
 end;
 $function$;
 
-revoke all on function public.register_backroom_android_native_binding(uuid,uuid,uuid,text,text,text,text,integer)
+revoke all on function public.register_backroom_android_native_binding(uuid,uuid,uuid,uuid,text,text,text,integer)
   from public, anon, authenticated;
-grant execute on function public.register_backroom_android_native_binding(uuid,uuid,uuid,text,text,text,text,integer)
+grant execute on function public.register_backroom_android_native_binding(uuid,uuid,uuid,uuid,text,text,text,integer)
   to service_role;
 
-comment on function public.register_backroom_android_native_binding(uuid,uuid,uuid,text,text,text,text,integer) is
-  'Consumes a short-lived device-authenticated Android target proof and creates an inactive native input binding atomically.';
+comment on function public.register_backroom_android_native_binding(uuid,uuid,uuid,uuid,text,text,text,integer) is
+  'Consumes a short-lived device-authenticated Android target proof for the exact requested room and creates an inactive native input binding atomically.';
