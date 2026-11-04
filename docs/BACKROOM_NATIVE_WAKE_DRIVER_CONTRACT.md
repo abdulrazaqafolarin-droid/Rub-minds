@@ -2,9 +2,11 @@
 
 > For the upstream group-event, drag-select, binding and downstream MCP response lifecycle around this driver, see [Backroom group-to-composer wake flow](BACKROOM_GROUP_TO_COMPOSER_WAKE_FLOW.md).
 
-Status: **The source branch now carries the provider-conversation digest through binding registration, wake-job storage and the provider-aware claim lease; the migration is not deployed, the Android provider resolver is empty, and the trusted host lease-forwarder and Windows native driver remain unconnected.**
+Status: **Source now includes device-attested Android binding registration and provider-aware durable leases, but those migrations/Edge changes are not deployed; the provider resolver is empty; the trusted host lease-forwarder/ACK settlement and Windows native driver remain unconnected.**
 
 This document defines the boundary between the existing group coordination/durable wake system and a future Android or Windows native composer driver. It does not enable native Off / On / Auto, native Send or a new host-server route.
+
+The #67 source branch adds device-attested registration: the owner creates a 120-second one-use intent for a specific AI MCP session, paired host, Android device and live screen/app/signer. The phone rechecks the exact composer, Send and provider conversation locally and posts their opaque digests through its device-bearer HTTPS connection. The service-role RPC consumes the intent and stores a wake-disabled binding plus a private attestation row. The browser receives only the intent ID, binding ID and non-sensitive attestation boolean. The generic owner binding route cannot supply a native provider digest. These changes are not deployed or yet verified by a runner.
 
 ## Why a separate native adapter exists
 
