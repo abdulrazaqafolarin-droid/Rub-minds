@@ -11,7 +11,7 @@ import { validateDesktopApps } from './desktop-app-protocol.mjs';
 import { validateDesktopCommand, validateDesktopSignal } from './desktop-command-protocol.mjs';
 import { validateDesktopSessionClose } from './desktop-session-close-protocol.mjs';
 import { validateDesktopSessionAbandon } from './desktop-session-abandon-protocol.mjs';
-import { validateAndroidSessionStart, validateAndroidDeviceCommand, validateAndroidSignal, validateAndroidCommandAck, validateAndroidNativeWakeHandoff, validateAndroidNativeWakeResult, validateAndroidSessionClose, mapAndroidQueuedCommand } from './android-streaming-protocol.mjs';
+import { validateAndroidSessionStart, validateAndroidDeviceCommand, validateAndroidSignal, validateAndroidCommandAck, validateAndroidNativeWakeHandoff, validateAndroidNativeWakeResult, validateAndroidNativeTargetProof, validateAndroidSessionClose, mapAndroidQueuedCommand } from './android-streaming-protocol.mjs';
 import { broadcastPrivateDeviceEvent } from './realtime-broadcast.mjs';
 
 const url = Deno.env.get('SUPABASE_URL');
@@ -427,6 +427,78 @@ Deno.serve(async req => {
       await db.from('backroom_devices').update({ last_seen_at: new Date().toISOString() }).eq('device_id', current.device_id);
       return json(200, { ok: true, deviceId: current.device_id, status: current.status,
         capabilities: current.capabilities }, origin);
+    }
+
+    if (action === 'android/native-target-proof') {
+      const current = await device(req);
+      if (!current || current.platform !== 'android') return json(401, fail('device_auth_invalid'), origin);
+      const proof = validateAndroidNativeTargetProof({
+        deviceId: input.deviceId, roomId: input.roomId, sessionId: input.sessionId,
+        requestId: input.requestId, issuedAt: input.issuedAt, appPackageName: input.appPackageName,
+        appSignerSha256: input.appSignerSha256, targetId: input.targetId,
+        targetRevision: input.targetRevision, composerIdentityDigest: input.composerIdentityDigest,
+        sendControlIdentityDigest: input.sendControlIdentityDigest,
+        providerConversationIdentityDigest: input.providerConversationIdentityDigest,
+      });
+      if (!proof || !exactKeys(input, [
+        'action','deviceId','roomId','sessionId','requestId','issuedAt','appPackageName',
+        'appSignerSha256','targetId','targetRevision','composerIdentityDigest',
+        'sendControlIdentityDigest','providerConversationIdentityDigest'
+      ])) return json(400, fail('invalid_android_native_target_proof'), origin);
+      if (proof.deviceId !== current.device_id) return json(403, fail('device_scope_mismatch'), origin);
+
+      const [binding, session] = await Promise.all([
+        verifyActiveDeviceRoomBinding(current.device_id, proof.roomId),
+        activeDesktopSession(proof.sessionId, current.device_id, proof.roomId),
+      ]);
+      if (!binding.ok) return json(binding.status, fail(binding.reason), origin);
+      if (binding.platform !== 'android') return json(403, fail('android_device_required'), origin);
+      if (!session.ok || session.session.session_type !== 'screen') {
+        return json(session.ok ? 409 : session.status, fail(session.ok ? 'active_screen_session_required' : session.reason), origin);
+      }
+
+      const { data: app, error: appError } = await db.from('backroom_device_apps')
+        .select('package_name,signing_certificate_sha256,draft_insertion_allowed')
+        .eq('device_id', current.device_id).eq('package_name', proof.appPackageName).maybeSingle();
+      if (appError) return json(503, fail('device_app_inventory_unavailable'), origin);
+      const approvedSigners = typeof app?.signing_certificate_sha256 === 'string'
+        ? app.signing_certificate_sha256.split('.') : [];
+      if (!app || app.draft_insertion_allowed !== true || !approvedSigners.includes(proof.appSignerSha256)) {
+        return json(403, fail('app_not_approved_for_draft_and_native_target_selection'), origin);
+      }
+
+      const now = new Date().toISOString();
+      const { count, error: countError } = await db.from('backroom_android_native_target_proofs')
+        .select('proof_id', { count: 'exact', head: true })
+        .eq('device_id', current.device_id).eq('room_id', proof.roomId)
+        .is('consumed_at', null).gt('expires_at', now);
+      if (countError) return json(503, fail('native_target_proof_rate_limit_unavailable'), origin);
+      if ((count ?? 0) >= 10) return json(429, fail('native_target_proof_rate_limited'), origin);
+
+      const issuedAt = new Date(proof.issuedAt);
+      const expiresAt = new Date(Math.min(
+        proof.issuedAt + 5 * 60 * 1000,
+        Date.parse(session.session.expires_at)
+      ));
+      if (!Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now()) {
+        return json(409, fail('screen_session_expiring'), origin);
+      }
+      const { data: created, error: createError } = await db.from('backroom_android_native_target_proofs')
+        .insert({
+          device_id: current.device_id, room_id: proof.roomId, screen_session_id: proof.sessionId,
+          request_id: proof.requestId, app_package_name: proof.appPackageName,
+          app_signer_sha256: proof.appSignerSha256, target_id: proof.targetId,
+          target_revision: proof.targetRevision, composer_identity_digest: proof.composerIdentityDigest,
+          send_control_identity_digest: proof.sendControlIdentityDigest,
+          provider_conversation_identity_digest: proof.providerConversationIdentityDigest,
+          created_at: issuedAt.toISOString(), expires_at: expiresAt.toISOString()
+        })
+        .select('proof_id,expires_at').single();
+      if (createError || !created) {
+        // A repeated request ID is rejected rather than silently issuing a second proof.
+        return json(409, fail('native_target_proof_request_replayed'), origin);
+      }
+      return json(201, { ok: true, proofId: created.proof_id, expiresAt: created.expires_at }, origin);
     }
 
     if (action === 'android/session-start') {
