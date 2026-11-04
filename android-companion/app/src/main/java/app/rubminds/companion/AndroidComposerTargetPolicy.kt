@@ -37,7 +37,8 @@ data class SendControlCandidate(
 
 data class SendControlDecision(
     val candidate: SendControlCandidate?,
-    val reason: String
+    val reason: String,
+    val providerConversationIdentityDigest: String? = null
 )
 
 data class ComposerSelectionDecision(
@@ -45,7 +46,8 @@ data class ComposerSelectionDecision(
     val reason: String,
     val sendControl: SendControlCandidate? = null,
     val sendReason: String = "not_checked",
-    val providerConversationIdentityAvailable: Boolean = false
+    val providerConversationIdentityAvailable: Boolean = false,
+    val providerConversationIdentityDigest: String? = null
 )
 
 /**
