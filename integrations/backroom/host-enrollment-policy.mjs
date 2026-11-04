@@ -38,6 +38,27 @@ export function validateHostEnrollment(raw){
  if(!Number.isSafeInteger(ttlSeconds)||ttlSeconds<3600||ttlSeconds>604800)throw new RangeError('Invalid host TTL');
  return Object.freeze({hostId,credentialDigest:v.credentialDigest,ttlSeconds});
 }
+export function validateNativeTargetProofBinding(raw){
+ const v=object(raw);
+ keys(v,['roomId','participantId','hostId','sessionDigest','spaceId',
+   'nativeTargetProofId','participationMode','maxWakesPerMinute']);
+ const result={
+  roomId:uuid(v.roomId,'roomId'),
+  participantId:uuid(v.participantId,'participantId'),
+  hostId:uuid(v.hostId,'hostId'),
+  sessionDigest:typeof v.sessionDigest==='string'&&HEX64.test(v.sessionDigest)
+   ? v.sessionDigest : (()=>{throw new TypeError('Invalid sessionDigest');})(),
+  spaceId:label(v.spaceId,'spaceId',128),
+  nativeTargetProofId:uuid(v.nativeTargetProofId,'nativeTargetProofId'),
+  participationMode:v.participationMode??'mentions',
+  maxWakesPerMinute:v.maxWakesPerMinute??6,
+ };
+ if(!MODES.has(result.participationMode))throw new TypeError('Invalid participationMode');
+ if(!Number.isSafeInteger(result.maxWakesPerMinute)||result.maxWakesPerMinute<1||result.maxWakesPerMinute>6)
+  throw new RangeError('Invalid wake rate');
+ return Object.freeze(result);
+}
+
 export function validatePendingWakeBinding(raw){
  const v=object(raw);
  keys(v,['roomId','participantId','hostId','sessionDigest','spaceId','sessionId',
