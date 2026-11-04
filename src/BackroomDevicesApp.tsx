@@ -13,6 +13,8 @@ import BackroomAndroidControl from './BackroomAndroidControl';
 import BackroomDesktopControl from './BackroomDesktopControl';
 import './backroom-cloud.css';
 
+type NativeAiSession = { participantId: string; displayName: string; sessionDigest: string };
+type NativeHost = { hostId: string; expiresAt: string };
 type Surface = 'phone' | 'desktop' | 'terminal';
 const surfaceLabels: Record<Surface, string> = {
   phone: 'Phone apps', desktop: 'Desktop apps', terminal: 'Terminal',
@@ -49,6 +51,8 @@ export default function BackroomApp() {
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [showHelp, setShowHelp] = useState(false);
+  const [nativeAiSessions, setNativeAiSessions] = useState<NativeAiSession[]>([]);
+  const [nativeHosts, setNativeHosts] = useState<NativeHost[]>([]);
 
   const loadRooms = useCallback(async () => {
     if (!supabase) return;
@@ -79,6 +83,46 @@ export default function BackroomApp() {
     params.set('room', roomId);
     history.replaceState(null, '', location.pathname + '?' + params.toString());
   }, [roomId, refresh]);
+
+  useEffect(() => {
+    let active = true;
+    setNativeAiSessions([]);
+    setNativeHosts([]);
+    if (!roomId || !canManageDevices || !supabase) return;
+    void Promise.all([
+      supabase.functions.invoke('backroom-config/sessions', { body: { roomId } }),
+      supabase.functions.invoke('backroom-config/hosts', { body: {} }),
+    ]).then(([sessionsResult, hostsResult]) => {
+      if (!active) return;
+      const sessions = sessionsResult.data?.ok === true && Array.isArray(sessionsResult.data.sessions)
+        ? sessionsResult.data.sessions.filter((item: any) =>
+            typeof item?.participantId === 'string' &&
+            typeof item?.displayName === 'string' &&
+            typeof item?.sessionDigest === 'string' && /^[a-f0-9]{64}$/.test(item.sessionDigest) &&
+            typeof item?.expiresAt === 'string' && Date.parse(item.expiresAt) > Date.now() &&
+            typeof item?.credentialExpiresAt === 'string' && Date.parse(item.credentialExpiresAt) > Date.now()
+          ).map((item: any) => ({
+            participantId: item.participantId,
+            displayName: item.displayName,
+            sessionDigest: item.sessionDigest,
+          }))
+        : [];
+      const hosts = hostsResult.data?.ok === true && Array.isArray(hostsResult.data.hosts)
+        ? hostsResult.data.hosts.filter((item: any) =>
+            typeof item?.hostId === 'string' &&
+            typeof item?.expiresAt === 'string' && Date.parse(item.expiresAt) > Date.now()
+          ).map((item: any) => ({ hostId: item.hostId, expiresAt: item.expiresAt }))
+        : [];
+      setNativeAiSessions(sessions);
+      setNativeHosts(hosts);
+    }).catch(() => {
+      if (active) {
+        setNativeAiSessions([]);
+        setNativeHosts([]);
+      }
+    });
+    return () => { active = false; };
+  }, [roomId, canManageDevices]);
 
   const selectedRoom = rooms.find(room => room.id === roomId);
   const activeDevices = useMemo(() => devices.filter(device => device.status === 'active'), [devices]);
@@ -198,7 +242,9 @@ export default function BackroomApp() {
                 </div>) : <div className="br-cloud-phone-empty"><ArrowDownToLine size={27}/><b>No apps added yet</b><span>Choose apps in the Android companion. Only selected app metadata is synced.</span></div>}
                 <div className="br-cloud-frame-foot"><Check size={14}/> App inventory synced from {activeDevice?.device_label ?? 'Android device'}</div>
                 {activeDevice?.platform === 'android'
-                  ? <BackroomAndroidControl device={activeDevice} roomId={roomId}/>
+                  ? <BackroomAndroidControl device={activeDevice} roomId={roomId}
+                    canRegisterNativeBinding={canManageDevices}
+                    nativeSessions={nativeAiSessions} nativeHosts={nativeHosts}/>
                   : <div className="br-cloud-phone-runtime-note">This connected device has no Android app-stream driver. Its app entries remain inventory only.</div>}
               </div> : <div className="br-cloud-phone-screen disconnected">
                 <div className="br-cloud-phone-bar"><span>Backroom</span><small>Not connected</small></div>
