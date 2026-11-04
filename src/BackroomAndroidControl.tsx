@@ -41,6 +41,7 @@ export default function BackroomAndroidControl({
   const [nativeBindingHostId, setNativeBindingHostId] = useState('');
   const [nativeBindingSessionDigest, setNativeBindingSessionDigest] = useState('');
   const [nativeBindingBusy, setNativeBindingBusy] = useState(false);
+  const [nativeBindingId, setNativeBindingId] = useState('');
   const [nativeBindingStatus, setNativeBindingStatus] = useState('No device-attested AI binding registered.');
   const [selectionPreview, setSelectionPreview] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const [remoteTextBusy, setRemoteTextBusy] = useState(false);
@@ -235,6 +236,29 @@ export default function BackroomAndroidControl({
     if (video.srcObject !== stream) video.srcObject = stream;
     void video.play().catch(() => undefined);
   }, [viewReady]);
+
+  const revokeNativeBinding = async () => {
+    if (!canRegisterNativeBinding || !supabase || !nativeBindingId || nativeBindingBusy) return;
+    setNativeBindingBusy(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('backroom-config/revoke-binding', {
+        body: { bindingId: nativeBindingId },
+      });
+      if (error || data?.ok !== true || data?.revoked !== true) {
+        throw new Error(typeof data?.reason === 'string'
+          ? data.reason.replaceAll('_', ' ')
+          : 'The device binding could not be revoked.');
+      }
+      setNativeBindingId('');
+      setNativeBindingStatus('The device-attested binding was revoked. Wake was already OFF; you can register a new target after selecting the new conversation.');
+      notify('Android native binding revoked. No autonomous wake is active.');
+    } catch (error) {
+      setNativeBindingStatus(error instanceof Error ? error.message : 'Binding revocation failed.');
+      notify('Could not revoke the Android native binding. Try again while signed in as the room owner.', true);
+    } finally {
+      setNativeBindingBusy(false);
+    }
+  };
 
   const registerNativeBinding = async () => {
     const session = sessionRef.current;
@@ -436,6 +460,7 @@ export default function BackroomAndroidControl({
           pendingNativeBindingAcksRef.current.delete(acknowledgement.requestId);
           setNativeBindingBusy(false);
           if (acknowledgement.accepted && typeof acknowledgement.bindingId === 'string') {
+            setNativeBindingId(acknowledgement.bindingId);
             setNativeBindingStatus('Phone attested this exact AI conversation and registered binding ' +
               acknowledgement.bindingId + '. Wake remains OFF; native host forwarding and ACK settlement are not enabled yet.');
             notify('Device-attested Android binding registered. No autonomous action was enabled.');
@@ -924,12 +949,15 @@ export default function BackroomAndroidControl({
           </option>)}
         </select>
         <button type="button" onClick={() => void registerNativeBinding()}
-          disabled={nativeBindingBusy || !viewReady || !sourceVisible || !dataReady ||
+          disabled={nativeBindingBusy || Boolean(nativeBindingId) || !viewReady || !sourceVisible || !dataReady ||
             !composerTargetId || !sendControlVerified || !providerConversationIdentityAvailable ||
             !nativeBindingHostId || !nativeBindingSessionDigest || !nativeHosts.length || !nativeSessions.length}>
           {nativeBindingBusy ? 'Attesting on phone…' : 'Bind selected AI to this phone'}
         </button>
         <p role="status">{nativeBindingStatus}</p>
+        {nativeBindingId ? <button type="button" onClick={() => void revokeNativeBinding()} disabled={nativeBindingBusy}>
+          Revoke this device binding
+        </button> : null}
         <small>The browser sends only a one-use intent ID. The phone rechecks its local identities and sends their digests directly to Rub Minds over its device credential. The new binding stays wake-disabled.</small>
       </div> : null}
       <div className="br-android-composer-actions">
