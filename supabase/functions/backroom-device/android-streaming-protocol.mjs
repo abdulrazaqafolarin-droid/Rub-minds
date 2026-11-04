@@ -95,6 +95,28 @@ export function validateAndroidNativeWakeHandoff(value, { now = Date.now(), cloc
   return Object.freeze({ ...value });
 }
 
+export function validateAndroidNativeTargetProof(value, { now = Date.now() } = {}) {
+  const keys = [
+    "deviceId", "roomId", "sessionId", "requestId", "issuedAt", "appPackageName",
+    "appSignerSha256", "targetId", "targetRevision", "composerIdentityDigest",
+    "sendControlIdentityDigest", "providerConversationIdentityDigest",
+  ];
+  if (!exactKeys(value, keys) ||
+      !UUID.test(value.deviceId ?? "") || !UUID.test(value.roomId ?? "") ||
+      !UUID.test(value.sessionId ?? "") || !UUID.test(value.requestId ?? "") ||
+      !Number.isSafeInteger(value.issuedAt) || !Number.isSafeInteger(now) ||
+      Math.abs(now - value.issuedAt) > MAX_REQUEST_AGE_MS ||
+      !isPackageName(value.appPackageName) ||
+      !HEX.test(value.appSignerSha256 ?? "") ||
+      !HEX.test(value.targetId ?? "") ||
+      !Number.isSafeInteger(value.targetRevision) || value.targetRevision < 1 ||
+      !HEX.test(value.composerIdentityDigest ?? "") ||
+      value.targetId !== value.composerIdentityDigest ||
+      !HEX.test(value.sendControlIdentityDigest ?? "") ||
+      !HEX.test(value.providerConversationIdentityDigest ?? "")) return null;
+  return Object.freeze({ ...value });
+}
+
 export function validateAndroidSignal(value) {
   if (!value || typeof value !== "object" || Array.isArray(value) ||
       !UUID.test(value.sessionId ?? "") || !exactKeys(value, ["sessionId", "answer", "canControl"]) ||
