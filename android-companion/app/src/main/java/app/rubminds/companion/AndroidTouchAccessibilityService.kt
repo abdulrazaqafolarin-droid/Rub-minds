@@ -361,7 +361,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 return SendControlDecision(null,
                     if (current.candidate == null) current.reason else "send_control_identity_changed")
             }
-            return if (expectedProviderConversationIdentityDigest != null) {
+            return if (expectedProviderConversationIdentityDigest != null && current.candidate != null) {
                 current.copy(providerConversationIdentityDigest = expectedProviderConversationIdentityDigest)
             } else {
                 current
