@@ -321,3 +321,30 @@ test('composer selection distinguishes Send discovery from provider-conversation
   assert.match(androidFrameUi, /native wake blocked/);
   assert.match(androidFrameUi, /does not expose a verified stable conversation identity/);
 });
+
+
+test('Android native target attestation is computed on-device and returns only a short-lived opaque receipt', () => {
+  const attest = method(service, '    fun createNativeTargetAttestation(', '    fun isBoundToProviderConversation(');
+  assert.match(attest, /revalidateSelectedSendControl/);
+  assert.match(attest, /ProviderConversationIdentityResolver\.resolve/);
+  assert.match(attest, /findNodeByTargetId/);
+  assert.match(attest, /appSignerSha256 = signer/);
+  assert.match(attest, /providerConversationIdentityDigest = snapshot\.providerDigest/);
+  assert.match(service, /fun createNativeTargetAttestation\([\s\S]*?instance\?\.createNativeTargetAttestation/);
+
+  const register = method(screen, '    private fun registerNativeTargetAttestation(', '    private fun sendComposerTargetAcknowledgement(');
+  assert.match(register, /client\.post\("android\/native-target\/register"/);
+  assert.match(register, /AndroidTouchAccessibilityService\.createNativeTargetAttestation/);
+  assert.match(register, /providerConversationIdentityDigest/);
+  assert.match(register, /revokeNativeTargetAttestation\(targetId/);
+  assert.match(register, /finalAttestation != attestation/);
+
+  const ack = method(screen, '    private fun sendNativeTargetAcknowledgement(', '    private fun revokeNativeTargetAttestation(');
+  assert.match(ack, /native_target_ack/);
+  assert.match(ack, /nativeTargetId/);
+  assert.doesNotMatch(ack, /providerConversationIdentityDigest|composerIdentityDigest|sendControlIdentityDigest|appSignerSha256/);
+  assert.match(androidFrameUi, /acknowledgement\.kind === 'native_target_ack'/);
+  assert.match(androidFrameUi, /nativeTargetId/);
+  assert.match(androidFrameUi, /no group AI binding or autonomous wake is enabled/);
+  assert.match(screen, /revokeCurrentNativeTargetAttestation/);
+});
