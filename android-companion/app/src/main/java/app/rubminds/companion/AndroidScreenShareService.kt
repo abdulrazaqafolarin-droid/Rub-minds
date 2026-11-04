@@ -56,6 +56,8 @@ class AndroidScreenShareService : Service() {
     @Volatile private var activeSessionId: String? = null
     @Volatile private var activeAppPackage: String? = null
     @Volatile private var activeRoomId: String? = null
+    @Volatile private var activeNativeTargetId: String? = null
+    @Volatile private var latestNativeSelectionId: String? = null
     @Volatile private var locallySelectedPackage: String? = null
     @Volatile private var localControlGranted = false
     @Volatile private var answeringSessionId: String? = null
@@ -768,6 +770,116 @@ class AndroidScreenShareService : Service() {
         true
     }
 
+
+    private fun sendNativeTargetAcknowledgement(
+        channel: DataChannel,
+        sessionId: String,
+        selectionId: String,
+        registered: Boolean,
+        reason: String,
+        nativeTargetId: String? = null,
+        expiresAt: String? = null
+    ) {
+        if (!UUID_PATTERN.matches(sessionId) || !UUID_PATTERN.matches(selectionId) ||
+            channel.state() != DataChannel.State.OPEN || activeSessionId != sessionId ||
+            dataChannel !== channel || latestNativeSelectionId != selectionId
+        ) return
+        val payload = JSONObject()
+            .put("kind", "native_target_ack")
+            .put("sessionId", sessionId)
+            .put("selectionId", selectionId)
+            .put("registered", registered)
+            .put("reason", reason)
+        if (registered && UUID_PATTERN.matches(nativeTargetId ?: "") && !expiresAt.isNullOrBlank()) {
+            payload.put("nativeTargetId", nativeTargetId)
+            payload.put("targetRevision", 1)
+            payload.put("expiresAt", expiresAt)
+        }
+        runCatching {
+            channel.send(DataChannel.Buffer(ByteBuffer.wrap(payload.toString().toByteArray(Charsets.UTF_8)), false))
+        }
+    }
+
+    private fun revokeNativeTargetAttestation(targetId: String, sessionId: String, roomId: String) {
+        val token = deviceToken ?: return
+        val client = api ?: return
+        Thread {
+            runCatching {
+                client.post("android/native-target/revoke", token, JSONObject()
+                    .put("roomId", roomId)
+                    .put("screenSessionId", sessionId)
+                    .put("nativeTargetId", targetId))
+            }
+        }.start()
+    }
+
+    private fun revokeCurrentNativeTargetAttestation(sessionId: String, roomId: String) {
+        val previous = activeNativeTargetId
+        activeNativeTargetId = null
+        if (!previous.isNullOrBlank() && UUID_PATTERN.matches(sessionId) && UUID_PATTERN.matches(roomId)) {
+            revokeNativeTargetAttestation(previous, sessionId, roomId)
+        }
+    }
+
+    private fun registerNativeTargetAttestation(
+        channel: DataChannel,
+        sessionId: String,
+        selectionId: String,
+        packageName: String
+    ) {
+        Thread {
+            val roomId = activeRoomId
+            val token = deviceToken
+            val client = api
+            if (roomId.isNullOrBlank() || token.isNullOrBlank() || client == null ||
+                activeSessionId != sessionId || activeAppPackage != packageName ||
+                latestNativeSelectionId != selectionId
+            ) {
+                sendNativeTargetAcknowledgement(channel, sessionId, selectionId, false, "screen_session_changed")
+                return@Thread
+            }
+            val attestation = AndroidTouchAccessibilityService.createNativeTargetAttestation(sessionId, packageName)
+            if (attestation == null) {
+                sendNativeTargetAcknowledgement(channel, sessionId, selectionId, false, "local_identity_revalidation_failed")
+                return@Thread
+            }
+            try {
+                val issuedAt = System.currentTimeMillis()
+                val response = client.post("android/native-target/register", token, JSONObject()
+                    .put("roomId", roomId)
+                    .put("requestId", selectionId)
+                    .put("issuedAt", issuedAt)
+                    .put("screenSessionId", sessionId)
+                    .put("appPackageName", packageName)
+                    .put("appSignerSha256", attestation.appSignerSha256)
+                    .put("composerIdentityDigest", attestation.composerIdentityDigest)
+                    .put("sendControlIdentityDigest", attestation.sendControlIdentityDigest)
+                    .put("providerConversationIdentityDigest", attestation.providerConversationIdentityDigest))
+                val targetId = response.optString("nativeTargetId")
+                val expiresAt = response.optString("expiresAt")
+                val revision = response.optInt("targetRevision", 0)
+                val expiresMillis = runCatching { java.time.Instant.parse(expiresAt).toEpochMilli() }.getOrNull()
+                if (!response.optBoolean("ok") || !UUID_PATTERN.matches(targetId) ||
+                    revision != 1 || expiresMillis == null || expiresMillis <= System.currentTimeMillis()
+                ) throw IllegalStateException("invalid_native_target_receipt")
+
+                // A response is accepted only if the phone still sees the same
+                // selection, foreground app and provider conversation.
+                val finalAttestation = AndroidTouchAccessibilityService.createNativeTargetAttestation(sessionId, packageName)
+                if (latestNativeSelectionId != selectionId || activeSessionId != sessionId ||
+                    activeRoomId != roomId || dataChannel !== channel || finalAttestation != attestation
+                ) {
+                    revokeNativeTargetAttestation(targetId, sessionId, roomId)
+                    return@Thread
+                }
+                activeNativeTargetId = targetId
+                sendNativeTargetAcknowledgement(channel, sessionId, selectionId, true, "device_attested", targetId, expiresAt)
+            } catch (_: Exception) {
+                sendNativeTargetAcknowledgement(channel, sessionId, selectionId, false, "native_target_registration_unavailable")
+            }
+        }.start()
+    }
+
     private fun sendComposerTargetAcknowledgement(
         channel: DataChannel,
         sessionId: String,
@@ -790,6 +902,13 @@ class AndroidScreenShareService : Service() {
         decision.candidate?.let { payload.put("targetId", it.targetId) }
         decision.sendControl?.let { payload.put("sendTargetId", it.targetId) }
         runCatching { channel.send(DataChannel.Buffer(ByteBuffer.wrap(payload.toString().toByteArray(Charsets.UTF_8)), false)) }
+        if (decision.candidate != null) {
+            when {
+                !decision.providerConversationIdentityAvailable -> sendNativeTargetAcknowledgement(channel, sessionId, selectionId, false, "provider_conversation_identity_unavailable")
+                decision.sendControl == null -> sendNativeTargetAcknowledgement(channel, sessionId, selectionId, false, "unique_send_control_not_verified")
+                else -> registerNativeTargetAttestation(channel, sessionId, selectionId, activeAppPackage ?: "")
+            }
+        }
     }
 
     private fun sendSendControlVerificationAcknowledgement(
@@ -899,6 +1018,8 @@ class AndroidScreenShareService : Service() {
                         )
                         return
                     }
+                    latestNativeSelectionId = selectionId
+                    revokeCurrentNativeTargetAttestation(sessionId, activeRoomId.orEmpty())
                     AndroidTouchAccessibilityService.clearSelectedComposer()
                     sendComposerTargetAcknowledgement(
                         channel, sessionId, selectionId,
@@ -927,6 +1048,8 @@ class AndroidScreenShareService : Service() {
                         )
                         return
                     }
+                    latestNativeSelectionId = selectionId
+                    revokeCurrentNativeTargetAttestation(sessionId, activeRoomId.orEmpty())
                     val region = input.optJSONObject("region")
                     if (region == null || region.keys().asSequence().toSet() != setOf("left", "top", "right", "bottom")) {
                         sendComposerTargetAcknowledgement(
@@ -1138,6 +1261,8 @@ class AndroidScreenShareService : Service() {
         DraftInputMethodService.clearRemoteSession(activeSessionId)
         synchronized(remoteTextRequestIds) { remoteTextRequestIds.clear() }
         activeSessionId = null
+        activeNativeTargetId = null
+        latestNativeSelectionId = null
         activeAppPackage = null
         activeRoomId = null
         answeringSessionId = null
@@ -1166,6 +1291,8 @@ class AndroidScreenShareService : Service() {
         if (stopping) return
         stopping = true
         runCatching { notifyServerSessionClosed() }
+        activeSessionId?.let { session -> revokeCurrentNativeTargetAttestation(session, activeRoomId.orEmpty()) }
+        latestNativeSelectionId = null
 
         // Invalidate the in-memory control binding before any disk or native
         // cleanup. A failed preference write must never leave a live target.
