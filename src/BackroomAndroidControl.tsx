@@ -9,8 +9,13 @@ import { waitForIceGatheringComplete } from '../integrations/backroom/ice-gather
 const uuid = () => crypto.randomUUID();
 type Point = { x: number; y: number };
 type PointerStart = Point & { pointerId: number; startedAt: number; mode: 'touch' | 'composer' };
+type NativeTargetProof = { proofId: string; expiresAt: string; deviceId: string; roomId: string; screenSessionId: string; appPackageName: string; targetId: string };
 
-export default function BackroomAndroidControl({ device, roomId }: { device: BackroomDevice; roomId: string }) {
+export default function BackroomAndroidControl({ device, roomId, onNativeTargetProof }: {
+  device: BackroomDevice;
+  roomId: string;
+  onNativeTargetProof?: (proof: NativeTargetProof | null) => void;
+}) {
   const [appPackage, setAppPackage] = useState(device.apps[0]?.package_name ?? '');
   const [channelReady, setChannelReady] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -25,6 +30,8 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const [composerTargetId, setComposerTargetId] = useState('');
   const [sendControlVerified, setSendControlVerified] = useState(false);
   const [providerConversationIdentityAvailable, setProviderConversationIdentityAvailable] = useState(false);
+  const [nativeTargetProofBusy, setNativeTargetProofBusy] = useState(false);
+  const [nativeTargetProofStatus, setNativeTargetProofStatus] = useState('No device-verified conversation proof prepared.');
   const [sendControlCheckPending, setSendControlCheckPending] = useState(false);
   const [sendControlStatus, setSendControlStatus] = useState('No native Send control verified.');
   const [selectionPreview, setSelectionPreview] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
@@ -46,6 +53,8 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const composerTargetRef = useRef('');
   const sendTargetRef = useRef('');
   const pendingSendControlCheckRef = useRef('');
+  const pendingNativeTargetProofRef = useRef('');
+  const nativeTargetProofTimerRef = useRef<number | null>(null);
   const sendControlCheckTimerRef = useRef<number | null>(null);
   const controlExpiryRef = useRef<number | null>(null);
   const startTimerRef = useRef<number | null>(null);
@@ -78,10 +87,16 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     setComposerTargetId('');
     setSendControlVerified(false);
     setProviderConversationIdentityAvailable(false);
+    if (nativeTargetProofTimerRef.current !== null) window.clearTimeout(nativeTargetProofTimerRef.current);
+    nativeTargetProofTimerRef.current = null;
+    pendingNativeTargetProofRef.current = '';
+    setNativeTargetProofBusy(false);
+    setNativeTargetProofStatus('No device-verified conversation proof prepared.');
+    onNativeTargetProof?.(null);
     setSendControlStatus('No native Send control verified.');
     setSelectionPreview(null);
     setSelectionMode(false);
-  }, [appPackage]);
+  }, [appPackage, onNativeTargetProof]);
 
 
   const disposePeer = useCallback(() => {
@@ -93,6 +108,10 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     if (sendControlCheckTimerRef.current !== null) window.clearTimeout(sendControlCheckTimerRef.current);
     sendControlCheckTimerRef.current = null;
     pendingSendControlCheckRef.current = '';
+    if (nativeTargetProofTimerRef.current !== null) window.clearTimeout(nativeTargetProofTimerRef.current);
+    nativeTargetProofTimerRef.current = null;
+    pendingNativeTargetProofRef.current = '';
+    onNativeTargetProof?.(null);
     const peer = peerRef.current;
     if (peer) { peer.ontrack = null; peer.onconnectionstatechange = null; peer.close(); }
     peerRef.current = null;
@@ -111,7 +130,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     if (videoRef.current) videoRef.current.srcObject = null;
     sessionRef.current = ''; pointerRef.current = null; pendingControlRequestRef.current = '';
     sourceVisibilityRef.current = null;
-    setSessionId(''); setViewReady(false); setSourceVisible(false); setDataReady(false); setControlGranted(false); setRemoteText(''); setRemoteTextBusy(false); setSelectionMode(false); setComposerTargetId(''); setSendControlVerified(false); setProviderConversationIdentityAvailable(false); setSendControlCheckPending(false); setSendControlStatus('No native Send control verified.'); setSelectionPreview(null); setRemoteTextStatus('Select the actual composer in the streamed app before inserting text.'); setBusy(false);
+    setSessionId(''); setViewReady(false); setSourceVisible(false); setDataReady(false); setControlGranted(false); setRemoteText(''); setRemoteTextBusy(false); setSelectionMode(false); setComposerTargetId(''); setSendControlVerified(false); setProviderConversationIdentityAvailable(false); setNativeTargetProofBusy(false); setNativeTargetProofStatus('No device-verified conversation proof prepared.'); setSendControlCheckPending(false); setSendControlStatus('No native Send control verified.'); setSelectionPreview(null); setRemoteTextStatus('Select the actual composer in the streamed app before inserting text.'); setBusy(false);
   }, []);
 
   const stopRemote = useCallback(async (expectedSession = sessionRef.current) => {
@@ -248,6 +267,38 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         let acknowledgement: any;
         try { acknowledgement = JSON.parse(String(event.data)); } catch { return; }
         if (!acknowledgement || acknowledgement.sessionId !== nextSessionId) return;
+        if (acknowledgement.kind === 'native_target_proof_ack' &&
+            typeof acknowledgement.requestId === 'string' &&
+            typeof acknowledgement.accepted === 'boolean') {
+          if (acknowledgement.requestId !== pendingNativeTargetProofRef.current) return;
+          if (nativeTargetProofTimerRef.current !== null) window.clearTimeout(nativeTargetProofTimerRef.current);
+          nativeTargetProofTimerRef.current = null;
+          pendingNativeTargetProofRef.current = '';
+          setNativeTargetProofBusy(false);
+          if (acknowledgement.accepted === true &&
+              typeof acknowledgement.proofId === 'string' &&
+              /^[a-f0-9-]{36}$/i.test(acknowledgement.proofId) &&
+              typeof acknowledgement.expiresAt === 'string' &&
+              Number.isFinite(Date.parse(acknowledgement.expiresAt)) &&
+              Date.parse(acknowledgement.expiresAt) > Date.now()) {
+            setNativeTargetProofStatus('Phone verified the exact target and conversation. Proof is ready for one owner-approved binding and expires ' + new Date(acknowledgement.expiresAt).toLocaleTimeString() + '.');
+            onNativeTargetProof?.({
+              proofId: acknowledgement.proofId,
+              expiresAt: acknowledgement.expiresAt,
+              deviceId: device.device_id,
+              roomId,
+              screenSessionId: nextSessionId,
+              appPackageName: appPackage,
+              targetId: composerTargetRef.current,
+            });
+          } else {
+            const reason = typeof acknowledgement.reason === 'string'
+              ? acknowledgement.reason.replaceAll('_', ' ') : 'local target proof unavailable';
+            setNativeTargetProofStatus('Phone could not prepare a conversation proof: ' + reason + '.');
+            onNativeTargetProof?.(null);
+          }
+          return;
+        }
         if (acknowledgement.kind === 'remote_keyboard_revoked') {
           for (const timer of pendingRemoteTextAcksRef.current.values()) window.clearTimeout(timer);
           pendingRemoteTextAcksRef.current.clear();
@@ -649,6 +700,47 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     }
   };
 
+  const requestNativeTargetProof = () => {
+    const channel = dataRef.current;
+    const session = sessionRef.current;
+    const composerTarget = composerTargetRef.current;
+    const sendTarget = sendTargetRef.current;
+    if (!session || !channel || channel.readyState !== 'open' ||
+        !composerTarget || !sendTarget || !viewReady || !sourceVisible || !dataReady ||
+        !sendControlVerified || !providerConversationIdentityAvailable || nativeTargetProofBusy) {
+      setNativeTargetProofStatus('Select and focus the exact composer, then verify one unique Send control and a stable conversation identity first.');
+      return;
+    }
+    if (pendingNativeTargetProofRef.current) return;
+    const requestId = uuid();
+    pendingNativeTargetProofRef.current = requestId;
+    setNativeTargetProofBusy(true);
+    setNativeTargetProofStatus('The phone is rechecking the same composer, Send control and provider conversation…');
+    nativeTargetProofTimerRef.current = window.setTimeout(() => {
+      if (pendingNativeTargetProofRef.current !== requestId) return;
+      pendingNativeTargetProofRef.current = '';
+      nativeTargetProofTimerRef.current = null;
+      setNativeTargetProofBusy(false);
+      setNativeTargetProofStatus('No proof acknowledgement arrived. No target proof was accepted; recheck the phone before trying again.');
+    }, 12_000);
+    try {
+      channel.send(JSON.stringify({
+        kind: 'request_native_target_proof',
+        requestId,
+        sessionId: session,
+        appPackageName: appPackage,
+        composerTargetId: composerTarget,
+        sendTargetId: sendTarget,
+      }));
+    } catch {
+      if (nativeTargetProofTimerRef.current !== null) window.clearTimeout(nativeTargetProofTimerRef.current);
+      nativeTargetProofTimerRef.current = null;
+      pendingNativeTargetProofRef.current = '';
+      setNativeTargetProofBusy(false);
+      setNativeTargetProofStatus('The phone data channel rejected the proof request.');
+    }
+  };
+
   const recheckSendControl = () => {
     const channel = dataRef.current;
     const session = sessionRef.current;
@@ -804,6 +896,10 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
           disabled={!viewReady || !sourceVisible || !dataReady || remoteTextBusy || sendControlCheckPending}>
           {sendControlCheckPending ? 'Rechecking Send…' : 'Recheck Send control'}
         </button> : null}
+        {composerTargetId && sendControlVerified && providerConversationIdentityAvailable ? <button type="button" onClick={requestNativeTargetProof}
+          disabled={!viewReady || !sourceVisible || !dataReady || remoteTextBusy || sendControlCheckPending || nativeTargetProofBusy || !sessionId}>
+          {nativeTargetProofBusy ? 'Preparing proof…' : 'Prepare conversation proof'}
+        </button> : null}
       </div>
       <label htmlFor="br-android-remote-text">Draft for the selected composer</label>
       <textarea id="br-android-remote-text" value={remoteText} maxLength={4_000}
@@ -818,6 +914,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         </button>
       </div>
       <p role="status">{remoteTextStatus}</p>
+      {sendControlVerified && providerConversationIdentityAvailable ? <p className="br-android-stream-disclaimer" role="status">{nativeTargetProofStatus}</p> : null}
       <small>{sendControlVerified
         ? providerConversationIdentityAvailable
           ? 'The phone found one unique Send control and detected a provider-conversation identity locally. The digest stays on the phone. This is not permission to click Send: the trusted queue bridge, local wake consent and execution rechecks are still required. Labels and editor/message contents are never transmitted to Rub Minds.'
