@@ -33,9 +33,16 @@ test('authenticated claims, acknowledgements, retries are scoped to DB-authorita
  assert.deepEqual(await gateway.acknowledge({...scope,jobId,leaseToken,outcome:'ignored'}),{ok:true,accepted:true});
  assert.deepEqual(await gateway.retry({...scope,jobId,leaseToken,errorCode:'provider_busy',retryAfterSeconds:5}),{ok:true,state:'pending'});
  assert.equal(calls.length,3);
- assert.deepEqual(calls[0][1],{hostId,bindingId,sessionDigest,limit:2});
+ assert.deepEqual(calls[0][1],{hostId,bindingId,sessionDigest,limit:2,providerConversationIdentityDigest:null});
  assert.equal(calls[1][1].hostToken,undefined);
 });
+test('claim passes the exact provider conversation digest from the authenticated binding',async()=>{
+ const digest='d'.repeat(64);
+ const {gateway,calls}=setup({binding:{providerConversationIdentityDigest:digest}});
+ assert.deepEqual(await gateway.claim({...scope,limit:1}),{ok:true,leases:[]});
+ assert.deepEqual(calls[0],['claim',{hostId,bindingId,sessionDigest,providerConversationIdentityDigest:digest,limit:1}]);
+});
+
 test('wrong token, host, binding, session digest denied without private RPC',async()=>{
  const {gateway,calls}=setup();
  for(const input of [{...scope,hostToken:'c'.repeat(64)},{...scope,hostId:ownerId},{...scope,bindingId:ownerId},{...scope,sessionDigest:'f'.repeat(64)},{...scope,hostToken:'invalid'}]){
