@@ -326,7 +326,7 @@ test('Android frame creates an owner intent but sends no provider/composer/Send 
   assert.match(androidFrameUi, /canRegisterNativeBinding/);
   assert.match(androidFrameUi, /nativeSessions/);
   assert.match(androidFrameUi, /nativeHosts/);
-  assert.match(androidFrameUi, /backroom-config\\/native-binding-intent/);
+  assert.ok(androidFrameUi.includes('backroom-config/native-binding-intent'));
   assert.match(androidFrameUi, /kind: 'native_binding_attest'/);
   assert.match(androidFrameUi, /intentId: data.intentId/);
   assert.doesNotMatch(androidFrameUi, /providerConversationIdentityDigest|composerTargetId:\s*composerTargetRef|sendControlTargetId/);
@@ -346,14 +346,14 @@ test('phone rechecks all three local identities and posts them only through the 
   const ack = method(screen, 'private fun sendNativeBindingAttestationAcknowledgement(', 'private fun sendRemoteTextAcknowledgement(');
   assert.match(ack, /bindingId/);
   assert.doesNotMatch(ack, /providerConversationIdentityDigest|composerTargetId|sendControlTargetId/);
-  assert.match(deviceApi, /post\("android\\/native-binding-attest", deviceToken, fields\)/);
+  assert.ok(deviceApi.includes('post("android/native-binding-attest", deviceToken, fields)'));
 });
 
 test('owner intent and device endpoint reject stale scope and persist only private digest fields', () => {
   assert.match(configEdge, /validateNativeBindingIntentRequest/);
   assert.match(configEdge, /backroom_native_binding_intents/);
   assert.match(configEdge, /expiresAt=new Date\(Date\.now\(\)\+120_000\)/);
-  assert.match(deviceEdge, /action === 'android\\/native-binding-attest'/);
+  assert.ok(deviceEdge.includes("action === 'android/native-binding-attest'"));
   assert.match(deviceEdge, /validateAndroidNativeBindingAttestation/);
   assert.match(deviceEdge, /register_backroom_native_input_binding_from_device/);
   assert.match(nativeAttestationPolicy, /Object\.keys\(value\)\.length===keys\.length/);
