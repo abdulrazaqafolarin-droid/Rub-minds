@@ -298,6 +298,15 @@ test('native wake fails closed without provider conversation identity and carrie
   assert.match(consent, /val providerConversationIdentityDigest: String/);
   assert.doesNotMatch(consent, /providerConversationIdentityDigest: String =/);
 });
+test('Android frame has no device-attested group-binding registration path yet', () => {
+  // The current phone frame knows device + room and a local selection result.
+  // It does not receive a selected AI participant/MCP session or send the
+  // provider digest through a browser-visible owner binding request.
+  assert.match(androidFrameUi, /export default function BackroomAndroidControl\\(\\{ device, roomId \\}/);
+  assert.doesNotMatch(androidFrameUi, /backroom-config\\/binding|providerConversationIdentityDigest|sessionDigest|participantId/);
+  assert.match(androidFrameUi, /providerConversationIdentityAvailable/);
+});
+
 test('composer selection distinguishes Send discovery from provider-conversation readiness without exporting its digest', () => {
   assert.match(composerPolicy, /providerConversationIdentityAvailable: Boolean = false/);
   assert.match(service, /ProviderConversationIdentityPolicy\.isValidDigest\(providerConversationDigest\)/);
