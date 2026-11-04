@@ -22,7 +22,7 @@ async function lookupHost(hostId:string) {
 }
 async function lookupBinding(bindingId:string) {
  const {data,error}=await db.from('backroom_input_bindings')
-  .select('id,owner_id,host_id,session_digest,room_id,participant_id,wake_enabled,confirmed_at,wake_expires_at,revoked_at')
+  .select('id,owner_id,host_id,session_digest,room_id,participant_id,provider_conversation_identity_digest,wake_enabled,confirmed_at,wake_expires_at,revoked_at')
   .eq('id',bindingId).maybeSingle();
  if(error||!data)return null;
  const now=new Date().toISOString();
@@ -44,6 +44,7 @@ async function lookupBinding(bindingId:string) {
  if(session.error||participant.error||connection.error||!session.data||!participant.data||!connection.data)return null;
  return {bindingId:data.id,hostId:data.host_id,ownerId:data.owner_id,sessionDigest:data.session_digest,
   wakeEnabled:data.wake_enabled,confirmedAt:data.confirmed_at,wakeExpiresAt:data.wake_expires_at,
+  providerConversationIdentityDigest:data.provider_conversation_identity_digest??null,
   revokedAt:data.revoked_at};
 }
 async function rpc(name:string,args:Record<string,unknown>) {
@@ -53,12 +54,14 @@ async function rpc(name:string,args:Record<string,unknown>) {
 }
 const store={
  async claim({hostId,sessionDigest,bindingId,limit}:{hostId:string,sessionDigest:string,bindingId:string,limit:number}) {
-  const rows=await rpc('claim_backroom_wake_jobs',{
+  const rows=await rpc('claim_backroom_wake_jobs_with_provider_identity',{
    p_host_id:hostId,p_session_digest:sessionDigest,p_binding_id:bindingId,p_limit:limit,p_lease_seconds:30
   });
   if(!Array.isArray(rows)||rows.length>limit)throw new Error('Invalid private queue response');
   return rows.map(row=>{
-   if(!row||row.out_binding_id!==bindingId||!row.out_job_id||!row.out_lease_token)
+   if(!row||row.out_binding_id!==bindingId||!row.out_job_id||!row.out_lease_token||
+    (row.out_provider_conversation_identity_digest!==null &&
+     (typeof row.out_provider_conversation_identity_digest!=='string'||! /^[a-f0-9]{64}$/.test(row.out_provider_conversation_identity_digest))))
     throw new Error('Invalid private queue lease');
    // Keep only exact server-issued scoped fields; no token or row records from the
    // database are ever accepted from remote clients.
@@ -68,7 +71,10 @@ const store={
     hostId,sessionDigest,bindingId,
     spaceId:row.out_space_id,sessionId:row.out_session_id,
     targetId:row.out_target_id,targetIdentityFingerprint:row.out_target_identity_fingerprint,
-    targetRevision:row.out_target_revision,prompt:row.out_prompt,promptDigest:row.out_prompt_digest,
+    targetRevision:row.out_target_revision,
+    ...(typeof row.out_provider_conversation_identity_digest==='string'
+     ? {providerConversationIdentityDigest:row.out_provider_conversation_identity_digest} : {}),
+    prompt:row.out_prompt,promptDigest:row.out_prompt_digest,
     attemptCount:row.out_attempt_count,expiresAt:row.out_expires_at,leaseToken:row.out_lease_token
    };
   });

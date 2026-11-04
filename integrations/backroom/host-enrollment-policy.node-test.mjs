@@ -29,6 +29,15 @@ test('binding creation only accepts inactive registration fields and explicit sc
  assert.throws(()=>validatePendingWakeBinding({...binding,surface:'arbitrary'}),/surface/);
 });
 
+test('native app wake bindings require a valid provider-conversation digest',()=>{
+ const native={...binding,surface:'android_app',locatorKind:'accessibility'};
+ assert.throws(()=>validatePendingWakeBinding(native),/providerConversationIdentityDigest/);
+ assert.throws(()=>validatePendingWakeBinding({...native,providerConversationIdentityDigest:'bad'}),/providerConversationIdentityDigest/);
+ const accepted=validatePendingWakeBinding({...native,providerConversationIdentityDigest:'c'.repeat(64)});
+ assert.equal(accepted.providerConversationIdentityDigest,'c'.repeat(64));
+ assert.equal(validatePendingWakeBinding(binding).providerConversationIdentityDigest,undefined);
+});
+
 test('binding status queries require owner-scoped room and optional participant identities',()=>{
  assert.deepEqual(validateBindingStatusQuery({roomId:uuid}),{roomId:uuid});
  assert.deepEqual(validateBindingStatusQuery({roomId:uuid,participantId:uuid,sessionDigest:'a'.repeat(64)}),

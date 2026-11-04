@@ -104,7 +104,7 @@ Deno.serve(async req=>{
    if(roomError)return json(503,{ok:false,reason:'service_unavailable'},origin);
    if(!ownedRoom)return json(403,{ok:false,reason:'not_room_owner'},origin);
    let query=db.from('backroom_input_bindings')
-    .select('id,participant_id,host_id,session_id,space_id,target_id,target_identity_fingerprint,target_revision,surface,participation_mode,wake_enabled,wake_expires_at,confirmed_at,revoked_at')
+    .select('id,participant_id,host_id,session_id,space_id,target_id,target_identity_fingerprint,provider_conversation_identity_digest,target_revision,surface,participation_mode,wake_enabled,wake_expires_at,confirmed_at,revoked_at')
     .eq('owner_id',ownerId).eq('room_id',input.roomId).is('revoked_at',null)
     .order('updated_at',{ascending:false}).limit(10);
    if(input.participantId){
@@ -116,7 +116,9 @@ Deno.serve(async req=>{
    const bindings=(data??[]).map(row=>({
     bindingId:row.id,participantId:row.participant_id,hostId:row.host_id,
     sessionId:row.session_id,spaceId:row.space_id,targetId:row.target_id,
-    targetIdentityFingerprint:row.target_identity_fingerprint,targetRevision:row.target_revision,
+    targetIdentityFingerprint:row.target_identity_fingerprint,
+    providerConversationIdentityDigest:row.provider_conversation_identity_digest??null,
+    targetRevision:row.target_revision,
     surface:row.surface,participationMode:row.participation_mode,
     wakeEnabled:row.wake_enabled===true&&typeof row.wake_expires_at==='string'&&Date.parse(row.wake_expires_at)>now,
     wakeExpiresAt:row.wake_expires_at,confirmedAt:row.confirmed_at
@@ -198,11 +200,11 @@ Deno.serve(async req=>{
    return json(403,{ok:false,reason:'binding_not_authorized'},origin);
   const [existingSession,existingTarget]=await Promise.all([
    db.from('backroom_input_bindings')
-    .select('id,owner_id,room_id,participant_id,host_id,session_digest,space_id,session_id,target_id,target_identity_fingerprint,target_revision,surface,locator_kind,locator_value,participation_mode,max_wakes_per_minute,wake_enabled')
+    .select('id,owner_id,room_id,participant_id,host_id,session_digest,space_id,session_id,target_id,target_identity_fingerprint,provider_conversation_identity_digest,target_revision,surface,locator_kind,locator_value,participation_mode,max_wakes_per_minute,wake_enabled')
     .eq('room_id',input.roomId).eq('participant_id',input.participantId)
     .eq('session_digest',input.sessionDigest).is('revoked_at',null).maybeSingle(),
    db.from('backroom_input_bindings')
-    .select('id,owner_id,room_id,participant_id,host_id,session_digest,space_id,session_id,target_id,target_identity_fingerprint,target_revision,surface,locator_kind,locator_value,participation_mode,max_wakes_per_minute,wake_enabled')
+    .select('id,owner_id,room_id,participant_id,host_id,session_digest,space_id,session_id,target_id,target_identity_fingerprint,provider_conversation_identity_digest,target_revision,surface,locator_kind,locator_value,participation_mode,max_wakes_per_minute,wake_enabled')
     .eq('host_id',input.hostId).eq('target_id',input.targetId)
     .is('revoked_at',null).maybeSingle()
   ]);
@@ -223,7 +225,10 @@ Deno.serve(async req=>{
    owner_id:ownerId,room_id:input.roomId,participant_id:input.participantId,
    host_id:input.hostId,session_digest:input.sessionDigest,
    space_id:input.spaceId,session_id:input.sessionId,target_id:input.targetId,
-   target_identity_fingerprint:input.targetIdentityFingerprint,target_revision:input.targetRevision,
+   target_identity_fingerprint:input.targetIdentityFingerprint,
+   ...(input.providerConversationIdentityDigest!==undefined
+    ? {provider_conversation_identity_digest:input.providerConversationIdentityDigest} : {}),
+   target_revision:input.targetRevision,
    surface:input.surface,locator_kind:input.locatorKind,locator_value:input.locatorValue,
    participation_mode:input.participationMode,max_wakes_per_minute:input.maxWakesPerMinute,
    wake_enabled:false,confirmed_at:null,wake_expires_at:null

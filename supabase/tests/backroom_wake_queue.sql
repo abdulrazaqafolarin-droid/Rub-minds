@@ -36,6 +36,10 @@ declare
   v_binding_5 uuid := '60000000-0000-4000-8000-000000000005';
   v_binding_6 uuid := '60000000-0000-4000-8000-000000000006';
   v_binding_7 uuid := '60000000-0000-4000-8000-000000000007';
+  v_binding_native uuid := '60000000-0000-4000-8000-000000000010';
+  v_native_provider_digest text := repeat('9',64);
+  v_native_job jsonb;
+  v_native_claim record;
 begin
   insert into auth.users(id) values (v_owner);
   insert into public.rooms(id,owner_id,title) values (v_room,v_owner,'Backroom wake queue test room');
@@ -53,6 +57,8 @@ begin
     (repeat('6',64),'ci-ciphertext-6',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
   insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,agent_credential_digest,room_id,participant_id,expires_at,terminated_at)
     values (repeat('7',64),'ci-ciphertext-7',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
+  insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,agent_credential_digest,room_id,participant_id,expires_at,terminated_at)
+    values (repeat('8',64),'ci-ciphertext-8',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
 
   insert into public.backroom_hosts(host_id,owner_id,credential_digest,expires_at,revoked_at)
   values (v_host_test,v_owner,repeat('1',64),pg_catalog.clock_timestamp()+interval '48 hours',null),
@@ -70,6 +76,29 @@ begin
     (v_binding_5,v_owner,v_room,v_participant,v_host_test,repeat('f',64),'space-1','session-5','target-5','fingerprint-5',1,'browser_tab','dom','composer-5','mentions',true,'70000000-0000-4000-8000-000000000005'::uuid,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null),
     (v_binding_6,v_owner,v_room,v_participant,v_host_test,repeat('6',64),'space-1','session-6','target-6','fingerprint-6',1,'browser_tab','dom','composer-6','mentions',true,'70000000-0000-4000-8000-000000000006'::uuid,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null),
     (v_binding_7,v_owner,v_room,v_participant,v_host_capacity,repeat('7',64),'space-capacity','session-capacity','target-capacity','fingerprint-capacity',1,'browser_tab','dom','composer-capacity','mentions',true,'70000000-0000-4000-8000-000000000007'::uuid,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null);
+
+  insert into public.backroom_input_bindings(
+    id,owner_id,room_id,participant_id,host_id,session_digest,space_id,session_id,target_id,
+    target_identity_fingerprint,provider_conversation_identity_digest,target_revision,surface,
+    locator_kind,locator_value,participation_mode,wake_enabled,wake_grant_id,wake_expires_at,
+    max_wakes_per_minute,confirmed_at,revoked_at
+  ) values (
+    v_binding_native,v_owner,v_room,v_participant,v_host_test,repeat('8',64),
+    'space-native','session-native','target-native','fingerprint-native',v_native_provider_digest,1,
+    'android_app','accessibility','composer-native','mentions',true,
+    '70000000-0000-4000-8000-000000000020'::uuid,
+    pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null
+  );
+
+  -- An enabled native binding must not lose its provider-conversation digest.
+  v_conflict := false;
+  begin
+    update public.backroom_input_bindings set provider_conversation_identity_digest=null
+    where id=v_binding_native;
+  exception when check_violation then
+    v_conflict := true;
+  end;
+  if not v_conflict then raise exception 'An enabled native binding must retain its provider-conversation digest'; end if;
 
   -- A wake grant is a single, explicit persisted consent state; inconsistent deactivation is forbidden.
   v_conflict := false;
@@ -353,6 +382,32 @@ begin
     or v_claim.out_target_identity_fingerprint <> 'fingerprint-1'
     or v_claim.out_prompt_digest <> pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_claim.out_prompt,'UTF8')),'hex') then
     raise exception 'Claim must return the job and a one-shot lease token';
+  end if;
+
+  if has_function_privilege('anon','public.claim_backroom_wake_jobs_with_provider_identity(text,text,uuid,integer,integer)','EXECUTE')
+    or has_function_privilege('authenticated','public.claim_backroom_wake_jobs_with_provider_identity(text,text,uuid,integer,integer)','EXECUTE')
+    or not has_function_privilege('service_role','public.claim_backroom_wake_jobs_with_provider_identity(text,text,uuid,integer,integer)','EXECUTE') then
+    raise exception 'Provider-aware claim wrapper privileges are unsafe';
+  end if;
+  v_native_job := public.enqueue_backroom_wake_job(
+    repeat('8',64),v_owner,v_room,v_participant,v_host_test,'space-native','session-native',repeat('8',64),
+    v_binding_native,'target-native','fingerprint-native',1,'native-provider-event',
+    '@RMconnects'||chr(10)||'Event: native-provider-event'||chr(10)||
+    'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
+  if not exists(select 1 from public.backroom_wake_jobs j
+      where j.id=(v_native_job->>'job_id')::uuid
+        and j.provider_conversation_identity_digest=v_native_provider_digest) then
+    raise exception 'Queue trigger must copy the exact binding provider-conversation digest';
+  end if;
+  select * into v_native_claim from public.claim_backroom_wake_jobs_with_provider_identity(
+    v_host_test,repeat('8',64),v_binding_native,5,30) limit 1;
+  if not found or v_native_claim.out_job_id::text<>(v_native_job->>'job_id')
+    or v_native_claim.out_provider_conversation_identity_digest<>v_native_provider_digest then
+    raise exception 'Provider-aware claim must return the exact native conversation digest';
+  end if;
+  if not public.ack_backroom_wake_job(v_native_claim.out_job_id,v_host_test,repeat('8',64),
+    v_binding_native,v_native_claim.out_lease_token,'ignored') then
+    raise exception 'Native provider identity test lease must be acknowledgeable';
   end if;
   select count(*) into v_count from public.claim_backroom_wake_jobs(v_host_test,v_session_digest,v_binding_1,5,30);
   if v_count <> 0 then raise exception 'An active lease must prevent duplicate concurrent claims'; end if;
