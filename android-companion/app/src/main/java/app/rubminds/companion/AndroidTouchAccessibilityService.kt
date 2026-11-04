@@ -1146,6 +1146,15 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             sessionId, packageName, composerTargetId, sendTargetId
         ) ?: SendControlDecision(null, "accessibility_service_not_connected")
 
+        fun currentNativeTargetProofMaterial(
+            sessionId: String,
+            packageName: String,
+            composerTargetId: String,
+            sendTargetId: String
+        ): NativeTargetProofMaterial? = instance?.currentNativeTargetProofMaterial(
+            sessionId, packageName, composerTargetId, sendTargetId
+        )
+
         fun isSelectedComposerFocused(sessionId: String, packageName: String, targetId: String): Boolean =
             instance?.isSelectedComposerFocused(sessionId, packageName, targetId) == true
 
