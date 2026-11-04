@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   validateAndroidSessionStart, validateAndroidDeviceCommand,
   validateAndroidSignal, validateAndroidCommandAck, validateAndroidNativeWakeHandoff,
-  validateAndroidNativeWakeResult, validateAndroidSessionClose, mapAndroidQueuedCommand
+  validateAndroidNativeWakeResult, validateAndroidNativeTargetProof, validateAndroidSessionClose, mapAndroidQueuedCommand
 } from "./android-streaming-protocol.mjs";
 import { createHash } from "node:crypto";
 
@@ -15,6 +15,25 @@ const commandId = "123e4567-e89b-42d3-a456-426614174004";
 const appPackageName = "com.example.notes";
 const now = 1_000_000;
 const offer = { sdp: "v=0\\r\\no=- 1 1 IN IP4 127.0.0.1\\r\\n" };
+
+const nativeTargetProof = () => ({
+  deviceId, roomId, sessionId, requestId, issuedAt: now, appPackageName,
+  appSignerSha256: "c".repeat(64), targetId: "a".repeat(64), targetRevision: 4,
+  composerIdentityDigest: "a".repeat(64), sendControlIdentityDigest: "b".repeat(64),
+  providerConversationIdentityDigest: "e".repeat(64),
+});
+
+test("Android native target proofs require exact device/session/app and opaque identity digests", () => {
+  const valid = nativeTargetProof();
+  assert.ok(validateAndroidNativeTargetProof(valid, { now }));
+  assert.equal(validateAndroidNativeTargetProof({ ...valid, providerConversationIdentityDigest: "bad" }, { now }), null);
+  assert.equal(validateAndroidNativeTargetProof({ ...valid, appSignerSha256: "bad" }, { now }), null);
+  assert.equal(validateAndroidNativeTargetProof({ ...valid, targetId: "f".repeat(64) }, { now }), null);
+  assert.equal(validateAndroidNativeTargetProof({ ...valid, targetRevision: 0 }, { now }), null);
+  assert.equal(validateAndroidNativeTargetProof({ ...valid, issuedAt: now - 30_001 }, { now }), null);
+  assert.equal(validateAndroidNativeTargetProof({ ...valid, sessionId: "bad" }, { now }), null);
+  assert.equal(validateAndroidNativeTargetProof({ ...valid, unexpected: true }, { now }), null);
+});
 
 test("session-start accepts only a fresh, scoped offer for a valid package", () => {
   const valid = { deviceId, roomId, requestId, issuedAt: now, sessionId, appPackageName, offer };
