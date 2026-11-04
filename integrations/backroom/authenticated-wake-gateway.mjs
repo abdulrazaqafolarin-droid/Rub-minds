@@ -75,7 +75,16 @@ export function createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,a
       if(!scope)return Object.freeze({ok:false,reason:'unauthorized'});
       const limit=input.limit??5;
       if(!Number.isSafeInteger(limit)||limit<1||limit>20)return invalidRequest();
-      return Object.freeze({ok:true,leases:await store.claim({...scope,limit})});
+      const leases=await store.claim({...scope,limit});
+      if(!Array.isArray(leases)||leases.length>limit)throw new Error('Invalid private wake lease batch');
+      for(const lease of leases){
+        if(!lease||lease.hostId!==scope.hostId||lease.sessionDigest!==scope.sessionDigest||
+           lease.bindingId!==scope.bindingId||
+           (lease.providerConversationIdentityDigest??null)!==scope.providerConversationIdentityDigest){
+          throw new Error('Claimed wake lease does not match the authenticated input binding');
+        }
+      }
+      return Object.freeze({ok:true,leases:Object.freeze(leases)});
     },
     async acknowledge(input) {
       const scope=await authorize(input??{});
