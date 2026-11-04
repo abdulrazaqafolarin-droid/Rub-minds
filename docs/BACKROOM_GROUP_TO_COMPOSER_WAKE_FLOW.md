@@ -110,6 +110,15 @@ The UI converts pointer coordinates against the actual displayed video content:
 
 **Important: the provider digest is intentionally not sent to the browser, but there is not yet an alternate device-attested registration path that sends it directly to Rub Minds.** `BackroomAndroidControl` currently receives only the paired device and room; it does not select an AI participant/MCP session or submit a durable group binding. The owner-authenticated `backroom-config/binding` route is a paired-host/input-binding enrollment route; it does not prove the phone's current device ID, screen session, app signer, composer digest and Send digest. The #66 schema and claim wrapper therefore provide storage/lease primitives, not a usable Android target registration flow. Keep the digest phone-local until a device-bearer-authenticated registration handshake can bind the current device/screen/app/composer/provider identity to an explicitly selected group AI/MCP session. The server should store only opaque digests, never raw provider IDs or conversation content.
 
+The registration contract must keep four identifiers distinct:
+
+- **Group target ID + revision:** the server/host `target_id` and `target_revision` used by the durable queue and target registry.
+- **Composer identity:** the phone-local Accessibility node identity returned by the drag-select flow (exposed to the frame as the composer target ID).
+- **Send-control identity:** the separate phone-local identity for the unique nearby Send control.
+- **Provider-conversation digest:** the phone-derived SHA-256 digest for the active provider thread.
+
+The current Android frame has the last three only as local/opaque selection state and a readiness boolean; it does not create the first group target record or store the full mapping. These values must not be copied into one another or compared as if they were the same identity. The eventual device registration should also bind `device_id`, active `screen_session_id`, app package/signer and the existing group `binding_id`, with expiry/revocation tied to the device session.
+
 The frame stores the composer and Send target identifiers only for the active session. It offers a separate **Recheck Send control** action. The phone must prove the same unique Send target remains available beside the selected composer. A changed target invalidates the earlier check and requires a fresh selection.
 
 The owner must still focus the exact field in the phone app before inserting a manual draft. The UI makes this explicit. A selection acknowledgement is not a guarantee that the provider conversation is correctly identified, that the model will respond, or that a Send action is allowed.
