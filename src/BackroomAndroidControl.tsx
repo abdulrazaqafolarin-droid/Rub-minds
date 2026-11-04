@@ -260,18 +260,52 @@ export default function BackroomAndroidControl({
     }
   };
 
+  const recoverNativeBindingAfterLostAck = async (
+    session: string,
+    aiSession: NativeAiSession,
+    hostId: string
+  ) => {
+    const expectedTargetId = 'android_' + session.replaceAll('-', '');
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const { data, error } = await supabase.functions.invoke('backroom-config/binding-status', {
+          body: { roomId, participantId: aiSession.participantId, sessionDigest: aiSession.sessionDigest },
+        });
+        if (!error && data?.ok === true && Array.isArray(data.bindings)) {
+          const found = data.bindings.find((item: any) =>
+            item?.nativeAttested === true && item?.surface === 'android_app' &&
+            item?.hostId === hostId && item?.participantId === aiSession.participantId &&
+            item?.sessionId === session && item?.targetId === expectedTargetId &&
+            typeof item?.bindingId === 'string'
+          );
+          if (found) {
+            setNativeBindingId(found.bindingId);
+            setNativeBindingStatus('The phone registered this device-attested binding, but its WebRTC acknowledgement was lost. Binding ' +
+              found.bindingId + ' was recovered from the owner status endpoint. Wake remains OFF.');
+            setNativeBindingBusy(false);
+            notify('Recovered the phone-attested binding after a lost acknowledgement. No wake was enabled.');
+            return;
+          }
+        }
+      } catch { /* A second owner read is attempted before declaring the result unknown. */ }
+      if (attempt === 0) await new Promise<void>(resolve => window.setTimeout(resolve, 1200));
+    }
+    setNativeBindingBusy(false);
+    setNativeBindingStatus('The acknowledgement was lost and no device-attested binding is visible yet. The intent may have expired or been consumed; do not retry this intent. Check the binding list or create a fresh intent only after confirming no binding was registered.');
+  };
+
   const registerNativeBinding = async () => {
     const session = sessionRef.current;
     const channel = dataRef.current;
     const aiSession = nativeSessions.find(value => value.sessionDigest === nativeBindingSessionDigest);
     if (!canRegisterNativeBinding || !supabase || !session || !channel ||
         channel.readyState !== 'open' || !viewReady || !sourceVisible || !dataReady ||
-        !sendControlVerified || !providerConversationIdentityAvailable ||
+        !sendControlVerified || sendControlCheckPending || !providerConversationIdentityAvailable ||
         !composerTargetRef.current || !sendTargetRef.current ||
         !aiSession || !nativeHosts.some(host => host.hostId === nativeBindingHostId) ||
-        nativeBindingBusy
+        nativeBindingBusy || nativeBindingId
     ) {
-      setNativeBindingStatus('Select an authorized AI session and paired host, then freshly verify the composer, Send control and provider conversation.');
+      setNativeBindingStatus('Select an authorized AI session and paired host, then freshly verify the composer, Send control and provider conversation. Revoke an existing binding before registering a replacement.');
       return;
     }
     setNativeBindingBusy(true);
@@ -296,17 +330,25 @@ export default function BackroomAndroidControl({
       const requestId = uuid();
       const timeout = window.setTimeout(() => {
         pendingNativeBindingAcksRef.current.delete(requestId);
-        setNativeBindingBusy(false);
-        setNativeBindingStatus('No phone attestation acknowledgement arrived. The owner intent expires automatically; create a fresh intent before retrying.');
-      }, 15_000);
+        setNativeBindingStatus('No phone acknowledgement arrived. Checking whether the device created the binding…');
+        void recoverNativeBindingAfterLostAck(session, aiSession, nativeBindingHostId);
+      }, 20_000);
       pendingNativeBindingAcksRef.current.set(requestId, timeout);
-      channel.send(JSON.stringify({
-        kind: 'native_binding_attest',
-        requestId,
-        intentId: data.intentId,
-        sessionId: session,
-        appPackageName: appPackage,
-      }));
+      try {
+        channel.send(JSON.stringify({
+          kind: 'native_binding_attest',
+          requestId,
+          intentId: data.intentId,
+          sessionId: session,
+          appPackageName: appPackage,
+        }));
+      } catch (error) {
+        window.clearTimeout(timeout);
+        pendingNativeBindingAcksRef.current.delete(requestId);
+        setNativeBindingStatus('The data channel failed during attestation. Checking whether the phone completed the request…');
+        void recoverNativeBindingAfterLostAck(session, aiSession, nativeBindingHostId);
+        return;
+      }
       setNativeBindingStatus('The phone is rechecking its local composer, Send control and provider conversation before HTTPS attestation…');
     } catch (error) {
       setNativeBindingBusy(false);
@@ -335,10 +377,9 @@ export default function BackroomAndroidControl({
       data.onopen = () => setDataReady(true);
       data.onclose = () => {
         setDataReady(false);
-        for (const timer of pendingNativeBindingAcksRef.current.values()) window.clearTimeout(timer);
-        pendingNativeBindingAcksRef.current.clear();
-        setNativeBindingBusy(false);
-        setNativeBindingStatus('The phone data channel closed. Any unused owner intent will expire automatically; create a fresh intent after reconnecting.');
+        if (pendingNativeBindingAcksRef.current.size) {
+          setNativeBindingStatus('The phone data channel closed during attestation. The pending owner intent will be reconciled against the server binding status.');
+        }
         for (const timer of pendingTouchAcksRef.current.values()) window.clearTimeout(timer);
         pendingTouchAcksRef.current.clear();
         for (const timer of pendingRemoteTextAcksRef.current.values()) window.clearTimeout(timer);
