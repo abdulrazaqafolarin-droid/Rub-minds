@@ -10,11 +10,12 @@ const ownerId='40000000-0000-4000-8000-000000000033';
 const jobId='40000000-0000-4000-8000-000000000044';
 const leaseToken='40000000-0000-4000-8000-000000000055';
 const sessionDigest='a'.repeat(64),hostToken='b'.repeat(64);
+const providerConversationIdentityDigest='c'.repeat(64);
 const scope={hostId,bindingId,sessionDigest};
 function setup(token=hostToken) {
  const calls=[];
  const db={
-  claim:async x=>{calls.push(['claim',x]);return [{...x,jobId,leaseToken}];},
+  claim:async x=>{calls.push(['claim',x]);return [{...x,jobId,leaseToken,providerConversationIdentityDigest}];},
   acknowledge:async x=>{calls.push(['ack',x]);return true;},
   retry:async x=>{calls.push(['retry',x]);return 'pending';}
  };
@@ -32,6 +33,7 @@ test('host HTTPS claim -> authenticated gateway -> private store and back',async
  const leases=await store.claim({...scope,limit:2});
  assert.equal(leases.length,1);
  assert.equal(leases[0].jobId,jobId);
+ assert.equal(leases[0].providerConversationIdentityDigest,providerConversationIdentityDigest);
  assert.deepEqual(calls[0],['claim',{...scope,limit:2}]);
  assert.equal(await store.acknowledge({...scope,jobId,leaseToken}),true);
  assert.equal(await store.retry({...scope,jobId,leaseToken,errorCode:'provider_busy'}),'pending');
