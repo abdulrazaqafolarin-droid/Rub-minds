@@ -84,6 +84,15 @@ export default function BackroomApp() {
     history.replaceState(null, '', location.pathname + '?' + params.toString());
   }, [roomId, refresh]);
 
+  const selectedRoom = rooms.find(room => room.id === roomId);
+  const activeDevices = useMemo(() => devices.filter(device => device.status === 'active'), [devices]);
+  const activeDevice = activeDevices.find(device => device.device_id === selectedDeviceId) ?? activeDevices[0];
+  const addedApps = useMemo(() => activeDevice
+    ? activeDevice.apps.map(app => ({ ...app, deviceId: activeDevice.device_id, deviceLabel: activeDevice.device_label, status: activeDevice.status }))
+    : [], [activeDevice]);
+  const phoneReady = Boolean(activeDevice);
+  const canManageDevices = Boolean(selectedRoom && userId && selectedRoom.owner_id === userId);
+
   useEffect(() => {
     let active = true;
     setNativeAiSessions([]);
@@ -124,14 +133,6 @@ export default function BackroomApp() {
     return () => { active = false; };
   }, [roomId, canManageDevices]);
 
-  const selectedRoom = rooms.find(room => room.id === roomId);
-  const activeDevices = useMemo(() => devices.filter(device => device.status === 'active'), [devices]);
-  const activeDevice = activeDevices.find(device => device.device_id === selectedDeviceId) ?? activeDevices[0];
-  const addedApps = useMemo(() => activeDevice
-    ? activeDevice.apps.map(app => ({ ...app, deviceId: activeDevice.device_id, deviceLabel: activeDevice.device_label, status: activeDevice.status }))
-    : [], [activeDevice]);
-  const phoneReady = Boolean(activeDevice);
-  const canManageDevices = Boolean(selectedRoom && userId && selectedRoom.owner_id === userId);
 
   useEffect(() => {
     if (!activeDevices.some(device => device.device_id === selectedDeviceId)) {
