@@ -22,7 +22,7 @@ const sha256 = v => createHash('sha256').update(v,'utf8').digest('hex');
  * shape (which silently hid required gateway dependencies).
  *
  * @typedef {{hostId:string,ownerId:string,credentialDigest:string,expiresAt:string,revokedAt?:string|null}} WakeHostRecord
- * @typedef {{bindingId:string,hostId:string,ownerId:string,sessionDigest:string,revokedAt?:string|null,wakeEnabled?:boolean,confirmedAt?:string|null,wakeExpiresAt?:string|null}} WakeBindingRecord
+ * @typedef {{bindingId:string,hostId:string,ownerId:string,sessionDigest:string,providerConversationIdentityDigest?:string|null,revokedAt?:string|null,wakeEnabled?:boolean,confirmedAt?:string|null,wakeExpiresAt?:string|null}} WakeBindingRecord
  * @typedef {{claim:(input:any)=>Promise<any>,acknowledge:(input:any)=>Promise<any>,retry:(input:any)=>Promise<any>}} WakeQueueStore
  * @typedef {{lookupHost:(hostId:string)=>Promise<WakeHostRecord|null>,lookupBinding:(bindingId:string)=>Promise<WakeBindingRecord|null>,store:WakeQueueStore,activateBinding?:(input:any)=>Promise<any>,deactivateBinding?:(input:any)=>Promise<any>,now?:()=>number}} WakeGatewayFactoryOptions
  * @param {Partial<WakeGatewayFactoryOptions>} [options]
@@ -45,7 +45,9 @@ export function createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,a
        binding.sessionDigest!==sessionDigest||binding.revokedAt!=null)return null;
     if(requireConsent&&(binding.wakeEnabled!==true||binding.confirmedAt==null||
        !Number.isFinite(Date.parse(binding.wakeExpiresAt))||Date.parse(binding.wakeExpiresAt)<=now()))return null;
-    return Object.freeze({hostId,sessionDigest,bindingId});
+    const providerConversationIdentityDigest=binding.providerConversationIdentityDigest??null;
+    if(providerConversationIdentityDigest!==null&&!DIGEST.test(providerConversationIdentityDigest))return null;
+    return Object.freeze({hostId,sessionDigest,bindingId,providerConversationIdentityDigest});
   }
   return Object.freeze({
     // Only an authenticated *host*, never a user browser, may activate a
@@ -56,14 +58,16 @@ export function createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,a
       if(!scope)return Object.freeze({ok:false,reason:'unauthorized'});
       if(!UUID.test(input.grantId??'')||!Number.isSafeInteger(input.ttlSeconds)||
          input.ttlSeconds<60||input.ttlSeconds>86400)return invalidRequest();
-      return Object.freeze({ok:true,activated:await activateBinding({...scope,grantId:input.grantId,ttlSeconds:input.ttlSeconds})});
+      const {providerConversationIdentityDigest: _providerDigest,...hostScope}=scope;
+      return Object.freeze({ok:true,activated:await activateBinding({...hostScope,grantId:input.grantId,ttlSeconds:input.ttlSeconds})});
     },
     async deactivate(input) {
       if(typeof deactivateBinding!=='function')return Object.freeze({ok:false,reason:'unauthorized'});
       const scope=await authorize(input??{},false);
       if(!scope)return Object.freeze({ok:false,reason:'unauthorized'});
       if(!UUID.test(input.grantId??''))return invalidRequest();
-      return Object.freeze({ok:true,deactivated:await deactivateBinding({...scope,grantId:input.grantId})});
+      const {providerConversationIdentityDigest: _providerDigest,...hostScope}=scope;
+      return Object.freeze({ok:true,deactivated:await deactivateBinding({...hostScope,grantId:input.grantId})});
     },
     // Returns an explicit denied status but never reveals whether a host, token or binding exists.
     async claim(input) {
@@ -78,7 +82,8 @@ export function createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,a
       if(!scope)return Object.freeze({ok:false,reason:'unauthorized'});
       if(!UUID.test(input.jobId??'')||!UUID.test(input.leaseToken??'')||
          !['acknowledged','ignored'].includes(input.outcome))return invalidRequest();
-      return Object.freeze({ok:true,accepted:await store.acknowledge({...scope,jobId:input.jobId,leaseToken:input.leaseToken,outcome:input.outcome})});
+      const {providerConversationIdentityDigest: _providerDigest,...hostScope}=scope;
+      return Object.freeze({ok:true,accepted:await store.acknowledge({...hostScope,jobId:input.jobId,leaseToken:input.leaseToken,outcome:input.outcome})});
     },
     async retry(input) {
       const scope=await authorize(input??{});
@@ -87,7 +92,8 @@ export function createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,a
       if(!UUID.test(input.jobId??'')||!UUID.test(input.leaseToken??'')||
          !Number.isSafeInteger(input.retryAfterSeconds)||input.retryAfterSeconds<1||input.retryAfterSeconds>300||
          !WAKE_ERROR_CODES.has(errorCode))return invalidRequest();
-      return Object.freeze({ok:true,state:await store.retry({...scope,jobId:input.jobId,leaseToken:input.leaseToken,
+      const {providerConversationIdentityDigest: _providerDigest,...hostScope}=scope;
+      return Object.freeze({ok:true,state:await store.retry({...hostScope,jobId:input.jobId,leaseToken:input.leaseToken,
         retryAfterSeconds:input.retryAfterSeconds,errorCode})});
     }
   });
