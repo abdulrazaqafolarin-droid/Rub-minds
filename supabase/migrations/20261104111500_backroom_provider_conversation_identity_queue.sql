@@ -27,6 +27,29 @@ where b.id=j.binding_id and b.surface in ('desktop_app','windows_app','android_a
   and j.provider_conversation_identity_digest is null
   and j.state in ('pending','leased');
 
+-- Native jobs with a digest that cannot be matched to the exact binding
+-- are equally unsafe; do not allow stale provider identity to be replayed.
+update public.backroom_wake_jobs j
+set state='cancelled',lease_owner=null,lease_token_hash=null,lease_expires_at=null,
+    last_error_code='authorization_denied',updated_at=pg_catalog.clock_timestamp()
+where j.state in ('pending','leased')
+  and exists (
+    select 1 from public.backroom_input_bindings native_binding
+    where native_binding.id=j.binding_id
+      and native_binding.surface in ('desktop_app','windows_app','android_app')
+  )
+  and not exists (
+    select 1 from public.backroom_input_bindings b
+    where b.id=j.binding_id and b.owner_id=j.owner_id and b.room_id=j.room_id
+      and b.participant_id=j.participant_id and b.host_id=j.host_id
+      and b.session_digest=j.session_digest and b.space_id=j.space_id
+      and b.session_id=j.session_id and b.target_id=j.target_id
+      and b.target_identity_fingerprint=j.target_identity_fingerprint
+      and b.target_revision=j.target_revision
+      and b.provider_conversation_identity_digest is not null
+      and b.provider_conversation_identity_digest=j.provider_conversation_identity_digest
+  );
+
 -- Existing native bindings without a digest lose wake consent and need explicit rebind.
 update public.backroom_input_bindings
 set wake_last_revoked_grant_id=wake_grant_id,wake_enabled=false,wake_grant_id=null,
@@ -109,15 +132,15 @@ begin
     and b.target_revision=new.target_revision;
 
   if not found then
-    raise exception 'Backroom wake job does not match an exact registered input binding';
+    raise check_violation using message = 'Backroom wake job does not match an exact registered input binding';
   end if;
   if new.provider_conversation_identity_digest is not null
     and new.provider_conversation_identity_digest is distinct from v_binding.provider_conversation_identity_digest then
-    raise exception 'Backroom wake provider-conversation digest does not match its binding';
+    raise check_violation using message = 'Backroom wake provider-conversation digest does not match its binding';
   end if;
   if v_binding.surface in ('desktop_app','windows_app','android_app')
     and v_binding.provider_conversation_identity_digest is null then
-    raise exception 'Native wake requires a registered provider-conversation identity digest';
+    raise check_violation using message = 'Native wake requires a registered provider-conversation identity digest';
   end if;
   new.provider_conversation_identity_digest:=v_binding.provider_conversation_identity_digest;
   return new;
