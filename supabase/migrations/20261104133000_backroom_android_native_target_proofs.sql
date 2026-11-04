@@ -5,7 +5,7 @@ create table if not exists public.backroom_android_native_target_proofs (
   proof_id uuid primary key default pg_catalog.gen_random_uuid(),
   device_id uuid not null references public.backroom_devices(device_id) on delete cascade,
   room_id uuid not null references public.rooms(id) on delete cascade,
-  screen_session_id uuid not null references public.backroom_desktop_sessions(session_id) on delete cascade,
+  screen_session_id uuid not null,
   request_id uuid not null,
   app_package_name text not null check (app_package_name ~ '^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$'),
   app_signer_sha256 text not null check (app_signer_sha256 ~ '^[a-f0-9]{64}$'),
@@ -17,8 +17,8 @@ create table if not exists public.backroom_android_native_target_proofs (
   created_at timestamptz not null default pg_catalog.clock_timestamp(),
   expires_at timestamptz not null,
   consumed_at timestamptz,
-  consumed_by_owner_id uuid references auth.users(id) on delete set null,
-  consumed_binding_id uuid references public.backroom_input_bindings(id) on delete set null,
+  consumed_by_owner_id uuid,
+  consumed_binding_id uuid,
   unique (device_id, request_id),
   check (target_id = composer_identity_digest),
   check (expires_at > created_at),
@@ -36,12 +36,9 @@ create index if not exists backroom_android_native_target_proof_expiry_idx
   where consumed_at is null;
 
 alter table public.backroom_input_bindings
-  add column if not exists native_target_proof_id uuid
-    references public.backroom_android_native_target_proofs(proof_id) on delete set null,
-  add column if not exists native_device_id uuid
-    references public.backroom_devices(device_id) on delete set null,
-  add column if not exists native_screen_session_id uuid
-    references public.backroom_desktop_sessions(session_id) on delete set null,
+  add column if not exists native_target_proof_id uuid,
+  add column if not exists native_device_id uuid,
+  add column if not exists native_screen_session_id uuid,
   add column if not exists native_app_package_name text,
   add column if not exists native_app_signer_sha256 text,
   add column if not exists native_composer_identity_digest text,
