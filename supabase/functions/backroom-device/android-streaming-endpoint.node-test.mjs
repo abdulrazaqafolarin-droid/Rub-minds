@@ -71,6 +71,7 @@ test("native target proof route requires the paired Android bearer, active room 
   assert.match(route, /verifyActiveDeviceRoomBinding\(current\.device_id, proof\.roomId\)/);
   assert.match(route, /activeDesktopSession\(proof\.sessionId, current\.device_id, proof\.roomId\)/);
   assert.match(route, /session\.session\.session_type !== 'screen'/);
+  assert.match(route, /session\.session\.requested_by !== current\.owner_id/);
   assert.match(route, /draft_insertion_allowed !== true/);
   assert.match(route, /approvedSigners\.includes\(proof\.appSignerSha256\)/);
   assert.match(route, /backroom_android_native_target_proofs/);
