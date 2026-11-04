@@ -78,6 +78,27 @@ class CloudDeviceApi {
     fun inventory(deviceToken: String, apps: JSONArray): JSONObject =
         post("device/inventory", deviceToken, JSONObject().put("apps", apps))
 
+    fun attestNativeBinding(
+        deviceToken: String,
+        intentId: String,
+        screenSessionId: String,
+        appPackageName: String,
+        signingCertificateSha256: String,
+        composerTargetId: String,
+        sendControlTargetId: String,
+        providerConversationIdentityDigest: String
+    ): JSONObject {
+        val fields = JSONObject()
+            .put("intentId", intentId)
+            .put("screenSessionId", screenSessionId)
+            .put("appPackageName", appPackageName)
+            .put("signingCertificateSha256", signingCertificateSha256)
+            .put("composerTargetId", composerTargetId)
+            .put("sendControlTargetId", sendControlTargetId)
+            .put("providerConversationIdentityDigest", providerConversationIdentityDigest)
+        return post("android/native-binding-attest", deviceToken, fields)
+    }
+
     fun status(deviceToken: String): JSONObject =
         post("device/status", deviceToken)
 }
