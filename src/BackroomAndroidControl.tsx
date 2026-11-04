@@ -11,10 +11,11 @@ type Point = { x: number; y: number };
 type PointerStart = Point & { pointerId: number; startedAt: number; mode: 'touch' | 'composer' };
 type NativeTargetProof = { proofId: string; expiresAt: string; deviceId: string; roomId: string; screenSessionId: string; appPackageName: string; targetId: string };
 
-export default function BackroomAndroidControl({ device, roomId, onNativeTargetProof }: {
+export default function BackroomAndroidControl({ device, roomId, onNativeTargetProof, nativeTargetProofConsumed = false }: {
   device: BackroomDevice;
   roomId: string;
   onNativeTargetProof?: (proof: NativeTargetProof | null) => void;
+  nativeTargetProofConsumed?: boolean;
 }) {
   const [appPackage, setAppPackage] = useState(device.apps[0]?.package_name ?? '');
   const [channelReady, setChannelReady] = useState(false);
@@ -60,6 +61,13 @@ export default function BackroomAndroidControl({ device, roomId, onNativeTargetP
   const startTimerRef = useRef<number | null>(null);
   const disconnectTimerRef = useRef<number | null>(null);
   const controlRequestTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (nativeTargetProofConsumed) {
+      setNativeTargetProofBusy(false);
+      setNativeTargetProofStatus('The one-use phone proof was consumed by the owner binding. Select the composer again to prepare another proof.');
+    }
+  }, [nativeTargetProofConsumed]);
 
   const notify = useCallback((text: string, error = false) => {
     setMessage(text); setMessageError(error);
