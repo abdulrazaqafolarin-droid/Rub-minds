@@ -55,6 +55,44 @@ test("Android stream Edge actions keep human auth, device bearer and platform bo
   assert.match(endpoint, /validateAndroidCommandAck/);
 });
 
+test("native target proof route requires the paired Android bearer, active room screen, exact approved signer and bounded one-use row", async () => {
+  const endpoint = await read("supabase/functions/backroom-device/index.ts");
+  const protocol = await read("supabase/functions/backroom-device/android-streaming-protocol.mjs");
+  const androidService = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  const touchService = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidTouchAccessibilityService.kt");
+  assert.match(endpoint, /action === 'android\/native-target-proof'/);
+  const routeStart = endpoint.indexOf("if (action === 'android/native-target-proof')");
+  const routeEnd = endpoint.indexOf("if (action === 'android/session-start')", routeStart);
+  assert.ok(routeStart >= 0 && routeEnd > routeStart);
+  const route = endpoint.slice(routeStart, routeEnd);
+  assert.match(route, /const current = await device\(req\)/);
+  assert.match(route, /current\.platform !== 'android'/);
+  assert.match(route, /validateAndroidNativeTargetProof/);
+  assert.match(route, /verifyActiveDeviceRoomBinding\(current\.device_id, proof\.roomId\)/);
+  assert.match(route, /activeDesktopSession\(proof\.sessionId, current\.device_id, proof\.roomId\)/);
+  assert.match(route, /session\.session\.session_type !== 'screen'/);
+  assert.match(route, /draft_insertion_allowed !== true/);
+  assert.match(route, /approvedSigners\.includes\(proof\.appSignerSha256\)/);
+  assert.match(route, /backroom_android_native_target_proofs/);
+  assert.match(route, /\.is\('consumed_at', null\)\.gt\('expires_at', now\)/);
+  assert.match(route, /5 \* 60 \* 1000/);
+  assert.match(route, /native_target_proof_request_replayed/);
+  assert.match(protocol, /export function validateAndroidNativeTargetProof/);
+  assert.match(protocol, /value\.targetId !== value\.composerIdentityDigest/);
+  assert.match(touchService, /currentNativeTargetProofMaterial/);
+  assert.match(touchService, /revalidateSelectedSendControl/);
+  assert.match(touchService, /isBoundToProviderConversation/);
+  assert.match(androidService, /request_native_target_proof/);
+  assert.match(androidService, /android\/native-target-proof/);
+  const ack = androidService.slice(
+    androidService.indexOf("private fun sendNativeTargetProofAcknowledgement"),
+    androidService.indexOf("private fun sendComposerTargetAcknowledgement")
+  );
+  assert.match(ack, /proofId/);
+  assert.match(ack, /expiresAt/);
+  assert.doesNotMatch(ack, /providerConversationIdentityDigest|appSignerSha256|composerIdentityDigest|sendControlIdentityDigest/);
+});
+
 test("Android queue and media components do not add an inbound phone listener or cloud-start capture action", async () => {
   const companion = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
   const setup = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidStreamSetupActivity.kt");
