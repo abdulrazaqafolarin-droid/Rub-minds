@@ -402,6 +402,82 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         }
     }
 
+
+    fun createNativeTargetAttestation(
+        sessionId: String,
+        packageName: String
+    ): AndroidNativeTargetAttestation? {
+        data class Snapshot(
+            val generation: Long,
+            val composerId: String,
+            val sendId: String,
+            val providerDigest: String
+        )
+        val snapshot = synchronized(this) {
+            val composerId = boundComposerTargetId
+            val sendId = boundSendTargetId
+            val providerDigest = boundProviderConversationIdentityDigest
+            if (boundSessionId != sessionId || boundPackageName != packageName ||
+                composerId.isNullOrBlank() || sendId.isNullOrBlank() ||
+                !ProviderConversationIdentityPolicy.isValidDigest(providerDigest)
+            ) return null
+            Snapshot(nativeBindingGeneration, composerId, sendId, providerDigest!!)
+        }
+        if (!isServiceEnabled(this)) return null
+
+        val sendBefore = revalidateSelectedSendControl(
+            sessionId, packageName, snapshot.composerId, snapshot.sendId
+        )
+        if (sendBefore.candidate?.targetId != snapshot.sendId) return null
+
+        val root = try { rootInActiveWindow } catch (_: SecurityException) { null } ?: return null
+        try {
+            if (!root.isVisibleToUser || root.packageName?.toString() != packageName) return null
+            if (!ProviderConversationIdentityPolicy.matches(
+                    snapshot.providerDigest,
+                    ProviderConversationIdentityResolver.resolve(packageName, root)
+                )
+            ) return null
+
+            val composer = findNodeByTargetId(root, packageName, snapshot.composerId) ?: return null
+            try {
+                if (!composer.isEditable || !composer.isEnabled || !composer.isVisibleToUser ||
+                    composer.isPassword || composer.packageName?.toString() != packageName
+                ) return null
+            } finally {
+                composer.recycle()
+            }
+
+            val signer = AppIdentity.signingCertificateSha256(this, packageName) ?: return null
+            if (!Regex("^[a-f0-9]{64}$").matches(signer)) return null
+
+            val sendAfter = revalidateSelectedSendControl(
+                sessionId, packageName, snapshot.composerId, snapshot.sendId
+            )
+            if (sendAfter.candidate?.targetId != snapshot.sendId) return null
+
+            val stillBound = synchronized(this) {
+                nativeBindingGeneration == snapshot.generation &&
+                    boundSessionId == sessionId && boundPackageName == packageName &&
+                    boundComposerTargetId == snapshot.composerId &&
+                    boundSendTargetId == snapshot.sendId &&
+                    ProviderConversationIdentityPolicy.matches(
+                        snapshot.providerDigest, boundProviderConversationIdentityDigest
+                    )
+            }
+            if (!stillBound) return null
+            return AndroidNativeTargetAttestation(
+                appSignerSha256 = signer,
+                composerIdentityDigest = snapshot.composerId,
+                sendControlIdentityDigest = snapshot.sendId,
+                providerConversationIdentityDigest = snapshot.providerDigest
+            )
+        } finally {
+            root.recycle()
+        }
+    }
+
+
     fun isBoundToProviderConversation(
         sessionId: String,
         packageName: String,
@@ -1091,6 +1167,11 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
 
         fun isSelectedComposerEmpty(sessionId: String, packageName: String, targetId: String): Boolean =
             instance?.isSelectedComposerEmpty(sessionId, packageName, targetId) == true
+
+        fun createNativeTargetAttestation(
+            sessionId: String,
+            packageName: String
+        ): AndroidNativeTargetAttestation? = instance?.createNativeTargetAttestation(sessionId, packageName)
 
         fun isBoundToProviderConversation(
             sessionId: String,
