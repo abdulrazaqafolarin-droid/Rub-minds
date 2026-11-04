@@ -13,6 +13,24 @@ import BackroomAndroidControl from './BackroomAndroidControl';
 import BackroomDesktopControl from './BackroomDesktopControl';
 import './backroom-cloud.css';
 
+type NativeTargetProof = {
+  proofId: string;
+  expiresAt: string;
+  deviceId: string;
+  roomId: string;
+  screenSessionId: string;
+  appPackageName: string;
+  targetId: string;
+};
+type NativeProofHost = { hostId: string; expiresAt: string };
+type NativeProofSession = {
+  participantId: string;
+  displayName: string;
+  sessionDigest: string;
+  expiresAt: string;
+  credentialExpiresAt: string;
+};
+
 type Surface = 'phone' | 'desktop' | 'terminal';
 const surfaceLabels: Record<Surface, string> = {
   phone: 'Phone apps', desktop: 'Desktop apps', terminal: 'Terminal',
@@ -49,6 +67,101 @@ export default function BackroomApp() {
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [showHelp, setShowHelp] = useState(false);
+  const [nativeTargetProof, setNativeTargetProof] = useState<NativeTargetProof | null>(null);
+  const [nativeProofHosts, setNativeProofHosts] = useState<NativeProofHost[]>([]);
+  const [nativeProofSessions, setNativeProofSessions] = useState<NativeProofSession[]>([]);
+  const [selectedNativeHostId, setSelectedNativeHostId] = useState('');
+  const [selectedNativeSessionDigest, setSelectedNativeSessionDigest] = useState('');
+  const [nativeBindingBusy, setNativeBindingBusy] = useState(false);
+  const [nativeBindingStatus, setNativeBindingStatus] = useState('');
+
+
+  const handleNativeTargetProof = useCallback(async (proof: NativeTargetProof | null) => {
+    setNativeTargetProof(proof);
+    setNativeProofHosts([]);
+    setNativeProofSessions([]);
+    setSelectedNativeHostId('');
+    setSelectedNativeSessionDigest('');
+    setNativeBindingStatus('');
+    if (!proof || !supabase) return;
+    try {
+      const [hostResult, sessionResult] = await Promise.all([
+        supabase.functions.invoke('backroom-config/hosts', { body: { roomId: proof.roomId } }),
+        supabase.functions.invoke('backroom-config/sessions', { body: { roomId: proof.roomId } }),
+      ]);
+      if (hostResult.error) throw hostResult.error;
+      if (sessionResult.error) throw sessionResult.error;
+      const hosts = Array.isArray(hostResult.data?.hosts)
+        ? hostResult.data.hosts.filter((row: any) =>
+            row && typeof row.hostId === 'string' && /^[a-f0-9-]{36}$/i.test(row.hostId) &&
+            typeof row.expiresAt === 'string')
+        : [];
+      const sessions = Array.isArray(sessionResult.data?.sessions)
+        ? sessionResult.data.sessions.filter((row: any) =>
+            row && typeof row.participantId === 'string' && /^[a-f0-9-]{36}$/i.test(row.participantId) &&
+            typeof row.displayName === 'string' && typeof row.sessionDigest === 'string' &&
+            /^[a-f0-9]{64}$/.test(row.sessionDigest) &&
+            typeof row.expiresAt === 'string' && typeof row.credentialExpiresAt === 'string')
+        : [];
+      setNativeProofHosts(hosts);
+      setNativeProofSessions(sessions);
+      setSelectedNativeHostId(hosts[0]?.hostId ?? '');
+      setSelectedNativeSessionDigest(sessions[0]?.sessionDigest ?? '');
+      if (!hosts.length) setNativeBindingStatus('No active Backroom host is registered for this owner. Register a host on the desktop before binding this phone target.');
+      else if (!sessions.length) setNativeBindingStatus('No active joined AI/MCP sessions are available in this group.');
+      else setNativeBindingStatus('Choose the original AI session and the trusted Backroom host that should own this phone target.');
+    } catch (e) {
+      setNativeBindingStatus(e instanceof Error ? e.message : 'Could not load active hosts and AI sessions.');
+    }
+  }, []);
+
+  const registerNativeTargetBinding = useCallback(async () => {
+    const proof = nativeTargetProof;
+    if (!supabase || !proof || !canManageDevices || nativeBindingBusy ||
+        !selectedNativeHostId || !selectedNativeSessionDigest) return;
+    if (Date.parse(proof.expiresAt) <= Date.now()) {
+      setNativeBindingStatus('The phone proof has expired. Recheck and prepare a new conversation proof.');
+      setNativeTargetProof(null);
+      return;
+    }
+    const selectedSession = nativeProofSessions.find(row => row.sessionDigest === selectedNativeSessionDigest);
+    if (!selectedSession) {
+      setNativeBindingStatus('The selected AI session is no longer available. Refresh the proof and session list.');
+      return;
+    }
+    setNativeBindingBusy(true);
+    setNativeBindingStatus('Consuming the phone proof and registering the inactive AI-to-phone binding…');
+    try {
+      const { data, error: invokeError } = await supabase.functions.invoke('backroom-config/binding', {
+        body: {
+          roomId: proof.roomId,
+          participantId: selectedSession.participantId,
+          hostId: selectedNativeHostId,
+          sessionDigest: selectedSession.sessionDigest,
+          spaceId: 'android-' + proof.deviceId,
+          nativeTargetProofId: proof.proofId,
+          participationMode: 'mentions',
+          maxWakesPerMinute: 6,
+        },
+      });
+      if (invokeError) throw invokeError;
+      if (data?.ok !== true || typeof data.bindingId !== 'string') {
+        throw new Error(typeof data?.reason === 'string' ? data.reason.replaceAll('_', ' ') : 'Android binding was not created.');
+      }
+      setNativeBindingStatus('Phone target registered for ' + selectedSession.displayName +
+        '. Binding is inactive; a separate on-phone native wake consent and the trusted host forwarder are still required.');
+      setNativeTargetProof(null);
+      setNativeProofHosts([]);
+      setNativeProofSessions([]);
+      setSelectedNativeHostId('');
+      setSelectedNativeSessionDigest('');
+    } catch (e) {
+      setNativeBindingStatus(e instanceof Error ? e.message : 'Could not register the native phone target.');
+    } finally {
+      setNativeBindingBusy(false);
+    }
+  }, [canManageDevices, nativeBindingBusy, nativeProofSessions, nativeTargetProof,
+      selectedNativeHostId, selectedNativeSessionDigest]);
 
   const loadRooms = useCallback(async () => {
     if (!supabase) return;
@@ -71,6 +184,12 @@ export default function BackroomApp() {
 
   useEffect(() => { void loadRooms().catch(e => setError(e.message)); }, [loadRooms]);
   useEffect(() => {
+    setNativeTargetProof(null);
+    setNativeProofHosts([]);
+    setNativeProofSessions([]);
+    setSelectedNativeHostId('');
+    setSelectedNativeSessionDigest('');
+    setNativeBindingStatus('');
     if (!roomId) return;
     setPairCode('');
     void refresh(roomId).catch(e => setError(e.message));
@@ -198,7 +317,32 @@ export default function BackroomApp() {
                 </div>) : <div className="br-cloud-phone-empty"><ArrowDownToLine size={27}/><b>No apps added yet</b><span>Choose apps in the Android companion. Only selected app metadata is synced.</span></div>}
                 <div className="br-cloud-frame-foot"><Check size={14}/> App inventory synced from {activeDevice?.device_label ?? 'Android device'}</div>
                 {activeDevice?.platform === 'android'
-                  ? <BackroomAndroidControl device={activeDevice} roomId={roomId}/>
+                  ? <>
+                      <BackroomAndroidControl device={activeDevice} roomId={roomId} onNativeTargetProof={handleNativeTargetProof}/>
+                      {nativeTargetProof && nativeTargetProof.deviceId === activeDevice.device_id ? <div className="br-cloud-native-proof">
+                        <b>Bind this phone conversation to an AI session</b>
+                        <small>Device proof expires {formatTime(nativeTargetProof.expiresAt)}. The provider conversation digest and native target identifiers remain on the phone/server; this panel sees only a one-use proof ID.</small>
+                        <label>
+                          <span>Trusted Backroom host</span>
+                          <select value={selectedNativeHostId} onChange={event => setSelectedNativeHostId(event.target.value)} disabled={!canManageDevices || nativeBindingBusy}>
+                            <option value="">Select active host</option>
+                            {nativeProofHosts.map(host => <option key={host.hostId} value={host.hostId}>{host.hostId.slice(0, 8)} · expires {formatTime(host.expiresAt)}</option>)}
+                          </select>
+                        </label>
+                        <label>
+                          <span>Original AI conversation in this group</span>
+                          <select value={selectedNativeSessionDigest} onChange={event => setSelectedNativeSessionDigest(event.target.value)} disabled={!canManageDevices || nativeBindingBusy}>
+                            <option value="">Select AI session</option>
+                            {nativeProofSessions.map(session => <option key={session.sessionDigest} value={session.sessionDigest}>{session.displayName} · {formatTime(session.expiresAt)}</option>)}
+                          </select>
+                        </label>
+                        <button type="button" disabled={!canManageDevices || nativeBindingBusy || !selectedNativeHostId || !selectedNativeSessionDigest}
+                          onClick={() => void registerNativeTargetBinding()}>
+                          {nativeBindingBusy ? 'Registering…' : 'Register inactive AI binding'}
+                        </button>
+                        {nativeBindingStatus ? <p role="status">{nativeBindingStatus}</p> : null}
+                      </div> : nativeBindingStatus ? <p className="br-cloud-native-proof-status" role="status">{nativeBindingStatus}</p> : null}
+                    </>
                   : <div className="br-cloud-phone-runtime-note">This connected device has no Android app-stream driver. Its app entries remain inventory only.</div>}
               </div> : <div className="br-cloud-phone-screen disconnected">
                 <div className="br-cloud-phone-bar"><span>Backroom</span><small>Not connected</small></div>
