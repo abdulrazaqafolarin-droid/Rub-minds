@@ -84,9 +84,10 @@ test("native target proof route requires the paired Android bearer, active room 
   assert.match(touchService, /isBoundToProviderConversation/);
   assert.match(androidService, /request_native_target_proof/);
   assert.match(androidService, /android\/native-target-proof/);
+  const ackStart = androidService.indexOf("private fun sendNativeTargetProofAcknowledgement");
   const ack = androidService.slice(
-    androidService.indexOf("private fun sendNativeTargetProofAcknowledgement"),
-    androidService.indexOf("private fun sendComposerTargetAcknowledgement")
+    ackStart,
+    androidService.indexOf("private fun requestNativeTargetProof", ackStart)
   );
   assert.match(ack, /proofId/);
   assert.match(ack, /expiresAt/);
