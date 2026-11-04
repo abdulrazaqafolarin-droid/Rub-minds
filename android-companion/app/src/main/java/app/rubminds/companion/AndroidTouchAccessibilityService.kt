@@ -13,6 +13,13 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import java.security.MessageDigest
 
+data class AndroidNativeTargetAttestationMaterial(
+    val appSignerSha256: String,
+    val composerIdentityDigest: String,
+    val sendControlIdentityDigest: String,
+    val providerConversationIdentityDigest: String
+)
+
 /**
  * User-enabled gesture bridge. It does not upload the accessibility tree or text.
  * Every gesture is scoped to a locally selected package and its current window bounds.
@@ -416,6 +423,76 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         } finally {
             root.recycle()
         }
+    }
+
+    fun createNativeTargetAttestationMaterial(
+        sessionId: String,
+        packageName: String
+    ): AndroidNativeTargetAttestationMaterial? {
+        data class Snapshot(
+            val generation: Long,
+            val composerTargetId: String,
+            val sendTargetId: String,
+            val providerDigest: String
+        )
+        val snapshot = synchronized(this) {
+            val composer = boundComposerTargetId
+            val send = boundSendTargetId
+            val provider = boundProviderConversationIdentityDigest
+            if (boundSessionId != sessionId || boundPackageName != packageName ||
+                composer.isNullOrBlank() || send.isNullOrBlank() ||
+                !Regex("^[a-f0-9]{64}$").matches(composer) ||
+                !Regex("^[a-f0-9]{64}$").matches(send) ||
+                !ProviderConversationIdentityPolicy.isValidDigest(provider)
+            ) return null
+            Snapshot(nativeBindingGeneration, composer, send, provider!!)
+        }
+        if (!isServiceEnabled(this)) return null
+        val signer = AppIdentity.signingCertificateSha256(this, packageName) ?: return null
+        if (!canSelectComposerForApp(packageName, signer)) return null
+        val root = try { rootInActiveWindow } catch (_: SecurityException) { null } ?: return null
+        try {
+            if (!root.isVisibleToUser || root.packageName?.toString() != packageName) return null
+            val currentProvider = ProviderConversationIdentityResolver.resolve(packageName, root)
+            if (!ProviderConversationIdentityPolicy.matches(snapshot.providerDigest, currentProvider)) return null
+            val focused = try { root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) }
+                catch (_: SecurityException) { null } ?: return null
+            val composerStillExact = try {
+                focused.isEditable && focused.isEnabled && focused.isVisibleToUser &&
+                    !focused.isPassword && focused.packageName?.toString() == packageName &&
+                    composerTargetId(focused, packageName) == snapshot.composerTargetId
+            } finally {
+                focused.recycle()
+            }
+            if (!composerStillExact) return null
+        } finally {
+            root.recycle()
+        }
+        val sendCheck = revalidateSelectedSendControl(
+            sessionId, packageName, snapshot.composerTargetId, snapshot.sendTargetId
+        )
+        if (sendCheck.candidate?.targetId != snapshot.sendTargetId ||
+            !ProviderConversationIdentityPolicy.matches(
+                snapshot.providerDigest, sendCheck.providerConversationIdentityDigest
+            )
+        ) return null
+        if (DeviceCredentialVault(this).deviceId().isNullOrBlank()) return null
+        val stillCurrent = synchronized(this) {
+            nativeBindingGeneration == snapshot.generation &&
+                boundSessionId == sessionId && boundPackageName == packageName &&
+                boundComposerTargetId == snapshot.composerTargetId &&
+                boundSendTargetId == snapshot.sendTargetId &&
+                ProviderConversationIdentityPolicy.matches(
+                    snapshot.providerDigest, boundProviderConversationIdentityDigest
+                )
+        }
+        if (!stillCurrent) return null
+        return AndroidNativeTargetAttestationMaterial(
+            appSignerSha256 = signer,
+            composerIdentityDigest = snapshot.composerTargetId,
+            sendControlIdentityDigest = snapshot.sendTargetId,
+            providerConversationIdentityDigest = snapshot.providerDigest
+        )
     }
 
     fun isBoundToProviderConversation(
@@ -1108,7 +1185,14 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         fun isSelectedComposerEmpty(sessionId: String, packageName: String, targetId: String): Boolean =
             instance?.isSelectedComposerEmpty(sessionId, packageName, targetId) == true
 
-        fun isBoundToProviderConversation(
+            fun createNativeTargetAttestationMaterial(
+            sessionId: String,
+            packageName: String
+        ): AndroidNativeTargetAttestationMaterial? = instance?.createNativeTargetAttestationMaterial(
+            sessionId, packageName
+        )
+
+    fun isBoundToProviderConversation(
             sessionId: String,
             packageName: String,
             providerConversationIdentityDigest: String
