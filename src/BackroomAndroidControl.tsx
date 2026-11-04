@@ -652,6 +652,9 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   };
 
   const selectComposer = (region: { x: number; y: number; width: number; height: number }) => {
+    // Android invalidates the old local target as soon as a new drag selection begins.
+    // Clear its browser-side digest at the same boundary so an old chat cannot remain wake-ready.
+    clearComposerTarget(false);
     const channel = dataRef.current;
     if (!viewReady || !sourceVisible || !dataReady || !channel || channel.readyState !== 'open') {
       setRemoteTextStatus('Wait until the selected app stream and data channel are live.');
@@ -692,6 +695,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         !composerTarget || !sendTarget || !viewReady || !sourceVisible || !dataReady) {
       setSendControlVerified(false);
       setProviderConversationIdentityAvailable(false);
+      providerConversationIdentityDigestRef.current = '';
       sendTargetRef.current = '';
       setSendControlStatus('Recheck unavailable: the live phone session or selected target is missing.');
       return;
