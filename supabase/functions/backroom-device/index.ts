@@ -94,7 +94,7 @@ async function verifyActiveDeviceRoomBinding(deviceId: string, roomId: string) {
 }
 async function activeDesktopSession(sessionId: string, deviceId: string, roomId: string) {
   const { data, error } = await db.from('backroom_desktop_sessions')
-    .select('session_id,session_type,status,expires_at')
+    .select('session_id,session_type,status,expires_at,requested_by')
     .eq('session_id', sessionId).eq('device_id', deviceId).eq('room_id', roomId)
     .eq('status', 'active').gt('expires_at', new Date().toISOString()).maybeSingle();
   if (error) return { ok: false as const, status: 503, reason: 'desktop_session_unavailable' };
@@ -455,6 +455,9 @@ Deno.serve(async req => {
       if (binding.platform !== 'android') return json(403, fail('android_device_required'), origin);
       if (!session.ok || session.session.session_type !== 'screen') {
         return json(session.ok ? 409 : session.status, fail(session.ok ? 'active_screen_session_required' : session.reason), origin);
+      }
+      if (session.session.requested_by !== current.owner_id) {
+        return json(403, fail('owner_requested_screen_session_required'), origin);
       }
 
       const { data: app, error: appError } = await db.from('backroom_device_apps')
