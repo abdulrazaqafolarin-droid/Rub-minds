@@ -35,8 +35,11 @@ test('native composer bindings remain registerable for human-approved draft use;
  assert.equal(draftBinding.surface,'android_app');
  assert.equal(draftBinding.providerConversationIdentityDigest,undefined);
  assert.throws(()=>validatePendingWakeBinding({...native,providerConversationIdentityDigest:'bad'}),/providerConversationIdentityDigest/);
- const wakeCapable=validatePendingWakeBinding({...native,providerConversationIdentityDigest:'c'.repeat(64)});
- assert.equal(wakeCapable.providerConversationIdentityDigest,'c'.repeat(64));
+ assert.throws(()=>validatePendingWakeBinding({...native,providerConversationIdentityDigest:'c'.repeat(64)}),/device-authenticated target proof/);
+ const wakeCapable=validateNativeTargetProofBinding({roomId:uuid,participantId:uuid,hostId:uuid,
+  sessionDigest:'a'.repeat(64),spaceId:'android-device-1',
+  nativeTargetProofId:'50000000-0000-4000-8000-000000000011'});
+ assert.equal(wakeCapable.nativeTargetProofId,'50000000-0000-4000-8000-000000000011');
 });
 
 test('native proof binding accepts only the one-use phone proof ID and AI session scope',()=>{
