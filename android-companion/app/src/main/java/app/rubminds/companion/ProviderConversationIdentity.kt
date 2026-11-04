@@ -8,6 +8,13 @@ import java.security.MessageDigest
  * active chat/thread—not a composer hash, title, app ID, or Rub Minds session.
  * The raw identifier remains local and is never persisted or transmitted.
  */
+internal data class AndroidNativeTargetAttestation(
+    val appSignerSha256: String,
+    val composerIdentityDigest: String,
+    val sendControlIdentityDigest: String,
+    val providerConversationIdentityDigest: String
+)
+
 internal fun interface ProviderConversationIdentityAdapter {
     fun activeConversationStableId(root: AccessibilityNodeInfo): String?
 }
