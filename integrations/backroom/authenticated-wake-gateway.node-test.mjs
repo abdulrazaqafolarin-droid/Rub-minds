@@ -16,7 +16,7 @@ const leaseToken='40000000-0000-4000-8000-000000000044';
 function setup({host={},binding={},leases=[],now=()=>Date.parse('2026-10-29T00:00:00Z'),activateBinding=async()=>true,deactivateBinding=async()=>true}={}) {
  const calls=[];
  const hostRecord={hostId,ownerId,credentialDigest,expiresAt,revokedAt:null,...host};
- const bindingRecord={bindingId,hostId,ownerId,sessionDigest,wakeEnabled:true,confirmedAt:'2026-10-28T00:00:00Z',wakeExpiresAt:expiresAt,revokedAt:null,...binding};
+ const bindingRecord={bindingId,hostId,ownerId,sessionDigest,surface:'browser_tab',wakeEnabled:true,confirmedAt:'2026-10-28T00:00:00Z',wakeExpiresAt:expiresAt,revokedAt:null,...binding};
  const store={
   claim:async args=>{calls.push(['claim',args]);return leases;},
   acknowledge:async args=>{calls.push(['acknowledge',args]);return true;},
@@ -36,6 +36,15 @@ test('authenticated claims, acknowledgements, retries are scoped to DB-authorita
  assert.deepEqual(calls[0][1],{hostId,bindingId,sessionDigest,limit:2,providerConversationIdentityDigest:null});
  assert.equal(calls[1][1].hostToken,undefined);
 });
+test('native wake claims and activation fail closed without a provider-conversation digest',async()=>{
+ const calls=[];
+ const {gateway}=setup({binding:{surface:'android_app',providerConversationIdentityDigest:null},activateBinding:async input=>{calls.push(input);return true;}});
+ assert.deepEqual(await gateway.claim(scope),{ok:false,reason:'unauthorized'});
+ const grantId='40000000-0000-4000-8000-000000000066';
+ assert.deepEqual(await gateway.activate({...scope,grantId,ttlSeconds:3600}),{ok:false,reason:'unauthorized'});
+ assert.equal(calls.length,0);
+});
+
 test('claim passes the exact provider conversation digest from the authenticated binding',async()=>{
  const digest='d'.repeat(64);
  const {gateway,calls}=setup({binding:{providerConversationIdentityDigest:digest}});
@@ -109,7 +118,7 @@ test('malformed acknowledgement and retry identifiers never reach privileged RPC
 
 test('inactive consent can only be activated by a correctly authenticated host for a grant up to 24 hours',async()=>{
  const calls=[];
- const bindingRecord={bindingId,hostId,ownerId,sessionDigest,wakeEnabled:false,
+ const bindingRecord={bindingId,hostId,ownerId,sessionDigest,surface:'browser_tab',wakeEnabled:false,
   confirmedAt:null,wakeExpiresAt:null,revokedAt:null};
  const gateway=createAuthenticatedWakeGateway({
   lookupHost:async()=>({hostId,ownerId,credentialDigest,expiresAt,revokedAt:null}),
