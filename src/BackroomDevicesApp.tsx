@@ -117,7 +117,8 @@ export default function BackroomApp() {
 
   const registerNativeTargetBinding = useCallback(async () => {
     const proof = nativeTargetProof;
-    if (!supabase || !proof || !canManageDevices || nativeBindingBusy ||
+    const proofRoom = proof ? rooms.find(room => room.id === proof.roomId) : undefined;
+    if (!supabase || !proof || !proofRoom || !userId || proofRoom.owner_id !== userId || nativeBindingBusy ||
         !selectedNativeHostId || !selectedNativeSessionDigest) return;
     if (Date.parse(proof.expiresAt) <= Date.now()) {
       setNativeBindingStatus('The phone proof has expired. Recheck and prepare a new conversation proof.');
@@ -160,7 +161,7 @@ export default function BackroomApp() {
     } finally {
       setNativeBindingBusy(false);
     }
-  }, [canManageDevices, nativeBindingBusy, nativeProofSessions, nativeTargetProof,
+  }, [nativeBindingBusy, nativeProofSessions, nativeTargetProof, rooms, userId,
       selectedNativeHostId, selectedNativeSessionDigest]);
 
   const loadRooms = useCallback(async () => {
