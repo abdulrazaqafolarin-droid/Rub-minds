@@ -170,6 +170,12 @@ Deno.serve(async req=>{
    }
    const {data,error}=await query;
    if(error)return json(503,{ok:false,reason:'service_unavailable'},origin);
+   const bindingIds=(data??[]).map(row=>row.id);
+   const nativeTargets=bindingIds.length
+    ? await db.from('backroom_native_input_targets').select('binding_id').in('binding_id',bindingIds)
+    : {data:[],error:null};
+   if(nativeTargets.error)return json(503,{ok:false,reason:'service_unavailable'},origin);
+   const nativeAttestedIds=new Set((nativeTargets.data??[]).map(row=>row.binding_id));
    const now=Date.now();
    const bindings=(data??[]).map(row=>({
     bindingId:row.id,participantId:row.participant_id,hostId:row.host_id,
@@ -177,6 +183,7 @@ Deno.serve(async req=>{
     targetIdentityFingerprint:row.target_identity_fingerprint,
     targetRevision:row.target_revision,
     surface:row.surface,participationMode:row.participation_mode,
+    nativeAttested:nativeAttestedIds.has(row.id),
     wakeEnabled:row.wake_enabled===true&&typeof row.wake_expires_at==='string'&&Date.parse(row.wake_expires_at)>now,
     wakeExpiresAt:row.wake_expires_at,confirmedAt:row.confirmed_at
    }));
