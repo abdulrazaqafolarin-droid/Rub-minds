@@ -5,6 +5,8 @@ import {createHash} from 'node:crypto';
 import {isCanonicalWakePrompt,mayDispatchWake} from './coordination-core.mjs';
 import {approvalContext} from './coordination-dispatch-bridge.mjs';
 const ID=/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
+const PROVIDER_IDENTITY_DIGEST=/^[a-f0-9]{64}$/;
+const NATIVE_WAKE_SURFACES=new Set(["desktop_app","windows_app","android_app"]);
 function id(v,n){if(typeof v!=='string'||!ID.test(v))throw new TypeError('Invalid '+n);return v;}
 function required(v,n){if(typeof v!=='string'||v.trim()==='')throw new TypeError(n+' required');return v;}
 function leaseInput(lease){
@@ -17,6 +19,9 @@ function leaseInput(lease){
  if(!/^[0-9a-f]{64}$/.test(lease.promptDigest)||createHash('sha256').update(lease.prompt,'utf8').digest('hex')!==lease.promptDigest)throw new TypeError('Wake prompt digest mismatch');
  id(lease.leaseToken,'lease.leaseToken');
  if(!/^[0-9a-f]{64}$/.test(lease.sessionDigest))throw new TypeError('Invalid session digest');
+ if(lease.providerConversationIdentityDigest!==undefined &&
+  !PROVIDER_IDENTITY_DIGEST.test(lease.providerConversationIdentityDigest))
+  throw new TypeError('Invalid provider conversation identity digest');
  if(!Number.isSafeInteger(lease.targetRevision)||lease.targetRevision<1)throw new TypeError('Invalid target revision');
  return lease;
 }
@@ -36,11 +41,21 @@ export function commandFromClaimedWake({lease:raw,targetRegistry,hostId,binding,
  id(wakeGrantId,'wakeGrantId');
  const target=targetRegistry.resolve(lease.targetId,{
   roomId:lease.roomId,hostId,spaceId:lease.spaceId,sessionId:lease.sessionId,
-  identityFingerprint:lease.targetIdentityFingerprint,expectedRevision:lease.targetRevision,
+  identityFingerprint:lease.targetIdentityFingerprint,
+  ...(lease.providerConversationIdentityDigest!==undefined
+   ? {expectedProviderConversationIdentityDigest:lease.providerConversationIdentityDigest} : {}),
+  expectedRevision:lease.targetRevision,
  });
+ if(NATIVE_WAKE_SURFACES.has(target.surface) &&
+  (!PROVIDER_IDENTITY_DIGEST.test(lease.providerConversationIdentityDigest??"") ||
+   target.providerConversationIdentityDigest!==lease.providerConversationIdentityDigest)) {
+  throw new Error("Native wake requires the exact provider conversation identity in both the durable lease and selected target");
+ }
  const command=Object.freeze({
   id:'wake_'+lease.jobId.replaceAll('-',''),eventId:lease.eventId,roomId:lease.roomId,hostId,
   spaceId:lease.spaceId,sessionId:lease.sessionId,identityFingerprint:lease.targetIdentityFingerprint,
+  ...(lease.providerConversationIdentityDigest!==undefined
+   ? {providerConversationIdentityDigest:lease.providerConversationIdentityDigest} : {}),
   participantId:lease.participantId,bindingId:lease.bindingId,targetId:lease.targetId,targetRevision:lease.targetRevision,operation:'wake',wakeGrantId,text:lease.prompt,
  });
  return Object.freeze({command,target,job:Object.freeze({
