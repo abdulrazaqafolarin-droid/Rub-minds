@@ -247,12 +247,16 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                     }
                 }
                 if (!committed) return ComposerSelectionDecision(null, "session_or_selection_changed")
+                val selectedProviderDigest = providerConversationDigest.takeIf {
+                    ProviderConversationIdentityPolicy.isValidDigest(it)
+                }
                 return ComposerSelectionDecision(
                     selected,
                     "selected",
                     null,
                     "accessibility_tree_too_large",
-                    ProviderConversationIdentityPolicy.isValidDigest(providerConversationDigest)
+                    selectedProviderDigest != null,
+                    selectedProviderDigest
                 )
             }
             val sendDecision = AndroidSendControlPolicy.choose(
@@ -273,12 +277,16 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 boundSendTargetId = sendDecision.candidate?.targetId
                 boundProviderConversationIdentityDigest = providerConversationDigest
             }
+            val selectedProviderDigest = providerConversationDigest.takeIf {
+                ProviderConversationIdentityPolicy.isValidDigest(it)
+            }
             return ComposerSelectionDecision(
                 selected,
                 "selected",
                 sendDecision.candidate,
                 sendDecision.reason,
-                ProviderConversationIdentityPolicy.isValidDigest(providerConversationDigest)
+                selectedProviderDigest != null,
+                selectedProviderDigest
             )
         } finally {
             root.recycle()
@@ -343,7 +351,15 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 return SendControlDecision(null,
                     if (current.candidate == null) current.reason else "send_control_identity_changed")
             }
-            return current
+            val currentProviderDigest = ProviderConversationIdentityResolver.resolve(packageName, root)
+            val sameBoundConversation = ProviderConversationIdentityPolicy.matches(
+                boundProviderConversationIdentityDigest, currentProviderDigest
+            )
+            return SendControlDecision(
+                current.candidate,
+                current.reason,
+                currentProviderDigest.takeIf { sameBoundConversation }
+            )
         } finally {
             root.recycle()
         }
