@@ -20,6 +20,7 @@ const androidFrameUi = await read('../../src/BackroomAndroidControl.tsx');
 const deviceEdge = await read('../../supabase/functions/backroom-device/index.ts');
 const configEdge = await read('../../supabase/functions/backroom-config/index.ts');
 const nativeAttestationPolicy = await read('./native-binding-attestation-policy.mjs');
+const hostEnrollmentPolicy = await read('./host-enrollment-policy.mjs');
 const nativeAttestationMigration = await read('../../supabase/migrations/20261104123000_backroom_android_native_binding_attestation.sql');
 const deviceApi = await read('../../android-companion/app/src/main/java/app/rubminds/companion/CloudDeviceApi.kt');
 const composerPolicy = await read('../../android-companion/app/src/main/java/app/rubminds/companion/AndroidComposerTargetPolicy.kt');
@@ -352,6 +353,9 @@ test('phone rechecks all three local identities and posts them only through the 
 test('owner intent and device endpoint reject stale scope and persist only private digest fields', () => {
   assert.match(configEdge, /validateNativeBindingIntentRequest/);
   assert.match(configEdge, /backroom_native_binding_intents/);
+  assert.match(configEdge, /nativeAttested:nativeAttestedIds\.has/);
+  assert.doesNotMatch(configEdge, /providerConversationIdentityDigest:row\.provider_conversation_identity_digest/);
+  assert.match(hostEnrollmentPolicy, /Native provider identity must be attested by the selected device/);
   assert.match(configEdge, /expiresAt=new Date\(Date\.now\(\)\+120_000\)/);
   assert.ok(deviceEdge.includes("action === 'android/native-binding-attest'"));
   assert.match(deviceEdge, /validateAndroidNativeBindingAttestation/);
