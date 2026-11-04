@@ -821,6 +821,34 @@ class AndroidScreenShareService : Service() {
         }
     }
 
+    private fun sendNativeTargetAttestationAcknowledgement(
+        channel: DataChannel,
+        sessionId: String,
+        requestId: String,
+        accepted: Boolean,
+        attestationId: String? = null,
+        reason: String = "other"
+    ) {
+        if (!UUID_PATTERN.matches(sessionId) || !UUID_PATTERN.matches(requestId) ||
+            channel.state() != DataChannel.State.OPEN || activeSessionId != sessionId ||
+            dataChannel !== channel
+        ) return
+        val payload = JSONObject()
+            .put("kind", "native_target_attestation_ack")
+            .put("sessionId", sessionId)
+            .put("requestId", requestId)
+            .put("accepted", accepted)
+            .put("reason", reason)
+        if (accepted && attestationId != null && UUID_PATTERN.matches(attestationId)) {
+            payload.put("attestationId", attestationId)
+        }
+        runCatching {
+            channel.send(DataChannel.Buffer(
+                ByteBuffer.wrap(payload.toString().toByteArray(Charsets.UTF_8)), false
+            ))
+        }
+    }
+
     private fun sendRemoteTextAcknowledgement(
         channel: DataChannel,
         sessionId: String,
@@ -1004,6 +1032,126 @@ class AndroidScreenShareService : Service() {
                             )
                         }
                         sendSendControlVerificationAcknowledgement(channel, sessionId, requestId, decision)
+                    }
+                    return
+                }
+                if (input.optString("kind") == "create_native_target_attestation") {
+                    val requestId = input.optString("requestId")
+                    val roomId = input.optString("roomId")
+                    val hostId = input.optString("hostId")
+                    val participantId = input.optString("participantId")
+                    val sessionDigest = input.optString("sessionDigest")
+                    val spaceId = input.optString("spaceId")
+                    val targetSessionId = input.optString("targetSessionId")
+                    val targetId = input.optString("targetId")
+                    val revisionValue = input.opt("targetRevision") as? Number
+                    val allowedKeys = setOf(
+                        "kind", "requestId", "roomId", "hostId", "participantId",
+                        "sessionDigest", "spaceId", "targetSessionId", "targetId", "targetRevision"
+                    )
+                    val validRequest = input.keys().asSequence().toSet() == allowedKeys &&
+                        UUID_PATTERN.matches(requestId) && UUID_PATTERN.matches(roomId) &&
+                        UUID_PATTERN.matches(hostId) && UUID_PATTERN.matches(participantId) &&
+                        Regex("^[a-f0-9]{64}$").matches(sessionDigest) &&
+                        Regex("^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$").matches(spaceId) &&
+                        targetSessionId.isNotBlank() && targetSessionId.length <= 256 &&
+                        !targetSessionId.any { it.isISOControl() } &&
+                        UUID_PATTERN.matches(targetId) &&
+                        revisionValue != null && revisionValue.toDouble() % 1.0 == 0.0 &&
+                        revisionValue.toLong() in 1L..2_147_483_647L
+                    if (!validRequest) {
+                        sendNativeTargetAttestationAcknowledgement(
+                            channel, sessionId, requestId, false, reason = "invalid_request"
+                        )
+                        return
+                    }
+                    if (input.optString("sessionId") != sessionId ||
+                        sessionId != activeSessionId || roomId != activeRoomId ||
+                        appPackage != activeAppPackage || stopping || !capturedContentVisible ||
+                        currentForegroundPackage() != appPackage
+                    ) {
+                        sendNativeTargetAttestationAcknowledgement(
+                            channel, sessionId, requestId, false, reason = "session_or_app_not_active"
+                        )
+                        return
+                    }
+                    if (!claimRemoteTextRequest(requestId)) {
+                        sendNativeTargetAttestationAcknowledgement(
+                            channel, sessionId, requestId, false, reason = "request_replayed_or_rate_limited"
+                        )
+                        return
+                    }
+                    mainHandler.post {
+                        if (stopping || activeSessionId != sessionId || activeRoomId != roomId ||
+                            activeAppPackage != appPackage || !capturedContentVisible ||
+                            currentForegroundPackage() != appPackage
+                        ) {
+                            sendNativeTargetAttestationAcknowledgement(
+                                channel, sessionId, requestId, false, reason = "session_or_app_not_active"
+                            )
+                            return@post
+                        }
+                        val material = AndroidTouchAccessibilityService.createNativeTargetAttestationMaterial(
+                            sessionId, appPackage
+                        )
+                        if (material == null) {
+                            sendNativeTargetAttestationAcknowledgement(
+                                channel, sessionId, requestId, false,
+                                reason = "local_composer_send_or_conversation_recheck_failed"
+                            )
+                            return@post
+                        }
+                        val request = JSONObject()
+                            .put("requestId", requestId)
+                            .put("screenSessionId", sessionId)
+                            .put("roomId", roomId)
+                            .put("hostId", hostId)
+                            .put("participantId", participantId)
+                            .put("sessionDigest", sessionDigest)
+                            .put("spaceId", spaceId)
+                            .put("targetSessionId", targetSessionId)
+                            .put("targetId", targetId)
+                            .put("targetRevision", revisionValue!!.toInt())
+                            .put("appPackageName", appPackage)
+                            .put("appSignerSha256", material.appSignerSha256)
+                            .put("composerIdentityDigest", material.composerIdentityDigest)
+                            .put("sendControlIdentityDigest", material.sendControlIdentityDigest)
+                            .put("providerConversationIdentityDigest", material.providerConversationIdentityDigest)
+                        val token = deviceToken
+                        val client = api
+                        if (token.isNullOrBlank() || client == null) {
+                            sendNativeTargetAttestationAcknowledgement(
+                                channel, sessionId, requestId, false, reason = "device_credential_missing"
+                            )
+                            return@post
+                        }
+                        try {
+                            executor.execute {
+                                try {
+                                    val response = client.post("android/target-attestation", token, request)
+                                    val attestationId = response.optString("attestationId")
+                                    val accepted = response.optBoolean("ok") &&
+                                        UUID_PATTERN.matches(attestationId)
+                                    mainHandler.post {
+                                        sendNativeTargetAttestationAcknowledgement(
+                                            channel, sessionId, requestId, accepted,
+                                            attestationId = attestationId,
+                                            reason = if (accepted) "attested" else response.optString("reason", "attestation_rejected")
+                                        )
+                                    }
+                                } catch (_: Exception) {
+                                    mainHandler.post {
+                                        sendNativeTargetAttestationAcknowledgement(
+                                            channel, sessionId, requestId, false, reason = "attestation_request_failed"
+                                        )
+                                    }
+                                }
+                            }
+                        } catch (_: Exception) {
+                            sendNativeTargetAttestationAcknowledgement(
+                                channel, sessionId, requestId, false, reason = "attestation_executor_unavailable"
+                            )
+                        }
                     }
                     return
                 }
