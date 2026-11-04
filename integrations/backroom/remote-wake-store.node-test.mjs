@@ -55,6 +55,14 @@ test('client blocks insecure URLs, malformed scopes and spoofed response leases'
  await assert.rejects(()=>forged.claim(scope),/Cross-scope/);
 });
 
+test('malformed provider-conversation digest in a remote lease is rejected',async()=>{
+ const forged=createRemoteWakeStore({baseUrl:'https://wake.example.test/',hostToken,
+  fetchImpl:async()=>new Response(JSON.stringify({ok:true,leases:[{
+   ...scope,jobId,leaseToken,providerConversationIdentityDigest:'not-a-sha256-digest'
+  }]}),{status:200})});
+ await assert.rejects(()=>forged.claim(scope),/provider-conversation identity digest/);
+});
+
 test('official Supabase Edge Function URL retains bearer and exact scoped route',async()=>{
  const {store,calls}=setup();
  const actual=[];
