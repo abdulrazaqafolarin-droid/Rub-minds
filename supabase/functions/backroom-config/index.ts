@@ -7,6 +7,7 @@ import {createClient} from 'npm:@supabase/supabase-js@2';
 import {validateHostEnrollment,validatePendingWakeBinding,validateBindingStatusQuery} from '../../../integrations/backroom/host-enrollment-policy.mjs';
 import {classifyExistingBinding} from '../../../integrations/backroom/binding-registration-policy.mjs';
 import {resolveOwnerFromJwt} from '../../../integrations/backroom/owner-jwt.mjs';
+import {validateNativeBindingIntentRequest} from '../../../integrations/backroom/native-binding-attestation-policy.mjs';
 
 const url=Deno.env.get('SUPABASE_URL'),key=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 if(!url||!key)throw new Error('Backend configuration missing');
@@ -46,7 +47,7 @@ Deno.serve(async req=>{
   }});
  }
  const parsed=new URL(req.url);
- if(req.method!=='POST'||parsed.search||parsed.hash||!['/functions/v1/backroom-config/host','/functions/v1/backroom-config/binding','/functions/v1/backroom-config/sessions','/functions/v1/backroom-config/binding-status','/functions/v1/backroom-config/revoke-host','/functions/v1/backroom-config/revoke-binding','/backroom-config/host','/backroom-config/binding','/backroom-config/sessions','/backroom-config/binding-status','/backroom-config/revoke-host','/backroom-config/revoke-binding','/host','/binding','/sessions','/binding-status','/revoke-host','/revoke-binding'].includes(parsed.pathname))
+ if(req.method!=='POST'||parsed.search||parsed.hash||!['/functions/v1/backroom-config/host','/functions/v1/backroom-config/binding','/functions/v1/backroom-config/sessions','/functions/v1/backroom-config/binding-status','/functions/v1/backroom-config/revoke-host','/functions/v1/backroom-config/revoke-binding','/functions/v1/backroom-config/hosts','/functions/v1/backroom-config/native-binding-intent','/backroom-config/host','/backroom-config/binding','/backroom-config/sessions','/backroom-config/binding-status','/backroom-config/revoke-host','/backroom-config/revoke-binding','/backroom-config/hosts','/backroom-config/native-binding-intent','/host','/binding','/sessions','/binding-status','/revoke-host','/revoke-binding','/hosts','/native-binding-intent'].includes(parsed.pathname))
   return json(404,{ok:false,reason:'not_found'},origin);
  if(req.headers.get('content-type')?.toLowerCase()!=='application/json')
   return json(415,{ok:false,reason:'unsupported_type'},origin);
@@ -58,6 +59,63 @@ Deno.serve(async req=>{
   if(!ownerId)return json(401,{ok:false,reason:'unauthorized'},origin);
   let value;
   try{value=await bodyJson(req);}catch{return json(400,{ok:false,reason:'invalid_body'},origin);}
+  if(parsed.pathname.endsWith('/hosts')){
+   if(!value||Object.keys(value).length!==0)
+    return json(400,{ok:false,reason:'invalid_hosts_query'},origin);
+   const now=new Date().toISOString();
+   const {data,error}=await db.from('backroom_hosts').select('host_id,expires_at')
+    .eq('owner_id',ownerId).is('revoked_at',null).gt('expires_at',now)
+    .order('created_at',{ascending:false}).limit(5);
+   if(error)return json(503,{ok:false,reason:'service_unavailable'},origin);
+   return json(200,{ok:true,hosts:(data??[]).map(row=>({
+    hostId:row.host_id,expiresAt:row.expires_at
+   }))},origin);
+  }
+  if(parsed.pathname.endsWith('/native-binding-intent')){
+   const input=validateNativeBindingIntentRequest(value);
+   if(!input)return json(400,{ok:false,reason:'invalid_native_binding_intent'},origin);
+   const now=new Date().toISOString();
+   const [room,host,participant,connection,session,device,deviceRoom,screen,app]=await Promise.all([
+    db.from('rooms').select('id').eq('id',input.roomId).eq('owner_id',ownerId).maybeSingle(),
+    db.from('backroom_hosts').select('host_id').eq('host_id',input.hostId).eq('owner_id',ownerId)
+     .is('revoked_at',null).gt('expires_at',now).maybeSingle(),
+    db.from('participants').select('id').eq('id',input.participantId).eq('room_id',input.roomId)
+     .in('kind',['original_session','model','external_agent'])
+     .in('status',['connected','active','autonomous']).maybeSingle(),
+    db.from('agent_connections').select('id').eq('room_id',input.roomId)
+     .eq('participant_id',input.participantId).eq('owner_id',ownerId)
+     .is('revoked_at',null).gt('expires_at',now).maybeSingle(),
+    db.from('rub_minds_mcp_sessions').select('session_digest').eq('session_digest',input.sessionDigest)
+     .eq('room_id',input.roomId).eq('participant_id',input.participantId)
+     .is('terminated_at',null).not('agent_credential_ciphertext','is',null)
+     .gt('expires_at',now).maybeSingle(),
+    db.from('backroom_devices').select('device_id').eq('device_id',input.deviceId)
+     .eq('owner_id',ownerId).eq('platform','android').eq('status','active').maybeSingle(),
+    db.from('backroom_device_room_bindings').select('device_id').eq('device_id',input.deviceId)
+     .eq('room_id',input.roomId).eq('owner_id',ownerId).is('revoked_at',null).maybeSingle(),
+    db.from('backroom_desktop_sessions').select('session_id').eq('session_id',input.screenSessionId)
+     .eq('device_id',input.deviceId).eq('room_id',input.roomId).eq('session_type','screen')
+     .eq('status','active').gt('expires_at',now).maybeSingle(),
+    db.from('backroom_device_apps').select('package_name,signing_certificate_sha256')
+     .eq('device_id',input.deviceId).eq('package_name',input.appPackageName).maybeSingle()
+   ]);
+   if([room,host,participant,connection,session,device,deviceRoom,screen,app].some(x=>x.error))
+    return json(503,{ok:false,reason:'native_binding_authorization_unavailable'},origin);
+   if(!room.data||!host.data||!participant.data||!connection.data||!session.data||
+      !device.data||!deviceRoom.data||!screen.data||!app.data)
+    return json(403,{ok:false,reason:'native_binding_scope_not_authorized'},origin);
+   const intentId=crypto.randomUUID();
+   const expiresAt=new Date(Date.now()+120_000).toISOString();
+   const {error:insertError}=await db.from('backroom_native_binding_intents').insert({
+    id:intentId,owner_id:ownerId,room_id:input.roomId,participant_id:input.participantId,
+    host_id:input.hostId,session_digest:input.sessionDigest,device_id:input.deviceId,
+    screen_session_id:input.screenSessionId,app_package_name:input.appPackageName,
+    signing_certificate_sha256:app.data.signing_certificate_sha256,
+    participation_mode:'mentions',max_wakes_per_minute:6,expires_at:expiresAt
+   });
+   if(insertError)return json(409,{ok:false,reason:'native_binding_intent_conflict'},origin);
+   return json(201,{ok:true,intentId,expiresAt},origin);
+  }
   if(parsed.pathname.endsWith('/sessions')){
    if(!value||typeof value.roomId!=='string'||!/^[a-f0-9-]{36}$/i.test(value.roomId)||
       Object.keys(value).some(k=>k!=='roomId'))
