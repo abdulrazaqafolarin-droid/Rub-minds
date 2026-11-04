@@ -337,25 +337,27 @@ test("native wake ACK stores bounded evidence privately and broadcasts no target
 });
 
 
+
 test("Android exposes only a validated provider-conversation digest to the frame and rechecks the same digest locally", async () => {
   const selectionModel = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidComposerTargetPolicy.kt");
   const accessibility = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidTouchAccessibilityService.kt");
   const companion = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
   const browser = await read("src/BackroomAndroidControl.tsx");
 
-  assert.match(selectionModel, /providerConversationIdentityDigest: String\\? = null/);
-  assert.match(accessibility, /ProviderConversationIdentityResolver\\.resolve\\(packageName, root\\)/);
-  assert.match(accessibility, /expectedProviderConversationIdentityDigest/);
-  assert.match(accessibility, /provider_conversation_identity_changed/);
-  assert.match(accessibility, /current\\.copy\\(providerConversationIdentityDigest = expectedProviderConversationIdentityDigest\\)/);
-  assert.match(companion, /providerConversationIdentityAvailable", providerDigest != null/);
-  assert.match(companion, /providerConversationIdentityDigest", it/);
-  assert.match(companion, /providerConversationIdentityRevalidated", providerDigest != null/);
-  assert.match(companion, /expectedProviderIdentityDigest/);
-  assert.match(companion, /ProviderConversationIdentityPolicy\\.isValidDigest\\(expectedProviderIdentityDigest\\)/);
-  assert.match(browser, /PROVIDER_IDENTITY_DIGEST = \\/\\^\\[a-f0-9\\]\\{64\\}\\$\\//);
-  assert.match(browser, /acknowledgement\\.providerConversationIdentityAvailable === true && Boolean\\(returnedProviderDigest\\)/);
-  assert.match(browser, /returnedProviderDigest === expectedProviderDigest/);
-  assert.match(browser, /providerConversationIdentityDigestRef\\.current = ''/);
-  assert.match(browser, /kind: 'verify_composer_send'[\\s\\S]+?providerConversationIdentityDigest/);
+  assert.ok(selectionModel.includes("providerConversationIdentityDigest: String? = null"));
+  assert.ok(accessibility.includes("ProviderConversationIdentityResolver.resolve(packageName, root)"));
+  assert.ok(accessibility.includes("expectedProviderConversationIdentityDigest"));
+  assert.ok(accessibility.includes("provider_conversation_identity_changed"));
+  assert.ok(accessibility.includes("current.copy(providerConversationIdentityDigest = expectedProviderConversationIdentityDigest)"));
+  assert.ok(companion.includes("decision.providerConversationIdentityAvailable &&"));
+  assert.ok(companion.includes('providerDigest?.let { payload.put("providerConversationIdentityDigest", it) }'));
+  assert.ok(companion.includes('providerConversationIdentityRevalidated", providerDigest != null'));
+  assert.ok(companion.includes("expectedProviderIdentityDigest"));
+  assert.ok(companion.includes("ProviderConversationIdentityPolicy.isValidDigest(expectedProviderIdentityDigest)"));
+  assert.ok(browser.includes("const PROVIDER_IDENTITY_DIGEST = /^[a-f0-9]{64}$/;"));
+  assert.ok(browser.includes("acknowledgement.providerConversationIdentityAvailable === true && Boolean(returnedProviderDigest)"));
+  assert.ok(browser.includes("returnedProviderDigest === expectedProviderDigest"));
+  assert.ok(browser.includes("providerConversationIdentityDigestRef.current = ''"));
+  assert.ok(browser.includes("kind: 'verify_composer_send'"));
+  assert.ok(browser.includes("providerConversationIdentityDigest: providerConversationIdentityDigestRef.current"));
 });
