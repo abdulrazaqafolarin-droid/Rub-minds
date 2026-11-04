@@ -29,13 +29,14 @@ test('binding creation only accepts inactive registration fields and explicit sc
  assert.throws(()=>validatePendingWakeBinding({...binding,surface:'arbitrary'}),/surface/);
 });
 
-test('native app wake bindings require a valid provider-conversation digest',()=>{
+test('native composer bindings remain registerable for human-approved draft use; optional digest is validated',()=>{
  const native={...binding,surface:'android_app',locatorKind:'accessibility'};
- assert.throws(()=>validatePendingWakeBinding(native),/providerConversationIdentityDigest/);
+ const draftBinding=validatePendingWakeBinding(native);
+ assert.equal(draftBinding.surface,'android_app');
+ assert.equal(draftBinding.providerConversationIdentityDigest,undefined);
  assert.throws(()=>validatePendingWakeBinding({...native,providerConversationIdentityDigest:'bad'}),/providerConversationIdentityDigest/);
- const accepted=validatePendingWakeBinding({...native,providerConversationIdentityDigest:'c'.repeat(64)});
- assert.equal(accepted.providerConversationIdentityDigest,'c'.repeat(64));
- assert.equal(validatePendingWakeBinding(binding).providerConversationIdentityDigest,undefined);
+ const wakeCapable=validatePendingWakeBinding({...native,providerConversationIdentityDigest:'c'.repeat(64)});
+ assert.equal(wakeCapable.providerConversationIdentityDigest,'c'.repeat(64));
 });
 
 test('binding status queries require owner-scoped room and optional participant identities',()=>{
