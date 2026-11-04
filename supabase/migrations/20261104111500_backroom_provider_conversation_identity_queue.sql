@@ -63,6 +63,32 @@ begin
 end;
 $constraints$;
 
+create or replace function public.guard_backroom_input_binding_provider_identity()
+returns trigger
+language plpgsql
+security definer
+set search_path=''
+as $function$
+begin
+  if new.provider_conversation_identity_digest is distinct from old.provider_conversation_identity_digest then
+    raise check_violation using
+      message = 'Provider conversation identity is immutable; revoke and register a new binding';
+  end if;
+  return new;
+end;
+$function$;
+
+revoke all on function public.guard_backroom_input_binding_provider_identity()
+  from public,anon,authenticated;
+grant execute on function public.guard_backroom_input_binding_provider_identity()
+  to service_role;
+
+drop trigger if exists backroom_binding_provider_identity_immutable_trigger
+  on public.backroom_input_bindings;
+create trigger backroom_binding_provider_identity_immutable_trigger
+before update of provider_conversation_identity_digest on public.backroom_input_bindings
+for each row execute function public.guard_backroom_input_binding_provider_identity();
+
 create or replace function public.sync_backroom_wake_job_provider_identity()
 returns trigger
 language plpgsql
@@ -141,6 +167,8 @@ revoke all on function public.claim_backroom_wake_jobs_with_provider_identity(te
 grant execute on function public.claim_backroom_wake_jobs_with_provider_identity(text,text,uuid,integer,integer)
   to service_role;
 
+comment on function public.guard_backroom_input_binding_provider_identity() is
+  'Prevents a registered binding from being silently retargeted to a different provider conversation; revoke and create a new binding instead.';
 comment on column public.backroom_input_bindings.provider_conversation_identity_digest is
   'Opaque SHA-256 identity of the exact provider conversation selected locally; not a raw provider identifier.';
 comment on column public.backroom_wake_jobs.provider_conversation_identity_digest is
