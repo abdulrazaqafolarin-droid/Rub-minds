@@ -17,7 +17,9 @@ test("native target attestation is device-bearer scoped and validates active pai
   assert.match(route, /register_backroom_android_native_target/);
   assert.match(route, /revoke_backroom_android_native_target/);
   assert.match(route, /nativeTargetId: data\[0\]\.out_native_target_id/);
-  assert.doesNotMatch(route, /providerConversationIdentityDigest:/);
+  assert.match(route, /p_provider_conversation_identity_digest: registration\.providerConversationIdentityDigest/);
+  const receipt = route.slice(route.indexOf("return json(201"), route.indexOf("if (action === 'android/native-target/revoke')"));
+  assert.doesNotMatch(receipt, /providerConversationIdentityDigest|composerIdentityDigest|sendControlIdentityDigest|appSignerSha256/);
   assert.match(protocol, /providerConversationIdentityDigest/);
   assert.match(protocol, /!exactKeys\(value, keys\)/);
 });
