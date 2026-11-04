@@ -2,18 +2,18 @@
 -- This file is exercised by the local Supabase/PostgreSQL test workflow.
 do $test$
 declare
-  v_owner uuid := '20000000-0000-4000-8000-000000000099';
-  v_room uuid := '10000000-0000-4000-8000-000000000099';
-  v_other_room uuid := '10000000-0000-4000-8000-000000000098';
-  v_participant uuid := '30000000-0000-4000-8000-000000000099';
-  v_device uuid := '40000000-0000-4000-8000-000000000099';
-  v_host text := '50000000-0000-4000-8000-000000000099';
-  v_screen_session uuid := '60000000-0000-4000-8000-000000000099';
-  v_mcp_digest text := repeat('a',64);
-  v_signer text := repeat('e',64);
-  v_composer text := repeat('b',64);
-  v_send text := repeat('c',64);
-  v_provider text := repeat('d',64);
+  v_owner uuid := 'a0000000-0000-4000-8000-000000000099';
+  v_room uuid := 'a1000000-0000-4000-8000-000000000099';
+  v_other_room uuid := 'a1000000-0000-4000-8000-000000000098';
+  v_participant uuid := 'a3000000-0000-4000-8000-000000000099';
+  v_device uuid := 'a4000000-0000-4000-8000-000000000099';
+  v_host text := 'a5000000-0000-4000-8000-000000000099';
+  v_screen_session uuid := 'a6000000-0000-4000-8000-000000000099';
+  v_mcp_digest text := repeat('78',32);
+  v_signer text := repeat('c3',32);
+  v_composer text := repeat('e5',32);
+  v_send text := repeat('f6',32);
+  v_provider text := repeat('d4',32);
   v_proof_id uuid;
   v_bad_room_proof_id uuid;
   v_bad_signer_proof_id uuid;
@@ -29,24 +29,24 @@ begin
   insert into public.agent_connections(
     room_id,participant_id,owner_id,credential_digest,expires_at,revoked_at
   ) values (
-    v_room,v_participant,v_owner,repeat('f',64),
+    v_room,v_participant,v_owner,repeat('12',32),
     pg_catalog.clock_timestamp()+interval '48 hours',null
   );
   insert into public.rub_minds_mcp_sessions(
     session_digest,agent_credential_ciphertext,agent_credential_digest,
     room_id,participant_id,expires_at,terminated_at
   ) values (
-    v_mcp_digest,'proof-test-ciphertext',repeat('f',64),
+    v_mcp_digest,'proof-test-ciphertext',repeat('12',32),
     v_room,v_participant,pg_catalog.clock_timestamp()+interval '2 hours',null
   );
   insert into public.backroom_hosts(host_id,owner_id,credential_digest,expires_at,revoked_at)
   values (
-    v_host,v_owner,repeat('1',64),pg_catalog.clock_timestamp()+interval '48 hours',null
+    v_host,v_owner,repeat('34',32),pg_catalog.clock_timestamp()+interval '48 hours',null
   );
   insert into public.backroom_devices(
     device_id,owner_id,token_digest,device_label,platform,status,approved_at
   ) values (
-    v_device,v_owner,repeat('2',64),'Android proof test phone','android','active',
+    v_device,v_owner,repeat('56',32),'Android proof test phone','android','active',
     pg_catalog.clock_timestamp()
   );
   insert into public.backroom_device_room_bindings(device_id,room_id,owner_id)
@@ -84,7 +84,7 @@ begin
     app_signer_sha256,target_id,target_revision,composer_identity_digest,
     send_control_identity_digest,provider_conversation_identity_digest,expires_at
   ) values (
-    v_device,v_room,v_screen_session,'70000000-0000-4000-8000-000000000099',
+    v_device,v_room,v_screen_session,'a7000000-0000-4000-8000-000000000099',
     'com.example.chat',v_signer,v_composer,7,v_composer,v_send,v_provider,
     pg_catalog.clock_timestamp()+interval '5 minutes'
   ) returning proof_id into v_proof_id;
@@ -144,7 +144,7 @@ begin
     app_signer_sha256,target_id,target_revision,composer_identity_digest,
     send_control_identity_digest,provider_conversation_identity_digest,expires_at
   ) values (
-    v_device,v_room,v_screen_session,'70000000-0000-4000-8000-000000000098',
+    v_device,v_room,v_screen_session,'a7000000-0000-4000-8000-000000000098',
     'com.example.chat',v_signer,repeat('8',64),8,repeat('8',64),v_send,v_provider,
     pg_catalog.clock_timestamp()+interval '5 minutes'
   ) returning proof_id into v_bad_room_proof_id;
@@ -171,8 +171,8 @@ begin
     app_signer_sha256,target_id,target_revision,composer_identity_digest,
     send_control_identity_digest,provider_conversation_identity_digest,expires_at
   ) values (
-    v_device,v_room,v_screen_session,'70000000-0000-4000-8000-000000000097',
-    'com.example.chat',repeat('9',64),repeat('7',64),9,repeat('7',64),v_send,v_provider,
+    v_device,v_room,v_screen_session,'a7000000-0000-4000-8000-000000000097',
+    'com.example.chat',repeat('9',64),repeat('90',32),9,repeat('90',32),v_send,v_provider,
     pg_catalog.clock_timestamp()+interval '5 minutes'
   ) returning proof_id into v_bad_signer_proof_id;
 
@@ -207,7 +207,7 @@ begin
     session_digest,agent_credential_ciphertext,agent_credential_digest,
     room_id,participant_id,expires_at,terminated_at
   ) values (
-    repeat('7',64),'proof-test-draft-ciphertext',repeat('f',64),
+    repeat('90',32),'proof-test-draft-ciphertext',repeat('12',32),
     v_room,v_participant,pg_catalog.clock_timestamp()+interval '2 hours',null
   );
 
@@ -218,7 +218,7 @@ begin
     target_id,target_identity_fingerprint,target_revision,surface,locator_kind,
     locator_value,participation_mode,max_wakes_per_minute,wake_enabled
   ) values (
-    v_owner,v_room,v_participant,v_host,repeat('7',64),'android-draft-'||v_device::text,
+    v_owner,v_room,v_participant,v_host,repeat('90',32),'android-draft-'||v_device::text,
     'screen-draft-only','draft-target','draft-fingerprint',1,'android_app',
     'accessibility','draft-locator','mentions',6,false
   );
