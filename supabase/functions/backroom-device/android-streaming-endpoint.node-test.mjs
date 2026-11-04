@@ -93,6 +93,39 @@ test("native target proof route requires the paired Android bearer, active room 
   assert.doesNotMatch(ack, /providerConversationIdentityDigest|appSignerSha256|composerIdentityDigest|sendControlIdentityDigest/);
 });
 
+test("Phone Frame requests a one-use device proof explicitly and never receives the provider digest", async () => {
+  const control = await read("src/BackroomAndroidControl.tsx");
+  const devices = await read("src/BackroomDevicesApp.tsx");
+  const policy = await read("integrations/backroom/host-enrollment-policy.mjs");
+  const config = await read("supabase/functions/backroom-config/index.ts");
+  const proofRequestStart = control.indexOf("const requestNativeTargetProof");
+  const proofRequestEnd = control.indexOf("const recheckSendControl", proofRequestStart);
+  const proofRequest = control.slice(proofRequestStart, proofRequestEnd);
+  assert.ok(proofRequestStart >= 0 && proofRequestEnd > proofRequestStart);
+  assert.match(proofRequest, /kind: 'request_native_target_proof'/);
+  assert.match(proofRequest, /composerTargetId: composerTarget/);
+  assert.match(proofRequest, /sendTargetId: sendTarget/);
+  assert.doesNotMatch(proofRequest, /providerConversationIdentityDigest|appSignerSha256|sendControlIdentityDigest/);
+  assert.match(control, /Prepare conversation proof/);
+  assert.match(control, /sendControlVerified && providerConversationIdentityAvailable/);
+
+  const ackStart = control.indexOf("if (acknowledgement.kind === 'native_target_proof_ack')");
+  const ackEnd = control.indexOf("if (acknowledgement.kind === 'remote_keyboard_revoked')", ackStart);
+  const ack = control.slice(ackStart, ackEnd);
+  assert.match(ack, /acknowledgement\.proofId/);
+  assert.match(ack, /acknowledgement\.expiresAt/);
+  assert.match(ack, /onNativeTargetProof/);
+  assert.doesNotMatch(ack, /providerConversationIdentityDigest|appSignerSha256|composerIdentityDigest|sendControlIdentityDigest/);
+
+  assert.match(devices, /nativeTargetProofId: proof\.proofId/);
+  assert.match(devices, /'backroom-config\/hosts'/);
+  assert.match(devices, /'backroom-config\/sessions'/);
+  assert.match(config, /register_backroom_android_native_binding/);
+  assert.match(config, /p_proof_id:proofInput\.nativeTargetProofId/);
+  assert.match(config, /parsed\.pathname\.endsWith\('\/hosts'\)/);
+  assert.match(policy, /Android provider identity must arrive through a device-authenticated target proof/);
+});
+
 test("Android queue and media components do not add an inbound phone listener or cloud-start capture action", async () => {
   const companion = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
   const setup = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidStreamSetupActivity.kt");
