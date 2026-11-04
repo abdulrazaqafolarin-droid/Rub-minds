@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {pollPairedWakeJobs} from './paired-wake-worker.mjs';
+import {createHash} from 'node:crypto';
+import {buildCanonicalWakePrompt} from './coordination-core.mjs';
 
 const hostId='40000000-0000-4000-8000-000000000099';
 const bindingId='40000000-0000-4000-8000-000000000088';
@@ -47,4 +49,34 @@ test('requires a trusted binding resolver, verifier and valid limit',async()=>{
   await assert.rejects(()=>pollPairedWakeJobs({store,hostId,bindingId,sessionDigest,dispatcher,verifyApproval:()=>false}),/resolver/);
   await assert.rejects(()=>pollPairedWakeJobs({store,hostId,bindingId,sessionDigest,dispatcher,executionJournal:{reserve:async()=>true},consumeApproval:async()=>true,resolveContext:()=>null}),/verifier/);
   await assert.rejects(()=>pollPairedWakeJobs({store,hostId,bindingId,sessionDigest,dispatcher,executionJournal:{reserve:async()=>true},consumeApproval:async()=>true,resolveContext:()=>null,verifyApproval:()=>false,limit:21}),/limit/);
+});
+
+
+test('provider-conversation digest is preserved from the remote lease into the trusted context resolver',async()=>{
+  const digest='c'.repeat(64);
+  const eventId='provider-digest-event';
+  const prompt=buildCanonicalWakePrompt(eventId);
+  const lease={
+    jobId:'40000000-0000-4000-8000-000000000013',eventId,
+    roomId:'10000000-0000-4000-8000-000000000013',
+    participantId:'30000000-0000-4000-8000-000000000013',
+    hostId,bindingId,sessionDigest,spaceId:'space-native',sessionId:'session-native',
+    targetId:'target-native',targetIdentityFingerprint:'native-window-fingerprint',
+    providerConversationIdentityDigest:digest,targetRevision:1,
+    prompt,promptDigest:createHash('sha256').update(prompt,'utf8').digest('hex'),
+    leaseToken:'50000000-0000-4000-8000-000000000013'
+  };
+  const {store,calls}=fixture([lease]);
+  let seenDigest=null;
+  const result=await pollPairedWakeJobs({
+    store,hostId,bindingId,sessionDigest,dispatcher,
+    executionJournal:{reserve:async()=>true},consumeApproval:async()=>true,
+    verifyApproval:async()=>false,
+    resolveContext:async context=>{seenDigest=context.lease.providerConversationIdentityDigest;return null;}
+  });
+  assert.equal(seenDigest,digest);
+  assert.equal(result.length,1);
+  assert.equal(result[0].state,'deferred');
+  assert.equal(calls.length,2);
+  assert.equal(calls[1][0],'retry');
 });
