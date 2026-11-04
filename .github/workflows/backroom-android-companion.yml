@@ -58,7 +58,7 @@ jobs:
           gradle-version: '8.10.2'
           cache-provider: basic
       - name: Verify Android, streaming, endpoint and Phone Frame tests
-        run: node --test android-companion/scripts/manifest-policy.node-test.mjs supabase/functions/backroom-device/android-streaming-protocol.node-test.mjs supabase/functions/backroom-device/realtime-broadcast.node-test.mjs supabase/functions/backroom-device/android-streaming-endpoint.node-test.mjs integrations/backroom/android-touch-policy.node-test.mjs integrations/backroom/device-frame-entry.node-test.mjs
+        run: node --test android-companion/scripts/manifest-policy.node-test.mjs supabase/functions/backroom-device/android-streaming-protocol.node-test.mjs supabase/functions/backroom-device/android-native-target-protocol.node-test.mjs supabase/functions/backroom-device/realtime-broadcast.node-test.mjs supabase/functions/backroom-device/android-streaming-endpoint.node-test.mjs integrations/backroom/android-touch-policy.node-test.mjs integrations/backroom/device-frame-entry.node-test.mjs integrations/backroom/android-native-wake-source.node-test.mjs
       - name: Run Android unit tests and merged-manifest gate
         working-directory: android-companion
         run: gradle --no-daemon --stacktrace :app:testDebugUnitTest :app:auditDebugGuestHostManifest
