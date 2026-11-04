@@ -439,6 +439,19 @@ begin
     v_binding_native,v_native_claim.out_lease_token,'ignored') then
     raise exception 'Native provider identity test lease must be acknowledgeable';
   end if;
+
+  -- The durable job's provider identity is immutable after enqueue.
+  v_conflict := false;
+  begin
+    update public.backroom_wake_jobs
+    set provider_conversation_identity_digest=repeat('8',64)
+    where id=(v_native_job->>'job_id')::uuid;
+  exception when check_violation then
+    v_conflict := true;
+  end;
+  if not v_conflict then
+    raise exception 'A queued native wake must not be retargeted to another provider conversation';
+  end if;
   select count(*) into v_count from public.claim_backroom_wake_jobs(v_host_test,v_session_digest,v_binding_1,5,30);
   if v_count <> 0 then raise exception 'An active lease must prevent duplicate concurrent claims'; end if;
   select count(*) into v_count from public.claim_backroom_wake_jobs(v_host_wrong,v_session_digest,v_binding_1,5,30);
