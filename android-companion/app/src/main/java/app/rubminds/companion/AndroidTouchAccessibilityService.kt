@@ -13,6 +13,12 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import java.security.MessageDigest
 
+data class NativeBindingAttestation(
+    val composerTargetId: String,
+    val sendControlTargetId: String,
+    val providerConversationIdentityDigest: String,
+)
+
 /**
  * User-enabled gesture bridge. It does not upload the accessibility tree or text.
  * Every gesture is scoped to a locally selected package and its current window bounds.
@@ -415,6 +421,45 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             else ProviderConversationIdentityResolver.resolve(packageName, root)
         } finally {
             root.recycle()
+        }
+    }
+
+    /**
+     * Builds a device-local snapshot only after repeating the exact focused
+     * composer, unique Send and provider-conversation checks. The values are
+     * sent only over device-bearer HTTPS, never in a WebRTC acknowledgement.
+     */
+    fun currentNativeBindingAttestation(
+        sessionId: String,
+        packageName: String
+    ): NativeBindingAttestation? {
+        val captured = synchronized(this) {
+            val composer = boundComposerTargetId
+            val send = boundSendTargetId
+            val provider = boundProviderConversationIdentityDigest
+            if (boundSessionId != sessionId || boundPackageName != packageName ||
+                composer == null || send == null || provider == null ||
+                !Regex("^[a-f0-9]{64}$").matches(composer) ||
+                !Regex("^[a-f0-9]{64}$").matches(send) ||
+                !ProviderConversationIdentityPolicy.isValidDigest(provider)
+            ) return null
+            Triple(nativeBindingGeneration, composer, send to provider)
+        }
+        val composerTargetId = captured.second
+        val sendTargetId = captured.third.first
+        val providerDigest = captured.third.second
+        val decision = revalidateSelectedSendControl(
+            sessionId, packageName, composerTargetId, sendTargetId
+        )
+        if (decision.candidate?.targetId != sendTargetId ||
+            !ProviderConversationIdentityPolicy.matches(providerDigest, decision.providerConversationIdentityDigest)
+        ) return null
+        return synchronized(this) {
+            if (nativeBindingGeneration != captured.first ||
+                boundSessionId != sessionId || boundPackageName != packageName ||
+                boundComposerTargetId != composerTargetId || boundSendTargetId != sendTargetId ||
+                !ProviderConversationIdentityPolicy.matches(providerDigest, boundProviderConversationIdentityDigest)
+            ) null else NativeBindingAttestation(composerTargetId, sendTargetId, providerDigest)
         }
     }
 
@@ -1107,6 +1152,11 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
 
         fun isSelectedComposerEmpty(sessionId: String, packageName: String, targetId: String): Boolean =
             instance?.isSelectedComposerEmpty(sessionId, packageName, targetId) == true
+
+        fun currentNativeBindingAttestation(
+            sessionId: String,
+            packageName: String
+        ): NativeBindingAttestation? = instance?.currentNativeBindingAttestation(sessionId, packageName)
 
         fun isBoundToProviderConversation(
             sessionId: String,
