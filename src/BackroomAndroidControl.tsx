@@ -9,8 +9,19 @@ import { waitForIceGatheringComplete } from '../integrations/backroom/ice-gather
 const uuid = () => crypto.randomUUID();
 type Point = { x: number; y: number };
 type PointerStart = Point & { pointerId: number; startedAt: number; mode: 'touch' | 'composer' };
+type NativeAiSession = { participantId: string; displayName: string; sessionDigest: string };
+type NativeHost = { hostId: string; expiresAt: string };
+type BackroomAndroidControlProps = {
+  device: BackroomDevice;
+  roomId: string;
+  canRegisterNativeBinding: boolean;
+  nativeSessions: NativeAiSession[];
+  nativeHosts: NativeHost[];
+};
 
-export default function BackroomAndroidControl({ device, roomId }: { device: BackroomDevice; roomId: string }) {
+export default function BackroomAndroidControl({
+  device, roomId, canRegisterNativeBinding, nativeSessions, nativeHosts,
+}: BackroomAndroidControlProps) {
   const [appPackage, setAppPackage] = useState(device.apps[0]?.package_name ?? '');
   const [channelReady, setChannelReady] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -27,6 +38,10 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const [providerConversationIdentityAvailable, setProviderConversationIdentityAvailable] = useState(false);
   const [sendControlCheckPending, setSendControlCheckPending] = useState(false);
   const [sendControlStatus, setSendControlStatus] = useState('No native Send control verified.');
+  const [nativeBindingHostId, setNativeBindingHostId] = useState('');
+  const [nativeBindingSessionDigest, setNativeBindingSessionDigest] = useState('');
+  const [nativeBindingBusy, setNativeBindingBusy] = useState(false);
+  const [nativeBindingStatus, setNativeBindingStatus] = useState('No device-attested AI binding registered.');
   const [selectionPreview, setSelectionPreview] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const [remoteTextBusy, setRemoteTextBusy] = useState(false);
   const [remoteTextStatus, setRemoteTextStatus] = useState('Focus a normal text field in the phone app, then type here.');
@@ -43,6 +58,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const pendingNavigationAcksRef = useRef<Map<string, number>>(new Map());
   const pendingRemoteTextAcksRef = useRef<Map<string, number>>(new Map());
   const pendingComposerSelectionAcksRef = useRef<Map<string, number>>(new Map());
+  const pendingNativeBindingAcksRef = useRef<Map<string, number>>(new Map());
   const composerTargetRef = useRef('');
   const sendTargetRef = useRef('');
   const pendingSendControlCheckRef = useRef('');
@@ -51,6 +67,15 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const startTimerRef = useRef<number | null>(null);
   const disconnectTimerRef = useRef<number | null>(null);
   const controlRequestTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!nativeHosts.some(host => host.hostId === nativeBindingHostId)) {
+      setNativeBindingHostId(nativeHosts[0]?.hostId ?? '');
+    }
+    if (!nativeSessions.some(session => session.sessionDigest === nativeBindingSessionDigest)) {
+      setNativeBindingSessionDigest(nativeSessions[0]?.sessionDigest ?? '');
+    }
+  }, [nativeHosts, nativeSessions, nativeBindingHostId, nativeBindingSessionDigest]);
 
   const notify = useCallback((text: string, error = false) => {
     setMessage(text); setMessageError(error);
@@ -105,6 +130,9 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     pendingRemoteTextAcksRef.current.clear();
     for (const timer of pendingComposerSelectionAcksRef.current.values()) window.clearTimeout(timer);
     pendingComposerSelectionAcksRef.current.clear();
+    for (const timer of pendingNativeBindingAcksRef.current.values()) window.clearTimeout(timer);
+    pendingNativeBindingAcksRef.current.clear();
+    setNativeBindingBusy(false);
     composerTargetRef.current = '';
     sendTargetRef.current = '';
         streamRef.current?.getTracks().forEach(track => track.stop()); streamRef.current = null;
@@ -207,6 +235,60 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     if (video.srcObject !== stream) video.srcObject = stream;
     void video.play().catch(() => undefined);
   }, [viewReady]);
+
+  const registerNativeBinding = async () => {
+    const session = sessionRef.current;
+    const channel = dataRef.current;
+    const aiSession = nativeSessions.find(value => value.sessionDigest === nativeBindingSessionDigest);
+    if (!canRegisterNativeBinding || !supabase || !session || !channel ||
+        channel.readyState !== 'open' || !viewReady || !sourceVisible || !dataReady ||
+        !sendControlVerified || !providerConversationIdentityAvailable ||
+        !composerTargetRef.current || !sendTargetRef.current ||
+        !aiSession || !nativeHosts.some(host => host.hostId === nativeBindingHostId) ||
+        nativeBindingBusy
+    ) {
+      setNativeBindingStatus('Select an authorized AI session and paired host, then freshly verify the composer, Send control and provider conversation.');
+      return;
+    }
+    setNativeBindingBusy(true);
+    setNativeBindingStatus('Creating a short-lived owner intent for this AI, phone, app and screen session…');
+    try {
+      const { data, error } = await supabase.functions.invoke('backroom-config/native-binding-intent', {
+        body: {
+          roomId,
+          participantId: aiSession.participantId,
+          sessionDigest: aiSession.sessionDigest,
+          hostId: nativeBindingHostId,
+          deviceId: device.device_id,
+          screenSessionId: session,
+          appPackageName: appPackage,
+        },
+      });
+      if (error || data?.ok !== true || typeof data.intentId !== 'string') {
+        throw new Error(typeof data?.reason === 'string'
+          ? data.reason.replaceAll('_', ' ')
+          : 'Owner intent could not be created.');
+      }
+      const requestId = uuid();
+      const timeout = window.setTimeout(() => {
+        pendingNativeBindingAcksRef.current.delete(requestId);
+        setNativeBindingBusy(false);
+        setNativeBindingStatus('No phone attestation acknowledgement arrived. The owner intent expires automatically; create a fresh intent before retrying.');
+      }, 15_000);
+      pendingNativeBindingAcksRef.current.set(requestId, timeout);
+      channel.send(JSON.stringify({
+        kind: 'native_binding_attest',
+        requestId,
+        intentId: data.intentId,
+        sessionId: session,
+        appPackageName: appPackage,
+      }));
+      setNativeBindingStatus('The phone is rechecking its local composer, Send control and provider conversation before HTTPS attestation…');
+    } catch (error) {
+      setNativeBindingBusy(false);
+      setNativeBindingStatus(error instanceof Error ? error.message : 'Native binding intent failed.');
+    }
+  };
 
   const startView = async () => {
     if (busy || !channelReady || !supabase || !device.apps.some(app => app.package_name === appPackage)) return;
@@ -338,6 +420,25 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
               ? 'The original provider conversation and Send control were rechecked. No message was sent.'
               : 'Provider conversation identity changed or is unavailable. Native wake is blocked; no message was sent.'
             : 'Native Send control is no longer verified. The Android frame remains draft-only.', !remainsSameTarget);
+          return;
+        }
+        if (acknowledgement.kind === 'native_binding_attest_ack' &&
+            typeof acknowledgement.requestId === 'string' &&
+            typeof acknowledgement.accepted === 'boolean' &&
+            typeof acknowledgement.reason === 'string') {
+          const timer = pendingNativeBindingAcksRef.current.get(acknowledgement.requestId);
+          if (timer === undefined) return;
+          window.clearTimeout(timer);
+          pendingNativeBindingAcksRef.current.delete(acknowledgement.requestId);
+          setNativeBindingBusy(false);
+          if (acknowledgement.accepted && typeof acknowledgement.bindingId === 'string') {
+            setNativeBindingStatus('Phone attested this exact AI conversation and registered binding ' +
+              acknowledgement.bindingId + '. Wake remains OFF; native host forwarding and ACK settlement are not enabled yet.');
+            notify('Device-attested Android binding registered. No autonomous action was enabled.');
+          } else {
+            setNativeBindingStatus('Attestation rejected: ' + acknowledgement.reason.replaceAll('_', ' ') + '.');
+            notify('Android did not register the native AI binding. No wake was enabled.', true);
+          }
           return;
         }
         if (acknowledgement.kind === 'remote_text_ack' &&
@@ -801,6 +902,32 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
             : 'Composer selected · draft only'
           : 'No target selected'}</span>
       </div>
+      {canRegisterNativeBinding ? <div className="br-android-native-binding">
+        <label htmlFor="br-android-native-ai">Original AI session</label>
+        <select id="br-android-native-ai" value={nativeBindingSessionDigest}
+          onChange={event => setNativeBindingSessionDigest(event.target.value)}
+          disabled={nativeBindingBusy || !nativeSessions.length}>
+          {nativeSessions.map(item => <option key={item.sessionDigest} value={item.sessionDigest}>
+            {item.displayName} · {item.participantId.slice(0, 8)}
+          </option>)}
+        </select>
+        <label htmlFor="br-android-native-host">Paired Backroom host</label>
+        <select id="br-android-native-host" value={nativeBindingHostId}
+          onChange={event => setNativeBindingHostId(event.target.value)}
+          disabled={nativeBindingBusy || !nativeHosts.length}>
+          {nativeHosts.map(item => <option key={item.hostId} value={item.hostId}>
+            {item.hostId.slice(0, 8)} · expires {new Date(item.expiresAt).toLocaleString()}
+          </option>)}
+        </select>
+        <button type="button" onClick={() => void registerNativeBinding()}
+          disabled={nativeBindingBusy || !viewReady || !sourceVisible || !dataReady ||
+            !composerTargetId || !sendControlVerified || !providerConversationIdentityAvailable ||
+            !nativeBindingHostId || !nativeBindingSessionDigest || !nativeHosts.length || !nativeSessions.length}>
+          {nativeBindingBusy ? 'Attesting on phone…' : 'Bind selected AI to this phone'}
+        </button>
+        <p role="status">{nativeBindingStatus}</p>
+        <small>The browser sends only a one-use intent ID. The phone rechecks its local identities and sends their digests directly to Rub Minds over its device credential. The new binding stays wake-disabled.</small>
+      </div> : null}
       <div className="br-android-composer-actions">
         <button type="button" onClick={() => {
           if (selectionMode) { setSelectionMode(false); setSelectionPreview(null); }
