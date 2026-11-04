@@ -13,6 +13,7 @@ import { validateDesktopSessionClose } from './desktop-session-close-protocol.mj
 import { validateDesktopSessionAbandon } from './desktop-session-abandon-protocol.mjs';
 import { validateAndroidSessionStart, validateAndroidDeviceCommand, validateAndroidSignal, validateAndroidCommandAck, validateAndroidNativeWakeHandoff, validateAndroidNativeWakeResult, validateAndroidSessionClose, mapAndroidQueuedCommand } from './android-streaming-protocol.mjs';
 import { broadcastPrivateDeviceEvent } from './realtime-broadcast.mjs';
+import { validateAndroidNativeBindingAttestation } from '../../../integrations/backroom/native-binding-attestation-policy.mjs';
 
 const url = Deno.env.get('SUPABASE_URL');
 const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
@@ -543,6 +544,76 @@ Deno.serve(async req => {
         } catch { /* device queue and local timeout remain authoritative */ }
       }
       return json(202, { ok: true, requestId: command.requestId, command: command.command }, origin);
+    }
+
+    if (action === 'android/native-binding-attest') {
+      const current = await device(req);
+      if (!current) return json(401, fail('device_not_approved'), origin);
+      if (current.platform !== 'android') return json(409, fail('android_device_required'), origin);
+      const allowed = [
+        'action','intentId','screenSessionId','appPackageName','signingCertificateSha256',
+        'composerTargetId','sendControlTargetId','providerConversationIdentityDigest',
+      ];
+      if (!exactKeys(input, allowed) || !allowed.every(key => Object.hasOwn(input, key)) ||
+          !UUID.test(input.intentId ?? '') || !UUID.test(input.screenSessionId ?? '')) {
+        return json(400, fail('invalid_native_binding_attestation'), origin);
+      }
+      const now = new Date().toISOString();
+      const { data: intent, error: intentError } = await db.from('backroom_native_binding_intents')
+        .select('id,room_id,device_id,screen_session_id,app_package_name,signing_certificate_sha256,expires_at,consumed_at')
+        .eq('id', input.intentId).eq('device_id', current.device_id)
+        .eq('screen_session_id', input.screenSessionId).is('consumed_at', null)
+        .gt('expires_at', now).maybeSingle();
+      if (intentError) return json(503, fail('native_binding_intent_lookup_failed'), origin);
+      if (!intent) return json(409, fail('native_binding_intent_expired_or_out_of_scope'), origin);
+      const [deviceRoom, screen, app] = await Promise.all([
+        verifyActiveDeviceRoomBinding(current.device_id, intent.room_id),
+        activeDesktopSession(intent.screen_session_id, current.device_id, intent.room_id),
+        db.from('backroom_device_apps').select('package_name,signing_certificate_sha256')
+          .eq('device_id', current.device_id).eq('package_name', intent.app_package_name).maybeSingle(),
+      ]);
+      if (!deviceRoom.ok) return json(deviceRoom.status, fail(deviceRoom.reason), origin);
+      if (deviceRoom.platform !== 'android') return json(409, fail('android_device_required'), origin);
+      if (!screen.ok || screen.session.session_type !== 'screen') return json(409, fail('android_screen_session_not_active'), origin);
+      if (app.error) return json(503, fail('android_app_inventory_unavailable'), origin);
+      if (!app.data || app.data.signing_certificate_sha256 !== intent.signing_certificate_sha256) {
+        return json(403, fail('android_app_signer_changed'), origin);
+      }
+      const attestation = validateAndroidNativeBindingAttestation({
+        intentId: input.intentId,
+        screenSessionId: input.screenSessionId,
+        appPackageName: input.appPackageName,
+        signingCertificateSha256: input.signingCertificateSha256,
+        composerTargetId: input.composerTargetId,
+        sendControlTargetId: input.sendControlTargetId,
+        providerConversationIdentityDigest: input.providerConversationIdentityDigest,
+      }, {
+        screenSessionId: intent.screen_session_id,
+        appPackageName: intent.app_package_name,
+        signingCertificateSha256: intent.signing_certificate_sha256,
+      });
+      if (!attestation) return json(400, fail('invalid_device_attestation_evidence'), origin);
+      const { data: bindingId, error: registerError } = await db.rpc(
+        'register_backroom_native_input_binding_from_device',
+        {
+          p_intent_id: intent.id,
+          p_device_id: current.device_id,
+          p_screen_session_id: attestation.screenSessionId,
+          p_app_package_name: attestation.appPackageName,
+          p_signing_certificate_sha256: attestation.signingCertificateSha256,
+          p_composer_target_id: attestation.composerTargetId,
+          p_send_control_target_id: attestation.sendControlTargetId,
+          p_provider_conversation_identity_digest: attestation.providerConversationIdentityDigest,
+        },
+      );
+      if (registerError || typeof bindingId !== 'string' || !UUID.test(bindingId)) {
+        return json(409, fail('native_binding_registration_rejected'), origin);
+      }
+      await db.from('backroom_devices').update({ last_seen_at: new Date().toISOString() })
+        .eq('device_id', current.device_id);
+      // The phone returns only the binding ID. Composer, Send and provider digests
+      // remain device-private and are never relayed through WebRTC to the browser.
+      return json(201, { ok: true, bindingId, wakeEnabled: false }, origin);
     }
 
     if (action === 'android/commands') {
