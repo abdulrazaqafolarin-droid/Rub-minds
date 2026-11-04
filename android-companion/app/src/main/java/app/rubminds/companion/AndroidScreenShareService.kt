@@ -789,9 +789,6 @@ class AndroidScreenShareService : Service() {
             .put("providerConversationIdentityAvailable", decision.providerConversationIdentityDigest?.let {
                 ProviderConversationIdentityPolicy.isValidDigest(it)
             } == true)
-        decision.providerConversationIdentityDigest
-            ?.takeIf { ProviderConversationIdentityPolicy.isValidDigest(it) }
-            ?.let { payload.put("providerConversationIdentityDigest", it) }
         decision.candidate?.let { payload.put("targetId", it.targetId) }
         decision.sendControl?.let { payload.put("sendTargetId", it.targetId) }
         runCatching { channel.send(DataChannel.Buffer(ByteBuffer.wrap(payload.toString().toByteArray(Charsets.UTF_8)), false)) }
@@ -816,9 +813,6 @@ class AndroidScreenShareService : Service() {
             .put("providerConversationIdentityAvailable", decision.providerConversationIdentityDigest?.let {
                 ProviderConversationIdentityPolicy.isValidDigest(it)
             } == true)
-        decision.providerConversationIdentityDigest
-            ?.takeIf { ProviderConversationIdentityPolicy.isValidDigest(it) }
-            ?.let { payload.put("providerConversationIdentityDigest", it) }
         decision.candidate?.let { payload.put("sendTargetId", it.targetId) }
         runCatching {
             channel.send(DataChannel.Buffer(

@@ -25,7 +25,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const [composerTargetId, setComposerTargetId] = useState('');
   const [sendControlVerified, setSendControlVerified] = useState(false);
   const [providerConversationIdentityAvailable, setProviderConversationIdentityAvailable] = useState(false);
-  const providerConversationIdentityDigestRef = useRef('');
+  const providerConversationIdentityAvailableRef = useRef(false);
   const [sendControlCheckPending, setSendControlCheckPending] = useState(false);
   const [sendControlStatus, setSendControlStatus] = useState('No native Send control verified.');
   const [selectionPreview, setSelectionPreview] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
@@ -79,7 +79,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     setComposerTargetId('');
     setSendControlVerified(false);
     setProviderConversationIdentityAvailable(false);
-    providerConversationIdentityDigestRef.current = '';
+    providerConversationIdentityAvailableRef.current = false;
     setSendControlStatus('No native Send control verified.');
     setSelectionPreview(null);
     setSelectionMode(false);
@@ -109,7 +109,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     pendingComposerSelectionAcksRef.current.clear();
     composerTargetRef.current = '';
     sendTargetRef.current = '';
-    providerConversationIdentityDigestRef.current = '';
+    providerConversationIdentityAvailableRef.current = false;
     streamRef.current?.getTracks().forEach(track => track.stop()); streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     sessionRef.current = ''; pointerRef.current = null; pendingControlRequestRef.current = '';
@@ -275,12 +275,8 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
               /^[a-f0-9]{64}$/.test(acknowledgement.sendTargetId)
                 ? acknowledgement.sendTargetId : '';
             const sendVerified = acknowledgement.sendAvailable === true && Boolean(sendTarget);
-            const returnedProviderDigest = typeof acknowledgement.providerConversationIdentityDigest === 'string' &&
-              /^[a-f0-9]{64}$/.test(acknowledgement.providerConversationIdentityDigest)
-                ? acknowledgement.providerConversationIdentityDigest : '';
-            const conversationIdentityAvailable = acknowledgement.providerConversationIdentityAvailable === true &&
-              Boolean(returnedProviderDigest);
-            providerConversationIdentityDigestRef.current = conversationIdentityAvailable ? returnedProviderDigest : '';
+            const conversationIdentityAvailable = acknowledgement.providerConversationIdentityAvailable === true;
+            providerConversationIdentityAvailableRef.current = conversationIdentityAvailable;
             sendTargetRef.current = sendVerified ? sendTarget : '';
             setSendControlVerified(sendVerified);
             setProviderConversationIdentityAvailable(conversationIdentityAvailable);
@@ -327,15 +323,11 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
           const remainsSameTarget = acknowledgement.available === true &&
             Boolean(returnedTarget) && !sendIdentityChanged &&
             Boolean(composerTargetRef.current);
-          const recheckedProviderDigest = typeof acknowledgement.providerConversationIdentityDigest === 'string' &&
-            /^[a-f0-9]{64}$/.test(acknowledgement.providerConversationIdentityDigest)
-              ? acknowledgement.providerConversationIdentityDigest : '';
           const sameProviderConversation = acknowledgement.providerConversationIdentityAvailable === true &&
-            Boolean(providerConversationIdentityDigestRef.current) &&
-            recheckedProviderDigest === providerConversationIdentityDigestRef.current;
+            providerConversationIdentityAvailableRef.current;
           setSendControlVerified(remainsSameTarget);
           setProviderConversationIdentityAvailable(sameProviderConversation);
-          if (!sameProviderConversation) providerConversationIdentityDigestRef.current = '';
+          providerConversationIdentityAvailableRef.current = sameProviderConversation;
           if (!remainsSameTarget) sendTargetRef.current = '';
           setSendControlStatus(remainsSameTarget
             ? sameProviderConversation
@@ -678,7 +670,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         !composerTarget || !sendTarget || !viewReady || !sourceVisible || !dataReady) {
       setSendControlVerified(false);
       setProviderConversationIdentityAvailable(false);
-      providerConversationIdentityDigestRef.current = '';
+      providerConversationIdentityAvailableRef.current = false;
       sendTargetRef.current = '';
       setSendControlStatus('Recheck unavailable: the live phone session or selected target is missing.');
       return;
@@ -695,7 +687,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       setSendControlCheckPending(false);
       setSendControlVerified(false);
       setProviderConversationIdentityAvailable(false);
-      providerConversationIdentityDigestRef.current = '';
+      providerConversationIdentityAvailableRef.current = false;
       sendTargetRef.current = '';
       setSendControlStatus('Recheck timed out. The Send control is not currently verified; no action was taken.');
       notify('The phone did not confirm the Send-control recheck. The frame remains draft-only.', true);
@@ -718,7 +710,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       setSendControlCheckPending(false);
       setSendControlVerified(false);
       setProviderConversationIdentityAvailable(false);
-      providerConversationIdentityDigestRef.current = '';
+      providerConversationIdentityAvailableRef.current = false;
       sendTargetRef.current = '';
       setSendControlStatus('The phone data channel rejected the Send-control recheck.');
     }
