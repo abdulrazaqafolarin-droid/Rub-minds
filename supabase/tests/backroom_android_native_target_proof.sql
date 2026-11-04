@@ -203,6 +203,14 @@ begin
   end;
   if not v_conflict then raise exception 'Native target proof identity must be immutable'; end if;
 
+  insert into public.rub_minds_mcp_sessions(
+    session_digest,agent_credential_ciphertext,agent_credential_digest,
+    room_id,participant_id,expires_at,terminated_at
+  ) values (
+    repeat('7',64),'proof-test-draft-ciphertext',repeat('f',64),
+    v_room,v_participant,pg_catalog.clock_timestamp()+interval '2 hours',null
+  );
+
   -- An Android composer can still be registered without a proof for manual draft use,
   -- but its consent check blocks enabling autonomous wake.
   insert into public.backroom_input_bindings(
@@ -210,7 +218,7 @@ begin
     target_id,target_identity_fingerprint,target_revision,surface,locator_kind,
     locator_value,participation_mode,max_wakes_per_minute,wake_enabled
   ) values (
-    v_owner,v_room,v_participant,v_host,v_mcp_digest,'android-draft-'||v_device::text,
+    v_owner,v_room,v_participant,v_host,repeat('7',64),'android-draft-'||v_device::text,
     'screen-draft-only','draft-target','draft-fingerprint',1,'android_app',
     'accessibility','draft-locator','mentions',6,false
   );
