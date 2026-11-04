@@ -335,3 +335,13 @@ test("native wake ACK stores bounded evidence privately and broadcasts no target
   assert.match(broadcast, /state: ack\.nativeWakeResult\.state/);
   assert.doesNotMatch(broadcast, /composerIdentityDigest|sendControlIdentityDigest|nativeWakeResult: ack\.nativeWakeResult/);
 });
+
+test("a new Android drag selection clears the previous frame-side composer and provider digest before sending the request", async () => {
+  const browser = await read("src/BackroomAndroidControl.tsx");
+  const start = browser.indexOf("const selectComposer =");
+  const end = browser.indexOf("const recheckSendControl =", start);
+  const selection = browser.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  assert.ok(selection.indexOf("clearComposerTarget(false)") >= 0);
+  assert.ok(selection.indexOf("clearComposerTarget(false)") < selection.indexOf("const selectionId = uuid()"));
+});
