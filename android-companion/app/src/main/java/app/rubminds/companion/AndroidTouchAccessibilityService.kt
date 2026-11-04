@@ -17,6 +17,16 @@ import java.security.MessageDigest
  * User-enabled gesture bridge. It does not upload the accessibility tree or text.
  * Every gesture is scoped to a locally selected package and its current window bounds.
  */
+internal data class NativeTargetProofMaterial(
+    val targetId: String,
+    val targetRevision: Int,
+    val appPackageName: String,
+    val appSignerSha256: String,
+    val composerIdentityDigest: String,
+    val sendControlIdentityDigest: String,
+    val providerConversationIdentityDigest: String
+)
+
 class AndroidTouchAccessibilityService : AccessibilityService() {
     @Volatile private var boundSessionId: String? = null
     @Volatile private var boundPackageName: String? = null
@@ -347,6 +357,56 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         } finally {
             root.recycle()
         }
+    }
+
+    /**
+     * Build the minimum device-originated proof for an owner-requested native
+     * binding. This re-resolves the live provider conversation and focused
+     * composer/unique Send control; no labels, text, titles or raw provider IDs
+     * are returned. The server receives only opaque SHA-256 identities.
+     */
+    fun currentNativeTargetProofMaterial(
+        sessionId: String,
+        packageName: String,
+        expectedComposerTargetId: String,
+        expectedSendTargetId: String
+    ): NativeTargetProofMaterial? {
+        val snapshot = synchronized(this) {
+            if (boundSessionId != sessionId || boundPackageName != packageName ||
+                boundComposerTargetId != expectedComposerTargetId ||
+                boundSendTargetId != expectedSendTargetId ||
+                !ProviderConversationIdentityPolicy.isValidDigest(boundProviderConversationIdentityDigest)
+            ) return null
+            Triple(nativeBindingGeneration, boundProviderConversationIdentityDigest!!, boundComposerTargetId!!)
+        }
+        if (!isBoundToProviderConversation(sessionId, packageName, snapshot.second)) return null
+        val sendDecision = revalidateSelectedSendControl(
+            sessionId, packageName, expectedComposerTargetId, expectedSendTargetId
+        )
+        if (sendDecision.candidate?.targetId != expectedSendTargetId) return null
+        val signer = AppIdentity.signingCertificateSha256(this, packageName) ?: return null
+        if (!AppGrantPolicy.isValidSigningCertificateSha256(signer)) return null
+        val revision = snapshot.first
+        if (revision !in 1L..Int.MAX_VALUE.toLong()) return null
+        val stillCurrent = synchronized(this) {
+            nativeBindingGeneration == snapshot.first &&
+                boundSessionId == sessionId && boundPackageName == packageName &&
+                boundComposerTargetId == snapshot.third &&
+                boundSendTargetId == expectedSendTargetId &&
+                ProviderConversationIdentityPolicy.matches(
+                    snapshot.second, boundProviderConversationIdentityDigest
+                )
+        }
+        if (!stillCurrent || !isBoundToProviderConversation(sessionId, packageName, snapshot.second)) return null
+        return NativeTargetProofMaterial(
+            targetId = snapshot.third,
+            targetRevision = revision.toInt(),
+            appPackageName = packageName,
+            appSignerSha256 = signer,
+            composerIdentityDigest = expectedComposerTargetId,
+            sendControlIdentityDigest = expectedSendTargetId,
+            providerConversationIdentityDigest = snapshot.second
+        )
     }
 
     fun isSelectedComposerFocused(sessionId: String, packageName: String, targetId: String): Boolean {
