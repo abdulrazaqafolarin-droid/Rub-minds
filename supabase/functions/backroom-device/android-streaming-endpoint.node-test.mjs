@@ -335,3 +335,27 @@ test("native wake ACK stores bounded evidence privately and broadcasts no target
   assert.match(broadcast, /state: ack\.nativeWakeResult\.state/);
   assert.doesNotMatch(broadcast, /composerIdentityDigest|sendControlIdentityDigest|nativeWakeResult: ack\.nativeWakeResult/);
 });
+
+
+test("Android exposes only a validated provider-conversation digest to the frame and rechecks the same digest locally", async () => {
+  const selectionModel = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidComposerTargetPolicy.kt");
+  const accessibility = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidTouchAccessibilityService.kt");
+  const companion = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  const browser = await read("src/BackroomAndroidControl.tsx");
+
+  assert.match(selectionModel, /providerConversationIdentityDigest: String\\? = null/);
+  assert.match(accessibility, /ProviderConversationIdentityResolver\\.resolve\\(packageName, root\\)/);
+  assert.match(accessibility, /expectedProviderConversationIdentityDigest/);
+  assert.match(accessibility, /provider_conversation_identity_changed/);
+  assert.match(accessibility, /current\\.copy\\(providerConversationIdentityDigest = expectedProviderConversationIdentityDigest\\)/);
+  assert.match(companion, /providerConversationIdentityAvailable", providerDigest != null/);
+  assert.match(companion, /providerConversationIdentityDigest", it/);
+  assert.match(companion, /providerConversationIdentityRevalidated", providerDigest != null/);
+  assert.match(companion, /expectedProviderIdentityDigest/);
+  assert.match(companion, /ProviderConversationIdentityPolicy\\.isValidDigest\\(expectedProviderIdentityDigest\\)/);
+  assert.match(browser, /PROVIDER_IDENTITY_DIGEST = \\/\\^\\[a-f0-9\\]\\{64\\}\\$\\//);
+  assert.match(browser, /acknowledgement\\.providerConversationIdentityAvailable === true && Boolean\\(returnedProviderDigest\\)/);
+  assert.match(browser, /returnedProviderDigest === expectedProviderDigest/);
+  assert.match(browser, /providerConversationIdentityDigestRef\\.current = ''/);
+  assert.match(browser, /kind: 'verify_composer_send'[\\s\\S]+?providerConversationIdentityDigest/);
+});
