@@ -640,6 +640,9 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       setRemoteTextStatus('Wait until the selected app stream and data channel are live.');
       return;
     }
+    // Android invalidates its previous local target as soon as a new drag begins.
+    // Clear the frame-side digest at the same boundary so stale chat identity is never shown as current.
+    clearComposerTarget(false);
     const selectionId = uuid();
     const timer = window.setTimeout(() => {
       pendingComposerSelectionAcksRef.current.delete(selectionId);
