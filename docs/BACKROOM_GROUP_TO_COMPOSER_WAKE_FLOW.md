@@ -1,6 +1,6 @@
 # Backroom group-to-composer wake flow
 
-Status snapshot: 2026-11-03, PR #64 branch `feat/backroom-off-on-auto-modes`. This document describes the source-level architecture at the branch head; it is not a claim of production deployment, connected-device acceptance, or a completed ChatGPT/Claude round trip.
+Status snapshot: 2026-11-04, follow-on source branches #65–#66. This document describes source-level contracts; it is not a claim of production deployment, connected-device acceptance, or a completed ChatGPT/Claude round trip.
 
 ## The invariant
 
@@ -108,6 +108,8 @@ The UI converts pointer coordinates against the actual displayed video content:
 5. The phone companion resolves that region against its live Accessibility tree. It must find exactly one visible, editable, non-password composer in the approved foreground app. A broad region, multiple fields, unavailable accessibility data or an app/session mismatch fails closed.
 6. The phone returns a selection acknowledgement tied to the request ID and opaque target identity. If it also found one unique nearby Send control, it returns a separate opaque Send-target identity and availability/reason. It also returns a boolean indicating whether a provider-specific stable conversation identity was available locally; the conversation digest itself never leaves the phone. The frame now distinguishes a nearby Send control from provider-conversation readiness and labels native wake as blocked when that identity is missing. The accessible label, raw node identity, conversation digest and editor content do not become UI authorization.
 
+**Important: the provider digest is intentionally not sent to the browser, but there is not yet an alternate device-attested registration path that sends it directly to Rub Minds.** `BackroomAndroidControl` currently receives only the paired device and room; it does not select an AI participant/MCP session or submit a durable group binding. The owner-authenticated `backroom-config/binding` route is a paired-host/input-binding enrollment route; it does not prove the phone's current device ID, screen session, app signer, composer digest and Send digest. The #66 schema and claim wrapper therefore provide storage/lease primitives, not a usable Android target registration flow. Keep the digest phone-local until a device-bearer-authenticated registration handshake can bind the current device/screen/app/composer/provider identity to an explicitly selected group AI/MCP session. The server should store only opaque digests, never raw provider IDs or conversation content.
+
 The frame stores the composer and Send target identifiers only for the active session. It offers a separate **Recheck Send control** action. The phone must prove the same unique Send target remains available beside the selected composer. A changed target invalidates the earlier check and requires a fresh selection.
 
 The owner must still focus the exact field in the phone app before inserting a manual draft. The UI makes this explicit. A selection acknowledgement is not a guarantee that the provider conversation is correctly identified, that the model will respond, or that a Send action is allowed.
@@ -166,7 +168,7 @@ Android has a separate device-bearer-authenticated command poll/ACK channel:
 
 The handoff expires no later than its queue lease and is bounded to 20 seconds. Only the digest of the durable lease token crosses into the handoff; the raw lease token remains with the trusted worker. The phone rechecks expiry immediately before the sensitive execution stages.
 
-**The missing connection is upstream of this phone receiver:** there is not yet a trusted host-side forwarder that takes a claimed group wake lease, maps it to the paired Android device's active room/screen session, creates the exact handoff and enqueues the `native_wake_trigger` command. Result reconciliation from the device ACK back to the original durable group wake lease is also not completed. The receiver and ACK validator are therefore not proof that group events can already wake the phone.
+**Two prerequisites remain before the phone receiver can be reached safely.** First, the device-attested binding registration described above must securely connect one selected AI/MCP participant and its existing group input binding to one paired Android device, active screen session, app/signer, selected composer/Send identities and phone-local provider digest. It must be invalidated when that screen session closes, the device is revoked, the app changes, or the provider conversation changes. Second, a trusted host-side forwarder must take a claimed group wake lease, resolve that exact registration, create the 20-second handoff and enqueue the `native_wake_trigger` command. The device ACK then needs to reconcile against the original group lease without losing the one-shot/no-replay distinction. Until both are connected, the receiver and ACK validator are not proof that group events can wake the phone.
 
 ### Windows native path
 
