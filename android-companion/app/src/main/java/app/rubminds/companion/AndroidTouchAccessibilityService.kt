@@ -252,7 +252,8 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                     "selected",
                     null,
                     "accessibility_tree_too_large",
-                    ProviderConversationIdentityPolicy.isValidDigest(providerConversationDigest)
+                    ProviderConversationIdentityPolicy.isValidDigest(providerConversationDigest),
+                    providerConversationDigest?.takeIf { ProviderConversationIdentityPolicy.isValidDigest(it) }
                 )
             }
             val sendDecision = AndroidSendControlPolicy.choose(
@@ -278,7 +279,8 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 "selected",
                 sendDecision.candidate,
                 sendDecision.reason,
-                ProviderConversationIdentityPolicy.isValidDigest(providerConversationDigest)
+                ProviderConversationIdentityPolicy.isValidDigest(providerConversationDigest),
+                providerConversationDigest?.takeIf { ProviderConversationIdentityPolicy.isValidDigest(it) }
             )
         } finally {
             root.recycle()
@@ -288,13 +290,20 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         sessionId: String,
         packageName: String,
         composerTargetId: String,
-        sendTargetId: String
+        sendTargetId: String,
+        expectedProviderConversationIdentityDigest: String? = null
     ): SendControlDecision {
         if (boundSessionId != sessionId || boundPackageName != packageName ||
             boundComposerTargetId != composerTargetId || boundSendTargetId != sendTargetId ||
             !Regex("^[a-f0-9]{64}$").matches(composerTargetId) ||
             !Regex("^[a-f0-9]{64}$").matches(sendTargetId)
         ) return SendControlDecision(null, "selection_identity_changed")
+        if (expectedProviderConversationIdentityDigest != null &&
+            (!ProviderConversationIdentityPolicy.isValidDigest(expectedProviderConversationIdentityDigest) ||
+                !ProviderConversationIdentityPolicy.matches(
+                    expectedProviderConversationIdentityDigest, boundProviderConversationIdentityDigest
+                ))
+        ) return SendControlDecision(null, "provider_conversation_identity_changed")
         if (!isServiceEnabled(this)) return SendControlDecision(null, "accessibility_service_not_enabled")
 
         val root = try { rootInActiveWindow } catch (_: SecurityException) { null }
@@ -302,6 +311,15 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         try {
             if (!root.isVisibleToUser || root.packageName?.toString() != packageName) {
                 return SendControlDecision(null, "selected_app_not_foreground")
+            }
+            if (expectedProviderConversationIdentityDigest != null) {
+                val currentProviderDigest = ProviderConversationIdentityResolver.resolve(packageName, root)
+                if (!ProviderConversationIdentityPolicy.matches(
+                        expectedProviderConversationIdentityDigest, currentProviderDigest
+                    ) || !ProviderConversationIdentityPolicy.matches(
+                        expectedProviderConversationIdentityDigest, boundProviderConversationIdentityDigest
+                    )
+                ) return SendControlDecision(null, "provider_conversation_identity_changed")
             }
             val signer = AppIdentity.signingCertificateSha256(this, packageName)
                 ?: return SendControlDecision(null, "app_signer_unavailable")
@@ -343,7 +361,11 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 return SendControlDecision(null,
                     if (current.candidate == null) current.reason else "send_control_identity_changed")
             }
-            return current
+            return if (expectedProviderConversationIdentityDigest != null) {
+                current.copy(providerConversationIdentityDigest = expectedProviderConversationIdentityDigest)
+            } else {
+                current
+            }
         } finally {
             root.recycle()
         }
@@ -1081,9 +1103,10 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             sessionId: String,
             packageName: String,
             composerTargetId: String,
-            sendTargetId: String
+            sendTargetId: String,
+            expectedProviderConversationIdentityDigest: String? = null
         ): SendControlDecision = instance?.revalidateSelectedSendControl(
-            sessionId, packageName, composerTargetId, sendTargetId
+            sessionId, packageName, composerTargetId, sendTargetId, expectedProviderConversationIdentityDigest
         ) ?: SendControlDecision(null, "accessibility_service_not_connected")
 
         fun isSelectedComposerFocused(sessionId: String, packageName: String, targetId: String): Boolean =
