@@ -120,6 +120,16 @@ begin
     raise exception 'Native draft binding without provider identity must not enable autonomous wake';
   end if;
 
+  -- A registered binding cannot silently switch to a different valid provider conversation.
+  v_conflict := false;
+  begin
+    update public.backroom_input_bindings set provider_conversation_identity_digest=repeat('a',64)
+    where id=v_binding_native;
+  exception when check_violation then
+    v_conflict := true;
+  end;
+  if not v_conflict then raise exception 'Provider conversation identity must be immutable for a binding'; end if;
+
   -- An enabled native binding must not lose its provider-conversation digest.
   v_conflict := false;
   begin
