@@ -21,7 +21,7 @@ function setup(token=hostToken) {
  };
  const gateway=createAuthenticatedWakeGateway({
   lookupHost:async()=>({hostId,ownerId,credentialDigest:createHash('sha256').update(hostToken).digest('hex'),expiresAt:'2030-01-01T00:00:00Z',revokedAt:null}),
-  lookupBinding:async()=>({bindingId,hostId,ownerId,sessionDigest,revokedAt:null,wakeEnabled:true,confirmedAt:'2026-10-29T00:00:00Z',wakeExpiresAt:'2030-01-01T00:00:00Z'}),
+  lookupBinding:async()=>({bindingId,hostId,ownerId,sessionDigest,providerConversationIdentityDigest,revokedAt:null,wakeEnabled:true,confirmedAt:'2026-10-29T00:00:00Z',wakeExpiresAt:'2030-01-01T00:00:00Z'}),
   store:db,now:()=>Date.parse('2026-10-29T12:00:00Z')
  });
  const handler=createWakeGatewayHttpHandler({gateway});
@@ -34,7 +34,7 @@ test('host HTTPS claim -> authenticated gateway -> private store and back',async
  assert.equal(leases.length,1);
  assert.equal(leases[0].jobId,jobId);
  assert.equal(leases[0].providerConversationIdentityDigest,providerConversationIdentityDigest);
- assert.deepEqual(calls[0],['claim',{...scope,limit:2,providerConversationIdentityDigest:null}]);
+ assert.deepEqual(calls[0],['claim',{...scope,limit:2,providerConversationIdentityDigest}]);
  assert.equal(await store.acknowledge({...scope,jobId,leaseToken}),true);
  assert.equal(await store.retry({...scope,jobId,leaseToken,errorCode:'provider_busy'}),'pending');
  assert.deepEqual(calls.map(x=>x[0]),['claim','ack','retry']);
@@ -73,7 +73,7 @@ test('official Supabase Edge Function URL retains bearer and exact scoped route'
    actual.push(url);
    const gateway=createAuthenticatedWakeGateway({
     lookupHost:async()=>({hostId,ownerId,credentialDigest:createHash('sha256').update(hostToken).digest('hex'),expiresAt:'2030-01-01T00:00:00Z',revokedAt:null}),
-    lookupBinding:async()=>({bindingId,hostId,ownerId,sessionDigest,revokedAt:null,wakeEnabled:true,confirmedAt:'2026-10-29T00:00:00Z',wakeExpiresAt:'2030-01-01T00:00:00Z'}),
+    lookupBinding:async()=>({bindingId,hostId,ownerId,sessionDigest,providerConversationIdentityDigest,revokedAt:null,wakeEnabled:true,confirmedAt:'2026-10-29T00:00:00Z',wakeExpiresAt:'2030-01-01T00:00:00Z'}),
     store:{claim:async x=>[{...x,jobId,leaseToken}],acknowledge:async()=>true,retry:async()=> 'pending'},
     now:()=>Date.parse('2026-10-29T12:00:00Z')
    });
