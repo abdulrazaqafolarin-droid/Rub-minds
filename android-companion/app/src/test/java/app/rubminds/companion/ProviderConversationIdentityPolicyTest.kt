@@ -22,6 +22,16 @@ class ProviderConversationIdentityPolicyTest {
         assertFalse(first!!.contains("conversation-A"))
     }
 
+    @Test fun frameExportAcceptsOnlyOpaqueSha256Digests() {
+        val digest = ProviderConversationIdentityPolicy.digest("com.example.ai", "conversation-A")
+        assertNotNull(digest)
+        assertTrue(ProviderConversationIdentityPolicy.isValidDigest(digest))
+        assertFalse(ProviderConversationIdentityPolicy.isValidDigest("a".repeat(63)))
+        assertFalse(ProviderConversationIdentityPolicy.isValidDigest("a".repeat(65)))
+        assertFalse(ProviderConversationIdentityPolicy.isValidDigest("A".repeat(64)))
+        assertFalse(ProviderConversationIdentityPolicy.matches(digest, "b".repeat(64)))
+    }
+
     @Test fun missingOrMalformedProviderConversationIdentityFailsClosed() {
         assertNull(ProviderConversationIdentityPolicy.digest("com.example.ai", null))
         assertNull(ProviderConversationIdentityPolicy.digest("com.example.ai", ""))
