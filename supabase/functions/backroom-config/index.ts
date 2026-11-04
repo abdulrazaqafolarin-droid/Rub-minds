@@ -4,7 +4,7 @@
  * enable wake. Requires the draft private queue migration.
  */
 import {createClient} from 'npm:@supabase/supabase-js@2';
-import {validateHostEnrollment,validatePendingWakeBinding,validateBindingStatusQuery} from '../../../integrations/backroom/host-enrollment-policy.mjs';
+import {validateHostEnrollment,validatePendingWakeBinding,validateNativeTargetProofBinding,validateBindingStatusQuery} from '../../../integrations/backroom/host-enrollment-policy.mjs';
 import {classifyExistingBinding} from '../../../integrations/backroom/binding-registration-policy.mjs';
 import {resolveOwnerFromJwt} from '../../../integrations/backroom/owner-jwt.mjs';
 
@@ -46,7 +46,7 @@ Deno.serve(async req=>{
   }});
  }
  const parsed=new URL(req.url);
- if(req.method!=='POST'||parsed.search||parsed.hash||!['/functions/v1/backroom-config/host','/functions/v1/backroom-config/binding','/functions/v1/backroom-config/sessions','/functions/v1/backroom-config/binding-status','/functions/v1/backroom-config/revoke-host','/functions/v1/backroom-config/revoke-binding','/backroom-config/host','/backroom-config/binding','/backroom-config/sessions','/backroom-config/binding-status','/backroom-config/revoke-host','/backroom-config/revoke-binding','/host','/binding','/sessions','/binding-status','/revoke-host','/revoke-binding'].includes(parsed.pathname))
+ if(req.method!=='POST'||parsed.search||parsed.hash||!['/functions/v1/backroom-config/host','/functions/v1/backroom-config/binding','/functions/v1/backroom-config/sessions','/functions/v1/backroom-config/hosts','/functions/v1/backroom-config/binding-status','/functions/v1/backroom-config/revoke-host','/functions/v1/backroom-config/revoke-binding','/backroom-config/host','/backroom-config/binding','/backroom-config/sessions','/backroom-config/hosts','/backroom-config/binding-status','/backroom-config/revoke-host','/backroom-config/revoke-binding','/host','/binding','/sessions','/hosts','/binding-status','/revoke-host','/revoke-binding'].includes(parsed.pathname))
   return json(404,{ok:false,reason:'not_found'},origin);
  if(req.headers.get('content-type')?.toLowerCase()!=='application/json')
   return json(415,{ok:false,reason:'unsupported_type'},origin);
@@ -95,6 +95,23 @@ Deno.serve(async req=>{
       displayName:names.get(s.participant_id),
       sessionDigest:s.session_digest,expiresAt:s.expires_at,
       credentialExpiresAt:validCredentials.get(s.agent_credential_digest)}))},origin);
+  }
+  if(parsed.pathname.endsWith('/hosts')){
+   if(!value||typeof value.roomId!=='string'||!/^[a-f0-9-]{36}$/i.test(value.roomId)||
+      Object.keys(value).some(k=>k!=='roomId'))
+    return json(400,{ok:false,reason:'invalid_room'},origin);
+   const {data:room,error:roomError}=await db.from('rooms').select('id')
+    .eq('id',value.roomId).eq('owner_id',ownerId).maybeSingle();
+   if(roomError)return json(503,{ok:false,reason:'service_unavailable'},origin);
+   if(!room)return json(403,{ok:false,reason:'not_room_owner'},origin);
+   const now=new Date().toISOString();
+   const {data,error}=await db.from('backroom_hosts').select('host_id,expires_at')
+    .eq('owner_id',ownerId).is('revoked_at',null).gt('expires_at',now)
+    .order('created_at',{ascending:false}).limit(5);
+   if(error)return json(503,{ok:false,reason:'service_unavailable'},origin);
+   return json(200,{ok:true,hosts:(data??[]).map(row=>({
+    hostId:row.host_id,expiresAt:row.expires_at
+   }))},origin);
   }
   if(parsed.pathname.endsWith('/binding-status')){
    let input;
@@ -178,6 +195,26 @@ Deno.serve(async req=>{
    });
    if(error)return json(409,{ok:false,reason:'registration_conflict'},origin);
    return json(201,{ok:true,hostId:input.hostId,wakeEnabled:false,renewed:false},origin);
+  }
+  if(value&&typeof value==='object'&&!Array.isArray(value)&&Object.hasOwn(value,'nativeTargetProofId')){
+   let proofInput;
+   try{proofInput=validateNativeTargetProofBinding(value);}
+   catch{return json(400,{ok:false,reason:'invalid_native_target_proof_binding'},origin);}
+   const {data:bindingId,error}=await db.rpc('register_backroom_android_native_binding',{
+    p_proof_id:proofInput.nativeTargetProofId,
+    p_owner_id:ownerId,
+    p_room_id:proofInput.roomId,
+    p_participant_id:proofInput.participantId,
+    p_host_id:proofInput.hostId,
+    p_session_digest:proofInput.sessionDigest,
+    p_space_id:proofInput.spaceId,
+    p_participation_mode:proofInput.participationMode,
+    p_max_wakes_per_minute:proofInput.maxWakesPerMinute
+   });
+   if(error||typeof bindingId!=='string'||!/^[a-f0-9-]{36}$/i.test(bindingId))
+    return json(409,{ok:false,reason:'native_target_proof_invalid_expired_or_already_used'},origin);
+   return json(201,{ok:true,bindingId,wakeEnabled:false,requiresLocalConsent:true,
+    nativeTargetProofConsumed:true},origin);
   }
   let input;
   try{input=validatePendingWakeBinding(value);}catch{return json(400,{ok:false,reason:'invalid_binding'},origin);}
