@@ -90,7 +90,8 @@ begin
   select a.signing_certificate_sha256 into v_signers
   from public.backroom_device_apps a
   where a.device_id=p_device_id and a.package_name=p_app_package_name;
-  if not found or not (p_app_signer_sha256 = any(pg_catalog.string_to_array(v_signers,'.'))) then
+  if not found or v_signers is null or
+    not (p_app_signer_sha256 = any(pg_catalog.string_to_array(v_signers,'.'))) then
     raise exception 'Android app signer does not match selected app inventory';
   end if;
 
