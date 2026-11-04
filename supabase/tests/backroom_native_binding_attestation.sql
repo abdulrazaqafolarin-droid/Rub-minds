@@ -25,9 +25,9 @@ begin
   insert into public.agent_connections(room_id,participant_id,owner_id,credential_digest,expires_at,revoked_at)
     values (v_room,v_participant,v_owner,repeat('e',64),pg_catalog.clock_timestamp()+interval '1 hour',null);
   insert into public.rub_minds_mcp_sessions(
-    session_digest,agent_credential_ciphertext,agent_credential_digest,room_id,participant_id,expires_at,terminated_at
+    session_digest,agent_credential_ciphertext,room_id,participant_id,expires_at,terminated_at
   ) values (
-    v_session_digest,'native-test-ciphertext',repeat('e',64),v_room,v_participant,
+    v_session_digest,'native-test-ciphertext',v_room,v_participant,
     pg_catalog.clock_timestamp()+interval '1 hour',null
   );
   insert into public.backroom_hosts(host_id,owner_id,credential_digest,expires_at,revoked_at)
