@@ -37,7 +37,9 @@ data class SendControlCandidate(
 
 data class SendControlDecision(
     val candidate: SendControlCandidate?,
-    val reason: String
+    val reason: String,
+    /** Present only when the exact selected provider conversation was revalidated locally. */
+    val providerConversationIdentityDigest: String? = null
 )
 
 data class ComposerSelectionDecision(
@@ -45,7 +47,9 @@ data class ComposerSelectionDecision(
     val reason: String,
     val sendControl: SendControlCandidate? = null,
     val sendReason: String = "not_checked",
-    val providerConversationIdentityAvailable: Boolean = false
+    val providerConversationIdentityAvailable: Boolean = false,
+    /** Opaque SHA-256 digest only; raw provider conversation IDs never leave the phone. */
+    val providerConversationIdentityDigest: String? = null
 )
 
 /**
