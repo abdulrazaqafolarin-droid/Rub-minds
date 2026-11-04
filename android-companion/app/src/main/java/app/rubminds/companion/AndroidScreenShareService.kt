@@ -827,57 +827,73 @@ class AndroidScreenShareService : Service() {
         selectionId: String,
         packageName: String
     ) {
-        Thread {
+        // AccessibilityNodeInfo and rootInActiveWindow are read on the service's
+        // main thread. Only the HTTPS request runs on a background thread.
+        mainHandler.post {
             val roomId = activeRoomId
             val token = deviceToken
             val client = api
             if (roomId.isNullOrBlank() || token.isNullOrBlank() || client == null ||
                 activeSessionId != sessionId || activeAppPackage != packageName ||
-                latestNativeSelectionId != selectionId
+                latestNativeSelectionId != selectionId || dataChannel !== channel
             ) {
                 sendNativeTargetAcknowledgement(channel, sessionId, selectionId, false, "screen_session_changed")
-                return@Thread
+                return@post
             }
+
             val attestation = AndroidTouchAccessibilityService.createNativeTargetAttestation(sessionId, packageName)
             if (attestation == null) {
                 sendNativeTargetAcknowledgement(channel, sessionId, selectionId, false, "local_identity_revalidation_failed")
-                return@Thread
+                return@post
             }
-            try {
-                val issuedAt = System.currentTimeMillis()
-                val response = client.post("android/native-target/register", token, JSONObject()
-                    .put("roomId", roomId)
-                    .put("requestId", selectionId)
-                    .put("issuedAt", issuedAt)
-                    .put("screenSessionId", sessionId)
-                    .put("appPackageName", packageName)
-                    .put("appSignerSha256", attestation.appSignerSha256)
-                    .put("composerIdentityDigest", attestation.composerIdentityDigest)
-                    .put("sendControlIdentityDigest", attestation.sendControlIdentityDigest)
-                    .put("providerConversationIdentityDigest", attestation.providerConversationIdentityDigest))
-                val targetId = response.optString("nativeTargetId")
-                val expiresAt = response.optString("expiresAt")
-                val revision = response.optInt("targetRevision", 0)
-                val expiresMillis = runCatching { java.time.Instant.parse(expiresAt).toEpochMilli() }.getOrNull()
-                if (!response.optBoolean("ok") || !UUID_PATTERN.matches(targetId) ||
-                    revision != 1 || expiresMillis == null || expiresMillis <= System.currentTimeMillis()
-                ) throw IllegalStateException("invalid_native_target_receipt")
 
-                // A response is accepted only if the phone still sees the same
-                // selection, foreground app and provider conversation.
-                val finalAttestation = AndroidTouchAccessibilityService.createNativeTargetAttestation(sessionId, packageName)
-                if (latestNativeSelectionId != selectionId || activeSessionId != sessionId ||
-                    activeRoomId != roomId || dataChannel !== channel || finalAttestation != attestation
-                ) {
-                    revokeNativeTargetAttestation(targetId, sessionId, roomId)
-                    return@Thread
+            Thread {
+                try {
+                    val issuedAt = System.currentTimeMillis()
+                    val response = client.post("android/native-target/register", token, JSONObject()
+                        .put("roomId", roomId)
+                        .put("requestId", selectionId)
+                        .put("issuedAt", issuedAt)
+                        .put("screenSessionId", sessionId)
+                        .put("appPackageName", packageName)
+                        .put("appSignerSha256", attestation.appSignerSha256)
+                        .put("composerIdentityDigest", attestation.composerIdentityDigest)
+                        .put("sendControlIdentityDigest", attestation.sendControlIdentityDigest)
+                        .put("providerConversationIdentityDigest", attestation.providerConversationIdentityDigest))
+                    val targetId = response.optString("nativeTargetId")
+                    val expiresAt = response.optString("expiresAt")
+                    val revision = response.optInt("targetRevision", 0)
+                    val expiresMillis = runCatching { java.time.Instant.parse(expiresAt).toEpochMilli() }.getOrNull()
+                    if (!response.optBoolean("ok") || !UUID_PATTERN.matches(targetId) ||
+                        revision != 1 || expiresMillis == null || expiresMillis <= System.currentTimeMillis()
+                    ) throw IllegalStateException("invalid_native_target_receipt")
+
+                    // Re-read accessibility and provider state on the main thread
+                    // after the request. A chat/app switch during HTTP invalidates it.
+                    mainHandler.post {
+                        val finalAttestation = AndroidTouchAccessibilityService.createNativeTargetAttestation(sessionId, packageName)
+                        if (latestNativeSelectionId != selectionId || activeSessionId != sessionId ||
+                            activeRoomId != roomId || activeAppPackage != packageName ||
+                            dataChannel !== channel || finalAttestation != attestation ||
+                            expiresMillis <= System.currentTimeMillis()
+                        ) {
+                            revokeNativeTargetAttestation(targetId, sessionId, roomId)
+                            return@post
+                        }
+                        activeNativeTargetId = targetId
+                        sendNativeTargetAcknowledgement(
+                            channel, sessionId, selectionId, true, "device_attested", targetId, expiresAt
+                        )
+                    }
+                } catch (_: Exception) {
+                    mainHandler.post {
+                        sendNativeTargetAcknowledgement(
+                            channel, sessionId, selectionId, false, "native_target_registration_unavailable"
+                        )
+                    }
                 }
-                activeNativeTargetId = targetId
-                sendNativeTargetAcknowledgement(channel, sessionId, selectionId, true, "device_attested", targetId, expiresAt)
-            } catch (_: Exception) {
-                sendNativeTargetAcknowledgement(channel, sessionId, selectionId, false, "native_target_registration_unavailable")
-            }
-        }.start()
+            }.start()
+        }
     }
 
     private fun sendComposerTargetAcknowledgement(
