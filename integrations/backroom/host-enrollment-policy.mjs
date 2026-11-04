@@ -65,6 +65,9 @@ export function validatePendingWakeBinding(raw){
   throw new TypeError('Invalid surface, locator or participation mode');
  // Registering a native composer is also used for human-approved draft typing.
  // The database consent constraint requires the digest only when wake is activated.
+ if(['desktop_app','windows_app','android_app'].includes(result.surface) &&
+  providerConversationIdentityDigest!==undefined)
+  throw new TypeError('Native provider identity must be attested by the selected device, not supplied by the owner browser');
  if(!Number.isSafeInteger(result.maxWakesPerMinute)||result.maxWakesPerMinute<1||result.maxWakesPerMinute>6)
   throw new RangeError('Invalid wake rate');
  if(providerConversationIdentityDigest!==undefined) result.providerConversationIdentityDigest=providerConversationIdentityDigest;
