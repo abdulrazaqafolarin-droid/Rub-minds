@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {validateHostEnrollment,validatePendingWakeBinding,validateBindingStatusQuery} from './host-enrollment-policy.mjs';
+import {validateHostEnrollment,validatePendingWakeBinding,validateNativeTargetProofBinding,validateBindingStatusQuery} from './host-enrollment-policy.mjs';
 const uuid='40000000-0000-4000-8000-000000000011';
 const binding={
  roomId:uuid,participantId:uuid,hostId:uuid,sessionDigest:'a'.repeat(64),
@@ -37,6 +37,20 @@ test('native composer bindings remain registerable for human-approved draft use;
  assert.throws(()=>validatePendingWakeBinding({...native,providerConversationIdentityDigest:'bad'}),/providerConversationIdentityDigest/);
  const wakeCapable=validatePendingWakeBinding({...native,providerConversationIdentityDigest:'c'.repeat(64)});
  assert.equal(wakeCapable.providerConversationIdentityDigest,'c'.repeat(64));
+});
+
+test('native proof binding accepts only the one-use phone proof ID and AI session scope',()=>{
+ const request={roomId:uuid,participantId:uuid,hostId:uuid,sessionDigest:'a'.repeat(64),
+  spaceId:'android-device-1',nativeTargetProofId:'50000000-0000-4000-8000-000000000011'};
+ const accepted=validateNativeTargetProofBinding(request);
+ assert.equal(accepted.nativeTargetProofId,request.nativeTargetProofId);
+ assert.equal(accepted.participationMode,'mentions');
+ assert.equal(accepted.maxWakesPerMinute,6);
+ assert.throws(()=>validateNativeTargetProofBinding({...request,providerConversationIdentityDigest:'c'.repeat(64)}),/Unexpected/);
+ assert.throws(()=>validateNativeTargetProofBinding({...request,targetId:'composer-hash'}),/Unexpected/);
+ assert.throws(()=>validateNativeTargetProofBinding({...request,nativeTargetProofId:'bad'}),/nativeTargetProofId/);
+ assert.throws(()=>validateNativeTargetProofBinding({...request,sessionDigest:'bad'}),/sessionDigest/);
+ assert.throws(()=>validateNativeTargetProofBinding({...request,maxWakesPerMinute:7}),/wake rate/);
 });
 
 test('binding status queries require owner-scoped room and optional participant identities',()=>{
