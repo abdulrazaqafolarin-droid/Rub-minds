@@ -265,10 +265,10 @@ begin
 end;
 $function$;
 
-revoke all on function public.register_backroom_android_native_binding(uuid,uuid,uuid,uuid,text,text,text,integer)
+revoke all on function public.register_backroom_android_native_binding(uuid,uuid,uuid,uuid,text,text,text,text,integer)
   from public, anon, authenticated;
-grant execute on function public.register_backroom_android_native_binding(uuid,uuid,uuid,uuid,text,text,text,integer)
+grant execute on function public.register_backroom_android_native_binding(uuid,uuid,uuid,uuid,text,text,text,text,integer)
   to service_role;
 
-comment on function public.register_backroom_android_native_binding(uuid,uuid,uuid,uuid,text,text,text,integer) is
+comment on function public.register_backroom_android_native_binding(uuid,uuid,uuid,uuid,text,text,text,text,integer) is
   'Consumes a short-lived device-authenticated Android target proof for the exact requested room and creates an inactive native input binding atomically.';
