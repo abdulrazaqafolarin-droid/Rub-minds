@@ -21,7 +21,7 @@ function setup(token=hostToken) {
  };
  const gateway=createAuthenticatedWakeGateway({
   lookupHost:async()=>({hostId,ownerId,credentialDigest:createHash('sha256').update(hostToken).digest('hex'),expiresAt:'2030-01-01T00:00:00Z',revokedAt:null}),
-  lookupBinding:async()=>({bindingId,hostId,ownerId,sessionDigest,providerConversationIdentityDigest,revokedAt:null,wakeEnabled:true,confirmedAt:'2026-10-29T00:00:00Z',wakeExpiresAt:'2030-01-01T00:00:00Z'}),
+  lookupBinding:async()=>({bindingId,hostId,ownerId,sessionDigest,surface:'android_app',providerConversationIdentityDigest,revokedAt:null,wakeEnabled:true,confirmedAt:'2026-10-29T00:00:00Z',wakeExpiresAt:'2030-01-01T00:00:00Z'}),
   store:db,now:()=>Date.parse('2026-10-29T12:00:00Z')
  });
  const handler=createWakeGatewayHttpHandler({gateway});
@@ -73,7 +73,7 @@ test('official Supabase Edge Function URL retains bearer and exact scoped route'
    actual.push(url);
    const gateway=createAuthenticatedWakeGateway({
     lookupHost:async()=>({hostId,ownerId,credentialDigest:createHash('sha256').update(hostToken).digest('hex'),expiresAt:'2030-01-01T00:00:00Z',revokedAt:null}),
-    lookupBinding:async()=>({bindingId,hostId,ownerId,sessionDigest,providerConversationIdentityDigest,revokedAt:null,wakeEnabled:true,confirmedAt:'2026-10-29T00:00:00Z',wakeExpiresAt:'2030-01-01T00:00:00Z'}),
+    lookupBinding:async()=>({bindingId,hostId,ownerId,sessionDigest,surface:'android_app',providerConversationIdentityDigest,revokedAt:null,wakeEnabled:true,confirmedAt:'2026-10-29T00:00:00Z',wakeExpiresAt:'2030-01-01T00:00:00Z'}),
     store:{claim:async x=>[{...x,jobId,leaseToken}],acknowledge:async()=>true,retry:async()=> 'pending'},
     now:()=>Date.parse('2026-10-29T12:00:00Z')
    });
@@ -103,7 +103,7 @@ test('remote activation requires a locally verified grant before contacting host
  const gateway=createAuthenticatedWakeGateway({
   lookupHost:async()=>({hostId,ownerId,credentialDigest:createHash('sha256').update(hostToken).digest('hex'),
    expiresAt:'2030-01-01T00:00:00Z',revokedAt:null}),
-  lookupBinding:async()=>({bindingId,hostId,ownerId,sessionDigest,wakeEnabled:false,confirmedAt:null,
+  lookupBinding:async()=>({bindingId,hostId,ownerId,sessionDigest,surface:'browser_tab',wakeEnabled:false,confirmedAt:null,
    wakeExpiresAt:null,revokedAt:null}),
   store:{claim:async()=>[],acknowledge:async()=>false,retry:async()=>null},
   activateBinding:async info=>{records.push(info);return true;},
