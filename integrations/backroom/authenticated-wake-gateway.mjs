@@ -11,6 +11,8 @@ import {Buffer} from 'node:buffer';
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DIGEST=/^[0-9a-f]{64}$/;
 const TOKEN=/^[0-9a-f]{64}$/;
+const SURFACES=new Set(['browser_tab','desktop_app','windows_app','terminal','android_app']);
+const NATIVE_SURFACES=new Set(['desktop_app','windows_app','android_app']);
 const WAKE_ERROR_CODES=new Set(['target_unavailable','approval_required','provider_busy','transport_error','result_unconfirmed','authorization_denied','other']);
 const invalidRequest=()=>Object.freeze({ok:false,reason:'invalid_request'});
 const sha256 = v => createHash('sha256').update(v,'utf8').digest('hex');
@@ -22,7 +24,7 @@ const sha256 = v => createHash('sha256').update(v,'utf8').digest('hex');
  * shape (which silently hid required gateway dependencies).
  *
  * @typedef {{hostId:string,ownerId:string,credentialDigest:string,expiresAt:string,revokedAt?:string|null}} WakeHostRecord
- * @typedef {{bindingId:string,hostId:string,ownerId:string,sessionDigest:string,providerConversationIdentityDigest?:string|null,revokedAt?:string|null,wakeEnabled?:boolean,confirmedAt?:string|null,wakeExpiresAt?:string|null}} WakeBindingRecord
+ * @typedef {{bindingId:string,hostId:string,ownerId:string,sessionDigest:string,surface:string,providerConversationIdentityDigest?:string|null,revokedAt?:string|null,wakeEnabled?:boolean,confirmedAt?:string|null,wakeExpiresAt?:string|null}} WakeBindingRecord
  * @typedef {{claim:(input:any)=>Promise<any>,acknowledge:(input:any)=>Promise<any>,retry:(input:any)=>Promise<any>}} WakeQueueStore
  * @typedef {{lookupHost:(hostId:string)=>Promise<WakeHostRecord|null>,lookupBinding:(bindingId:string)=>Promise<WakeBindingRecord|null>,store:WakeQueueStore,activateBinding?:(input:any)=>Promise<any>,deactivateBinding?:(input:any)=>Promise<any>,now?:()=>number}} WakeGatewayFactoryOptions
  * @param {Partial<WakeGatewayFactoryOptions>} [options]
@@ -42,12 +44,13 @@ export function createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,a
     if(expected.length!==32||!timingSafeEqual(supplied,expected))return null;
     const binding=await lookupBinding(bindingId);
     if(!binding||binding.bindingId!==bindingId||binding.hostId!==hostId||binding.ownerId!==host.ownerId||
-       binding.sessionDigest!==sessionDigest||binding.revokedAt!=null)return null;
+       binding.sessionDigest!==sessionDigest||binding.revokedAt!=null||!SURFACES.has(binding.surface))return null;
     if(requireConsent&&(binding.wakeEnabled!==true||binding.confirmedAt==null||
        !Number.isFinite(Date.parse(binding.wakeExpiresAt))||Date.parse(binding.wakeExpiresAt)<=now()))return null;
     const providerConversationIdentityDigest=binding.providerConversationIdentityDigest??null;
     if(providerConversationIdentityDigest!==null&&!DIGEST.test(providerConversationIdentityDigest))return null;
-    return Object.freeze({hostId,sessionDigest,bindingId,providerConversationIdentityDigest});
+    if(requireConsent&&NATIVE_SURFACES.has(binding.surface)&&providerConversationIdentityDigest===null)return null;
+    return Object.freeze({hostId,sessionDigest,bindingId,surface:binding.surface,providerConversationIdentityDigest});
   }
   return Object.freeze({
     // Only an authenticated *host*, never a user browser, may activate a
@@ -55,10 +58,11 @@ export function createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,a
     async activate(input) {
       if(typeof activateBinding!=='function')return Object.freeze({ok:false,reason:'unauthorized'});
       const scope=await authorize(input??{},false);
-      if(!scope)return Object.freeze({ok:false,reason:'unauthorized'});
+      if(!scope||(NATIVE_SURFACES.has(scope.surface)&&scope.providerConversationIdentityDigest===null))
+        return Object.freeze({ok:false,reason:'unauthorized'});
       if(!UUID.test(input.grantId??'')||!Number.isSafeInteger(input.ttlSeconds)||
          input.ttlSeconds<60||input.ttlSeconds>86400)return invalidRequest();
-      const {providerConversationIdentityDigest: _providerDigest,...hostScope}=scope;
+      const {providerConversationIdentityDigest: _providerDigest,surface: _surface,...hostScope}=scope;
       return Object.freeze({ok:true,activated:await activateBinding({...hostScope,grantId:input.grantId,ttlSeconds:input.ttlSeconds})});
     },
     async deactivate(input) {
