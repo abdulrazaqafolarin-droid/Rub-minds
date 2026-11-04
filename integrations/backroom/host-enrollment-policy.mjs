@@ -84,6 +84,8 @@ export function validatePendingWakeBinding(raw){
   throw new RangeError('Invalid targetRevision');
  if(!SURFACES.has(result.surface)||!LOCATORS.has(result.locatorKind)||!MODES.has(result.participationMode))
   throw new TypeError('Invalid surface, locator or participation mode');
+ if(result.surface==='android_app' && providerConversationIdentityDigest!==undefined)
+  throw new TypeError('Android provider identity must arrive through a device-authenticated target proof');
  // Registering a native composer is also used for human-approved draft typing.
  // The database consent constraint requires the digest only when wake is activated.
  if(!Number.isSafeInteger(result.maxWakesPerMinute)||result.maxWakesPerMinute<1||result.maxWakesPerMinute>6)
