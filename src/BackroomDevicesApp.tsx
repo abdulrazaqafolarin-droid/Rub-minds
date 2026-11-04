@@ -74,10 +74,12 @@ export default function BackroomApp() {
   const [selectedNativeSessionDigest, setSelectedNativeSessionDigest] = useState('');
   const [nativeBindingBusy, setNativeBindingBusy] = useState(false);
   const [nativeBindingStatus, setNativeBindingStatus] = useState('');
+  const [nativeTargetProofConsumed, setNativeTargetProofConsumed] = useState(false);
 
 
   const handleNativeTargetProof = useCallback(async (proof: NativeTargetProof | null) => {
     setNativeTargetProof(proof);
+    setNativeTargetProofConsumed(false);
     setNativeProofHosts([]);
     setNativeProofSessions([]);
     setSelectedNativeHostId('');
@@ -151,6 +153,7 @@ export default function BackroomApp() {
       }
       setNativeBindingStatus('Phone target registered for ' + selectedSession.displayName +
         '. Binding is inactive; a separate on-phone native wake consent and the trusted host forwarder are still required.');
+      setNativeTargetProofConsumed(true);
       setNativeTargetProof(null);
       setNativeProofHosts([]);
       setNativeProofSessions([]);
@@ -186,6 +189,7 @@ export default function BackroomApp() {
   useEffect(() => { void loadRooms().catch(e => setError(e.message)); }, [loadRooms]);
   useEffect(() => {
     setNativeTargetProof(null);
+    setNativeTargetProofConsumed(false);
     setNativeProofHosts([]);
     setNativeProofSessions([]);
     setSelectedNativeHostId('');
@@ -319,7 +323,7 @@ export default function BackroomApp() {
                 <div className="br-cloud-frame-foot"><Check size={14}/> App inventory synced from {activeDevice?.device_label ?? 'Android device'}</div>
                 {activeDevice?.platform === 'android'
                   ? <>
-                      <BackroomAndroidControl device={activeDevice} roomId={roomId} onNativeTargetProof={handleNativeTargetProof}/>
+                      <BackroomAndroidControl device={activeDevice} roomId={roomId} onNativeTargetProof={handleNativeTargetProof} nativeTargetProofConsumed={nativeTargetProofConsumed}/>
                       {nativeTargetProof && nativeTargetProof.deviceId === activeDevice.device_id ? <div className="br-cloud-native-proof">
                         <b>Bind this phone conversation to an AI session</b>
                         <small>Device proof expires {formatTime(nativeTargetProof.expiresAt)}. The provider conversation digest and native target identifiers remain on the phone/server; this panel sees only a one-use proof ID.</small>
