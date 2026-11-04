@@ -17,6 +17,11 @@ const store = await read('../../android-companion/app/src/main/java/app/rubminds
 const activity = await read('../../android-companion/app/src/main/java/app/rubminds/companion/MainActivity.kt');
 const devicesUi = await read('../../src/BackroomDevicesApp.tsx');
 const androidFrameUi = await read('../../src/BackroomAndroidControl.tsx');
+const deviceEdge = await read('../../supabase/functions/backroom-device/index.ts');
+const configEdge = await read('../../supabase/functions/backroom-config/index.ts');
+const nativeAttestationPolicy = await read('./native-binding-attestation-policy.mjs');
+const nativeAttestationMigration = await read('../../supabase/migrations/20261104123000_backroom_android_native_binding_attestation.sql');
+const deviceApi = await read('../../android-companion/app/src/main/java/app/rubminds/companion/CloudDeviceApi.kt');
 const composerPolicy = await read('../../android-companion/app/src/main/java/app/rubminds/companion/AndroidComposerTargetPolicy.kt');
 
 function method(source, start, end) {
@@ -317,13 +322,45 @@ test('native wake fails closed without provider conversation identity and carrie
   assert.match(consent, /val providerConversationIdentityDigest: String/);
   assert.doesNotMatch(consent, /providerConversationIdentityDigest: String =/);
 });
-test('Android frame has no device-attested group-binding registration path yet', () => {
-  // The current phone frame knows device + room and a local selection result.
-  // It does not receive a selected AI participant/MCP session or send the
-  // provider digest through a browser-visible owner binding request.
-  assert.match(androidFrameUi, /export default function BackroomAndroidControl\\(\\{ device, roomId \\}/);
-  assert.doesNotMatch(androidFrameUi, /backroom-config\\/binding|providerConversationIdentityDigest|sessionDigest|participantId/);
+test('Android frame creates an owner intent but sends no provider/composer/Send digests over WebRTC', () => {
+  assert.match(androidFrameUi, /canRegisterNativeBinding/);
+  assert.match(androidFrameUi, /nativeSessions/);
+  assert.match(androidFrameUi, /nativeHosts/);
+  assert.match(androidFrameUi, /backroom-config\\/native-binding-intent/);
+  assert.match(androidFrameUi, /kind: 'native_binding_attest'/);
+  assert.match(androidFrameUi, /intentId: data.intentId/);
+  assert.doesNotMatch(androidFrameUi, /providerConversationIdentityDigest|composerTargetId:\s*composerTargetRef|sendControlTargetId/);
+  assert.match(androidFrameUi, /native_binding_attest_ack/);
+  assert.match(androidFrameUi, /Wake remains OFF/);
   assert.match(androidFrameUi, /providerConversationIdentityAvailable/);
+});
+
+test('phone rechecks all three local identities and posts them only through the device bearer endpoint', () => {
+  assert.match(service, /fun currentNativeBindingAttestation/);
+  const snapshot = method(service, 'fun currentNativeBindingAttestation(', 'fun isBoundToProviderConversation(');
+  assert.match(snapshot, /revalidateSelectedSendControl/);
+  assert.match(snapshot, /nativeBindingGeneration/);
+  assert.match(snapshot, /providerConversationIdentityDigest/);
+  assert.match(screen, /AndroidTouchAccessibilityService\.currentNativeBindingAttestation/);
+  assert.match(screen, /api\?\.attestNativeBinding/);
+  const ack = method(screen, 'private fun sendNativeBindingAttestationAcknowledgement(', 'private fun sendRemoteTextAcknowledgement(');
+  assert.match(ack, /bindingId/);
+  assert.doesNotMatch(ack, /providerConversationIdentityDigest|composerTargetId|sendControlTargetId/);
+  assert.match(deviceApi, /post\("android\\/native-binding-attest", deviceToken, fields\)/);
+});
+
+test('owner intent and device endpoint reject stale scope and persist only private digest fields', () => {
+  assert.match(configEdge, /validateNativeBindingIntentRequest/);
+  assert.match(configEdge, /backroom_native_binding_intents/);
+  assert.match(configEdge, /expiresAt=new Date\(Date\.now\(\)\+120_000\)/);
+  assert.match(deviceEdge, /action === 'android\\/native-binding-attest'/);
+  assert.match(deviceEdge, /validateAndroidNativeBindingAttestation/);
+  assert.match(deviceEdge, /register_backroom_native_input_binding_from_device/);
+  assert.match(nativeAttestationPolicy, /Object\.keys\(value\)\.length===keys\.length/);
+  assert.match(nativeAttestationMigration, /wake_enabled,false/);
+  assert.match(nativeAttestationMigration, /for update/);
+  assert.match(nativeAttestationMigration, /set consumed_at = v_now/);
+  assert.match(nativeAttestationMigration, /grant execute on function public\.register_backroom_native_input_binding_from_device/);
 });
 
 test('composer selection distinguishes Send discovery from provider-conversation readiness without exporting its digest', () => {
