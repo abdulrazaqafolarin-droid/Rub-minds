@@ -89,7 +89,7 @@ $constraints$;
 create or replace function public.guard_backroom_input_binding_provider_identity()
 returns trigger
 language plpgsql
-security definer
+security invoker
 set search_path=''
 as $function$
 begin
@@ -115,7 +115,7 @@ for each row execute function public.guard_backroom_input_binding_provider_ident
 create or replace function public.sync_backroom_wake_job_provider_identity()
 returns trigger
 language plpgsql
-security definer
+security invoker
 set search_path=''
 as $function$
 declare
@@ -153,7 +153,10 @@ grant execute on function public.sync_backroom_wake_job_provider_identity() to s
 
 drop trigger if exists backroom_wake_job_provider_identity_trigger on public.backroom_wake_jobs;
 create trigger backroom_wake_job_provider_identity_trigger
-before insert or update on public.backroom_wake_jobs
+before insert or update of binding_id, owner_id, room_id, participant_id, host_id,
+  session_digest, space_id, session_id, target_id, target_identity_fingerprint,
+  target_revision, provider_conversation_identity_digest
+on public.backroom_wake_jobs
 for each row execute function public.sync_backroom_wake_job_provider_identity();
 
 -- Backwards-compatible claim response extension. Existing managed-browser workers
@@ -171,7 +174,7 @@ returns table (
   out_provider_conversation_identity_digest text
 )
 language sql
-security definer
+security invoker
 set search_path=''
 as $function$
   select c.out_job_id,c.out_job_key,c.out_event_id,c.out_owner_id,
