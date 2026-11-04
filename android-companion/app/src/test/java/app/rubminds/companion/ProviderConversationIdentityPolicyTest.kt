@@ -32,6 +32,17 @@ class ProviderConversationIdentityPolicyTest {
         assertFalse(ProviderConversationIdentityPolicy.matches("a".repeat(64), null))
     }
 
+    @Test fun chatGptAndClaudeRemainDraftOnlyUntilVerifiedProviderAdaptersExist() {
+        // Official Play Store package IDs. Package identity is not conversation identity.
+        // Do not enable native wake until each adapter distinguishes two chats while
+        // the same composer and Send controls are reused on a physical device.
+        val supportedPackages = listOf("com.openai.chatgpt", "com.anthropic.claude")
+
+        supportedPackages.forEach { packageName ->
+            assertFalse(ProviderConversationIdentityResolver.supports(packageName))
+        }
+    }
+
     @Test fun noUnverifiedProviderAdapterIsReportedAsConversationCapable() {
         assertFalse(ProviderConversationIdentityResolver.supports("com.example.ai"))
         assertNull(ProviderConversationIdentityResolver.resolve("com.example.ai", null))
