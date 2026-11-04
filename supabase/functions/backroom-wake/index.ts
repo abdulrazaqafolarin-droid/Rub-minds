@@ -22,7 +22,7 @@ async function lookupHost(hostId:string) {
 }
 async function lookupBinding(bindingId:string) {
  const {data,error}=await db.from('backroom_input_bindings')
-  .select('id,owner_id,host_id,session_digest,room_id,participant_id,provider_conversation_identity_digest,wake_enabled,confirmed_at,wake_expires_at,revoked_at')
+  .select('id,owner_id,host_id,session_digest,room_id,participant_id,surface,provider_conversation_identity_digest,wake_enabled,confirmed_at,wake_expires_at,revoked_at')
   .eq('id',bindingId).maybeSingle();
  if(error||!data)return null;
  const now=new Date().toISOString();
@@ -43,7 +43,7 @@ async function lookupBinding(bindingId:string) {
  // causes the paired host to stop rather than spin on an empty queue forever.
  if(session.error||participant.error||connection.error||!session.data||!participant.data||!connection.data)return null;
  return {bindingId:data.id,hostId:data.host_id,ownerId:data.owner_id,sessionDigest:data.session_digest,
-  wakeEnabled:data.wake_enabled,confirmedAt:data.confirmed_at,wakeExpiresAt:data.wake_expires_at,
+  surface:data.surface,wakeEnabled:data.wake_enabled,confirmedAt:data.confirmed_at,wakeExpiresAt:data.wake_expires_at,
   providerConversationIdentityDigest:data.provider_conversation_identity_digest??null,
   revokedAt:data.revoked_at};
 }
