@@ -778,6 +778,10 @@ class AndroidScreenShareService : Service() {
             channel.state() != DataChannel.State.OPEN || activeSessionId != sessionId ||
             dataChannel !== channel
         ) return
+        val providerDigest = decision.providerConversationIdentityDigest?.takeIf {
+            decision.providerConversationIdentityAvailable &&
+                ProviderConversationIdentityPolicy.isValidDigest(it)
+        }
         val payload = JSONObject()
             .put("kind", "composer_target_ack")
             .put("sessionId", sessionId)
@@ -786,9 +790,10 @@ class AndroidScreenShareService : Service() {
             .put("reason", decision.reason)
             .put("sendAvailable", decision.sendControl != null)
             .put("sendReason", decision.sendReason)
-            .put("providerConversationIdentityAvailable", decision.providerConversationIdentityAvailable)
+            .put("providerConversationIdentityAvailable", providerDigest != null)
         decision.candidate?.let { payload.put("targetId", it.targetId) }
         decision.sendControl?.let { payload.put("sendTargetId", it.targetId) }
+        providerDigest?.let { payload.put("providerConversationIdentityDigest", it) }
         runCatching { channel.send(DataChannel.Buffer(ByteBuffer.wrap(payload.toString().toByteArray(Charsets.UTF_8)), false)) }
     }
 
@@ -802,13 +807,18 @@ class AndroidScreenShareService : Service() {
             channel.state() != DataChannel.State.OPEN || activeSessionId != sessionId ||
             dataChannel !== channel
         ) return
+        val providerDigest = decision.providerConversationIdentityDigest?.takeIf {
+            ProviderConversationIdentityPolicy.isValidDigest(it)
+        }
         val payload = JSONObject()
             .put("kind", "send_control_ack")
             .put("sessionId", sessionId)
             .put("requestId", requestId)
             .put("available", decision.candidate != null)
             .put("reason", decision.reason)
+            .put("providerConversationIdentityRevalidated", providerDigest != null)
         decision.candidate?.let { payload.put("sendTargetId", it.targetId) }
+        providerDigest?.let { payload.put("providerConversationIdentityDigest", it) }
         runCatching {
             channel.send(DataChannel.Buffer(
                 ByteBuffer.wrap(payload.toString().toByteArray(Charsets.UTF_8)), false
@@ -964,17 +974,24 @@ class AndroidScreenShareService : Service() {
                     val requestId = input.optString("requestId")
                     val composerTargetId = input.optString("composerTargetId")
                     val sendTargetId = input.optString("sendTargetId")
+                    val hasProviderIdentityDigest = input.has("providerConversationIdentityDigest")
+                    val expectedProviderIdentityDigest = if (hasProviderIdentityDigest)
+                        input.optString("providerConversationIdentityDigest") else null
                     if (!UUID_PATTERN.matches(requestId) ||
                         input.optString("sessionId") != sessionId ||
                         input.optString("appPackageName") != appPackage
                     ) return
-                    val allowedKeys = setOf(
+                    val requiredKeys = setOf(
                         "kind", "requestId", "sessionId", "appPackageName",
                         "composerTargetId", "sendTargetId"
                     )
+                    val allowedKeys = if (hasProviderIdentityDigest)
+                        requiredKeys + "providerConversationIdentityDigest" else requiredKeys
                     if (input.keys().asSequence().toSet() != allowedKeys ||
                         !Regex("^[a-f0-9]{64}$").matches(composerTargetId) ||
-                        !Regex("^[a-f0-9]{64}$").matches(sendTargetId)
+                        !Regex("^[a-f0-9]{64}$").matches(sendTargetId) ||
+                        (expectedProviderIdentityDigest != null &&
+                            !ProviderConversationIdentityPolicy.isValidDigest(expectedProviderIdentityDigest))
                     ) {
                         sendSendControlVerificationAcknowledgement(
                             channel, sessionId, requestId,
@@ -995,7 +1012,8 @@ class AndroidScreenShareService : Service() {
                             SendControlDecision(null, "session_not_active")
                         } else {
                             AndroidTouchAccessibilityService.revalidateSelectedSendControl(
-                                sessionId, appPackage, composerTargetId, sendTargetId
+                                sessionId, appPackage, composerTargetId, sendTargetId,
+                                expectedProviderIdentityDigest
                             )
                         }
                         sendSendControlVerificationAcknowledgement(channel, sessionId, requestId, decision)
