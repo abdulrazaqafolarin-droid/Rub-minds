@@ -162,7 +162,7 @@ Deno.serve(async req=>{
    if(roomError)return json(503,{ok:false,reason:'service_unavailable'},origin);
    if(!ownedRoom)return json(403,{ok:false,reason:'not_room_owner'},origin);
    let query=db.from('backroom_input_bindings')
-    .select('id,participant_id,host_id,session_id,space_id,target_id,target_identity_fingerprint,provider_conversation_identity_digest,target_revision,surface,participation_mode,wake_enabled,wake_expires_at,confirmed_at,revoked_at')
+    .select('id,participant_id,host_id,session_id,space_id,target_id,target_identity_fingerprint,target_revision,surface,participation_mode,wake_enabled,wake_expires_at,confirmed_at,revoked_at')
     .eq('owner_id',ownerId).eq('room_id',input.roomId).is('revoked_at',null)
     .order('updated_at',{ascending:false}).limit(10);
    if(input.participantId){
@@ -175,7 +175,6 @@ Deno.serve(async req=>{
     bindingId:row.id,participantId:row.participant_id,hostId:row.host_id,
     sessionId:row.session_id,spaceId:row.space_id,targetId:row.target_id,
     targetIdentityFingerprint:row.target_identity_fingerprint,
-    providerConversationIdentityDigest:row.provider_conversation_identity_digest??null,
     targetRevision:row.target_revision,
     surface:row.surface,participationMode:row.participation_mode,
     wakeEnabled:row.wake_enabled===true&&typeof row.wake_expires_at==='string'&&Date.parse(row.wake_expires_at)>now,
