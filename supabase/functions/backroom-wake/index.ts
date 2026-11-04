@@ -53,7 +53,9 @@ async function rpc(name:string,args:Record<string,unknown>) {
  return data;
 }
 const store={
- async claim({hostId,sessionDigest,bindingId,limit}:{hostId:string,sessionDigest:string,bindingId:string,limit:number}) {
+ async claim({hostId,sessionDigest,bindingId,limit,providerConversationIdentityDigest}:{
+  hostId:string,sessionDigest:string,bindingId:string,limit:number,providerConversationIdentityDigest:string|null
+ }) {
   const rows=await rpc('claim_backroom_wake_jobs_with_provider_identity',{
    p_host_id:hostId,p_session_digest:sessionDigest,p_binding_id:bindingId,p_limit:limit,p_lease_seconds:30
   });
@@ -61,7 +63,8 @@ const store={
   return rows.map(row=>{
    if(!row||row.out_binding_id!==bindingId||!row.out_job_id||!row.out_lease_token||
     (row.out_provider_conversation_identity_digest!==null &&
-     (typeof row.out_provider_conversation_identity_digest!=='string'||! /^[a-f0-9]{64}$/.test(row.out_provider_conversation_identity_digest))))
+     (typeof row.out_provider_conversation_identity_digest!=='string'||!/^[a-f0-9]{64}$/.test(row.out_provider_conversation_identity_digest))) ||
+    (row.out_provider_conversation_identity_digest??null)!==providerConversationIdentityDigest)
     throw new Error('Invalid private queue lease');
    // Keep only exact server-issued scoped fields; no token or row records from the
    // database are ever accepted from remote clients.
