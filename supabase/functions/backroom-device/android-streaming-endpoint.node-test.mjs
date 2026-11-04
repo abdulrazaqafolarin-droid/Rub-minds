@@ -4,6 +4,24 @@ import { readFile } from "node:fs/promises";
 
 const read = path => readFile(new URL("../../../" + path, import.meta.url), "utf8");
 
+test("native target attestation is device-bearer scoped and validates active paired app/session identity", async () => {
+  const endpoint = await read("supabase/functions/backroom-device/index.ts");
+  const protocol = await read("supabase/functions/backroom-device/android-streaming-protocol.mjs");
+  const route = endpoint.slice(endpoint.indexOf("if (action === 'android/native-target/register')"), endpoint.indexOf("if (action === 'android/session-start')"));
+  assert.match(route, /const current = await device\(req\)/);
+  assert.match(route, /current\.platform !== 'android'/);
+  assert.match(route, /validateAndroidNativeTargetRegistration/);
+  assert.match(route, /verifyActiveDeviceRoomBinding/);
+  assert.match(route, /activeDesktopSession/);
+  assert.match(route, /session_type !== 'screen'/);
+  assert.match(route, /register_backroom_android_native_target/);
+  assert.match(route, /revoke_backroom_android_native_target/);
+  assert.match(route, /nativeTargetId: data\[0\]\.out_native_target_id/);
+  assert.doesNotMatch(route, /providerConversationIdentityDigest:/);
+  assert.match(protocol, /providerConversationIdentityDigest/);
+  assert.match(protocol, /!exactKeys\(value, keys\)/);
+});
+
 test("Android stream Edge actions keep human auth, device bearer and platform boundaries separate", async () => {
   const endpoint = await read("supabase/functions/backroom-device/index.ts");
   assert.match(endpoint, /action === 'android\/session-start'/);

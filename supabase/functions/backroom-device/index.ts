@@ -11,7 +11,7 @@ import { validateDesktopApps } from './desktop-app-protocol.mjs';
 import { validateDesktopCommand, validateDesktopSignal } from './desktop-command-protocol.mjs';
 import { validateDesktopSessionClose } from './desktop-session-close-protocol.mjs';
 import { validateDesktopSessionAbandon } from './desktop-session-abandon-protocol.mjs';
-import { validateAndroidSessionStart, validateAndroidDeviceCommand, validateAndroidSignal, validateAndroidCommandAck, validateAndroidNativeWakeHandoff, validateAndroidNativeWakeResult, validateAndroidSessionClose, mapAndroidQueuedCommand } from './android-streaming-protocol.mjs';
+import { validateAndroidSessionStart, validateAndroidDeviceCommand, validateAndroidSignal, validateAndroidCommandAck, validateAndroidNativeWakeHandoff, validateAndroidNativeWakeResult, validateAndroidSessionClose, validateAndroidNativeTargetRegistration, mapAndroidQueuedCommand } from './android-streaming-protocol.mjs';
 import { broadcastPrivateDeviceEvent } from './realtime-broadcast.mjs';
 
 const url = Deno.env.get('SUPABASE_URL');
@@ -429,6 +429,81 @@ Deno.serve(async req => {
         capabilities: current.capabilities }, origin);
     }
 
+
+    if (action === 'android/native-target/register') {
+      const current = await device(req);
+      if (!current) return json(401, fail('device_not_approved'), origin);
+      if (current.platform !== 'android') return json(409, fail('android_device_required'), origin);
+      const registration = validateAndroidNativeTargetRegistration({
+        roomId: input.roomId, requestId: input.requestId, issuedAt: input.issuedAt,
+        screenSessionId: input.screenSessionId, appPackageName: input.appPackageName,
+        appSignerSha256: input.appSignerSha256,
+        composerIdentityDigest: input.composerIdentityDigest,
+        sendControlIdentityDigest: input.sendControlIdentityDigest,
+        providerConversationIdentityDigest: input.providerConversationIdentityDigest,
+      });
+      if (!registration || !exactKeys(input, [
+        'action','roomId','requestId','issuedAt','screenSessionId','appPackageName',
+        'appSignerSha256','composerIdentityDigest','sendControlIdentityDigest',
+        'providerConversationIdentityDigest'
+      ])) return json(400, fail('invalid_native_target_attestation'), origin);
+
+      const binding = await verifyActiveDeviceRoomBinding(current.device_id, registration.roomId);
+      if (!binding.ok) return json(binding.status, fail(binding.reason), origin);
+      if (binding.platform !== 'android') return json(409, fail('android_device_required'), origin);
+      const session = await activeDesktopSession(
+        registration.screenSessionId, current.device_id, registration.roomId
+      );
+      if (!session.ok) return json(session.status, fail(session.reason), origin);
+      if (session.session.session_type !== 'screen') {
+        return json(409, fail('android_screen_session_required'), origin);
+      }
+
+      const { data, error } = await db.rpc('register_backroom_android_native_target', {
+        p_device_id: current.device_id,
+        p_room_id: registration.roomId,
+        p_screen_session_id: registration.screenSessionId,
+        p_request_id: registration.requestId,
+        p_issued_at: new Date(registration.issuedAt).toISOString(),
+        p_app_package_name: registration.appPackageName,
+        p_app_signer_sha256: registration.appSignerSha256,
+        p_composer_identity_digest: registration.composerIdentityDigest,
+        p_send_control_identity_digest: registration.sendControlIdentityDigest,
+        p_provider_conversation_identity_digest: registration.providerConversationIdentityDigest
+      });
+      if (error || !Array.isArray(data) || data.length !== 1 ||
+          !UUID.test(data[0]?.out_native_target_id ?? '') ||
+          typeof data[0]?.out_expires_at !== 'string') {
+        return json(409, fail('native_target_attestation_rejected'), origin);
+      }
+      return json(201, {
+        ok: true,
+        nativeTargetId: data[0].out_native_target_id,
+        targetRevision: 1,
+        expiresAt: data[0].out_expires_at,
+        reused: data[0].out_reused === true
+      }, origin);
+    }
+
+    if (action === 'android/native-target/revoke') {
+      const current = await device(req);
+      if (!current) return json(401, fail('device_not_approved'), origin);
+      if (current.platform !== 'android') return json(409, fail('android_device_required'), origin);
+      if (!exactKeys(input, ['action','roomId','screenSessionId','nativeTargetId']) ||
+          !UUID.test(input.roomId ?? '') || !UUID.test(input.screenSessionId ?? '') ||
+          !UUID.test(input.nativeTargetId ?? '')) {
+        return json(400, fail('invalid_native_target_revocation'), origin);
+      }
+      const { data, error } = await db.rpc('revoke_backroom_android_native_target', {
+        p_device_id: current.device_id,
+        p_room_id: input.roomId,
+        p_screen_session_id: input.screenSessionId,
+        p_native_target_id: input.nativeTargetId
+      });
+      if (error) return json(503, fail('native_target_revocation_unavailable'), origin);
+      return json(200, { ok: true, revoked: data === true }, origin);
+    }
+
     if (action === 'android/session-start') {
       const userId = await owner(req);
       if (!userId) return json(401, fail('owner_auth_required'), origin);
@@ -741,6 +816,11 @@ Deno.serve(async req => {
           .eq('room_id', closeRequest.roomId).eq('status', 'active');
         if (error) return json(503, fail('android_session_close_failed'), origin);
       }
+      const { error: targetRevokeError } = await db.from('backroom_android_native_targets')
+        .update({ status: 'revoked', revoked_at: new Date().toISOString() })
+        .eq('device_id', current.device_id).eq('screen_session_id', closeRequest.sessionId)
+        .eq('status', 'active');
+      if (targetRevokeError) return json(503, fail('android_native_target_revoke_failed'), origin);
       try {
         await broadcastPrivateDeviceEvent({
           projectUrl: url, apiKey: serviceKey, deviceId: current.device_id, event: 'android_signal',

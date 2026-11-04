@@ -171,6 +171,27 @@ export function validateAndroidCommandAck(value) {
   return Object.freeze({ ...value });
 }
 
+export function validateAndroidNativeTargetRegistration(value, { now = Date.now(), maxAgeMs = 30_000, futureSkewMs = 3_000 } = {}) {
+  const keys = [
+    "roomId", "requestId", "issuedAt", "screenSessionId", "appPackageName",
+    "appSignerSha256", "composerIdentityDigest", "sendControlIdentityDigest",
+    "providerConversationIdentityDigest",
+  ];
+  if (!exactKeys(value, keys) ||
+      !UUID.test(value.roomId ?? "") || !UUID.test(value.requestId ?? "") ||
+      !UUID.test(value.screenSessionId ?? "") ||
+      !isPackageName(value.appPackageName) ||
+      !HEX.test(value.appSignerSha256 ?? "") ||
+      !HEX.test(value.composerIdentityDigest ?? "") ||
+      !HEX.test(value.sendControlIdentityDigest ?? "") ||
+      !HEX.test(value.providerConversationIdentityDigest ?? "") ||
+      !Number.isSafeInteger(value.issuedAt) || !Number.isSafeInteger(now) ||
+      !Number.isSafeInteger(maxAgeMs) || maxAgeMs < 1 || maxAgeMs > 60_000 ||
+      !Number.isSafeInteger(futureSkewMs) || futureSkewMs < 0 || futureSkewMs > 10_000 ||
+      value.issuedAt < now - maxAgeMs || value.issuedAt > now + futureSkewMs) return null;
+  return Object.freeze({ ...value });
+}
+
 export function validateAndroidSessionClose(value) {
   if (!exactKeys(value, ["roomId", "sessionId"]) || !UUID.test(value.roomId ?? "") || !UUID.test(value.sessionId ?? "")) return null;
   return Object.freeze({ roomId: value.roomId, sessionId: value.sessionId });
