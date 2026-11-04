@@ -334,6 +334,74 @@ class AndroidScreenShareService : Service() {
         }
     }
 
+    private fun processNativeBindingAttestation(
+        token: String,
+        channel: DataChannel,
+        intentId: String,
+        requestId: String,
+        screenSessionId: String,
+        appPackage: String
+    ) {
+        if (!UUID_PATTERN.matches(intentId) || !UUID_PATTERN.matches(requestId) ||
+            !UUID_PATTERN.matches(screenSessionId) || activeSessionId != screenSessionId ||
+            activeAppPackage != appPackage || activeRoomId == null ||
+            !capturedContentVisible || currentForegroundPackage() != appPackage ||
+            channel !== dataChannel || channel.state() != DataChannel.State.OPEN
+        ) {
+            sendNativeBindingAttestationAcknowledgement(
+                channel, screenSessionId, requestId, null, "screen_or_app_scope_changed"
+            )
+            return
+        }
+        val deviceId = DeviceCredentialVault(this).deviceId()
+        val signer = if (AppGrantPolicy.isValidPackageName(appPackage))
+            AppIdentity.signingCertificateSha256(this, appPackage) else null
+        if (deviceId == null || signer == null ||
+            AppGrantStore(this).get(appPackage, signer) == null
+        ) {
+            sendNativeBindingAttestationAcknowledgement(
+                channel, screenSessionId, requestId, null, "device_or_app_not_approved"
+            )
+            return
+        }
+        val localAttestation = AndroidTouchAccessibilityService.currentNativeBindingAttestation(
+            screenSessionId, appPackage
+        )
+        if (localAttestation == null) {
+            // The provider resolver may be unavailable, the user may have switched
+            // conversations, or the selected Send control may have changed. Do not
+            // send any digest or attempt to fall back to draft/remote_text.
+            sendNativeBindingAttestationAcknowledgement(
+                channel, screenSessionId, requestId, null, "provider_or_send_identity_unavailable"
+            )
+            return
+        }
+        try {
+            executor.execute {
+                val bindingId = try {
+                    val response = api?.attestNativeBinding(
+                        token, intentId, screenSessionId, appPackage, signer,
+                        localAttestation.composerTargetId,
+                        localAttestation.sendControlTargetId,
+                        localAttestation.providerConversationIdentityDigest
+                    ) ?: throw IllegalStateException("Native binding API unavailable")
+                    response.optString("bindingId").takeIf { UUID_PATTERN.matches(it) }
+                        ?: throw IllegalStateException("Native binding registration rejected")
+                } catch (_: Exception) {
+                    null
+                }
+                sendNativeBindingAttestationAcknowledgement(
+                    channel, screenSessionId, requestId, bindingId,
+                    if (bindingId != null) "registered_wake_disabled" else "server_rejected_or_intent_expired"
+                )
+            }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            sendNativeBindingAttestationAcknowledgement(
+                channel, screenSessionId, requestId, null, "device_service_stopping"
+            )
+        }
+    }
+
     private fun safeNativeWakeReason(reason: String): String {
         val value = reason.lowercase()
         return when {
@@ -821,6 +889,33 @@ class AndroidScreenShareService : Service() {
         }
     }
 
+    private fun sendNativeBindingAttestationAcknowledgement(
+        channel: DataChannel,
+        sessionId: String,
+        requestId: String,
+        bindingId: String?,
+        reason: String
+    ) {
+        if (!UUID_PATTERN.matches(sessionId) || !UUID_PATTERN.matches(requestId)) return
+        mainHandler.post {
+            if (channel.state() != DataChannel.State.OPEN || activeSessionId != sessionId ||
+                dataChannel !== channel
+            ) return@post
+            val payload = JSONObject()
+                .put("kind", "native_binding_attest_ack")
+                .put("sessionId", sessionId)
+                .put("requestId", requestId)
+                .put("accepted", bindingId != null)
+                .put("reason", reason)
+            if (bindingId != null) payload.put("bindingId", bindingId)
+            runCatching {
+                channel.send(DataChannel.Buffer(
+                    ByteBuffer.wrap(payload.toString().toByteArray(Charsets.UTF_8)), false
+                ))
+            }
+        }
+    }
+
     private fun sendRemoteTextAcknowledgement(
         channel: DataChannel,
         sessionId: String,
@@ -1004,6 +1099,41 @@ class AndroidScreenShareService : Service() {
                             )
                         }
                         sendSendControlVerificationAcknowledgement(channel, sessionId, requestId, decision)
+                    }
+                    return
+                }
+                if (input.optString("kind") == "native_binding_attest") {
+                    val requestId = input.optString("requestId")
+                    val intentId = input.optString("intentId")
+                    if (!UUID_PATTERN.matches(requestId) || !UUID_PATTERN.matches(intentId) ||
+                        input.optString("sessionId") != sessionId ||
+                        input.optString("appPackageName") != appPackage
+                    ) return
+                    val allowedKeys = setOf("kind", "requestId", "intentId", "sessionId", "appPackageName")
+                    if (input.keys().asSequence().toSet() != allowedKeys) {
+                        sendNativeBindingAttestationAcknowledgement(
+                            channel, sessionId, requestId, null, "invalid_request"
+                        )
+                        return
+                    }
+                    if (!claimRemoteTextRequest(requestId)) {
+                        sendNativeBindingAttestationAcknowledgement(
+                            channel, sessionId, requestId, null, "request_replayed_or_rate_limited"
+                        )
+                        return
+                    }
+                    mainHandler.post {
+                        if (stopping || !capturedContentVisible ||
+                            activeSessionId != sessionId || activeAppPackage != appPackage
+                        ) {
+                            sendNativeBindingAttestationAcknowledgement(
+                                channel, sessionId, requestId, null, "screen_or_app_scope_changed"
+                            )
+                        } else {
+                            processNativeBindingAttestation(
+                                deviceToken.orEmpty(), channel, intentId, requestId, sessionId, appPackage
+                            )
+                        }
                     }
                     return
                 }
