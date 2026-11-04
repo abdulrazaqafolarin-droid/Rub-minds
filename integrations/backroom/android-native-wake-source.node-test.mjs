@@ -330,6 +330,7 @@ test('Android native target attestation is computed on-device and returns only a
   assert.match(attest, /findNodeByTargetId/);
   assert.match(attest, /appSignerSha256 = signer/);
   assert.match(attest, /providerConversationIdentityDigest = snapshot\.providerDigest/);
+  assert.match(service, /fun createNativeTargetAttestation\([\s\S]*?return AndroidNativeTargetAttestation/);
   assert.match(service, /fun createNativeTargetAttestation\([\s\S]*?instance\?\.createNativeTargetAttestation/);
 
   const register = method(screen, '    private fun registerNativeTargetAttestation(', '    private fun sendComposerTargetAcknowledgement(');
