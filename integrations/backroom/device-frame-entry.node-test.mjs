@@ -106,6 +106,24 @@ test("Android composer selection binds one real non-password accessibility node 
   assert.match(policy, /MIN_NODE_COVERAGE/);
 });
 
+
+test("Android composer selection and Send recheck expose only a stable digest and detect conversation switches", async () => {
+  const control = await read("src/BackroomAndroidControl.tsx");
+  const screen = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  const service = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidTouchAccessibilityService.kt");
+  const policy = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidComposerTargetPolicy.kt");
+  const provider = await read("android-companion/app/src/main/java/app/rubminds/companion/ProviderConversationIdentity.kt");
+  assert.match(policy, /providerConversationIdentityDigest: String\? = null/);
+  assert.match(service, /ProviderConversationIdentityResolver\.resolve\(packageName, root\)/);
+  assert.match(service, /sameBoundConversation/);
+  assert.match(screen, /providerConversationIdentityDigest/);
+  assert.match(control, /providerConversationIdentityDigestRef/);
+  assert.match(control, /recheckedProviderDigest === providerConversationIdentityDigestRef\.current/);
+  assert.match(control, /Native wake is blocked; draft insertion remains available/);
+  assert.match(provider, /private val adapters: Map<String, ProviderConversationIdentityAdapter> = emptyMap\(\)/);
+  assert.doesNotMatch(screen, /stableConversationId|activeConversationStableId/);
+});
+
 test("Android touch-control requests have a bounded pending state and exact request correlation", async () => {
   const control = await read("src/BackroomAndroidControl.tsx");
   assert.match(control, /pendingControlRequestRef/);
