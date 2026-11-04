@@ -37,6 +37,7 @@ declare
   v_binding_6 uuid := '60000000-0000-4000-8000-000000000006';
   v_binding_7 uuid := '60000000-0000-4000-8000-000000000007';
   v_binding_native uuid := '60000000-0000-4000-8000-000000000010';
+  v_binding_native_draft uuid := '60000000-0000-4000-8000-000000000011';
   v_native_provider_digest text := repeat('9',64);
   v_native_job jsonb;
   v_native_claim record;
@@ -59,6 +60,8 @@ begin
     values (repeat('7',64),'ci-ciphertext-7',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
   insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,agent_credential_digest,room_id,participant_id,expires_at,terminated_at)
     values (repeat('8',64),'ci-ciphertext-8',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
+  insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,agent_credential_digest,room_id,participant_id,expires_at,terminated_at)
+    values (repeat('5',64),'ci-ciphertext-5',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
 
   insert into public.backroom_hosts(host_id,owner_id,credential_digest,expires_at,revoked_at)
   values (v_host_test,v_owner,repeat('1',64),pg_catalog.clock_timestamp()+interval '48 hours',null),
@@ -89,6 +92,33 @@ begin
     '70000000-0000-4000-8000-000000000020'::uuid,
     pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null
   );
+
+  -- Native composer selection remains available for manual draft typing without a provider resolver.
+  insert into public.backroom_input_bindings(
+    id,owner_id,room_id,participant_id,host_id,session_digest,space_id,session_id,target_id,
+    target_identity_fingerprint,provider_conversation_identity_digest,target_revision,surface,
+    locator_kind,locator_value,participation_mode,wake_enabled,wake_grant_id,wake_expires_at,
+    max_wakes_per_minute,confirmed_at,revoked_at
+  ) values (
+    v_binding_native_draft,v_owner,v_room,v_participant,v_host_test,repeat('5',64),
+    'space-native-draft','session-native-draft','target-native-draft','fingerprint-native-draft',null,1,
+    'android_app','accessibility','composer-native-draft','mentions',false,
+    null,null,6,null,null
+  );
+
+  v_conflict := false;
+  begin
+    update public.backroom_input_bindings
+    set wake_enabled=true,wake_grant_id='70000000-0000-4000-8000-000000000021'::uuid,
+        confirmed_at=pg_catalog.clock_timestamp(),
+        wake_expires_at=pg_catalog.clock_timestamp()+interval '1 hour'
+    where id=v_binding_native_draft;
+  exception when check_violation then
+    v_conflict := true;
+  end;
+  if not v_conflict then
+    raise exception 'Native draft binding without provider identity must not enable autonomous wake';
+  end if;
 
   -- An enabled native binding must not lose its provider-conversation digest.
   v_conflict := false;
