@@ -311,6 +311,10 @@ export default function BackroomAndroidControl({
       data.onopen = () => setDataReady(true);
       data.onclose = () => {
         setDataReady(false);
+        for (const timer of pendingNativeBindingAcksRef.current.values()) window.clearTimeout(timer);
+        pendingNativeBindingAcksRef.current.clear();
+        setNativeBindingBusy(false);
+        setNativeBindingStatus('The phone data channel closed. Any unused owner intent will expire automatically; create a fresh intent after reconnecting.');
         for (const timer of pendingTouchAcksRef.current.values()) window.clearTimeout(timer);
         pendingTouchAcksRef.current.clear();
         for (const timer of pendingRemoteTextAcksRef.current.values()) window.clearTimeout(timer);
