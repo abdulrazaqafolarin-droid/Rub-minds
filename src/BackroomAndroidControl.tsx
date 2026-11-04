@@ -25,6 +25,10 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const [composerTargetId, setComposerTargetId] = useState('');
   const [sendControlVerified, setSendControlVerified] = useState(false);
   const [providerConversationIdentityAvailable, setProviderConversationIdentityAvailable] = useState(false);
+  const [nativeTargetId, setNativeTargetId] = useState('');
+  const [nativeTargetExpiresAt, setNativeTargetExpiresAt] = useState('');
+  const [nativeTargetAttestationPending, setNativeTargetAttestationPending] = useState(false);
+  const [nativeTargetStatus, setNativeTargetStatus] = useState('No device-attested native target.');
   const [sendControlCheckPending, setSendControlCheckPending] = useState(false);
   const [sendControlStatus, setSendControlStatus] = useState('No native Send control verified.');
   const [selectionPreview, setSelectionPreview] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
@@ -43,6 +47,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const pendingNavigationAcksRef = useRef<Map<string, number>>(new Map());
   const pendingRemoteTextAcksRef = useRef<Map<string, number>>(new Map());
   const pendingComposerSelectionAcksRef = useRef<Map<string, number>>(new Map());
+  const latestComposerSelectionRef = useRef('');
   const composerTargetRef = useRef('');
   const sendTargetRef = useRef('');
   const pendingSendControlCheckRef = useRef('');
@@ -75,6 +80,11 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     setSendControlCheckPending(false);
     composerTargetRef.current = '';
     sendTargetRef.current = '';
+    latestComposerSelectionRef.current = '';
+    setNativeTargetId('');
+    setNativeTargetExpiresAt('');
+    setNativeTargetAttestationPending(false);
+    setNativeTargetStatus('No device-attested native target.');
     setComposerTargetId('');
     setSendControlVerified(false);
     setProviderConversationIdentityAvailable(false);
@@ -256,6 +266,29 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
           setRemoteTextStatus('The phone user revoked remote typing.');
           return;
         }
+        if (acknowledgement.kind === 'native_target_ack' &&
+            typeof acknowledgement.selectionId === 'string' &&
+            acknowledgement.selectionId === latestComposerSelectionRef.current &&
+            typeof acknowledgement.registered === 'boolean') {
+          if (acknowledgement.registered &&
+              typeof acknowledgement.nativeTargetId === 'string' &&
+              /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(acknowledgement.nativeTargetId) &&
+              acknowledgement.targetRevision === 1 &&
+              typeof acknowledgement.expiresAt === 'string' &&
+              Number.isFinite(Date.parse(acknowledgement.expiresAt)) &&
+              Date.parse(acknowledgement.expiresAt) > Date.now()) {
+            setNativeTargetId(acknowledgement.nativeTargetId);
+            setNativeTargetExpiresAt(acknowledgement.expiresAt);
+            setNativeTargetAttestationPending(false);
+            setNativeTargetStatus('Phone attested the exact composer, Send control, app signer and provider conversation. This short-lived target is staged only; no group AI binding or autonomous wake is enabled.');
+          } else {
+            setNativeTargetId('');
+            setNativeTargetExpiresAt('');
+            setNativeTargetAttestationPending(false);
+            setNativeTargetStatus('Phone could not stage the native target: ' + String(acknowledgement.reason ?? 'verification failed').replaceAll('_', ' ') + '. Manual draft insertion remains separate.');
+          }
+          return;
+        }
         if (acknowledgement.kind === 'composer_target_ack' &&
             typeof acknowledgement.selectionId === 'string' &&
             typeof acknowledgement.selected === 'boolean' &&
@@ -273,6 +306,12 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
                 ? acknowledgement.sendTargetId : '';
             const sendVerified = acknowledgement.sendAvailable === true && Boolean(sendTarget);
             const conversationIdentityAvailable = acknowledgement.providerConversationIdentityAvailable === true;
+            setNativeTargetId('');
+            setNativeTargetExpiresAt('');
+            setNativeTargetAttestationPending(sendVerified && conversationIdentityAvailable);
+            setNativeTargetStatus(sendVerified && conversationIdentityAvailable
+              ? 'Phone is revalidating the local target and registering a short-lived attestation…'
+              : 'No device-attested native target: provider identity and a unique Send control are both required.');
             sendTargetRef.current = sendVerified ? sendTarget : '';
             setSendControlVerified(sendVerified);
             setProviderConversationIdentityAvailable(conversationIdentityAvailable);
@@ -624,6 +663,13 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       return;
     }
     const selectionId = uuid();
+    latestComposerSelectionRef.current = selectionId;
+    setNativeTargetId('');
+    setNativeTargetExpiresAt('');
+    setNativeTargetAttestationPending(false);
+    setNativeTargetStatus('Waiting for the phone to verify this new selection…');
+    for (const pendingTimer of pendingComposerSelectionAcksRef.current.values()) window.clearTimeout(pendingTimer);
+    pendingComposerSelectionAcksRef.current.clear();
     const timer = window.setTimeout(() => {
       pendingComposerSelectionAcksRef.current.delete(selectionId);
       clearComposerTarget(false);
@@ -818,6 +864,10 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         </button>
       </div>
       <p role="status">{remoteTextStatus}</p>
+      <p className="br-android-stream-disclaimer" role="status">
+        {nativeTargetAttestationPending ? 'Phone is registering a short-lived device attestation…' : nativeTargetStatus}
+        {nativeTargetId && nativeTargetExpiresAt ? ' Expires ' + new Date(nativeTargetExpiresAt).toLocaleTimeString() + '.' : ''}
+      </p>
       <small>{sendControlVerified
         ? providerConversationIdentityAvailable
           ? 'The phone found one unique Send control and detected a provider-conversation identity locally. The digest stays on the phone. This is not permission to click Send: the trusted queue bridge, local wake consent and execution rechecks are still required. Labels and editor/message contents are never transmitted to Rub Minds.'
