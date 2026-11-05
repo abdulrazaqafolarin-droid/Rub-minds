@@ -63,7 +63,7 @@ export function validateAndroidDeviceCommand(value, { now = Date.now() } = {}) {
 export function validateAndroidNativeWakeHandoff(value, { now = Date.now(), clockSkewMs = 3_000 } = {}) {
   const keys = [
     "version", "kind", "handoffId", "jobId", "eventId", "deviceId", "roomId", "screenSessionId",
-    "hostId", "bindingId", "sessionId", "targetId", "targetRevision", "surface", "appId",
+    "hostId", "bindingId", "sessionDigest", "sessionId", "targetId", "targetRevision", "surface", "appId",
     "identityFingerprint", "composerIdentityDigest", "sendControlIdentityDigest",
     "providerConversationIdentityDigest", "leaseTokenDigest", "prompt", "promptDigest", "issuedAt", "leaseExpiresAt", "expiresAt",
   ];
@@ -74,7 +74,7 @@ export function validateAndroidNativeWakeHandoff(value, { now = Date.now(), cloc
       !EVENT_ID.test(value.eventId ?? "") ||
       !UUID.test(value.deviceId ?? "") || !UUID.test(value.roomId ?? "") ||
       !UUID.test(value.screenSessionId ?? "") || !UUID.test(value.hostId ?? "") ||
-      !UUID.test(value.bindingId ?? "") || !isNonempty(value.sessionId, 256) ||
+      !UUID.test(value.bindingId ?? "") || !HEX.test(value.sessionDigest ?? "") || !isNonempty(value.sessionId, 256) ||
       !isNonempty(value.targetId, 128) ||
       !Number.isSafeInteger(value.targetRevision) || value.targetRevision < 1 ||
       value.surface !== ANDROID_NATIVE_SURFACE || !isPackageName(value.appId) ||
