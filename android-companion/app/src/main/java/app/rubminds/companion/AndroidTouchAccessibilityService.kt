@@ -17,6 +17,12 @@ import java.security.MessageDigest
  * User-enabled gesture bridge. It does not upload the accessibility tree or text.
  * Every gesture is scoped to a locally selected package and its current window bounds.
  */
+internal data class AndroidNativeWakeTargetIdentitySnapshot(
+    val composerIdentityDigest: String,
+    val sendControlIdentityDigest: String,
+    val providerConversationIdentityDigest: String
+)
+
 class AndroidTouchAccessibilityService : AccessibilityService() {
     @Volatile private var boundSessionId: String? = null
     @Volatile private var boundPackageName: String? = null
@@ -416,6 +422,36 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         } finally {
             root.recycle()
         }
+    }
+
+    /**
+     * Local-only snapshot for the device-bearer registration request. The raw
+     * provider conversation ID never leaves this service; callers receive only
+     * the three SHA-256 digests, after a fresh foreground-root comparison.
+     */
+    fun nativeWakeTargetIdentitySnapshot(
+        sessionId: String,
+        packageName: String
+    ): AndroidNativeWakeTargetIdentitySnapshot? {
+        val selected = synchronized(this) {
+            if (!isServiceEnabled(this) ||
+                boundSessionId != sessionId ||
+                boundPackageName != packageName
+            ) return@synchronized null
+            val composer = boundComposerTargetId
+            val send = boundSendTargetId
+            val provider = boundProviderConversationIdentityDigest
+            if (!ProviderConversationIdentityPolicy.isValidDigest(composer) ||
+                !ProviderConversationIdentityPolicy.isValidDigest(send) ||
+                !ProviderConversationIdentityPolicy.isValidDigest(provider)
+            ) return@synchronized null
+            AndroidNativeWakeTargetIdentitySnapshot(composer!!, send!!, provider!!)
+        } ?: return null
+        val currentProvider = currentProviderConversationIdentityDigest(packageName)
+        if (!ProviderConversationIdentityPolicy.matches(selected.providerConversationIdentityDigest, currentProvider)) {
+            return null
+        }
+        return selected
     }
 
     fun isBoundToProviderConversation(
