@@ -826,6 +826,31 @@ Deno.serve(async req => {
             capability: 'control', ...(controlGranted ? {} : { reason: 'local_touch_permission_missing' }) },
         });
       };
+      const settleNativeWakeGroupJob = async () => {
+        if (!isNativeWakeCommand || !nativeWakeHandoff || !ack.nativeWakeResult) return null;
+        const { data, error } = await db.rpc('settle_backroom_android_native_wake_result', {
+          p_job_id: nativeWakeHandoff.jobId,
+          p_host_id: nativeWakeHandoff.hostId,
+          p_session_digest: nativeWakeHandoff.sessionDigest,
+          p_binding_id: nativeWakeHandoff.bindingId,
+          p_lease_token_digest: nativeWakeHandoff.leaseTokenDigest,
+          p_handoff_id: nativeWakeHandoff.handoffId,
+          p_device_id: current.device_id,
+          p_screen_session_id: nativeWakeHandoff.screenSessionId,
+          p_target_id: nativeWakeHandoff.targetId,
+          p_target_revision: nativeWakeHandoff.targetRevision,
+          p_composer_identity_digest: nativeWakeHandoff.composerIdentityDigest,
+          p_send_control_identity_digest: nativeWakeHandoff.sendControlIdentityDigest,
+          p_provider_conversation_identity_digest: nativeWakeHandoff.providerConversationIdentityDigest,
+          p_result_payload: ack.nativeWakeResult,
+        });
+        if (error) throw new Error('native_wake_group_result_settlement_failed');
+        if (!['acknowledged','pending','failed','cancelled','replayed'].includes(data)) {
+          throw new Error('native_wake_group_lease_mismatch');
+        }
+        return data;
+      };
+
       const broadcastNativeWakeResult = async () => {
         if (!isNativeWakeCommand || !nativeWakeHandoff || !ack.nativeWakeResult) return;
         // The room Realtime event carries outcome metadata only. Exact composer /
@@ -863,10 +888,12 @@ Deno.serve(async req => {
           return json(409, fail('android_ack_result_conflict'), origin);
         }
         try {
+          await settleNativeWakeGroupJob();
           await broadcastControlResult();
           await broadcastNativeWakeResult();
-        } catch {
-          return json(503, fail('android_ack_result_delivery_failed'), origin);
+        } catch (error) {
+          return json(error instanceof Error && error.message === 'native_wake_group_lease_mismatch' ? 409 : 503,
+            fail(error instanceof Error ? error.message : 'android_ack_result_delivery_failed'), origin);
         }
         return json(200, { ok: true, acked: true, replayed: true }, origin);
       }
@@ -878,12 +905,15 @@ Deno.serve(async req => {
       // Publish before committing the ACK. If Realtime is temporarily unavailable,
       // the device keeps the command leased and will retry it after lease expiry.
       try {
+        // Settle the original group job before recording the Android command ACK.
+        // If this response is lost, an identical device ACK replays the same evidence safely.
+        await settleNativeWakeGroupJob();
         await broadcastControlResult();
         await broadcastNativeWakeResult();
-      } catch {
-        return json(503, fail(isNativeWakeCommand
-          ? 'android_native_wake_result_delivery_failed'
-          : 'android_control_result_delivery_failed'), origin);
+      } catch (error) {
+        const mismatch = error instanceof Error && error.message === 'native_wake_group_lease_mismatch';
+        return json(mismatch ? 409 : 503, fail(error instanceof Error ? error.message :
+          (isNativeWakeCommand ? 'android_native_wake_result_delivery_failed' : 'android_control_result_delivery_failed')), origin);
       }
 
       const ackedAt = new Date().toISOString();
