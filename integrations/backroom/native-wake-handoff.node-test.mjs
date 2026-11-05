@@ -16,6 +16,7 @@ const ids={
  screenSessionId:'74000000-0000-4000-8000-000000000001',
  bindingId:'75000000-0000-4000-8000-000000000001',
  hostId:'76000000-0000-4000-8000-000000000001',
+ sessionDigest:'d'.repeat(64),
 };
 const now=100_000;
 const prompt=buildCanonicalWakePrompt('event_123');
@@ -59,6 +60,7 @@ test('creates an immutable short-lived handoff containing only a canonical event
  assert.equal(handoff.prompt,prompt);
  assert.equal(handoff.promptDigest,digestPrompt(prompt));
  assert.equal(handoff.providerConversationIdentityDigest,scope.providerConversationIdentityDigest);
+ assert.equal(handoff.sessionDigest,lease.sessionDigest);
  assert.equal(handoff.leaseTokenDigest,digestPrompt(lease.leaseToken));
  assert.equal('leaseToken' in handoff,false);
  assert.equal(handoff.expiresAt,now+20_000);
