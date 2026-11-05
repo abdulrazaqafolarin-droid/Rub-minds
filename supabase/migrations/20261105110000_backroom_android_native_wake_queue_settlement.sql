@@ -62,7 +62,8 @@ begin
   end if;
 
   v_result_state:=p_result_payload->>'state';
-  if p_result_payload->>'version'<>'1'
+  if not (p_result_payload ?& array['version','kind','handoffId','jobId','deviceId','roomId','screenSessionId','bindingId','targetId','targetRevision','state','promptInserted','sendInvoked','composerCleared'])
+    or p_result_payload->>'version'<>'1'
     or p_result_payload->>'kind'<>'native_wake_result'
     or p_result_payload->>'handoffId'<>p_handoff_id::text
     or p_result_payload->>'jobId'<>p_job_id::text
@@ -93,14 +94,16 @@ begin
       raise exception 'Submitted native wake lacks exact composer, Send or provider proof';
     end if;
   elsif v_result_state='preflight_denied' then
-    if p_result_payload->>'promptInserted'<>'false'
+    if p_result_payload ?| array['promptReadbackVerified','composerIdentityRevalidated','sendControlIdentityRevalidated','composerIdentityDigest','sendControlIdentityDigest','providerConversationIdentityRevalidated','providerConversationIdentityDigest']
+      or p_result_payload->>'promptInserted'<>'false'
       or p_result_payload->>'sendInvoked'<>'false'
       or p_result_payload->>'composerCleared'<>'false'
       or coalesce(p_result_payload->>'reason','')='' then
       raise exception 'Preflight denial cannot claim a side effect';
     end if;
   elsif v_result_state='needs_review' then
-    if coalesce(p_result_payload->>'reason','')=''
+    if p_result_payload ?| array['promptReadbackVerified','composerIdentityRevalidated','sendControlIdentityRevalidated','composerIdentityDigest','sendControlIdentityDigest','providerConversationIdentityRevalidated','providerConversationIdentityDigest']
+      or coalesce(p_result_payload->>'reason','')=''
       or p_result_payload->>'composerCleared'<>'false'
       or (p_result_payload->>'sendInvoked'='true' and p_result_payload->>'promptInserted'<>'true') then
       raise exception 'Uncertain native wake result must remain terminal review evidence';
@@ -113,6 +116,9 @@ begin
     and j.session_digest=p_session_digest and j.binding_id=p_binding_id
   for update;
   if not found then return 'lease_mismatch'; end if;
+  if p_result_payload->>'roomId'<>v_job.room_id::text then
+    raise exception 'Native wake result room does not match the durable group job';
+  end if;
 
   -- A device retries after a lost HTTP response; exact evidence is idempotent.
   if v_job.native_result_payload=p_result_payload then
