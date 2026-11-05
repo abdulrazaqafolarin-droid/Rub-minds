@@ -36,7 +36,7 @@ flowchart TD
     K --> L["Insert fixed event prompt, read back, invoke once"]
     L --> M["Verify same composer clears; acknowledge durable lease"]
     I -.-> N["Android device queue / native driver exist separately"]
-    N -.-> O["Structured device ACK exists; group-lease producer/reconciliation gap remains"]
+    N -.-> O["Device ACK settles original group lease; attested binding/forwarder still missing"]
     M --> P["Original AI reads event through its joined MCP session"]
     P --> Q["AI replies to group through MCP; event/response ACK is separate"]
     O -.-> P
@@ -177,7 +177,7 @@ Android has a separate device-bearer-authenticated command poll/ACK channel:
 
 The handoff expires no later than its queue lease and is bounded to 20 seconds. Only the digest of the durable lease token crosses into the handoff; the raw lease token remains with the trusted worker. The phone rechecks expiry immediately before the sensitive execution stages.
 
-**Two prerequisites remain before the phone receiver can be reached safely.** First, the device-attested binding registration described above must securely connect one selected AI/MCP participant and its existing group input binding to one paired Android device, active screen session, app/signer, selected composer/Send identities and phone-local provider digest. It must be invalidated when that screen session closes, the device is revoked, the app changes, or the provider conversation changes. Second, a trusted host-side forwarder must take a claimed group wake lease, resolve that exact registration, create the 20-second handoff and enqueue the `native_wake_trigger` command. The device ACK then needs to reconcile against the original group lease without losing the one-shot/no-replay distinction. Until both are connected, the receiver and ACK validator are not proof that group events can wake the phone.
+**Two prerequisites remain before the phone receiver can be reached safely.** First, the device-attested binding registration described above must securely connect one selected AI/MCP participant and its existing group input binding to one paired Android device, active screen session, app/signer, selected composer/Send identities and phone-local provider digest. It must be invalidated when that screen session closes, the device is revoked, the app changes, or the provider conversation changes. Second, a trusted host-side forwarder must take a claimed group wake lease, resolve that exact registration, create the 20-second handoff and enqueue the `native_wake_trigger` command. The Android ACK-to-group-lease settlement routine is now implemented in source and settles the original durable job before the command ACK is committed; it still has no eligible command to settle until the first two prerequisites exist. Until those are connected, the receiver and ACK validator are not proof that group events can wake the phone.
 
 ### Windows native path
 
@@ -218,7 +218,7 @@ After waking, the original AI conversation should use its already joined Rub Min
 | Surface | Drag-select composer targeting | Manual draft insertion | Send-control check | Group wake delivery | Native Off / On / Auto |
 | --- | --- | --- | --- | --- | --- |
 | Managed browser | Yes, on the managed frame | Yes | Runtime recheck | Managed-browser canonical wake path; acceptance must be evaluated separately from provider response | First intended supported surface |
-| Android Phone Frame | Source-level accessibility-backed selection | Yes, separate IME/WebRTC draft path | Yes, local discovery and recheck | Device receiver/driver/ACK exist, but group-lease forwarding and lease-result reconciliation are missing; provider resolver registry is empty | Not available |
+| Android Phone Frame | Source-level accessibility-backed selection | Yes, separate IME/WebRTC draft path | Yes, local discovery and recheck | Device receiver/driver/ACK and source-level original-lease settlement exist, but device attestation and group-lease forwarding are missing; provider resolver registry is empty | Not available |
 | Windows Desktop Frame | Source-level UIA selection | Yes, separate approved draft path | Yes, local UIA discovery and recheck | No native canonical-wake driver | Not available |
 | Terminal | Separate terminal target/session | Yes, under its own local approval | Not applicable to a chat composer | No native group-wake integration | Not available |
 
@@ -233,8 +233,8 @@ This means ChatGPT, Claude and other providers are not currently eligible for na
 The remaining order is intentional; do not wire the UI switch to native Send before the trust chain is complete.
 
 1. **Provider conversation adapters:** implement and test stable active-conversation identity for each provider/app. Prove that switching between adjacent conversations changes the digest, that refresh/navigation invalidates stale identity, and that missing/ambiguous identity denies native wake.
-2. **Trusted Android host forwarder:** add a host-side component that consumes a claimed durable group lease, resolves the paired device and its active screen session, constructs the strict 20-second handoff, and enqueues the device command without exposing the raw lease token.
-3. **Device-result reconciliation:** validate the device ACK receipt against the exact original durable lease, then acknowledge/retry/ignore that lease according to the outcome. A preflight denial may be safely retryable only when the one-shot seal was not reserved; post-seal ambiguity must become review, never replay.
+2. **Trusted Android host forwarder:** add a host-side component that consumes a claimed durable group lease, resolves the device-attested group binding and its active Android screen session, constructs the strict 20-second handoff, and enqueues the device command without exposing the raw lease token.
+3. **Physical acceptance and deployed settlement:** apply the settlement migration in staging, verify submitted/preflight-denied/needs-review behavior against the original durable lease, and then repeat those cases on an approved Android device. The source settlement routine is already wired into the device ACK endpoint; a preflight denial may be retried only when the one-shot seal was not reserved, while post-seal ambiguity must become terminal review, never replay.
 4. **Windows native driver:** implement a platform driver behind the existing native adapter/guard contract, with stable composer, Send-control and provider-conversation identity. Keep Windows Send read-only until this exists.
 5. **Native mode lifecycle:** only after the full path exists, connect Off/On/Auto to per-binding host poller, device consent, expiry, revocation and emergency-stop state. Do not reuse ordinary draft/touch grants.
 6. **End-to-end proof:** exercise human message → SQL admission → durable lease → trusted host → paired native device → exact prompt Send → provider receives trigger → original MCP session reads event → group reply → MCP acknowledgement. Repeat for On mention, Auto human message, self-message suppression, AI-authored Auto suppression, Leave/revoke/expiry, offline device, changed composer, changed Send control, switched provider conversation and ambiguous post-Send outcomes.
@@ -244,7 +244,7 @@ The remaining order is intentional; do not wire the UI switch to native Send bef
 
 - This is a documentation-only architecture map for PR #64; no runtime code or production configuration is changed by adding it.
 - The SQL queue/message trigger, Android command receiver, strict native handoff validator, structured ACK validator and Android native driver are present in the feature-branch source.
-- Their presence is not an end-to-end test. The Android provider adapter registry is empty, the group-lease-to-device forwarder and durable-lease result reconciliation are missing, and Windows has no native Send driver.
+- Their presence is not an end-to-end test. The Android provider adapter registry is empty, device-attested group binding and the group-lease-to-device forwarder are missing, the settlement migration is not deployed or physically accepted, and Windows has no native Send driver.
 - The feature branch remains a draft PR. Do not apply the SQL migrations or deploy Edge Functions to production as part of this documentation slice.
 - Do not describe Off/On/Auto as native Android/Windows functionality until the above integration and device acceptance gates pass.
 
