@@ -31,11 +31,11 @@ function exactKeys(value,keys){
   Object.keys(value).length===keys.length&&Object.keys(value).every(key=>keys.includes(key));
 }
 function validLease(lease){
- return exactKeys(lease,['jobId','leaseToken','eventId','roomId','bindingId','hostId','sessionId',
+ return exactKeys(lease,['jobId','leaseToken','eventId','roomId','bindingId','hostId','sessionDigest','sessionId',
   'targetId','targetIdentityFingerprint','providerConversationIdentityDigest','targetRevision','prompt','promptDigest','expiresAt'])&&
   UUID.test(lease.jobId??'')&&validId(lease.eventId)&&
   UUID.test(lease.leaseToken??'')&&UUID.test(lease.roomId??'')&&
-  UUID.test(lease.bindingId??'')&&nonempty(lease.hostId,128)&&
+  UUID.test(lease.bindingId??'')&&nonempty(lease.hostId,128)&&HEX.test(lease.sessionDigest??'')&&
   nonempty(lease.sessionId,256)&&nonempty(lease.targetId,128)&&
   nonempty(lease.targetIdentityFingerprint)&&HEX.test(lease.providerConversationIdentityDigest??'')&&Number.isSafeInteger(lease.targetRevision)&&lease.targetRevision>0&&
   Number.isSafeInteger(lease.expiresAt)&&isCanonicalWakePrompt(lease.prompt,lease.eventId)&&
@@ -83,7 +83,7 @@ export function createNativeWakeHandoff(lease,scope,{now=Date.now(),handoffId=ra
  const expiresAt=Math.min(lease.expiresAt,now+MAX_HANDOFF_TTL_MS);
  const handoff=Object.freeze({
   version:1,kind:'native_wake_trigger',handoffId:handoffId.toLowerCase(),
-  jobId:lease.jobId.toLowerCase(),eventId:lease.eventId,
+  jobId:lease.jobId.toLowerCase(),eventId:lease.eventId,sessionDigest:lease.sessionDigest,
   ...buildScopeFields(scope),leaseTokenDigest:sha256(lease.leaseToken),
   prompt:buildCanonicalWakePrompt(lease.eventId),promptDigest:lease.promptDigest,
   issuedAt:now,leaseExpiresAt:lease.expiresAt,expiresAt,
@@ -93,7 +93,7 @@ export function createNativeWakeHandoff(lease,scope,{now=Date.now(),handoffId=ra
 
 const HANDOFF_KEYS=[
  'version','kind','handoffId','jobId','eventId','deviceId','roomId','screenSessionId',
- 'hostId','bindingId','sessionId','targetId','targetRevision','surface','appId',
+ 'hostId','bindingId','sessionDigest','sessionId','targetId','targetRevision','surface','appId',
  'identityFingerprint','composerIdentityDigest','sendControlIdentityDigest','providerConversationIdentityDigest',
  'leaseTokenDigest','prompt','promptDigest','issuedAt','leaseExpiresAt','expiresAt',
 ];
@@ -102,7 +102,7 @@ export function validateNativeWakeHandoff(payload,expected,{now=Date.now(),clock
   payload.version!==1||payload.kind!=='native_wake_trigger'||
   !UUID.test(payload.handoffId??'')||!UUID.test(payload.jobId??'')||
   !validId(payload.eventId)||!HEX.test(payload.leaseTokenDigest??'')||
-  !nonempty(payload.hostId,128)||!nonempty(payload.sessionId,256)||
+  !nonempty(payload.hostId,128)||!HEX.test(payload.sessionDigest??'')||!nonempty(payload.sessionId,256)||
   !nonempty(payload.targetId,128)||!Number.isSafeInteger(payload.targetRevision)||payload.targetRevision<1||
   !nonempty(payload.appId,256)||!nonempty(payload.identityFingerprint)||
   !HEX.test(payload.composerIdentityDigest??'')||!HEX.test(payload.sendControlIdentityDigest??'')||
