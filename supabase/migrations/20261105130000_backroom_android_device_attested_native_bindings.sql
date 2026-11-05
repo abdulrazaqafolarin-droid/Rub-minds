@@ -28,6 +28,28 @@ create index if not exists backroom_android_native_binding_device_active_idx
   on public.backroom_android_native_bindings(device_id,room_id,expires_at)
   where revoked_at is null;
 
+-- A previous native binding without this device/session/app attestation is not
+-- eligible for autonomous wake. Keep its row for explicit owner review, but
+-- clear any old grant and cancel its unforwarded queue work.
+update public.backroom_wake_jobs j
+set state='cancelled',lease_owner=null,lease_token_hash=null,lease_expires_at=null,
+    last_error_code='authorization_denied',updated_at=pg_catalog.clock_timestamp()
+from public.backroom_input_bindings b
+where b.id=j.binding_id and b.surface='android_app'
+  and not exists(select 1 from public.backroom_android_native_bindings m
+    where m.binding_id=b.id and m.revoked_at is null
+      and m.expires_at>pg_catalog.clock_timestamp())
+  and j.state in ('pending','leased');
+
+update public.backroom_input_bindings b
+set wake_enabled=false,wake_last_revoked_grant_id=coalesce(b.wake_grant_id,b.wake_last_revoked_grant_id),
+    wake_grant_id=null,wake_expires_at=null,confirmed_at=null,
+    updated_at=pg_catalog.clock_timestamp()
+where b.surface='android_app' and b.wake_enabled=true
+  and not exists(select 1 from public.backroom_android_native_bindings m
+    where m.binding_id=b.id and m.revoked_at is null
+      and m.expires_at>pg_catalog.clock_timestamp());
+
 alter table public.backroom_android_commands
   add column if not exists native_wake_binding_id uuid
     references public.backroom_android_native_bindings(binding_id) on delete set null;
@@ -214,7 +236,9 @@ begin
   where m.binding_id=p_binding_id
   for update;
   if found then
-    return v_existing.device_id=p_device_id
+    return (v_binding.provider_conversation_identity_digest is null
+        or v_binding.provider_conversation_identity_digest=p_provider_conversation_identity_digest)
+      and v_existing.device_id=p_device_id
       and v_existing.room_id=p_room_id
       and v_existing.screen_session_id=p_screen_session_id
       and v_existing.app_package_name=p_app_package_name
