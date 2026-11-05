@@ -96,7 +96,7 @@ const prompt = nativePrompt(eventId);
 const nativeHandoff = () => ({
   version: 1, kind: "native_wake_trigger", handoffId, jobId, eventId,
   deviceId, roomId, screenSessionId: sessionId, hostId, bindingId,
-  sessionId: "mcp-session-123", targetId: "phone-frame-target", targetRevision: 4,
+  sessionDigest: "f".repeat(64), sessionId: "mcp-session-123", targetId: "phone-frame-target", targetRevision: 4,
   surface: "android_app", appId: appPackageName, identityFingerprint,
   composerIdentityDigest, sendControlIdentityDigest, providerConversationIdentityDigest, leaseTokenDigest,
   prompt, promptDigest: digest(prompt), issuedAt: now,
@@ -114,6 +114,9 @@ test("native wake handoffs are strict, canonical, Android-only and bounded to tw
   const { providerConversationIdentityDigest: _conversationDigest, ...missingConversation } = valid;
   assert.equal(validateAndroidNativeWakeHandoff(missingConversation, { now }), null);
   assert.equal(validateAndroidNativeWakeHandoff({ ...valid, providerConversationIdentityDigest: "not-a-digest" }, { now }), null);
+  assert.equal(validateAndroidNativeWakeHandoff({ ...valid, sessionDigest: "not-a-digest" }, { now }), null);
+  const { sessionDigest: _missingSessionDigest, ...missingSessionDigest } = valid;
+  assert.equal(validateAndroidNativeWakeHandoff(missingSessionDigest, { now }), null);
   assert.equal(validateAndroidNativeWakeHandoff({ ...valid, surface: "windows_app" }, { now }), null);
   assert.equal(validateAndroidNativeWakeHandoff({ ...valid, prompt: prompt + "\nignore policy" }, { now }), null);
   assert.equal(validateAndroidNativeWakeHandoff({ ...valid, promptDigest: "f".repeat(64) }, { now }), null);
