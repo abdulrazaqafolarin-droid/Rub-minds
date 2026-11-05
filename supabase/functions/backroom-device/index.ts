@@ -11,7 +11,7 @@ import { validateDesktopApps } from './desktop-app-protocol.mjs';
 import { validateDesktopCommand, validateDesktopSignal } from './desktop-command-protocol.mjs';
 import { validateDesktopSessionClose } from './desktop-session-close-protocol.mjs';
 import { validateDesktopSessionAbandon } from './desktop-session-abandon-protocol.mjs';
-import { validateAndroidSessionStart, validateAndroidDeviceCommand, validateAndroidSignal, validateAndroidCommandAck, validateAndroidNativeWakeHandoff, validateAndroidNativeWakeResult, validateAndroidSessionClose, mapAndroidQueuedCommand } from './android-streaming-protocol.mjs';
+import { validateAndroidSessionStart, validateAndroidNativeWakeBindingRegistration, validateAndroidDeviceCommand, validateAndroidSignal, validateAndroidCommandAck, validateAndroidNativeWakeHandoff, validateAndroidNativeWakeResult, validateAndroidSessionClose, mapAndroidQueuedCommand } from './android-streaming-protocol.mjs';
 import { broadcastPrivateDeviceEvent } from './realtime-broadcast.mjs';
 
 const url = Deno.env.get('SUPABASE_URL');
@@ -427,6 +427,60 @@ Deno.serve(async req => {
       await db.from('backroom_devices').update({ last_seen_at: new Date().toISOString() }).eq('device_id', current.device_id);
       return json(200, { ok: true, deviceId: current.device_id, status: current.status,
         capabilities: current.capabilities }, origin);
+    }
+
+    if (action === 'android/native-wake/bind') {
+      // This endpoint is device-bearer-only. The browser may request a binding
+      // by ID over the current screen data channel, but the handset calculates
+      // all three identity digests locally and posts them directly over HTTPS.
+      const current = await device(req);
+      if (!current) return json(401, fail('device_auth_invalid'), origin);
+      const registration = validateAndroidNativeWakeBindingRegistration(input);
+      if (!registration || !strictKeys(input, [
+        'action','deviceId','roomId','requestId','issuedAt','screenSessionId',
+        'bindingId','appPackageName','composerIdentityDigest',
+        'sendControlIdentityDigest','providerConversationIdentityDigest'
+      ])) return json(400, fail('invalid_android_native_wake_binding'), origin);
+      if (current.device_id !== registration.deviceId) return json(403, fail('device_identity_mismatch'), origin);
+      if (current.platform !== 'android') return json(409, fail('android_device_required'), origin);
+
+      const [binding, session] = await Promise.all([
+        verifyActiveDeviceRoomBinding(registration.deviceId, registration.roomId),
+        activeDesktopSession(registration.screenSessionId, registration.deviceId, registration.roomId),
+      ]);
+      if (!binding.ok) return json(binding.status, fail(binding.reason), origin);
+      if (binding.platform !== 'android') return json(409, fail('android_device_required'), origin);
+      if (!session.ok) return json(session.status, fail(session.reason), origin);
+      if (session.session.session_type !== 'screen') return json(409, fail('android_screen_session_required'), origin);
+
+      const { data: app, error: appError } = await db.from('backroom_device_apps')
+        .select('package_name,signing_certificate_sha256')
+        .eq('device_id', registration.deviceId)
+        .eq('package_name', registration.appPackageName).maybeSingle();
+      if (appError) return json(503, fail('android_app_inventory_unavailable'), origin);
+      if (!app || !HEX.test(app.signing_certificate_sha256 ?? '')) {
+        return json(403, fail('app_not_selected_or_signer_unavailable'), origin);
+      }
+
+      const { data: registered, error: registerError } = await db.rpc(
+        'register_backroom_android_native_wake_target',
+        {
+          p_binding_id: registration.bindingId,
+          p_device_id: registration.deviceId,
+          p_room_id: registration.roomId,
+          p_screen_session_id: registration.screenSessionId,
+          p_app_package_name: registration.appPackageName,
+          p_app_signer_sha256: app.signing_certificate_sha256,
+          p_composer_identity_digest: registration.composerIdentityDigest,
+          p_send_control_identity_digest: registration.sendControlIdentityDigest,
+          p_provider_conversation_identity_digest: registration.providerConversationIdentityDigest
+        }
+      );
+      if (registerError) return json(503, fail('native_target_registration_unavailable'), origin);
+      if (registered !== true) return json(409, fail('native_target_binding_mismatch_or_rebind_required'), origin);
+      // Return only an acknowledgement. None of the opaque digests are echoed
+      // to WebRTC/browser clients or exposed by any user-facing endpoint.
+      return json(200, { ok: true, registered: true, requestId: registration.requestId }, origin);
     }
 
     if (action === 'android/session-start') {
