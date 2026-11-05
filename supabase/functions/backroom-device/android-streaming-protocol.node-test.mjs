@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  validateAndroidNativeWakeBindingRegistration,
   validateAndroidSessionStart, validateAndroidDeviceCommand,
   validateAndroidSignal, validateAndroidCommandAck, validateAndroidNativeWakeHandoff,
   validateAndroidNativeWakeResult, validateAndroidSessionClose, mapAndroidQueuedCommand
@@ -15,6 +16,31 @@ const commandId = "123e4567-e89b-42d3-a456-426614174004";
 const appPackageName = "com.example.notes";
 const now = 1_000_000;
 const offer = { sdp: "v=0\\r\\no=- 1 1 IN IP4 127.0.0.1\\r\\n" };
+
+
+const nativeBindingRequest = overrides => ({
+  action: "android/native-wake/bind",
+  deviceId, roomId, requestId, issuedAt: now, screenSessionId: sessionId,
+  bindingId, appPackageName,
+  composerIdentityDigest: "a".repeat(64),
+  sendControlIdentityDigest: "b".repeat(64),
+  providerConversationIdentityDigest: "c".repeat(64),
+  ...overrides,
+});
+
+test("Android native target registration requires a fresh device-scoped binding and local SHA-256 proofs", () => {
+  const valid = nativeBindingRequest({});
+  assert.ok(validateAndroidNativeWakeBindingRegistration(valid, { now }));
+  assert.equal(validateAndroidNativeWakeBindingRegistration({ ...valid, action: "android/command" }, { now }), null);
+  assert.equal(validateAndroidNativeWakeBindingRegistration({ ...valid, rawConversationId: "private" }, { now }), null);
+  assert.equal(validateAndroidNativeWakeBindingRegistration({ ...valid, issuedAt: now - 30_001 }, { now }), null);
+  assert.equal(validateAndroidNativeWakeBindingRegistration({ ...valid, deviceId: roomId }, { now }), null);
+  assert.equal(validateAndroidNativeWakeBindingRegistration({ ...valid, bindingId: "not-a-uuid" }, { now }), null);
+  assert.equal(validateAndroidNativeWakeBindingRegistration({ ...valid, appPackageName: "com..notes" }, { now }), null);
+  assert.equal(validateAndroidNativeWakeBindingRegistration({ ...valid, composerIdentityDigest: "raw" }, { now }), null);
+  assert.equal(validateAndroidNativeWakeBindingRegistration({ ...valid, sendControlIdentityDigest: "f".repeat(63) }, { now }), null);
+  assert.equal(validateAndroidNativeWakeBindingRegistration({ ...valid, providerConversationIdentityDigest: "provider-thread-42" }, { now }), null);
+});
 
 test("session-start accepts only a fresh, scoped offer for a valid package", () => {
   const valid = { deviceId, roomId, requestId, issuedAt: now, sessionId, appPackageName, offer };
