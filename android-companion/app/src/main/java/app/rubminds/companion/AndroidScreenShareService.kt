@@ -768,6 +768,34 @@ class AndroidScreenShareService : Service() {
         true
     }
 
+    private fun sendNativeWakeBindingAcknowledgement(
+        channel: DataChannel,
+        sessionId: String,
+        requestId: String,
+        bindingId: String,
+        registered: Boolean,
+        reason: String
+    ) {
+        if (!UUID_PATTERN.matches(sessionId) || !UUID_PATTERN.matches(requestId) ||
+            !UUID_PATTERN.matches(bindingId) || channel.state() != DataChannel.State.OPEN ||
+            activeSessionId != sessionId || dataChannel !== channel
+        ) return
+        // Only the boolean outcome and request/binding correlation leave the
+        // phone. Never echo composer, Send or provider-conversation digests.
+        val payload = JSONObject()
+            .put("kind", "native_wake_binding_ack")
+            .put("sessionId", sessionId)
+            .put("requestId", requestId)
+            .put("bindingId", bindingId)
+            .put("registered", registered)
+            .put("reason", reason)
+        runCatching {
+            channel.send(DataChannel.Buffer(
+                ByteBuffer.wrap(payload.toString().toByteArray(Charsets.UTF_8)), false
+            ))
+        }
+    }
+
     private fun sendComposerTargetAcknowledgement(
         channel: DataChannel,
         sessionId: String,
@@ -883,6 +911,93 @@ class AndroidScreenShareService : Service() {
                 val bytes = ByteArray(buffer.data.remaining())
                 buffer.data.get(bytes)
                 val input = try { JSONObject(String(bytes, Charsets.UTF_8)) } catch (_: Exception) { return }
+                if (input.optString("kind") == "register_native_wake_binding") {
+                    val requestId = input.optString("requestId")
+                    val bindingId = input.optString("bindingId")
+                    if (!UUID_PATTERN.matches(requestId) ||
+                        !UUID_PATTERN.matches(bindingId) ||
+                        input.optString("sessionId") != sessionId ||
+                        input.optString("appPackageName") != appPackage
+                    ) return
+                    val allowedKeys = setOf(
+                        "kind", "requestId", "sessionId", "appPackageName", "bindingId"
+                    )
+                    if (input.keys().asSequence().toSet() != allowedKeys) {
+                        sendNativeWakeBindingAcknowledgement(
+                            channel, sessionId, requestId, bindingId, false, "invalid_request"
+                        )
+                        return
+                    }
+                    if (!claimRemoteTextRequest(requestId)) {
+                        sendNativeWakeBindingAcknowledgement(
+                            channel, sessionId, requestId, bindingId, false, "request_replayed_or_rate_limited"
+                        )
+                        return
+                    }
+                    mainHandler.post {
+                        if (stopping || !capturedContentVisible ||
+                            activeSessionId != sessionId || activeAppPackage != appPackage ||
+                            dataChannel !== channel
+                        ) {
+                            sendNativeWakeBindingAcknowledgement(
+                                channel, sessionId, requestId, bindingId, false, "screen_session_not_active"
+                            )
+                            return@post
+                        }
+                        val currentDeviceId = DeviceCredentialVault(this).deviceId()
+                        val currentToken = deviceToken
+                        val currentRoomId = activeRoomId
+                        val identity = AndroidTouchAccessibilityService.nativeWakeTargetIdentitySnapshot(
+                            sessionId, appPackage
+                        )
+                        if (currentDeviceId == null || currentToken.isNullOrBlank() ||
+                            currentRoomId == null || identity == null
+                        ) {
+                            sendNativeWakeBindingAcknowledgement(
+                                channel, sessionId, requestId, bindingId, false,
+                                "composer_send_or_provider_identity_unavailable"
+                            )
+                            return@post
+                        }
+                        try {
+                            executor.execute {
+                                val registered = try {
+                                    val response = api?.post(
+                                        "android/native-wake/bind",
+                                        currentToken,
+                                        JSONObject()
+                                            .put("deviceId", currentDeviceId)
+                                            .put("roomId", currentRoomId)
+                                            .put("requestId", requestId)
+                                            .put("issuedAt", System.currentTimeMillis())
+                                            .put("screenSessionId", sessionId)
+                                            .put("bindingId", bindingId)
+                                            .put("appPackageName", appPackage)
+                                            .put("composerIdentityDigest", identity.composerIdentityDigest)
+                                            .put("sendControlIdentityDigest", identity.sendControlIdentityDigest)
+                                            .put("providerConversationIdentityDigest", identity.providerConversationIdentityDigest)
+                                    )
+                                    response?.optBoolean("ok") == true &&
+                                        response.optBoolean("registered") == true &&
+                                        response.optString("requestId") == requestId
+                                } catch (_: Exception) {
+                                    false
+                                }
+                                mainHandler.post {
+                                    sendNativeWakeBindingAcknowledgement(
+                                        channel, sessionId, requestId, bindingId, registered,
+                                        if (registered) "registered" else "server_attestation_rejected"
+                                    )
+                                }
+                            }
+                        } catch (_: java.util.concurrent.RejectedExecutionException) {
+                            sendNativeWakeBindingAcknowledgement(
+                                channel, sessionId, requestId, bindingId, false, "device_service_stopping"
+                            )
+                        }
+                    }
+                    return
+                }
                 if (input.optString("kind") == "clear_composer_target") {
                     val selectionId = input.optString("selectionId")
                     if (!UUID_PATTERN.matches(selectionId) ||
