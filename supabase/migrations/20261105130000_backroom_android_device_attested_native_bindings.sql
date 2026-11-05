@@ -300,7 +300,7 @@ as $function$
 declare
   v_binding_id uuid;
 begin
-  if new.revoked_at is null and new.expires_at>pg_catalog.clock_timestamp() then
+  if new.status='active' and new.expires_at>pg_catalog.clock_timestamp() then
     return new;
   end if;
   for v_binding_id in
@@ -348,6 +348,11 @@ begin
     update public.backroom_android_commands
     set status='rejected',result='native_binding_revoked',lease_until=null
     where native_wake_binding_id=new.binding_id and status in ('pending','leased');
+
+    update public.backroom_wake_jobs
+    set state='cancelled',lease_owner=null,lease_token_hash=null,lease_expires_at=null,
+        last_error_code='authorization_denied',updated_at=pg_catalog.clock_timestamp()
+    where binding_id=new.binding_id and state in ('pending','leased');
   end if;
   return new;
 end;
