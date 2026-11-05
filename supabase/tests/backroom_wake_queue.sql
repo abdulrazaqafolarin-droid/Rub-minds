@@ -37,6 +37,11 @@ declare
   v_binding_6 uuid := '60000000-0000-4000-8000-000000000006';
   v_binding_7 uuid := '60000000-0000-4000-8000-000000000007';
   v_binding_native uuid := '60000000-0000-4000-8000-000000000010';
+  v_android_device uuid := '80000000-0000-4000-8000-000000000001';
+  v_android_screen uuid := '90000000-0000-4000-8000-000000000001';
+  v_android_signer text := repeat('c',64);
+  v_android_composer text := repeat('a',64);
+  v_android_send text := repeat('b',64);
   v_binding_native_draft uuid := '60000000-0000-4000-8000-000000000011';
   v_native_provider_digest text := repeat('9',64);
   v_native_job jsonb;
@@ -63,6 +68,26 @@ begin
   insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,agent_credential_digest,room_id,participant_id,expires_at,terminated_at)
     values (repeat('5',64),'ci-ciphertext-5',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
 
+  insert into public.backroom_devices(
+    device_id,owner_id,token_digest,device_label,platform,os_version,app_version,status,approved_at
+  ) values (
+    v_android_device,v_owner,repeat('7',64),'Native wake test phone','android','test','test',
+    'active',pg_catalog.clock_timestamp()
+  );
+  insert into public.backroom_device_room_bindings(device_id,room_id,owner_id)
+    values (v_android_device,v_room,v_owner);
+  insert into public.backroom_device_apps(
+    device_id,package_name,app_label,signing_certificate_sha256,version_name,draft_insertion_allowed
+  ) values (
+    v_android_device,'com.example.chat','Native wake test app',v_android_signer,'1.0',true
+  );
+  insert into public.backroom_desktop_sessions(
+    session_id,device_id,room_id,requested_by,session_type,status,expires_at
+  ) values (
+    v_android_screen,v_android_device,v_room,v_owner,'screen','active',
+    pg_catalog.clock_timestamp()+interval '1 hour'
+  );
+
   insert into public.backroom_hosts(host_id,owner_id,credential_digest,expires_at,revoked_at)
   values (v_host_test,v_owner,repeat('1',64),pg_catalog.clock_timestamp()+interval '48 hours',null),
          (v_host_capacity,v_owner,repeat('2',64),pg_catalog.clock_timestamp()+interval '1 hour',null);
@@ -87,11 +112,40 @@ begin
     max_wakes_per_minute,confirmed_at,revoked_at
   ) values (
     v_binding_native,v_owner,v_room,v_participant,v_host_test,repeat('8',64),
-    'space-native','session-native','target-native','fingerprint-native',v_native_provider_digest,1,
-    'android_app','accessibility','composer-native','mentions',true,
-    '70000000-0000-4000-8000-000000000020'::uuid,
-    pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null
+    'space-native','session-native','target-native',v_android_signer,null,1,
+    'android_app','accessibility','composer-native','mentions',false,
+    null,null,6,null,null
   );
+
+  if has_function_privilege('anon','public.register_backroom_android_native_wake_target(uuid,uuid,uuid,uuid,text,text,text,text,text)','EXECUTE')
+    or has_function_privilege('authenticated','public.register_backroom_android_native_wake_target(uuid,uuid,uuid,uuid,text,text,text,text,text)','EXECUTE')
+    or not has_function_privilege('service_role','public.register_backroom_android_native_wake_target(uuid,uuid,uuid,uuid,text,text,text,text,text)','EXECUTE') then
+    raise exception 'Android target registration RPC privileges are unsafe';
+  end if;
+
+  v_ok := public.register_backroom_android_native_wake_target(
+    v_binding_native,v_android_device,v_room,v_android_screen,'com.example.chat',
+    v_android_signer,v_android_composer,v_android_send,v_native_provider_digest
+  );
+  if not v_ok then raise exception 'Exact Android screen/app/composer/Send/provider attestation must register'; end if;
+  if not public.register_backroom_android_native_wake_target(
+    v_binding_native,v_android_device,v_room,v_android_screen,'com.example.chat',
+    v_android_signer,v_android_composer,v_android_send,v_native_provider_digest
+  ) then raise exception 'Exact Android attestation retries must be idempotent'; end if;
+  if public.register_backroom_android_native_wake_target(
+    v_binding_native,v_android_device,v_room,v_android_screen,'com.example.chat',
+    v_android_signer,v_android_composer,v_android_send,repeat('8',64)
+  ) then raise exception 'Android target registration must reject a changed provider conversation'; end if;
+  if public.register_backroom_android_native_wake_target(
+    v_binding_native,v_android_device,v_room,'90000000-0000-4000-8000-000000000002',
+    'com.example.chat',v_android_signer,v_android_composer,v_android_send,v_native_provider_digest
+  ) then raise exception 'Android target registration must reject a stale screen session'; end if;
+
+  update public.backroom_input_bindings
+  set wake_enabled=true,wake_grant_id='70000000-0000-4000-8000-000000000020'::uuid,
+      confirmed_at=pg_catalog.clock_timestamp(),
+      wake_expires_at=pg_catalog.clock_timestamp()+interval '1 hour'
+  where id=v_binding_native;
 
   -- Native composer selection remains available for manual draft typing without a provider resolver.
   insert into public.backroom_input_bindings(
@@ -139,6 +193,16 @@ begin
     v_conflict := true;
   end;
   if not v_conflict then raise exception 'An enabled native binding must retain its provider-conversation digest'; end if;
+
+  -- An attested Android target cannot be silently rebound to a different device.
+  v_conflict := false;
+  begin
+    update public.backroom_input_bindings set android_device_id='80000000-0000-4000-8000-000000000002'
+    where id=v_binding_native;
+  exception when check_violation then
+    v_conflict := true;
+  end;
+  if not v_conflict then raise exception 'Android device attestation must be immutable for a binding'; end if;
 
   -- A wake grant is a single, explicit persisted consent state; inconsistent deactivation is forbidden.
   v_conflict := false;
@@ -431,7 +495,7 @@ begin
   end if;
   v_native_job := public.enqueue_backroom_wake_job(
     repeat('8',64),v_owner,v_room,v_participant,v_host_test,'space-native','session-native',repeat('8',64),
-    v_binding_native,'target-native','fingerprint-native',1,'native-provider-event',
+    v_binding_native,'target-native',v_android_signer,1,'native-provider-event',
     '@RMconnects'||chr(10)||'Event: native-provider-event'||chr(10)||
     'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   if not exists(select 1 from public.backroom_wake_jobs j
