@@ -41,6 +41,19 @@ declare
   v_native_provider_digest text := repeat('9',64);
   v_native_job jsonb;
   v_native_claim record;
+  v_native_handoff uuid := '80000000-0000-4000-8000-000000000010';
+  v_native_device uuid := '81000000-0000-4000-8000-000000000010';
+  v_native_screen_session uuid := '82000000-0000-4000-8000-000000000010';
+  v_native_result jsonb;
+  v_native_settlement text;
+  v_preflight_job jsonb;
+  v_preflight_claim record;
+  v_preflight_handoff uuid := '80000000-0000-4000-8000-000000000011';
+  v_preflight_result jsonb;
+  v_review_job jsonb;
+  v_review_claim record;
+  v_review_handoff uuid := '80000000-0000-4000-8000-000000000012';
+  v_review_result jsonb;
 begin
   insert into auth.users(id) values (v_owner);
   insert into public.rooms(id,owner_id,title) values (v_room,v_owner,'Backroom wake queue test room');
@@ -445,9 +458,106 @@ begin
     or v_native_claim.out_provider_conversation_identity_digest<>v_native_provider_digest then
     raise exception 'Provider-aware claim must return the exact native conversation digest';
   end if;
-  if not public.ack_backroom_wake_job(v_native_claim.out_job_id,v_host_test,repeat('8',64),
-    v_binding_native,v_native_claim.out_lease_token,'ignored') then
-    raise exception 'Native provider identity test lease must be acknowledgeable';
+  if has_function_privilege('anon','public.settle_backroom_android_native_wake_result(uuid,text,text,uuid,text,uuid,uuid,uuid,text,integer,text,text,text,jsonb)','EXECUTE')
+    or has_function_privilege('authenticated','public.settle_backroom_android_native_wake_result(uuid,text,text,uuid,text,uuid,uuid,uuid,text,integer,text,text,text,jsonb)','EXECUTE')
+    or not has_function_privilege('service_role','public.settle_backroom_android_native_wake_result(uuid,text,text,uuid,text,uuid,uuid,uuid,text,integer,text,text,text,jsonb)','EXECUTE') then
+    raise exception 'Native result settlement must be service-role only';
+  end if;
+
+  v_native_result := jsonb_build_object(
+    'version',1,'kind','native_wake_result','handoffId',v_native_handoff::text,
+    'jobId',v_native_claim.out_job_id::text,'deviceId',v_native_device::text,
+    'roomId',v_room::text,'screenSessionId',v_native_screen_session::text,
+    'bindingId',v_binding_native::text,'targetId','target-native','targetRevision',1,
+    'state','submitted','promptInserted',true,'sendInvoked',true,'composerCleared',true,
+    'promptReadbackVerified',true,'composerIdentityRevalidated',true,
+    'sendControlIdentityRevalidated',true,
+    'composerIdentityDigest',repeat('a',64),'sendControlIdentityDigest',repeat('b',64),
+    'providerConversationIdentityRevalidated',true,
+    'providerConversationIdentityDigest',v_native_provider_digest
+  );
+  v_native_settlement := public.settle_backroom_android_native_wake_result(
+    v_native_claim.out_job_id,v_host_test,repeat('8',64),v_binding_native,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_claim.out_lease_token,'UTF8')),'hex'),
+    v_native_handoff,v_native_device,v_native_screen_session,'target-native',1,
+    repeat('a',64),repeat('b',64),v_native_provider_digest,v_native_result
+  );
+  if v_native_settlement<>'acknowledged'
+    or not exists(select 1 from public.backroom_wake_jobs j
+      where j.id=v_native_claim.out_job_id and j.state='acknowledged'
+        and j.lease_token_hash is null and j.native_result_payload=v_native_result
+        and j.native_result_at is not null) then
+    raise exception 'A proven Android Send must settle the original group job as acknowledged';
+  end if;
+  if public.settle_backroom_android_native_wake_result(
+    v_native_claim.out_job_id,v_host_test,repeat('8',64),v_binding_native,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_claim.out_lease_token,'UTF8')),'hex'),
+    v_native_handoff,v_native_device,v_native_screen_session,'target-native',1,
+    repeat('a',64),repeat('b',64),v_native_provider_digest,v_native_result
+  )<>'replayed' then
+    raise exception 'Duplicate native result ACK must be idempotent';
+  end if;
+
+  -- A preflight denial proves no insertion and no Send; only this outcome may retry.
+  v_preflight_job := public.enqueue_backroom_wake_job(
+    repeat('4',64),v_owner,v_room,v_participant,v_host_test,'space-native','session-native',repeat('8',64),
+    v_binding_native,'target-native','fingerprint-native',1,'native-preflight-event',
+    '@RMconnects'||chr(10)||'Event: native-preflight-event'||chr(10)||
+    'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
+  select * into v_preflight_claim from public.claim_backroom_wake_jobs_with_provider_identity(
+    v_host_test,repeat('8',64),v_binding_native,5,30) limit 1;
+  if not found or v_preflight_claim.out_job_id::text<>(v_preflight_job->>'job_id') then
+    raise exception 'Preflight test must claim the next native job';
+  end if;
+  v_preflight_result:=jsonb_build_object(
+    'version',1,'kind','native_wake_result','handoffId',v_preflight_handoff::text,
+    'jobId',v_preflight_claim.out_job_id::text,'deviceId',v_native_device::text,
+    'roomId',v_room::text,'screenSessionId',v_native_screen_session::text,
+    'bindingId',v_binding_native::text,'targetId','target-native','targetRevision',1,
+    'state','preflight_denied','promptInserted',false,'sendInvoked',false,
+    'composerCleared',false,'reason','permission_denied'
+  );
+  if public.settle_backroom_android_native_wake_result(
+    v_preflight_claim.out_job_id,v_host_test,repeat('8',64),v_binding_native,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_preflight_claim.out_lease_token,'UTF8')),'hex'),
+    v_preflight_handoff,v_native_device,v_native_screen_session,'target-native',1,
+    repeat('a',64),repeat('b',64),v_native_provider_digest,v_preflight_result
+  )<>'pending' or not exists(select 1 from public.backroom_wake_jobs j
+    where j.id=v_preflight_claim.out_job_id and j.state='pending'
+      and j.last_error_code='approval_required' and j.lease_token_hash is null
+      and j.native_result_payload=v_preflight_result) then
+    raise exception 'A proven no-effect permission denial must be returned to bounded retry';
+  end if;
+
+  -- A post-effect uncertain result is terminal and must never be replayed automatically.
+  v_review_job:=public.enqueue_backroom_wake_job(
+    repeat('3',64),v_owner,v_room,v_participant,v_host_test,'space-native','session-native',repeat('8',64),
+    v_binding_native,'target-native','fingerprint-native',1,'native-review-event',
+    '@RMconnects'||chr(10)||'Event: native-review-event'||chr(10)||
+    'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
+  select * into v_review_claim from public.claim_backroom_wake_jobs_with_provider_identity(
+    v_host_test,repeat('8',64),v_binding_native,5,30) limit 1;
+  if not found or v_review_claim.out_job_id::text<>(v_review_job->>'job_id') then
+    raise exception 'Review test must claim the next native job';
+  end if;
+  v_review_result:=jsonb_build_object(
+    'version',1,'kind','native_wake_result','handoffId',v_review_handoff::text,
+    'jobId',v_review_claim.out_job_id::text,'deviceId',v_native_device::text,
+    'roomId',v_room::text,'screenSessionId',v_native_screen_session::text,
+    'bindingId',v_binding_native::text,'targetId','target-native','targetRevision',1,
+    'state','needs_review','promptInserted',true,'sendInvoked',false,
+    'composerCleared',false,'reason','outcome_unknown'
+  );
+  if public.settle_backroom_android_native_wake_result(
+    v_review_claim.out_job_id,v_host_test,repeat('8',64),v_binding_native,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_review_claim.out_lease_token,'UTF8')),'hex'),
+    v_review_handoff,v_native_device,v_native_screen_session,'target-native',1,
+    repeat('a',64),repeat('b',64),v_native_provider_digest,v_review_result
+  )<>'failed' or not exists(select 1 from public.backroom_wake_jobs j
+    where j.id=v_review_claim.out_job_id and j.state='failed'
+      and j.last_error_code='result_unconfirmed' and j.lease_token_hash is null
+      and j.native_result_payload=v_review_result) then
+    raise exception 'Uncertain native effect must be terminal review, never replayed';
   end if;
 
   -- The durable job's provider identity is immutable after enqueue.
