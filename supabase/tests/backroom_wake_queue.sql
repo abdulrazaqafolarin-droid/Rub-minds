@@ -80,6 +80,10 @@ declare
   v_native_nonce_retry text := repeat('1',64);
   v_native_screen_session_retry uuid := '82000000-0000-4000-8000-000000000011';
   v_native_mapping_retry_id uuid;
+  v_native_challenge_screen_cap uuid := '83000000-0000-4000-8000-000000000012';
+  v_native_nonce_screen_cap text := repeat('2',64);
+  v_native_challenge_host_cap uuid := '83000000-0000-4000-8000-000000000013';
+  v_native_nonce_host_cap text := repeat('3',64);
 begin
   select pg_catalog.pg_get_functiondef(
     'public.settle_backroom_android_native_wake_result(uuid,text,text,uuid,text,uuid,uuid,uuid,text,integer,text,text,text,jsonb)'::regprocedure
@@ -276,13 +280,38 @@ begin
     raise exception 'A device-attested provider digest must remain immutable after first registration';
   end if;
 
-  -- Stopping the exact Android screen session must revoke its attestation.
+  -- Shortening a live screen lease caps both the attestation and any pending challenge.
+  insert into public.backroom_android_native_binding_challenges(
+    id,owner_id,room_id,binding_id,device_id,screen_session_id,app_package_name,nonce_digest,expires_at
+  ) values(
+    v_native_challenge_screen_cap,v_owner,v_room,v_binding_native_draft,v_native_device,
+    v_native_screen_session,'com.example.notes',
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_nonce_screen_cap,'UTF8')),'hex'),
+    pg_catalog.clock_timestamp()+interval '45 minutes'
+  );
+  update public.backroom_desktop_sessions
+  set expires_at=pg_catalog.clock_timestamp()+interval '5 minutes'
+  where session_id=v_native_screen_session and status='active';
+  if not exists(select 1 from public.backroom_android_native_bindings n
+      join public.backroom_desktop_sessions s on s.session_id=n.screen_session_id
+      where n.id=v_native_mapping_id and n.revoked_at is null
+        and n.expires_at<=s.expires_at)
+    or not exists(select 1 from public.backroom_android_native_binding_challenges c
+      join public.backroom_desktop_sessions s on s.session_id=c.screen_session_id
+      where c.id=v_native_challenge_screen_cap and c.revoked_at is null
+        and c.expires_at<=s.expires_at) then
+    raise exception 'Shortening a screen lease must cap its mapping and pending challenge';
+  end if;
+
+  -- Stopping the exact Android screen session revokes both active and pending phone authority.
   update public.backroom_desktop_sessions
   set status='stopped',stopped_at=pg_catalog.clock_timestamp()
   where session_id=v_native_screen_session and status='active';
   if not exists(select 1 from public.backroom_android_native_bindings n
-    where n.id=v_native_mapping_id and n.revoked_at is not null) then
-    raise exception 'Stopping the Android screen session must revoke its native group binding';
+    where n.id=v_native_mapping_id and n.revoked_at is not null)
+    or not exists(select 1 from public.backroom_android_native_binding_challenges c
+      where c.id=v_native_challenge_screen_cap and c.revoked_at is not null) then
+    raise exception 'Stopping the Android screen session must revoke its native mapping and pending challenges';
   end if;
   select public.register_backroom_android_native_binding(
     v_native_challenge,
