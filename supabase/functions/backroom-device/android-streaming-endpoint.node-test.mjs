@@ -59,6 +59,10 @@ test("Android stream Edge actions keep human auth, device bearer and platform bo
   assert.match(endpoint, /event: 'android_response'/);
   assert.match(endpoint, /event: 'android_signal'/);
   assert.match(endpoint, /event: 'android_response'/);
+  assert.match(endpoint, /validateAndroidNativeBindingRegistration/);
+  const ownerConfig = await read("supabase/functions/backroom-config/index.ts");
+  assert.doesNotMatch(ownerConfig, /providerConversationIdentityDigest:\s*row\./);
+  assert.doesNotMatch(ownerConfig, /\.\.\.\(input\.providerConversationIdentityDigest/);
   assert.match(endpoint, /validateAndroidSessionStart/);
   assert.match(endpoint, /validateAndroidDeviceCommand/);
   assert.match(endpoint, /validateAndroidCommandAck/);
