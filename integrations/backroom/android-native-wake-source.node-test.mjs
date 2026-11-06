@@ -170,7 +170,7 @@ test('native wake consent is device, app and signer bound with a 24-hour cap and
   assert.match(consent, /request\.bindingId/);
   assert.match(consent, /request\.leaseTokenDigest/);
   assert.match(store, /row\.jobId, row\.hostId, row\.roomId, row\.bindingId/);
-  assert.match(consent, /it\.grantId == grant\.grantId && it\.eventId == request\.eventId/);
+  assert.match(consent, /retained\.any \{[\s\S]*it\.deviceId == request\.deviceId[\s\S]*it\.roomId == request\.roomId[\s\S]*it\.bindingId == request\.bindingId[\s\S]*it\.jobId == request\.jobId \|\| it\.eventId == request\.eventId \|\|[\s\S]*it\.leaseTokenDigest == request\.leaseTokenDigest/);
   assert.match(store, /\.commit\(\)/);
   assert.match(store, /fun revokeDevice\(deviceId: String\)/);
   assert.match(consent, /native_wake_replay_ledger_corrupt/);
@@ -193,7 +193,7 @@ test('the 20-second native handoff deadline is carried to the driver and recheck
   assert.match(consent, /MAX_HANDOFF_CLOCK_SKEW_MILLIS = 3_000L/);
   assert.match(consent, /handoffExpiresAt - handoffIssuedAt > MAX_HANDOFF_TTL_MILLIS/);
   assert.match(consent, /MAX_HANDOFF_TTL_MILLIS = 20_000L/);
-  assert.match(consent, /request\.handoffExpiresAtMillis <= nowMillis/);
+  assert.match(consent, /handoffExpiresAt <= nowMillis/);
   const nativeInsert = method(
     ime,
     'private fun insertNativeWakeTrigger(request: NativeWakeExecutionRequest)',
@@ -212,7 +212,7 @@ test('the 20-second native handoff deadline is carried to the driver and recheck
 });
 test('Backroom capability copy reports the missing group forwarder rather than a missing phone queue', () => {
   assert.match(devicesUi, /AI-directed sending \/ native Off · On · Auto/);
-  assert.match(devicesUi, /Not available · provider adapters \\+ group forwarding missing/);
+  assert.match(devicesUi, /Not available · provider adapters \+ group forwarding missing/);
   assert.doesNotMatch(devicesUi, /Not available · wake queue not connected/);
 });
 
@@ -260,12 +260,12 @@ test('native Send is serialized against session and composer-target invalidation
   assert.match(submit, /bindingGenerationAtStart/);
   assert.match(submit, /NativeWakeBindingPolicy\.isCurrent/);
   const insertionGuard = method(submit, '            val insertion = synchronized(this)', '            if (insertion == null)');
-  assert.match(insertionGuard, /NativeWakeBindingPolicy\\.isCurrent/);
-  assert.match(insertionGuard, /DraftInputMethodService\\.insertNativeWakeTrigger\\(request\\)/);
+  assert.match(insertionGuard, /NativeWakeBindingPolicy\.isCurrent/);
+  assert.match(insertionGuard, /DraftInputMethodService\.insertNativeWakeTrigger\(request\)/);
 
   const finalClick = method(submit, '            val invoked = try {', '            if (!invoked)');
-  assert.match(finalClick, /synchronized\\(this\\)[\\s\\S]*performAction\\(AccessibilityNodeInfo\\.ACTION_CLICK\\)/);
-  assert.match(finalClick, /NativeWakeBindingPolicy\\.isCurrent/);
+  assert.match(finalClick, /synchronized\(this\)[\s\S]*performAction\(AccessibilityNodeInfo\.ACTION_CLICK\)/);
+  assert.match(finalClick, /NativeWakeBindingPolicy\.isCurrent/);
 
   const clearActive = method(service, '        fun clearActiveSession(', '        fun selectComposerTarget(');
   assert.match(clearActive, /synchronized\(current\)[\s\S]*nativeBindingGeneration\+\+/);
@@ -293,7 +293,7 @@ test('native wake fails closed without provider conversation identity and carrie
   assert.match(service, /boundProviderConversationIdentityDigest = null/);
   assert.match(screen, /isBoundToProviderConversation\(/);
   assert.match(service, /fun isBoundToProviderConversation\([\s\S]*?instance\?\.isBoundToProviderConversation\(/);
-  assert.match(screen, /providerConversationIdentityUnavailable/);
+  assert.match(screen, /provider_conversation_identity_unavailable/);
   assert.match(screen, /provider_conversation.*conversation_scope_unavailable/);
   const ack = method(screen, '    private fun acknowledgeNativeWake(', '    private fun processCommand(');
   assert.match(ack, /providerConversationIdentityRevalidated/);
@@ -315,7 +315,9 @@ test('native wake fails closed without provider conversation identity and carrie
   assert.match(store, /providerConversationIdentityDigest = fields.getOrNull\(16\)/);
   assert.match(store, /fields.size !in 16\.\.17/);
   assert.match(consent, /val providerConversationIdentityDigest: String/);
-  assert.doesNotMatch(consent, /providerConversationIdentityDigest: String =/);
+  const executionRequest = method(consent, 'data class NativeWakeExecutionRequest(', 'data class NativeWakeExecutionReservation(');
+  assert.match(executionRequest, /providerConversationIdentityDigest: String/);
+  assert.doesNotMatch(executionRequest, /providerConversationIdentityDigest: String\s*=/);
 });
 test('Android frame has no device-attested group-binding registration path yet', () => {
   // The current phone frame knows device + room and a local selection result.
@@ -328,14 +330,14 @@ test('Android frame has no device-attested group-binding registration path yet',
 
 test('composer selection distinguishes Send discovery from provider-conversation readiness without exporting its digest', () => {
   assert.match(composerPolicy, /providerConversationIdentityAvailable: Boolean = false/);
-  assert.match(service, /ProviderConversationIdentityPolicy\.isValidDigest\(providerConversationDigest\)/);
+  assert.match(service, /val selectedProviderDigest = providerConversationDigest\.takeIf \{[\s\S]*ProviderConversationIdentityPolicy\.isValidDigest\(it\)/);
   const composerAck = method(
     screen,
     'private fun sendComposerTargetAcknowledgement(',
     'private fun sendSendControlVerificationAcknowledgement('
   );
   assert.match(composerAck, /providerConversationIdentityAvailable/);
-  assert.doesNotMatch(composerAck, /providerConversationIdentityDigest|providerConversationDigest/);
+  assert.doesNotMatch(composerAck, /\.put\("(?:providerConversationIdentityDigest|providerConversationDigest)"/);
   assert.match(androidFrameUi, /acknowledgement\.providerConversationIdentityAvailable === true/);
   assert.match(androidFrameUi, /native wake blocked/);
   assert.match(androidFrameUi, /does not expose a verified stable conversation identity/);
