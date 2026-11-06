@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import {
   validateAndroidSessionStart, validateAndroidDeviceCommand,
   validateAndroidSignal, validateAndroidCommandAck, validateAndroidNativeWakeHandoff,
-  validateAndroidNativeWakeResult, validateAndroidSessionClose, mapAndroidQueuedCommand
+  validateAndroidNativeWakeResult, validateAndroidSessionClose, validateAndroidNativeBindingRegistration,
+  mapAndroidQueuedCommand
 } from "./android-streaming-protocol.mjs";
 import { createHash } from "node:crypto";
 
@@ -15,6 +16,22 @@ const commandId = "123e4567-e89b-42d3-a456-426614174004";
 const appPackageName = "com.example.notes";
 const now = 1_000_000;
 const offer = { sdp: "v=0\\r\\no=- 1 1 IN IP4 127.0.0.1\\r\\n" };
+
+test("native binding registration is device-scoped, exact, fresh and digest-only", () => {
+  const valid = {
+    bindingId, roomId, screenSessionId: sessionId, issuedAt: now,
+    appPackageName, appSignerDigest: "1".repeat(64),
+    composerIdentityDigest: "2".repeat(64), sendControlIdentityDigest: "3".repeat(64),
+    providerConversationIdentityDigest: "4".repeat(64),
+  };
+  assert.ok(validateAndroidNativeBindingRegistration(valid, { now }));
+  assert.equal(validateAndroidNativeBindingRegistration({ ...valid, issuedAt: now - 30_001 }, { now }), null);
+  assert.equal(validateAndroidNativeBindingRegistration({ ...valid, providerConversationIdentityDigest: "raw-thread-id" }, { now }), null);
+  assert.equal(validateAndroidNativeBindingRegistration({ ...valid, appPackageName: "com..notes" }, { now }), null);
+  assert.equal(validateAndroidNativeBindingRegistration({ ...valid, extra: "provider chat title" }, { now }), null);
+  const { deviceId: _untrustedDeviceId, ...noDeviceId } = { ...valid, deviceId };
+  assert.equal(validateAndroidNativeBindingRegistration(noDeviceId, { now }), null);
+});
 
 test("session-start accepts only a fresh, scoped offer for a valid package", () => {
   const valid = { deviceId, roomId, requestId, issuedAt: now, sessionId, appPackageName, offer };
