@@ -353,3 +353,10 @@ test('Android native wake activation and claims require an unrevoked, unexpired 
   assert.match(lookup,/\.gt\('expires_at',now\)/);
   assert.match(lookup,/nativeBindingAttested/);
 });
+
+test('native Android group leases cover the independent 60-second device command lease',()=>{
+  const claimStore = method(wakeGateway,'async claim(', 'async acknowledge(');
+  assert.match(claimStore,/surface:string/);
+  assert.match(claimStore,/p_lease_seconds:surface==='android_app'\?120:30/);
+  assert.match(claimStore,/hostId,sessionDigest,bindingId,surface,/);
+});
