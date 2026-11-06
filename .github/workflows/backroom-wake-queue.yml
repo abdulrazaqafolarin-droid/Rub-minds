@@ -47,6 +47,15 @@ jobs:
           create schema auth;
           create table auth.users (id uuid primary key);
           create or replace function auth.uid()
+          returns uuid language sql stable set search_path = ''
+          as $$ select nullif(pg_catalog.current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+          create schema if not exists private;
+          create schema if not exists realtime;
+          create table realtime.messages (id bigint generated always as identity primary key, topic text, extension text);
+          create or replace function realtime.topic()
+          returns text language sql stable set search_path = ''
+          as $$ select coalesce(pg_catalog.current_setting('realtime.topic', true), '') $$;
+          create or replace function auth.uid()
           returns uuid
           language sql stable
           set search_path = ''
@@ -106,7 +115,39 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261102223000_revoke_backroom_wake_on_mcp_leave.sql
-      - name: Test idempotency, claims, leases, retry, cancellation and least privilege
+      - name: Apply cloud device and pairing tables
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261030110000_backroom_cloud_devices.sql
+      - name: Apply desktop companion registration contract
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261030195538_backroom_desktop_companion_registration.sql
+      - name: Apply server-authorized screen sessions
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261030210225_backroom_desktop_server_signals.sql
+      - name: Apply Android device command and ACK queue
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261031183000_backroom_android_streaming_commands.sql
+      - name: Add bounded Android native result evidence
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261103133000_backroom_android_native_wake_result_evidence.sql
+      - name: Persist provider conversation identity through the group wake queue
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261104111500_backroom_provider_conversation_identity_queue.sql
+      - name: Add native Android result-to-group-lease settlement
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261105110000_backroom_android_native_wake_queue_settlement.sql
+      - name: Add device-bearer Android provider identity attestation
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261106120000_backroom_android_native_binding_attestation.sql
+      - name: Test idempotency, claims, native attestation, leases, retry, cancellation and least privilege
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/tests/backroom_wake_queue.sql
