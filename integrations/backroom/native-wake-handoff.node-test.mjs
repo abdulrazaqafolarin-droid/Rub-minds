@@ -23,7 +23,7 @@ const prompt=buildCanonicalWakePrompt('event_123');
 const digest=createHash('sha256').update(prompt,'utf8').digest('hex');
 const lease={
  jobId:ids.jobId,leaseToken:ids.leaseToken,eventId:'event_123',
- roomId:ids.roomId,bindingId:ids.bindingId,hostId:ids.hostId,
+ roomId:ids.roomId,bindingId:ids.bindingId,hostId:ids.hostId,sessionDigest:ids.sessionDigest,
  sessionId:'mcp-session-1',targetId:'native-target-1',
  targetIdentityFingerprint:'fingerprint-1',providerConversationIdentityDigest:'c'.repeat(64),targetRevision:4,
  prompt,promptDigest:digest,expiresAt:now+60_000,
