@@ -90,6 +90,28 @@ jobs:
             expires_at timestamptz not null,
             terminated_at timestamptz
           );
+          -- The bridge-state rejoin function locks and deletes the prior
+          -- idempotency row. This is a pre-existing production table, so the
+          -- isolated CI database must model its minimum contract explicitly.
+          create table public.rub_minds_mcp_join_requests (
+            session_digest text primary key
+              check (length(session_digest) = 64 and session_digest !~ '[^a-f0-9]'),
+            invite_token_hash text not null
+              check (length(invite_token_hash) = 64 and invite_token_hash !~ '[^a-f0-9]'),
+            agent_label text not null
+              check (char_length(agent_label) between 1 and 80),
+            credential_digest text not null
+              check (length(credential_digest) = 64 and credential_digest !~ '[^a-f0-9]'),
+            room_id uuid not null,
+            participant_id uuid not null,
+            expires_at timestamptz not null,
+            created_at timestamptz not null default now()
+          );
+          alter table public.rub_minds_mcp_join_requests enable row level security;
+          revoke all on table public.rub_minds_mcp_join_requests from public, anon, authenticated;
+          grant all on table public.rub_minds_mcp_join_requests to service_role;
+          create index rub_minds_mcp_join_requests_expiry_idx
+            on public.rub_minds_mcp_join_requests (expires_at);
           -- Minimal isolated device/screen schema required by the native binding attestation migration.
           create table public.backroom_devices (
             device_id uuid primary key,
