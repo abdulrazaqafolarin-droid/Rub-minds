@@ -463,7 +463,9 @@ begin
   end if;
   if has_function_privilege('anon','public.settle_backroom_android_native_wake_result(uuid,text,text,uuid,text,uuid,uuid,uuid,text,integer,text,text,text,jsonb)','EXECUTE')
     or has_function_privilege('authenticated','public.settle_backroom_android_native_wake_result(uuid,text,text,uuid,text,uuid,uuid,uuid,text,integer,text,text,text,jsonb)','EXECUTE')
-    or not has_function_privilege('service_role','public.settle_backroom_android_native_wake_result(uuid,text,text,uuid,text,uuid,uuid,uuid,text,integer,text,text,text,jsonb)','EXECUTE') then
+    or not has_function_privilege('service_role','public.settle_backroom_android_native_wake_result(uuid,text,text,uuid,text,uuid,uuid,uuid,text,integer,text,text,text,jsonb)','EXECUTE')
+    or (select p.prosecdef from pg_catalog.pg_proc p
+      where p.oid='public.settle_backroom_android_native_wake_result(uuid,text,text,uuid,text,uuid,uuid,uuid,text,integer,text,text,text,jsonb)'::regprocedure) then
     raise exception 'Native result settlement must be service-role only';
   end if;
 
