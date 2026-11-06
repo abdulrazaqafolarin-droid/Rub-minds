@@ -520,6 +520,10 @@ begin
   select * into v_challenge from public.backroom_android_native_binding_challenges c
   where c.id=p_challenge_id;
   if not found then return pg_catalog.jsonb_build_object('ok',false,'reason','challenge_not_found'); end if;
+  if not exists(select 1 from public.rooms r
+    where r.id=v_challenge.room_id and r.owner_id=v_challenge.owner_id) then
+    return pg_catalog.jsonb_build_object('ok',false,'reason','room_owner_changed');
+  end if;
 
   -- Lock order: session advisory -> MCP session -> group binding -> challenge -> screen -> device -> room pair -> app -> agent credential -> host -> native mapping.
   select * into v_binding from public.backroom_input_bindings b where b.id=v_challenge.binding_id;
