@@ -281,6 +281,7 @@ declare
   v_app public.backroom_device_apps%rowtype;
   v_host public.backroom_hosts%rowtype;
   v_mapping public.backroom_android_native_bindings%rowtype;
+  v_phone_mapping public.backroom_android_native_bindings%rowtype;
   v_now timestamptz:=pg_catalog.clock_timestamp();
   v_mapping_id uuid;
 begin
@@ -429,6 +430,20 @@ begin
   elsif found then
     update public.backroom_android_native_bindings set revoked_at=coalesce(revoked_at,v_now)
     where id=v_mapping.id;
+  end if;
+
+  -- The same live Android screen may serve only one group binding. Retire an
+  -- expired mapping on that screen before inserting a different group binding.
+  select * into v_phone_mapping from public.backroom_android_native_bindings n
+  where n.device_id=p_device_id and n.screen_session_id=p_screen_session_id
+    and n.revoked_at is null for update;
+  if found and v_phone_mapping.id is distinct from v_mapping.id then
+    if v_phone_mapping.expires_at>v_now then
+      return pg_catalog.jsonb_build_object('ok',false,'reason','phone_screen_already_bound');
+    end if;
+    update public.backroom_android_native_bindings
+    set revoked_at=coalesce(revoked_at,v_now)
+    where id=v_phone_mapping.id;
   end if;
 
   insert into public.backroom_android_native_bindings(
