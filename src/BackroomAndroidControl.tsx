@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'react';
 import { ArrowLeft, Hand, MonitorPlay, Power, ShieldCheck, Smartphone } from 'lucide-react';
 import { supabase } from './supabase';
-import { type BackroomDevice } from './backroomCloudDevices';
+import { createAndroidNativeBindingChallenge, listAndroidNativeBindingCandidates, revokeAndroidNativeBinding, type AndroidNativeBindingCandidate, type BackroomDevice } from './backroomCloudDevices';
 import { validateDeviceSignal } from '../integrations/backroom/desktop-realtime-protocol.mjs';
 import { createNormalizedDragSelection, getContainedVideoRect, mapVideoSelectionToFrame, normalizeClientPointToVideo } from '../integrations/backroom/video-selection-overlay.mjs';
 import { waitForIceGatheringComplete } from '../integrations/backroom/ice-gathering.mjs';
@@ -27,6 +27,12 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const [providerConversationIdentityAvailable, setProviderConversationIdentityAvailable] = useState(false);
   const [sendControlCheckPending, setSendControlCheckPending] = useState(false);
   const [sendControlStatus, setSendControlStatus] = useState('No native Send control verified.');
+  const [nativeBindingCandidates, setNativeBindingCandidates] = useState<AndroidNativeBindingCandidate[]>([]);
+  const [selectedNativeBindingId, setSelectedNativeBindingId] = useState('');
+  const [nativeBindingBusy, setNativeBindingBusy] = useState(false);
+  const [nativeBindingStatus, setNativeBindingStatus] = useState('No group AI linked to this phone composer.');
+  const [activeNativeBindingId, setActiveNativeBindingId] = useState('');
+
   const [selectionPreview, setSelectionPreview] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const [remoteTextBusy, setRemoteTextBusy] = useState(false);
   const [remoteTextStatus, setRemoteTextStatus] = useState('Focus a normal text field in the phone app, then type here.');
@@ -46,6 +52,11 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const composerTargetRef = useRef('');
   const sendTargetRef = useRef('');
   const pendingSendControlCheckRef = useRef('');
+  const pendingNativeBindingRequestRef = useRef('');
+  const nativeBindingTimerRef = useRef<number | null>(null);
+  const activeNativeBindingRef = useRef('');
+  const nativeBindingSessionRef = useRef('');
+
   const sendControlCheckTimerRef = useRef<number | null>(null);
   const controlExpiryRef = useRef<number | null>(null);
   const startTimerRef = useRef<number | null>(null);
@@ -55,6 +66,29 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const notify = useCallback((text: string, error = false) => {
     setMessage(text); setMessageError(error);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!roomId || !sessionId) {
+      setNativeBindingCandidates([]);
+      setSelectedNativeBindingId('');
+      return;
+    }
+    void listAndroidNativeBindingCandidates(roomId).then(candidates => {
+      if (cancelled) return;
+      setNativeBindingCandidates(candidates);
+      setSelectedNativeBindingId(current =>
+        candidates.some(candidate => candidate.bindingId === current) ? current : candidates[0]?.bindingId ?? ''
+      );
+    }).catch(() => {
+      if (!cancelled) {
+        setNativeBindingCandidates([]);
+        setSelectedNativeBindingId('');
+      }
+    });
+    return () => { cancelled = true; };
+  }, [roomId, sessionId, device.device_id]);
+
 
   const clearComposerTarget = useCallback((notifyPhone = true) => {
     const channel = dataRef.current;
@@ -78,7 +112,22 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     setComposerTargetId('');
     setSendControlVerified(false);
     setProviderConversationIdentityAvailable(false);
-        setSendControlStatus('No native Send control verified.');
+    const oldBindingId = activeNativeBindingRef.current;
+    const oldBindingSessionId = nativeBindingSessionRef.current;
+    activeNativeBindingRef.current = '';
+    nativeBindingSessionRef.current = '';
+    setActiveNativeBindingId('');
+    if (oldBindingId && oldBindingSessionId) {
+      void revokeAndroidNativeBinding({
+        deviceId: device.device_id, roomId, sessionId: oldBindingSessionId, bindingId: oldBindingId,
+      }).catch(() => setNativeBindingStatus('Phone target cleared locally; server revocation will be rechecked before any future wake.'));
+    }
+    if (nativeBindingTimerRef.current !== null) window.clearTimeout(nativeBindingTimerRef.current);
+    nativeBindingTimerRef.current = null;
+    pendingNativeBindingRequestRef.current = '';
+    setNativeBindingBusy(false);
+    setNativeBindingStatus('No group AI linked to this phone composer.');
+    setSendControlStatus('No native Send control verified.');
     setSelectionPreview(null);
     setSelectionMode(false);
   }, [appPackage]);
