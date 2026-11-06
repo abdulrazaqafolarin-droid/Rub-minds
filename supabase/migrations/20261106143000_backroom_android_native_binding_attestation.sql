@@ -476,7 +476,7 @@ begin
   where c.id=p_challenge_id;
   if not found then return pg_catalog.jsonb_build_object('ok',false,'reason','challenge_not_found'); end if;
 
-  -- Session advisory lock -> MCP session -> group binding -> challenge -> phone session.
+  -- Lock order: session advisory -> MCP session -> group binding -> challenge -> screen -> device -> room pair -> app -> agent credential -> host -> native mapping.
   select * into v_binding from public.backroom_input_bindings b where b.id=v_challenge.binding_id;
   if not found then return pg_catalog.jsonb_build_object('ok',false,'reason','group_binding_not_found'); end if;
   perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(v_binding.session_digest,0));
