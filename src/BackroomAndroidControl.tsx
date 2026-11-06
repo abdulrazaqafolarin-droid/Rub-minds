@@ -970,6 +970,10 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
           {nativeBindingBusy ? 'Linking phone target…' : activeNativeBindingId ? 'Phone target linked' : 'Link phone target to group AI'}
         </button>
         <p role="status">{nativeBindingStatus}</p>
+        {!nativeBindingCandidates.length && !activeNativeBindingId ? <small>
+          No unused Android group binding is available for this room yet. A group AI must already have an owner-authorized
+          Backroom input binding on an active host before this phone can attest its separate native composer.
+        </small> : null}
         <small>
           Linking asks the phone to verify its current app, composer, Send control and provider conversation locally.
           Only opaque identity digests are sent directly from the phone to Rub Minds; the browser receives a result only.
