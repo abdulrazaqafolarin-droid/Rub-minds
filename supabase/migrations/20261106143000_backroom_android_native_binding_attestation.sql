@@ -325,12 +325,11 @@ begin
   if not found then return pg_catalog.jsonb_build_object('ok',false,'reason','challenge_not_found'); end if;
 
   if v_binding.surface is distinct from 'android_app'
-    or v_binding.revoked_at is not null or v_binding.wake_enabled
+    or v_binding.revoked_at is not null
     or v_binding.owner_id is distinct from v_challenge.owner_id
     or v_binding.room_id is distinct from v_challenge.room_id
     or (v_binding.provider_conversation_identity_digest is not null
-      and v_binding.provider_conversation_identity_digest is distinct from p_provider_conversation_identity_digest)
-    or exists(select 1 from public.backroom_wake_jobs j where j.binding_id=v_binding.id) then
+      and v_binding.provider_conversation_identity_digest is distinct from p_provider_conversation_identity_digest) then
     return pg_catalog.jsonb_build_object('ok',false,'reason','group_binding_not_eligible');
   end if;
 
@@ -427,7 +426,7 @@ begin
   end if;
 
   if v_binding.surface is distinct from 'android_app'
-    or v_binding.revoked_at is not null
+    or v_binding.revoked_at is not null or v_binding.wake_enabled
     or (v_binding.provider_conversation_identity_digest is not null
       and v_binding.provider_conversation_identity_digest is distinct from p_provider_conversation_identity_digest)
     or exists(select 1 from public.backroom_wake_jobs j where j.binding_id=v_binding.id) then
