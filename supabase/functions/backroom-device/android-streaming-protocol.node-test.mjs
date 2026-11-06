@@ -254,6 +254,10 @@ test("native binding completion accepts only device-local opaque digests and exa
     providerConversationIdentityDigest: "e".repeat(64),
   };
   assert.equal(validateAndroidNativeBindingCompletion(valid)?.providerConversationIdentityDigest, valid.providerConversationIdentityDigest);
+  const secondSigner = "f".repeat(64);
+  const multiSigner = { ...valid, appSigningCertificateSha256: [valid.appSigningCertificateSha256, secondSigner].sort().join(".") };
+  assert.equal(validateAndroidNativeBindingCompletion(multiSigner)?.appSigningCertificateSha256, multiSigner.appSigningCertificateSha256);
+  assert.equal(validateAndroidNativeBindingCompletion({ ...multiSigner, appSigningCertificateSha256: multiSigner.appSigningCertificateSha256.replace(".", "/") }), null);
   assert.equal(validateAndroidNativeBindingCompletion({ ...valid, appSigningCertificateSha256: "bad" }), null);
   assert.equal(validateAndroidNativeBindingCompletion({ ...valid, providerConversationIdentityDigest: null }), null);
   assert.equal(validateAndroidNativeBindingCompletion({ ...valid, extra: true }), null);
