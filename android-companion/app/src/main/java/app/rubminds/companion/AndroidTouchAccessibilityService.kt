@@ -365,6 +365,25 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** Return proof only while the same selected composer, Send and provider thread revalidate locally. */
+    fun nativeBindingEvidence(sessionId: String, packageName: String): NativeBindingEvidence? = synchronized(this) {
+        if (boundSessionId != sessionId || boundPackageName != packageName ||
+            !isServiceEnabled(this)
+        ) return null
+        val composerTargetId = boundComposerTargetId ?: return null
+        val sendTargetId = boundSendTargetId ?: return null
+        val decision = revalidateSelectedSendControl(
+            sessionId, packageName, composerTargetId, sendTargetId
+        )
+        val providerDigest = decision.providerConversationIdentityDigest ?: return null
+        if (decision.candidate?.targetId != sendTargetId ||
+            !ProviderConversationIdentityPolicy.isValidDigest(composerTargetId) ||
+            !ProviderConversationIdentityPolicy.isValidDigest(sendTargetId) ||
+            !ProviderConversationIdentityPolicy.isValidDigest(providerDigest)
+        ) return null
+        NativeBindingEvidence(composerTargetId, sendTargetId, providerDigest)
+    }
+
     fun isSelectedComposerFocused(sessionId: String, packageName: String, targetId: String): Boolean {
         if (boundSessionId != sessionId || boundPackageName != packageName ||
             boundComposerTargetId != targetId || !isServiceEnabled(this)
@@ -1115,6 +1134,9 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         ): Boolean = instance?.isBoundToProviderConversation(
             sessionId, packageName, providerConversationIdentityDigest
         ) == true
+
+        fun nativeBindingEvidence(sessionId: String, packageName: String): NativeBindingEvidence? =
+            instance?.nativeBindingEvidence(sessionId, packageName)
 
 
         fun submitCanonicalWake(
