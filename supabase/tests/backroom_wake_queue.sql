@@ -7,6 +7,7 @@ declare
   v_trigger_human uuid := '30000000-0000-4000-8000-000000000097';
   v_trigger_binding uuid := '60000000-0000-4000-8000-000000000008';
   v_trigger_message uuid;
+  v_trigger_session_digest text := repeat('9',64);
   v_room uuid := '10000000-0000-0000-0000-000000000099';
   v_participant uuid := '30000000-0000-0000-0000-000000000099';
   v_session_digest text := repeat('b',64);
@@ -1184,7 +1185,7 @@ begin
   -- Session6 termination is exercised below through the atomic MCP Leave RPC.
 
   v_cancel_job := public.enqueue_backroom_wake_job(
-    repeat('3',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-3',repeat('d',64),
+    repeat('7',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-3',repeat('d',64),
     v_binding_3,'target-3','fingerprint-3',1,'event-3','@RMconnects'||chr(10)||'Event: event-3'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   if public.cancel_backroom_wake_job((v_cancel_job->>'job_id')::uuid,'20000000-0000-0000-0000-000000000098') then
     raise exception 'A different owner must not cancel a wake';
@@ -1197,7 +1198,7 @@ begin
   end if;
 
   v_expire_job := public.enqueue_backroom_wake_job(
-    repeat('4',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-4',repeat('e',64),
+    repeat('0',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-4',repeat('e',64),
     v_binding_4,'target-4','fingerprint-4',1,'event-4','@RMconnects'||chr(10)||'Event: event-4'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   update public.rub_minds_mcp_sessions set terminated_at=pg_catalog.clock_timestamp() where session_digest=repeat('e',64);
   select count(*) into v_count from public.claim_backroom_wake_jobs(v_host_test,repeat('e',64),v_binding_4,5,30);
@@ -1263,13 +1264,13 @@ begin
   insert into public.agent_connections(room_id,participant_id,owner_id,credential_digest,expires_at,revoked_at)
   values (v_trigger_room,v_trigger_ai,v_owner,repeat('8',64),pg_catalog.clock_timestamp()+interval '1 hour',null);
   insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,agent_credential_digest,room_id,participant_id,expires_at,terminated_at)
-  values (repeat('8',64),'ci-ciphertext-trigger',repeat('8',64),v_trigger_room,v_trigger_ai,pg_catalog.clock_timestamp()+interval '1 hour',null);
+  values (v_trigger_session_digest,'ci-ciphertext-trigger',repeat('8',64),v_trigger_room,v_trigger_ai,pg_catalog.clock_timestamp()+interval '1 hour',null);
   insert into public.backroom_input_bindings(
     id,owner_id,room_id,participant_id,host_id,session_digest,space_id,session_id,target_id,
     target_identity_fingerprint,target_revision,surface,locator_kind,locator_value,participation_mode,
     wake_enabled,wake_grant_id,wake_expires_at,max_wakes_per_minute,confirmed_at,revoked_at
   ) values (
-    v_trigger_binding,v_owner,v_trigger_room,v_trigger_ai,v_host_test,repeat('8',64),
+    v_trigger_binding,v_owner,v_trigger_room,v_trigger_ai,v_host_test,v_trigger_session_digest,
     'space-trigger','session-trigger','target-trigger','fingerprint-trigger',1,'browser_tab','dom',
     'composer-trigger','mentions',true,'70000000-0000-4000-8000-000000000008'::uuid,
     pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null
