@@ -10,6 +10,7 @@ const handoffPolicy = await read('../../android-companion/app/src/main/java/app/
 const handoffTest = await read('../../android-companion/app/src/test/java/app/rubminds/companion/AndroidNativeWakeHandoffPolicyTest.kt');
 const bindingPolicy = await read('../../android-companion/app/src/main/java/app/rubminds/companion/NativeWakeBindingPolicy.kt');
 const bindingPolicyTest = await read('../../android-companion/app/src/test/java/app/rubminds/companion/NativeWakeBindingPolicyTest.kt');
+const wakeGateway = await read('../../supabase/functions/backroom-wake/index.ts');
 const providerConversation = await read('../../android-companion/app/src/main/java/app/rubminds/companion/ProviderConversationIdentity.kt');
 const providerConversationTest = await read('../../android-companion/app/src/test/java/app/rubminds/companion/ProviderConversationIdentityPolicyTest.kt');
 const consent = await read('../../android-companion/app/src/main/java/app/rubminds/companion/NativeWakeConsentPolicy.kt');
@@ -341,4 +342,14 @@ test('composer selection distinguishes Send discovery from provider-conversation
   assert.match(androidFrameUi, /acknowledgement\.providerConversationIdentityAvailable === true/);
   assert.match(androidFrameUi, /native wake blocked/);
   assert.match(androidFrameUi, /does not expose a verified stable conversation identity/);
+});
+
+test('Android native wake activation and claims require an unrevoked, unexpired attestation with the exact provider digest',()=>{
+  const lookup = method(wakeGateway,'async function lookupBinding(', 'async function rpc(');
+  assert.match(lookup,/backroom_android_native_bindings/);
+  assert.match(lookup,/\.eq\('binding_id',data\.id\)/);
+  assert.match(lookup,/\.eq\('provider_conversation_identity_digest',data\.provider_conversation_identity_digest\)/);
+  assert.match(lookup,/\.is\('revoked_at',null\)/);
+  assert.match(lookup,/\.gt\('expires_at',now\)/);
+  assert.match(lookup,/nativeBindingAttested/);
 });
