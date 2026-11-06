@@ -26,7 +26,15 @@ async function lookupBinding(bindingId:string) {
   .eq('id',bindingId).maybeSingle();
  if(error||!data)return null;
  const now=new Date().toISOString();
- const [session,participant,connection]=await Promise.all([
+ const nativeBindingLookup=data.surface==='android_app'&&
+  typeof data.provider_conversation_identity_digest==='string'
+  ? db.from('backroom_android_native_bindings').select('id')
+    .eq('binding_id',data.id).eq('owner_id',data.owner_id).eq('room_id',data.room_id)
+    .eq('participant_id',data.participant_id)
+    .eq('provider_conversation_identity_digest',data.provider_conversation_identity_digest)
+    .is('revoked_at',null).gt('expires_at',now).maybeSingle()
+  : Promise.resolve({data:null,error:null});
+ const [session,participant,connection,nativeBinding]=await Promise.all([
   db.from('rub_minds_mcp_sessions').select('session_digest')
    .eq('session_digest',data.session_digest).eq('room_id',data.room_id)
    .eq('participant_id',data.participant_id).is('terminated_at',null)
@@ -36,15 +44,21 @@ async function lookupBinding(bindingId:string) {
    .in('status',['connected','active','autonomous']).maybeSingle(),
   db.from('agent_connections').select('id')
    .eq('room_id',data.room_id).eq('participant_id',data.participant_id)
-   .eq('owner_id',data.owner_id).is('revoked_at',null).gt('expires_at',now).maybeSingle()
+   .eq('owner_id',data.owner_id).is('revoked_at',null).gt('expires_at',now).maybeSingle(),
+  nativeBindingLookup
  ]);
  // An expired/terminated MCP handle, disconnected participant or revoked
  // participant credential invalidates the host's local poller. Returning null
  // causes the paired host to stop rather than spin on an empty queue forever.
  if(session.error||participant.error||connection.error||!session.data||!participant.data||!connection.data)return null;
+ // The mapping is service-role-only and its DB triggers revoke it when its
+ // screen, room pairing, host, MCP credential, device or installed signer changes.
+ // A lookup failure is treated as unattested: it must never enable native Send.
+ const nativeBindingAttested=data.surface==='android_app'&&!nativeBinding.error&&!!nativeBinding.data;
  return {bindingId:data.id,hostId:data.host_id,ownerId:data.owner_id,sessionDigest:data.session_digest,
   surface:data.surface,wakeEnabled:data.wake_enabled,confirmedAt:data.confirmed_at,wakeExpiresAt:data.wake_expires_at,
   providerConversationIdentityDigest:data.provider_conversation_identity_digest??null,
+  nativeBindingAttested,
   revokedAt:data.revoked_at};
 }
 async function rpc(name:string,args:Record<string,unknown>) {
