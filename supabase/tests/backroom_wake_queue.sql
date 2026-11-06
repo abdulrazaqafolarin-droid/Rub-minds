@@ -66,6 +66,7 @@ declare
   v_binding_lock_position integer;
   v_job_lock_position integer;
   v_native_binding_definition text;
+  v_trigger_definition text;
   v_attest_advisory_position integer;
   v_attest_session_position integer;
   v_attest_binding_position integer;
@@ -140,6 +141,79 @@ begin
     or (select p.prosecdef from pg_catalog.pg_proc p
       where p.oid='public.register_backroom_android_native_binding(uuid,text,uuid,uuid,text,text,text,text,text)'::regprocedure) then
     raise exception 'Native binding registration must use invoker privileges and consistent session-to-device lock ordering';
+  end if;
+
+  -- Parent identity changes and deletes must invalidate the exact phone proof.
+  select pg_catalog.pg_get_triggerdef(t.oid) into v_trigger_definition
+  from pg_catalog.pg_trigger t
+  where t.tgrelid='public.backroom_desktop_sessions'::regclass
+    and t.tgname='backroom_android_native_binding_screen_lifecycle_trigger';
+  if v_trigger_definition is null or position('device_id' in v_trigger_definition)=0
+    or position('room_id' in v_trigger_definition)=0 then
+    raise exception 'Screen lifecycle trigger must observe parent device and room identity changes';
+  end if;
+
+  select pg_catalog.pg_get_triggerdef(t.oid) into v_trigger_definition
+  from pg_catalog.pg_trigger t
+  where t.tgrelid='public.backroom_input_bindings'::regclass
+    and t.tgname='backroom_android_native_binding_group_binding_lifecycle_trigger';
+  if v_trigger_definition is null or position('target_id' in v_trigger_definition)=0
+    or position('host_id' in v_trigger_definition)=0
+    or position('session_digest' in v_trigger_definition)=0 then
+    raise exception 'Group binding lifecycle trigger must observe target and host/session identity changes';
+  end if;
+
+  select pg_catalog.pg_get_triggerdef(t.oid) into v_trigger_definition
+  from pg_catalog.pg_trigger t
+  where t.tgrelid='public.backroom_device_room_bindings'::regclass
+    and t.tgname='backroom_android_native_binding_room_unpair_trigger';
+  if v_trigger_definition is null or position('DELETE' in v_trigger_definition)=0
+    or position('device_id' in v_trigger_definition)=0 then
+    raise exception 'Deleting or reassigning the room-device pairing must revoke native proofs';
+  end if;
+
+  select pg_catalog.pg_get_triggerdef(t.oid) into v_trigger_definition
+  from pg_catalog.pg_trigger t
+  where t.tgrelid='public.backroom_device_apps'::regclass
+    and t.tgname='backroom_android_native_binding_app_signer_trigger';
+  if v_trigger_definition is null or position('DELETE' in v_trigger_definition)=0
+    or position('package_name' in v_trigger_definition)=0 then
+    raise exception 'App package/signer replacement and deletion must revoke native proofs';
+  end if;
+
+  select pg_catalog.pg_get_triggerdef(t.oid) into v_trigger_definition
+  from pg_catalog.pg_trigger t
+  where t.tgrelid='public.backroom_hosts'::regclass
+    and t.tgname='backroom_android_native_binding_host_lifecycle_trigger';
+  if v_trigger_definition is null or position('host_id' in v_trigger_definition)=0 then
+    raise exception 'Host identity changes must revoke dependent native proofs';
+  end if;
+
+  select pg_catalog.pg_get_triggerdef(t.oid) into v_trigger_definition
+  from pg_catalog.pg_trigger t
+  where t.tgrelid='public.backroom_devices'::regclass
+    and t.tgname='backroom_android_native_binding_device_lifecycle_trigger';
+  if v_trigger_definition is null or position('platform' in v_trigger_definition)=0
+    or position('owner_id' in v_trigger_definition)=0 then
+    raise exception 'Device owner/platform reassignment must revoke native proofs';
+  end if;
+
+  select pg_catalog.pg_get_triggerdef(t.oid) into v_trigger_definition
+  from pg_catalog.pg_trigger t
+  where t.tgrelid='public.rub_minds_mcp_sessions'::regclass
+    and t.tgname='backroom_android_native_binding_mcp_session_lifecycle_trigger';
+  if v_trigger_definition is null or position('DELETE' in v_trigger_definition)=0
+    or position('session_digest' in v_trigger_definition)=0 then
+    raise exception 'MCP session deletion or identity replacement must revoke native proofs';
+  end if;
+
+  select pg_catalog.pg_get_triggerdef(t.oid) into v_trigger_definition
+  from pg_catalog.pg_trigger t
+  where t.tgrelid='public.agent_connections'::regclass
+    and t.tgname='backroom_android_native_binding_agent_connection_lifecycle_trigger';
+  if v_trigger_definition is null or position('DELETE' in v_trigger_definition)=0
+    or position('credential_digest' in v_trigger_definition)=0 then
+    raise exception 'Agent credential deletion or replacement must revoke native proofs';
   end if;
 
   insert into auth.users(id) values (v_owner);
