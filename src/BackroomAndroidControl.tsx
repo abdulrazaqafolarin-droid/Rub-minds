@@ -407,7 +407,6 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
               'Phone target linked to ' + (target?.displayName ?? 'the selected group AI') +
               '. Native autonomous sending remains disabled until a verified provider resolver and trusted forwarder are available.'
             );
-            setNativeBindingCandidates(items => items.filter(item => item.bindingId !== selectedNativeBindingId));
             notify('The Android companion confirmed the group binding using phone-local identity proof. No message was sent.');
           } else {
             setNativeBindingStatus(
@@ -955,6 +954,29 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
           {remoteTextBusy ? 'Inserting…' : 'Insert draft'}
         </button>
       </div>
+      {composerTargetId && sendControlVerified && providerConversationIdentityAvailable ? <div className="br-android-native-binding">
+        <label htmlFor="br-android-native-group">Group AI participant</label>
+        <select id="br-android-native-group" value={selectedNativeBindingId}
+          onChange={event => setSelectedNativeBindingId(event.target.value)}
+          disabled={nativeBindingBusy || Boolean(activeNativeBindingId)}>
+          <option value="">Choose an AI already joined to this group</option>
+          {nativeBindingCandidates.map(candidate =>
+            <option key={candidate.bindingId} value={candidate.bindingId}>{candidate.displayName}</option>
+          )}
+        </select>
+        <button type="button" onClick={() => void bindSelectedGroupAI()}
+          disabled={!selectedNativeBindingId || nativeBindingBusy || Boolean(activeNativeBindingId) ||
+            !viewReady || !sourceVisible || !dataReady}>
+          {nativeBindingBusy ? 'Linking phone target…' : activeNativeBindingId ? 'Phone target linked' : 'Link phone target to group AI'}
+        </button>
+        <p role="status">{nativeBindingStatus}</p>
+        <small>
+          Linking asks the phone to verify its current app, composer, Send control and provider conversation locally.
+          Only opaque identity digests are sent directly from the phone to Rub Minds; the browser receives a result only.
+          This does not grant autonomous sending or activate native Off / On / Auto.
+        </small>
+      </div> : null}
+      {activeNativeBindingId ? <p className="br-android-stream-disclaimer">A device-attested group binding is active for this live screen session. Clear the composer or stop the session to revoke it.</p> : null}
       <p role="status">{remoteTextStatus}</p>
       <small>{sendControlVerified
         ? providerConversationIdentityAvailable
