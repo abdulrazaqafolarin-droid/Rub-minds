@@ -3,6 +3,8 @@ alter table public.backroom_wake_jobs
   add column if not exists native_result_payload jsonb;
 alter table public.backroom_wake_jobs
   add column if not exists native_result_at timestamptz;
+alter table public.backroom_wake_jobs
+  add column if not exists native_result_receipts jsonb not null default '[]'::jsonb;
 
 do $constraints$
 begin
@@ -21,6 +23,18 @@ begin
     alter table public.backroom_wake_jobs
       add constraint backroom_wake_native_result_time_check
       check ((native_result_payload is null)=(native_result_at is null));
+  end if;
+  if not exists(select 1 from pg_catalog.pg_constraint
+    where conrelid='public.backroom_wake_jobs'::regclass
+      and conname='backroom_wake_native_result_receipts_bound') then
+    alter table public.backroom_wake_jobs
+      add constraint backroom_wake_native_result_receipts_bound
+      check (case
+        when pg_catalog.jsonb_typeof(native_result_receipts)='array'
+          then pg_catalog.jsonb_array_length(native_result_receipts)<=5
+            and pg_catalog.octet_length(native_result_receipts::text)<=45000
+        else false
+      end);
   end if;
 end;
 $constraints$;
@@ -43,6 +57,7 @@ declare
   v_result_state text;
   v_next_state text;
   v_error_code text;
+  v_prior_receipt jsonb;
 begin
   if p_job_id is null
     or p_host_id is null or p_host_id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
@@ -143,9 +158,19 @@ begin
     raise exception 'Native wake result room does not match the durable group job';
   end if;
 
-  -- A device retries after a lost HTTP response; exact evidence is idempotent.
+  -- Preserve one bounded result per handoff. A safe preflight retry may
+  -- advance the same durable job and replace its latest result, but it must
+  -- not erase the receipt needed to acknowledge a delayed duplicate device ACK.
   if v_job.native_result_payload=p_result_payload then
     return 'replayed';
+  end if;
+  select receipt.value into v_prior_receipt
+  from pg_catalog.jsonb_array_elements(v_job.native_result_receipts) as receipt(value)
+  where receipt.value->>'handoffId'=p_handoff_id::text
+  limit 1;
+  if found then
+    if v_prior_receipt=p_result_payload then return 'replayed'; end if;
+    raise exception 'Conflicting native wake result for a previously settled handoff';
   end if;
 
   if v_job.state is distinct from 'leased' or v_job.lease_owner is distinct from p_host_id
@@ -199,6 +224,7 @@ begin
       last_error_code=v_error_code,
       native_result_payload=p_result_payload,
       native_result_at=pg_catalog.clock_timestamp(),
+      native_result_receipts=j.native_result_receipts || pg_catalog.jsonb_build_array(p_result_payload),
       updated_at=pg_catalog.clock_timestamp()
   where j.id=p_job_id and j.state='leased'
     and j.lease_owner=p_host_id and j.lease_token_hash=p_lease_token_digest
@@ -218,6 +244,8 @@ grant execute on function public.settle_backroom_android_native_wake_result(
 
 comment on column public.backroom_wake_jobs.native_result_payload is
   'Bounded native device result evidence that settles the original group wake lease; excludes prompts and group-message bodies.';
+comment on column public.backroom_wake_jobs.native_result_receipts is
+  'Bounded per-handoff native result receipts (at most five per job) retained so delayed duplicate device ACKs remain idempotent across safe preflight retries.';
 comment on function public.settle_backroom_android_native_wake_result(
   uuid,text,text,uuid,text,uuid,uuid,uuid,text,integer,text,text,text,jsonb
 ) is
