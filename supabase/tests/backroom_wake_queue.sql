@@ -102,10 +102,10 @@ begin
   select pg_catalog.pg_get_functiondef(
     'public.settle_backroom_android_native_wake_result(uuid,text,text,uuid,text,uuid,uuid,uuid,text,integer,text,text,text,jsonb)'::regprocedure
   ) into v_settlement_definition;
-  v_advisory_lock_position:=pg_catalog.position('pg_advisory_xact_lock' in v_settlement_definition);
-  v_session_lock_position:=pg_catalog.position('from public.rub_minds_mcp_sessions s' in v_settlement_definition);
-  v_binding_lock_position:=pg_catalog.position('from public.backroom_input_bindings b' in v_settlement_definition);
-  v_job_lock_position:=pg_catalog.position('from public.backroom_wake_jobs j' in v_settlement_definition);
+  v_advisory_lock_position:=position('pg_advisory_xact_lock' in v_settlement_definition);
+  v_session_lock_position:=position('from public.rub_minds_mcp_sessions s' in v_settlement_definition);
+  v_binding_lock_position:=position('from public.backroom_input_bindings b' in v_settlement_definition);
+  v_job_lock_position:=position('from public.backroom_wake_jobs j' in v_settlement_definition);
   if v_advisory_lock_position=0 or v_session_lock_position=0
     or v_binding_lock_position=0 or v_job_lock_position=0
     or not (v_advisory_lock_position<v_session_lock_position
@@ -117,17 +117,17 @@ begin
   select pg_catalog.pg_get_functiondef(
     'public.register_backroom_android_native_binding(uuid,text,uuid,uuid,text,text,text,text,text)'::regprocedure
   ) into v_native_binding_definition;
-  v_attest_advisory_position:=pg_catalog.position('pg_advisory_xact_lock' in v_native_binding_definition);
-  v_attest_session_position:=pg_catalog.position('from public.rub_minds_mcp_sessions s' in v_native_binding_definition);
-  v_attest_binding_position:=pg_catalog.position('where b.id=v_challenge.binding_id for update' in v_native_binding_definition);
-  v_attest_challenge_position:=pg_catalog.position('where c.id=p_challenge_id for update' in v_native_binding_definition);
-  v_attest_challenge_scope_position:=pg_catalog.position('v_challenge.binding_id is distinct from v_binding.id' in v_native_binding_definition);
-  v_attest_screen_position:=pg_catalog.position('where s.session_id=p_screen_session_id' in v_native_binding_definition);
-  v_attest_device_position:=pg_catalog.position('where d.device_id=p_device_id' in v_native_binding_definition);
-  v_attest_app_position:=pg_catalog.position('from public.backroom_device_apps a' in v_native_binding_definition);
-  v_attest_connection_position:=pg_catalog.position('from public.agent_connections ac' in v_native_binding_definition);
-  v_attest_host_position:=pg_catalog.position('from public.backroom_hosts h' in v_native_binding_definition);
-  v_attest_mapping_position:=pg_catalog.position('where n.binding_id=v_binding.id and n.revoked_at is null for update' in v_native_binding_definition);
+  v_attest_advisory_position:=position('pg_advisory_xact_lock' in v_native_binding_definition);
+  v_attest_session_position:=position('from public.rub_minds_mcp_sessions s' in v_native_binding_definition);
+  v_attest_binding_position:=position('where b.id=v_challenge.binding_id for update' in v_native_binding_definition);
+  v_attest_challenge_position:=position('where c.id=p_challenge_id for update' in v_native_binding_definition);
+  v_attest_challenge_scope_position:=position('v_challenge.binding_id is distinct from v_binding.id' in v_native_binding_definition);
+  v_attest_screen_position:=position('where s.session_id=p_screen_session_id' in v_native_binding_definition);
+  v_attest_device_position:=position('where d.device_id=p_device_id' in v_native_binding_definition);
+  v_attest_app_position:=position('from public.backroom_device_apps a' in v_native_binding_definition);
+  v_attest_connection_position:=position('from public.agent_connections ac' in v_native_binding_definition);
+  v_attest_host_position:=position('from public.backroom_hosts h' in v_native_binding_definition);
+  v_attest_mapping_position:=position('where n.binding_id=v_binding.id and n.revoked_at is null for update' in v_native_binding_definition);
   if v_attest_advisory_position=0 or v_attest_session_position=0
     or v_attest_binding_position=0 or v_attest_challenge_position=0
     or v_attest_challenge_scope_position<=v_attest_challenge_position
@@ -454,7 +454,7 @@ begin
     repeat('c',64),repeat('d',64),v_native_provider_digest
   ) into v_native_attestation;
   if v_native_attestation->>'ok' is distinct from 'false'
-    or v_native_attestation->>'reason' is distinct from 'challenge_already_consumed' then
+    or v_native_attestation->>'reason' is distinct from 'screen_session_inactive' then
     raise exception 'A consumed challenge must not replay a revoked phone attestation';
   end if;
 
