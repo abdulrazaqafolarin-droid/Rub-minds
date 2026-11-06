@@ -34,6 +34,7 @@ class NativeWakeConsentPolicyTest {
 
     private fun request(
         event: String = "70000000-0000-4000-8000-000000000001",
+        grantId: String = this.grantId,
         job: String = jobId,
         host: String = hostId,
         room: String = roomId,
@@ -189,13 +190,13 @@ class NativeWakeConsentPolicyTest {
             now + 1_000L, now + 60L * 60L * 1000L
         )
         val duplicateEvent = NativeWakeConsentPolicy.reserveExecution(
-            renewed, request(job = "76000000-0000-4000-8000-000000000002"),
+            renewed, request(grantId = renewedGrant, job = "76000000-0000-4000-8000-000000000002"),
             first.reservations, now + 2_000L
         )
         assertFalse(duplicateEvent.allowed)
         assertEquals("native_wake_event_already_reserved", duplicateEvent.reason)
         val duplicateJob = NativeWakeConsentPolicy.reserveExecution(
-            renewed, request(event = "another_event"), first.reservations, now + 2_000L
+            renewed, request(grantId = renewedGrant, event = "another_event"), first.reservations, now + 2_000L
         )
         assertFalse(duplicateJob.allowed)
         assertEquals("native_wake_event_already_reserved", duplicateJob.reason)
@@ -227,13 +228,17 @@ class NativeWakeConsentPolicyTest {
         var rows = emptyList<NativeWakeExecutionReservation>()
         repeat(NativeWakeConsentPolicy.MAX_WAKES_PER_MINUTE) { index ->
             val decision = NativeWakeConsentPolicy.reserveExecution(
-                grant(), request(event = "event_$index", job = jobUuid(index + 1)), rows, now + index * 1_000L
+                grant(), request(
+                    event = "event_$index",
+                    job = jobUuid(index + 1),
+                    leaseDigest = index.toString().padStart(64, '0')
+                ), rows, now + index * 1_000L
             )
             assertTrue(decision.allowed)
             rows = decision.reservations
         }
         val limited = NativeWakeConsentPolicy.reserveExecution(
-            grant(), request(event = "event_seventh"), rows, now + 5_999L
+            grant(), request(event = "event_seventh", leaseDigest = "7".repeat(64)), rows, now + 5_999L
         )
         assertFalse(limited.allowed)
         assertEquals("native_wake_rate_limited", limited.reason)
