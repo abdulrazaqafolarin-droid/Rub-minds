@@ -87,8 +87,9 @@ test("control ACK broadcasts before marking the leased queue row acknowledged an
   assert.match(handler, /row.status === 'acked'/);
   assert.match(handler, /row.result !== ack.result/);
   const broadcastIndex = handler.indexOf("await broadcastControlResult()");
-  const ackUpdateIndex = handler.search(/\\.update\\(\\{\\s*status: 'acked'/);
-  assert.ok(broadcastIndex >= 0 && ackUpdateIndex > broadcastIndex,
+  const ackUpdateIndex = handler.indexOf(".update({");
+  const ackStatusIndex = handler.indexOf("status: 'acked'", ackUpdateIndex);
+  assert.ok(broadcastIndex >= 0 && ackUpdateIndex > broadcastIndex && ackStatusIndex > ackUpdateIndex,
     "the private control result must be delivered before the ACK row is committed");
   assert.match(handler, /android_control_result_delivery_failed/);
   assert.match(handler, /replayed: true/);
