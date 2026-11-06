@@ -33,7 +33,7 @@ test('authenticated claims, acknowledgements, retries are scoped to DB-authorita
  assert.deepEqual(await gateway.acknowledge({...scope,jobId,leaseToken,outcome:'ignored'}),{ok:true,accepted:true});
  assert.deepEqual(await gateway.retry({...scope,jobId,leaseToken,errorCode:'provider_busy',retryAfterSeconds:5}),{ok:true,state:'pending'});
  assert.equal(calls.length,3);
- assert.deepEqual(calls[0][1],{hostId,bindingId,sessionDigest,limit:2,providerConversationIdentityDigest:null});
+ assert.deepEqual(calls[0][1],{hostId,bindingId,sessionDigest,surface:'browser_tab',limit:2,providerConversationIdentityDigest:null});
  assert.equal(calls[1][1].hostToken,undefined);
 });
 test('native wake claims and activation fail closed without a provider-conversation digest',async()=>{
@@ -89,7 +89,17 @@ test('claim passes the exact provider conversation digest from the authenticated
  const digest='d'.repeat(64);
  const {gateway,calls}=setup({binding:{providerConversationIdentityDigest:digest}});
  assert.deepEqual(await gateway.claim({...scope,limit:1}),{ok:true,leases:[]});
- assert.deepEqual(calls[0],['claim',{hostId,bindingId,sessionDigest,providerConversationIdentityDigest:digest,limit:1}]);
+ assert.deepEqual(calls[0],['claim',{hostId,bindingId,sessionDigest,surface:'browser_tab',providerConversationIdentityDigest:digest,limit:1}]);
+});
+
+test('Android claim carries its authenticated surface to the private lease store',async()=>{
+ const digest='d'.repeat(64);
+ const {gateway,calls}=setup({binding:{surface:'android_app',providerConversationIdentityDigest:digest,nativeBindingAttested:true}});
+ assert.deepEqual(await gateway.claim(scope),{ok:true,leases:[]});
+ assert.deepEqual(calls[0],['claim',{
+  hostId,bindingId,sessionDigest,surface:'android_app',
+  providerConversationIdentityDigest:digest,limit:5
+ }]);
 });
 
 test('claim rejects a lease whose provider digest differs from the authenticated binding',async()=>{
