@@ -260,8 +260,8 @@ object NativeWakeConsentPolicy {
                 it.reservedAtMillis > nowMillis - 60_000L &&
                 it.reservedAtMillis <= nowMillis
         }
-        if (recent >= MAX_WAKES_PER_MINUTE) return denied("native_wake_rate_limited", retained)
         if (retained.size >= MAX_REPLAY_RECORDS) return denied("native_wake_replay_ledger_full", retained)
+        if (recent >= MAX_WAKES_PER_MINUTE) return denied("native_wake_rate_limited", retained)
 
         val reservation = NativeWakeExecutionReservation(
             grantId = grant.grantId,
