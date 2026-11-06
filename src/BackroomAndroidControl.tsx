@@ -53,6 +53,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
   const sendTargetRef = useRef('');
   const pendingSendControlCheckRef = useRef('');
   const pendingNativeBindingRequestRef = useRef('');
+  const selectedNativeBindingIdRef = useRef('');
   const nativeBindingTimerRef = useRef<number | null>(null);
   const activeNativeBindingRef = useRef('');
   const nativeBindingSessionRef = useRef('');
@@ -77,9 +78,10 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     void listAndroidNativeBindingCandidates(roomId).then(candidates => {
       if (cancelled) return;
       setNativeBindingCandidates(candidates);
-      setSelectedNativeBindingId(current =>
-        candidates.some(candidate => candidate.bindingId === current) ? current : candidates[0]?.bindingId ?? ''
-      );
+      const selected = candidates.some(candidate => candidate.bindingId === selectedNativeBindingIdRef.current)
+        ? selectedNativeBindingIdRef.current : candidates[0]?.bindingId ?? '';
+      selectedNativeBindingIdRef.current = selected;
+      setSelectedNativeBindingId(selected);
     }).catch(() => {
       if (!cancelled) {
         setNativeBindingCandidates([]);
@@ -398,14 +400,13 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
           nativeBindingTimerRef.current = null;
           pendingNativeBindingRequestRef.current = '';
           setNativeBindingBusy(false);
-          if (acknowledgement.bound && selectedNativeBindingId) {
-            activeNativeBindingRef.current = selectedNativeBindingId;
+          const completedBindingId = selectedNativeBindingIdRef.current;
+          if (acknowledgement.bound && completedBindingId) {
+            activeNativeBindingRef.current = completedBindingId;
             nativeBindingSessionRef.current = nextSessionId;
-            setActiveNativeBindingId(selectedNativeBindingId);
-            const target = nativeBindingCandidates.find(candidate => candidate.bindingId === selectedNativeBindingId);
+            setActiveNativeBindingId(completedBindingId);
             setNativeBindingStatus(
-              'Phone target linked to ' + (target?.displayName ?? 'the selected group AI') +
-              '. Native autonomous sending remains disabled until a verified provider resolver and trusted forwarder are available.'
+              'Phone target linked to the selected group AI. Native autonomous sending remains disabled until a verified provider resolver and trusted forwarder are available.'
             );
             notify('The Android companion confirmed the group binding using phone-local identity proof. No message was sent.');
           } else {
@@ -957,7 +958,10 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       {composerTargetId && sendControlVerified && providerConversationIdentityAvailable ? <div className="br-android-native-binding">
         <label htmlFor="br-android-native-group">Group AI participant</label>
         <select id="br-android-native-group" value={selectedNativeBindingId}
-          onChange={event => setSelectedNativeBindingId(event.target.value)}
+          onChange={event => {
+            selectedNativeBindingIdRef.current = event.target.value;
+            setSelectedNativeBindingId(event.target.value);
+          }}
           disabled={nativeBindingBusy || Boolean(activeNativeBindingId)}>
           <option value="">Choose an AI already joined to this group</option>
           {nativeBindingCandidates.map(candidate =>
