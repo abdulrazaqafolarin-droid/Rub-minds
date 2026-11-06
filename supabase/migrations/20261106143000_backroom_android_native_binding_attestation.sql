@@ -269,7 +269,7 @@ grant execute on function public.revoke_backroom_android_native_binding_on_host_
 drop trigger if exists backroom_android_native_binding_host_lifecycle_trigger
   on public.backroom_hosts;
 create trigger backroom_android_native_binding_host_lifecycle_trigger
-after update of revoked_at on public.backroom_hosts
+after update of revoked_at,expires_at on public.backroom_hosts
 for each row execute function public.revoke_backroom_android_native_binding_on_host_change();
 
 create or replace function public.revoke_backroom_android_native_binding_on_device_change()
