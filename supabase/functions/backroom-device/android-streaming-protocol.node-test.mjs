@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import {
   validateAndroidSessionStart, validateAndroidDeviceCommand,
   validateAndroidSignal, validateAndroidCommandAck, validateAndroidNativeWakeHandoff,
-  validateAndroidNativeWakeResult, validateAndroidSessionClose, mapAndroidQueuedCommand
+  validateAndroidNativeWakeResult, validateAndroidSessionClose, mapAndroidQueuedCommand,
+  validateAndroidNativeBindingChallenge, validateAndroidNativeBindingCompletion
 } from "./android-streaming-protocol.mjs";
 import { createHash } from "node:crypto";
 
@@ -230,4 +231,31 @@ test("native wake handoff accepts only the issuer clock skew window", () => {
   assert.ok(validateAndroidNativeWakeHandoff(withinClockSkew, { now }));
   const beyondClockSkew = { ...valid, issuedAt: now + 3_001, expiresAt: now + 23_001 };
   assert.equal(validateAndroidNativeWakeHandoff(beyondClockSkew, { now }), null);
+});
+
+
+test("native binding challenge is a fresh owner-scoped request for one Android screen and group binding", () => {
+  const valid = {
+    deviceId, roomId, requestId, issuedAt: now, sessionId, appPackageName,
+    bindingId: "123e4567-e89b-42d3-a456-426614174005",
+  };
+  assert.equal(validateAndroidNativeBindingChallenge(valid, { now })?.bindingId, valid.bindingId);
+  assert.equal(validateAndroidNativeBindingChallenge({ ...valid, issuedAt: now - 30_001 }, { now }), null);
+  assert.equal(validateAndroidNativeBindingChallenge({ ...valid, appPackageName: "com..notes" }, { now }), null);
+  assert.equal(validateAndroidNativeBindingChallenge({ ...valid, bindingId: "bad" }, { now }), null);
+  assert.equal(validateAndroidNativeBindingChallenge({ ...valid, nonce: "a".repeat(64) }, { now }), null);
+});
+
+test("native binding completion accepts only device-local opaque digests and exact challenge scope", () => {
+  const valid = {
+    challengeId: requestId, nonce: "a".repeat(64), screenSessionId: sessionId,
+    appPackageName, appSigningCertificateSha256: "b".repeat(64),
+    composerIdentityDigest: "c".repeat(64), sendControlIdentityDigest: "d".repeat(64),
+    providerConversationIdentityDigest: "e".repeat(64),
+  };
+  assert.equal(validateAndroidNativeBindingCompletion(valid)?.providerConversationIdentityDigest, valid.providerConversationIdentityDigest);
+  assert.equal(validateAndroidNativeBindingCompletion({ ...valid, appSigningCertificateSha256: "bad" }), null);
+  assert.equal(validateAndroidNativeBindingCompletion({ ...valid, providerConversationIdentityDigest: null }), null);
+  assert.equal(validateAndroidNativeBindingCompletion({ ...valid, extra: true }), null);
+  assert.equal(validateAndroidNativeBindingCompletion({ ...valid, nonce: "short" }), null);
 });
