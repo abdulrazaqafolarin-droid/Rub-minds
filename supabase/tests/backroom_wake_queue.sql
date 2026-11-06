@@ -7,7 +7,7 @@ declare
   v_trigger_human uuid := '30000000-0000-4000-8000-000000000097';
   v_trigger_binding uuid := '60000000-0000-4000-8000-000000000008';
   v_trigger_message uuid;
-  v_trigger_session_digest text := repeat('9',64);
+  v_trigger_session_digest text := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('backroom-trigger-session','UTF8')),'hex');
   v_room uuid := '10000000-0000-0000-0000-000000000099';
   v_participant uuid := '30000000-0000-0000-0000-000000000099';
   v_session_digest text := repeat('b',64);
