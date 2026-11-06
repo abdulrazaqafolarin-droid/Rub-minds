@@ -599,11 +599,13 @@ Deno.serve(async req => {
       }
       const userId = await owner(req);
       if (!userId) return json(401, fail('owner_auth_required'), origin);
-      const [actor, deviceBinding] = await Promise.all([
-        authorizeRoomActor(input.roomId, userId),
+      const [binding, deviceBinding] = await Promise.all([
+        db.from('backroom_input_bindings').select('id')
+          .eq('id', input.bindingId).eq('owner_id', userId).eq('room_id', input.roomId).maybeSingle(),
         verifyActiveDeviceRoomBinding(input.deviceId, input.roomId),
       ]);
-      if (!actor.ok) return json(actor.status, fail(actor.reason), origin);
+      if (binding.error) return json(503, fail('native_binding_revoke_failed'), origin);
+      if (!binding.data) return json(404, fail('native_group_binding_not_found'), origin);
       if (!deviceBinding.ok) return json(deviceBinding.status, fail(deviceBinding.reason), origin);
       if (deviceBinding.platform !== 'android') return json(409, fail('android_device_required'), origin);
       const { data, error } = await db.from('backroom_android_native_bindings')
