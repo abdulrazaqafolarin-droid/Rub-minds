@@ -42,6 +42,35 @@ async function lookupBinding(bindingId:string) {
  // participant credential invalidates the host's local poller. Returning null
  // causes the paired host to stop rather than spin on an empty queue forever.
  if(session.error||participant.error||connection.error||!session.data||!participant.data||!connection.data)return null;
+ if(data.surface==='android_app'){
+  // A native Android lease is eligible only while the phone-attested binding,
+  // device, screen session and selected app are still live. A generic owner/host
+  // binding or stale copied digest is not enough to authorize native Send.
+  const {data:attestation,error:attestationError}=await db
+   .from('backroom_android_native_binding_attestations')
+   .select('device_id,room_id,screen_session_id,app_package_name,app_signer_digest,provider_conversation_identity_digest,revoked_at')
+   .eq('binding_id',bindingId).is('revoked_at',null).maybeSingle();
+  if(attestationError||!attestation||
+    attestation.room_id!==data.room_id||
+    attestation.provider_conversation_identity_digest!==data.provider_conversation_identity_digest)return null;
+  const [device,deviceRoom,screen,app]=await Promise.all([
+   db.from('backroom_devices').select('device_id,owner_id,status,platform')
+    .eq('device_id',attestation.device_id).eq('owner_id',data.owner_id)
+    .eq('status','active').eq('platform','android').maybeSingle(),
+   db.from('backroom_device_room_bindings').select('device_id,owner_id,revoked_at')
+    .eq('device_id',attestation.device_id).eq('room_id',data.room_id)
+    .eq('owner_id',data.owner_id).is('revoked_at',null).maybeSingle(),
+   db.from('backroom_desktop_sessions').select('session_id,session_type,status,expires_at')
+    .eq('session_id',attestation.screen_session_id).eq('device_id',attestation.device_id)
+    .eq('room_id',data.room_id).eq('session_type','screen').eq('status','active')
+    .gt('expires_at',now).maybeSingle(),
+   db.from('backroom_device_apps').select('signing_certificate_sha256')
+    .eq('device_id',attestation.device_id).eq('package_name',attestation.app_package_name).maybeSingle()
+  ]);
+  if(device.error||deviceRoom.error||screen.error||app.error||
+    !device.data||!deviceRoom.data||!screen.data||!app.data||
+    !String(app.data.signing_certificate_sha256??'').split('.').includes(attestation.app_signer_digest))return null;
+ }
  return {bindingId:data.id,hostId:data.host_id,ownerId:data.owner_id,sessionDigest:data.session_digest,
   surface:data.surface,wakeEnabled:data.wake_enabled,confirmedAt:data.confirmed_at,wakeExpiresAt:data.wake_expires_at,
   providerConversationIdentityDigest:data.provider_conversation_identity_digest??null,
