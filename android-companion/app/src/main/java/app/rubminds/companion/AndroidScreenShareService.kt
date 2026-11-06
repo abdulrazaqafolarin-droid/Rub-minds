@@ -275,7 +275,7 @@ class AndroidScreenShareService : Service() {
 
         if (handoff == null || activeSessionId != screenSessionId ||
             activeRoomId != roomId || activeAppPackage != appPackage ||
-            currentForegroundPackage() != appPackage
+            AndroidTouchAccessibilityService.currentForegroundPackage() != appPackage
         ) {
             // Invalid/stale handoffs are deliberately not converted into remote
             // typing or a WebRTC message. The command expires if its exact live
