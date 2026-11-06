@@ -117,7 +117,7 @@ begin
   end if;
   return new;
 end;
-$function$
+$function$;
 revoke all on function public.revoke_backroom_android_native_binding_on_screen_change()
   from public,anon,authenticated;
 grant execute on function public.revoke_backroom_android_native_binding_on_screen_change() to service_role;
@@ -219,7 +219,7 @@ begin
   end if;
   return new;
 end;
-$function$
+$function$;
 revoke all on function public.revoke_backroom_android_native_binding_on_app_signer_change()
   from public,anon,authenticated;
 grant execute on function public.revoke_backroom_android_native_binding_on_app_signer_change() to service_role;
@@ -262,7 +262,7 @@ begin
   end if;
   return new;
 end;
-$function$
+$function$;
 revoke all on function public.revoke_backroom_android_native_binding_on_host_change()
   from public,anon,authenticated;
 grant execute on function public.revoke_backroom_android_native_binding_on_host_change() to service_role;
@@ -291,7 +291,7 @@ begin
   end if;
   return new;
 end;
-$function$
+$function$;
 revoke all on function public.revoke_backroom_android_native_binding_on_device_change()
   from public,anon,authenticated;
 grant execute on function public.revoke_backroom_android_native_binding_on_device_change() to service_role;
