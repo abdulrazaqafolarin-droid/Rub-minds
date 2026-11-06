@@ -214,3 +214,33 @@ export function mapAndroidQueuedCommand(row, { now = Date.now() } = {}) {
     sessionId: row.session_id,
   });
 }
+
+
+/** Owner-authenticated request to bind a live Android screen to one existing group input binding. */
+export function validateAndroidNativeBindingChallenge(value, { now = Date.now() } = {}) {
+  const keys = ["deviceId","roomId","requestId","issuedAt","sessionId","appPackageName","bindingId"];
+  if (!exactKeys(value, keys) ||
+      !UUID.test(value.deviceId ?? "") || !UUID.test(value.roomId ?? "") ||
+      !UUID.test(value.requestId ?? "") || !UUID.test(value.sessionId ?? "") ||
+      !UUID.test(value.bindingId ?? "") || !Number.isSafeInteger(value.issuedAt) ||
+      !Number.isSafeInteger(now) || Math.abs(now - value.issuedAt) > MAX_REQUEST_AGE_MS ||
+      !isPackageName(value.appPackageName)) return null;
+  return Object.freeze({ ...value });
+}
+
+/** Device-bearer completion. Only the native handset can provide these opaque identity digests. */
+export function validateAndroidNativeBindingCompletion(value) {
+  const keys = [
+    "challengeId","nonce","screenSessionId","appPackageName","appSigningCertificateSha256",
+    "composerIdentityDigest","sendControlIdentityDigest","providerConversationIdentityDigest",
+  ];
+  if (!exactKeys(value, keys) ||
+      !UUID.test(value.challengeId ?? "") || !HEX.test(value.nonce ?? "") ||
+      !UUID.test(value.screenSessionId ?? "") || !isPackageName(value.appPackageName) ||
+      typeof value.appSigningCertificateSha256 !== "string" ||
+      !/^[a-f0-9]{64}(?:\\.[a-f0-9]{64})*$/.test(value.appSigningCertificateSha256) ||
+      !HEX.test(value.composerIdentityDigest ?? "") ||
+      !HEX.test(value.sendControlIdentityDigest ?? "") ||
+      !HEX.test(value.providerConversationIdentityDigest ?? "")) return null;
+  return Object.freeze({ ...value });
+}
