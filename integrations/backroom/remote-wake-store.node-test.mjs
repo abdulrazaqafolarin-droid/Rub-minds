@@ -34,7 +34,7 @@ test('host HTTPS claim -> authenticated gateway -> private store and back',async
  assert.equal(leases.length,1);
  assert.equal(leases[0].jobId,jobId);
  assert.equal(leases[0].providerConversationIdentityDigest,providerConversationIdentityDigest);
- assert.deepEqual(calls[0],['claim',{...scope,limit:2,providerConversationIdentityDigest}]);
+ assert.deepEqual(calls[0],['claim',{...scope,surface:'android_app',limit:2,providerConversationIdentityDigest}]);
  assert.equal(await store.acknowledge({...scope,jobId,leaseToken}),true);
  assert.equal(await store.retry({...scope,jobId,leaseToken,errorCode:'provider_busy'}),'pending');
  assert.deepEqual(calls.map(x=>x[0]),['claim','ack','retry']);
