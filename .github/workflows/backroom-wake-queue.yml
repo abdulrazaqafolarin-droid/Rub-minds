@@ -55,13 +55,6 @@ jobs:
           create or replace function realtime.topic()
           returns text language sql stable set search_path = ''
           as $$ select coalesce(pg_catalog.current_setting('realtime.topic', true), '') $$;
-          create or replace function auth.uid()
-          returns uuid
-          language sql stable
-          set search_path = ''
-          as $$
-            select nullif(pg_catalog.current_setting('request.jwt.claim.sub', true), '')::uuid
-          $$;
           create publication supabase_realtime;
           create table public.rooms (id uuid primary key, owner_id uuid not null references auth.users(id), title text not null default 'CI room', objective text not null default '', created_at timestamptz not null default now());
           create table public.participants (
