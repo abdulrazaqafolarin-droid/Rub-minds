@@ -39,6 +39,9 @@ declare
   v_binding_native uuid := '60000000-0000-4000-8000-000000000010';
   v_binding_native_draft uuid := '60000000-0000-4000-8000-000000000011';
   v_native_provider_digest text := repeat('9',64);
+  v_native_app_signer_digest text := repeat('1',64);
+  v_native_composer_digest text := repeat('2',64);
+  v_native_send_digest text := repeat('3',64);
   v_native_job jsonb;
   v_native_claim record;
   v_native_handoff uuid := '80000000-0000-4000-8000-000000000010';
@@ -80,6 +83,25 @@ begin
   values (v_host_test,v_owner,repeat('1',64),pg_catalog.clock_timestamp()+interval '48 hours',null),
          (v_host_capacity,v_owner,repeat('2',64),pg_catalog.clock_timestamp()+interval '1 hour',null);
 
+  insert into public.backroom_devices(
+    device_id,owner_id,token_digest,device_label,platform,status,approved_at
+  ) values (
+    v_native_device,v_owner,repeat('4',64),'CI Android','android','active',pg_catalog.clock_timestamp()
+  );
+  insert into public.backroom_device_room_bindings(device_id,room_id,owner_id)
+  values (v_native_device,v_room,v_owner);
+  insert into public.backroom_device_apps(
+    device_id,package_name,app_label,signing_certificate_sha256,version_name,draft_insertion_allowed
+  ) values (
+    v_native_device,'com.example.notes','Example Notes',v_native_app_signer_digest,'1.0',true
+  );
+  insert into public.backroom_desktop_sessions(
+    session_id,device_id,room_id,requested_by,session_type,status,expires_at
+  ) values (
+    v_native_screen_session,v_native_device,v_room,v_owner,'screen','active',
+    pg_catalog.clock_timestamp()+interval '1 hour'
+  );
+
   insert into public.backroom_input_bindings(
     id,owner_id,room_id,participant_id,host_id,session_digest,space_id,session_id,target_id,
     target_identity_fingerprint,target_revision,surface,locator_kind,locator_value,participation_mode,
@@ -100,11 +122,34 @@ begin
     max_wakes_per_minute,confirmed_at,revoked_at
   ) values (
     v_binding_native,v_owner,v_room,v_participant,v_host_test,repeat('8',64),
-    'space-native','session-native','target-native','fingerprint-native',v_native_provider_digest,1,
-    'android_app','accessibility','composer-native','mentions',true,
-    '70000000-0000-4000-8000-000000000020'::uuid,
-    pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null
+    'space-native','session-native','target-native','fingerprint-native',null,1,
+    'android_app','accessibility','composer-native','mentions',false,
+    null,null,6,null,null
   );
+
+  if not public.register_backroom_android_native_binding(
+    v_binding_native,v_native_device,v_room,v_native_screen_session,'com.example.notes',
+    v_native_app_signer_digest,v_native_composer_digest,v_native_send_digest,v_native_provider_digest
+  ) then
+    raise exception 'Device-bearer registration must attest the exact Android binding';
+  end if;
+  if not public.register_backroom_android_native_binding(
+    v_binding_native,v_native_device,v_room,v_native_screen_session,'com.example.notes',
+    v_native_app_signer_digest,v_native_composer_digest,v_native_send_digest,v_native_provider_digest
+  ) then
+    raise exception 'Exact device attestation retries must be idempotent';
+  end if;
+  if public.register_backroom_android_native_binding(
+    v_binding_native,v_native_device,v_room,v_native_screen_session,'com.example.notes',
+    v_native_app_signer_digest,v_native_composer_digest,v_native_send_digest,repeat('8',64)
+  ) then
+    raise exception 'A different provider digest must not retarget an attested binding';
+  end if;
+  update public.backroom_input_bindings
+  set wake_enabled=true,wake_grant_id='70000000-0000-4000-8000-000000000020'::uuid,
+      confirmed_at=pg_catalog.clock_timestamp(),
+      wake_expires_at=pg_catalog.clock_timestamp()+interval '1 hour'
+  where id=v_binding_native;
 
   -- Native composer selection remains available for manual draft typing without a provider resolver.
   insert into public.backroom_input_bindings(
@@ -142,6 +187,22 @@ begin
     v_conflict := true;
   end;
   if not v_conflict then raise exception 'Provider conversation identity must be immutable for a binding'; end if;
+
+  if has_function_privilege('anon','public.register_backroom_android_native_binding(uuid,uuid,uuid,uuid,text,text,text,text,text)','EXECUTE')
+    or has_function_privilege('authenticated','public.register_backroom_android_native_binding(uuid,uuid,uuid,uuid,text,text,text,text,text)','EXECUTE')
+    or not has_function_privilege('service_role','public.register_backroom_android_native_binding(uuid,uuid,uuid,uuid,text,text,text,text,text)','EXECUTE') then
+    raise exception 'Native device attestation RPC must be service-role-only';
+  end if;
+  if has_table_privilege('anon','public.backroom_android_native_binding_attestations','SELECT')
+    or has_table_privilege('authenticated','public.backroom_android_native_binding_attestations','SELECT')
+    or has_table_privilege('service_role','public.backroom_android_native_binding_attestations','INSERT')
+    or has_table_privilege('service_role','public.backroom_android_native_binding_attestations','UPDATE') then
+    raise exception 'Provider attestation rows must be private and writable only through the RPC';
+  end if;
+  if (select provider_conversation_identity_digest from public.backroom_input_bindings where id=v_binding_native)
+    <>v_native_provider_digest then
+    raise exception 'Device RPC must initialize the group binding with the exact phone digest';
+  end if;
 
   -- An enabled native binding must not lose its provider-conversation digest.
   v_conflict := false;
@@ -917,6 +978,30 @@ begin
   ) into v_first;
   if (v_first->>'terminated') <> 'true' or (v_first->>'already_terminated') <> 'true' then
     raise exception 'Repeated MCP Leave must idempotently confirm and preserve revocation';
+  end if;
+
+  -- A live Android attestation must die with its exact screen session.
+  v_native_job := public.enqueue_backroom_wake_job(
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('native-screen-stop-job','UTF8')),'hex'),
+    v_owner,v_room,v_participant,v_host_test,'space-native','session-native',repeat('8',64),
+    v_binding_native,'target-native','fingerprint-native',1,'native-screen-stop-event',
+    '@RMconnects'||chr(10)||'Event: native-screen-stop-event'||chr(10)||
+    'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
+  update public.backroom_desktop_sessions
+  set status='stopped',stopped_at=pg_catalog.clock_timestamp()
+  where session_id=v_native_screen_session and status='active';
+  if not exists(select 1 from public.backroom_android_native_binding_attestations
+      where binding_id=v_binding_native and revoked_at is not null) then
+    raise exception 'Stopping the exact screen session must revoke its provider attestation';
+  end if;
+  if not exists(select 1 from public.backroom_input_bindings
+      where id=v_binding_native and revoked_at is not null and wake_enabled=false
+        and wake_grant_id is null and confirmed_at is null and wake_expires_at is null) then
+    raise exception 'Stopping the Android screen must revoke the native group binding and wake consent';
+  end if;
+  if not exists(select 1 from public.backroom_wake_jobs
+      where id=(v_native_job->>'job_id')::uuid and state='cancelled') then
+    raise exception 'Stopping the Android screen must cancel pending native group jobs';
   end if;
 
 end;
