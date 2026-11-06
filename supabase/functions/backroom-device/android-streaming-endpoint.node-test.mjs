@@ -358,12 +358,14 @@ test("a new Android drag selection clears the previous frame-side composer and p
 
 test("provider-identity migration backfills only missing digests and preserves mismatches for cancellation", async () => {
   const migration = await read("supabase/migrations/20261104111500_backroom_provider_conversation_identity_queue.sql");
-  const start = migration.indexOf("update public.backroom_wake_jobs j\\nset provider_conversation_identity_digest=b.provider_conversation_identity_digest");
-  const end = migration.indexOf("-- Old native work", start);
+  const assignment = "set provider_conversation_identity_digest=b.provider_conversation_identity_digest";
+  const assignmentIndex = migration.indexOf(assignment);
+  const start = migration.lastIndexOf("update public.backroom_wake_jobs j", assignmentIndex);
+  const end = migration.indexOf("-- Old native work", assignmentIndex);
   assert.ok(start >= 0 && end > start, "provider digest backfill block must exist");
   const backfill = migration.slice(start, end);
-  assert.match(backfill, /j\\.provider_conversation_identity_digest is null/);
-  assert.match(backfill, /b\\.provider_conversation_identity_digest is not null/);
-  assert.doesNotMatch(backfill, /is distinct from b\\.provider_conversation_identity_digest/);
-  assert.match(migration, /b\\.provider_conversation_identity_digest=j\\.provider_conversation_identity_digest/);
+  assert.ok(backfill.includes("j.provider_conversation_identity_digest is null"));
+  assert.ok(backfill.includes("b.provider_conversation_identity_digest is not null"));
+  assert.equal(backfill.includes("is distinct from b.provider_conversation_identity_digest"), false);
+  assert.ok(migration.includes("b.provider_conversation_identity_digest=j.provider_conversation_identity_digest"));
 });
