@@ -821,6 +821,33 @@ class AndroidScreenShareService : Service() {
         }
     }
 
+    private fun sendNativeBindingAcknowledgement(
+        channel: DataChannel,
+        sessionId: String,
+        requestId: String,
+        bound: Boolean,
+        reason: String
+    ) {
+        if (!UUID_PATTERN.matches(sessionId) || !UUID_PATTERN.matches(requestId) ||
+            channel.state() != DataChannel.State.OPEN || activeSessionId != sessionId ||
+            dataChannel !== channel
+        ) return
+        val allowedReasons = setOf(
+            "bound", "native_identity_unavailable", "app_signer_unavailable",
+            "session_not_active", "challenge_rejected", "binding_conflict",
+            "device_service_unavailable", "invalid_request"
+        )
+        val payload = JSONObject()
+            .put("kind", "native_binding_ack")
+            .put("sessionId", sessionId)
+            .put("requestId", requestId)
+            .put("bound", bound)
+            .put("reason", reason.takeIf { it in allowedReasons } ?: "device_service_unavailable")
+            .toString()
+            .toByteArray(Charsets.UTF_8)
+        runCatching { channel.send(DataChannel.Buffer(ByteBuffer.wrap(payload), false)) }
+    }
+
     private fun sendRemoteTextAcknowledgement(
         channel: DataChannel,
         sessionId: String,
@@ -1004,6 +1031,83 @@ class AndroidScreenShareService : Service() {
                             )
                         }
                         sendSendControlVerificationAcknowledgement(channel, sessionId, requestId, decision)
+                    }
+                    return
+                }
+                if (input.optString("kind") == "bind_native_group_target") {
+                    val requestId = input.optString("requestId")
+                    val challengeId = input.optString("challengeId")
+                    val nonce = input.optString("nonce")
+                    if (!UUID_PATTERN.matches(requestId) ||
+                        input.optString("sessionId") != sessionId ||
+                        input.optString("appPackageName") != appPackage
+                    ) return
+                    val allowedKeys = setOf(
+                        "kind", "requestId", "sessionId", "appPackageName", "challengeId", "nonce"
+                    )
+                    if (input.keys().asSequence().toSet() != allowedKeys ||
+                        !UUID_PATTERN.matches(challengeId) ||
+                        !Regex("^[a-f0-9]{64}$").matches(nonce)
+                    ) {
+                        sendNativeBindingAcknowledgement(channel, sessionId, requestId, false, "invalid_request")
+                        return
+                    }
+                    if (!claimRemoteTextRequest(requestId)) {
+                        sendNativeBindingAcknowledgement(channel, sessionId, requestId, false, "challenge_rejected")
+                        return
+                    }
+                    mainHandler.post {
+                        if (stopping || !capturedContentVisible ||
+                            activeSessionId != sessionId || activeAppPackage != appPackage
+                        ) {
+                            sendNativeBindingAcknowledgement(channel, sessionId, requestId, false, "session_not_active")
+                            return@post
+                        }
+                        val evidence = AndroidTouchAccessibilityService.nativeBindingEvidence(sessionId, appPackage)
+                        if (evidence == null) {
+                            sendNativeBindingAcknowledgement(
+                                channel, sessionId, requestId, false, "native_identity_unavailable"
+                            )
+                            return@post
+                        }
+                        val signer = AppIdentity.signingCertificateSha256(this@AndroidScreenShareService, appPackage)
+                        if (signer.isNullOrBlank()) {
+                            sendNativeBindingAcknowledgement(channel, sessionId, requestId, false, "app_signer_unavailable")
+                            return@post
+                        }
+                        val token = deviceToken
+                        if (token.isNullOrBlank()) {
+                            sendNativeBindingAcknowledgement(channel, sessionId, requestId, false, "device_service_unavailable")
+                            return@post
+                        }
+                        try {
+                            executor.execute {
+                                val result = try {
+                                    api?.completeNativeBinding(token, JSONObject()
+                                        .put("challengeId", challengeId)
+                                        .put("nonce", nonce)
+                                        .put("screenSessionId", sessionId)
+                                        .put("appPackageName", appPackage)
+                                        .put("appSigningCertificateSha256", signer)
+                                        .put("composerIdentityDigest", evidence.composerIdentityDigest)
+                                        .put("sendControlIdentityDigest", evidence.sendControlIdentityDigest)
+                                        .put("providerConversationIdentityDigest", evidence.providerConversationIdentityDigest)
+                                    )
+                                } catch (_: Exception) { null }
+                                val bound = result?.optBoolean("ok", false) == true
+                                val reason = if (bound) "bound" else when (result?.optString("reason")) {
+                                    "native_binding_already_active", "group_binding_not_eligible" -> "binding_conflict"
+                                    "challenge_invalid_or_expired", "challenge_already_consumed",
+                                    "challenge_not_found" -> "challenge_rejected"
+                                    else -> "device_service_unavailable"
+                                }
+                                sendNativeBindingAcknowledgement(channel, sessionId, requestId, bound, reason)
+                            }
+                        } catch (_: java.util.concurrent.RejectedExecutionException) {
+                            sendNativeBindingAcknowledgement(
+                                channel, sessionId, requestId, false, "device_service_unavailable"
+                            )
+                        }
                     }
                     return
                 }
