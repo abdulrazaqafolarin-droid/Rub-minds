@@ -301,6 +301,137 @@ create trigger backroom_android_native_binding_device_lifecycle_trigger
 after update of status on public.backroom_devices
 for each row execute function public.revoke_backroom_android_native_binding_on_device_change();
 
+create or replace function public.revoke_backroom_android_native_binding_on_agent_connection_change()
+returns trigger
+language plpgsql
+security invoker
+set search_path=''
+as $function$
+declare
+  v_now timestamptz:=pg_catalog.clock_timestamp();
+  v_revoke boolean:=false;
+  v_credential_digest text;
+  v_owner_id uuid;
+  v_room_id uuid;
+  v_participant_id uuid;
+  v_expiry timestamptz;
+begin
+  if tg_op='DELETE' then
+    v_revoke:=true;
+    v_credential_digest:=old.credential_digest;
+    v_owner_id:=old.owner_id;
+    v_room_id:=old.room_id;
+    v_participant_id:=old.participant_id;
+  else
+    v_credential_digest:=old.credential_digest;
+    v_owner_id:=old.owner_id;
+    v_room_id:=old.room_id;
+    v_participant_id:=old.participant_id;
+    v_expiry:=new.expires_at;
+    v_revoke:=new.revoked_at is not null or new.expires_at<=v_now
+      or new.credential_digest is distinct from old.credential_digest
+      or new.owner_id is distinct from old.owner_id
+      or new.room_id is distinct from old.room_id
+      or new.participant_id is distinct from old.participant_id;
+  end if;
+
+  if v_revoke then
+    update public.backroom_android_native_bindings n
+    set revoked_at=coalesce(n.revoked_at,v_now),expires_at=least(n.expires_at,v_now)
+    from public.backroom_input_bindings b
+    join public.rub_minds_mcp_sessions m on m.session_digest=b.session_digest
+    where n.binding_id=b.id and m.agent_credential_digest=v_credential_digest
+      and b.owner_id=v_owner_id and b.room_id=v_room_id
+      and b.participant_id=v_participant_id and n.revoked_at is null;
+    update public.backroom_android_native_binding_challenges c
+    set revoked_at=coalesce(c.revoked_at,v_now),expires_at=least(c.expires_at,v_now)
+    from public.backroom_input_bindings b
+    join public.rub_minds_mcp_sessions m on m.session_digest=b.session_digest
+    where c.binding_id=b.id and m.agent_credential_digest=v_credential_digest
+      and b.owner_id=v_owner_id and b.room_id=v_room_id
+      and b.participant_id=v_participant_id
+      and c.consumed_at is null and c.revoked_at is null;
+  elsif new.expires_at<old.expires_at then
+    -- A shorter AI credential lease caps its native mapping and any challenge.
+    update public.backroom_android_native_bindings n
+    set expires_at=least(n.expires_at,v_expiry)
+    from public.backroom_input_bindings b
+    join public.rub_minds_mcp_sessions m on m.session_digest=b.session_digest
+    where n.binding_id=b.id and m.agent_credential_digest=v_credential_digest
+      and b.owner_id=v_owner_id and b.room_id=v_room_id
+      and b.participant_id=v_participant_id and n.revoked_at is null;
+    update public.backroom_android_native_binding_challenges c
+    set expires_at=least(c.expires_at,v_expiry)
+    from public.backroom_input_bindings b
+    join public.rub_minds_mcp_sessions m on m.session_digest=b.session_digest
+    where c.binding_id=b.id and m.agent_credential_digest=v_credential_digest
+      and b.owner_id=v_owner_id and b.room_id=v_room_id
+      and b.participant_id=v_participant_id
+      and c.consumed_at is null and c.revoked_at is null;
+  end if;
+
+  if tg_op='DELETE' then return old; end if;
+  return new;
+end;
+$function$;
+revoke all on function public.revoke_backroom_android_native_binding_on_agent_connection_change()
+  from public,anon,authenticated;
+grant execute on function public.revoke_backroom_android_native_binding_on_agent_connection_change() to service_role;
+drop trigger if exists backroom_android_native_binding_agent_connection_lifecycle_trigger
+  on public.agent_connections;
+create trigger backroom_android_native_binding_agent_connection_lifecycle_trigger
+after update of credential_digest,owner_id,room_id,participant_id,revoked_at,expires_at or delete
+on public.agent_connections
+for each row execute function public.revoke_backroom_android_native_binding_on_agent_connection_change();
+
+create or replace function public.revoke_backroom_android_native_binding_on_mcp_session_change()
+returns trigger
+language plpgsql
+security invoker
+set search_path=''
+as $function$
+declare
+  v_now timestamptz:=pg_catalog.clock_timestamp();
+begin
+  if new.terminated_at is not null or new.expires_at<=v_now
+    or new.agent_credential_digest is distinct from old.agent_credential_digest
+    or new.participant_id is distinct from old.participant_id
+    or new.room_id is distinct from old.room_id then
+    update public.backroom_android_native_bindings n
+    set revoked_at=coalesce(n.revoked_at,v_now),expires_at=least(n.expires_at,v_now)
+    from public.backroom_input_bindings b
+    where n.binding_id=b.id and b.session_digest=old.session_digest and n.revoked_at is null;
+    update public.backroom_android_native_binding_challenges c
+    set revoked_at=coalesce(c.revoked_at,v_now),expires_at=least(c.expires_at,v_now)
+    from public.backroom_input_bindings b
+    where c.binding_id=b.id and b.session_digest=old.session_digest
+      and c.consumed_at is null and c.revoked_at is null;
+  elsif new.expires_at<old.expires_at then
+    -- A shortened MCP lease caps all dependent native proofs; renewal never
+    -- extends a proof already accepted by the phone.
+    update public.backroom_android_native_bindings n
+    set expires_at=least(n.expires_at,new.expires_at)
+    from public.backroom_input_bindings b
+    where n.binding_id=b.id and b.session_digest=old.session_digest and n.revoked_at is null;
+    update public.backroom_android_native_binding_challenges c
+    set expires_at=least(c.expires_at,new.expires_at)
+    from public.backroom_input_bindings b
+    where c.binding_id=b.id and b.session_digest=old.session_digest
+      and c.consumed_at is null and c.revoked_at is null;
+  end if;
+  return new;
+end;
+$function$;
+revoke all on function public.revoke_backroom_android_native_binding_on_mcp_session_change()
+  from public,anon,authenticated;
+grant execute on function public.revoke_backroom_android_native_binding_on_mcp_session_change() to service_role;
+drop trigger if exists backroom_android_native_binding_mcp_session_lifecycle_trigger
+  on public.rub_minds_mcp_sessions;
+create trigger backroom_android_native_binding_mcp_session_lifecycle_trigger
+after update of terminated_at,expires_at,agent_credential_digest,participant_id,room_id
+on public.rub_minds_mcp_sessions
+for each row execute function public.revoke_backroom_android_native_binding_on_mcp_session_change();
+
 create or replace function public.register_backroom_android_native_binding(
   p_challenge_id uuid,p_nonce_digest text,p_device_id uuid,p_screen_session_id uuid,
   p_app_package_name text,p_app_signing_certificate_sha256 text,
