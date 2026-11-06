@@ -34,6 +34,8 @@ test('native composer bindings remain registerable for human-approved draft use;
  const draftBinding=validatePendingWakeBinding(native);
  assert.equal(draftBinding.surface,'android_app');
  assert.equal(draftBinding.providerConversationIdentityDigest,undefined);
+ const explicitNullDraft=validatePendingWakeBinding({...native,providerConversationIdentityDigest:null});
+ assert.equal(explicitNullDraft.providerConversationIdentityDigest,undefined);
  assert.throws(()=>validatePendingWakeBinding({...native,providerConversationIdentityDigest:'bad'}),/providerConversationIdentityDigest/);
  const wakeCapable=validatePendingWakeBinding({...native,providerConversationIdentityDigest:'c'.repeat(64)});
  assert.equal(wakeCapable.providerConversationIdentityDigest,'c'.repeat(64));
