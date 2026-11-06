@@ -36,7 +36,7 @@ flowchart TD
     K --> L["Insert fixed event prompt, read back, invoke once"]
     L --> M["Verify same composer clears; acknowledge durable lease"]
     I -.-> N["Android device queue / native driver exist separately"]
-    N -.-> O["Device ACK settles original group lease; attested binding/forwarder still missing"]
+    N -.-> O["Attestation route and ACK settlement exist in source; phone caller and host forwarder remain missing"]
     M --> P["Original AI reads event through its joined MCP session"]
     P --> Q["AI replies to group through MCP; event/response ACK is separate"]
     O -.-> P
@@ -108,7 +108,9 @@ The UI converts pointer coordinates against the actual displayed video content:
 5. The phone companion resolves that region against its live Accessibility tree. It must find exactly one visible, editable, non-password composer in the approved foreground app. A broad region, multiple fields, unavailable accessibility data or an app/session mismatch fails closed.
 6. The phone returns a selection acknowledgement tied to the request ID and opaque target identity. If it also found one unique nearby Send control, it returns a separate opaque Send-target identity and availability/reason. It also returns a boolean indicating whether a provider-specific stable conversation identity was available locally; the conversation digest itself never leaves the phone. The frame now distinguishes a nearby Send control from provider-conversation readiness and labels native wake as blocked when that identity is missing. The accessible label, raw node identity, conversation digest and editor content do not become UI authorization.
 
-**Important: the provider digest is intentionally not sent to the browser, but there is not yet an alternate device-attested registration path that sends it directly to Rub Minds.** `BackroomAndroidControl` currently receives only the paired device and room; it does not select an AI participant/MCP session or submit a durable group binding. The owner-authenticated `backroom-config/binding` route is a paired-host/input-binding enrollment route; it does not prove the phone's current device ID, screen session, app signer, composer digest and Send digest. The #66 schema and claim wrapper therefore provide storage/lease primitives, not a usable Android target registration flow. Keep the digest phone-local until a device-bearer-authenticated registration handshake can bind the current device/screen/app/composer/provider identity to an explicitly selected group AI/MCP session. The server should store only opaque digests, never raw provider IDs or conversation content.
+**The provider digest is still never sent to the browser or over the WebRTC data channel.** The #67 source branch now adds `POST /android/native-binding/register` to the device-bearer-authenticated `backroom-device` Edge Function. It binds an existing Android group input binding to the bearer-authenticated device, current room binding, active screen session, selected app/signer, composer digest, Send-control digest and phone-computed provider digest. The service-role RPC stores only those opaque digests, initializes the immutable binding digest, and returns only `{ ok, bindingId, status: 'attested' }`. The generic owner-authenticated `backroom-config/binding` route can no longer accept or return a provider digest.
+
+This is not yet a usable phone registration flow: `AndroidScreenShareService` does not call the new endpoint, and `BackroomAndroidControl` still receives only device/room context; it does not select a group AI participant/MCP session or pass the existing `bindingId` to the phone. The Android provider resolver registry is also empty. The endpoint and SQL trust boundary are source-complete, but the phone caller and UI association remain outstanding. Raw provider IDs, titles and conversation content remain on device.
 
 The registration contract must keep four identifiers distinct:
 
@@ -177,7 +179,7 @@ Android has a separate device-bearer-authenticated command poll/ACK channel:
 
 The handoff expires no later than its queue lease and is bounded to 20 seconds. Only the digest of the durable lease token crosses into the handoff; the raw lease token remains with the trusted worker. The phone rechecks expiry immediately before the sensitive execution stages.
 
-**Two prerequisites remain before the phone receiver can be reached safely.** First, the device-attested binding registration described above must securely connect one selected AI/MCP participant and its existing group input binding to one paired Android device, active screen session, app/signer, selected composer/Send identities and phone-local provider digest. It must be invalidated when that screen session closes, the device is revoked, the app changes, or the provider conversation changes. Second, a trusted host-side forwarder must take a claimed group wake lease, resolve that exact registration, create the 20-second handoff and enqueue the `native_wake_trigger` command. The Android ACK-to-group-lease settlement routine is now implemented in source and settles the original durable job before the command ACK is committed; it still has no eligible command to settle until the first two prerequisites exist. Until those are connected, the receiver and ACK validator are not proof that group events can wake the phone.
+**Two integration prerequisites remain before the phone receiver can be reached safely.** First, the device-attestation schema/RPC and `android/native-binding/register` Edge route are now implemented in source, including invalidation on screen-session, device, room-binding or input-binding revocation. The Android companion still needs to call that route using its bearer credential after an explicitly selected group AI/MCP `bindingId` is associated with the current phone screen/app target. Second, a trusted host-side forwarder must take a claimed group wake lease, resolve that exact registration, create the 20-second handoff and enqueue the `native_wake_trigger` command. The Android ACK-to-group-lease settlement routine is implemented in source and settles the original durable job before the command ACK is committed, but it has no eligible command to settle until the phone caller and forwarder are connected. Until those integrations and physical acceptance exist, the receiver and ACK validator are not proof that group events can wake the phone.
 
 ### Windows native path
 
@@ -218,7 +220,7 @@ After waking, the original AI conversation should use its already joined Rub Min
 | Surface | Drag-select composer targeting | Manual draft insertion | Send-control check | Group wake delivery | Native Off / On / Auto |
 | --- | --- | --- | --- | --- | --- |
 | Managed browser | Yes, on the managed frame | Yes | Runtime recheck | Managed-browser canonical wake path; acceptance must be evaluated separately from provider response | First intended supported surface |
-| Android Phone Frame | Source-level accessibility-backed selection | Yes, separate IME/WebRTC draft path | Yes, local discovery and recheck | Device receiver/driver/ACK and source-level original-lease settlement exist, but device attestation and group-lease forwarding are missing; provider resolver registry is empty | Not available |
+| Android Phone Frame | Source-level accessibility-backed selection | Yes, separate IME/WebRTC draft path | Yes, local discovery and recheck | Device-attestation schema/RPC and bearer route exist in source; Android caller, group binding selection and host forwarder are still missing; provider resolver registry is empty | Not available |
 | Windows Desktop Frame | Source-level UIA selection | Yes, separate approved draft path | Yes, local UIA discovery and recheck | No native canonical-wake driver | Not available |
 | Terminal | Separate terminal target/session | Yes, under its own local approval | Not applicable to a chat composer | No native group-wake integration | Not available |
 
@@ -244,7 +246,7 @@ The remaining order is intentional; do not wire the UI switch to native Send bef
 
 - This is a documentation-only architecture map for PR #64; no runtime code or production configuration is changed by adding it.
 - The SQL queue/message trigger, Android command receiver, strict native handoff validator, structured ACK validator and Android native driver are present in the feature-branch source.
-- Their presence is not an end-to-end test. The Android provider adapter registry is empty, device-attested group binding and the group-lease-to-device forwarder are missing, the settlement migration is not deployed or physically accepted, and Windows has no native Send driver.
+- Their presence is not an end-to-end test. The #67 branch now contains the device-attestation SQL and bearer route, but Android does not call it and the UI does not bind a selected AI/MCP participant to the phone target. The trusted group-lease-to-device forwarder is still missing, the provider adapter registry is empty, the migrations are not deployed or physically accepted, and Windows has no native Send driver.
 - The feature branch remains a draft PR. Do not apply the SQL migrations or deploy Edge Functions to production as part of this documentation slice.
 - Do not describe Off/On/Auto as native Android/Windows functionality until the above integration and device acceptance gates pass.
 
