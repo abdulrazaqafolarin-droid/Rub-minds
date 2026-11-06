@@ -106,6 +106,14 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261102223000_revoke_backroom_wake_on_mcp_leave.sql
+      - name: Add provider-conversation identity to bindings and durable wake leases
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261104111500_backroom_provider_conversation_identity_queue.sql
+      - name: Add Android native result settlement to durable wake leases
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261105110000_backroom_android_native_wake_queue_settlement.sql
       - name: Test idempotency, claims, leases, retry, cancellation and least privilege
         env:
           PGPASSWORD: postgres
