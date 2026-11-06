@@ -9,6 +9,7 @@ declare
   v_trigger_message uuid;
   v_room uuid := '10000000-0000-0000-0000-000000000099';
   v_participant uuid := '30000000-0000-0000-0000-000000000099';
+  v_native_participant uuid := '30000000-0000-4000-8000-000000000010';
   v_session_digest text := repeat('b',64);
   v_first jsonb;
   v_repeat jsonb;
@@ -61,8 +62,10 @@ begin
   insert into auth.users(id) values (v_owner);
   insert into public.rooms(id,owner_id,title) values (v_room,v_owner,'Backroom wake queue test room');
   insert into public.participants(id,room_id,display_name,kind,status) values (v_participant,v_room,'Test Backroom Agent','external_agent','active');
+  insert into public.participants(id,room_id,display_name,kind,status) values (v_native_participant,v_room,'Native Android Test Agent','external_agent','active');
   insert into public.agent_connections(room_id,participant_id,owner_id,credential_digest,expires_at,revoked_at)
-  values (v_room,v_participant,v_owner,repeat('a',64),pg_catalog.clock_timestamp()+interval '48 hours',null);
+  values (v_room,v_participant,v_owner,repeat('a',64),pg_catalog.clock_timestamp()+interval '48 hours',null),
+         (v_room,v_native_participant,v_owner,repeat('c',64),pg_catalog.clock_timestamp()+interval '48 hours',null);
 
   insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,agent_credential_digest,room_id,participant_id,expires_at,terminated_at)
   values
@@ -75,7 +78,7 @@ begin
   insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,agent_credential_digest,room_id,participant_id,expires_at,terminated_at)
     values (repeat('7',64),'ci-ciphertext-7',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
   insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,agent_credential_digest,room_id,participant_id,expires_at,terminated_at)
-    values (repeat('8',64),'ci-ciphertext-8',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
+    values (repeat('8',64),'ci-ciphertext-8',repeat('c',64),v_room,v_native_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
   insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,agent_credential_digest,room_id,participant_id,expires_at,terminated_at)
     values (repeat('5',64),'ci-ciphertext-5',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
 
@@ -121,7 +124,7 @@ begin
     locator_kind,locator_value,participation_mode,wake_enabled,wake_grant_id,wake_expires_at,
     max_wakes_per_minute,confirmed_at,revoked_at
   ) values (
-    v_binding_native,v_owner,v_room,v_participant,v_host_test,repeat('8',64),
+    v_binding_native,v_owner,v_room,v_native_participant,v_host_test,repeat('8',64),
     'space-native','session-native','target-native','fingerprint-native',null,1,
     'android_app','accessibility','composer-native','mentions',false,
     null,null,6,null,null
@@ -504,7 +507,7 @@ begin
     raise exception 'Provider-aware claim wrapper privileges are unsafe';
   end if;
   v_native_job := public.enqueue_backroom_wake_job(
-    repeat('8',64),v_owner,v_room,v_participant,v_host_test,'space-native','session-native',repeat('8',64),
+    repeat('8',64),v_owner,v_room,v_native_participant,v_host_test,'space-native','session-native',repeat('8',64),
     v_binding_native,'target-native','fingerprint-native',1,'native-provider-event',
     '@RMconnects'||chr(10)||'Event: native-provider-event'||chr(10)||
     'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
@@ -561,7 +564,7 @@ begin
 
   -- A preflight denial proves no insertion and no Send; only this outcome may retry.
   v_preflight_job := public.enqueue_backroom_wake_job(
-    repeat('4',64),v_owner,v_room,v_participant,v_host_test,'space-native','session-native',repeat('8',64),
+    repeat('4',64),v_owner,v_room,v_native_participant,v_host_test,'space-native','session-native',repeat('8',64),
     v_binding_native,'target-native','fingerprint-native',1,'native-preflight-event',
     '@RMconnects'||chr(10)||'Event: native-preflight-event'||chr(10)||
     'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
@@ -592,7 +595,7 @@ begin
 
   -- A post-effect uncertain result is terminal and must never be replayed automatically.
   v_review_job:=public.enqueue_backroom_wake_job(
-    repeat('3',64),v_owner,v_room,v_participant,v_host_test,'space-native','session-native',repeat('8',64),
+    repeat('3',64),v_owner,v_room,v_native_participant,v_host_test,'space-native','session-native',repeat('8',64),
     v_binding_native,'target-native','fingerprint-native',1,'native-review-event',
     '@RMconnects'||chr(10)||'Event: native-review-event'||chr(10)||
     'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
@@ -983,7 +986,7 @@ begin
   -- A live Android attestation must die with its exact screen session.
   v_native_job := public.enqueue_backroom_wake_job(
     pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('native-screen-stop-job','UTF8')),'hex'),
-    v_owner,v_room,v_participant,v_host_test,'space-native','session-native',repeat('8',64),
+    v_owner,v_room,v_native_participant,v_host_test,'space-native','session-native',repeat('8',64),
     v_binding_native,'target-native','fingerprint-native',1,'native-screen-stop-event',
     '@RMconnects'||chr(10)||'Event: native-screen-stop-event'||chr(10)||
     'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
