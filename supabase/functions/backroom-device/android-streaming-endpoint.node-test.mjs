@@ -383,7 +383,7 @@ test("Android native binding challenge remains owner-authenticated and device co
   const candidates = endpoint.slice(candidatesStart, challengeStart);
   assert.match(candidates, /const userId = await owner\(req\)/);
   assert.match(candidates, /\.eq\('owner_id', userId\)/);
-  assert.match(candidates, /provider_conversation_identity_digest/ === undefined ? /$^/ : /provider_conversation_identity_digest/);
+  assert.doesNotMatch(candidates, /provider_conversation_identity_digest|composerIdentityDigest|sendControlIdentityDigest/);
   const challenge = endpoint.slice(challengeStart, completionStart);
   assert.match(challenge, /validateAndroidNativeBindingChallenge/);
   assert.match(challenge, /authorizeRoomActor\(/);
