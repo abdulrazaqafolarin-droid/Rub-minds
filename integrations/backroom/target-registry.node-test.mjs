@@ -47,6 +47,23 @@ test("unrelated room, host, space and session cannot resolve registered target",
   }
 });
 
+test("provider-conversation identity is preserved and resolved only for the exact digest", () => {
+  const digest = "a".repeat(64);
+  const r = new TargetRegistry();
+  const registered = r.register(base({ providerConversationIdentityDigest: digest }));
+  assert.equal(registered.providerConversationIdentityDigest, digest);
+  assert.equal(r.resolve("target-1", { ...scope,
+    expectedProviderConversationIdentityDigest: digest,
+  }), registered);
+  assert.throws(() => r.resolve("target-1", { ...scope,
+    expectedProviderConversationIdentityDigest: "b".repeat(64),
+  }), /provider conversation identity changed/);
+  assert.throws(() => validateTarget(base({ providerConversationIdentityDigest: "not-a-digest" })),
+    /providerConversationIdentityDigest/);
+  const { providerConversationIdentityDigest: _omitted, ...withoutDigest } = base();
+  assert.equal(validateTarget(withoutDigest).providerConversationIdentityDigest, undefined);
+});
+
 test("app identity changes require explicit rebind with optimistic revision", () => {
   const r = new TargetRegistry();
   r.register(base());

@@ -12,10 +12,12 @@ const target = Object.freeze({
   id:'native-target-1', roomId:'room-1', hostId:'host-1', spaceId:'space-1',
   sessionId:'session-1', appId:'com.example.chat',
   identityFingerprint:'foreground-app-fingerprint',
+  providerConversationIdentityDigest,
   surface:'android_app', locatorKind:'accessibility',
   locatorValue:'native-composer-opaque', revision:3,
 });
 const eventId='message-001';
+const providerConversationIdentityDigest='c'.repeat(64);
 const prompt=buildCanonicalWakePrompt(eventId);
 const sessionDigest='d'.repeat(64);
 const binding=Object.freeze({
@@ -29,7 +31,7 @@ const lease=Object.freeze({
   jobId:'job-001',eventId,roomId:target.roomId,participantId:participant.participantId,
   hostId:target.hostId,sessionId:target.sessionId,bindingId:binding.bindingId,
   targetId:target.id,spaceId:target.spaceId,targetIdentityFingerprint:target.identityFingerprint,
-  targetRevision:target.revision,prompt,promptDigest:createHash('sha256').update(prompt,'utf8').digest('hex'),
+  targetRevision:target.revision,providerConversationIdentityDigest,prompt,promptDigest:createHash('sha256').update(prompt,'utf8').digest('hex'),
   leaseToken:'lease-001',sessionDigest,
 });
 
@@ -37,7 +39,8 @@ function readyState(focused=true) {
   return {
     connected:true,focused,composerEmpty:true,composerIdentityVerified:true,
     sendControlUnique:true,sendControlEnabled:true,sendControlVisible:true,
-    sendControlIdentityVerified:true,targetId:target.id,targetRevision:target.revision,
+    sendControlIdentityVerified:true,providerConversationIdentityVerified:true,
+    providerConversationIdentityDigest,targetId:target.id,targetRevision:target.revision,
     locatorKind:'accessibility',composerIdentityDigest:'a'.repeat(64),
     sendControlIdentityDigest:'b'.repeat(64),surface:target.surface,
     appId:target.appId,sessionId:target.sessionId,identityFingerprint:target.identityFingerprint,
@@ -49,7 +52,8 @@ function submitted(input, overrides={}) {
     targetRevision:input.target.targetRevision,
     composerIdentityDigest:'a'.repeat(64),sendControlIdentityDigest:'b'.repeat(64),
     promptInserted:true,promptReadbackVerified:true,composerIdentityRevalidated:true,
-    sendControlIdentityRevalidated:true,sendInvoked:true,composerCleared:true,
+    sendControlIdentityRevalidated:true,providerConversationIdentityRevalidated:true,
+    providerConversationIdentityDigest,sendInvoked:true,composerCleared:true,
     ...overrides,
   };
 }
@@ -60,7 +64,7 @@ function harness({focused=true,submitOverrides={},throwOnSubmit=false}={}) {
     targetId:target.id,roomId:target.roomId,hostId:target.hostId,spaceId:target.spaceId,
     surface:target.surface,appId:target.appId,sessionId:target.sessionId,
     identityFingerprint:target.identityFingerprint,locatorValue:target.locatorValue,
-    targetRevision:target.revision,
+    targetRevision:target.revision,providerConversationIdentityDigest:target.providerConversationIdentityDigest,
     driver:{
       async inspectWakeTarget(input){order.push('inspect');driverCalls.push(['inspect',input]);return readyState(focused);},
       async submitCanonicalWake(input){
@@ -110,6 +114,7 @@ test('durable claimed wake reaches the native adapter only after grant verificat
   assert.equal(f.order.indexOf('consume-grant')<f.order.indexOf('native-send'),true);
   assert.equal(f.driverCalls.filter(([kind])=>kind==='send').length,1);
   assert.equal(f.driverCalls.find(([kind])=>kind==='send')[1].prompt,prompt);
+  assert.equal(f.driverCalls.find(([kind])=>kind==='send')[1].providerConversationIdentityDigest,providerConversationIdentityDigest);
   assert.equal(f.driverCalls.find(([kind])=>kind==='ack')[1].outcome,'acknowledged');
 });
 

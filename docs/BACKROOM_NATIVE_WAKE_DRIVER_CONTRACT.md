@@ -2,7 +2,7 @@
 
 > For the upstream group-event, drag-select, binding and downstream MCP response lifecycle around this driver, see [Backroom group-to-composer wake flow](BACKROOM_GROUP_TO_COMPOSER_WAKE_FLOW.md).
 
-Status: **Android device-queue receiver and Accessibility/IME driver are present in source; the trusted host lease-forwarder and Windows native driver remain unconnected.**
+Status: **Android device-queue receiver and Accessibility/IME driver are present in source; the provider identity requirement is not yet carried by the group database lease; the trusted host lease-forwarder and Windows native driver remain unconnected.**
 
 This document defines the boundary between the existing group coordination/durable wake system and a future Android or Windows native composer driver. It does not enable native Off / On / Auto, native Send or a new host-server route.
 
@@ -115,9 +115,9 @@ Still required before implementing/enabling this action: a Windows-native 24-hou
 
 ## Provider conversation identity is a separate native-send gate — 2026-11-03
 
-The current Android handoff binds a durable lease to the Rub Minds AI/MCP sessionId, a native target ID/revision, app package and signer, screen-capture session, composer digest and Send-control digest. These identities are necessary but **do not prove which provider chat/thread is currently open inside the selected app**. screenSessionId identifies the companion's MediaProjection stream, not a ChatGPT/Claude conversation. The same app can reuse one composer node and one Send button across multiple chats; their hashes can remain unchanged after the user switches conversations.
+The Android device handoff contract now requires a provider-conversation identity digest in addition to the Rub Minds AI/MCP session ID, native target ID/revision, app package and signer, screen-capture session, composer digest and Send-control digest. `screenSessionId` identifies the companion's MediaProjection stream, not a ChatGPT/Claude conversation. The same app can reuse one composer node and one Send button across multiple chats; their hashes can remain unchanged after the user switches conversations. The gap is upstream: the current group input-binding and wake-job database schema, enqueue/claim RPCs and Edge lease mapper do not yet persist or return the provider-conversation digest, so a real group queue lease cannot currently satisfy the device handoff contract.
 
-Consequently, an app-level signer grant plus the current composer/Send checks cannot yet guarantee that a native trigger reaches the original AI conversation whose context and MCP session are registered with the Rub Minds group. This is a separate blocker from the missing trusted group-to-device forwarder.
+Consequently, the local Android protocol is prepared to reject a mismatched conversation, but the server-to-device chain cannot yet prove that the durable group event belongs to that same conversation. An app-level signer grant plus the composer/Send checks is not enough. This is a separate blocker from the missing trusted group-to-device forwarder.
 
 Before native-app On / Auto or any native wake producer is enabled, the target contract must include a **provider-conversation identity digest** that is generated locally by an app-specific resolver and bound to the registered target revision and Rub Minds AI/MCP session. The companion must re-resolve and compare the same conversation identity when binding the target, before trigger insertion, immediately before Send and while confirming the result. Raw provider conversation IDs, titles, chat histories and message text must remain on-device; only the scoped digest/boolean result is allowed to leave the phone. If a provider does not expose a stable identity that can distinguish conversation A from conversation B, that provider remains draft-only for autonomous participation. A composer hash or app signer must never be used as a substitute for conversation identity.
 

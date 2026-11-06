@@ -8,12 +8,12 @@ import {TargetRegistry} from './target-registry.mjs';
 import {BackroomDispatcher} from './dispatcher.mjs';
 import {LocalExecutionGuard} from './host-runtime.mjs';
 import {dispatchClaimedWake,commandFromClaimedWake} from './durable-wake-runtime.mjs';
-const ids={ownerId:'20000000-0000-4000-8000-000000000001',roomId:'10000000-0000-4000-8000-000000000001',participantId:'30000000-0000-4000-8000-000000000001',jobId:'40000000-0000-4000-8000-000000000001',hostId:'host-1',spaceId:'space-1',sessionId:'session-1',bindingId:'binding-1',targetId:'target-1',sessionDigest:'a'.repeat(64),leaseToken:'50000000-0000-4000-8000-000000000001',targetIdentityFingerprint:'window-fingerprint-1'};
+const ids={ownerId:'20000000-0000-4000-8000-000000000001',roomId:'10000000-0000-4000-8000-000000000001',participantId:'30000000-0000-4000-8000-000000000001',jobId:'40000000-0000-4000-8000-000000000001',hostId:'host-1',spaceId:'space-1',sessionId:'session-1',bindingId:'binding-1',targetId:'target-1',sessionDigest:'a'.repeat(64),leaseToken:'50000000-0000-4000-8000-000000000001',targetIdentityFingerprint:'window-fingerprint-1',providerConversationIdentityDigest:'c'.repeat(64)};
 const binding={bindingId:ids.bindingId,groupId:ids.roomId,participantId:ids.participantId,sessionId:ids.sessionId,targetId:ids.targetId,capabilities:['draft','wake']};
 const participant={groupId:ids.roomId,participantId:ids.participantId,sessionId:ids.sessionId,status:'ready',mode:'mentions',mentions:[]};
 function lease(overrides={}){return {...ids,jobKey:'b'.repeat(64),eventId:'event-1',targetRevision:1,attemptCount:1,prompt:buildCanonicalWakePrompt('event-1'),promptDigest:createHash('sha256').update(buildCanonicalWakePrompt('event-1'),'utf8').digest('hex'),expiresAt:'2030-01-01T00:00:00Z',...overrides};}
 function setup(options={}) {
- const registry=new TargetRegistry(),target=registry.register({id:ids.targetId,roomId:ids.roomId,hostId:ids.hostId,spaceId:ids.spaceId,sessionId:ids.sessionId,appId:'claude',identityFingerprint:ids.targetIdentityFingerprint,surface:'windows_app',locatorKind:'accessibility',locatorValue:'composer',revision:1});
+ const registry=new TargetRegistry(),target=registry.register({id:ids.targetId,roomId:ids.roomId,hostId:ids.hostId,spaceId:ids.spaceId,sessionId:ids.sessionId,appId:'claude',identityFingerprint:ids.targetIdentityFingerprint,providerConversationIdentityDigest:ids.providerConversationIdentityDigest,surface:'windows_app',locatorKind:'accessibility',locatorValue:'composer',revision:1});
  let writes=0;
  const authority=new WakeAuthorizationAuthority({maxGrantMs:60_000});
  const grant=authority.createGrant({confirmed:true,hostId:ids.hostId,groupId:ids.roomId,participantId:ids.participantId,sessionId:ids.sessionId,spaceId:ids.spaceId,bindingId:ids.bindingId,targetId:ids.targetId,identityFingerprint:ids.targetIdentityFingerprint,targetRevision:1,ttlMs:60_000});
@@ -24,6 +24,18 @@ function setup(options={}) {
  return {registry,target,guard,dispatcher,store,calls,base,authority,grant,writes:()=>writes};
 }
 test('claimed lease resolves the exact identity fingerprint and builds only draft command',()=>{const s=setup();const m=commandFromClaimedWake({lease:s.base.lease,targetRegistry:s.registry,hostId:ids.hostId,binding,participant,sessionDigest:ids.sessionDigest,wakeGrantId:'grant-1'});assert.equal(m.target.identityFingerprint,ids.targetIdentityFingerprint);assert.equal(m.command.operation,'wake');assert.equal(m.command.roomId,ids.roomId);assert.equal(m.command.participantId,ids.participantId);assert.equal(m.command.bindingId,ids.bindingId);assert.ok(m.command.text.startsWith('@RMconnects\n'));});
+test('native wake refuses a missing or mismatched provider conversation identity',()=>{
+ const s=setup();
+ assert.throws(()=>commandFromClaimedWake({lease:lease({providerConversationIdentityDigest:undefined}),
+  targetRegistry:s.registry,hostId:ids.hostId,binding,participant,sessionDigest:ids.sessionDigest,wakeGrantId:'grant-1'}),
+  /Native wake requires the exact provider conversation identity/);
+ const otherRegistry=new TargetRegistry();
+ otherRegistry.register({...s.target,providerConversationIdentityDigest:'d'.repeat(64)});
+ assert.throws(()=>commandFromClaimedWake({lease:s.base.lease,targetRegistry:otherRegistry,
+  hostId:ids.hostId,binding,participant,sessionDigest:ids.sessionDigest,wakeGrantId:'grant-1'}),
+  /provider conversation identity changed|Native wake requires the exact provider conversation identity/);
+});
+
 test('durable lease -> preflight -> seal -> one-shot grant -> provider effect -> acknowledgement',async()=>{
  const s=setup();let seals=0,consumes=0;
  const result=await dispatchClaimedWake({...s.base,

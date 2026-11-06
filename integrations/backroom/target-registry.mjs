@@ -25,6 +25,7 @@ const compatible = {
   android_app: new Set(["accessibility", "screen_region"]),
 };
 const isNonempty = (v) => typeof v === "string" && v.trim().length > 0;
+const PROVIDER_IDENTITY_DIGEST = /^[a-f0-9]{64}$/;
 const fail = (message) => { throw new TypeError(message); };
 function validateRegion(region) {
   if (!region || typeof region !== "object" ||
@@ -55,11 +56,18 @@ export function validateTarget(target) {
   // A stable app/window/session identity is mandatory; foreground coordinates
   // alone must never select a different application following a focus change.
   if (!isNonempty(target.identityFingerprint)) fail("identityFingerprint required");
+  if (target.providerConversationIdentityDigest !== undefined &&
+    (typeof target.providerConversationIdentityDigest !== "string" ||
+      !PROVIDER_IDENTITY_DIGEST.test(target.providerConversationIdentityDigest))) {
+    fail("providerConversationIdentityDigest must be a SHA-256 digest");
+  }
   return Object.freeze({
     id: target.id, roomId: target.roomId, spaceId: target.spaceId,
     hostId: target.hostId, sessionId: target.sessionId,
     surface: target.surface, appId: target.appId,
     identityFingerprint: target.identityFingerprint,
+    ...(target.providerConversationIdentityDigest !== undefined
+      ? { providerConversationIdentityDigest: target.providerConversationIdentityDigest } : {}),
     locatorKind: target.locatorKind, locatorValue: target.locatorValue,
     ...(target.locatorKind === "screen_region" ? { region: Object.freeze({
       x: target.region.x, y: target.region.y, width: target.region.width,
@@ -95,7 +103,8 @@ export class TargetRegistry {
     if (old.roomId !== roomId || old.hostId !== hostId) throw new Error("target ownership mismatch");
     return this.#targets.delete(id);
   }
-  resolve(id, { roomId, hostId, spaceId, sessionId, identityFingerprint, expectedRevision } = {}) {
+  resolve(id, { roomId, hostId, spaceId, sessionId, identityFingerprint,
+    expectedProviderConversationIdentityDigest, expectedRevision } = {}) {
     const target = this.#targets.get(id);
     if (!target) throw new Error("target missing or revoked");
     if (target.roomId !== roomId || target.hostId !== hostId || target.spaceId !== spaceId) {
@@ -103,6 +112,10 @@ export class TargetRegistry {
     }
     if (target.sessionId !== sessionId || target.identityFingerprint !== identityFingerprint) {
       throw new Error("target identity changed; re-register typing area");
+    }
+    if (expectedProviderConversationIdentityDigest !== undefined &&
+      target.providerConversationIdentityDigest !== expectedProviderConversationIdentityDigest) {
+      throw new Error("provider conversation identity changed; re-register this exact conversation");
     }
     if (target.revision !== expectedRevision) throw new Error("target revision changed");
     return target;
