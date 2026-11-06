@@ -63,49 +63,73 @@ begin
 
   v_result_state:=p_result_payload->>'state';
   if not (p_result_payload ?& array['version','kind','handoffId','jobId','deviceId','roomId','screenSessionId','bindingId','targetId','targetRevision','state','promptInserted','sendInvoked','composerCleared'])
-    or p_result_payload->>'version'<>'1'
-    or p_result_payload->>'kind'<>'native_wake_result'
-    or p_result_payload->>'handoffId'<>p_handoff_id::text
-    or p_result_payload->>'jobId'<>p_job_id::text
-    or p_result_payload->>'deviceId'<>p_device_id::text
-    or p_result_payload->>'screenSessionId'<>p_screen_session_id::text
-    or p_result_payload->>'bindingId'<>p_binding_id::text
-    or p_result_payload->>'targetId'<>p_target_id
-    or p_result_payload->>'targetRevision'<>p_target_revision::text
-    or v_result_state not in ('submitted','preflight_denied','needs_review')
-    or p_result_payload->>'promptInserted' not in ('true','false')
-    or p_result_payload->>'sendInvoked' not in ('true','false')
-    or p_result_payload->>'composerCleared' not in ('true','false') then
+    or pg_catalog.jsonb_typeof(p_result_payload->'version') is distinct from 'number'
+    or pg_catalog.jsonb_typeof(p_result_payload->'targetRevision') is distinct from 'number'
+    or pg_catalog.jsonb_typeof(p_result_payload->'kind') is distinct from 'string'
+    or pg_catalog.jsonb_typeof(p_result_payload->'handoffId') is distinct from 'string'
+    or pg_catalog.jsonb_typeof(p_result_payload->'jobId') is distinct from 'string'
+    or pg_catalog.jsonb_typeof(p_result_payload->'deviceId') is distinct from 'string'
+    or pg_catalog.jsonb_typeof(p_result_payload->'roomId') is distinct from 'string'
+    or pg_catalog.jsonb_typeof(p_result_payload->'screenSessionId') is distinct from 'string'
+    or pg_catalog.jsonb_typeof(p_result_payload->'bindingId') is distinct from 'string'
+    or pg_catalog.jsonb_typeof(p_result_payload->'targetId') is distinct from 'string'
+    or pg_catalog.jsonb_typeof(p_result_payload->'state') is distinct from 'string'
+    or pg_catalog.jsonb_typeof(p_result_payload->'promptInserted') is distinct from 'boolean'
+    or pg_catalog.jsonb_typeof(p_result_payload->'sendInvoked') is distinct from 'boolean'
+    or pg_catalog.jsonb_typeof(p_result_payload->'composerCleared') is distinct from 'boolean'
+    or p_result_payload->>'version' is distinct from '1'
+    or p_result_payload->>'kind' is distinct from 'native_wake_result'
+    or p_result_payload->>'handoffId' is distinct from p_handoff_id::text
+    or p_result_payload->>'jobId' is distinct from p_job_id::text
+    or p_result_payload->>'deviceId' is distinct from p_device_id::text
+    or p_result_payload->>'roomId' is distinct from v_job.room_id::text
+    or p_result_payload->>'screenSessionId' is distinct from p_screen_session_id::text
+    or p_result_payload->>'bindingId' is distinct from p_binding_id::text
+    or p_result_payload->>'targetId' is distinct from p_target_id
+    or p_result_payload->>'targetRevision' is distinct from p_target_revision::text
+    or v_result_state is null
+    or v_result_state not in ('submitted','preflight_denied','needs_review') then
+    raise exception 'Invalid native wake result evidence';
+  end if;
+
+  if p_result_payload ? 'reason' and pg_catalog.jsonb_typeof(p_result_payload->'reason') is distinct from 'string' then
     raise exception 'Invalid native wake result evidence';
   end if;
 
   if v_result_state='submitted' then
-    if p_result_payload->>'promptInserted'<>'true'
-      or p_result_payload->>'sendInvoked'<>'true'
-      or p_result_payload->>'composerCleared'<>'true'
-      or p_result_payload->>'promptReadbackVerified'<>'true'
-      or p_result_payload->>'composerIdentityRevalidated'<>'true'
-      or p_result_payload->>'sendControlIdentityRevalidated'<>'true'
-      or p_result_payload->>'providerConversationIdentityRevalidated'<>'true'
-      or p_result_payload->>'composerIdentityDigest'<>p_composer_identity_digest
-      or p_result_payload->>'sendControlIdentityDigest'<>p_send_control_identity_digest
-      or p_result_payload->>'providerConversationIdentityDigest'<>p_provider_conversation_identity_digest
+    if p_result_payload->>'promptInserted' is distinct from 'true'
+      or p_result_payload->>'sendInvoked' is distinct from 'true'
+      or p_result_payload->>'composerCleared' is distinct from 'true'
+      or pg_catalog.jsonb_typeof(p_result_payload->'promptReadbackVerified') is distinct from 'boolean'
+      or p_result_payload->>'promptReadbackVerified' is distinct from 'true'
+      or pg_catalog.jsonb_typeof(p_result_payload->'composerIdentityRevalidated') is distinct from 'boolean'
+      or p_result_payload->>'composerIdentityRevalidated' is distinct from 'true'
+      or pg_catalog.jsonb_typeof(p_result_payload->'sendControlIdentityRevalidated') is distinct from 'boolean'
+      or p_result_payload->>'sendControlIdentityRevalidated' is distinct from 'true'
+      or pg_catalog.jsonb_typeof(p_result_payload->'providerConversationIdentityRevalidated') is distinct from 'boolean'
+      or p_result_payload->>'providerConversationIdentityRevalidated' is distinct from 'true'
+      or pg_catalog.jsonb_typeof(p_result_payload->'composerIdentityDigest') is distinct from 'string'
+      or pg_catalog.jsonb_typeof(p_result_payload->'sendControlIdentityDigest') is distinct from 'string'
+      or pg_catalog.jsonb_typeof(p_result_payload->'providerConversationIdentityDigest') is distinct from 'string'
+      or p_result_payload->>'composerIdentityDigest' is distinct from p_composer_identity_digest
+      or p_result_payload->>'sendControlIdentityDigest' is distinct from p_send_control_identity_digest
+      or p_result_payload->>'providerConversationIdentityDigest' is distinct from p_provider_conversation_identity_digest
       or p_result_payload ? 'reason' then
       raise exception 'Submitted native wake lacks exact composer, Send or provider proof';
     end if;
   elsif v_result_state='preflight_denied' then
     if p_result_payload ?| array['promptReadbackVerified','composerIdentityRevalidated','sendControlIdentityRevalidated','composerIdentityDigest','sendControlIdentityDigest','providerConversationIdentityRevalidated','providerConversationIdentityDigest']
-      or p_result_payload->>'promptInserted'<>'false'
-      or p_result_payload->>'sendInvoked'<>'false'
-      or p_result_payload->>'composerCleared'<>'false'
+      or p_result_payload->>'promptInserted' is distinct from 'false'
+      or p_result_payload->>'sendInvoked' is distinct from 'false'
+      or p_result_payload->>'composerCleared' is distinct from 'false'
       or coalesce(p_result_payload->>'reason','')='' then
       raise exception 'Preflight denial cannot claim a side effect';
     end if;
   elsif v_result_state='needs_review' then
     if p_result_payload ?| array['promptReadbackVerified','composerIdentityRevalidated','sendControlIdentityRevalidated','composerIdentityDigest','sendControlIdentityDigest','providerConversationIdentityRevalidated','providerConversationIdentityDigest']
       or coalesce(p_result_payload->>'reason','')=''
-      or p_result_payload->>'composerCleared'<>'false'
-      or (p_result_payload->>'sendInvoked'='true' and p_result_payload->>'promptInserted'<>'true') then
+      or p_result_payload->>'composerCleared' is distinct from 'false'
+      or (p_result_payload->>'sendInvoked'='true' and p_result_payload->>'promptInserted' is distinct from 'true') then
       raise exception 'Uncertain native wake result must remain terminal review evidence';
     end if;
   end if;
@@ -116,7 +140,7 @@ begin
     and j.session_digest=p_session_digest and j.binding_id=p_binding_id
   for update;
   if not found then return 'lease_mismatch'; end if;
-  if p_result_payload->>'roomId'<>v_job.room_id::text then
+  if p_result_payload->>'roomId' is distinct from v_job.room_id::text then
     raise exception 'Native wake result room does not match the durable group job';
   end if;
 
@@ -125,11 +149,11 @@ begin
     return 'replayed';
   end if;
 
-  if v_job.state<>'leased' or v_job.lease_owner<>p_host_id
-    or v_job.lease_token_hash<>p_lease_token_digest
-    or v_job.target_id<>p_target_id or v_job.target_revision<>p_target_revision
-    or v_job.provider_conversation_identity_digest<>p_provider_conversation_identity_digest
-    or v_job.lease_expires_at<=pg_catalog.clock_timestamp()
+  if v_job.state is distinct from 'leased' or v_job.lease_owner is distinct from p_host_id
+    or v_job.lease_token_hash is distinct from p_lease_token_digest
+    or v_job.target_id is distinct from p_target_id or v_job.target_revision is distinct from p_target_revision
+    or v_job.provider_conversation_identity_digest is distinct from p_provider_conversation_identity_digest
+    or v_job.lease_expires_at is null or v_job.lease_expires_at<=pg_catalog.clock_timestamp()
     or v_job.expires_at<=pg_catalog.clock_timestamp() then
     return 'lease_mismatch';
   end if;
