@@ -327,13 +327,19 @@ begin
     select * into v_mapping from public.backroom_android_native_bindings n
     where n.challenge_id=p_challenge_id;
     if found
+      and v_challenge.nonce_digest is not distinct from p_nonce_digest
+      and v_challenge.device_id is not distinct from p_device_id
+      and v_challenge.screen_session_id is not distinct from p_screen_session_id
+      and v_challenge.app_package_name is not distinct from p_app_package_name
       and v_mapping.device_id=p_device_id
       and v_mapping.screen_session_id=p_screen_session_id
       and v_mapping.app_package_name=p_app_package_name
       and v_mapping.app_signing_certificate_sha256=p_app_signing_certificate_sha256
       and v_mapping.composer_identity_digest=p_composer_identity_digest
       and v_mapping.send_control_identity_digest=p_send_control_identity_digest
-      and v_mapping.provider_conversation_identity_digest=p_provider_conversation_identity_digest then
+      and v_mapping.provider_conversation_identity_digest=p_provider_conversation_identity_digest
+      and v_mapping.revoked_at is null
+      and v_mapping.expires_at>v_now then
       return pg_catalog.jsonb_build_object('ok',true,'nativeBindingId',v_mapping.id,
         'bindingId',v_mapping.binding_id,'expiresAt',v_mapping.expires_at,'replayed',true);
     end if;
