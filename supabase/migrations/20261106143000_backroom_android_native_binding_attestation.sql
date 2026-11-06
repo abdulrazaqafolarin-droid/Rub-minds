@@ -560,22 +560,24 @@ begin
 
   select * into v_screen from public.backroom_desktop_sessions s
   where s.session_id=p_screen_session_id and s.device_id=p_device_id
-    and s.room_id=v_binding.room_id and s.session_type='screen'
-    and s.status='active' and s.expires_at>v_now for update;
+    and s.room_id=v_binding.room_id and s.requested_by=v_challenge.owner_id
+    and s.session_type='screen' and s.status='active' and s.expires_at>v_now for update;
   if not found then return pg_catalog.jsonb_build_object('ok',false,'reason','screen_session_inactive'); end if;
 
   -- Lock every mutable device-side authority before writing an attestation.
   -- Revocation/app inventory updates therefore either happen before these checks
   -- or wait and revoke the newly inserted mapping after this transaction commits.
   select * into v_device from public.backroom_devices d
-  where d.device_id=p_device_id and d.platform='android' and d.status='active'
+  where d.device_id=p_device_id and d.owner_id=v_challenge.owner_id
+    and d.platform='android' and d.status='active'
   for update;
   if not found then
     return pg_catalog.jsonb_build_object('ok',false,'reason','device_room_binding_inactive');
   end if;
 
   select * into v_device_room_binding from public.backroom_device_room_bindings rb
-  where rb.device_id=p_device_id and rb.room_id=v_binding.room_id and rb.revoked_at is null
+  where rb.device_id=p_device_id and rb.room_id=v_binding.room_id
+    and rb.owner_id=v_challenge.owner_id and rb.revoked_at is null
   for update;
   if not found then
     return pg_catalog.jsonb_build_object('ok',false,'reason','device_room_binding_inactive');
