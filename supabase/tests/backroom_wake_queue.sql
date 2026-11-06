@@ -606,6 +606,25 @@ begin
     raise exception 'A delayed duplicate ACK must replay after a later retry has settled';
   end if;
 
+  -- Reusing one handoff ID with altered evidence is a conflict, not a replay.
+  v_bad_native_result:=v_preflight_result || jsonb_build_object('reason','other');
+  v_rejected:=false;
+  v_error_message:=null;
+  begin
+    perform public.settle_backroom_android_native_wake_result(
+      v_preflight_claim.out_job_id,v_host_test,repeat('8',64),v_binding_native,
+      pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_preflight_claim.out_lease_token,'UTF8')),'hex'),
+      v_preflight_handoff,v_native_device,v_native_screen_session,'target-native',1,
+      repeat('a',64),repeat('b',64),v_native_provider_digest,v_bad_native_result
+    );
+  exception when others then
+    get stacked diagnostics v_error_message = message_text;
+    v_rejected := v_error_message = 'Conflicting native wake result for a previously settled handoff';
+  end;
+  if not v_rejected then
+    raise exception 'A native handoff must not be reused with different result evidence';
+  end if;
+
   -- A post-effect uncertain result is terminal and must never be replayed automatically.
   v_review_job:=public.enqueue_backroom_wake_job(
     repeat('3',64),v_owner,v_room,v_participant,v_host_test,'space-native','session-native',repeat('8',64),
