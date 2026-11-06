@@ -52,6 +52,8 @@ security invoker
 set search_path=''
 as $function$
 declare
+  v_session public.rub_minds_mcp_sessions%rowtype;
+  v_binding public.backroom_input_bindings%rowtype;
   v_job public.backroom_wake_jobs%rowtype;
   v_binding_active boolean := false;
   v_result_state text;
@@ -148,14 +150,42 @@ begin
     end if;
   end if;
 
+  -- Serialize against MCP Leave and queue admission using the same lock order:
+  -- session advisory lock -> parent MCP session -> input binding -> durable job.
+  -- This prevents a concurrent Off/revoke from changing consent between the
+  -- settlement check and the job transition.
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(p_session_digest,0)
+  );
+
+  select * into v_session
+  from public.rub_minds_mcp_sessions s
+  where s.session_digest=p_session_digest
+  for update;
+  if not found or v_session.terminated_at is not null
+    or v_session.expires_at<=pg_catalog.clock_timestamp()
+    or v_session.agent_credential_ciphertext is null then
+    return 'lease_mismatch';
+  end if;
+
+  select * into v_binding
+  from public.backroom_input_bindings b
+  where b.id=p_binding_id and b.host_id=p_host_id
+    and b.session_digest=p_session_digest
+  for update;
+  if not found then return 'lease_mismatch'; end if;
+
   select * into v_job
   from public.backroom_wake_jobs j
   where j.id=p_job_id and j.host_id=p_host_id
     and j.session_digest=p_session_digest and j.binding_id=p_binding_id
   for update;
   if not found then return 'lease_mismatch'; end if;
-  if p_result_payload->>'roomId' is distinct from v_job.room_id::text then
-    raise exception 'Native wake result room does not match the durable group job';
+
+  if v_session.room_id is distinct from v_job.room_id
+    or v_session.participant_id is distinct from v_job.participant_id
+    or p_result_payload->>'roomId' is distinct from v_job.room_id::text then
+    raise exception 'Native wake result room or MCP session does not match the durable group job';
   end if;
 
   -- Preserve one bounded result per handoff. A safe preflight retry may
@@ -182,20 +212,28 @@ begin
     return 'lease_mismatch';
   end if;
 
-  select exists(
-    select 1 from public.backroom_input_bindings b
-    where b.id=p_binding_id and b.owner_id=v_job.owner_id
-      and b.room_id=v_job.room_id and b.participant_id=v_job.participant_id
-      and b.host_id=v_job.host_id and b.session_digest=v_job.session_digest
-      and b.space_id=v_job.space_id and b.session_id=v_job.session_id
-      and b.target_id=v_job.target_id
-      and b.target_identity_fingerprint=v_job.target_identity_fingerprint
-      and b.target_revision=v_job.target_revision
-      and b.provider_conversation_identity_digest=p_provider_conversation_identity_digest
-      and b.surface='android_app' and b.revoked_at is null
-      and b.wake_enabled=true and b.confirmed_at is not null
-      and b.wake_expires_at>pg_catalog.clock_timestamp()
-  ) into v_binding_active;
+  -- The binding row is locked before the job row is changed. A concurrent
+  -- grant revocation/rebind must therefore finish first, or wait until this
+  -- settlement commits; it cannot slip between consent check and ACK.
+  v_binding_active :=
+    v_binding.id=p_binding_id
+    and v_binding.owner_id=v_job.owner_id
+    and v_binding.room_id=v_job.room_id
+    and v_binding.participant_id=v_job.participant_id
+    and v_binding.host_id=v_job.host_id
+    and v_binding.session_digest=v_job.session_digest
+    and v_binding.space_id=v_job.space_id
+    and v_binding.session_id=v_job.session_id
+    and v_binding.target_id=v_job.target_id
+    and v_binding.target_identity_fingerprint=v_job.target_identity_fingerprint
+    and v_binding.target_revision=v_job.target_revision
+    and v_binding.provider_conversation_identity_digest=p_provider_conversation_identity_digest
+    and v_binding.surface='android_app'
+    and v_binding.revoked_at is null
+    and v_binding.wake_enabled is true
+    and v_binding.confirmed_at is not null
+    and v_binding.wake_expires_at is not null
+    and v_binding.wake_expires_at>pg_catalog.clock_timestamp();
 
   if v_result_state='submitted' then
     v_next_state:=case when v_binding_active then 'acknowledged' else 'cancelled' end;
