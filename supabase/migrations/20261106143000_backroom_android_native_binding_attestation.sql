@@ -118,6 +118,124 @@ create trigger backroom_android_native_binding_screen_lifecycle_trigger
 after update of status,expires_at on public.backroom_desktop_sessions
 for each row execute function public.revoke_backroom_android_native_binding_on_screen_change();
 
+create or replace function public.revoke_backroom_android_native_binding_on_group_binding_change()
+returns trigger
+language plpgsql
+security invoker
+set search_path=''
+as $function$
+begin
+  if new.revoked_at is not null then
+    update public.backroom_android_native_bindings
+    set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp())
+    where binding_id=new.id and revoked_at is null;
+    update public.backroom_android_native_binding_challenges
+    set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp())
+    where binding_id=new.id and consumed_at is null and revoked_at is null;
+  end if;
+  return new;
+end;
+$function$;
+revoke all on function public.revoke_backroom_android_native_binding_on_group_binding_change()
+  from public,anon,authenticated;
+grant execute on function public.revoke_backroom_android_native_binding_on_group_binding_change() to service_role;
+drop trigger if exists backroom_android_native_binding_group_binding_lifecycle_trigger
+  on public.backroom_input_bindings;
+create trigger backroom_android_native_binding_group_binding_lifecycle_trigger
+after update of revoked_at on public.backroom_input_bindings
+for each row execute function public.revoke_backroom_android_native_binding_on_group_binding_change();
+
+create or replace function public.revoke_backroom_android_native_binding_on_room_unpair()
+returns trigger
+language plpgsql
+security invoker
+set search_path=''
+as $function$
+begin
+  if new.revoked_at is not null then
+    update public.backroom_android_native_bindings
+    set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp())
+    where device_id=new.device_id and room_id=new.room_id and revoked_at is null;
+    update public.backroom_android_native_binding_challenges
+    set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp())
+    where device_id=new.device_id and room_id=new.room_id
+      and consumed_at is null and revoked_at is null;
+  end if;
+  return new;
+end;
+$function$;
+revoke all on function public.revoke_backroom_android_native_binding_on_room_unpair()
+  from public,anon,authenticated;
+grant execute on function public.revoke_backroom_android_native_binding_on_room_unpair() to service_role;
+drop trigger if exists backroom_android_native_binding_room_unpair_trigger
+  on public.backroom_device_room_bindings;
+create trigger backroom_android_native_binding_room_unpair_trigger
+after update of revoked_at on public.backroom_device_room_bindings
+for each row execute function public.revoke_backroom_android_native_binding_on_room_unpair();
+
+create or replace function public.revoke_backroom_android_native_binding_on_app_signer_change()
+returns trigger
+language plpgsql
+security invoker
+set search_path=''
+as $function$
+begin
+  if tg_op='DELETE' or new.signing_certificate_sha256 is distinct from old.signing_certificate_sha256 then
+    update public.backroom_android_native_bindings
+    set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp())
+    where device_id=case when tg_op='DELETE' then old.device_id else new.device_id end
+      and app_package_name=case when tg_op='DELETE' then old.package_name else new.package_name end
+      and revoked_at is null;
+    update public.backroom_android_native_binding_challenges
+    set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp())
+    where device_id=case when tg_op='DELETE' then old.device_id else new.device_id end
+      and app_package_name=case when tg_op='DELETE' then old.package_name else new.package_name end
+      and consumed_at is null and revoked_at is null;
+  end if;
+  if tg_op='DELETE' then return old; end if;
+  return new;
+end;
+$function$;
+revoke all on function public.revoke_backroom_android_native_binding_on_app_signer_change()
+  from public,anon,authenticated;
+grant execute on function public.revoke_backroom_android_native_binding_on_app_signer_change() to service_role;
+drop trigger if exists backroom_android_native_binding_app_signer_trigger
+  on public.backroom_device_apps;
+create trigger backroom_android_native_binding_app_signer_trigger
+after update of signing_certificate_sha256 or delete on public.backroom_device_apps
+for each row execute function public.revoke_backroom_android_native_binding_on_app_signer_change();
+
+create or replace function public.revoke_backroom_android_native_binding_on_host_change()
+returns trigger
+language plpgsql
+security invoker
+set search_path=''
+as $function$
+begin
+  if new.revoked_at is not null then
+    update public.backroom_android_native_bindings n
+    set revoked_at=coalesce(n.revoked_at,pg_catalog.clock_timestamp())
+    from public.backroom_input_bindings b
+    where b.id=n.binding_id and b.host_id=new.host_id
+      and n.revoked_at is null;
+    update public.backroom_android_native_binding_challenges c
+    set revoked_at=coalesce(c.revoked_at,pg_catalog.clock_timestamp())
+    from public.backroom_input_bindings b
+    where b.id=c.binding_id and b.host_id=new.host_id
+      and c.consumed_at is null and c.revoked_at is null;
+  end if;
+  return new;
+end;
+$function$;
+revoke all on function public.revoke_backroom_android_native_binding_on_host_change()
+  from public,anon,authenticated;
+grant execute on function public.revoke_backroom_android_native_binding_on_host_change() to service_role;
+drop trigger if exists backroom_android_native_binding_host_lifecycle_trigger
+  on public.backroom_hosts;
+create trigger backroom_android_native_binding_host_lifecycle_trigger
+after update of revoked_at on public.backroom_hosts
+for each row execute function public.revoke_backroom_android_native_binding_on_host_change();
+
 create or replace function public.revoke_backroom_android_native_binding_on_device_change()
 returns trigger
 language plpgsql
@@ -158,6 +276,10 @@ declare
   v_binding public.backroom_input_bindings%rowtype;
   v_mcp public.rub_minds_mcp_sessions%rowtype;
   v_screen public.backroom_desktop_sessions%rowtype;
+  v_device public.backroom_devices%rowtype;
+  v_device_room_binding public.backroom_device_room_bindings%rowtype;
+  v_app public.backroom_device_apps%rowtype;
+  v_host public.backroom_hosts%rowtype;
   v_mapping public.backroom_android_native_bindings%rowtype;
   v_now timestamptz:=pg_catalog.clock_timestamp();
   v_mapping_id uuid;
@@ -257,16 +379,37 @@ begin
     and s.status='active' and s.expires_at>v_now for update;
   if not found then return pg_catalog.jsonb_build_object('ok',false,'reason','screen_session_inactive'); end if;
 
-  if not exists(select 1 from public.backroom_devices d
-    join public.backroom_device_room_bindings rb on rb.device_id=d.device_id
-    where d.device_id=p_device_id and d.platform='android' and d.status='active'
-      and rb.room_id=v_binding.room_id and rb.revoked_at is null) then
+  -- Lock every mutable device-side authority before writing an attestation.
+  -- Revocation/app inventory updates therefore either happen before these checks
+  -- or wait and revoke the newly inserted mapping after this transaction commits.
+  select * into v_device from public.backroom_devices d
+  where d.device_id=p_device_id and d.platform='android' and d.status='active'
+  for update;
+  if not found then
     return pg_catalog.jsonb_build_object('ok',false,'reason','device_room_binding_inactive');
   end if;
-  if not exists(select 1 from public.backroom_device_apps a
-    where a.device_id=p_device_id and a.package_name=p_app_package_name
-      and a.signing_certificate_sha256=p_app_signing_certificate_sha256) then
+
+  select * into v_device_room_binding from public.backroom_device_room_bindings rb
+  where rb.device_id=p_device_id and rb.room_id=v_binding.room_id and rb.revoked_at is null
+  for update;
+  if not found then
+    return pg_catalog.jsonb_build_object('ok',false,'reason','device_room_binding_inactive');
+  end if;
+
+  select * into v_app from public.backroom_device_apps a
+  where a.device_id=p_device_id and a.package_name=p_app_package_name
+    and a.signing_certificate_sha256=p_app_signing_certificate_sha256
+  for update;
+  if not found then
     return pg_catalog.jsonb_build_object('ok',false,'reason','app_signer_not_in_device_inventory');
+  end if;
+
+  select * into v_host from public.backroom_hosts h
+  where h.host_id=v_binding.host_id and h.owner_id=v_binding.owner_id
+    and h.revoked_at is null and h.expires_at>v_now
+  for update;
+  if not found then
+    return pg_catalog.jsonb_build_object('ok',false,'reason','group_authorization_expired');
   end if;
 
   select * into v_mapping from public.backroom_android_native_bindings n
