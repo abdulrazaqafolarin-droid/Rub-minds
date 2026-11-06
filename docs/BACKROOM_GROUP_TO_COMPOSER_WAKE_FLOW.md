@@ -268,3 +268,19 @@ The remaining order is intentional; do not wire the UI switch to native Send bef
 | Android device command and receipt validation | `supabase/functions/backroom-device/android-streaming-protocol.mjs`, `supabase/functions/backroom-device/index.ts` |
 | Native host/driver contract | `docs/BACKROOM_NATIVE_WAKE_DRIVER_CONTRACT.md` |
 | User-facing mode and capability boundary | `docs/BACKROOM_INTERACTION_MODES.md` |
+
+
+## Android device-attested group binding — source update, 2026-11-06
+
+The earlier note above that no device-attested registration route existed is superseded by the current #66 source branch. A narrow challenge/completion handshake is now implemented in source:
+
+1. The owner-authenticated phone-frame route lists only existing, active, owner-authorized Android-surface group input bindings. It does not return provider, composer or Send digests.
+2. The owner requests a one-time challenge tied to one existing group binding, paired Android device, room, active screen session and selected app. The browser receives a random nonce with a 90-second expiry; only its SHA-256 digest is stored in the challenge row.
+3. The browser relays only the challenge ID and nonce to the phone over the existing WebRTC data channel.
+4. The phone revalidates the same focused composer, unique nearby Send control, app signer and provider conversation locally through Accessibility. It sends the four opaque identities directly to backroom-device with its device bearer; none of those digests traverse the browser channel.
+5. The service-role RPC checks the one-time nonce, live MCP session and credential, exact group binding, room membership, paired device-room grant, active screen session, app signer inventory and immutable provider identity before inserting the native mapping.
+6. Screen stop/expiry, device revocation, room unpair, app signer change/removal, host revocation and group-binding revocation invalidate the mapping. A phone screen can map to only one group binding at a time; an expired mapping must be retired before rebind.
+
+The database permits the first NULL-to-provider-digest transition only after the matching live phone attestation exists, while wake remains off and no durable wake job exists. Thereafter provider identity remains immutable and requires revoke/re-register to change.
+
+**Limits remain important.** The handset provider resolver registry is still empty, so ChatGPT, Claude and other providers do not yet yield a verified stable conversation digest. The phone frame requires an existing owner-authorized group input binding on an active Backroom host; this phone flow does not create that upstream host/target binding. The trusted group-lease-to-device forwarder is still absent, as are native Android Off / On / Auto and physical-device acceptance. The new migration and Edge changes are source-only and have not been applied or deployed.
