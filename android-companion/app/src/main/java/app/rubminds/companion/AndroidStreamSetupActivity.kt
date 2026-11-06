@@ -49,7 +49,7 @@ class AndroidStreamSetupActivity : Activity() {
             setPadding(0, dp(12), 0, dp(12))
         })
         val privacy = TextView(this).apply {
-            text = "Screen capture is local-user approved by Android every time. Accessibility is a separate, optional permission used only to verify the foreground package and dispatch taps/swipes into the selected app window. Backroom does not upload the accessibility tree or app text. Remote touch remains off until you explicitly arm it here."
+            text = "Screen capture is approved by you through Android every time. Accessibility is a separate, optional permission used to verify the foreground app, drag-selected composer and nearby Send control, and dispatch taps/swipes into the selected app window. For a separately consented native wake, the exact selected composer is inspected locally only to confirm it is empty, contains the fixed @RMconnects event trigger and clears after Send. No accessibility tree, composer value or conversation content is uploaded. Remote touch remains off until you explicitly arm it here. The phone can consume a separately authenticated native-wake queue command, but no group-wake producer currently forwards group events into that device queue."
             textSize = 12f
             setTextColor(0xff334155.toInt())
             setBackgroundColor(0xfff0f3f8.toInt())

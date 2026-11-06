@@ -100,7 +100,7 @@ test("health endpoint is no-store and query strings are rejected",async()=>{
 });
 
 function fakeBrowserRuntime() {
- let running=false, selected=null, selectionRoom=null, selectionAttemptId=null, selectionCounter=0, targets=[], viewGrants=new Map();
+ let running=false, selected=null, selectionRoom=null, selectionAttemptId=null, selectionCounter=0, targets=[], viewGrants=new Map(),lastWakeInput=null;
  const pageId="12345678-1234-4234-9234-123456789012";
  const targetId="12345678-1234-4234-9234-123456789013";
  const makeSelectionAttempt=()=> "32345678-1234-4234-9234-"+String(++selectionCounter).padStart(12,"0");
@@ -122,10 +122,11 @@ function fakeBrowserRuntime() {
   listTargets:async()=>targets,
   unregisterTarget:async(id,roomId)=>{const index=targets.findIndex(t=>t.id===id&&t.roomId===roomId);if(index<0)return false;targets.splice(index,1);return true},
   draft:async(id,text,{approved,roomId}={})=>{if(approved!==true)throw Error("approval required");if(!targets.some(t=>t.id===id&&t.roomId===roomId)){const error=Error("target scope mismatch");error.status=409;throw error}return {state:"completed",result:{drafted:true,submitted:false},submitted:false}},
-  enableContinuousWake:async input=>{if(input.confirmed!==true)throw Object.assign(Error("confirmation required"),{status:403});if(!targets.some(t=>t.id===input.targetId&&t.roomId===input.roomId))throw Object.assign(Error("target scope mismatch"),{status:409});return {grantId:"42345678-1234-4234-9234-123456789099",createdAt:1,expiresAt:900001,maxPerMinute:6,scope:{hostId:"host-test",groupId:input.roomId,participantId:input.participantId,sessionId:input.sessionId,bindingId:input.bindingId,targetId:input.targetId,identityFingerprint:"fake-window",targetRevision:1},mode:"canonical-trigger-only"}},
+  enableContinuousWake:async input=>{if(input.confirmed!==true)throw Object.assign(Error("confirmation required"),{status:403});if(!targets.some(t=>t.id===input.targetId&&t.roomId===input.roomId))throw Object.assign(Error("target scope mismatch"),{status:409});lastWakeInput=input;const createdAt=Date.now();return {grantId:"42345678-1234-4234-9234-123456789099",createdAt,expiresAt:createdAt+input.ttlMs,maxPerMinute:input.maxPerMinute,scope:{hostId:"host-test",groupId:input.roomId,participantId:input.participantId,sessionId:input.sessionId,bindingId:input.bindingId,targetId:input.targetId,identityFingerprint:"fake-window",targetRevision:1},mode:"canonical-trigger-only"}},
   revokeContinuousWake:async input=>input.grantId==="42345678-1234-4234-9234-123456789099"&&input.targetId===targetId&&targets.some(t=>t.id===input.targetId&&t.roomId===input.roomId),
   wake:async (targetId,eventId,grantId,{roomId}={})=>{if(grantId!=="42345678-1234-4234-9234-123456789099")throw Object.assign(Error("grant invalid"),{status:403});if(!targets.some(t=>t.id===targetId&&t.roomId===roomId))throw Object.assign(Error("target scope mismatch"),{status:409});return {state:"completed",reason:null,result:{triggerSubmitted:true,confirmation:"composer-cleared"},submitted:true,triggerOnly:true}},
   testSetSelected:()=>{selected={state:"selected",selectionAttemptId};},
+  lastWakeInput:()=>lastWakeInput,
   pageId,targetId,
  };
 }
@@ -442,6 +443,7 @@ test("wrong-origin callers cannot trigger the emergency stop", async () => {
 
 test("canonical wake HTTP routes require pairing, explicit opt-in, exact scope and grant",async()=>{
  const browserRuntime=fakeBrowserRuntime();
+ const approvalRequests=[];
  await withHost(async({base,origin})=>{
   const targetId=browserRuntime.targetId,roomId="12345678-1234-4234-9234-123456789014";
   assert.equal((await fetch(base+"/v1/browser/wake/grants",{method:"POST",headers:{Origin:origin,"Content-Type":"application/json"},body:JSON.stringify({confirmed:true})})).status,401);
@@ -454,7 +456,9 @@ test("canonical wake HTTP routes require pairing, explicit opt-in, exact scope a
   const selection=await (await fetch(base+"/v1/browser/select",{method:"POST",headers:auth,body:JSON.stringify({pageId:browserRuntime.pageId,roomId})})).json();
   browserRuntime.testSetSelected();
   assert.equal((await fetch(base+"/v1/browser/targets",{method:"POST",headers:auth,body:JSON.stringify({pageId:browserRuntime.pageId,roomId,attemptId:selection.selectionAttemptId})})).status,201);
-  const request={confirmed:true,targetId,roomId,participantId:"32345678-1234-4234-9234-123456789011",sessionId:browserRuntime.pageId,bindingId:"32345678-1234-4234-9234-123456789012"};
+  const request={confirmed:true,targetId,roomId,participantId:"32345678-1234-4234-9234-123456789011",sessionId:browserRuntime.pageId,bindingId:"32345678-1234-4234-9234-123456789012",ttlMs:86400000,maxPerMinute:6};
+  const invalidTtl=await fetch(base+"/v1/browser/wake/grants",{method:"POST",headers:auth,body:JSON.stringify({...request,ttlMs:86400001})});
+  assert.equal(invalidTtl.status,400);
   const grantResponse=await fetch(base+"/v1/browser/wake/grants",{method:"POST",headers:auth,body:JSON.stringify(request)});
   assert.equal(grantResponse.status,201);
   const grant=await grantResponse.json();assert.equal(grant.mode,"canonical-trigger-only");assert.equal(grant.scope.targetId,targetId);
@@ -464,7 +468,12 @@ test("canonical wake HTTP routes require pairing, explicit opt-in, exact scope a
   assert.equal(wake.status,200);assert.equal((await wake.json()).triggerOnly,true);
   const revoke=await fetch(base+"/v1/browser/wake/grants/revoke",{method:"POST",headers:auth,body:JSON.stringify({grantId:grant.grantId,targetId,roomId,bindingId:request.bindingId})});
   assert.equal(revoke.status,200);assert.equal((await revoke.json()).revoked,true);
- },{browserRuntime,authorizeLocalAction:async()=>true});
+ },{browserRuntime,authorizeLocalAction:async action=>{approvalRequests.push(action);return true;}});
+ assert.equal(approvalRequests.length,1);
+ assert.equal(approvalRequests[0].ttlMs,86400000);
+ assert.equal(approvalRequests[0].maxPerMinute,6);
+ assert.equal(browserRuntime.lastWakeInput().ttlMs,approvalRequests[0].ttlMs);
+ assert.equal(browserRuntime.lastWakeInput().maxPerMinute,approvalRequests[0].maxPerMinute);
 });
 
 
@@ -791,4 +800,116 @@ test("paired host status reports only the trusted wake gateway hostname",async()
   assert.equal(value.gatewayUrl,undefined);
   assert.equal(value.hostToken,undefined);
  },{wakeService});
+});
+
+test("paired host status preserves an authoritative empty wake inventory after process restart",async()=>{
+ const gatewayHost="tzcuuynmviiuactafpld.supabase.co";
+ const wakeService={get status(){return {configured:false,count:0,bindings:[],gatewayHost};}};
+ await withHost(async({base,origin})=>{
+  const credentials=await(await pair(base,origin)).json();
+  const response=await fetch(base+"/v1/host",{headers:{Origin:origin,Authorization:"Bearer "+credentials.sessionToken}});
+  assert.equal(response.status,200);
+  const value=await response.json();
+  assert.deepEqual(value.wakeBindings,[]);
+ },{wakeService});
+});
+
+test("paired host status omits malformed or truncated wake inventory instead of claiming it is complete",async()=>{
+ const bindingId="42345678-1234-4234-9234-123456789013";
+ for(const bindings of [
+  [{bindingId,polling:true}],
+  Array.from({length:11},(_,i)=>({
+   bindingId:"52345678-1234-4234-9234-"+String(i+1).padStart(12,"0"),
+   polling:false,consentActive:false,deactivationPending:false
+  }))
+ ]) {
+  const wakeService={get status(){return {configured:true,count:bindings.length,bindings,gatewayHost:"tzcuuynmviiuactafpld.supabase.co"};}};
+  await withHost(async({base,origin})=>{
+   const credentials=await(await pair(base,origin)).json();
+   const response=await fetch(base+"/v1/host",{headers:{Origin:origin,Authorization:"Bearer "+credentials.sessionToken}});
+   assert.equal(response.status,200);
+   const value=await response.json();
+   assert.equal(Object.hasOwn(value,"wakeBindings"),false);
+  },{wakeService});
+ }
+});
+
+test("paired host status reports exact local wake poller state without leaking grant credentials",async()=>{
+ const bindingId="42345678-1234-4234-9234-123456789012";
+ const gatewayHost="tzcuuynmviiuactafpld.supabase.co";
+ const wakeService={
+  get status(){return {configured:true,count:1,gatewayHost,bindings:[{
+   bindingId,polling:true,consentActive:true,deactivationPending:false,
+   grantId:"must-not-leak",sessionDigest:"a".repeat(64),hostToken:"must-not-leak"
+  }]};}
+ };
+ await withHost(async({base,origin})=>{
+  const credentials=await(await pair(base,origin)).json();
+  const response=await fetch(base+"/v1/host",{headers:{Origin:origin,Authorization:"Bearer "+credentials.sessionToken}});
+  assert.equal(response.status,200);
+  const value=await response.json();
+  assert.deepEqual(value.wakeBindings,[{bindingId,polling:true,consentActive:true,deactivationPending:false}]);
+  assert.equal(JSON.stringify(value).includes("must-not-leak"),false);
+  assert.equal(JSON.stringify(value).includes("a".repeat(64)),false);
+ },{wakeService});
+});
+
+test("binding revoke confirms no local worker after restart only from a complete empty poller inventory",async()=>{
+ const bindingId="52345678-1234-4234-9234-123456789012";
+ const browserRuntime={
+  status:()=>({running:true,pages:1,capabilities:{browserCanonicalWake:true}}),
+  revokeWakeBinding:()=>false
+ };
+ const wakeService={
+  status:{configured:false,count:0,bindings:[],gatewayHost:"project.supabase.co"},
+  stop:async()=>({stopped:true,bindings:[],remotelyDeactivated:null})
+ };
+ await withHost(async({base,origin})=>{
+  const credentials=await(await pair(base,origin)).json();
+  const headers={Origin:origin,Authorization:"Bearer "+credentials.sessionToken,"Content-Type":"application/json"};
+  const response=await fetch(base+"/v1/browser/wake/bindings/revoke",{method:"POST",headers,body:JSON.stringify({bindingId})});
+  assert.equal(response.status,200);
+  assert.deepEqual(await response.json(),{
+   revoked:true,localPollingStopped:true,grantRevoked:false,noLocalWorker:true,
+   remoteDeactivationConfirmed:false,remoteDeactivationPending:false
+  });
+ },{browserRuntime,wakeService});
+});
+
+test("binding revoke remains unconfirmed if local poller inventory is missing",async()=>{
+ const bindingId="52345678-1234-4234-9234-123456789015";
+ const browserRuntime={
+  status:()=>({running:true,pages:1,capabilities:{browserCanonicalWake:true}}),
+  revokeWakeBinding:()=>false
+ };
+ const wakeService={status:{configured:false,count:0},stop:async()=>({stopped:true,bindings:[],remotelyDeactivated:null})};
+ await withHost(async({base,origin})=>{
+  const credentials=await(await pair(base,origin)).json();
+  const headers={Origin:origin,Authorization:"Bearer "+credentials.sessionToken,"Content-Type":"application/json"};
+  const response=await fetch(base+"/v1/browser/wake/bindings/revoke",{method:"POST",headers,body:JSON.stringify({bindingId})});
+  assert.equal(response.status,200);
+  const value=await response.json();
+  assert.equal(value.localPollingStopped,false);
+  assert.equal(value.noLocalWorker,false);
+ },{browserRuntime,wakeService});
+});
+
+test("binding revoke confirms local stop only for the exact poller it stopped",async()=>{
+ const bindingId="52345678-1234-4234-9234-123456789013";
+ const otherBindingId="52345678-1234-4234-9234-123456789014";
+ const browserRuntime={
+  status:()=>({running:true,pages:1,capabilities:{browserCanonicalWake:true}}),
+  revokeWakeBinding:()=>false
+ };
+ const wakeService={stop:async id=>({stopped:true,bindings:[{bindingId:otherBindingId,stopped:true},{bindingId:id,stopped:true}],remotelyDeactivated:true})};
+ await withHost(async({base,origin})=>{
+  const credentials=await(await pair(base,origin)).json();
+  const headers={Origin:origin,Authorization:"Bearer "+credentials.sessionToken,"Content-Type":"application/json"};
+  const response=await fetch(base+"/v1/browser/wake/bindings/revoke",{method:"POST",headers,body:JSON.stringify({bindingId})});
+  assert.equal(response.status,200);
+  assert.deepEqual(await response.json(),{
+   revoked:true,localPollingStopped:true,grantRevoked:false,
+   remoteDeactivationConfirmed:true,remoteDeactivationPending:false
+  });
+ },{browserRuntime,wakeService});
 });

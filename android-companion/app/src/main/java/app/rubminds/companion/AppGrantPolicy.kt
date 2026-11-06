@@ -39,6 +39,14 @@ object AppGrantPolicy {
             grant.signingCertificateSha256 == currentSigningCertificateSha256 &&
             grant.allowLaunch
 
+    fun canSelectComposerTarget(
+        grant: AppGrant?,
+        currentSigningCertificateSha256: String?,
+        hasActiveNativeWakeConsent: Boolean
+    ): Boolean =
+        canLaunch(grant, currentSigningCertificateSha256) &&
+            (grant?.allowDraftInsertion == true || hasActiveNativeWakeConsent)
+
     fun isSensitiveInput(inputType: Int): Boolean {
         val inputClass = inputType and InputType.TYPE_MASK_CLASS
         val variation = inputType and InputType.TYPE_MASK_VARIATION

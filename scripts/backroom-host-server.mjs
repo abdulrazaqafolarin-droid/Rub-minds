@@ -202,11 +202,26 @@ export function createBackroomHostServer({
       if (!session) { writeJson(response, 401, { error: "host_session_invalid" }, cors); return; }
       const runtimeStatus = browser.status();
       const executionReady = Object.values(runtimeStatus.capabilities).some(Boolean);
-      const wakeGatewayHost = wakeService?.status?.gatewayHost;
+      const wakeServiceStatus = wakeService?.status;
+      const wakeGatewayHost = wakeServiceStatus?.gatewayHost;
+      const wakeBindingsRaw = wakeServiceStatus?.bindings;
+      const wakeBindingsValid = Array.isArray(wakeBindingsRaw) && wakeBindingsRaw.length <= 10 &&
+        wakeBindingsRaw.every(item =>
+          item && typeof item.bindingId === "string" && /^[a-f0-9-]{36}$/i.test(item.bindingId) &&
+          typeof item.polling === "boolean" && typeof item.consentActive === "boolean" &&
+          typeof item.deactivationPending === "boolean"
+        );
+      const wakeBindings = wakeBindingsValid
+        ? wakeBindingsRaw.map(item => ({
+          bindingId: item.bindingId, polling: item.polling,
+          consentActive: item.consentActive, deactivationPending: item.deactivationPending,
+        }))
+        : null;
       writeJson(response, 200, {
         hostId: session.hostId, label: session.clientLabel, expiresAt: session.expiresAt,
         ...(enrollmentDigest ? { enrollmentDigest } : {}),
         ...(typeof wakeGatewayHost === "string" ? { wakeGatewayHost } : {}),
+        ...(wakeBindings !== null ? { wakeBindings } : {}),
         protocolVersion: PROTOCOL_VERSION, connected: true, executionReady,
         browserPages: runtimeStatus.pages,
         capabilities: runtimeStatus.capabilities,
@@ -486,10 +501,22 @@ export function createBackroomHostServer({
               Object.keys(input).some(key=>key!=="bindingId")){
               writeJson(response,400,{error:"invalid_wake_binding_scope"},cors);return;
             }
-            const grantRevoked=browser.revokeWakeBinding(input.bindingId);
+            const grantRevoked=browser.revokeWakeBinding(input.bindingId)===true;
             const stopStatus=await wakeService?.stop?.(input.bindingId);
-            writeJson(response,200,{revoked:true,grantRevoked,
-              remoteDeactivationConfirmed:stopStatus?.remotelyDeactivated===true},cors);
+            const serviceStopConfirmed=Array.isArray(stopStatus?.bindings)&&
+              stopStatus.bindings.some(item=>item?.bindingId===input.bindingId&&item.stopped===true);
+            const inventory=wakeService?.status?.bindings;
+            const inventoryTrusted=Array.isArray(inventory)&&inventory.every(item=>
+              item&&typeof item.bindingId==="string"&&typeof item.polling==="boolean"&&
+              typeof item.consentActive==="boolean"&&typeof item.deactivationPending==="boolean");
+            // A reachable host with a complete local inventory can prove that
+            // no worker exists for this binding after a process restart. An
+            // absent or malformed inventory remains unknown and fails closed.
+            const noLocalWorker=inventoryTrusted&&!inventory.some(item=>item.bindingId===input.bindingId);
+            const localPollingStopped=grantRevoked||serviceStopConfirmed||noLocalWorker;
+            writeJson(response,200,{revoked:localPollingStopped,localPollingStopped,grantRevoked,
+              noLocalWorker,remoteDeactivationConfirmed:stopStatus?.remotelyDeactivated===true,
+              remoteDeactivationPending:stopStatus?.remotelyDeactivated===false},cors);
             return;
           }
           if (url.pathname === "/v1/browser/wake/grants") {
@@ -509,6 +536,12 @@ export function createBackroomHostServer({
               writeJson(response, 400, { error: "invalid_wake_scope" }, cors);
               return;
             }
+            const wakeTtlMs=input.ttlMs??300000;
+            const wakeMaxPerMinute=input.maxPerMinute??6;
+            if(!Number.isSafeInteger(wakeTtlMs)||wakeTtlMs<60000||wakeTtlMs>86400000||
+               !Number.isSafeInteger(wakeMaxPerMinute)||wakeMaxPerMinute<1||wakeMaxPerMinute>6){
+              writeJson(response,400,{error:"invalid_wake_scope"},cors);return;
+            }
             const target = (await browser.listTargets()).find(item =>
               item.id === input.targetId && item.roomId === input.roomId && item.operations?.includes("wake") && item.wakeAvailable === true);
             if (!target) {
@@ -519,8 +552,8 @@ export function createBackroomHostServer({
               operation: "browser.wake.enable", targetId: target.id, pageId: target.pageId,
               roomId: input.roomId, participantId: input.participantId, sessionId: input.sessionId,
               bindingId: input.bindingId, site: target.site, title: target.title,
-              capabilities: ["wake"], ttlMs: input.ttlMs ?? 300000,
-              maxPerMinute: input.maxPerMinute ?? 6,
+              capabilities: ["wake"], ttlMs: wakeTtlMs,
+              maxPerMinute: wakeMaxPerMinute,
             });
             if (locallyApproved !== true) {
               writeJson(response, 403, { error: "trusted_local_browser_wake_approval_denied" }, cors);
@@ -529,8 +562,7 @@ export function createBackroomHostServer({
             const grant = await browser.enableContinuousWake({
               targetId: input.targetId, roomId: input.roomId, participantId: input.participantId,
               sessionId: input.sessionId, bindingId: input.bindingId, confirmed: true,
-              ...(input.ttlMs === undefined ? {} : { ttlMs: input.ttlMs }),
-              ...(input.maxPerMinute === undefined ? {} : { maxPerMinute: input.maxPerMinute }),
+              ttlMs: wakeTtlMs, maxPerMinute: wakeMaxPerMinute,
             });
             if(wakeService){
               try {
@@ -697,8 +729,13 @@ const authorizeLocalWorkspaceAction = createSerializedLocalApproval(async action
     process.stdout.write("\n\n[Rub Minds Backroom local approval]\n");
     process.stdout.write("This request originated from a local workspace adapter. Review every field before approving:\n");
     process.stdout.write(JSON.stringify(action, null, 2) + "\n");
-    const answer = await readline.question("Type APPROVE ONCE to permit only this operation (anything else denies): ");
-    return answer.trim() === "APPROVE ONCE";
+    const isContinuousBrowserWake=action?.operation==="browser.wake.enable";
+    if(isContinuousBrowserWake){
+      process.stdout.write("WARNING: this enables automatic canonical wake submissions in one exact AI conversation. It can press that chat's Send control without a per-message prompt. Review the exact group, target, session, TTL and six-per-minute limit above.\n");
+    }
+    const approvalPhrase=isContinuousBrowserWake?"ENABLE AUTO":"APPROVE ONCE";
+    const answer = await readline.question("Type "+approvalPhrase+" to permit only this exact operation and scope (anything else denies): ");
+    return answer.trim() === approvalPhrase;
   } finally {
     readline.close();
   }

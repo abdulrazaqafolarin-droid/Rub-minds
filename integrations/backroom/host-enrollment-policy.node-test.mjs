@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {validateHostEnrollment,validatePendingWakeBinding} from './host-enrollment-policy.mjs';
+import {validateHostEnrollment,validatePendingWakeBinding,validateBindingStatusQuery} from './host-enrollment-policy.mjs';
 const uuid='40000000-0000-4000-8000-000000000011';
 const binding={
  roomId:uuid,participantId:uuid,hostId:uuid,sessionDigest:'a'.repeat(64),
@@ -12,6 +12,7 @@ test('accepts digest-only host enrollment with bounded TTL and no raw credential
  const valid=validateHostEnrollment({hostId:uuid,credentialDigest:'b'.repeat(64)});
  assert.equal(valid.ttlSeconds,86400);
  assert.equal(valid.credentialDigest,'b'.repeat(64));
+ assert.equal(validateHostEnrollment({hostId:uuid,credentialDigest:'c'.repeat(64),ttlSeconds:604800}).ttlSeconds,604800);
  assert.throws(()=>validateHostEnrollment({hostId:uuid,hostToken:'b'.repeat(64),credentialDigest:'b'.repeat(64)}),/Unexpected/);
  assert.throws(()=>validateHostEnrollment({hostId:uuid,credentialDigest:'b'.repeat(64),ttlSeconds:604801}),/TTL/);
 });
@@ -26,4 +27,15 @@ test('binding creation only accepts inactive registration fields and explicit sc
  assert.throws(()=>validatePendingWakeBinding({...binding,locatorValue:'textarea\nsecret'}),/locatorValue/);
  assert.throws(()=>validatePendingWakeBinding({...binding,maxWakesPerMinute:7}),/wake rate/);
  assert.throws(()=>validatePendingWakeBinding({...binding,surface:'arbitrary'}),/surface/);
+});
+
+test('binding status queries require owner-scoped room and optional participant identities',()=>{
+ assert.deepEqual(validateBindingStatusQuery({roomId:uuid}),{roomId:uuid});
+ assert.deepEqual(validateBindingStatusQuery({roomId:uuid,participantId:uuid,sessionDigest:'a'.repeat(64)}),
+  {roomId:uuid,participantId:uuid,sessionDigest:'a'.repeat(64)});
+ assert.throws(()=>validateBindingStatusQuery({roomId:uuid,ownerId:uuid}),/Unexpected/);
+ assert.throws(()=>validateBindingStatusQuery({roomId:'not-a-uuid'}),/roomId/);
+ assert.throws(()=>validateBindingStatusQuery({roomId:uuid,participantId:uuid}),/supplied together/);
+ assert.throws(()=>validateBindingStatusQuery({roomId:uuid,sessionDigest:'a'.repeat(64)}),/supplied together/);
+ assert.throws(()=>validateBindingStatusQuery({roomId:uuid,participantId:uuid,sessionDigest:'bad'}),/sessionDigest/);
 });

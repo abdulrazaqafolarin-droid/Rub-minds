@@ -4,7 +4,7 @@
  * enable wake. Requires the draft private queue migration.
  */
 import {createClient} from 'npm:@supabase/supabase-js@2';
-import {validateHostEnrollment,validatePendingWakeBinding} from '../../../integrations/backroom/host-enrollment-policy.mjs';
+import {validateHostEnrollment,validatePendingWakeBinding,validateBindingStatusQuery} from '../../../integrations/backroom/host-enrollment-policy.mjs';
 import {classifyExistingBinding} from '../../../integrations/backroom/binding-registration-policy.mjs';
 import {resolveOwnerFromJwt} from '../../../integrations/backroom/owner-jwt.mjs';
 
@@ -46,7 +46,7 @@ Deno.serve(async req=>{
   }});
  }
  const parsed=new URL(req.url);
- if(req.method!=='POST'||parsed.search||parsed.hash||!['/functions/v1/backroom-config/host','/functions/v1/backroom-config/binding','/functions/v1/backroom-config/sessions','/functions/v1/backroom-config/revoke-host','/functions/v1/backroom-config/revoke-binding','/backroom-config/host','/backroom-config/binding','/backroom-config/sessions','/backroom-config/revoke-host','/backroom-config/revoke-binding','/host','/binding','/sessions','/revoke-host','/revoke-binding'].includes(parsed.pathname))
+ if(req.method!=='POST'||parsed.search||parsed.hash||!['/functions/v1/backroom-config/host','/functions/v1/backroom-config/binding','/functions/v1/backroom-config/sessions','/functions/v1/backroom-config/binding-status','/functions/v1/backroom-config/revoke-host','/functions/v1/backroom-config/revoke-binding','/backroom-config/host','/backroom-config/binding','/backroom-config/sessions','/backroom-config/binding-status','/backroom-config/revoke-host','/backroom-config/revoke-binding','/host','/binding','/sessions','/binding-status','/revoke-host','/revoke-binding'].includes(parsed.pathname))
   return json(404,{ok:false,reason:'not_found'},origin);
  if(req.headers.get('content-type')?.toLowerCase()!=='application/json')
   return json(415,{ok:false,reason:'unsupported_type'},origin);
@@ -66,25 +66,62 @@ Deno.serve(async req=>{
     .eq('id',value.roomId).eq('owner_id',ownerId).maybeSingle();
    if(roomError||!ownedRoom)return json(403,{ok:false,reason:'not_room_owner'},origin);
    const now=new Date().toISOString();
-   const [participants,connections,sessions]=await Promise.all([
+   const [participants,sessions]=await Promise.all([
     db.from('participants').select('id,display_name,kind,status').eq('room_id',value.roomId)
       .in('kind',['original_session','model','external_agent'])
       .in('status',['connected','active','autonomous']).limit(100),
-    db.from('agent_connections').select('participant_id').eq('room_id',value.roomId)
-      .eq('owner_id',ownerId).is('revoked_at',null).gt('expires_at',now).limit(100),
-    db.from('rub_minds_mcp_sessions').select('session_digest,participant_id,expires_at')
+    db.from('rub_minds_mcp_sessions').select('session_digest,agent_credential_digest,participant_id,expires_at')
       .eq('room_id',value.roomId).is('terminated_at',null)
       .not('agent_credential_ciphertext','is',null).gt('expires_at',now).limit(100)
    ]);
-   if(participants.error||connections.error||sessions.error)
+   if(participants.error||sessions.error)
     return json(503,{ok:false,reason:'service_unavailable'},origin);
    const names=new Map((participants.data??[]).map(p=>[p.id,p.display_name]));
-   const joined=new Set((connections.data??[]).map(c=>c.participant_id));
+   const credentialDigests=[...new Set((sessions.data??[])
+    .map(s=>s.agent_credential_digest)
+    .filter(digest=>typeof digest==='string'&&/^[a-f0-9]{64}$/.test(digest)))];
+   const connections=credentialDigests.length
+    ? await db.from('agent_connections').select('credential_digest,expires_at')
+       .eq('room_id',value.roomId).eq('owner_id',ownerId)
+       .is('revoked_at',null).gt('expires_at',now)
+       .in('credential_digest',credentialDigests)
+    : {data:[],error:null};
+   if(connections.error)
+    return json(503,{ok:false,reason:'service_unavailable'},origin);
+   const validCredentials=new Map((connections.data??[]).map(c=>[c.credential_digest,c.expires_at]));
    return json(200,{ok:true,sessions:(sessions.data??[])
-    .filter(s=>names.has(s.participant_id)&&joined.has(s.participant_id))
+    .filter(s=>names.has(s.participant_id)&&typeof s.agent_credential_digest==='string'&&validCredentials.has(s.agent_credential_digest))
     .slice(0,30).map(s=>({participantId:s.participant_id,
       displayName:names.get(s.participant_id),
-      sessionDigest:s.session_digest,expiresAt:s.expires_at}))},origin);
+      sessionDigest:s.session_digest,expiresAt:s.expires_at,
+      credentialExpiresAt:validCredentials.get(s.agent_credential_digest)}))},origin);
+  }
+  if(parsed.pathname.endsWith('/binding-status')){
+   let input;
+   try{input=validateBindingStatusQuery(value);}catch{return json(400,{ok:false,reason:'invalid_binding_status_query'},origin);}
+   const {data:ownedRoom,error:roomError}=await db.from('rooms').select('id')
+    .eq('id',input.roomId).eq('owner_id',ownerId).maybeSingle();
+   if(roomError)return json(503,{ok:false,reason:'service_unavailable'},origin);
+   if(!ownedRoom)return json(403,{ok:false,reason:'not_room_owner'},origin);
+   let query=db.from('backroom_input_bindings')
+    .select('id,participant_id,host_id,session_id,space_id,target_id,target_identity_fingerprint,target_revision,surface,participation_mode,wake_enabled,wake_expires_at,confirmed_at,revoked_at')
+    .eq('owner_id',ownerId).eq('room_id',input.roomId).is('revoked_at',null)
+    .order('updated_at',{ascending:false}).limit(10);
+   if(input.participantId){
+    query=query.eq('participant_id',input.participantId).eq('session_digest',input.sessionDigest);
+   }
+   const {data,error}=await query;
+   if(error)return json(503,{ok:false,reason:'service_unavailable'},origin);
+   const now=Date.now();
+   const bindings=(data??[]).map(row=>({
+    bindingId:row.id,participantId:row.participant_id,hostId:row.host_id,
+    sessionId:row.session_id,spaceId:row.space_id,targetId:row.target_id,
+    targetIdentityFingerprint:row.target_identity_fingerprint,targetRevision:row.target_revision,
+    surface:row.surface,participationMode:row.participation_mode,
+    wakeEnabled:row.wake_enabled===true&&typeof row.wake_expires_at==='string'&&Date.parse(row.wake_expires_at)>now,
+    wakeExpiresAt:row.wake_expires_at,confirmedAt:row.confirmed_at
+   }));
+   return json(200,{ok:true,bindings},origin);
   }
   if(parsed.pathname.endsWith('/revoke-host')){
    if(!value||typeof value.hostId!=='string'||!/^[a-f0-9-]{36}$/i.test(value.hostId)||

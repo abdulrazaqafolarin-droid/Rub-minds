@@ -5,16 +5,16 @@
 import {createHash,randomUUID} from 'node:crypto';
 import {buildCanonicalWakePrompt,isCanonicalWakePrompt,validId} from './coordination-core.mjs';
 const sha256=value=>createHash('sha256').update(value,'utf8').digest('hex');
-const MIN_TTL=60_000,MAX_TTL=60*60_000;
+const MIN_TTL=60_000,MAX_TTL=24*60*60_000;
 function requiredId(value,name){if(!validId(value))throw new TypeError('Invalid '+name);return value;}
 function nonempty(value,name,max=512){if(typeof value!=='string'||!value.trim()||value.length>max||/[\u0000-\u001f]/.test(value))throw new TypeError('Invalid '+name);return value;}
 export class WakeAuthorizationAuthority {
  #grants=new Map();
  #now;
- constructor({now=()=>Date.now(),maxPerMinute=6,maxGrantMs=15*60_000}={}){
+ constructor({now=()=>Date.now(),maxPerMinute=6,maxGrantMs=24*60*60_000}={}){
   if(typeof now!=='function')throw new TypeError('clock function required');
   if(!Number.isSafeInteger(maxPerMinute)||maxPerMinute<1||maxPerMinute>12)throw new RangeError('maxPerMinute must be 1-12');
-  if(!Number.isSafeInteger(maxGrantMs)||maxGrantMs<MIN_TTL||maxGrantMs>MAX_TTL)throw new RangeError('maxGrantMs must be 1-60 minutes');
+  if(!Number.isSafeInteger(maxGrantMs)||maxGrantMs<MIN_TTL||maxGrantMs>MAX_TTL)throw new RangeError('maxGrantMs must be 1-24 hours');
   this.#now=now;this.maxPerMinute=maxPerMinute;this.maxGrantMs=maxGrantMs;
  }
  createGrant(input={}){

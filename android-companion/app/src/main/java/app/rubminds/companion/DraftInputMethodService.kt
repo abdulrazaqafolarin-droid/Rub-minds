@@ -258,6 +258,89 @@ class DraftInputMethodService : InputMethodService() {
         return if (connection.commitText(text, 1)) "inserted" else "phone_editor_rejected_text"
     }
 
+    /**
+     * Insert only the fixed event trigger after the device-local native-wake
+     * grant and persistent event seal pass. This does not use the ordinary
+     * remote-typing arm and does not accept caller-authored prompt text.
+     */
+    private fun insertNativeWakeTrigger(request: NativeWakeExecutionRequest): NativeWakeInsertResult {
+        val denied = { reason: String ->
+            NativeWakeInsertResult(NativeWakeInsertState.PRECHECK_DENIED, reason)
+        }
+        if (boundSessionId != request.sessionId || boundPackageName != request.packageName) {
+            return denied("session_or_app_mismatch")
+        }
+        if (!AndroidTouchAccessibilityService.isBoundToProviderConversation(
+                request.sessionId, request.packageName, request.providerConversationIdentityDigest
+            )
+        ) return denied("provider_conversation_identity_unavailable_or_changed")
+        val prompt = NativeWakeConsentPolicy.canonicalWakePrompt(request.eventId)
+            ?: return denied("event_id_invalid")
+        val liveEditor = currentInputEditorInfo ?: return denied("phone_text_field_not_focused")
+        if (activePackage != request.packageName || liveEditor.packageName != request.packageName ||
+            liveEditor.inputType != activeInputType
+        ) return denied("phone_text_field_wrong_app")
+        if (!AppGrantPolicy.isSupportedInputType(liveEditor.inputType) ||
+            AppGrantPolicy.isSensitiveInput(liveEditor.inputType)
+        ) return denied("sensitive_or_unsupported_field")
+        val currentSigner = AppIdentity.signingCertificateSha256(this, request.packageName)
+            ?: return denied("app_signer_unavailable")
+        if (currentSigner != request.signingCertificateSha256 ||
+            activeSigningCertificateSha256 != currentSigner
+        ) return denied("app_signer_changed")
+        val appGrant = AppGrantStore(this).get(request.packageName, currentSigner)
+        if (!AppGrantPolicy.canLaunch(appGrant, currentSigner)) return denied("app_not_locally_approved")
+        val connection = currentInputConnection ?: return denied("phone_keyboard_not_active")
+        if (!AndroidTouchAccessibilityService.isSelectedComposerEmpty(
+                request.sessionId, request.packageName, request.composerTargetId
+            )
+        ) return denied("selected_composer_not_empty_or_changed")
+        if (!AndroidTouchAccessibilityService.isBoundToProviderConversation(
+                request.sessionId, request.packageName, request.providerConversationIdentityDigest
+            )
+        ) return denied("provider_conversation_identity_unavailable_or_changed")
+
+        // Persist the one-shot seal only after the exact app, signer, editor,
+        // selected composer, and local 24-hour native-wake grant are rechecked.
+        val seal = AndroidNativeWakeConsentStore(this).reserveExecution(request)
+        if (!seal.allowed) {
+            val state = if (NativeWakeConsentPolicy.isTerminalReservationDenial(seal.reason)) {
+                NativeWakeInsertState.NEEDS_REVIEW
+            } else {
+                NativeWakeInsertState.PRECHECK_DENIED
+            }
+            return NativeWakeInsertResult(state, seal.reason)
+        }
+
+        // The handoff deadline is checked again after the durable seal. If
+        // it expired while the IME was being entered, retain the seal and do
+        // not insert a now-stale trigger.
+        if (request.handoffExpiresAtMillis <= System.currentTimeMillis()) {
+            return NativeWakeInsertResult(NativeWakeInsertState.NEEDS_REVIEW, "native_wake_handoff_expired_after_seal")
+        }
+        if (!AndroidTouchAccessibilityService.isBoundToProviderConversation(
+                request.sessionId, request.packageName, request.providerConversationIdentityDigest
+            )
+        ) {
+            return NativeWakeInsertResult(
+                NativeWakeInsertState.NEEDS_REVIEW,
+                "provider_conversation_identity_changed_after_seal"
+            )
+        }
+
+        // Once the seal exists, every uncertain insertion outcome is terminal:
+        // the caller must not retry this event automatically.
+        return try {
+            if (connection.commitText(prompt, 1)) {
+                NativeWakeInsertResult(NativeWakeInsertState.INSERTED, "canonical_trigger_inserted")
+            } else {
+                NativeWakeInsertResult(NativeWakeInsertState.NEEDS_REVIEW, "native_trigger_insertion_unconfirmed")
+            }
+        } catch (_: RuntimeException) {
+            NativeWakeInsertResult(NativeWakeInsertState.NEEDS_REVIEW, "native_trigger_insertion_outcome_unknown")
+        }
+    }
+
     companion object {
         private const val MAX_REMOTE_TEXT_CHARS = 4_000
 
@@ -289,6 +372,10 @@ class DraftInputMethodService : InputMethodService() {
 
         fun insertRemoteText(sessionId: String, packageName: String, targetId: String, text: String): String =
             activeInstance?.insertRemoteText(sessionId, packageName, targetId, text) ?: "phone_keyboard_not_active"
+
+        internal fun insertNativeWakeTrigger(request: NativeWakeExecutionRequest): NativeWakeInsertResult =
+            activeInstance?.insertNativeWakeTrigger(request)
+                ?: NativeWakeInsertResult(NativeWakeInsertState.PRECHECK_DENIED, "phone_keyboard_not_active")
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()

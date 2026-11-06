@@ -67,7 +67,8 @@ export class BackroomDispatcher {
     job.status = { ...job.status, state: "cancelled" };
     return true;
   }
-  async step(id, { approved = false } = {}) {
+  async step(id, { approved = false, beforeEffect } = {}) {
+    if (beforeEffect !== undefined && typeof beforeEffect !== "function") throw new TypeError("beforeEffect must be a function");
     const job = this.#jobs.get(id);
     if (!job) throw new Error("unknown command");
     if (!STATES.has(job.status.state)) throw new Error("invalid state");
@@ -76,7 +77,7 @@ export class BackroomDispatcher {
     this.#inflight.add(id);
     try {
     const c = job.command;
-    const allowed = await this.authorize(c);
+    const allowed = await this.authorize(c, { deferEffectAuthorization: typeof beforeEffect === "function" });
     if (job.status.state === 'cancelled') return job.status;
     if (allowed !== true) {
       job.status = { ...job.status, state: "failed", reason: "not_authorized" };
@@ -99,7 +100,7 @@ export class BackroomDispatcher {
     }
     job.status = { ...job.status, state: "running", attempts: job.status.attempts + 1 };
     try {
-      const outcome = await this.adapter.execute({ command: c, target });
+      const outcome = await this.adapter.execute({ command: c, target, ...(beforeEffect ? { beforeEffect } : {}) });
       if (!outcome || !["completed", "needs_review", "failed"].includes(outcome.state)) {
         throw new Error("adapter did not return a verifiable outcome");
       }
@@ -107,6 +108,10 @@ export class BackroomDispatcher {
     } catch (error) {
       if (error && error.code === "BACKROOM_PREFLIGHT") {
         job.status = { ...job.status, state: "failed", reason: "device_preflight_denied" };
+        return job.status;
+      }
+      if (error && error.code === "BACKROOM_EXECUTION_SEAL_DENIED") {
+        job.status = { ...job.status, state: "failed", reason: "execution_seal_denied" };
         return job.status;
       }
       // Ambiguous UI effects are not automatically retried. The host must

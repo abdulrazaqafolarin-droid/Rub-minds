@@ -22,9 +22,26 @@ async function lookupHost(hostId:string) {
 }
 async function lookupBinding(bindingId:string) {
  const {data,error}=await db.from('backroom_input_bindings')
-  .select('id,owner_id,host_id,session_digest,wake_enabled,confirmed_at,wake_expires_at,revoked_at')
+  .select('id,owner_id,host_id,session_digest,room_id,participant_id,wake_enabled,confirmed_at,wake_expires_at,revoked_at')
   .eq('id',bindingId).maybeSingle();
  if(error||!data)return null;
+ const now=new Date().toISOString();
+ const [session,participant,connection]=await Promise.all([
+  db.from('rub_minds_mcp_sessions').select('session_digest')
+   .eq('session_digest',data.session_digest).eq('room_id',data.room_id)
+   .eq('participant_id',data.participant_id).is('terminated_at',null)
+   .not('agent_credential_ciphertext','is',null).gt('expires_at',now).maybeSingle(),
+  db.from('participants').select('id')
+   .eq('id',data.participant_id).eq('room_id',data.room_id)
+   .in('status',['connected','active','autonomous']).maybeSingle(),
+  db.from('agent_connections').select('id')
+   .eq('room_id',data.room_id).eq('participant_id',data.participant_id)
+   .eq('owner_id',data.owner_id).is('revoked_at',null).gt('expires_at',now).maybeSingle()
+ ]);
+ // An expired/terminated MCP handle, disconnected participant or revoked
+ // participant credential invalidates the host's local poller. Returning null
+ // causes the paired host to stop rather than spin on an empty queue forever.
+ if(session.error||participant.error||connection.error||!session.data||!participant.data||!connection.data)return null;
  return {bindingId:data.id,hostId:data.host_id,ownerId:data.owner_id,sessionDigest:data.session_digest,
   wakeEnabled:data.wake_enabled,confirmedAt:data.confirmed_at,wakeExpiresAt:data.wake_expires_at,
   revokedAt:data.revoked_at};

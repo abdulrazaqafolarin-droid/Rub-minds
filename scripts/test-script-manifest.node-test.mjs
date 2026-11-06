@@ -28,11 +28,14 @@ test('critical Backroom test suites remain registered in runtime and queue scrip
  const required={
   'test:runtime':['integrations/backroom/host-wake-service.node-test.mjs',
    'integrations/backroom/host-identity.node-test.mjs',
-   'integrations/backroom/multi-surface-execution.node-test.mjs'],
+   'integrations/backroom/multi-surface-execution.node-test.mjs',
+   'integrations/backroom/native-wake-handoff.node-test.mjs'],
   'test:backroom':['integrations/backroom/host-server.node-test.mjs',
-   'integrations/backroom/multi-surface-execution.node-test.mjs'],
+   'integrations/backroom/multi-surface-execution.node-test.mjs',
+   'integrations/backroom/native-wake-handoff.node-test.mjs'],
   'test:durable-queue':['integrations/backroom/host-wake-service.node-test.mjs',
-   'integrations/backroom/host-identity.node-test.mjs']
+   'integrations/backroom/host-identity.node-test.mjs'],
+  'test:companion':['integrations/backroom/android-native-wake-source.node-test.mjs']
  };
  for(const [name,paths] of Object.entries(required)){
   const command=manifest.scripts?.[name];
@@ -48,7 +51,8 @@ test('focused Backroom test commands cover multi-surface and hosted lifecycle co
  assert.equal(typeof multi,'string','Missing focused multi-surface test command');
  for(const path of ['integrations/backroom/multi-surface-execution.node-test.mjs',
   'integrations/backroom/native-accessibility-adapter.node-test.mjs',
-  'integrations/backroom/terminal-draft-adapter.node-test.mjs'])
+  'integrations/backroom/terminal-draft-adapter.node-test.mjs',
+  'integrations/backroom/native-wake-handoff.node-test.mjs'])
   assert.ok(multi.includes(path),'test:multi-surface must include '+path);
  const lifecycle=manifest.scripts?.['test:host-lifecycle'];
  assert.equal(typeof lifecycle,'string','Missing focused host lifecycle test command');
@@ -86,4 +90,12 @@ test('local Playwright runner isolates its browser profile and environment',asyn
  assert.match(runner,/join\(homedir\(\),\s*"\.rub-minds",\s*"original-session-profiles",\s*provider\)/);
  assert.doesNotMatch(runner,/connectOverCDP/);
  assert.match(runner,/controller\.signal\.aborted\s*&&\s*error\?\.name\s*===\s*"AbortError"/);
+});
+
+test('Android native-wake source, Edge protocol and ACK suites stay wired into CI', async () => {
+  const androidWorkflow = await readFile(resolve(root, '.github/workflows/backroom-android-companion.yml'), 'utf8');
+  assert.ok(androidWorkflow.includes('supabase/functions/backroom-device/android-streaming-protocol.node-test.mjs'));
+  assert.ok(androidWorkflow.includes('supabase/functions/backroom-device/android-streaming-endpoint.node-test.mjs'));
+  assert.ok(manifest.scripts?.['test:backroom']?.includes('integrations/backroom/android-native-wake-source.node-test.mjs'));
+  assert.ok(manifest.scripts?.['test:companion']?.includes('integrations/backroom/android-native-wake-source.node-test.mjs'));
 });

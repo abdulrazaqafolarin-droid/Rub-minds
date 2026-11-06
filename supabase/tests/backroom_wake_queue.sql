@@ -41,21 +41,21 @@ begin
   insert into public.rooms(id,owner_id,title) values (v_room,v_owner,'Backroom wake queue test room');
   insert into public.participants(id,room_id,display_name,kind,status) values (v_participant,v_room,'Test Backroom Agent','external_agent','active');
   insert into public.agent_connections(room_id,participant_id,owner_id,credential_digest,expires_at,revoked_at)
-  values (v_room,v_participant,v_owner,repeat('a',64),pg_catalog.clock_timestamp()+interval '1 hour',null);
+  values (v_room,v_participant,v_owner,repeat('a',64),pg_catalog.clock_timestamp()+interval '48 hours',null);
 
-  insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,room_id,participant_id,expires_at,terminated_at)
+  insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,agent_credential_digest,room_id,participant_id,expires_at,terminated_at)
   values
-    (repeat('b',64),'ci-ciphertext-b',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
-    (repeat('c',64),'ci-ciphertext-c',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
-    (repeat('d',64),'ci-ciphertext-d',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
-    (repeat('e',64),'ci-ciphertext-e',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
-    (repeat('f',64),'ci-ciphertext-f',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',pg_catalog.clock_timestamp()),
-    (repeat('6',64),'ci-ciphertext-6',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
-  insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,room_id,participant_id,expires_at,terminated_at)
-    values (repeat('7',64),'ci-ciphertext-7',v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
+    (repeat('b',64),'ci-ciphertext-b',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
+    (repeat('c',64),'ci-ciphertext-c',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
+    (repeat('d',64),'ci-ciphertext-d',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
+    (repeat('e',64),'ci-ciphertext-e',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null),
+    (repeat('f',64),'ci-ciphertext-f',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',pg_catalog.clock_timestamp()),
+    (repeat('6',64),'ci-ciphertext-6',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
+  insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,agent_credential_digest,room_id,participant_id,expires_at,terminated_at)
+    values (repeat('7',64),'ci-ciphertext-7',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
 
   insert into public.backroom_hosts(host_id,owner_id,credential_digest,expires_at,revoked_at)
-  values (v_host_test,v_owner,repeat('1',64),pg_catalog.clock_timestamp()+interval '1 hour',null),
+  values (v_host_test,v_owner,repeat('1',64),pg_catalog.clock_timestamp()+interval '48 hours',null),
          (v_host_capacity,v_owner,repeat('2',64),pg_catalog.clock_timestamp()+interval '1 hour',null);
 
   insert into public.backroom_input_bindings(
@@ -148,6 +148,101 @@ begin
   if not public.deactivate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
       '70000000-0000-4000-8000-000000000008'::uuid) then
     raise exception 'New grant must be deactivatable';
+  end if;
+
+  -- A locally approved Auto session may extend this still-live MCP handle,
+  -- but only to the exact invitation credential's expiry and never past 24 hours.
+  update public.rub_minds_mcp_sessions
+  set expires_at=pg_catalog.clock_timestamp()+interval '12 hours'
+  where session_digest=repeat('6',64);
+  if not public.activate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
+      '70000000-0000-4000-8000-00000000000d'::uuid,86400) then
+    raise exception 'A live MCP handle may be extended by the owner explicit 24-hour Auto consent';
+  end if;
+  if not exists(
+    select 1
+    from public.rub_minds_mcp_sessions s
+    join public.agent_connections ac
+      on ac.credential_digest=s.agent_credential_digest
+     and ac.room_id=s.room_id
+     and ac.participant_id=s.participant_id
+     and ac.owner_id=v_owner
+    where s.session_digest=repeat('6',64)
+      and s.expires_at=ac.expires_at
+      and ac.expires_at > pg_catalog.clock_timestamp()+interval '47 hours 59 minutes'
+  ) then
+    raise exception 'The MCP session must remain valid only until its exact invitation credential expires';
+  end if;
+  if not public.deactivate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
+      '70000000-0000-4000-8000-00000000000d'::uuid) then
+    raise exception 'The session-extension grant must be revocable';
+  end if;
+
+  -- A different active credential for the same participant cannot extend this session.
+  update public.rub_minds_mcp_sessions
+  set agent_credential_digest=repeat('9',64)
+  where session_digest=repeat('6',64);
+  if public.activate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
+      '70000000-0000-4000-8000-00000000000f'::uuid,86400) then
+    raise exception 'Auto must use the exact invitation credential bound to the MCP session';
+  end if;
+  update public.rub_minds_mcp_sessions
+  set agent_credential_digest=repeat('a',64)
+  where session_digest=repeat('6',64);
+  update public.agent_connections
+  set expires_at=pg_catalog.clock_timestamp()+interval '12 hours'
+  where room_id=v_room and participant_id=v_participant;
+  if public.activate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
+      '70000000-0000-4000-8000-00000000000e'::uuid,86400) then
+    raise exception 'A 24-hour Auto grant must not outlive its AI participant credential';
+  end if;
+  update public.agent_connections
+  set expires_at=pg_catalog.clock_timestamp()+interval '48 hours'
+  where room_id=v_room and participant_id=v_participant and credential_digest=repeat('a',64);
+
+  -- The paired owner host lease must outlive the entire Auto consent window.
+  if not exists(select 1 from public.backroom_hosts where host_id=v_host_test
+      and expires_at > pg_catalog.clock_timestamp()+interval '24 hours') then
+    raise exception '24-hour Auto host lease fixture must remain valid for the entire consent window';
+  end if;
+
+  -- One explicit Auto consent may persist for up to 24 hours, never longer.
+  if not public.activate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
+      '70000000-0000-4000-8000-00000000000b'::uuid,86400) then
+    raise exception 'A new 24-hour Auto grant must activate';
+  end if;
+  if not exists(select 1 from public.backroom_input_bindings where id=v_binding_6
+      and wake_grant_id='70000000-0000-4000-8000-00000000000b'::uuid
+      and wake_expires_at > pg_catalog.clock_timestamp()+interval '23 hours 59 minutes'
+      and wake_expires_at <= pg_catalog.clock_timestamp()+interval '24 hours') then
+    raise exception '24-hour Auto consent expiry must be persisted exactly within its bound';
+  end if;
+
+  if not exists(
+    select 1
+    from public.rub_minds_mcp_sessions s
+    join public.agent_connections ac
+      on ac.credential_digest=s.agent_credential_digest
+     and ac.room_id=s.room_id
+     and ac.participant_id=s.participant_id
+     and ac.owner_id=v_owner
+    where s.session_digest=repeat('6',64)
+      and s.expires_at=ac.expires_at
+      and ac.expires_at > pg_catalog.clock_timestamp()+interval '47 hours 59 minutes'
+  ) then
+    raise exception 'Each bounded Auto grant must leave the MCP handle valid until its exact credential expiry';
+  end if;
+  v_conflict := false;
+  begin
+    perform public.activate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
+      '70000000-0000-4000-8000-00000000000c'::uuid,86401);
+  exception when others then
+    v_conflict := true;
+  end;
+  if not v_conflict then raise exception 'Auto consent beyond 24 hours must be rejected'; end if;
+  if not public.deactivate_backroom_wake_grant(v_host_test,repeat('6',64),v_binding_6,
+      '70000000-0000-4000-8000-00000000000b'::uuid) then
+    raise exception '24-hour Auto grant must be revocable';
   end if;
 
   -- Recovery after a host crash: a stale, expired grant must not block fresh consent.
@@ -314,7 +409,7 @@ begin
   v_ok := public.ack_backroom_wake_job(v_claim_retry.out_job_id,v_host_test,repeat('6',64),v_binding_6,v_claim_retry.out_lease_token,'acknowledged');
   if v_ok then raise exception 'Revoked agent connections must not acknowledge outstanding leases'; end if;
   update public.agent_connections set revoked_at=null where participant_id=v_participant;
-  update public.rub_minds_mcp_sessions set terminated_at=pg_catalog.clock_timestamp() where session_digest=repeat('6',64);
+  -- Session6 termination is exercised below through the atomic MCP Leave RPC.
 
   v_cancel_job := public.enqueue_backroom_wake_job(
     repeat('3',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-3',repeat('d',64),
@@ -395,8 +490,8 @@ begin
     (v_trigger_human,v_trigger_room,v_owner,'TestHuman','human','connected');
   insert into public.agent_connections(room_id,participant_id,owner_id,credential_digest,expires_at,revoked_at)
   values (v_trigger_room,v_trigger_ai,v_owner,repeat('8',64),pg_catalog.clock_timestamp()+interval '1 hour',null);
-  insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,room_id,participant_id,expires_at,terminated_at)
-  values (repeat('8',64),'ci-ciphertext-trigger',v_trigger_room,v_trigger_ai,pg_catalog.clock_timestamp()+interval '1 hour',null);
+  insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,agent_credential_digest,room_id,participant_id,expires_at,terminated_at)
+  values (repeat('8',64),'ci-ciphertext-trigger',repeat('8',64),v_trigger_room,v_trigger_ai,pg_catalog.clock_timestamp()+interval '1 hour',null);
   insert into public.backroom_input_bindings(
     id,owner_id,room_id,participant_id,host_id,session_digest,space_id,session_id,target_id,
     target_identity_fingerprint,target_revision,surface,locator_kind,locator_value,participation_mode,
@@ -559,6 +654,52 @@ begin
   select count(*) into v_count from public.claim_backroom_wake_jobs(
     v_host_capacity,repeat('7',64),v_binding_7,5,30);
   if v_count <> 0 then raise exception 'A revoked host must not reclaim cancelled wakes'; end if;
+
+  -- MCP Leave is a full consent revocation boundary, including a leased trigger.
+  v_first := public.enqueue_backroom_wake_job(
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('leave-pending','UTF8')),'hex'),
+    v_owner,v_room,v_participant,v_host_test,'space-1','session-6',repeat('6',64),
+    v_binding_6,'target-6','fingerprint-6',1,'leave-pending-event',
+    '@RMconnects'||chr(10)||'Event: leave-pending-event'||chr(10)||
+    'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
+  insert into public.rub_minds_mcp_bridge_state(session_digest,room_id,participant_id)
+  values (repeat('6',64),v_room,v_participant);
+  select public.terminate_rub_minds_mcp_bridge_session(
+    repeat('6',64),'ci-ciphertext-6',repeat('a',64),
+    pg_catalog.clock_timestamp()+interval '24 hours'
+  ) into v_first;
+  if (v_first->>'terminated') <> 'true' or (v_first->>'already_terminated') <> 'false' then
+    raise exception 'MCP Leave must atomically terminate the exact joined session';
+  end if;
+  if exists(select 1 from public.backroom_input_bindings
+      where room_id=v_room and participant_id=v_participant
+        and (revoked_at is null or wake_enabled or wake_grant_id is not null
+          or confirmed_at is not null or wake_expires_at is not null)) then
+    raise exception 'MCP Leave must revoke every Backroom input binding for the participant';
+  end if;
+  if exists(select 1 from public.backroom_wake_jobs
+      where room_id=v_room and participant_id=v_participant and state in ('pending','leased')) then
+    raise exception 'MCP Leave must cancel pending and leased Backroom triggers';
+  end if;
+  if exists(select 1 from public.backroom_wake_jobs
+      where id=(v_retry_job->>'job_id')::uuid and state<>'cancelled') then
+    raise exception 'MCP Leave must cancel an already leased trigger';
+  end if;
+  if exists(select 1 from public.rub_minds_mcp_bridge_state where session_digest=repeat('6',64)) then
+    raise exception 'MCP Leave must clear its private cursor and pending-response state';
+  end if;
+  if exists(select 1 from public.agent_connections where credential_digest=repeat('a',64) and revoked_at is null) then
+    raise exception 'MCP Leave must revoke the participant credential';
+  end if;
+  select count(*) into v_count from public.claim_backroom_wake_jobs(
+    v_host_test,repeat('6',64),v_binding_6,5,30);
+  if v_count <> 0 then raise exception 'A participant who left must not claim more wakes'; end if;
+  select public.terminate_rub_minds_mcp_bridge_session(
+    repeat('6',64),null,null,pg_catalog.clock_timestamp()+interval '24 hours'
+  ) into v_first;
+  if (v_first->>'terminated') <> 'true' or (v_first->>'already_terminated') <> 'true' then
+    raise exception 'Repeated MCP Leave must idempotently confirm and preserve revocation';
+  end if;
 
 end;
 $test$;

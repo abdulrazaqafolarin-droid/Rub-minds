@@ -104,10 +104,10 @@ test('remote activation requires a locally verified grant before contacting host
   verifyLocalGrant:async approval=>approval.grantId===grantId,
   fetchImpl:async(url,options)=>handler(new Request(url,options))
  });
- assert.equal(await accepted.activate({...scope,grantId,ttlSeconds:300}),true);
+ assert.equal(await accepted.activate({...scope,grantId,ttlSeconds:86400}),true);
  assert.equal(records.length,1);
  assert.equal(records[0].hostId,hostId);
- await assert.rejects(()=>accepted.activate({...scope,grantId,ttlSeconds:901}),/grant/);
+ await assert.rejects(()=>accepted.activate({...scope,grantId,ttlSeconds:86401}),/grant/);
 });
 
 test('Supabase publishable key is sent in apikey header while private host token stays in Authorization',async()=>{

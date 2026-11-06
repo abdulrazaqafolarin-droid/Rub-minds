@@ -38,6 +38,7 @@ class MainActivity : Activity() {
     private val executor = Executors.newSingleThreadExecutor()
     private lateinit var store: AppGrantStore
     private lateinit var vault: DeviceCredentialVault
+    private lateinit var nativeWakeConsentStore: AndroidNativeWakeConsentStore
     private var cloudApi: CloudDeviceApi? = null
     private lateinit var appList: LinearLayout
     private lateinit var pairingCodeInput: EditText
@@ -53,7 +54,7 @@ class MainActivity : Activity() {
     private val workProfileButtons = mutableMapOf<String, Button>()
     private val launchGrants = linkedMapOf<String, String>()
     private val draftGrants = linkedSetOf<String>()
-    private val appRows = mutableMapOf<String, Pair<CheckBox, CheckBox>>()
+    private val appRows = mutableMapOf<String, Triple<CheckBox, CheckBox, CheckBox>>()
     private var apps: List<LaunchableApp> = emptyList()
     private var busy = false
 
@@ -61,6 +62,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         store = AppGrantStore(this)
         vault = DeviceCredentialVault(this)
+        nativeWakeConsentStore = AndroidNativeWakeConsentStore(this)
         consentPrefs = getSharedPreferences("backroom_cloud_consent", MODE_PRIVATE)
         cloudApi = try { CloudDeviceApi() } catch (_: Exception) { null }
         store.all().forEach {
@@ -141,7 +143,7 @@ class MainActivity : Activity() {
             setPadding(0, dp(12), 0, dp(3))
         })
         cloudCard.addView(TextView(this).apply {
-            text = "Internet: connects to Rub Minds over encrypted HTTPS for pairing, selected-app metadata and short-lived stream commands. App discovery shows launchable apps Android exposes to this profile. All Files Access is not requested because streaming does not clone app data; that permission would not unlock other apps' private data. Screen capture is approved through Android's system picker for each share. Accessibility is optional, must be enabled by you in Settings, and is used only for foreground-package checks and locally armed touch gestures; app text and the accessibility tree are not uploaded."
+            text = "Internet: connects to Rub Minds over encrypted HTTPS for pairing, selected-app metadata and short-lived stream commands. App discovery shows launchable apps Android exposes to this profile. All Files Access is not requested because streaming does not clone app data; that permission would not unlock other apps' private data. Screen capture is approved through Android's system picker for each share. Accessibility is optional and must be enabled by you in Settings. It verifies the foreground app, drag-selected composer and nearby Send control, and dispatches locally armed touch gestures. In the separate native-wake path, the selected composer value is inspected on this phone only to confirm it is empty, contains the exact fixed @RMconnects event trigger, and clears after Send. The accessibility tree, composer value and conversation contents are never uploaded to Rub Minds."
             textSize = 11f
             setTextColor(0xff405070.toInt())
         })
@@ -431,6 +433,7 @@ class MainActivity : Activity() {
             signerChanges.forEach { app ->
                 launchGrants.remove(app.packageName)
                 draftGrants.remove(app.packageName)
+                pairedDeviceId()?.let { nativeWakeConsentStore.revokePackage(it, app.packageName) }
             }
             store.save(launchGrants.map { (packageName, digest) ->
                 AppGrant(packageName, digest, allowLaunch = true, allowDraftInsertion = packageName in draftGrants)
@@ -464,11 +467,15 @@ class MainActivity : Activity() {
                     if (checked && digest != null) {
                         launchGrants[app.packageName] = digest
                         appRows[app.packageName]?.second?.isEnabled = true
+                        appRows[app.packageName]?.third?.isEnabled = pairedDeviceId() != null
                     } else {
                         launchGrants.remove(app.packageName)
                         draftGrants.remove(app.packageName)
                         appRows[app.packageName]?.second?.isChecked = false
                         appRows[app.packageName]?.second?.isEnabled = false
+                        pairedDeviceId()?.let { nativeWakeConsentStore.revokePackage(it, app.packageName) }
+                        appRows[app.packageName]?.third?.isChecked = false
+                        appRows[app.packageName]?.third?.isEnabled = false
                     }
                 }
             }
@@ -484,6 +491,30 @@ class MainActivity : Activity() {
                 }
             }
             row.addView(draft)
+            val deviceId = pairedDeviceId()
+            val wakeEnabled = selected && digest != null && deviceId != null &&
+                nativeWakeConsentStore.activeGrant(deviceId, app.packageName, digest) != null
+            val wakeConsent = CheckBox(this).apply {
+                text = "Pre-authorize app-level native @RMconnects wake for 24 hours"
+                isChecked = wakeEnabled
+                isEnabled = selected && digest != null && deviceId != null
+                setOnCheckedChangeListener { _, checked ->
+                    if (checked) {
+                        confirmNativeWakeConsent(app.packageName, digest ?: "")
+                    } else {
+                        if (deviceId != null && digest != null) {
+                            nativeWakeConsentStore.revoke(deviceId, app.packageName, digest)
+                        }
+                    }
+                }
+            }
+            row.addView(wakeConsent)
+            row.addView(TextView(this).apply {
+                text = "App/signer-level consent only; it does not pin a particular ChatGPT/Claude conversation. Native autonomous sending stays unavailable until a provider-specific adapter can re-identify the same active conversation after navigation, and trusted group-to-device forwarding with result reconciliation is connected. Saving consent alone triggers no action."
+                textSize = 10f
+                setTextColor(0xff7b5b24.toInt())
+                setPadding(dp(8), 0, dp(8), dp(4))
+            })
             row.addView(Button(this).apply {
                 text = "Open on this phone"
                 // This is a deliberate local action, never a cloud-issued remote launch.
@@ -507,8 +538,57 @@ class MainActivity : Activity() {
             row.addView(android.view.View(this).apply { setBackgroundColor(0xffe2e6ef.toInt()) },
                 LinearLayout.LayoutParams(-1, dp(1)))
             appList.addView(row)
-            appRows[app.packageName] = add to draft
+            appRows[app.packageName] = Triple(add, draft, wakeConsent)
         }
+    }
+
+    private fun confirmNativeWakeConsent(packageName: String, signerSha256: String) {
+        val deviceId = pairedDeviceId()
+        if (deviceId.isNullOrBlank()) {
+            Toast.makeText(this, "Pair this phone to a Rub Minds group before saving native wake consent.", Toast.LENGTH_LONG).show()
+            drawAppRows()
+            return
+        }
+        val grant = store.get(packageName, signerSha256)
+        if (!AppGrantPolicy.canLaunch(grant, signerSha256) ||
+            launchGrants[packageName] != signerSha256
+        ) {
+            Toast.makeText(this, "Save the selected app and verify its signing identity first.", Toast.LENGTH_LONG).show()
+            drawAppRows()
+            return
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Pre-authorize app-level native AI wake for this app?")
+            .setMessage(
+                "This separate local consent is bound to this phone, selected app and signing certificate for up to 24 hours. It is app-level permission only: it does not identify or pin a specific AI conversation/thread. A future native trigger must prove that the same provider conversation is still active after navigation, in addition to rechecking the selected composer and Send control. If an app cannot expose a stable conversation identity, native autonomous Send must remain unavailable for that app.\n\nThe phone-side queue consumer exists, but the provider-conversation identity adapter and trusted group-to-device forwarding/result reconciliation are not complete. Saving this consent alone will not trigger any action in ChatGPT, Claude or another app. It does not authorize arbitrary messages, message-body injection, remote touch or ordinary draft typing."
+            )
+            .setNegativeButton("Cancel") { _, _ -> drawAppRows() }
+            .setPositiveButton("Save app-level consent for 24 hours") { _, _ ->
+                val currentDeviceId = pairedDeviceId()
+                val currentSigner = AppIdentity.signingCertificateSha256(this, packageName)
+                val currentGrant = currentSigner?.let { store.get(packageName, it) }
+                if (currentDeviceId != deviceId || currentSigner != signerSha256 ||
+                    launchGrants[packageName] != signerSha256 ||
+                    !AppGrantPolicy.canLaunch(currentGrant, currentSigner)
+                ) {
+                    Toast.makeText(this, "Phone or app identity changed. Native wake consent was not saved.", Toast.LENGTH_LONG).show()
+                    drawAppRows()
+                    return@setPositiveButton
+                }
+                val saved = nativeWakeConsentStore.confirmGrant(
+                    deviceId = deviceId,
+                    packageName = packageName,
+                    signer = signerSha256,
+                    localConfirmation = true
+                )
+                if (saved == null) {
+                    Toast.makeText(this, "Native wake consent could not be created.", Toast.LENGTH_LONG).show()
+                } else {
+                    Toast.makeText(this, "App-level native-wake consent saved for 24 hours. Native autonomous sending remains unavailable until provider-conversation identity verification and group-to-device forwarding/result reconciliation are implemented.", Toast.LENGTH_LONG).show()
+                }
+                drawAppRows()
+            }
+            .show()
     }
 
     private fun confirmWorkProfileAppLaunch(packageName: String, signerSha256: String) {
@@ -711,7 +791,7 @@ class MainActivity : Activity() {
                 if (error is CloudDeviceApiException &&
                     error.action == "pair/claim" &&
                     (error.statusCode == 400 || error.statusCode == 409)
-                ) vault.clear()
+                ) clearDeviceCredentialAndWakeConsent()
                 runOnUiThread { setBusy(false, error.message ?: "Device pairing failed.") }
             }
         }
@@ -740,7 +820,7 @@ class MainActivity : Activity() {
                 } else if (state == "pending") {
                     runOnUiThread { setBusy(false, "Waiting for the Rub Minds group owner to approve this phone.") }
                 } else {
-                    vault.clear()
+                    clearDeviceCredentialAndWakeConsent()
                     consentPrefs.edit().putBoolean("selected_app_inventory", false).apply()
                     runOnUiThread {
                         pairConsent.isChecked = false
@@ -750,7 +830,7 @@ class MainActivity : Activity() {
             } catch (error: Exception) {
                 val message = error.message ?: "Could not check the cloud device status."
                 if (message.contains("authentication expired", ignoreCase = true)) {
-                    vault.clear()
+                    clearDeviceCredentialAndWakeConsent()
                     consentPrefs.edit().putBoolean("selected_app_inventory", false).apply()
                 }
                 runOnUiThread {
@@ -779,7 +859,7 @@ class MainActivity : Activity() {
                 val status = cloudClient().status(token)
                 val state = status.optString("status")
                 if (state == "revoked") {
-                    vault.clear()
+                    clearDeviceCredentialAndWakeConsent()
                     consentPrefs.edit().putBoolean("selected_app_inventory", false).apply()
                     runOnUiThread {
                         pairConsent.isChecked = false
@@ -821,6 +901,17 @@ class MainActivity : Activity() {
         return rows
     }
 
+    private fun pairedDeviceId(): String? {
+        val credential = vault.token() ?: return null
+        if (!credential.matches(Regex("^[a-f0-9]{64}$"))) return null
+        return vault.deviceId()
+    }
+
+    private fun clearDeviceCredentialAndWakeConsent() {
+        pairedDeviceId()?.let { nativeWakeConsentStore.revokeDevice(it) }
+        vault.clear()
+    }
+
     private fun cloudClient(): CloudDeviceApi =
         cloudApi ?: throw IllegalStateException("This companion build is missing the Rub Minds cloud URL or publishable key.")
 
@@ -830,9 +921,12 @@ class MainActivity : Activity() {
         if (::saveButton.isInitialized) saveButton.isEnabled = !value
         if (::pairConsent.isInitialized) pairConsent.isEnabled = !value
         appRows.forEach { (packageName, row) ->
-            val hasSigner = apps.any { it.packageName == packageName && it.signingCertificateSha256 != null }
+            val app = apps.firstOrNull { it.packageName == packageName }
+            val hasSigner = app?.signingCertificateSha256 != null
             row.first.isEnabled = !value && hasSigner
             row.second.isEnabled = !value && row.first.isChecked
+            row.third.isEnabled = !value && row.first.isChecked &&
+                app?.signingCertificateSha256 != null && pairedDeviceId() != null
         }
         workProfileButtons.forEach { (packageName, button) ->
             button.isEnabled = !value && apps.any { it.packageName == packageName && it.signingCertificateSha256 != null && launchGrants[packageName] == it.signingCertificateSha256 }

@@ -38,7 +38,7 @@ const DIGEST=/^[0-9a-f]{64}$/;
 const RETRY_ERRORS=new Set(['target_unavailable','approval_required','provider_busy','transport_error','result_unconfirmed','authorization_denied','other']);
 function validOperationBody(method,body) {
  if(!UUID.test(body.hostId??'')||!UUID.test(body.bindingId??'')||!DIGEST.test(body.sessionDigest??''))return false;
- if(method==='activate')return UUID.test(body.grantId??'')&&Number.isSafeInteger(body.ttlSeconds)&&body.ttlSeconds>=60&&body.ttlSeconds<=900;
+ if(method==='activate')return UUID.test(body.grantId??'')&&Number.isSafeInteger(body.ttlSeconds)&&body.ttlSeconds>=60&&body.ttlSeconds<=86400;
  if(method==='deactivate')return UUID.test(body.grantId??'');
  if(method==='claim')return body.limit===undefined||(Number.isSafeInteger(body.limit)&&body.limit>=1&&body.limit<=20);
  if(method==='acknowledge')return UUID.test(body.jobId??'')&&UUID.test(body.leaseToken??'')&&['acknowledged','ignored'].includes(body.outcome);

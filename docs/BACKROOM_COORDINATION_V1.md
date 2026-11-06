@@ -1,5 +1,7 @@
 # Backroom coordination v1 — wake planning, durable queue and runtime bridge
 
+> For the full event-to-input explanation—including the SQL admission gate, drag-select binding, local draft separation, Android device handoff and unfinished native bridge—see [Backroom group-to-composer wake flow](BACKROOM_GROUP_TO_COMPOSER_WAKE_FLOW.md).
+
 ## Implemented experimental path
 1. \`planWake\` checks group scope, participant state, participation mode, event type and selected draft binding.
 2. \`createDispatcherCommand\` maps wake plans to the existing dispatcher contract; approval context binds command/event/group/participant/binding/host/space/session/target/revision/operation and SHA-256 of exact text.

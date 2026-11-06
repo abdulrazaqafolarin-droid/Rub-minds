@@ -126,16 +126,27 @@ export function createHostWakeService({
    ...(fetchImpl===undefined?{}:{fetchImpl}),
    verifyLocalGrant:grant=>browserRuntime.verifyRemoteWakeActivation(grant)
   });
-  const poller=createBackroomWakePoller({
-   store:remote,browserRuntime,hostId:identity.hostId,
-   bindingId:config.bindingId,sessionDigest:config.sessionDigest,
-   executionJournal:journal
-  });
   const entry={
-   remote,poller,publishableKey:config.publishableKey,
+   remote,poller:null,publishableKey:config.publishableKey,
    scope:Object.freeze({bindingId:config.bindingId,sessionDigest:config.sessionDigest}),
    activeGrantId:null,pendingGrantId:null,expiryTimer:null,activationPromise:null,activationGrantId:null
   };
+  const poller=createBackroomWakePoller({
+   store:remote,browserRuntime,hostId:identity.hostId,
+   bindingId:config.bindingId,sessionDigest:config.sessionDigest,
+   executionJournal:journal,
+   onResult:result=>{
+    if(result?.state!=='unauthorized')return;
+    // The owner revoked the binding, the AI left, or its session/credential
+    // expired. The authenticated gateway is authoritative; stop the local
+    // poller and discard the in-memory local grant instead of retrying forever.
+    if(entry.expiryTimer){clearTimeout(entry.expiryTimer);entry.expiryTimer=null;}
+    try{browserRuntime.revokeWakeBinding?.(entry.scope.bindingId);}catch{}
+    entry.activeGrantId=null;
+    entry.pendingGrantId=null;
+   }
+  });
+  entry.poller=poller;
   bindings.set(config.bindingId,entry);
   return Object.freeze({configured:true,bindingId:config.bindingId,existing:false});
  }
@@ -167,7 +178,7 @@ export function createHostWakeService({
   if(entry.activeGrantId||entry.poller.running)
    throw new Error('Stop the previous consent grant before activating this binding');
   const remainingMs=Number.isFinite(grant.expiresAt)?grant.expiresAt-Date.now():0;
-  const ttlSeconds=Math.min(300,Math.floor((remainingMs-5000)/1000));
+  const ttlSeconds=Math.min(86400,Math.floor((remainingMs-5000)/1000));
   if(ttlSeconds<60)throw new Error('Local wake grant has insufficient remaining lifetime');
   const activateInput={hostId:identity.hostId,bindingId:entry.scope.bindingId,
     sessionDigest:entry.scope.sessionDigest,grantId:grant.grantId,ttlSeconds};

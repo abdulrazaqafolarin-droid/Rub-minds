@@ -8,12 +8,13 @@ import {dispatchClaimedWake} from './durable-wake-runtime.mjs';
 
 export async function pollPairedWakeJobs({
   store,hostId,sessionDigest,bindingId,limit=5,
-  resolveContext,dispatcher,verifyApproval,executionJournal
+  resolveContext,dispatcher,verifyApproval,consumeApproval,executionJournal
 }={}) {
   if (!store || typeof store.claim!=='function' || typeof store.acknowledge!=='function' || typeof store.retry!=='function')
     throw new TypeError('Private durable wake store required');
   if (typeof resolveContext!=='function') throw new TypeError('Trusted binding resolver required');
   if (typeof verifyApproval!=='function') throw new TypeError('Non-consuming wake-grant verifier required');
+  if (typeof consumeApproval!=='function') throw new TypeError('One-shot wake-grant consumer required');
   if (!dispatcher || typeof dispatcher.enqueue!=='function' || typeof dispatcher.step!=='function' || typeof dispatcher.status!=='function')
     throw new TypeError('Dispatcher required');
   if (!executionJournal || typeof executionJournal.reserve!=='function')
@@ -44,23 +45,15 @@ export async function pollPairedWakeJobs({
       results.push(Object.freeze({jobId:lease.jobId,...result}));
       continue;
     }
-    // Claim leases are at-least-once. Atomically seal the wake BEFORE any UI
-    // execution step. On lease expiry, a later claim must not send it twice.
-    // A rejected reservation intentionally enters manual reconciliation.
-    const guardedDispatcher={
-      enqueue:command=>dispatcher.enqueue(command),
-      status:id=>dispatcher.status(id),
-      async step(id,options){
-        const fresh=await executionJournal.reserve(Object.freeze({
-          jobKey:lease.jobKey,jobId:lease.jobId,hostId,bindingId,
-          sessionDigest,targetId:lease.targetId
-        }));
-        if(fresh!==true)throw new Error('wake-already-reserved-or-journal-unavailable');
-        return dispatcher.step(id,options);
-      }
-    };
+    // The dispatcher/host guard performs live permission and focus checks
+    // first. Only its final beforeEffect callback can reserve the persistent
+    // seal and consume this exact approval immediately before provider UI.
     const result=await dispatchClaimedWake({
-      lease,store,dispatcher:guardedDispatcher,verifyApproval,
+      lease,store,dispatcher,verifyApproval,consumeApproval,
+      executionSeal:async()=>executionJournal.reserve(Object.freeze({
+        jobKey:lease.jobKey,jobId:lease.jobId,hostId,bindingId,
+        sessionDigest,targetId:lease.targetId
+      })),
       hostId,sessionDigest,approval:context.approval,
       targetRegistry:context.targetRegistry,binding:context.binding,
       participant:context.participant,composerEmpty:context.composerEmpty,

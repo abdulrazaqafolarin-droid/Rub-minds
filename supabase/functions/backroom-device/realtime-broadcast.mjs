@@ -1,5 +1,5 @@
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const EVENTS=new Set(['command','signal','device_revoked','response','android_signal','android_response']);
+const EVENTS=new Set(['command','signal','device_revoked','response','android_signal','android_response','android_native_wake_result']);
 /**
  * @param {{
  *   projectUrl?: string,

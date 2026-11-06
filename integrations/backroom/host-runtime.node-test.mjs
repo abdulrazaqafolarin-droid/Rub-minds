@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { LocalExecutionGuard, validateHostCapabilities } from "./host-runtime.mjs";
+import { buildCanonicalWakePrompt } from "./coordination-core.mjs";
 const host = { hostId: "h", deviceLabel: "Local host", surfaces: ["android_app"], operations: ["draft"] };
 const target = { id: "t", hostId: "h", roomId: "r", spaceId: "s", sessionId: "session", appId: "ai.app", surface: "android_app", locatorKind: "accessibility", identityFingerprint: "fingerprint", revision: 1 };
 const command = { hostId: "h", targetId: "t", roomId: "r", spaceId: "s", sessionId: "session", identityFingerprint: "fingerprint", targetRevision: 1, operation: "draft", text: "test" };
@@ -59,4 +60,93 @@ test("wrong group, host and capability fail closed", async () => {
   const { guard } = configured();
   await assert.rejects(() => guard.execute({ command: { ...command, roomId: "wrong" }, target }), /scope/);
   await assert.rejects(() => guard.execute({ command: { ...command, operation: "submit" }, target }), /capability/);
+});
+
+test("wake execution seal runs after permission and exact composer preflight but before UI effect", async () => {
+  const order = [];
+  const wakeHost = { ...host, operations: ["wake"] };
+  const wakeCommand = { ...command, operation: "wake", eventId: "event-1", text: buildCanonicalWakePrompt("event-1") };
+  const guard = new LocalExecutionGuard({
+    host: wakeHost,
+    isConnected: async () => { order.push("connected"); return true; },
+    permission: async () => { order.push("permission"); return true; },
+    adapter: {
+      probe: async () => { order.push("probe"); return probe; },
+      execute: async () => { order.push("effect"); return { state: "completed", verified: true }; },
+    },
+  });
+  const result = await guard.execute({
+    command: wakeCommand,
+    target,
+    beforeEffect: async () => { order.push("seal-and-consume"); return true; },
+  });
+  assert.equal(result.state, "completed");
+  assert.deepEqual(order, ["connected", "permission", "probe", "seal-and-consume", "effect"]);
+});
+
+test("wake execution seal is not acquired when local app preflight fails", async () => {
+  let sealCalls = 0;
+  let effectCalls = 0;
+  const wakeHost = { ...host, operations: ["wake"] };
+  const wakeCommand = { ...command, operation: "wake", eventId: "event-1", text: buildCanonicalWakePrompt("event-1") };
+  const guard = new LocalExecutionGuard({
+    host: wakeHost,
+    isConnected: async () => true,
+    permission: async () => true,
+    adapter: {
+      probe: async () => ({ ...probe, focused: false }),
+      execute: async () => { effectCalls++; return { state: "completed", verified: true }; },
+    },
+  });
+  await assert.rejects(() => guard.execute({
+    command: wakeCommand,
+    target,
+    beforeEffect: async () => { sealCalls++; return true; },
+  }), /focus mismatch/);
+  assert.equal(sealCalls, 0);
+  assert.equal(effectCalls, 0);
+});
+
+test("native wake cannot execute without a durable one-time seal callback", async () => {
+  let effectCalls = 0;
+  const wakeHost = { ...host, operations: ["wake"] };
+  const wakeCommand = { ...command, operation: "wake", eventId: "event-1", text: buildCanonicalWakePrompt("event-1") };
+  const guard = new LocalExecutionGuard({
+    host: wakeHost,
+    isConnected: async () => true,
+    permission: async () => true,
+    adapter: {
+      probe: async () => probe,
+      execute: async () => { effectCalls++; return { state: "completed", verified: true }; },
+    },
+  });
+  await assert.rejects(
+    () => guard.execute({ command: wakeCommand, target }),
+    /native wake requires a durable execution seal/,
+  );
+  assert.equal(effectCalls, 0);
+});
+
+test("native wake adapter receives explicit proof that the seal hook completed", async () => {
+  let observedSeal = null;
+  const wakeHost = { ...host, operations: ["wake"] };
+  const wakeCommand = { ...command, operation: "wake", eventId: "event-1", text: buildCanonicalWakePrompt("event-1") };
+  const guard = new LocalExecutionGuard({
+    host: wakeHost,
+    isConnected: async () => true,
+    permission: async () => true,
+    adapter: {
+      probe: async () => probe,
+      execute: async ({ executionSealReserved }) => {
+        observedSeal = executionSealReserved;
+        return { state: "completed", verified: true };
+      },
+    },
+  });
+  await guard.execute({
+    command: wakeCommand,
+    target,
+    beforeEffect: async () => true,
+  });
+  assert.equal(observedSeal, true);
 });

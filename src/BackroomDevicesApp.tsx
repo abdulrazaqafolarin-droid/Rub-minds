@@ -216,7 +216,8 @@ export default function BackroomApp() {
             <div className="br-cloud-capability-row"><span>Live original app stream and touch</span><b>Implementation ready · device verification pending</b></div>
             <div className="br-cloud-capability-row"><span>Accessibility-backed composer identification</span><b>Implemented · Android CI pending</b></div>
             <div className="br-cloud-capability-row"><span>Drag-select exact composer</span><b>Implemented · device verification pending</b></div>
-            <div className="br-cloud-capability-row"><span>AI-directed device actions</span><b>Not available</b></div>
+            <div className="br-cloud-capability-row"><span>Send-control discovery and recheck</span><b>Implemented · device verification pending</b></div>
+            <div className="br-cloud-capability-row"><span>AI-directed sending / native Off · On · Auto</span><b>Not available · provider adapters + group forwarding missing</b></div>
           </div>}
         </div>
       </section>

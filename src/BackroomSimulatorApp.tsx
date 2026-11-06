@@ -6,16 +6,20 @@ import { listCloudMessages, listCloudRooms, subscribeToCloudMessages, type Cloud
 import './backroom.css';
 import ExternalWorkspacePanel from './ExternalWorkspacePanel';
 import BackroomDesktopControl from './BackroomDesktopControl';
+import { interactionModeForParticipationMode, needsWakeBindingRebind, participationModeForInteractionMode } from '../integrations/backroom/interaction-mode.mjs';
 
 type Surface = 'browser_tab' | 'desktop_app' | 'windows_app' | 'terminal' | 'android_app';
 type Space = { id: string; name: string; surface: Surface; app: string; createdAt: number; pageId?: string };
 type BrowserViewFrame = { pageId: string; roomId: string; grantId: string; frameId: string; mimeType: 'image/jpeg'; image: string; width: number; height: number; expiresAt: number };
 type Rect = { x: number; y: number; width: number; height: number };
-type HostStatus = { hostId: string; label: string; expiresAt: number; protocolVersion: string; connected: boolean; executionReady: boolean; capabilities: Record<string, boolean>; nextStep: string; browserPages?: number; enrollmentDigest?: string; wakeGatewayHost?: string };
+type HostWakeBindingStatus = { bindingId: string; polling: boolean; consentActive: boolean; deactivationPending: boolean };
+type HostStatus = { hostId: string; label: string; expiresAt: number; protocolVersion: string; connected: boolean; executionReady: boolean; capabilities: Record<string, boolean>; nextStep: string; browserPages?: number; enrollmentDigest?: string; wakeGatewayHost?: string; wakeBindings?: HostWakeBindingStatus[] };
 type BrowserPageRow = { pageId: string; title: string; site: string; canSelect: boolean };
 type BrowserTargetRow = { id: string; pageId: string; roomId: string; title: string; site: string; surface: string; operations: string[]; wakeAvailable?: boolean; spaceId?: string; sessionId?: string; identityFingerprint?: string; revision?: number; locatorKind?: string; locatorValue?: string };
-type HostedAiSession = { participantId: string; displayName: string; sessionDigest: string; expiresAt: string };
-type HostedWakeBinding = { bindingId: string; roomId: string; participantId: string; sessionId: string; targetId: string; sessionDigest: string; wakeEnabled?: boolean; requiresRevoke?: boolean };
+type HostedAiSession = { participantId: string; displayName: string; sessionDigest: string; expiresAt: string; credentialExpiresAt: string };
+type WakeInteractionMode = 'off' | 'on' | 'auto';
+type FrameWakeBindingState = 'unknown' | 'unbound' | 'bound' | 'armed' | 'stale' | 'needs-rebind' | 'other-target' | 'other-group';
+type HostedWakeBinding = { bindingId: string; roomId: string; participantId: string; sessionId: string; targetId: string; sessionDigest: string; participationMode?: 'mentions' | 'smart' | 'task'; wakeEnabled?: boolean; serverWakeEnabled?: boolean; localPollingConfirmed?: boolean; wakeExpiresAt?: string | null; requiresRevoke?: boolean };
 type PendingBrowserSelection = { pageId: string; roomId: string; generation: number; attemptId: string | null };
 const surfaces: { id: Surface; name: string; detail: string }[] = [
   { id: 'browser_tab', name: 'Browser session', detail: 'ChatGPT, Claude and other browser conversations' },
@@ -67,6 +71,17 @@ function parseHostStatus(value: unknown, expectedHostId?: string): HostStatus {
       !/^(?:[a-z0-9-]+\\.)*[a-z0-9-]+$/i.test(row.wakeGatewayHost))) {
     throw new HostStatusValidationError('Local host returned an invalid wake gateway hostname.');
   }
+  let wakeBindings: HostWakeBindingStatus[] | undefined;
+  if (row.wakeBindings !== undefined) {
+    if (!Array.isArray(row.wakeBindings) || row.wakeBindings.length > 10 || row.wakeBindings.some(value => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return true;
+      const item=value as Record<string,unknown>;
+      return typeof item.bindingId!=='string' || !/^[a-f0-9-]{36}$/i.test(item.bindingId) ||
+        typeof item.polling!=='boolean' || typeof item.consentActive!=='boolean' ||
+        typeof item.deactivationPending!=='boolean';
+    })) throw new HostStatusValidationError('Local host returned invalid durable wake status.');
+    wakeBindings = row.wakeBindings as HostWakeBindingStatus[];
+  }
   if (!row.capabilities || typeof row.capabilities !== 'object' || Array.isArray(row.capabilities)) {
     throw new HostStatusValidationError('Local host returned invalid capabilities.');
   }
@@ -95,13 +110,31 @@ function parseHostStatus(value: unknown, expectedHostId?: string): HostStatus {
     ...(typeof row.browserPages === 'number' ? { browserPages: row.browserPages } : {}),
     ...(typeof row.enrollmentDigest === 'string' ? { enrollmentDigest: row.enrollmentDigest } : {}),
     ...(typeof row.wakeGatewayHost === 'string' ? { wakeGatewayHost: row.wakeGatewayHost.toLowerCase() } : {}),
+    ...(wakeBindings ? { wakeBindings } : {}),
   };
 }
 
-function LiveBrowserPreview({ frame, appName, onSelectRegion }: {
+function LiveBrowserPreview({ frame, appName, onSelectRegion, wakeMode, onWakeModeChange, wakeModeDisabled, wakeModeStatus, wakeCapable, findSessionsDisabled, onFindSessions, sessions, selectedSessionDigest, onSelectSession, bindingState, canBind, canArm, onBind, onArm, onOff, onRevoke }: {
   frame: BrowserViewFrame;
   appName: string;
   onSelectRegion: (frameId: string, region: Rect) => void;
+  wakeMode: WakeInteractionMode;
+  onWakeModeChange: (mode: WakeInteractionMode) => void;
+  wakeModeDisabled: boolean;
+  wakeModeStatus: string;
+  wakeCapable: boolean;
+  findSessionsDisabled: boolean;
+  onFindSessions: () => void;
+  sessions: HostedAiSession[];
+  selectedSessionDigest: string;
+  onSelectSession: (digest: string) => void;
+  bindingState: FrameWakeBindingState;
+  canBind: boolean;
+  canArm: boolean;
+  onBind: () => void;
+  onArm: () => void;
+  onOff: () => void;
+  onRevoke: () => void;
 }) {
   const [start, setStart] = useState<{ x: number; y: number; frameId: string } | null>(null);
   const [drag, setDrag] = useState<Rect | null>(null);
@@ -160,7 +193,7 @@ function LiveBrowserPreview({ frame, appName, onSelectRegion }: {
         onPointerUp={finish}
         onPointerCancel={() => { setStart(null); setDrag(null); setDragFrame(null); }}
         role="group"
-        aria-label="Drag around exactly one visible empty text field to register it as a draft-only target"
+        aria-label="Drag around exactly one visible empty AI composer to register it for draft insertion and, when the provider adapter supports it, a separately consented canonical wake"
         tabIndex={0}
       />
       {rectangle && <div className="br-live-selection" style={{
@@ -168,7 +201,40 @@ function LiveBrowserPreview({ frame, appName, onSelectRegion }: {
         width: rectangle.width + '%', height: rectangle.height + '%',
       }} />}
     </div>
-    <div className="br-live-caption">Read-only visual snapshots are refreshed locally. Drag around one visible empty editable field; Backroom resolves the region against the live DOM and rejects stale, ambiguous or occupied targets.</div>
+    <div className="br-live-mode-control">
+      <div className="br-live-mode-head">
+        <div><b>AI participation</b><small>Choose how this exact composer joins the group</small></div>
+        <button type="button" className="br-secondary" onClick={onFindSessions} disabled={findSessionsDisabled}>Find joined AI</button>
+      </div>
+      <div id="br-frame-wake-mode-label" className="br-live-mode-label">Interaction mode</div>
+      <div id="br-frame-wake-mode" className="br-live-mode-switch" role="group" aria-labelledby="br-frame-wake-mode-label">
+        <button type="button" className={'br-live-mode-option' + (wakeMode==='off'?' is-selected':'')} data-mode="off" aria-pressed={wakeMode==='off'} onClick={()=>onWakeModeChange('off')} disabled={wakeModeDisabled}>
+          <b>Off</b><small>No triggers</small>
+        </button>
+        <button type="button" className={'br-live-mode-option' + (wakeMode==='on'?' is-selected':'')} data-mode="on" aria-pressed={wakeMode==='on'} onClick={()=>onWakeModeChange('on')} disabled={wakeModeDisabled || !wakeCapable}>
+          <b>On</b><small>When mentioned</small>
+        </button>
+        <button type="button" className={'br-live-mode-option' + (wakeMode==='auto'?' is-selected':'')} data-mode="auto" aria-pressed={wakeMode==='auto'} onClick={()=>onWakeModeChange('auto')} disabled={wakeModeDisabled || !wakeCapable}>
+          <b>Auto</b><small>Human messages</small>
+        </button>
+      </div>
+      {sessions.length>0 && <>
+        <label htmlFor="br-frame-joined-ai">Joined AI conversation</label>
+        <select id="br-frame-joined-ai" value={selectedSessionDigest} onChange={event=>onSelectSession(event.target.value)} disabled={wakeModeDisabled}>
+          {sessions.map(session=><option key={session.sessionDigest} value={session.sessionDigest}>{session.displayName}</option>)}
+        </select>
+      </>}
+      <p>{wakeModeStatus}</p>
+      {bindingState==='armed'
+        ? <button type="button" className="br-danger-action br-live-mode-action" onClick={onOff} disabled={wakeModeDisabled}>Turn Off and revoke this binding</button>
+        : bindingState==='stale' || bindingState==='needs-rebind' || bindingState==='other-target' || bindingState==='other-group'
+          ? <button type="button" className="br-danger-action br-live-mode-action" onClick={onRevoke} disabled={wakeModeDisabled}>{bindingState==='other-group'?'Revoke binding from another group':bindingState==='other-target'?'Revoke binding from previous browser target':'Revoke current binding'}</button>
+          : bindingState==='bound'
+            ? <button type="button" className="br-primary br-live-mode-action" onClick={onArm} disabled={!canArm || wakeModeDisabled}>Arm {wakeMode.toUpperCase()} — local approval</button>
+            : <button type="button" className="br-primary br-live-mode-action" onClick={onBind} disabled={!canBind || wakeModeDisabled || wakeMode==='off'}>Bind this composer to the selected AI</button>}
+      <small>Auto sends only the fixed @RMconnects trigger to this registered managed-browser composer. It does not copy the group message into the AI chat. The AI must already be joined to Rub Minds through MCP. Native Android and Windows app frames still support verified draft insertion only.</small>
+    </div>
+    <div className="br-live-caption">Read-only snapshots are refreshed locally. Drag around one visible empty editable composer in this frame; Backroom resolves the region against the live DOM and rejects stale, ambiguous or occupied targets. The frame mode above applies to this managed-browser surface only.</div>
   </div>;
 }
 
@@ -202,6 +268,9 @@ export default function BackroomApp() {
   const [selectedHostedSession,setSelectedHostedSession] = useState('');
   const [hostedWakeBinding,setHostedWakeBinding] = useState<HostedWakeBinding | null>(null);
   const [hostedWakeGrantId,setHostedWakeGrantId] = useState('');
+  const [selectedWakeMode,setSelectedWakeMode] = useState<WakeInteractionMode>('off');
+  const [wakeBindingStatusKnown,setWakeBindingStatusKnown] = useState(false);
+  const bindingStatusRequestRef = useRef(0);
   const selectionGeneration = useRef(0);
   const activeBrowserSelection = useRef<PendingBrowserSelection | null>(null);
   const [roomId, setRoomId] = useState(() => new URLSearchParams(location.search).get('room') || '');
@@ -316,6 +385,38 @@ export default function BackroomApp() {
   const roomBrowserTargets = browserTargets.filter(target => target.roomId === room?.id);
   const currentBrowserTarget = current?.pageId
     ? roomBrowserTargets.find(target => target.pageId === current.pageId) : undefined;
+  const selectedFrameTarget = browserTargets.find(target =>
+    target.id===selectedBrowserTarget && target.roomId===room?.id &&
+    target.pageId===current?.pageId);
+  const selectedWakeParticipationMode = participationModeForInteractionMode(selectedWakeMode);
+  const wakeBindingNeedsRebind = Boolean(hostedWakeBinding?.roomId===room?.id && selectedWakeParticipationMode &&
+    needsWakeBindingRebind(selectedWakeMode, hostedWakeBinding.participationMode));
+  const frameWakeBinding = selectedFrameTarget && hostedWakeBinding?.roomId===room?.id &&
+    hostedWakeBinding.targetId===selectedFrameTarget.id ? hostedWakeBinding : null;
+  const frameWakeBindingState: FrameWakeBindingState = !wakeBindingStatusKnown ? 'unknown'
+    : hostedWakeBinding && hostedWakeBinding.roomId!==room?.id ? 'other-group'
+    : selectedBrowserTarget && !selectedFrameTarget ? 'other-target'
+    : hostedWakeBinding && hostedWakeBinding.roomId===room?.id && hostedWakeBinding.targetId!==selectedFrameTarget?.id ? 'other-target'
+    : !frameWakeBinding ? 'unbound'
+    : frameWakeBinding.requiresRevoke || (frameWakeBinding.serverWakeEnabled && !frameWakeBinding.localPollingConfirmed) ? 'stale'
+    : frameWakeBinding.participationMode!==selectedWakeParticipationMode ? 'needs-rebind'
+    : frameWakeBinding.wakeEnabled ? 'armed' : 'bound';
+  const frameTargetCanWake = Boolean(selectedFrameTarget?.wakeAvailable===true &&
+    Array.isArray(selectedFrameTarget.operations) && selectedFrameTarget.operations.includes('wake'));
+  const frameCanBind = Boolean(wakeBindingStatusKnown && hostInfo?.connected && hostToken &&
+    frameTargetCanWake && selectedWakeParticipationMode && selectedHostedSession &&
+    hostedAiSessions.some(session=>session.sessionDigest===selectedHostedSession));
+  const frameCanArm = Boolean(frameWakeBindingState==='bound' && frameTargetCanWake &&
+    hostInfo?.connected && selectedWakeParticipationMode &&
+    frameWakeBinding?.participationMode===selectedWakeParticipationMode);
+  useEffect(() => {
+    bindingStatusRequestRef.current++;
+    setWakeBindingStatusKnown(false);
+    setSelectedWakeMode('off');
+    setHostedAiSessions([]);
+    setSelectedHostedSession('');
+    setHostedWakeGrantId('');
+  }, [room?.id]);
   useEffect(() => {
     setLiveViewEnabled(false);
     setLiveGrantId('');
@@ -454,25 +555,42 @@ export default function BackroomApp() {
     }finally{setHostBusy(false);}
   }
 
-  async function revokeHostedWakeBinding() {
+  async function revokeHostedWakeBinding(alreadyConfirmed = false) {
     const binding=hostedWakeBinding;
-    if(!supabase||!user||!binding)return;
-    if(!window.confirm('Permanently revoke this AI input binding? Its pending and leased wake events will be cancelled. The host remains registered, but this input must be selected and bound again before wake can be enabled.'))return;
+    if(!supabase||!user||!binding)return false;
+    if(!alreadyConfirmed && !window.confirm('Permanently revoke this AI input binding? Its pending and leased wake events will be cancelled. The host remains registered, but this input must be selected and bound again before wake can be enabled.'))return false;
     setHostBusy(true);
     try{
-      // Stop the local worker first where reachable. Server-side binding revoke
-      // remains authoritative if the computer is offline or the browser lost its grant ID.
-      try{if(hostToken)await hostApi('/v1/browser/wake/bindings/revoke',{method:'POST',body:{bindingId:binding.bindingId}});}catch{}
+      // Stop the local grant and poller first. The owner-authenticated server
+      // revoke below still cancels queued work if the local host is unreachable,
+      // but cannot prove that an already-running local action has stopped.
+      let localStopConfirmed=false;
+      try{
+        if(hostToken){
+          const local=await hostApi<{revoked:boolean}>('/v1/browser/wake/bindings/revoke',{
+            method:'POST',body:{bindingId:binding.bindingId}
+          });
+          localStopConfirmed=local.localPollingStopped===true;
+        }
+      }catch{}
       const {data,error:revokeError}=await supabase.functions.invoke('backroom-config/revoke-binding',{
         body:{bindingId:binding.bindingId}
       });
       if(revokeError||data?.ok!==true||data?.revoked!==true)
         throw new Error('Input binding was not revoked. Check ownership and retry.');
+      if(!localStopConfirmed){
+        setHostedWakeBinding(current=>current?{...current,wakeEnabled:false,serverWakeEnabled:false,localPollingConfirmed:false,requiresRevoke:true}:current);
+        setHostedWakeGrantId('');
+        setHostMessage('The server revoked this binding and cancelled queued jobs, but the paired local host did not confirm that polling and any in-flight action have stopped. This mode change is not marked complete. Reconnect to that host and use Emergency Stop before retrying.');
+        return false;
+      }
       setHostedWakeBinding(null);
       setHostedWakeGrantId('');
-      setHostMessage('AI input binding revoked on the server; its pending wakes were cancelled. Select the intended composer and bind it again.');
+      setHostMessage('Off confirmed: the paired local host stopped its wake poller and the server revoked the binding and cancelled pending jobs.');
+      return true;
     }catch(error){
       setHostMessage(error instanceof Error?error.message:'Input binding revocation failed.');
+      return false;
     }finally{setHostBusy(false);}
   }
 
@@ -507,8 +625,73 @@ export default function BackroomApp() {
     } finally {setHostBusy(false);}
   }
 
+  async function restoreHostedWakeBinding(roomId: string, selectedSession: HostedAiSession) {
+    if (!supabase) return;
+    const requestId = ++bindingStatusRequestRef.current;
+    setWakeBindingStatusKnown(false);
+    const {data,error} = await supabase.functions.invoke('backroom-config/binding-status',{
+      body:{roomId,participantId:selectedSession.participantId,sessionDigest:selectedSession.sessionDigest}
+    });
+    if (requestId !== bindingStatusRequestRef.current) return;
+    if(error || data?.ok!==true || !Array.isArray(data.bindings)) {
+      setHostMessage('Wake status is UNKNOWN because the owner-authenticated server check failed. Existing state has been preserved; do not register or arm another binding until status can be restored.');
+      return;
+    }
+    setWakeBindingStatusKnown(true);
+    const row=data.bindings.find((value:unknown)=>{
+      if(!value||typeof value!=='object'||Array.isArray(value))return false;
+      const item=value as Record<string,unknown>;
+      return item.participantId===selectedSession.participantId &&
+        typeof item.bindingId==='string' && typeof item.sessionId==='string' &&
+        typeof item.targetId==='string' && ['mentions','smart','task'].includes(String(item.participationMode));
+    }) as Record<string,unknown>|undefined;
+    setHostedWakeGrantId('');
+    if(!row) {
+      setHostedWakeBinding(null);
+      setSelectedWakeMode('off');
+      setHostMessage('No active input binding exists for this exact AI session. Select On or Auto and register the intended composer.');
+      return;
+    }
+    const participationMode=row.participationMode as 'mentions'|'smart'|'task';
+    const interactionMode=interactionModeForParticipationMode(participationMode);
+    let localPollingConfirmed=false;
+    try {
+      if(hostToken&&hostInfo?.connected) {
+        const localStatus=await hostApi<unknown>('/v1/host');
+        const parsed=parseHostStatus(localStatus,hostInfo.hostId);
+        setHostInfo(parsed);
+        const localBinding=parsed.wakeBindings?.find(item=>item.bindingId===String(row.bindingId));
+        localPollingConfirmed=localBinding?.polling===true&&localBinding.consentActive===true&&localBinding.deactivationPending===false;
+      }
+    } catch { localPollingConfirmed=false; }
+    if(requestId!==bindingStatusRequestRef.current)return;
+    const serverWakeEnabled=row.wakeEnabled===true;
+    const binding: HostedWakeBinding={
+      bindingId:String(row.bindingId),roomId,participantId:selectedSession.participantId,
+      sessionId:String(row.sessionId),targetId:String(row.targetId),sessionDigest:selectedSession.sessionDigest,
+      participationMode,wakeEnabled:serverWakeEnabled&&localPollingConfirmed,
+      serverWakeEnabled,localPollingConfirmed,
+      wakeExpiresAt:typeof row.wakeExpiresAt==='string'?row.wakeExpiresAt:null,
+      requiresRevoke:interactionMode===null
+    };
+    setHostedWakeBinding(binding);
+    setSelectedWakeMode(interactionMode==='on'||interactionMode==='auto'?interactionMode:'off');
+    if(roomBrowserTargets.some(target=>target.id===binding.targetId))setSelectedBrowserTarget(binding.targetId);
+    if(interactionMode===null) {
+      setHostMessage('This binding uses a task-only policy that is not exposed by the Off / On / Auto control. Revoke it before creating a supported mode.');
+    } else if(serverWakeEnabled&&!localPollingConfirmed) {
+      setHostMessage('The server still has a live wake grant, but the paired host did not confirm an active local poller. Do not treat Auto as running. Turn Off to revoke the stale grant, or reconnect/restart the intended host and check again.');
+    } else if(binding.wakeEnabled) {
+      const expiry=binding.wakeExpiresAt?Date.parse(binding.wakeExpiresAt):NaN;
+      setHostMessage(`${interactionMode.toUpperCase()} is active on the paired host for this exact AI session${Number.isFinite(expiry)?' until '+new Date(expiry).toLocaleTimeString():''}.`);
+    } else {
+      setHostMessage(`${interactionMode.toUpperCase()} binding restored. It is not currently armed; local consent is required to start its bounded wake grant.`);
+    }
+  }
+
   async function discoverHostedAiSessions() {
     if (!supabase || !room?.id || !user) return;
+    setWakeBindingStatusKnown(false);
     setHostBusy(true);
     try {
       const {data,error:discoveryError}=await supabase.functions.invoke('backroom-config/sessions',{
@@ -520,17 +703,33 @@ export default function BackroomApp() {
         if(!v||typeof v!=='object'||Array.isArray(v))return false;
         const x=v as Record<string,unknown>;
         return typeof x.participantId==='string'&&typeof x.displayName==='string'&&
-          typeof x.sessionDigest==='string'&&/^[a-f0-9]{64}$/.test(x.sessionDigest);
+          typeof x.sessionDigest==='string'&&/^[a-f0-9]{64}$/.test(x.sessionDigest)&&
+          typeof x.expiresAt==='string'&&Number.isFinite(Date.parse(x.expiresAt))&&
+          typeof x.credentialExpiresAt==='string'&&Number.isFinite(Date.parse(x.credentialExpiresAt));
       }) as HostedAiSession[];
       setHostedAiSessions(sessions);
       setSelectedHostedSession(sessions[0]?.sessionDigest??'');
-      setHostMessage(sessions.length+' authorized live AI session(s) found. Select the intended original AI conversation.');
+      if(sessions[0]) await restoreHostedWakeBinding(room.id,sessions[0]);
+      else {
+        bindingStatusRequestRef.current++;
+        setWakeBindingStatusKnown(false);
+        setHostMessage('No live joined AI MCP session was found. Existing wake bindings are not assumed Off; reconnect the original AI session and restore its owner-scoped status before changing modes.');
+      }
     }catch(error){
       setHostMessage(error instanceof Error?error.message:'AI session discovery failed.');
     }finally{setHostBusy(false);}
   }
   async function bindHostedWakeInput() {
     if (!supabase || !room?.id || !hostInfo?.connected || !hostToken) return;
+    if (hostedWakeBinding && hostedWakeBinding.roomId !== room.id) {
+      setHostMessage('This view is still tracking a binding from another group. Reopen that group to manage or revoke it before registering another binding here.');
+      return;
+    }
+    const participationMode=participationModeForInteractionMode(selectedWakeMode);
+    if (!participationMode) {
+      setHostMessage('Wake is Off. Choose On or Auto before registering an AI input binding.');
+      return;
+    }
     const selectedSession=hostedAiSessions.find(s=>s.sessionDigest===selectedHostedSession);
     const target=browserTargets.find(t=>t.id===selectedBrowserTarget);
     // Capture optional identity fields before any await so TypeScript and runtime share one stable value.
@@ -559,7 +758,7 @@ export default function BackroomApp() {
           targetId:target.id,targetIdentityFingerprint:target.identityFingerprint,
           targetRevision:target.revision,surface:'browser_tab',
           locatorKind:target.locatorKind,locatorValue:target.locatorValue,
-          participationMode:'mentions',maxWakesPerMinute:6
+          participationMode,maxWakesPerMinute:6
         }
       });
       let data=rawBindingData as {ok?:boolean;bindingId?:string;reason?:string;wakeEnabled?:boolean;requiresHostRevoke?:boolean;existing?:boolean}|null;
@@ -601,10 +800,10 @@ export default function BackroomApp() {
         bindingId:data.bindingId,roomId:room.id,
         participantId:selectedSession.participantId,sessionId:targetSessionId,
         targetId:target.id,sessionDigest:selectedSession.sessionDigest,
-        wakeEnabled:false,requiresRevoke:false
+        participationMode,wakeEnabled:false,requiresRevoke:false
       });
       setHostedWakeGrantId('');
-      setHostMessage('AI session bound to the exact selected composer. Wake remains OFF; activate only with your explicit confirmation.');
+      setHostMessage('AI session bound to the exact selected composer in ' + selectedWakeMode.toUpperCase() + ' mode. Wake remains OFF until you explicitly arm it.');
     }catch(error){
       let cleanupWarning='';
       if(pendingNewBindingId && supabase){
@@ -620,23 +819,82 @@ export default function BackroomApp() {
   async function enableHostedWake() {
     const binding=hostedWakeBinding;
     if(!binding||binding.roomId!==room?.id||binding.targetId!==selectedBrowserTarget||!hostInfo?.connected)return;
-    if(!window.confirm('Enable the selected original AI conversation to receive only canonical @RMconnects event triggers for up to 5 minutes? This may press Send in that selected AI chat.'))return;
+    const requiredMode=participationModeForInteractionMode(selectedWakeMode);
+    if(!requiredMode||binding.participationMode!==requiredMode) {
+      setHostMessage('The selected mode does not match this registered input. Revoke and re-register the binding before arming it.');
+      return;
+    }
+    const joinedSession=hostedAiSessions.find(session=>session.sessionDigest===binding.sessionDigest&&session.participantId===binding.participantId);
+    const sessionExpiry=typeof joinedSession?.expiresAt==='string'?Date.parse(joinedSession.expiresAt):NaN;
+    const credentialExpiry=typeof joinedSession?.credentialExpiresAt==='string'?Date.parse(joinedSession.credentialExpiresAt):NaN;
+    const sessionBoundTtlMs=Math.min(86400000,Math.floor(credentialExpiry-Date.now()-15000));
+    if(!Number.isFinite(sessionExpiry)||sessionExpiry<=Date.now()||
+       !Number.isFinite(sessionBoundTtlMs)||sessionBoundTtlMs<60000) {
+      setHostMessage('This joined AI session is no longer live or its exact invitation credential expires too soon for a one-minute wake grant. Rejoin with a valid invitation, refresh the session list, then arm it again.');
+      return;
+    }
+    const consentMinutes=Math.floor(sessionBoundTtlMs/60000);
+    const consentDuration=consentMinutes>=60
+      ? Math.floor(consentMinutes/60)+' hour(s) '+(consentMinutes%60)+' minute(s)'
+      : consentMinutes+' minute(s)';
+    if(!window.confirm('Enable the selected original AI conversation to receive canonical @RMconnects event triggers automatically for up to '+consentDuration+'? This can press Send in that exact selected AI chat without per-message confirmation. It is limited to six triggers per minute. It expires with the exact joined invitation credential and cannot be silently renewed. You can revoke it or use Emergency Stop at any time.'))return;
     setHostBusy(true);
     try{
-      const grant=await hostApi<{grantId:string}>('/v1/browser/wake/grants',{
+      if(!supabase||!hostInfo.enrollmentDigest)throw new Error('Owner-authenticated host registration is missing. Re-pair before enabling Auto.');
+      const {data:renewedHost,error:renewHostError}=await supabase.functions.invoke('backroom-config/host',{
+        body:{hostId:hostInfo.hostId,credentialDigest:hostInfo.enrollmentDigest,ttlSeconds:Math.min(604800,Math.max(86400,Math.ceil(sessionBoundTtlMs/1000)+3600))}
+      });
+      if(renewHostError||renewedHost?.ok!==true)throw new Error('Could not renew the owner-authorized host lease for the 24-hour Auto session.');
+      const grant=await hostApi<{grantId:string;expiresAt:number}>('/v1/browser/wake/grants',{
         method:'POST',body:{
           targetId:binding.targetId,roomId:binding.roomId,
           participantId:binding.participantId,sessionId:binding.sessionId,
-          bindingId:binding.bindingId,confirmed:true,ttlMs:300000,maxPerMinute:6
+          bindingId:binding.bindingId,confirmed:true,ttlMs:sessionBoundTtlMs,maxPerMinute:6
         }
       });
       if(typeof grant.grantId!=='string')throw new Error('Local wake grant was not confirmed.');
       setHostedWakeGrantId(grant.grantId);
-      setHostMessage('Wake enabled for this one selected AI input. It expires automatically; use Revoke wake to stop earlier.');
+      setHostedWakeBinding(current=>current?{...current,wakeEnabled:true,wakeExpiresAt:new Date(grant.expiresAt).toISOString()}:current);
+      setHostMessage(selectedWakeMode.toUpperCase() + ' enabled for this one selected AI input until ' + new Date(grant.expiresAt).toLocaleString() + '. The grant is bounded by this AI session’s exact invitation credential and limited to six triggers per minute.');
     }catch(error){
       setHostMessage(error instanceof Error?error.message:'Wake activation failed and must be retried with consent.');
     }finally{setHostBusy(false);}
   }
+  async function chooseWakeMode(nextMode: WakeInteractionMode) {
+    const currentRoomBinding = hostedWakeBinding?.roomId === room?.id ? hostedWakeBinding : null;
+    const currentFrameBinding = currentRoomBinding && selectedFrameTarget &&
+      currentRoomBinding.targetId === selectedFrameTarget.id ? currentRoomBinding : null;
+    if (nextMode === 'off') {
+      if (currentFrameBinding) {
+        if (!window.confirm('Switching this frame to Off permanently revokes its input binding and cancels pending wake events. Continue?')) return;
+        const revoked = await revokeHostedWakeBinding(true);
+        if (revoked) setSelectedWakeMode('off');
+        return;
+      }
+      setSelectedWakeMode('off');
+      setHostMessage(currentRoomBinding
+        ? 'Off is selected for the displayed frame. The separately bound composer on another browser target is unchanged; switch to that frame or use its explicit revoke action to turn it Off.'
+        : 'Interaction mode is Off for the displayed frame. No input binding is armed here; other groups’ bindings are unchanged.');
+      return;
+    }
+    const requiredMode = participationModeForInteractionMode(nextMode);
+    if (!requiredMode) return;
+    if (currentRoomBinding && !currentFrameBinding) {
+      setHostMessage('This group already has a binding for another browser target. Switch to that target or explicitly revoke it before binding a different frame.');
+      return;
+    }
+    if (currentFrameBinding && needsWakeBindingRebind(nextMode, currentFrameBinding.participationMode)) {
+      const oldMode = currentFrameBinding.participationMode
+        ? interactionModeForParticipationMode(currentFrameBinding.participationMode) || 'the existing'
+        : 'the existing';
+      if (!window.confirm('Changing from ' + oldMode + ' to ' + nextMode.toUpperCase() + ' requires revoking this frame’s binding and cancelling its queued wakes. Continue?')) return;
+      const revoked = await revokeHostedWakeBinding(true);
+      if (!revoked) return;
+    }
+    setSelectedWakeMode(nextMode);
+    setHostMessage(nextMode.toUpperCase() + ' selected. Register or arm the exact composer in the displayed browser frame to activate this mode.');
+  }
+
   async function revokeHostedWake() {
     const binding=hostedWakeBinding;
     if(!binding||!hostedWakeGrantId)return;
@@ -654,7 +912,7 @@ export default function BackroomApp() {
       setHostedWakeBinding(previous=>previous?{...previous,wakeEnabled:false}:previous);
       setHostMessage(result.remoteDeactivationConfirmed===true
         ? 'Wake grant revoked; local polling stopped and hosted consent deactivation confirmed.'
-        : 'Wake grant revoked locally and polling stopped, but the server did not confirm remote deactivation. The old consent expires within 5 minutes. For immediate server-side cancellation, revoke this input binding.');
+        : 'Wake grant revoked locally and polling stopped, but the server did not confirm remote deactivation. The old consent expires within 24 hours. For immediate server-side cancellation, revoke this input binding.');
 
     }catch(error){
       setHostMessage(error instanceof Error?error.message:'Could not confirm wake revocation. Use Emergency Stop.');
@@ -828,19 +1086,21 @@ export default function BackroomApp() {
     const pageId = current?.pageId;
     const groupId = room?.id;
     if (!pageId || !groupId || !hostToken || !liveViewEnabled || !liveFrame) return;
-    if (!window.confirm('Register the field inside this rectangle on the selected live tab? The local host will accept only one visible, editable, empty text field. Registration grants draft insertion only; it will never send or press Enter.')) return;
+    if (!window.confirm('Register the field inside this rectangle on the selected live tab? The local host must resolve it to one visible, editable, empty composer. This does not send anything. A provider-specific canonical wake capability, when available, still requires a separate joined-AI binding and explicit local consent before it can submit a fixed @RMconnects trigger.')) return;
     setBrowserBusy(true);
     try {
       const target = await hostApi<BrowserTargetRow>('/v1/browser/select-region', {
         method: 'POST', body: { pageId, roomId: groupId, frameId, region },
       });
       if (target.pageId !== pageId || target.roomId !== groupId || target.surface !== 'browser_tab' ||
-        !target.operations.includes('draft')) {
-        throw new Error('The local host returned a target outside the selected tab or draft-only scope.');
+        !Array.isArray(target.operations) || !target.operations.includes('draft') ||
+        (target.wakeAvailable === true && !target.operations.includes('wake')) ||
+        (target.wakeAvailable !== undefined && typeof target.wakeAvailable !== 'boolean')) {
+        throw new Error('The local host returned an inconsistent target capability or a target outside the selected tab.');
       }
       setBrowserTargets(previous => [target, ...previous.filter(existing => existing.id !== target.id)]);
       setSelectedBrowserTarget(target.id);
-      setNotice('Live tab target registered. The host retains the exact DOM element and revalidates it before draft insertion. No message was sent.');
+      setNotice(target.wakeAvailable===true ? 'Live composer registered. The host retains the exact DOM node and verified provider wake control. No message was sent; On / Auto still require a joined-AI binding and explicit local consent.' : 'Live text field registered for verified draft insertion only. No message was sent.');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Could not register this live typing area.');
     } finally { setBrowserBusy(false); }
@@ -1072,19 +1332,63 @@ export default function BackroomApp() {
       <div className="br-side-heading br-space-heading">SPACES <span>{spaces.length}</span></div>
       <div className="br-space-list">{spaces.map(s => { const Icon = iconFor(s.surface); return <button className={'br-space-item' + (s.id === active ? ' active' : '')} key={s.id} onClick={() => { setActive(s.id); setNotice(''); }}><span className="br-space-icon"><Icon size={18}/></span><span className="br-space-name"><b>{s.name}</b><small>{surfaces.find(t => t.id === s.surface)?.name}</small></span><span className="br-offline-dot"/></button>; })}</div>
       <button className="br-add-side" onClick={() => setAdding(true)} disabled={!room || spaces.length >= 30}><Plus size={17}/> Add a space</button>
-      <div className="br-side-footer"><span>{hostInfo?.connected ? <Check size={15}/> : <WifiOff size={15}/>} {hostInfo?.connected ? "Local host connected" : hostInfo ? "Local host not reachable" : "No device host connected"}</span><small>{wakeGatewayMismatch(hostInfo) ? `Wake gateway mismatch · ${hostInfo?.wakeGatewayHost} is not this Preview's Supabase project.` : hostInfo?.capabilities.browserDraft ? "Browser draft only · native drivers unavailable" : hostInfo?.connected ? "Host online · browser driver not started" : "Workspace layouts remain local · no active device control"}</small></div>
+      <div className="br-side-footer"><span>{hostInfo?.connected ? <Check size={15}/> : <WifiOff size={15}/>} {hostInfo?.connected ? "Local host connected" : hostInfo ? "Local host not reachable" : "No device host connected"}</span><small>{wakeGatewayMismatch(hostInfo) ? `Wake gateway mismatch · ${hostInfo?.wakeGatewayHost} is not this Preview's Supabase project.` : hostInfo?.capabilities.browserCanonicalWake ? "Browser draft + canonical wake · native drivers unavailable" : hostInfo?.capabilities.browserDraft ? "Browser draft only · native drivers unavailable" : hostInfo?.connected ? "Host online · browser driver not started" : "Workspace layouts remain local · no active device control"}</small></div>
     </aside>
     <main className="br-main">
       <header className="br-topbar"><div className="br-breadcrumb"><a href="/"><ArrowLeft size={15}/> Groups</a><span>/</span><b>Backroom</b></div><div className="br-top-right"><button type="button" className={'br-status-pill' + (hostInfo ? ' paired' : '') + (hostStopped ? ' br-status-stopped' : '')} onClick={() => setHostModal(true)}><span/> {hostStopped ? 'Emergency stop · restart required' : hostInfo?.connected && wakeGatewayMismatch(hostInfo) ? 'Host paired · wake gateway mismatch' : hostInfo?.connected ? (hostInfo.capabilities.browserDraft ? 'Host paired · browser ready' : 'Host paired · browser idle') : hostInfo ? 'Host offline · session saved' : 'Host offline'}</button><span className="br-avatar">{user.email?.slice(0, 1).toUpperCase() || 'U'}</span></div></header>
       {!room ? <div className="br-empty"><Layers3 size={42}/><h1>Choose a Rub Minds group</h1><p>Backroom spaces are scoped to your authenticated group. Select one from the sidebar to begin.</p></div> :
       <div className="br-content">
-        <div className="br-title-row"><div><div className="br-eyebrow"><Activity size={14}/> MULTI-SPACE COORDINATION</div><h1>Backroom <span>workspace</span></h1><p>One group. Multiple AI interfaces. Start with an explicitly approved browser draft.</p></div><button className="br-primary" onClick={() => setAdding(true)} disabled={spaces.length >= 30}><Plus size={17}/> New space</button></div>
+        <div className="br-title-row"><div><div className="br-eyebrow"><Activity size={14}/> MULTI-SPACE COORDINATION</div><h1>Backroom <span>workspace</span></h1><p>One group. Multiple AI interfaces. Select the real browser composer, then separately authorize drafting or automatic wake.</p></div><button className="br-primary" onClick={() => setAdding(true)} disabled={spaces.length >= 30}><Plus size={17}/> New space</button></div>
         <div className="br-metrics"><div><span>Registered spaces</span><strong>{spaces.length.toString().padStart(2, '0')}</strong><small>Local workspace layouts</small></div><div><span>Connected hosts</span><strong>{hostInfo?.connected ? "01" : "00"}</strong><small>{hostInfo?.connected ? "Local host is reachable" : hostInfo ? "Reconnect to verify the saved host" : "Pair a local host to connect"}</small></div><div><span>Active automations</span><strong>00</strong><small>No device commands running</small></div></div>
         {notice && <div className="br-notice" role="status"><CircleHelp size={16}/>{notice}<button onClick={() => setNotice('')} aria-label="Dismiss notice"><X size={15}/></button></div>}
         {!current ? <div className="br-empty-card"><div className="br-empty-symbol"><Layers3 size={34}/></div><h2>Give every AI its own space.</h2><p>Connect the original AI apps and sessions on your phone, desktop, terminal or managed browser. Each surface appears only when its real local runtime is registered and reachable.</p><button className="br-primary" onClick={() => setAdding(true)}><Plus size={16}/> Create your first space</button><div className="br-platforms">{surfaces.map(s => { const Icon = iconFor(s.id); return <span key={s.id} title={s.name}><Icon size={18}/></span>; })}</div></div> :
         <div className="br-workspace-grid"><section className="br-panel br-stage"><div className="br-panel-head"><div><span className="br-eyebrow">ACTIVE SPACE</span><h2>{current.name}</h2><p>{current.app || surfaces.find(s => s.id === current.surface)?.detail}</p></div><button className="br-icon-button" aria-label="Remove this local space" title="Remove local space" onClick={() => { if (!confirm('Remove this saved app session from Backroom? This will not close the app on your computer.')) return; save(spaces.filter(s => s.id !== current.id)); setActive(''); }}><Trash2 size={17}/></button></div>{current.pageId
           ? liveViewEnabled && liveFrame
-            ? <LiveBrowserPreview key={current.id} frame={liveFrame} appName={current.app || current.name} onSelectRegion={(frameId, region) => void registerLiveRegion(frameId, region)}/>
+            ? <LiveBrowserPreview key={current.id} frame={liveFrame} appName={current.app || current.name}
+              wakeMode={selectedWakeMode}
+              onWakeModeChange={mode => void chooseWakeMode(mode)}
+              wakeModeDisabled={hostBusy || browserBusy || !wakeBindingStatusKnown}
+              findSessionsDisabled={hostBusy || browserBusy}
+              wakeCapable={frameTargetCanWake}
+              sessions={hostedAiSessions}
+              selectedSessionDigest={selectedHostedSession}
+              onSelectSession={digest=>{setSelectedHostedSession(digest);const selected=hostedAiSessions.find(session=>session.sessionDigest===digest);if(selected&&room?.id)void restoreHostedWakeBinding(room.id,selected);}}
+              bindingState={frameWakeBindingState}
+              canBind={frameCanBind}
+              canArm={frameCanArm}
+              onBind={()=>void bindHostedWakeInput()}
+              onArm={()=>void enableHostedWake()}
+              onOff={()=>void chooseWakeMode('off')}
+              onRevoke={()=>void revokeHostedWakeBinding()}
+              wakeModeStatus={!wakeBindingStatusKnown
+                ? 'Find the exact joined AI session first so Backroom can restore its server-side mode and local poller state.'
+                : !selectedBrowserTarget
+                  ? 'Drag-select one exact composer in this frame. On and Auto are available only when the provider adapter verifies a unique visible Send control.'
+                  : !selectedFrameTarget
+                    ? 'The selected typing target belongs to a different browser tab. Drag-select the composer in this displayed frame before binding or arming it.'
+                    : !frameTargetCanWake
+                      ? 'This registered field supports draft insertion only. On and Auto are unavailable until the provider wake adapter verifies this composer and its Send control.'
+                    : frameWakeBindingState==='other-group'
+                      ? 'Another group has a separately registered input on this host. Return to that group and manage it before binding this composer.'
+                      : frameWakeBindingState==='other-target'
+                        ? 'This group already has a binding for a different composer. Revoke it before binding the selected frame target.'
+                        : frameWakeBindingState==='stale'
+                          ? 'The server grant or task-only binding needs revocation. The UI will not report it Off unless the local host confirms stop.'
+                          : frameWakeBindingState==='unknown'
+                            ? 'Wake status is unknown. Restore the exact joined AI session before binding or arming this composer.'
+                            : frameWakeBindingState==='unbound' && hostedAiSessions.length===0
+                              ? 'No eligible joined AI session was found. Rejoin the original AI once through the current MCP join_group flow, then find it here.'
+                          : frameWakeBindingState==='needs-rebind'
+                            ? 'The selected mode differs from the registered binding. Revoke/rebind is required before arming.'
+                            : frameWakeBindingState==='armed'
+                              ? selectedWakeMode.toUpperCase()+' is active on this exact managed-browser target.'
+                              : frameWakeBindingState==='bound'
+                                ? selectedWakeMode.toUpperCase()+' is registered but not armed. Arm it to request local consent.'
+                                : selectedWakeMode==='off'
+                                  ? 'Off: this frame has no active automatic wake binding.'
+                                  : 'Select the joined AI, bind this exact composer, then arm the selected mode with local consent.'}
+              onFindSessions={() => void discoverHostedAiSessions()}
+              onSelectRegion={(frameId, region) => void registerLiveRegion(frameId, region)}/>
             : <div className="br-live-placeholder" role="status"><Monitor size={28}/><b>{liveViewEnabled ? 'Connecting to the selected browser tab…' : 'Live view paused'}</b><p>{hostInfo?.capabilities.browserView ? 'Enable the read-only local view to display the actual managed tab here. Its screenshots are not stored or uploaded.' : 'This paired host does not advertise the browser-view adapter. Update and restart the local host.'}</p></div>
           : <div className="br-live-placeholder" role="status">
               <Monitor size={28}/><b>No verified app session</b>
@@ -1093,7 +1397,7 @@ export default function BackroomApp() {
         <div className="br-stage-foot"><MousePointer2 size={16}/><span>{current.pageId ? (liveFrame ? 'Local screenshot view. Drag around one empty field to register a real DOM target.' : 'This space is linked to a discovered tab; no screenshot is being captured while paused.') : 'This saved entry has no verified live app session.'}</span>{current.pageId
           ? <button type="button" className="br-sample-select" onClick={() => void toggleLiveBrowserView()} disabled={browserBusy || !hostInfo?.connected || hostInfo.capabilities.browserView !== true}>{liveViewEnabled ? 'Revoke view permission' : 'Request local view permission'}</button>
           : <button type="button" className="br-sample-select" onClick={() => { save(spaces.filter(space => space.id !== current.id)); setActive(''); }}>Remove disconnected entry</button>}</div></section>
-        <section className="br-panel br-inspector"><span className="br-eyebrow">SPACE INSPECTOR</span><h2>Connection details</h2><div className="br-detail"><span>Platform</span><b>{surfaces.find(s => s.id === current.surface)?.name}</b></div><div className="br-detail"><span>Host status</span><b className="br-muted">{hostInfo?.connected ? (hostInfo.capabilities.browserDraft ? 'Paired · browser draft only' : 'Paired · browser idle') : hostInfo ? 'Offline · paired before' : 'Not connected'}</b></div><div className="br-detail"><span>App view</span><b className="br-muted">{current.pageId ? (liveFrame ? 'Local screenshot view active' : liveViewEnabled ? 'Connecting' : 'Paused') : 'No verified app session'}</b></div><div className="br-detail"><span>View permission</span><b className="br-muted">{current.pageId && liveViewEnabled ? 'Enabled for this tab' : 'Not enabled'}</b></div><div className="br-detail"><span>Typing target</span><b>{currentBrowserTarget ? 'Verified · draft only' : current.pageId ? 'Not registered' : 'Not registered'}</b></div><div className="br-onboard-steps"><b>Open this app in Backroom</b><div><span>1</span> Connect and authenticate the device host</div><div><span>2</span> Choose the real app, window, tab or terminal session</div><div><span>3</span> Approve view and draft permissions separately on the device</div><div><span>4</span> Start an authorized live view (driver required)</div></div><div className="br-warning"><ShieldCheck size={19}/><div><b>{current.pageId ? 'Local tab identity and draft-only permissions' : 'No verified app connection'}</b><p>{current.pageId ? 'This tile is linked to a discovered managed browser tab. View permission is separate from draft registration. The local host resolves drag selections against one exact visible DOM field, then revalidates the node and conversation before inserting text. Enter, Send and submission are not part of this adapter.' : 'This saved entry has no verified app connection. Add an original app only after the paired local runtime discovers its real session and identity.'}</p></div></div><button className="br-disabled-action" onClick={() => setHostModal(true)}><Command size={16}/> {hostInfo ? 'Manage local host' : 'Pair local host'} <span>{hostInfo?.connected ? 'Online' : hostInfo ? 'Offline' : 'Connect'}</span></button></section></div>}
+        <section className="br-panel br-inspector"><span className="br-eyebrow">SPACE INSPECTOR</span><h2>Connection details</h2><div className="br-detail"><span>Platform</span><b>{surfaces.find(s => s.id === current.surface)?.name}</b></div><div className="br-detail"><span>Host status</span><b className="br-muted">{hostInfo?.connected ? (hostInfo.capabilities.browserCanonicalWake ? 'Paired · browser draft + canonical wake' : hostInfo.capabilities.browserDraft ? 'Paired · browser draft only' : 'Paired · browser idle') : hostInfo ? 'Offline · paired before' : 'Not connected'}</b></div><div className="br-detail"><span>App view</span><b className="br-muted">{current.pageId ? (liveFrame ? 'Local screenshot view active' : liveViewEnabled ? 'Connecting' : 'Paused') : 'No verified app session'}</b></div><div className="br-detail"><span>View permission</span><b className="br-muted">{current.pageId && liveViewEnabled ? 'Enabled for this tab' : 'Not enabled'}</b></div><div className="br-detail"><span>Typing target</span><b>{currentBrowserTarget ? (currentBrowserTarget.wakeAvailable===true && Array.isArray(currentBrowserTarget.operations) && currentBrowserTarget.operations.includes('wake') ? 'Verified · canonical wake available' : 'Verified · draft only') : 'Not registered'}</b></div><div className="br-onboard-steps"><b>Open this app in Backroom</b><div><span>1</span> Connect and authenticate the device host</div><div><span>2</span> Choose the real app, window, tab or terminal session</div><div><span>3</span> Approve view and draft permissions separately on the device</div><div><span>4</span> Start an authorized live view (driver required)</div></div><div className="br-warning"><ShieldCheck size={19}/><div><b>{current.pageId ? 'Local tab identity and composer permissions' : 'No verified app connection'}</b><p>{current.pageId ? 'This tile is linked to a discovered managed browser tab. View permission is separate from composer registration. The local host resolves drag selections against one exact visible DOM field and revalidates its identity before any action. Draft insertion never sends; where the provider adapter verifies a unique Send control, On / Auto may submit only the fixed @RMconnects wake trigger after a separate joined-session binding and local consent.' : 'This saved entry has no verified app connection. Add an original app only after the paired local runtime discovers its real session and identity.'}</p></div></div><button className="br-disabled-action" onClick={() => setHostModal(true)}><Command size={16}/> {hostInfo ? 'Manage local host' : 'Pair local host'} <span>{hostInfo?.connected ? 'Online' : hostInfo ? 'Offline' : 'Connect'}</span></button></section></div>}
         <BackroomDesktopControl roomId={room.id} />
         {hostToken && <ExternalWorkspacePanel
           hostToken={hostToken}
@@ -1104,33 +1408,37 @@ export default function BackroomApp() {
           onSelectSession={setSelectedHostedSession}
           onFindSessions={() => void discoverHostedAiSessions()}
         />}
-        <div className="br-bottom-note"><Cpu size={16}/><span>This browser workspace displays the actual managed Chromium app session after trusted host approval. Draft insertion is separate and never submits. Phone, desktop and terminal controls are provided by their respective paired local runtimes; availability and target capability are reported per connected device.</span><a href="https://github.com/abdulrazaqafolarin-droid/Rub-minds/pull/48" target="_blank" rel="noreferrer">Backroom core <ExternalLink size={13}/></a></div>
+        <div className="br-bottom-note"><Cpu size={16}/><span>This browser workspace displays the actual managed Chromium app session after trusted host approval. Draft insertion never submits; On / Auto use a separate canonical wake trigger and require a joined MCP session plus explicit local consent. Android, Windows native-app and terminal controls remain governed by their own local adapters.</span><a href="https://github.com/abdulrazaqafolarin-droid/Rub-minds/pull/48" target="_blank" rel="noreferrer">Backroom core <ExternalLink size={13}/></a></div>
       </div>}
     </main>
-    {hostModal && <div className="br-modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setHostModal(false); }}><div className="br-modal" role="dialog" aria-modal="true" aria-labelledby="br-host-title"><div className="br-modal-top"><div className="br-modal-icon"><Cpu size={22}/></div><button className="br-icon-button" onClick={() => setHostModal(false)} aria-label="Close host pairing"><X size={20}/></button></div><h2 id="br-host-title">{hostStopped ? 'Emergency stop is active' : hostInfo ? 'Local host connection' : 'Pair a local host'}</h2><p>Run the Backroom host on this same computer, then enter its one-time code. Use a current Chrome or Edge browser; local-network permission may be required. Embedded webviews, Firefox or Safari may block this HTTP loopback connection. Pairing exposes host status first. Browser, desktop, Android and terminal capabilities are advertised only when the respective local runtime is actually configured and ready.</p>{hostMessage && <div className="br-host-message" role="status">{hostMessage}</div>}{hostInfo && wakeGatewayMismatch(hostInfo) && <div className="br-host-message br-host-stopped" role="alert">This local host sends wake requests to {hostInfo.wakeGatewayHost}, but this Rub Minds Preview uses {expectedSupabaseHost}. Stop the host and restart it with BACKROOM_WAKE_GATEWAY_URL set to this project's exact backroom-wake function URL before enabling hosted wake.</div>}{!hostInfo ? <>{hostStopped && <div className="br-host-message br-host-stopped" role="status">The previous host session was emergency-stopped. Stop the old local host process with Ctrl+C, restart it to generate a fresh one-time code, then pair below. The host health check will reject pairing if the emergency stop is still latched.</div>}<label htmlFor="br-host-url">Local host address</label><input id="br-host-url" autoFocus value={hostUrl} onChange={e => setHostUrl(e.target.value)} placeholder="http://127.0.0.1:43781" autoCapitalize="none" spellCheck={false}/><label htmlFor="br-pair-code">One-time pairing code</label><input id="br-pair-code" value={pairingCode} onChange={e => setPairingCode(e.target.value.trim().slice(0, 32))} placeholder="Paste code from the host terminal" autoComplete="off" autoCapitalize="none" spellCheck={false}/><div className="br-warning"><ShieldCheck size={19}/><div><b>Local-only connection</b><p>The host should bind to 127.0.0.1. Never share the pairing code or session token with a Rub Minds group.</p></div></div><div className="br-modal-actions"><button className="br-secondary" onClick={() => setHostModal(false)}>Close</button><button className="br-primary" onClick={() => void pairLocalHost()} disabled={hostBusy || !/^[a-f0-9]{32}$/i.test(pairingCode.trim())}>{hostBusy ? 'Pairing…' : 'Pair host'} <ArrowRight size={16}/></button></div></> : <><div className="br-detail"><span>Host ID</span><b>{hostInfo.hostId}</b></div><div className="br-detail"><span>Connection</span><b>{hostInfo.connected ? 'Authenticated' : 'Offline'}</b></div><div className="br-detail"><span>Available local capability</span><b className="br-muted">{hostInfo.capabilities.browserDraft ? 'Browser draft insertion only' : 'No execution driver enabled'}</b></div><div className="br-warning"><ShieldCheck size={19}/><div><b>{hostInfo.capabilities.browserDraft ? 'Browser draft adapter ready' : 'Browser adapter not started'}</b><p>{hostInfo.capabilities.browserDraft ? 'The managed browser supports inserting text into an explicitly registered empty composer. It never presses Send.' : 'Launch a dedicated visible browser profile. Log into AI websites yourself; Backroom does not copy existing cookies or sign you in.'} Desktop, Android and terminal actions appear in Connected workspaces only when their local adapters are configured and ready.</p></div></div>
+    {hostModal && <div className="br-modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setHostModal(false); }}><div className="br-modal" role="dialog" aria-modal="true" aria-labelledby="br-host-title"><div className="br-modal-top"><div className="br-modal-icon"><Cpu size={22}/></div><button className="br-icon-button" onClick={() => setHostModal(false)} aria-label="Close host pairing"><X size={20}/></button></div><h2 id="br-host-title">{hostStopped ? 'Emergency stop is active' : hostInfo ? 'Local host connection' : 'Pair a local host'}</h2><p>Run the Backroom host on this same computer, then enter its one-time code. Use a current Chrome or Edge browser; local-network permission may be required. Embedded webviews, Firefox or Safari may block this HTTP loopback connection. Pairing exposes host status first. Browser, desktop, Android and terminal capabilities are advertised only when the respective local runtime is actually configured and ready.</p>{hostMessage && <div className="br-host-message" role="status">{hostMessage}</div>}{hostInfo && wakeGatewayMismatch(hostInfo) && <div className="br-host-message br-host-stopped" role="alert">This local host sends wake requests to {hostInfo.wakeGatewayHost}, but this Rub Minds Preview uses {expectedSupabaseHost}. Stop the host and restart it with BACKROOM_WAKE_GATEWAY_URL set to this project's exact backroom-wake function URL before enabling hosted wake.</div>}{!hostInfo ? <>{hostStopped && <div className="br-host-message br-host-stopped" role="status">The previous host session was emergency-stopped. Stop the old local host process with Ctrl+C, restart it to generate a fresh one-time code, then pair below. The host health check will reject pairing if the emergency stop is still latched.</div>}<label htmlFor="br-host-url">Local host address</label><input id="br-host-url" autoFocus value={hostUrl} onChange={e => setHostUrl(e.target.value)} placeholder="http://127.0.0.1:43781" autoCapitalize="none" spellCheck={false}/><label htmlFor="br-pair-code">One-time pairing code</label><input id="br-pair-code" value={pairingCode} onChange={e => setPairingCode(e.target.value.trim().slice(0, 32))} placeholder="Paste code from the host terminal" autoComplete="off" autoCapitalize="none" spellCheck={false}/><div className="br-warning"><ShieldCheck size={19}/><div><b>Local-only connection</b><p>The host should bind to 127.0.0.1. Never share the pairing code or session token with a Rub Minds group.</p></div></div><div className="br-modal-actions"><button className="br-secondary" onClick={() => setHostModal(false)}>Close</button><button className="br-primary" onClick={() => void pairLocalHost()} disabled={hostBusy || !/^[a-f0-9]{32}$/i.test(pairingCode.trim())}>{hostBusy ? 'Pairing…' : 'Pair host'} <ArrowRight size={16}/></button></div></> : <><div className="br-detail"><span>Host ID</span><b>{hostInfo.hostId}</b></div><div className="br-detail"><span>Connection</span><b>{hostInfo.connected ? 'Authenticated' : 'Offline'}</b></div><div className="br-detail"><span>Available local capability</span><b className="br-muted">{hostInfo.capabilities.browserCanonicalWake ? 'Browser draft + canonical wake' : hostInfo.capabilities.browserDraft ? 'Browser draft insertion only' : 'No execution driver enabled'}</b></div><div className="br-warning"><ShieldCheck size={19}/><div><b>{hostInfo.capabilities.browserDraft ? (hostInfo.capabilities.browserCanonicalWake ? 'Browser draft and canonical wake adapters ready' : 'Browser draft adapter ready') : 'Browser adapter not started'}</b><p>{hostInfo.capabilities.browserDraft ? 'The managed browser supports inserting text into an explicitly registered empty composer; draft insertion never presses Send. Where the selected provider exposes a verified unique Send control, the separate On / Auto wake adapter can send only the fixed @RMconnects trigger after a joined-AI binding and explicit local consent.' : 'Launch a dedicated visible browser profile. Log into AI websites yourself; Backroom does not copy existing cookies or sign you in.'} Desktop, Android and terminal actions appear in Connected workspaces only when their local adapters are configured and ready.</p></div></div>
 <div className="br-browser-panel"><div className="br-browser-panel-head"><div><b>Managed browser</b><small>Visible Chromium · local profile only</small></div><button className="br-secondary" onClick={() => void refreshBrowserInventory()} disabled={browserBusy || !hostInfo.capabilities.browserDraft}><Activity size={14}/> Refresh tabs</button></div>
 {!hostInfo.capabilities.browserDraft ? <button className="br-primary br-browser-launch" onClick={() => void startManagedBrowser()} disabled={browserBusy}>{browserBusy ? 'Starting browser…' : 'Launch managed browser'} <ArrowRight size={15}/></button> : <>
 <div className="br-browser-open"><label className="br-browser-field-label" htmlFor="br-browser-url">Open an AI website</label><div className="br-browser-open-row"><input id="br-browser-url" type="url" value={browserUrl} onChange={e=>setBrowserUrl(e.target.value)} placeholder="https://chatgpt.com/" autoCapitalize="none" spellCheck={false}/><button className="br-primary" onClick={() => void openManagedUrl()} disabled={browserBusy || !browserUrl.trim()}>Open</button></div><div className="br-browser-quick"><button className="br-secondary" onClick={()=>setBrowserUrl('https://chatgpt.com/')} disabled={browserBusy}>ChatGPT</button><button className="br-secondary" onClick={()=>setBrowserUrl('https://claude.ai/new')} disabled={browserBusy}>Claude</button></div></div><div className="br-browser-pages">{browserPages.map(page => <div className="br-browser-page" key={page.pageId}><div className="br-browser-page-icon"><Monitor size={16}/></div><div className="br-browser-page-label"><b>{page.site}</b><small>{page.title || 'Untitled conversation tab'}</small></div><button className="br-secondary" onClick={() => void registerBrowserInput(page.pageId)} disabled={browserBusy}>Select input</button></div>)}{!browserPages.length && <p className="br-browser-empty">No supported browser tabs found. Open a conversation in the managed browser and refresh.</p>}</div>
 {roomBrowserTargets.length>0 && <><label className="br-browser-field-label" htmlFor="br-browser-target">Registered typing area</label><select id="br-browser-target" value={selectedBrowserTarget} onChange={e=>setSelectedBrowserTarget(e.target.value)}><option value="">Choose a typing target</option>{roomBrowserTargets.map(t=><option key={t.id} value={t.id}>{t.site} · {t.title}</option>)}</select><div className="br-browser-target-actions"><button className="br-secondary" onClick={() => void removeBrowserTarget()} disabled={browserBusy || !roomBrowserTargets.some(t => t.id === selectedBrowserTarget)}>Remove selected target</button></div><label className="br-browser-field-label" htmlFor="br-group-message">Source group message (optional)</label><select id="br-group-message" value={selectedGroupMessageId} onChange={e => { const id = e.target.value; setSelectedGroupMessageId(id); const message = groupMessages.find(m => m.id === id); if (message) setBrowserDraftText(message.body); }}><option value="">Write a manual draft instead</option>{groupMessages.map(m => <option key={m.id} value={m.id}>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · {m.body.slice(0, 90).replace(/\s+/g, ' ')}</option>)}</select><label className="br-browser-field-label" htmlFor="br-browser-draft">Text to draft (not sent)</label><textarea id="br-browser-draft" rows={3} maxLength={10000} value={browserDraftText} onChange={e=>setBrowserDraftText(e.target.value)} placeholder="Write the exact text to insert into the selected composer…"/><button className="br-primary br-browser-draft" onClick={() => void draftToBrowser()} disabled={browserBusy || !roomBrowserTargets.some(t => t.id === selectedBrowserTarget) || !browserDraftText.trim()}>Insert draft — never send <ArrowRight size={15}/></button><p className="br-browser-caption">Target registration stores the selector locally. Text is inserted only after confirmation, only into an empty input, and is read back to verify success.</p></>}
 <button className="br-secondary br-browser-stop" onClick={() => void stopManagedBrowser()} disabled={browserBusy}>Close managed browser</button></>}
 {browserNotice && <div className="br-host-message" role="status">{browserNotice}</div>}</div>
-<div className="br-warning"><ShieldCheck size={19}/><div><b>Experimental hosted AI wake</b><p>Register the host first. Choose a live AI MCP session and a locally selected browser composer for this group. Registration never sends anything; an explicit five-minute wake grant is required.</p></div></div>
+<div className="br-browser-caption">Choose Off / On / Auto beside the live composer frame. On requires an explicit mention; Auto wakes on human-authored group messages. Both use only the canonical trigger and require local consent.</div>
 {room?.id && hostInfo.enrollmentDigest && <div>
   <div className="br-modal-actions"><button className="br-secondary" onClick={() => void discoverHostedAiSessions()} disabled={hostBusy || browserBusy}>Find joined AI sessions</button></div>
   {hostedAiSessions.length>0 && <>
     <label htmlFor="br-hosted-ai-session">Joined AI conversation</label>
-    <select id="br-hosted-ai-session" value={selectedHostedSession} onChange={e=>setSelectedHostedSession(e.target.value)}>{hostedAiSessions.map(s=><option key={s.sessionDigest} value={s.sessionDigest}>{s.displayName} · {s.participantId.slice(0,8)}</option>)}</select>
+    <select id="br-hosted-ai-session" value={selectedHostedSession} onChange={e=>{const digest=e.target.value;setSelectedHostedSession(digest);const selected=hostedAiSessions.find(s=>s.sessionDigest===digest);if(selected&&room?.id)void restoreHostedWakeBinding(room.id,selected);}}>{hostedAiSessions.map(s=><option key={s.sessionDigest} value={s.sessionDigest}>{s.displayName} · {s.participantId.slice(0,8)}</option>)}</select>
     <p>Selected local input: {browserTargets.find(t=>t.id===selectedBrowserTarget)?.title || 'Select a managed browser target before binding.'}</p>
-    <div className="br-modal-actions"><button className="br-secondary" onClick={() => void bindHostedWakeInput()} disabled={hostBusy || browserBusy || !selectedBrowserTarget}>Register inactive AI input binding</button></div>
+    <div className="br-modal-actions"><button className="br-secondary" onClick={() => void bindHostedWakeInput()} disabled={hostBusy || browserBusy || !wakeBindingStatusKnown || !selectedBrowserTarget || selectedWakeMode==='off'}>Register inactive {selectedWakeMode==='auto'?'Auto':'On'} input binding</button></div>
   </>}
   {hostedWakeBinding && hostedWakeBinding.roomId===room.id && <>
-    <div className="br-detail"><span>Wake status</span><b>{hostedWakeBinding.requiresRevoke?'Existing binding · revoke before rebind':hostedWakeGrantId?'Locally consented · time-limited':'Off · binding registered'}</b></div>
+    <div className="br-detail"><span>Wake status</span><b>{hostedWakeBinding.requiresRevoke?'Existing binding · revoke before rebind':wakeBindingNeedsRebind?'Mode change · rebind required':hostedWakeBinding.serverWakeEnabled&&!hostedWakeBinding.localPollingConfirmed?'Server grant stale · revoke required':(hostedWakeGrantId||hostedWakeBinding.wakeEnabled)?selectedWakeMode.toUpperCase()+' armed · up to 24 hours':selectedWakeMode==='off'?'Off · no wake grant':selectedWakeMode.toUpperCase()+' selected · not armed'}</b></div>
     <div className="br-modal-actions">
-      {hostedWakeBinding.requiresRevoke
-        ? <button className="br-danger-action" disabled={hostBusy || browserBusy} onClick={() => void revokeHostedWakeBinding()}>Revoke existing binding and rebind</button>
-        : !hostedWakeGrantId
-          ? <button className="br-primary" disabled={hostBusy || browserBusy || hostedWakeBinding.targetId!==selectedBrowserTarget} onClick={() => void enableHostedWake()}>Enable wake for 5 minutes</button>
-          : <button className="br-danger-action" disabled={hostBusy || browserBusy} onClick={() => void revokeHostedWake()}>Revoke wake</button>}
+      {hostedWakeBinding.requiresRevoke || wakeBindingNeedsRebind
+        ? <button className="br-danger-action" disabled={hostBusy || browserBusy} onClick={() => void revokeHostedWakeBinding()}>Revoke binding to apply selected mode</button>
+        : (hostedWakeGrantId || hostedWakeBinding.wakeEnabled || hostedWakeBinding.serverWakeEnabled)
+          ? <button className="br-danger-action" disabled={hostBusy || browserBusy} onClick={() => void chooseWakeMode('off')}>Turn Off and revoke binding</button>
+          : !wakeBindingStatusKnown
+            ? <span className="br-browser-caption">Wake status is unknown. Restore the exact joined AI session status before changing modes or creating another binding.</span>
+          : selectedWakeMode==='off'
+            ? <span className="br-browser-caption">Off is not armed. Choose On or Auto, then register the intended input.</span>
+            : <button className="br-primary" disabled={hostBusy || browserBusy || !wakeBindingStatusKnown || hostedWakeBinding.targetId!==selectedBrowserTarget} onClick={() => void enableHostedWake()}>Arm {selectedWakeMode.toUpperCase()} for 24 hours</button>}
     </div>
     {!hostedWakeBinding.requiresRevoke && <div className="br-modal-actions"><button className="br-secondary" disabled={hostBusy || browserBusy} onClick={() => void revokeHostedWakeBinding()}>Permanently unbind this AI input</button></div>}
   </>}

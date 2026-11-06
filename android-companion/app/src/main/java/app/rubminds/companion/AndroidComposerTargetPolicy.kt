@@ -24,9 +24,28 @@ data class ComposerCandidate(
     val password: Boolean
 )
 
+data class SendControlCandidate(
+    val targetId: String,
+    val packageName: String,
+    val bounds: ComposerScreenRect,
+    val label: String,
+    val resourceId: String,
+    val clickable: Boolean,
+    val enabled: Boolean,
+    val visible: Boolean
+)
+
+data class SendControlDecision(
+    val candidate: SendControlCandidate?,
+    val reason: String
+)
+
 data class ComposerSelectionDecision(
     val candidate: ComposerCandidate?,
-    val reason: String
+    val reason: String,
+    val sendControl: SendControlCandidate? = null,
+    val sendReason: String = "not_checked",
+    val providerConversationIdentityAvailable: Boolean = false
 )
 
 /**
@@ -91,4 +110,87 @@ object AndroidComposerTargetPolicy {
             else -> ComposerSelectionDecision(null, "multiple_editable_fields_in_selection")
         }
     }
+}
+
+
+/**
+ * Finds a single, explicitly labelled Send control adjacent to the selected
+ * composer. All labels and resource identifiers are inspected locally and are
+ * never returned to the web client. Ambiguous or generic submit-like controls
+ * are rejected rather than guessed.
+ */
+object AndroidSendControlPolicy {
+    private val acceptedLabels = setOf("send", "send message", "send prompt")
+    private val rejectedResourceSubstrings = setOf("resend", "email", "feedback", "share", "forward", "reply")
+    private val targetIdPattern = Regex("^[a-f0-9]{64}$")
+
+    fun isRecognizedLabel(label: String): Boolean =
+        label.trim().lowercase().replace(Regex("\\s+"), " ") in acceptedLabels
+
+    fun isRecognizedResourceId(resourceId: String): Boolean {
+        val leaf = resourceId.substringAfterLast('/').substringAfterLast(':')
+        val lowercaseLeaf = leaf.lowercase()
+        if (rejectedResourceSubstrings.any { lowercaseLeaf.contains(it) }) return false
+        val camelSeparated = Regex("([a-z0-9])([A-Z])").replace(leaf) { match ->
+            "${match.groupValues[1]}_${match.groupValues[2]}"
+        }
+        val tokens = camelSeparated
+            .split(Regex("[^A-Za-z0-9]+"))
+            .filter { it.isNotBlank() }
+            .map { it.lowercase() }
+        return "send" in tokens
+    }
+
+    fun choose(
+        candidates: List<SendControlCandidate>,
+        packageName: String,
+        rootBounds: ComposerScreenRect,
+        composerBounds: ComposerScreenRect
+    ): SendControlDecision {
+        if (!validBounds(rootBounds) || !validBounds(composerBounds)) {
+            return SendControlDecision(null, "invalid_app_or_composer_bounds")
+        }
+        val maxVerticalGap = maxOf(96, composerBounds.height * 3, rootBounds.height / 10)
+        val maxHorizontalGap = maxOf(96, composerBounds.width / 2, rootBounds.width / 10)
+        val matches = candidates.filter { candidate ->
+            if (candidate.packageName != packageName ||
+                !candidate.clickable || !candidate.enabled || !candidate.visible ||
+                !targetIdPattern.matches(candidate.targetId) ||
+                !validBounds(candidate.bounds) ||
+                candidate.bounds.left < rootBounds.left ||
+                candidate.bounds.top < rootBounds.top ||
+                candidate.bounds.right > rootBounds.right ||
+                candidate.bounds.bottom > rootBounds.bottom
+            ) return@filter false
+
+            val accessibleNameMatches = isRecognizedLabel(candidate.label)
+            val resourceNameMatches = candidate.label.isBlank() &&
+                isRecognizedResourceId(candidate.resourceId)
+            if (!accessibleNameMatches && !resourceNameMatches) return@filter false
+
+            val verticalGap = when {
+                candidate.bounds.bottom < composerBounds.top ->
+                    composerBounds.top - candidate.bounds.bottom
+                candidate.bounds.top > composerBounds.bottom ->
+                    candidate.bounds.top - composerBounds.bottom
+                else -> 0
+            }
+            val horizontalGap = when {
+                candidate.bounds.right < composerBounds.left ->
+                    composerBounds.left - candidate.bounds.right
+                candidate.bounds.left > composerBounds.right ->
+                    candidate.bounds.left - composerBounds.right
+                else -> 0
+            }
+            verticalGap <= maxVerticalGap && horizontalGap <= maxHorizontalGap
+        }
+        return when (matches.size) {
+            0 -> SendControlDecision(null, "unique_nearby_send_control_not_found")
+            1 -> SendControlDecision(matches.single(), "unique_send_control_verified")
+            else -> SendControlDecision(null, "multiple_send_controls_ambiguous")
+        }
+    }
+
+    private fun validBounds(bounds: ComposerScreenRect): Boolean =
+        bounds.right > bounds.left && bounds.bottom > bounds.top && bounds.area > 0
 }

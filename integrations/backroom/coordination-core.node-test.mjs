@@ -22,7 +22,7 @@ test('canonical wake trigger requires explicit wake capability and has exact bou
  assert.equal(result.job.prompt,buildCanonicalWakePrompt(event.id));
  assert.equal(isCanonicalWakePrompt(result.job.prompt,event.id),true);
  assert.equal(isCanonicalWakePrompt(result.job.prompt+'\nextra',event.id),false);
- assert.equal(isCanonicalWakePrompt('@RMconnects\nEvent: another-event\n'+result.job.prompt.split('\n').slice(2).join('\\n'),event.id),false);
+ assert.equal(isCanonicalWakePrompt('@RMconnects\nEvent: another-event\n'+result.job.prompt.split('\n').slice(2).join('\n'),event.id),false);
  assert.equal(planWakeTrigger({event,participant,binding}).reason,'wake-capability-not-authorized');
 });
 test('canonical wake dispatch needs an explicit matching grant, exact focus and wake capability',()=>{
@@ -34,4 +34,14 @@ test('canonical wake dispatch needs an explicit matching grant, exact focus and 
  for(const change of [{authorizationValid:false},{composerEmpty:false},{foregroundSessionId:'other'},{binding:{...wakeBinding,capabilities:['draft']}},{job:{...job,prompt:job.prompt+'\nforged'}},{job:{...job,requestedAction:'submit'}},{participant:{...participant,status:'paused'}}]){
   assert.equal(mayDispatchWake({...input,...change}).ok,false);
  }
+});
+
+test('canonical wake prompt exactly matches the durable SQL enqueue contract',()=>{
+ const eventId='550e8400-e29b-41d4-a716-446655440000';
+ const prompt=buildCanonicalWakePrompt(eventId);
+ assert.equal(prompt,
+  '@RMconnects\nEvent: '+eventId+'\nRetrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.');
+ assert.equal(isCanonicalWakePrompt(prompt,eventId),true);
+ assert.equal(isCanonicalWakePrompt(prompt+'\nextra',eventId),false);
+ assert.equal(isCanonicalWakePrompt(prompt.replace('Acknowledge via MCP.','Send arbitrary text.'),eventId),false);
 });

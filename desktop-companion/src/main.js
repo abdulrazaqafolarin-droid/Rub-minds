@@ -592,9 +592,9 @@ async function handlePeerData(sessionId,raw){
     try{await invoke('dispatch_input',{sessionId,event});}catch(error){notify(error.message,'error');}
   } else if(message.kind==='select_target'){
     const requestId=typeof message.requestId==='string'&&UUID_PATTERN.test(message.requestId)?message.requestId:null;
-    const report=(ok,reason)=>{
+    const report=(ok,reason,extra={})=>{
       if(peer.channel?.readyState==='open'){
-        try{peer.channel.send(JSON.stringify({kind:'target_result',requestId,ok,reason}));}catch{}
+        try{peer.channel.send(JSON.stringify({kind:'target_result',requestId,ok,reason,...extra}));}catch{}
       }
     };
     if(!requestId){report(false,'A unique selection-attempt identifier is required.');return;}
@@ -645,7 +645,12 @@ async function handlePeerData(sessionId,raw){
         const status=modeMessage.message.length<=240
           ?modeMessage.message
           :'Windows verified an empty editable text field. Its identity will be rechecked before insertion.';
-        report(true,status);
+        report(true,status,{
+          selectionId:modeMessage.selectionId,
+          sendAvailable:modeMessage.sendControlAvailable===true,
+          sendReason:typeof modeMessage.sendControlReason==='string'
+            ?modeMessage.sendControlReason:'not_checked',
+        });
         notify(status,'success');
       }catch(error){
         const reason=error?.message||'The selected area is not a verifiable editable field.';
@@ -656,6 +661,41 @@ async function handlePeerData(sessionId,raw){
         peer.targetQueueDepth=Math.max(0,(peer.targetQueueDepth||1)-1);
       }
     });
+  } else if(message.kind==='verify_send_control'){
+    const requestId=typeof message.requestId==='string'&&UUID_PATTERN.test(message.requestId)?message.requestId:null;
+    const selectionId=typeof message.selectionId==='string'&&UUID_PATTERN.test(message.selectionId)?message.selectionId:null;
+    const report=(available,reason)=>{
+      if(peer.channel?.readyState==='open'){
+        try{peer.channel.send(JSON.stringify({kind:'send_control_result',requestId,selectionId,available,reason}));}catch{}
+      }
+    };
+    if(!requestId||!selectionId){
+      report(false,'invalid_request');
+      return;
+    }
+    if(peer.targetVerified!==true||peer.targetSelectionId!==selectionId){
+      report(false,'selection_identity_changed');
+      return;
+    }
+    try{
+      await enqueuePeerOperation(peer,async()=>{
+        if(peer.targetVerified!==true||peer.targetSelectionId!==selectionId||peer.targetClearPromise){
+          report(false,'selection_identity_changed');
+          return;
+        }
+        const result=await invoke('recheck_draft_send_control',{sessionId,selectionId});
+        if(peer.targetVerified!==true||peer.targetSelectionId!==selectionId||peer.targetClearPromise){
+          report(false,'selection_changed_during_recheck');
+          return;
+        }
+        report(result?.available===true,
+          typeof result?.reason==='string'?result.reason:'invalid_native_recheck_response');
+      });
+    }catch(error){
+      report(false,'native_recheck_failed');
+      notify(error?.message||'Could not recheck the native Send control.','error');
+    }
+    return;
   } else if(message.kind==='draft'){
     const clientRequestId=typeof message.requestId==='string'&&UUID_PATTERN.test(message.requestId)
       ?message.requestId:null;

@@ -22,7 +22,7 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use uuid::Uuid;
 
 mod input_targeting;
-use input_targeting::EditableTargetIdentity;
+use input_targeting::{EditableTargetIdentity, SendControlIdentity};
 
 const VAULT_SERVICE: &str = "com.rubminds.backroom.desktop";
 const MAX_DRAFT_CHARS: usize = 4_000;
@@ -705,6 +705,9 @@ struct DraftTarget {
     // Never supplied by the remote caller. This is captured locally from UI Automation.
     #[serde(skip)]
     identity: Option<EditableTargetIdentity>,
+    // UI Automation identity is retained locally and is never serialized to the WebView.
+    #[serde(skip)]
+    send_control_identity: Option<SendControlIdentity>,
     // Locally generated for each drag. Never accepted from the browser caller.
     #[serde(skip)]
     selection_id: Option<String>,
@@ -1223,13 +1226,21 @@ fn select_draft_target(state: State<'_, AppState>, session_id: String, mut targe
         "text" => "Windows verified an empty multi-line editor. Focus-bound Text-pattern typing and exact readback will be used.",
         _ => return Err("The selected editor exposes an unsupported accessibility write mode".into()),
     };
+    // Send-control inspection is local and read-only. Keep its full UIA identity
+    // in native state; only a boolean and bounded reason reach the WebView.
+    let send_inspection = input_targeting::inspect_send_control(&identity);
+    let send_control_available = send_inspection.candidate.is_some();
+    let send_control_reason = send_inspection.reason.to_string();
     let selection_id = Uuid::new_v4().to_string();
     target.identity = Some(identity);
+    target.send_control_identity = send_inspection.candidate;
     target.selection_id = Some(selection_id.clone());
     state.draft_targets.lock().map_err(|_| "Draft state unavailable")?.insert(session_id, target);
     Ok(SelectedTargetSummary {
         message: mode_message.to_string(),
         selection_id,
+        send_control_available,
+        send_control_reason,
     })
 }
 
@@ -1239,6 +1250,70 @@ fn select_draft_target(state: State<'_, AppState>, session_id: String, mut targe
 struct SelectedTargetSummary {
     message: String,
     selection_id: String,
+    send_control_available: bool,
+    send_control_reason: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SendControlRecheckSummary {
+    available: bool,
+    reason: String,
+}
+
+#[tauri::command]
+fn recheck_draft_send_control(
+    state: State<'_, AppState>,
+    session_id: String,
+    selection_id: String,
+) -> Result<SendControlRecheckSummary, String> {
+    let _execution_guard = state.execution_generation.lock()
+        .map_err(|_| "Native execution state is unavailable")?;
+    control_granted(&state, &session_id)?;
+    draft_granted(&state, &session_id)?;
+
+    let target = state.draft_targets.lock().map_err(|_| "Draft state unavailable")?
+        .get(&session_id).cloned().ok_or("The selected typing area was cleared. Select it again.")?;
+    if target.selection_id.as_deref() != Some(selection_id.as_str()) {
+        return Err("The typing-area selection changed. Select it again before rechecking Send.".into());
+    }
+    let identity = target.identity.as_ref()
+        .ok_or("The selected composer has no verified accessibility identity.")?;
+    let expected_send = target.send_control_identity.as_ref()
+        .ok_or("No unique Send control was found at selection time. Select the composer again after checking the app UI.")?;
+    let geometry = state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?
+        .get(&session_id).cloned().ok_or("Live screen capture is not active")?;
+
+    // Revalidate the same empty composer first, then compare the exact local
+    // Send-node identity. A failed composer/window preflight invalidates the old
+    // candidate so it cannot later become valid again without a fresh drag.
+    if verify_selected_editable_target(&state, &geometry, &target).is_err() {
+        if let Ok(mut targets) = state.draft_targets.lock() {
+            if let Some(current) = targets.get_mut(&session_id) {
+                if current.selection_id.as_deref() == Some(selection_id.as_str()) {
+                    current.send_control_identity = None;
+                }
+            }
+        }
+        return Ok(SendControlRecheckSummary {
+            available: false,
+            reason: "composer_or_foreground_window_changed".into(),
+        });
+    }
+    // This path never invokes UIA Invoke or a mouse click.
+    let inspection = input_targeting::revalidate_send_control(identity, expected_send);
+    let available = inspection.candidate.is_some();
+    let reason = inspection.reason.to_string();
+    if !available {
+        if let Ok(mut targets) = state.draft_targets.lock() {
+            if let Some(current) = targets.get_mut(&session_id) {
+                if current.selection_id.as_deref() == Some(selection_id.as_str()) {
+                    current.send_control_identity = None;
+                }
+            }
+        }
+    }
+    Ok(SendControlRecheckSummary { available, reason })
 }
 
 #[tauri::command]
@@ -1722,7 +1797,7 @@ pub fn run() {
             device_identity, register_desktop_device, desktop_device_status, sync_desktop_app_inventory, revoke_desktop_device, close_desktop_session,
             pick_and_register_app, list_registered_apps, launch_registered_app, stop_registered_app,
             grant_control, revoke_control, grant_draft_typing, set_capture_geometry,
-            get_execution_generation, dispatch_input, select_draft_target, clear_draft_target, stage_draft_request, list_pending_drafts,
+            get_execution_generation, dispatch_input, select_draft_target, recheck_draft_send_control, clear_draft_target, stage_draft_request, list_pending_drafts,
             approve_draft_request, deny_draft_request, start_terminal, write_terminal, submit_terminal_input,
             resize_terminal, stop_terminal, emergency_stop
         ])
@@ -1745,6 +1820,40 @@ mod native_input_tests {
             origin_y: 0,
             window_binding: None,
         }
+    }
+
+    #[test]
+    fn serialized_draft_target_never_exposes_local_uia_or_send_identity() {
+        let target = DraftTarget {
+            x: 0.2,
+            y: 0.7,
+            width: 0.3,
+            height: 0.1,
+            identity: Some(EditableTargetIdentity {
+                process_id: 42,
+                runtime_id: vec![1, 2, 3],
+                class_name: "Edit".into(),
+                control_type: "Edit".into(),
+                access_mode: "value".into(),
+                bounds: [10, 20, 300, 80],
+            }),
+            send_control_identity: Some(SendControlIdentity {
+                process_id: 42,
+                runtime_id: vec![4, 5, 6],
+                class_name: "Button".into(),
+                accessible_name: "Send".into(),
+                automation_id: "composer_send_button".into(),
+                bounds: [820, 1630, 960, 1700],
+            }),
+            selection_id: Some("123e4567-e89b-42d3-a456-426614174000".into()),
+        };
+        let serialized = serde_json::to_value(target).unwrap();
+        assert!(serialized.get("identity").is_none());
+        assert!(serialized.get("sendControlIdentity").is_none());
+        assert!(serialized.get("selectionId").is_none());
+        let encoded = serialized.to_string();
+        assert!(!encoded.contains("composer_send_button"));
+        assert!(!encoded.contains("123e4567-e89b-42d3-a456-426614174000"));
     }
 
     #[test]

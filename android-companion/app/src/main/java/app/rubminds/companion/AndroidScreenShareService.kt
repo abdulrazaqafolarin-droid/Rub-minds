@@ -246,6 +246,196 @@ class AndroidScreenShareService : Service() {
         }
     }
 
+    private fun processNativeWakeTrigger(
+        token: String,
+        commandId: String,
+        requestId: String,
+        screenSessionId: String,
+        appPackage: String,
+        roomId: String,
+        command: JSONObject
+    ) {
+        if (!UUID_PATTERN.matches(commandId) || !UUID_PATTERN.matches(requestId) ||
+            !UUID_PATTERN.matches(screenSessionId) || !UUID_PATTERN.matches(roomId)
+        ) return
+
+        val deviceId = DeviceCredentialVault(this).deviceId()
+        val signer = if (AppGrantPolicy.isValidPackageName(appPackage))
+            AppIdentity.signingCertificateSha256(this, appPackage) else null
+        val handoff = if (deviceId != null && signer != null) {
+            AndroidNativeWakeHandoffPolicy.validate(
+                command = command,
+                expectedDeviceId = deviceId,
+                expectedRoomId = roomId,
+                expectedScreenSessionId = screenSessionId,
+                expectedPackageName = appPackage,
+                expectedSignerSha256 = signer
+            )
+        } else null
+
+        if (handoff == null || activeSessionId != screenSessionId ||
+            activeRoomId != roomId || activeAppPackage != appPackage ||
+            currentForegroundPackage() != appPackage
+        ) {
+            // Invalid/stale handoffs are deliberately not converted into remote
+            // typing or a WebRTC message. The command expires if its exact live
+            // device/session scope cannot be established.
+            return
+        }
+
+        val grant = AndroidNativeWakeConsentStore(this).activeGrant(
+            handoff.deviceId, handoff.packageName, handoff.signingCertificateSha256
+        )
+        if (grant == null) {
+            acknowledgeNativeWake(
+                token, commandId, requestId, screenSessionId, handoff,
+                NativeWakeSubmissionResult(
+                    NativeWakeSubmissionState.PRECHECK_DENIED,
+                    "native_wake_grant_inactive"
+                )
+            )
+            return
+        }
+
+        if (!AndroidTouchAccessibilityService.isBoundToProviderConversation(
+                screenSessionId, appPackage, handoff.providerConversationIdentityDigest
+            )
+        ) {
+            acknowledgeNativeWake(
+                token, commandId, requestId, screenSessionId, handoff,
+                NativeWakeSubmissionResult(
+                    NativeWakeSubmissionState.PRECHECK_DENIED,
+                    "provider_conversation_identity_unavailable"
+                )
+            )
+            return
+        }
+
+        val request = handoff.toExecutionRequest(grant.grantId)
+        val accepted = AndroidTouchAccessibilityService.submitCanonicalWake(request) { result ->
+            // submitCanonicalWake completes on the Accessibility main thread;
+            // keep network I/O on the service's bounded command executor.
+            runCatching {
+                executor.execute {
+                    acknowledgeNativeWake(
+                        token, commandId, requestId, screenSessionId, handoff, result
+                    )
+                }
+            }
+        }
+        if (!accepted) {
+            acknowledgeNativeWake(
+                token, commandId, requestId, screenSessionId, handoff,
+                NativeWakeSubmissionResult(
+                    NativeWakeSubmissionState.PRECHECK_DENIED,
+                    "native_wake_local_driver_unavailable"
+                )
+            )
+        }
+    }
+
+    private fun safeNativeWakeReason(reason: String): String {
+        val value = reason.lowercase()
+        return when {
+            value.contains("outcome_unknown") || value.contains("already_reserved") ||
+                value.contains("replay_ledger") || value.contains("insertion_outcome_unknown") ||
+                value.contains("send_outcome") -> "outcome_unknown"
+            value.contains("provider_conversation") -> "conversation_scope_unavailable"
+            value.contains("provider_conversation") -> "conversation_scope_unavailable"
+            value.contains("foreground") || value.contains("active_app_window") -> "foreground_changed"
+            value.contains("not_empty") -> "composer_not_empty"
+            value.contains("composer") || value.contains("focus") || value.contains("target") &&
+                !value.contains("send") -> "composer_identity_changed"
+            value.contains("send_control_unavailable") || value.contains("send_control") &&
+                value.contains("unavailable") -> "send_control_unavailable"
+            value.contains("send") && value.contains("changed") -> "send_identity_changed"
+            value.contains("send") -> "send_unconfirmed"
+            value.contains("grant") || value.contains("permission") || value.contains("signer") ||
+                value.contains("approved") -> "permission_denied"
+            value.contains("device") || value.contains("session") -> "device_disconnected"
+            else -> "other"
+        }
+    }
+
+    private fun acknowledgeNativeWake(
+        token: String,
+        commandId: String,
+        requestId: String,
+        screenSessionId: String,
+        handoff: ValidatedAndroidNativeWakeHandoff,
+        result: NativeWakeSubmissionResult
+    ) {
+        if (!UUID_PATTERN.matches(commandId) || !UUID_PATTERN.matches(requestId) ||
+            !UUID_PATTERN.matches(screenSessionId)
+        ) return
+        val state = when (result.state) {
+            NativeWakeSubmissionState.PRECHECK_DENIED -> "preflight_denied"
+            NativeWakeSubmissionState.SUBMITTED -> "submitted"
+            NativeWakeSubmissionState.NEEDS_REVIEW -> "needs_review"
+        }
+        val resultName = when (state) {
+            "preflight_denied" -> "native_wake_preflight_denied"
+            "submitted" -> "native_wake_submitted"
+            else -> "native_wake_needs_review"
+        }
+        val evidence = JSONObject()
+            .put("version", 1)
+            .put("kind", "native_wake_result")
+            .put("handoffId", handoff.handoffId)
+            .put("jobId", handoff.jobId)
+            .put("deviceId", handoff.deviceId)
+            .put("roomId", handoff.roomId)
+            .put("screenSessionId", handoff.screenSessionId)
+            .put("bindingId", handoff.bindingId)
+            .put("targetId", handoff.targetId)
+            .put("targetRevision", handoff.targetRevision)
+            .put("state", state)
+            .put("promptInserted", result.promptInserted)
+            .put("sendInvoked", result.sendInvoked)
+            .put("composerCleared", result.composerCleared)
+
+        // Only a fully confirmed submission carries the stronger read-back and
+        // same-target revalidation claims. Preflight denials and ambiguous
+        // outcomes never masquerade as a verified send.
+        if (state == "submitted") {
+            val composerDigest = result.composerIdentityDigest
+                ?: return
+            val sendDigest = result.sendControlIdentityDigest
+                ?: return
+            val providerConversationDigest = result.providerConversationIdentityDigest
+                ?: return
+            if (!result.providerConversationIdentityRevalidated ||
+                providerConversationDigest != handoff.providerConversationIdentityDigest
+            ) return
+            evidence
+                .put("promptReadbackVerified", true)
+                .put("composerIdentityRevalidated", true)
+                .put("sendControlIdentityRevalidated", true)
+                .put("providerConversationIdentityRevalidated", true)
+                .put("composerIdentityDigest", composerDigest)
+                .put("sendControlIdentityDigest", sendDigest)
+                .put("providerConversationIdentityDigest", providerConversationDigest)
+        } else {
+            val reason = safeNativeWakeReason(result.reason)
+            evidence.put("reason", reason)
+        }
+        try {
+            api?.post(
+                "android/ack",
+                token,
+                JSONObject()
+                    .put("commandId", commandId)
+                    .put("requestId", requestId)
+                    .put("sessionId", screenSessionId)
+                    .put("result", resultName)
+                    .put("nativeWakeResult", evidence)
+            )
+        } catch (_: Exception) {
+            // The queue lease will expire. The local one-shot journal remains
+            // sealed, so a redelivery cannot blindly repeat an uncertain Send.
+        }
+    }
+
     private fun processCommand(token: String, command: JSONObject) {
         if (stopping) return
         val commandId = command.optString("commandId")
@@ -255,6 +445,9 @@ class AndroidScreenShareService : Service() {
         val appPackage = command.optString("appPackageName")
         val roomId = command.optString("roomId")
         when (action) {
+            "native_wake_trigger" -> processNativeWakeTrigger(
+                token, commandId, requestId, sessionId, appPackage, roomId, command
+            )
             "view_offer" -> {
                 // If a phone ACK was lost after creating the peer, the same lease may
                 // be delivered again. Reuse that peer and retry only the ACK.
@@ -591,8 +784,36 @@ class AndroidScreenShareService : Service() {
             .put("selectionId", selectionId)
             .put("selected", decision.candidate != null)
             .put("reason", decision.reason)
+            .put("sendAvailable", decision.sendControl != null)
+            .put("sendReason", decision.sendReason)
+            .put("providerConversationIdentityAvailable", decision.providerConversationIdentityAvailable)
         decision.candidate?.let { payload.put("targetId", it.targetId) }
+        decision.sendControl?.let { payload.put("sendTargetId", it.targetId) }
         runCatching { channel.send(DataChannel.Buffer(ByteBuffer.wrap(payload.toString().toByteArray(Charsets.UTF_8)), false)) }
+    }
+
+    private fun sendSendControlVerificationAcknowledgement(
+        channel: DataChannel,
+        sessionId: String,
+        requestId: String,
+        decision: SendControlDecision
+    ) {
+        if (!UUID_PATTERN.matches(sessionId) || !UUID_PATTERN.matches(requestId) ||
+            channel.state() != DataChannel.State.OPEN || activeSessionId != sessionId ||
+            dataChannel !== channel
+        ) return
+        val payload = JSONObject()
+            .put("kind", "send_control_ack")
+            .put("sessionId", sessionId)
+            .put("requestId", requestId)
+            .put("available", decision.candidate != null)
+            .put("reason", decision.reason)
+        decision.candidate?.let { payload.put("sendTargetId", it.targetId) }
+        runCatching {
+            channel.send(DataChannel.Buffer(
+                ByteBuffer.wrap(payload.toString().toByteArray(Charsets.UTF_8)), false
+            ))
+        }
     }
 
     private fun sendRemoteTextAcknowledgement(
@@ -736,6 +957,48 @@ class AndroidScreenShareService : Service() {
                             AndroidTouchAccessibilityService.selectComposerTarget(sessionId, appPackage, selection)
                         }
                         sendComposerTargetAcknowledgement(channel, sessionId, selectionId, decision)
+                    }
+                    return
+                }
+                if (input.optString("kind") == "verify_composer_send") {
+                    val requestId = input.optString("requestId")
+                    val composerTargetId = input.optString("composerTargetId")
+                    val sendTargetId = input.optString("sendTargetId")
+                    if (!UUID_PATTERN.matches(requestId) ||
+                        input.optString("sessionId") != sessionId ||
+                        input.optString("appPackageName") != appPackage
+                    ) return
+                    val allowedKeys = setOf(
+                        "kind", "requestId", "sessionId", "appPackageName",
+                        "composerTargetId", "sendTargetId"
+                    )
+                    if (input.keys().asSequence().toSet() != allowedKeys ||
+                        !Regex("^[a-f0-9]{64}$").matches(composerTargetId) ||
+                        !Regex("^[a-f0-9]{64}$").matches(sendTargetId)
+                    ) {
+                        sendSendControlVerificationAcknowledgement(
+                            channel, sessionId, requestId,
+                            SendControlDecision(null, "invalid_request")
+                        )
+                        return
+                    }
+                    if (!claimRemoteTextRequest(requestId)) {
+                        sendSendControlVerificationAcknowledgement(
+                            channel, sessionId, requestId,
+                            SendControlDecision(null, "request_replayed_or_rate_limited")
+                        )
+                        return
+                    }
+                    mainHandler.post {
+                        val decision = if (stopping || !capturedContentVisible ||
+                            activeSessionId != sessionId || activeAppPackage != appPackage) {
+                            SendControlDecision(null, "session_not_active")
+                        } else {
+                            AndroidTouchAccessibilityService.revalidateSelectedSendControl(
+                                sessionId, appPackage, composerTargetId, sendTargetId
+                            )
+                        }
+                        sendSendControlVerificationAcknowledgement(channel, sessionId, requestId, decision)
                     }
                     return
                 }
