@@ -88,6 +88,8 @@ declare
   v_native_screen_challenge_cap_expiry timestamptz;
   v_native_host_cap_expiry timestamptz;
   v_native_host_challenge_cap_expiry timestamptz;
+  v_native_authority_cap_expiry timestamptz;
+  v_native_authority_challenge_cap_expiry timestamptz;
 begin
   select pg_catalog.pg_get_functiondef(
     'public.settle_backroom_android_native_wake_result(uuid,text,text,uuid,text,uuid,uuid,uuid,text,integer,text,text,text,jsonb)'::regprocedure
@@ -403,6 +405,60 @@ begin
     or (select c.expires_at from public.backroom_android_native_binding_challenges c
       where c.id=v_native_challenge_host_cap) is distinct from v_native_host_challenge_cap_expiry then
     raise exception 'Host renewal must not silently extend a native mapping or challenge';
+  end if;
+
+  -- Expiring the exact MCP session caps its phone attestation and outstanding challenge.
+  update public.rub_minds_mcp_sessions
+  set expires_at=pg_catalog.clock_timestamp()+interval '8 minutes'
+  where session_digest=repeat('5',64);
+  if not exists(select 1 from public.backroom_android_native_bindings n
+      join public.rub_minds_mcp_sessions m on m.session_digest=repeat('5',64)
+      where n.id=v_native_mapping_retry_id and n.revoked_at is null
+        and n.expires_at<=m.expires_at)
+    or not exists(select 1 from public.backroom_android_native_binding_challenges c
+      join public.rub_minds_mcp_sessions m on m.session_digest=repeat('5',64)
+      where c.id=v_native_challenge_host_cap and c.revoked_at is null
+        and c.expires_at<=m.expires_at) then
+    raise exception 'Shortening an MCP session must cap its native mapping and pending challenge';
+  end if;
+  update public.rub_minds_mcp_sessions
+  set expires_at=pg_catalog.clock_timestamp()+interval '1 hour'
+  where session_digest=repeat('5',64);
+  select n.expires_at into v_native_authority_cap_expiry
+  from public.backroom_android_native_bindings n where n.id=v_native_mapping_retry_id;
+  select c.expires_at into v_native_authority_challenge_cap_expiry
+  from public.backroom_android_native_binding_challenges c where c.id=v_native_challenge_host_cap;
+  if (select n.expires_at from public.backroom_android_native_bindings n
+      where n.id=v_native_mapping_retry_id) is distinct from v_native_authority_cap_expiry
+    or (select c.expires_at from public.backroom_android_native_binding_challenges c
+      where c.id=v_native_challenge_host_cap) is distinct from v_native_authority_challenge_cap_expiry then
+    raise exception 'MCP session renewal must not silently extend native proofs';
+  end if;
+
+  -- Revoking or shortening the exact agent credential is another independent consent boundary.
+  update public.agent_connections
+  set expires_at=pg_catalog.clock_timestamp()+interval '6 minutes'
+  where credential_digest=repeat('a',64);
+  if not exists(select 1 from public.backroom_android_native_bindings n
+      where n.id=v_native_mapping_retry_id and n.revoked_at is null
+        and n.expires_at<=pg_catalog.clock_timestamp()+interval '6 minutes')
+    or not exists(select 1 from public.backroom_android_native_binding_challenges c
+      where c.id=v_native_challenge_host_cap and c.revoked_at is null
+        and c.expires_at<=pg_catalog.clock_timestamp()+interval '6 minutes') then
+    raise exception 'Shortening an AI credential must cap its native mapping and pending challenge';
+  end if;
+  update public.agent_connections
+  set expires_at=pg_catalog.clock_timestamp()+interval '48 hours'
+  where credential_digest=repeat('a',64);
+  select n.expires_at into v_native_authority_cap_expiry
+  from public.backroom_android_native_bindings n where n.id=v_native_mapping_retry_id;
+  select c.expires_at into v_native_authority_challenge_cap_expiry
+  from public.backroom_android_native_binding_challenges c where c.id=v_native_challenge_host_cap;
+  if (select n.expires_at from public.backroom_android_native_bindings n
+      where n.id=v_native_mapping_retry_id) is distinct from v_native_authority_cap_expiry
+    or (select c.expires_at from public.backroom_android_native_binding_challenges c
+      where c.id=v_native_challenge_host_cap) is distinct from v_native_authority_challenge_cap_expiry then
+    raise exception 'AI credential renewal must not silently extend native proofs';
   end if;
 
   -- A consumed challenge can still acknowledge an exact duplicate after the
