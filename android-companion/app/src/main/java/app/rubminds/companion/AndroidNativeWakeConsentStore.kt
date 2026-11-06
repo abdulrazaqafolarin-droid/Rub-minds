@@ -68,7 +68,7 @@ class AndroidNativeWakeConsentStore(context: Context) {
         synchronized(NativeWakeJournalLock.monitor) {
             val prefix = "$deviceId|$packageName|"
             val editor = preferences.edit()
-            val keys = preferences.all().keys.filter { it.startsWith(prefix) }
+            val keys = preferences.all.keys.filter { it.startsWith(prefix) }
             keys.forEach { key -> editor.remove(key) }
             if (keys.isEmpty()) return 0
             check(editor.commit()) { "Could not revoke package native wake consent." }
@@ -83,7 +83,7 @@ class AndroidNativeWakeConsentStore(context: Context) {
         }
         val prefix = "grant|$deviceId|"
         val editor = preferences.edit()
-        val keys = preferences.all().keys.filter { it.startsWith(prefix) }
+        val keys = preferences.all.keys.filter { it.startsWith(prefix) }
         keys.forEach { key -> editor.remove(key) }
         // This Android companion installation is paired to one device ID.
         // Revoking that identity also retires its one-shot event journal.
