@@ -101,6 +101,9 @@ begin
     set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp()),
         expires_at=least(expires_at,pg_catalog.clock_timestamp())
     where screen_session_id=new.session_id and revoked_at is null;
+    update public.backroom_android_native_binding_challenges
+    set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp())
+    where screen_session_id=new.session_id and consumed_at is null and revoked_at is null;
   elsif new.status='active' and new.expires_at>old.expires_at then
     update public.backroom_android_native_bindings
     set expires_at=least(new.expires_at,expires_at+interval '15 minutes')
@@ -152,15 +155,19 @@ security invoker
 set search_path=''
 as $function$
 begin
-  if new.revoked_at is not null then
+  if tg_op='DELETE' or new.revoked_at is not null then
     update public.backroom_android_native_bindings
     set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp())
-    where device_id=new.device_id and room_id=new.room_id and revoked_at is null;
+    where device_id=case when tg_op='DELETE' then old.device_id else new.device_id end
+      and room_id=case when tg_op='DELETE' then old.room_id else new.room_id end
+      and revoked_at is null;
     update public.backroom_android_native_binding_challenges
     set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp())
-    where device_id=new.device_id and room_id=new.room_id
+    where device_id=case when tg_op='DELETE' then old.device_id else new.device_id end
+      and room_id=case when tg_op='DELETE' then old.room_id else new.room_id end
       and consumed_at is null and revoked_at is null;
   end if;
+  if tg_op='DELETE' then return old; end if;
   return new;
 end;
 $function$;
@@ -170,7 +177,7 @@ grant execute on function public.revoke_backroom_android_native_binding_on_room_
 drop trigger if exists backroom_android_native_binding_room_unpair_trigger
   on public.backroom_device_room_bindings;
 create trigger backroom_android_native_binding_room_unpair_trigger
-after update of revoked_at on public.backroom_device_room_bindings
+after update of revoked_at or delete on public.backroom_device_room_bindings
 for each row execute function public.revoke_backroom_android_native_binding_on_room_unpair();
 
 create or replace function public.revoke_backroom_android_native_binding_on_app_signer_change()
@@ -247,6 +254,9 @@ begin
     update public.backroom_android_native_bindings
     set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp())
     where device_id=new.device_id and revoked_at is null;
+    update public.backroom_android_native_binding_challenges
+    set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp())
+    where device_id=new.device_id and consumed_at is null and revoked_at is null;
   end if;
   return new;
 end;
