@@ -72,6 +72,10 @@ declare
   v_attest_challenge_position integer;
   v_attest_screen_position integer;
   v_attest_device_position integer;
+  v_attest_app_position integer;
+  v_attest_connection_position integer;
+  v_attest_host_position integer;
+  v_attest_mapping_position integer;
   v_native_challenge uuid := '83000000-0000-4000-8000-000000000010';
   v_native_nonce text := repeat('f',64);
   v_native_attestation jsonb;
@@ -115,14 +119,24 @@ begin
   v_attest_challenge_position:=pg_catalog.position('where c.id=p_challenge_id for update' in v_native_binding_definition);
   v_attest_screen_position:=pg_catalog.position('where s.session_id=p_screen_session_id' in v_native_binding_definition);
   v_attest_device_position:=pg_catalog.position('where d.device_id=p_device_id' in v_native_binding_definition);
+  v_attest_app_position:=pg_catalog.position('from public.backroom_device_apps a' in v_native_binding_definition);
+  v_attest_connection_position:=pg_catalog.position('from public.agent_connections ac' in v_native_binding_definition);
+  v_attest_host_position:=pg_catalog.position('from public.backroom_hosts h' in v_native_binding_definition);
+  v_attest_mapping_position:=pg_catalog.position('where n.binding_id=v_binding.id and n.revoked_at is null for update' in v_native_binding_definition);
   if v_attest_advisory_position=0 or v_attest_session_position=0
     or v_attest_binding_position=0 or v_attest_challenge_position=0
     or v_attest_screen_position=0 or v_attest_device_position=0
+    or v_attest_app_position=0 or v_attest_connection_position=0
+    or v_attest_host_position=0 or v_attest_mapping_position=0
     or not (v_attest_advisory_position<v_attest_session_position
       and v_attest_session_position<v_attest_binding_position
       and v_attest_binding_position<v_attest_challenge_position
       and v_attest_challenge_position<v_attest_screen_position
-      and v_attest_screen_position<v_attest_device_position)
+      and v_attest_screen_position<v_attest_device_position
+      and v_attest_device_position<v_attest_app_position
+      and v_attest_app_position<v_attest_connection_position
+      and v_attest_connection_position<v_attest_host_position
+      and v_attest_host_position<v_attest_mapping_position)
     or (select p.prosecdef from pg_catalog.pg_proc p
       where p.oid='public.register_backroom_android_native_binding(uuid,text,uuid,uuid,text,text,text,text,text)'::regprocedure) then
     raise exception 'Native binding registration must use invoker privileges and consistent session-to-device lock ordering';
