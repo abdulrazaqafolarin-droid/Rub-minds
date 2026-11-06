@@ -67,11 +67,15 @@ async function rpc(name:string,args:Record<string,unknown>) {
  return data;
 }
 const store={
- async claim({hostId,sessionDigest,bindingId,limit,providerConversationIdentityDigest}:{
-  hostId:string,sessionDigest:string,bindingId:string,limit:number,providerConversationIdentityDigest:string|null
+ async claim({hostId,sessionDigest,bindingId,surface,limit,providerConversationIdentityDigest}:{
+  hostId:string,sessionDigest:string,bindingId:string,surface:string,limit:number,providerConversationIdentityDigest:string|null
  }) {
   const rows=await rpc('claim_backroom_wake_jobs_with_provider_identity',{
-   p_host_id:hostId,p_session_digest:sessionDigest,p_binding_id:bindingId,p_limit:limit,p_lease_seconds:30
+   p_host_id:hostId,p_session_digest:sessionDigest,p_binding_id:bindingId,p_limit:limit,
+   // Android commands carry an independent 60-second device lease and ACK.
+   // Keep the parent group lease alive through that settlement window; browser
+   // workers retain the existing shorter lease.
+   p_lease_seconds:surface==='android_app'?120:30
   });
   if(!Array.isArray(rows)||rows.length>limit)throw new Error('Invalid private queue response');
   return rows.map(row=>{
@@ -85,7 +89,7 @@ const store={
    return {
     jobId:row.out_job_id,jobKey:row.out_job_key,eventId:row.out_event_id,
     ownerId:row.out_owner_id,roomId:row.out_room_id,participantId:row.out_participant_id,
-    hostId,sessionDigest,bindingId,
+    hostId,sessionDigest,bindingId,surface,
     spaceId:row.out_space_id,sessionId:row.out_session_id,
     targetId:row.out_target_id,targetIdentityFingerprint:row.out_target_identity_fingerprint,
     targetRevision:row.out_target_revision,
