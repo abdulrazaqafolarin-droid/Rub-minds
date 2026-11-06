@@ -11,7 +11,7 @@ import { validateDesktopApps } from './desktop-app-protocol.mjs';
 import { validateDesktopCommand, validateDesktopSignal } from './desktop-command-protocol.mjs';
 import { validateDesktopSessionClose } from './desktop-session-close-protocol.mjs';
 import { validateDesktopSessionAbandon } from './desktop-session-abandon-protocol.mjs';
-import { validateAndroidSessionStart, validateAndroidDeviceCommand, validateAndroidSignal, validateAndroidCommandAck, validateAndroidNativeWakeHandoff, validateAndroidNativeWakeResult, validateAndroidSessionClose, mapAndroidQueuedCommand } from './android-streaming-protocol.mjs';
+import { validateAndroidSessionStart, validateAndroidDeviceCommand, validateAndroidSignal, validateAndroidCommandAck, validateAndroidNativeWakeHandoff, validateAndroidNativeWakeResult, validateAndroidNativeBindingChallenge, validateAndroidNativeBindingCompletion, validateAndroidSessionClose, mapAndroidQueuedCommand } from './android-streaming-protocol.mjs';
 import { broadcastPrivateDeviceEvent } from './realtime-broadcast.mjs';
 
 const url = Deno.env.get('SUPABASE_URL');
@@ -427,6 +427,209 @@ Deno.serve(async req => {
       await db.from('backroom_devices').update({ last_seen_at: new Date().toISOString() }).eq('device_id', current.device_id);
       return json(200, { ok: true, deviceId: current.device_id, status: current.status,
         capabilities: current.capabilities }, origin);
+    }
+
+    if (action === 'android/native-binding-candidates') {
+      if (!exactKeys(input, ['action','roomId']) || typeof input.roomId !== 'string' || !UUID.test(input.roomId)) {
+        return json(400, fail('invalid_native_binding_candidate_query'), origin);
+      }
+      const userId = await owner(req);
+      if (!userId) return json(401, fail('owner_auth_required'), origin);
+      const { data: room, error: roomError } = await db.from('rooms').select('id')
+        .eq('id', input.roomId).eq('owner_id', userId).maybeSingle();
+      if (roomError) return json(503, fail('native_binding_candidate_lookup_failed'), origin);
+      if (!room) return json(403, fail('room_owner_required'), origin);
+
+      const { data: bindings, error: bindingError } = await db.from('backroom_input_bindings')
+        .select('id,participant_id,session_digest,host_id')
+        .eq('owner_id', userId).eq('room_id', input.roomId)
+        .eq('surface', 'android_app').eq('wake_enabled', false).is('revoked_at', null)
+        .order('updated_at', { ascending: false }).limit(20);
+      if (bindingError) return json(503, fail('native_binding_candidate_lookup_failed'), origin);
+      if (!bindings?.length) return json(200, { ok: true, candidates: [] }, origin);
+
+      const sessionDigests = [...new Set(bindings.map(row => row.session_digest))];
+      const hostIds = [...new Set(bindings.map(row => row.host_id))];
+      const participantIds = [...new Set(bindings.map(row => row.participant_id))];
+      const [sessions, participants, hosts, activeMappings] = await Promise.all([
+        db.from('rub_minds_mcp_sessions')
+          .select('session_digest,participant_id,agent_credential_digest,expires_at')
+          .in('session_digest', sessionDigests).eq('room_id', input.roomId)
+          .is('terminated_at', null).not('agent_credential_ciphertext', 'is', null)
+          .gt('expires_at', new Date().toISOString()),
+        db.from('participants').select('id,display_name,kind,status')
+          .eq('room_id', input.roomId).in('id', participantIds)
+          .in('kind', ['original_session','model','external_agent'])
+          .in('status', ['connected','active','autonomous']),
+        db.from('backroom_hosts').select('host_id')
+          .eq('owner_id', userId).in('host_id', hostIds)
+          .is('revoked_at', null).gt('expires_at', new Date().toISOString()),
+        db.from('backroom_android_native_bindings').select('binding_id')
+          .in('binding_id', bindings.map(row => row.id)).is('revoked_at', null)
+          .gt('expires_at', new Date().toISOString()),
+      ]);
+      if (sessions.error || participants.error || hosts.error || activeMappings.error) {
+        return json(503, fail('native_binding_candidate_lookup_failed'), origin);
+      }
+      const sessionByDigest = new Map((sessions.data ?? []).map(row => [row.session_digest, row]));
+      const participantById = new Map((participants.data ?? []).map(row => [row.id, row]));
+      const validHostIds = new Set((hosts.data ?? []).map(row => row.host_id));
+      const activeBindingIds = new Set((activeMappings.data ?? []).map(row => row.binding_id));
+      const credentialDigests = [...new Set((sessions.data ?? [])
+        .map(row => row.agent_credential_digest)
+        .filter(value => typeof value === 'string' && HEX.test(value)))];
+      const connections = credentialDigests.length
+        ? await db.from('agent_connections').select('credential_digest')
+            .eq('owner_id', userId).eq('room_id', input.roomId)
+            .is('revoked_at', null).gt('expires_at', new Date().toISOString())
+            .in('credential_digest', credentialDigests)
+        : { data: [], error: null };
+      if (connections.error) return json(503, fail('native_binding_candidate_lookup_failed'), origin);
+      const validCredentialDigests = new Set((connections.data ?? []).map(row => row.credential_digest));
+      const candidates = (bindings ?? []).flatMap(row => {
+        const session = sessionByDigest.get(row.session_digest);
+        const participant = participantById.get(row.participant_id);
+        if (!session || session.participant_id !== row.participant_id ||
+            !validCredentialDigests.has(session.agent_credential_digest) ||
+            !participant || !validHostIds.has(row.host_id) || activeBindingIds.has(row.id)) return [];
+        return [{
+          bindingId: row.id,
+          participantId: row.participant_id,
+          displayName: typeof participant.display_name === 'string'
+            ? participant.display_name.replace(/[\\u0000-\\u001f\\u007f-\\u009f]/g, '').trim().slice(0, 80) || 'AI participant'
+            : 'AI participant',
+        }];
+      });
+      return json(200, { ok: true, candidates }, origin);
+    }
+
+    if (action === 'android/native-binding-challenge') {
+      const challenge = validateAndroidNativeBindingChallenge({
+        deviceId: input.deviceId, roomId: input.roomId, requestId: input.requestId,
+        issuedAt: input.issuedAt, sessionId: input.sessionId,
+        appPackageName: input.appPackageName, bindingId: input.bindingId,
+      });
+      if (!challenge || !exactKeys(input, [
+        'action','deviceId','roomId','requestId','issuedAt','sessionId','appPackageName','bindingId'
+      ])) return json(400, fail('invalid_native_binding_challenge'), origin);
+      const userId = await owner(req);
+      if (!userId) return json(401, fail('owner_auth_required'), origin);
+
+      const [actor, deviceBinding, screen, groupBinding] = await Promise.all([
+        authorizeRoomActor(challenge.roomId, userId),
+        verifyActiveDeviceRoomBinding(challenge.deviceId, challenge.roomId),
+        activeDesktopSession(challenge.sessionId, challenge.deviceId, challenge.roomId),
+        db.from('backroom_input_bindings').select(
+          'id,owner_id,room_id,participant_id,host_id,session_digest,surface,wake_enabled,revoked_at'
+        ).eq('id', challenge.bindingId).eq('owner_id', userId)
+          .eq('room_id', challenge.roomId).maybeSingle(),
+      ]);
+      if (!actor.ok) return json(actor.status, fail(actor.reason), origin);
+      if (!deviceBinding.ok) return json(deviceBinding.status, fail(deviceBinding.reason), origin);
+      if (deviceBinding.platform !== 'android') return json(409, fail('android_device_required'), origin);
+      if (!screen.ok) return json(screen.status, fail(screen.reason), origin);
+      if (screen.session.session_type !== 'screen') return json(409, fail('android_screen_session_required'), origin);
+      if (groupBinding.error) return json(503, fail('native_binding_group_lookup_failed'), origin);
+      const binding = groupBinding.data;
+      if (!binding || binding.surface !== 'android_app' || binding.wake_enabled ||
+          binding.revoked_at !== null || binding.owner_id !== userId) {
+        return json(409, fail('native_group_binding_not_eligible'), origin);
+      }
+      const [app, host, mcp, participant] = await Promise.all([
+        db.from('backroom_device_apps').select('package_name')
+          .eq('device_id', challenge.deviceId).eq('package_name', challenge.appPackageName).maybeSingle(),
+        db.from('backroom_hosts').select('host_id')
+          .eq('host_id', binding.host_id).eq('owner_id', userId)
+          .is('revoked_at', null).gt('expires_at', new Date().toISOString()).maybeSingle(),
+        db.from('rub_minds_mcp_sessions')
+          .select('session_digest,agent_credential_digest,expires_at')
+          .eq('session_digest', binding.session_digest).eq('room_id', challenge.roomId)
+          .eq('participant_id', binding.participant_id).is('terminated_at', null)
+          .not('agent_credential_ciphertext', 'is', null).gt('expires_at', new Date().toISOString())
+          .maybeSingle(),
+        db.from('participants').select('id')
+          .eq('id', binding.participant_id).eq('room_id', challenge.roomId)
+          .in('kind', ['original_session','model','external_agent'])
+          .in('status', ['connected','active','autonomous']).maybeSingle(),
+      ]);
+      if (app.error || host.error || mcp.error || participant.error) {
+        return json(503, fail('native_binding_authorization_lookup_failed'), origin);
+      }
+      if (!app.data) return json(403, fail('app_not_selected_on_device'), origin);
+      if (!host.data || !mcp.data || !participant.data) {
+        return json(403, fail('group_binding_authorization_expired'), origin);
+      }
+      const { data: connection, error: connectionError } = await db.from('agent_connections')
+        .select('credential_digest').eq('credential_digest', mcp.data.agent_credential_digest)
+        .eq('owner_id', userId).eq('room_id', challenge.roomId)
+        .eq('participant_id', binding.participant_id).is('revoked_at', null)
+        .gt('expires_at', new Date().toISOString()).maybeSingle();
+      if (connectionError) return json(503, fail('native_binding_authorization_lookup_failed'), origin);
+      if (!connection) return json(403, fail('group_binding_authorization_expired'), origin);
+
+      const nonce = randomHex(32);
+      const expiresAt = new Date(Math.min(
+        Date.now() + 90_000,
+        Date.parse(screen.session.expires_at),
+        Date.parse(mcp.data.expires_at),
+      )).toISOString();
+      if (Date.parse(expiresAt) <= Date.now()) return json(409, fail('native_binding_challenge_expired'), origin);
+      const now = new Date().toISOString();
+      const { error: revokeChallengeError } = await db.from('backroom_android_native_binding_challenges')
+        .update({ revoked_at: now })
+        .eq('binding_id', binding.id).eq('device_id', challenge.deviceId)
+        .eq('screen_session_id', challenge.sessionId).is('consumed_at', null).is('revoked_at', null);
+      if (revokeChallengeError) return json(503, fail('native_binding_challenge_unavailable'), origin);
+      const challengeId = crypto.randomUUID();
+      const { error: insertChallengeError } = await db.from('backroom_android_native_binding_challenges').insert({
+        id: challengeId, owner_id: userId, room_id: challenge.roomId,
+        binding_id: binding.id, device_id: challenge.deviceId,
+        screen_session_id: challenge.sessionId, app_package_name: challenge.appPackageName,
+        nonce_digest: await sha256(nonce), expires_at: expiresAt,
+      });
+      if (insertChallengeError) return json(503, fail('native_binding_challenge_unavailable'), origin);
+      return json(201, { ok: true, challengeId, nonce, expiresAt }, origin);
+    }
+
+    if (action === 'android/native-binding-complete') {
+      if (!exactKeys(input, [
+        'action','challengeId','nonce','screenSessionId','appPackageName',
+        'appSigningCertificateSha256','composerIdentityDigest','sendControlIdentityDigest',
+        'providerConversationIdentityDigest'
+      ])) return json(400, fail('invalid_native_binding_evidence'), origin);
+      const evidence = validateAndroidNativeBindingCompletion({
+        challengeId: input.challengeId, nonce: input.nonce, screenSessionId: input.screenSessionId,
+        appPackageName: input.appPackageName,
+        appSigningCertificateSha256: input.appSigningCertificateSha256,
+        composerIdentityDigest: input.composerIdentityDigest,
+        sendControlIdentityDigest: input.sendControlIdentityDigest,
+        providerConversationIdentityDigest: input.providerConversationIdentityDigest,
+      });
+      if (!evidence) return json(400, fail('invalid_native_binding_evidence'), origin);
+      const current = await device(req);
+      if (!current) return json(401, fail('device_not_approved'), origin);
+      if (current.platform !== 'android') return json(409, fail('android_device_required'), origin);
+      const { data, error } = await db.rpc('register_backroom_android_native_binding', {
+        p_challenge_id: evidence.challengeId,
+        p_nonce_digest: await sha256(evidence.nonce),
+        p_device_id: current.device_id,
+        p_screen_session_id: evidence.screenSessionId,
+        p_app_package_name: evidence.appPackageName,
+        p_app_signing_certificate_sha256: evidence.appSigningCertificateSha256,
+        p_composer_identity_digest: evidence.composerIdentityDigest,
+        p_send_control_identity_digest: evidence.sendControlIdentityDigest,
+        p_provider_conversation_identity_digest: evidence.providerConversationIdentityDigest,
+      });
+      if (error) return json(503, fail('native_binding_registration_unavailable'), origin);
+      if (!data || data.ok !== true) {
+        const reason = typeof data?.reason === 'string' ? data.reason : 'native_binding_registration_rejected';
+        const status = ['challenge_not_found','challenge_invalid_or_expired','challenge_already_consumed'].includes(reason) ? 409 : 403;
+        return json(status, fail(reason), origin);
+      }
+      return json(200, {
+        ok: true, nativeBindingId: data.nativeBindingId, bindingId: data.bindingId,
+        expiresAt: data.expiresAt, replayed: data.replayed === true,
+      }, origin);
     }
 
     if (action === 'android/session-start') {
