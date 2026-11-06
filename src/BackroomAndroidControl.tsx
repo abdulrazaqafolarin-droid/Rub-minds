@@ -130,7 +130,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     setSendControlStatus('No native Send control verified.');
     setSelectionPreview(null);
     setSelectionMode(false);
-  }, [appPackage]);
+  }, [appPackage, device.device_id, roomId]);
 
 
   const disposePeer = useCallback(() => {
@@ -387,6 +387,34 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
               ? 'The original provider conversation and Send control were rechecked. No message was sent.'
               : 'Provider conversation identity changed or is unavailable. Native wake is blocked; no message was sent.'
             : 'Native Send control is no longer verified. The Android frame remains draft-only.', !remainsSameTarget);
+          return;
+        }
+        if (acknowledgement.kind === 'native_binding_ack' &&
+            typeof acknowledgement.requestId === 'string' &&
+            typeof acknowledgement.bound === 'boolean' &&
+            typeof acknowledgement.reason === 'string') {
+          if (acknowledgement.requestId !== pendingNativeBindingRequestRef.current) return;
+          if (nativeBindingTimerRef.current !== null) window.clearTimeout(nativeBindingTimerRef.current);
+          nativeBindingTimerRef.current = null;
+          pendingNativeBindingRequestRef.current = '';
+          setNativeBindingBusy(false);
+          if (acknowledgement.bound && selectedNativeBindingId) {
+            activeNativeBindingRef.current = selectedNativeBindingId;
+            nativeBindingSessionRef.current = nextSessionId;
+            setActiveNativeBindingId(selectedNativeBindingId);
+            const target = nativeBindingCandidates.find(candidate => candidate.bindingId === selectedNativeBindingId);
+            setNativeBindingStatus(
+              'Phone target linked to ' + (target?.displayName ?? 'the selected group AI') +
+              '. Native autonomous sending remains disabled until a verified provider resolver and trusted forwarder are available.'
+            );
+            setNativeBindingCandidates(items => items.filter(item => item.bindingId !== selectedNativeBindingId));
+            notify('The Android companion confirmed the group binding using phone-local identity proof. No message was sent.');
+          } else {
+            setNativeBindingStatus(
+              'The phone did not complete the native binding: ' + acknowledgement.reason.replaceAll('_', ' ') + '.'
+            );
+            notify('Android native binding was not completed. The composer remains draft-only.', true);
+          }
           return;
         }
         if (acknowledgement.kind === 'remote_text_ack' &&
@@ -756,6 +784,58 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       setProviderConversationIdentityAvailable(false);
             sendTargetRef.current = '';
       setSendControlStatus('The phone data channel rejected the Send-control recheck.');
+    }
+  };
+
+  const bindSelectedGroupAI = async () => {
+    const channel = dataRef.current;
+    const activeSession = sessionRef.current;
+    const bindingId = selectedNativeBindingId;
+    if (!bindingId || !activeSession || !channel || channel.readyState !== 'open' ||
+        !viewReady || !sourceVisible || !dataReady || !sendControlVerified ||
+        !providerConversationIdentityAvailable || !composerTargetRef.current || !sendTargetRef.current) {
+      setNativeBindingStatus('Select a verified composer and Send control in the live phone app first.');
+      return;
+    }
+    if (nativeBindingBusy || pendingNativeBindingRequestRef.current) return;
+
+    const requestId = uuid();
+    pendingNativeBindingRequestRef.current = requestId;
+    setNativeBindingBusy(true);
+    setNativeBindingStatus('Requesting a one-time owner-approved binding challenge…');
+    nativeBindingTimerRef.current = window.setTimeout(() => {
+      if (pendingNativeBindingRequestRef.current !== requestId) return;
+      pendingNativeBindingRequestRef.current = '';
+      nativeBindingTimerRef.current = null;
+      setNativeBindingBusy(false);
+      setNativeBindingStatus('The phone did not confirm the binding. The challenge has expired; request a new one.');
+    }, 30_000);
+    try {
+      const challenge = await createAndroidNativeBindingChallenge({
+        deviceId: device.device_id, roomId, sessionId: activeSession,
+        appPackageName: appPackage, bindingId,
+      });
+      if (pendingNativeBindingRequestRef.current !== requestId ||
+          sessionRef.current !== activeSession || dataRef.current !== channel ||
+          channel.readyState !== 'open') return;
+      channel.send(JSON.stringify({
+        kind: 'bind_native_group_target',
+        requestId,
+        sessionId: activeSession,
+        appPackageName: appPackage,
+        challengeId: challenge.challengeId,
+        nonce: challenge.nonce,
+      }));
+      setNativeBindingStatus('The phone is checking its selected composer, Send control and active provider conversation locally…');
+    } catch (error) {
+      if (nativeBindingTimerRef.current !== null) window.clearTimeout(nativeBindingTimerRef.current);
+      nativeBindingTimerRef.current = null;
+      pendingNativeBindingRequestRef.current = '';
+      setNativeBindingBusy(false);
+      setNativeBindingStatus(error instanceof Error
+        ? 'Could not create the binding challenge: ' + error.message
+        : 'Could not create the binding challenge.');
+      notify('Rub Minds could not authorize the phone binding challenge.', true);
     }
   };
 
