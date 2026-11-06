@@ -238,7 +238,11 @@ class NativeWakeConsentPolicyTest {
             rows = decision.reservations
         }
         val limited = NativeWakeConsentPolicy.reserveExecution(
-            grant(), request(event = "event_seventh", leaseDigest = "7".repeat(64)), rows, now + 5_999L
+            grant(), request(
+                event = "event_seventh",
+                job = jobUuid(7),
+                leaseDigest = "7".repeat(64)
+            ), rows, now + 5_999L
         )
         assertFalse(limited.allowed)
         assertEquals("native_wake_rate_limited", limited.reason)
