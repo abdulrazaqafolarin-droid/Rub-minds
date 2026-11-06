@@ -11,7 +11,7 @@ import { validateDesktopApps } from './desktop-app-protocol.mjs';
 import { validateDesktopCommand, validateDesktopSignal } from './desktop-command-protocol.mjs';
 import { validateDesktopSessionClose } from './desktop-session-close-protocol.mjs';
 import { validateDesktopSessionAbandon } from './desktop-session-abandon-protocol.mjs';
-import { validateAndroidSessionStart, validateAndroidDeviceCommand, validateAndroidSignal, validateAndroidCommandAck, validateAndroidNativeWakeHandoff, validateAndroidNativeWakeResult, validateAndroidSessionClose, mapAndroidQueuedCommand } from './android-streaming-protocol.mjs';
+import { validateAndroidSessionStart, validateAndroidDeviceCommand, validateAndroidSignal, validateAndroidCommandAck, validateAndroidNativeWakeHandoff, validateAndroidNativeWakeResult, validateAndroidSessionClose, validateAndroidNativeBindingRegistration, mapAndroidQueuedCommand } from './android-streaming-protocol.mjs';
 import { broadcastPrivateDeviceEvent } from './realtime-broadcast.mjs';
 
 const url = Deno.env.get('SUPABASE_URL');
@@ -490,6 +490,63 @@ Deno.serve(async req => {
         return json(503, fail('android_command_queue_unavailable'), origin);
       }
       return json(202, { ok: true, sessionId: start.sessionId, status: 'queued' }, origin);
+    }
+
+    if (action === 'android/native-binding/register') {
+      // The bearer token identifies the approved Android device. The body may
+      // identify an existing group binding and a live screen/app target, but it
+      // cannot choose the device identity or submit raw provider identifiers.
+      const current = await device(req);
+      if (!current) return json(401, fail('device_not_approved'), origin);
+      if (current.platform !== 'android') return json(409, fail('android_device_required'), origin);
+      const registration = validateAndroidNativeBindingRegistration({
+        bindingId: input.bindingId, roomId: input.roomId,
+        screenSessionId: input.screenSessionId, issuedAt: input.issuedAt,
+        appPackageName: input.appPackageName, appSignerDigest: input.appSignerDigest,
+        composerIdentityDigest: input.composerIdentityDigest,
+        sendControlIdentityDigest: input.sendControlIdentityDigest,
+        providerConversationIdentityDigest: input.providerConversationIdentityDigest,
+      });
+      if (!registration || !exactKeys(input, [
+        'action','bindingId','roomId','screenSessionId','issuedAt','appPackageName',
+        'appSignerDigest','composerIdentityDigest','sendControlIdentityDigest',
+        'providerConversationIdentityDigest'
+      ])) return json(400, fail('invalid_android_native_binding_registration'), origin);
+
+      const [binding, session] = await Promise.all([
+        verifyActiveDeviceRoomBinding(current.device_id, registration.roomId),
+        activeDesktopSession(registration.screenSessionId, current.device_id, registration.roomId),
+      ]);
+      if (!binding.ok) return json(binding.status, fail(binding.reason), origin);
+      if (binding.platform !== 'android') return json(409, fail('android_device_required'), origin);
+      if (!session.ok) return json(session.status, fail(session.reason), origin);
+      if (session.session.session_type !== 'screen') return json(409, fail('android_screen_session_required'), origin);
+
+      const { data: app, error: appError } = await db.from('backroom_device_apps')
+        .select('signing_certificate_sha256')
+        .eq('device_id', current.device_id)
+        .eq('package_name', registration.appPackageName).maybeSingle();
+      if (appError) return json(503, fail('android_app_inventory_unavailable'), origin);
+      if (!app || !String(app.signing_certificate_sha256 ?? '').split('.').includes(registration.appSignerDigest)) {
+        return json(403, fail('android_app_signer_not_selected'), origin);
+      }
+
+      const { data, error } = await db.rpc('register_backroom_android_native_binding', {
+        p_binding_id: registration.bindingId,
+        p_device_id: current.device_id,
+        p_room_id: registration.roomId,
+        p_screen_session_id: registration.screenSessionId,
+        p_app_package_name: registration.appPackageName,
+        p_app_signer_digest: registration.appSignerDigest,
+        p_composer_identity_digest: registration.composerIdentityDigest,
+        p_send_control_identity_digest: registration.sendControlIdentityDigest,
+        p_provider_conversation_identity_digest: registration.providerConversationIdentityDigest,
+      });
+      if (error) return json(503, fail('android_native_binding_attestation_unavailable'), origin);
+      if (data !== true) return json(409, fail('android_native_binding_attestation_conflict'), origin);
+      // Return only an acknowledgement. The provider digest and Accessibility
+      // identities are never echoed to the browser or room Realtime channel.
+      return json(201, { ok: true, bindingId: registration.bindingId, status: 'attested' }, origin);
     }
 
     if (action === 'android/command') {
