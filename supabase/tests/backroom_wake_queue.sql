@@ -71,6 +71,7 @@ declare
   v_attest_session_position integer;
   v_attest_binding_position integer;
   v_attest_challenge_position integer;
+  v_attest_challenge_scope_position integer;
   v_attest_screen_position integer;
   v_attest_device_position integer;
   v_attest_app_position integer;
@@ -120,6 +121,7 @@ begin
   v_attest_session_position:=pg_catalog.position('from public.rub_minds_mcp_sessions s' in v_native_binding_definition);
   v_attest_binding_position:=pg_catalog.position('where b.id=v_challenge.binding_id for update' in v_native_binding_definition);
   v_attest_challenge_position:=pg_catalog.position('where c.id=p_challenge_id for update' in v_native_binding_definition);
+  v_attest_challenge_scope_position:=pg_catalog.position('v_challenge.binding_id is distinct from v_binding.id' in v_native_binding_definition);
   v_attest_screen_position:=pg_catalog.position('where s.session_id=p_screen_session_id' in v_native_binding_definition);
   v_attest_device_position:=pg_catalog.position('where d.device_id=p_device_id' in v_native_binding_definition);
   v_attest_app_position:=pg_catalog.position('from public.backroom_device_apps a' in v_native_binding_definition);
@@ -128,6 +130,7 @@ begin
   v_attest_mapping_position:=pg_catalog.position('where n.binding_id=v_binding.id and n.revoked_at is null for update' in v_native_binding_definition);
   if v_attest_advisory_position=0 or v_attest_session_position=0
     or v_attest_binding_position=0 or v_attest_challenge_position=0
+    or v_attest_challenge_scope_position<=v_attest_challenge_position
     or v_attest_screen_position=0 or v_attest_device_position=0
     or v_attest_app_position=0 or v_attest_connection_position=0
     or v_attest_host_position=0 or v_attest_mapping_position=0
