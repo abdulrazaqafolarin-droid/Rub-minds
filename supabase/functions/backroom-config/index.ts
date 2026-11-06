@@ -117,7 +117,7 @@ Deno.serve(async req=>{
     bindingId:row.id,participantId:row.participant_id,hostId:row.host_id,
     sessionId:row.session_id,spaceId:row.space_id,targetId:row.target_id,
     targetIdentityFingerprint:row.target_identity_fingerprint,
-    providerConversationIdentityDigest:row.provider_conversation_identity_digest??null,
+    providerConversationIdentityAvailable:typeof row.provider_conversation_identity_digest==='string'&&/^[a-f0-9]{64}$/.test(row.provider_conversation_identity_digest),
     targetRevision:row.target_revision,
     surface:row.surface,participationMode:row.participation_mode,
     wakeEnabled:row.wake_enabled===true&&typeof row.wake_expires_at==='string'&&Date.parse(row.wake_expires_at)>now,
@@ -226,8 +226,6 @@ Deno.serve(async req=>{
    host_id:input.hostId,session_digest:input.sessionDigest,
    space_id:input.spaceId,session_id:input.sessionId,target_id:input.targetId,
    target_identity_fingerprint:input.targetIdentityFingerprint,
-   ...(input.providerConversationIdentityDigest!==undefined
-    ? {provider_conversation_identity_digest:input.providerConversationIdentityDigest} : {}),
    target_revision:input.targetRevision,
    surface:input.surface,locator_kind:input.locatorKind,locator_value:input.locatorValue,
    participation_mode:input.participationMode,max_wakes_per_minute:input.maxWakesPerMinute,
