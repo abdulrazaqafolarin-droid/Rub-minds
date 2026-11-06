@@ -321,6 +321,28 @@ begin
   end if;
   v_native_mapping_retry_id:=(v_native_attestation->>'nativeBindingId')::uuid;
 
+  -- A consumed challenge can still acknowledge an exact duplicate after the
+  -- group owner explicitly arms wake; it must not create a second mapping.
+  if not public.activate_backroom_wake_grant(
+    v_host_test,repeat('5',64),v_binding_native_draft,
+    '70000000-0000-4000-8000-000000000022'::uuid,300
+  ) then
+    raise exception 'A device-attested native binding with a provider digest may be explicitly armed';
+  end if;
+  select public.register_backroom_android_native_binding(
+    v_native_challenge_retry,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_nonce_retry,'UTF8')),'hex'),
+    v_native_device,v_native_screen_session_retry,'com.example.notes',repeat('e',64),
+    repeat('c',64),repeat('d',64),v_native_provider_digest
+  ) into v_native_attestation;
+  if v_native_attestation->>'ok' is distinct from 'true'
+    or v_native_attestation->>'replayed' is distinct from 'true'
+    or (v_native_attestation->>'nativeBindingId')::uuid is distinct from v_native_mapping_retry_id
+    or (select count(*) from public.backroom_android_native_bindings
+      where binding_id=v_binding_native_draft and revoked_at is null)<>1 then
+    raise exception 'Exact duplicate attestation replay must remain idempotent after wake activation';
+  end if;
+
   -- A registered binding cannot silently switch to a different valid provider conversation.
   v_conflict := false;
   begin
