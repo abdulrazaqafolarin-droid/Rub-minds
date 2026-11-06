@@ -86,7 +86,10 @@ test("control ACK broadcasts before marking the leased queue row acknowledged an
   const handler = endpoint.slice(endpoint.indexOf("if (action === 'android/ack')"), endpoint.indexOf("if (action === 'desktop/inventory')"));
   assert.match(handler, /row.status === 'acked'/);
   assert.match(handler, /row.result !== ack.result/);
-  assert.ok(handler.indexOf("await broadcastControlResult()") < handler.indexOf(".update({ status: 'acked'"));
+  const broadcastIndex = handler.indexOf("await broadcastControlResult()");
+  const ackUpdateIndex = handler.search(/\\.update\\(\\{\\s*status: 'acked'/);
+  assert.ok(broadcastIndex >= 0 && ackUpdateIndex > broadcastIndex,
+    "the private control result must be delivered before the ACK row is committed");
   assert.match(handler, /android_control_result_delivery_failed/);
   assert.match(handler, /replayed: true/);
 });
@@ -379,12 +382,12 @@ test("Android native binding challenge remains owner-authenticated and device co
   const revokeStart = endpoint.indexOf("if (action === 'android/native-binding-revoke')");
   const sessionStart = endpoint.indexOf("if (action === 'android/session-start')");
   assert.ok(candidatesStart >= 0 && challengeStart > candidatesStart);
-  assert.ok(completionStart > challengeStart && revokeStart > completionStart && sessionStart > revokeStart);
+  assert.ok(revokeStart > challengeStart && completionStart > revokeStart && sessionStart > completionStart);
   const candidates = endpoint.slice(candidatesStart, challengeStart);
   assert.match(candidates, /const userId = await owner\(req\)/);
   assert.match(candidates, /\.eq\('owner_id', userId\)/);
   assert.doesNotMatch(candidates, /provider_conversation_identity_digest|composerIdentityDigest|sendControlIdentityDigest/);
-  const challenge = endpoint.slice(challengeStart, completionStart);
+  const challenge = endpoint.slice(challengeStart, revokeStart);
   assert.match(challenge, /validateAndroidNativeBindingChallenge/);
   assert.match(challenge, /authorizeRoomActor\(/);
   assert.match(challenge, /verifyActiveDeviceRoomBinding\(/);
@@ -392,14 +395,14 @@ test("Android native binding challenge remains owner-authenticated and device co
   assert.match(challenge, /nonce_digest: await sha256\(nonce\)/);
   assert.match(challenge, /nonce, expiresAt/);
   assert.doesNotMatch(challenge, /composerIdentityDigest|sendControlIdentityDigest|providerConversationIdentityDigest/);
-  const completion = endpoint.slice(completionStart, revokeStart);
+  const completion = endpoint.slice(completionStart, sessionStart);
   assert.match(completion, /validateAndroidNativeBindingCompletion/);
   assert.match(completion, /const current = await device\(req\)/);
   assert.match(completion, /register_backroom_android_native_binding/);
   assert.match(completion, /p_composer_identity_digest/);
   assert.match(completion, /p_send_control_identity_digest/);
   assert.match(completion, /p_provider_conversation_identity_digest/);
-  const revoke = endpoint.slice(revokeStart, sessionStart);
+  const revoke = endpoint.slice(revokeStart, completionStart);
   assert.match(revoke, /const userId = await owner\(req\)/);
   assert.match(revoke, /backroom_android_native_bindings/);
   assert.match(revoke, /backroom_android_native_binding_challenges/);
