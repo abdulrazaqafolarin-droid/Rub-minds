@@ -65,6 +65,10 @@ declare
   v_session_lock_position integer;
   v_binding_lock_position integer;
   v_job_lock_position integer;
+  v_native_challenge uuid := '83000000-0000-4000-8000-000000000010';
+  v_native_nonce text := repeat('f',64);
+  v_native_attestation jsonb;
+  v_native_mapping_id uuid;
 begin
   select pg_catalog.pg_get_functiondef(
     'public.settle_backroom_android_native_wake_result(uuid,text,text,uuid,text,uuid,uuid,uuid,text,integer,text,text,text,jsonb)'::regprocedure
@@ -157,6 +161,95 @@ begin
   end;
   if not v_conflict then
     raise exception 'Native draft binding without provider identity must not enable autonomous wake';
+  end if;
+
+  -- Create a paired Android device, live app-screen session and owner-approved
+  -- one-time challenge. Only the device-bearer completion RPC may attach the
+  -- first provider digest to this draft-only group binding.
+  insert into public.backroom_devices(device_id,owner_id,token_digest,device_label,platform,status)
+  values(v_native_device,v_owner,repeat('d',64),'Android CI device','android','active');
+  insert into public.backroom_device_room_bindings(device_id,room_id,owner_id)
+  values(v_native_device,v_room,v_owner);
+  insert into public.backroom_device_apps(
+    device_id,package_name,app_label,signing_certificate_sha256,version_name
+  ) values(v_native_device,'com.example.notes','Example Notes',repeat('e',64),'1.0');
+  insert into public.backroom_desktop_sessions(
+    session_id,device_id,room_id,requested_by,session_type,status,expires_at
+  ) values(v_native_screen_session,v_native_device,v_room,v_owner,'screen','active',
+    pg_catalog.clock_timestamp()+interval '1 hour');
+  insert into public.backroom_android_native_binding_challenges(
+    id,owner_id,room_id,binding_id,device_id,screen_session_id,app_package_name,nonce_digest,expires_at
+  ) values(
+    v_native_challenge,v_owner,v_room,v_binding_native_draft,v_native_device,
+    v_native_screen_session,'com.example.notes',
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_nonce,'UTF8')),'hex'),
+    pg_catalog.clock_timestamp()+interval '90 seconds'
+  );
+
+  if has_function_privilege('anon','public.register_backroom_android_native_binding(uuid,text,uuid,uuid,text,text,text,text,text)','EXECUTE')
+    or has_function_privilege('authenticated','public.register_backroom_android_native_binding(uuid,text,uuid,uuid,text,text,text,text,text)','EXECUTE')
+    or not has_function_privilege('service_role','public.register_backroom_android_native_binding(uuid,text,uuid,uuid,text,text,text,text,text)','EXECUTE') then
+    raise exception 'Android native binding registration RPC must be service-role only';
+  end if;
+
+  select public.register_backroom_android_native_binding(
+    v_native_challenge,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_nonce,'UTF8')),'hex'),
+    v_native_device,v_native_screen_session,'com.example.notes',repeat('e',64),
+    repeat('c',64),repeat('d',64),v_native_provider_digest
+  ) into v_native_attestation;
+  if v_native_attestation->>'ok' is distinct from 'true'
+    or v_native_attestation->>'replayed' is distinct from 'false'
+    or not exists(select 1 from public.backroom_input_bindings b
+      where b.id=v_binding_native_draft
+        and b.provider_conversation_identity_digest=v_native_provider_digest
+        and b.wake_enabled=false and b.wake_grant_id is null)
+    or not exists(select 1 from public.backroom_android_native_bindings n
+      where n.id=(v_native_attestation->>'nativeBindingId')::uuid
+        and n.binding_id=v_binding_native_draft and n.device_id=v_native_device
+        and n.screen_session_id=v_native_screen_session
+        and n.app_signing_certificate_sha256=repeat('e',64)
+        and n.composer_identity_digest=repeat('c',64)
+        and n.send_control_identity_digest=repeat('d',64)
+        and n.provider_conversation_identity_digest=v_native_provider_digest
+        and n.revoked_at is null) then
+    raise exception 'Android device evidence must create the exact group-to-phone native binding without enabling wake';
+  end if;
+  v_native_mapping_id:=(v_native_attestation->>'nativeBindingId')::uuid;
+
+  -- The same consumed challenge/evidence may be replayed idempotently; a new
+  -- set of digests cannot reuse that challenge.
+  select public.register_backroom_android_native_binding(
+    v_native_challenge,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_nonce,'UTF8')),'hex'),
+    v_native_device,v_native_screen_session,'com.example.notes',repeat('e',64),
+    repeat('c',64),repeat('d',64),v_native_provider_digest
+  ) into v_native_attestation;
+  if v_native_attestation->>'ok' is distinct from 'true'
+    or v_native_attestation->>'replayed' is distinct from 'true'
+    or (v_native_attestation->>'nativeBindingId')::uuid is distinct from v_native_mapping_id then
+    raise exception 'The same device binding evidence must replay idempotently';
+  end if;
+
+  v_conflict:=false;
+  begin
+    update public.backroom_input_bindings
+    set provider_conversation_identity_digest=repeat('a',64)
+    where id=v_binding_native_draft;
+  exception when check_violation then
+    v_conflict:=true;
+  end;
+  if not v_conflict then
+    raise exception 'A device-attested provider digest must remain immutable after first registration';
+  end if;
+
+  -- Stopping the exact Android screen session must revoke its attestation.
+  update public.backroom_desktop_sessions
+  set status='stopped',stopped_at=pg_catalog.clock_timestamp()
+  where session_id=v_native_screen_session and status='active';
+  if not exists(select 1 from public.backroom_android_native_bindings n
+    where n.id=v_native_mapping_id and n.revoked_at is not null) then
+    raise exception 'Stopping the Android screen session must revoke its native group binding';
   end if;
 
   -- A registered binding cannot silently switch to a different valid provider conversation.
@@ -1010,6 +1103,11 @@ begin
         and (revoked_at is null or wake_enabled or wake_grant_id is not null
           or confirmed_at is not null or wake_expires_at is not null)) then
     raise exception 'MCP Leave must revoke every Backroom input binding for the participant';
+  end if;
+  if exists(select 1 from public.backroom_android_native_bindings n
+      join public.backroom_input_bindings b on b.id=n.binding_id
+      where b.room_id=v_room and b.participant_id=v_participant and n.revoked_at is null) then
+    raise exception 'MCP Leave must revoke every device-attested Android group binding';
   end if;
   if exists(select 1 from public.backroom_wake_jobs
       where room_id=v_room and participant_id=v_participant and state in ('pending','leased')) then
