@@ -1,4 +1,4 @@
--- Integration contract for supabase/migrations/20261029090000_backroom_wake_queue.sql.
+-- Integration contract for the durable wake queue, provider-identity and native-settlement migrations.
 do $test$
 declare
   v_owner uuid := '20000000-0000-0000-0000-000000000099';
