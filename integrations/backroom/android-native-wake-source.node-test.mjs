@@ -321,8 +321,8 @@ test('Android frame has no device-attested group-binding registration path yet',
   // The current phone frame knows device + room and a local selection result.
   // It does not receive a selected AI participant/MCP session or send the
   // provider digest through a browser-visible owner binding request.
-  assert.match(androidFrameUi, /export default function BackroomAndroidControl\\(\\{ device, roomId \\}/);
-  assert.doesNotMatch(androidFrameUi, /backroom-config\\/binding|providerConversationIdentityDigest|sessionDigest|participantId/);
+  assert.match(androidFrameUi, /export default function BackroomAndroidControl\(\{ device, roomId \}/);
+  assert.doesNotMatch(androidFrameUi, /backroom-config\/binding|providerConversationIdentityDigest|sessionDigest|participantId/);
   assert.match(androidFrameUi, /providerConversationIdentityAvailable/);
 });
 
