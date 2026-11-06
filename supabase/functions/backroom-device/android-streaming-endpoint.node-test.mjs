@@ -12,6 +12,15 @@ test("Android stream Edge actions keep human auth, device bearer and platform bo
   assert.match(endpoint, /action === 'android\/signal'/);
   assert.match(endpoint, /action === 'android\/ack'/);
   assert.match(endpoint, /action === 'android\/session-close'/);
+  assert.match(endpoint, /action === 'android\/native-binding\/register'/);
+  const nativeBindingRoute = endpoint.slice(endpoint.indexOf("if (action === 'android/native-binding/register')"), endpoint.indexOf("if (action === 'android/command')"));
+  assert.match(nativeBindingRoute, /const current = await device\(req\)/);
+  assert.match(nativeBindingRoute, /verifyActiveDeviceRoomBinding\(current\.device_id/);
+  assert.match(nativeBindingRoute, /activeDesktopSession\(registration\.screenSessionId, current\.device_id/);
+  assert.match(nativeBindingRoute, /signing_certificate_sha256/);
+  assert.match(nativeBindingRoute, /register_backroom_android_native_binding/);
+  assert.match(nativeBindingRoute, /providerConversationIdentityDigest/);
+  assert.doesNotMatch(nativeBindingRoute.slice(nativeBindingRoute.indexOf('return json(201')), /providerConversationIdentityDigest|appSignerDigest|composerIdentityDigest|sendControlIdentityDigest/);
   assert.match(endpoint, /const userId = await owner\(req\)/);
   assert.match(endpoint, /const current = await device\(req\)/);
   assert.match(endpoint, /binding\.platform !== 'android'/);
