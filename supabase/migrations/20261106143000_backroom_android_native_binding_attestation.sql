@@ -324,8 +324,12 @@ begin
 
   if not found then return pg_catalog.jsonb_build_object('ok',false,'reason','challenge_not_found'); end if;
   if v_challenge.consumed_at is not null then
+    -- A mapping may have been created by an earlier challenge for this exact
+    -- binding. Keep the challenge's nonce receipt, and replay only while the
+    -- same attested mapping is still active and its complete evidence matches.
     select * into v_mapping from public.backroom_android_native_bindings n
-    where n.challenge_id=p_challenge_id;
+    where n.binding_id=v_challenge.binding_id and n.revoked_at is null
+    order by n.attested_at desc limit 1;
     if found
       and v_challenge.nonce_digest is not distinct from p_nonce_digest
       and v_challenge.device_id is not distinct from p_device_id
