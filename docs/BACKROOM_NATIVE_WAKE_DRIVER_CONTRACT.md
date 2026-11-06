@@ -129,3 +129,12 @@ Required acceptance cases: select conversation A, switch to B while the app reus
 ## Multi-attempt result receipt retention
 
 The durable group job keeps a private, bounded receipt for each native handoff (at most five, matching the queue attempt limit). Exact delayed ACK replays remain idempotent after a safe preflight retry and a later attempt. Reusing a handoff ID with different result content is rejected. The latest result is also retained separately for current-state inspection.
+
+
+## Device-attested group binding handshake — source update, 2026-11-06
+
+The earlier “Still missing” note is superseded in one respect: the #66 source branch now contains the owner-authenticated native-binding challenge routes, the device-bearer completion route, the Android Accessibility evidence bridge and the database registration/revocation lifecycle. The browser relays a 90-second nonce and challenge ID only. Composer, Send-control, app-signer and provider-conversation identities are sent directly from the phone to the device-bearer Edge route and stored as opaque digests.
+
+The RPC locks the existing MCP session and input binding before it locks the challenge and phone-side records. It requires a pre-existing owner-authorized Android group input binding, a live MCP credential/participant, an active paired Android device-room grant, the current screen session, and a matching app signer inventory record. It never enables wake as part of registration. The first provider digest can be added only if the phone mapping proves it; the digest is immutable afterward. Lifecycle triggers revoke the attestation on screen stop/expiry, device revocation, room unpair, app signer change/removal, host revocation or group binding revocation.
+
+This is **not yet a usable native autonomous execution path**: the provider resolver registry is still empty (including ChatGPT and Claude), the phone frame depends on an existing owner-authorized group input binding, and the trusted host forwarder that turns a durable group lease into a matching device command is still missing. Native Android/Windows Off / On / Auto remain unavailable. The new migration, device endpoint and phone changes are source-only; CI/SQL/Android build and physical-device acceptance have not yet passed.
