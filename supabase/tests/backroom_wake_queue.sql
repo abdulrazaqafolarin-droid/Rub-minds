@@ -45,7 +45,10 @@ declare
   v_native_device uuid := '81000000-0000-4000-8000-000000000010';
   v_native_screen_session uuid := '82000000-0000-4000-8000-000000000010';
   v_native_result jsonb;
+  v_bad_native_result jsonb;
   v_native_settlement text;
+  v_rejected boolean;
+  v_error_message text;
   v_preflight_job jsonb;
   v_preflight_claim record;
   v_preflight_handoff uuid := '80000000-0000-4000-8000-000000000011';
@@ -476,6 +479,37 @@ begin
     'providerConversationIdentityRevalidated',true,
     'providerConversationIdentityDigest',v_native_provider_digest
   );
+  -- SQL is an independent trust boundary: JSON nulls must not pass through
+  -- PL/pgSQL three-valued comparisons as an apparently valid native result.
+  foreach v_bad_native_result in array array[
+    v_native_result || jsonb_build_object('state',null),
+    v_native_result || jsonb_build_object('promptInserted',null),
+    v_native_result || jsonb_build_object('roomId',null)
+  ] loop
+    v_rejected := false;
+    v_error_message := null;
+    begin
+      perform public.settle_backroom_android_native_wake_result(
+        v_native_claim.out_job_id,v_host_test,repeat('8',64),v_binding_native,
+        pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_claim.out_lease_token,'UTF8')),'hex'),
+        v_native_handoff,v_native_device,v_native_screen_session,'target-native',1,
+        repeat('a',64),repeat('b',64),v_native_provider_digest,v_bad_native_result
+      );
+    exception when others then
+      get stacked diagnostics v_error_message = message_text;
+      v_rejected := v_error_message = 'Invalid native wake result evidence';
+    end;
+    if not v_rejected then
+      raise exception 'Native settlement must reject JSON null for required result fields';
+    end if;
+    if not exists(select 1 from public.backroom_wake_jobs j
+        where j.id=v_native_claim.out_job_id and j.state='leased'
+          and j.lease_token_hash=pg_catalog.encode(pg_catalog.sha256(
+            pg_catalog.convert_to(v_native_claim.out_lease_token,'UTF8')),'hex')) then
+      raise exception 'Rejected null evidence must leave the original lease untouched';
+    end if;
+  end loop;
+
   v_native_settlement := public.settle_backroom_android_native_wake_result(
     v_native_claim.out_job_id,v_host_test,repeat('8',64),v_binding_native,
     pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_claim.out_lease_token,'UTF8')),'hex'),
