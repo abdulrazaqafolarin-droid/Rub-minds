@@ -355,3 +355,15 @@ test("a new Android drag selection clears the previous frame-side composer and p
   assert.ok(selection.indexOf("clearComposerTarget(false)") >= 0);
   assert.ok(selection.indexOf("clearComposerTarget(false)") < selection.indexOf("const selectionId = uuid()"));
 });
+
+test("provider-identity migration backfills only missing digests and preserves mismatches for cancellation", async () => {
+  const migration = await read("supabase/migrations/20261104111500_backroom_provider_conversation_identity_queue.sql");
+  const start = migration.indexOf("update public.backroom_wake_jobs j\\nset provider_conversation_identity_digest=b.provider_conversation_identity_digest");
+  const end = migration.indexOf("-- Old native work", start);
+  assert.ok(start >= 0 && end > start, "provider digest backfill block must exist");
+  const backfill = migration.slice(start, end);
+  assert.match(backfill, /j\\.provider_conversation_identity_digest is null/);
+  assert.match(backfill, /b\\.provider_conversation_identity_digest is not null/);
+  assert.doesNotMatch(backfill, /is distinct from b\\.provider_conversation_identity_digest/);
+  assert.match(migration, /b\\.provider_conversation_identity_digest=j\\.provider_conversation_identity_digest/);
+});
