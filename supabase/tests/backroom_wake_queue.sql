@@ -60,7 +60,27 @@ declare
   v_review_claim record;
   v_review_handoff uuid := '80000000-0000-4000-8000-000000000012';
   v_review_result jsonb;
+  v_settlement_definition text;
+  v_advisory_lock_position integer;
+  v_session_lock_position integer;
+  v_binding_lock_position integer;
+  v_job_lock_position integer;
 begin
+  select pg_catalog.pg_get_functiondef(
+    'public.settle_backroom_android_native_wake_result(uuid,text,text,uuid,text,uuid,uuid,uuid,text,integer,text,text,text,jsonb)'::regprocedure
+  ) into v_settlement_definition;
+  v_advisory_lock_position:=pg_catalog.position('pg_advisory_xact_lock' in v_settlement_definition);
+  v_session_lock_position:=pg_catalog.position('from public.rub_minds_mcp_sessions s' in v_settlement_definition);
+  v_binding_lock_position:=pg_catalog.position('from public.backroom_input_bindings b' in v_settlement_definition);
+  v_job_lock_position:=pg_catalog.position('from public.backroom_wake_jobs j' in v_settlement_definition);
+  if v_advisory_lock_position=0 or v_session_lock_position=0
+    or v_binding_lock_position=0 or v_job_lock_position=0
+    or not (v_advisory_lock_position<v_session_lock_position
+      and v_session_lock_position<v_binding_lock_position
+      and v_binding_lock_position<v_job_lock_position) then
+    raise exception 'Native settlement must lock session, binding, then job to serialize with consent revocation';
+  end if;
+
   insert into auth.users(id) values (v_owner);
   insert into public.rooms(id,owner_id,title) values (v_room,v_owner,'Backroom wake queue test room');
   insert into public.participants(id,room_id,display_name,kind,status) values (v_participant,v_room,'Test Backroom Agent','external_agent','active');
