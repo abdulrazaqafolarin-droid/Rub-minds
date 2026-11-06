@@ -95,23 +95,29 @@ language plpgsql
 security invoker
 set search_path=''
 as $function$
+declare
+  v_now timestamptz:=pg_catalog.clock_timestamp();
 begin
-  if new.status is distinct from 'active' or new.expires_at<=pg_catalog.clock_timestamp() then
+  if new.status is distinct from 'active' or new.expires_at<=v_now then
     update public.backroom_android_native_bindings
-    set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp()),
-        expires_at=least(expires_at,pg_catalog.clock_timestamp())
+    set revoked_at=coalesce(revoked_at,v_now),expires_at=least(expires_at,v_now)
     where screen_session_id=new.session_id and revoked_at is null;
     update public.backroom_android_native_binding_challenges
-    set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp())
+    set revoked_at=coalesce(revoked_at,v_now),expires_at=least(expires_at,v_now)
     where screen_session_id=new.session_id and consumed_at is null and revoked_at is null;
-  elsif new.status='active' and new.expires_at>old.expires_at then
+  elsif new.expires_at<old.expires_at then
+    -- Shortening a screen lease caps every dependent proof immediately.
+    -- Extending the screen does not silently extend a native attestation.
     update public.backroom_android_native_bindings
-    set expires_at=least(new.expires_at,expires_at+interval '15 minutes')
+    set expires_at=least(expires_at,new.expires_at)
     where screen_session_id=new.session_id and revoked_at is null;
+    update public.backroom_android_native_binding_challenges
+    set expires_at=least(expires_at,new.expires_at)
+    where screen_session_id=new.session_id and consumed_at is null and revoked_at is null;
   end if;
   return new;
 end;
-$function$;
+$function$
 revoke all on function public.revoke_backroom_android_native_binding_on_screen_change()
   from public,anon,authenticated;
 grant execute on function public.revoke_backroom_android_native_binding_on_screen_change() to service_role;
@@ -186,30 +192,41 @@ language plpgsql
 security invoker
 set search_path=''
 as $function$
+declare
+  v_now timestamptz:=pg_catalog.clock_timestamp();
 begin
-  if tg_op='DELETE' or new.signing_certificate_sha256 is distinct from old.signing_certificate_sha256 then
+  if tg_op='DELETE' then
     update public.backroom_android_native_bindings
-    set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp())
-    where device_id=case when tg_op='DELETE' then old.device_id else new.device_id end
-      and app_package_name=case when tg_op='DELETE' then old.package_name else new.package_name end
-      and revoked_at is null;
+    set revoked_at=coalesce(revoked_at,v_now),expires_at=least(expires_at,v_now)
+    where device_id=old.device_id and app_package_name=old.package_name and revoked_at is null;
     update public.backroom_android_native_binding_challenges
-    set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp())
-    where device_id=case when tg_op='DELETE' then old.device_id else new.device_id end
-      and app_package_name=case when tg_op='DELETE' then old.package_name else new.package_name end
+    set revoked_at=coalesce(revoked_at,v_now),expires_at=least(expires_at,v_now)
+    where device_id=old.device_id and app_package_name=old.package_name
+      and consumed_at is null and revoked_at is null;
+    return old;
+  end if;
+  if new.device_id is distinct from old.device_id
+    or new.package_name is distinct from old.package_name
+    or new.signing_certificate_sha256 is distinct from old.signing_certificate_sha256 then
+    -- The attestation is tied to the OLD installed-app identity.
+    update public.backroom_android_native_bindings
+    set revoked_at=coalesce(revoked_at,v_now),expires_at=least(expires_at,v_now)
+    where device_id=old.device_id and app_package_name=old.package_name and revoked_at is null;
+    update public.backroom_android_native_binding_challenges
+    set revoked_at=coalesce(revoked_at,v_now),expires_at=least(expires_at,v_now)
+    where device_id=old.device_id and app_package_name=old.package_name
       and consumed_at is null and revoked_at is null;
   end if;
-  if tg_op='DELETE' then return old; end if;
   return new;
 end;
-$function$;
+$function$
 revoke all on function public.revoke_backroom_android_native_binding_on_app_signer_change()
   from public,anon,authenticated;
 grant execute on function public.revoke_backroom_android_native_binding_on_app_signer_change() to service_role;
 drop trigger if exists backroom_android_native_binding_app_signer_trigger
   on public.backroom_device_apps;
 create trigger backroom_android_native_binding_app_signer_trigger
-after update of signing_certificate_sha256 or delete on public.backroom_device_apps
+after update of device_id,package_name,signing_certificate_sha256 or delete on public.backroom_device_apps
 for each row execute function public.revoke_backroom_android_native_binding_on_app_signer_change();
 
 create or replace function public.revoke_backroom_android_native_binding_on_host_change()
@@ -218,22 +235,34 @@ language plpgsql
 security invoker
 set search_path=''
 as $function$
+declare
+  v_now timestamptz:=pg_catalog.clock_timestamp();
 begin
-  if new.revoked_at is not null then
+  if new.revoked_at is not null or new.expires_at<=v_now then
     update public.backroom_android_native_bindings n
-    set revoked_at=coalesce(n.revoked_at,pg_catalog.clock_timestamp())
+    set revoked_at=coalesce(n.revoked_at,v_now),expires_at=least(n.expires_at,v_now)
     from public.backroom_input_bindings b
-    where b.id=n.binding_id and b.host_id=new.host_id
-      and n.revoked_at is null;
+    where b.id=n.binding_id and b.host_id=new.host_id and n.revoked_at is null;
     update public.backroom_android_native_binding_challenges c
-    set revoked_at=coalesce(c.revoked_at,pg_catalog.clock_timestamp())
+    set revoked_at=coalesce(c.revoked_at,v_now),expires_at=least(c.expires_at,v_now)
+    from public.backroom_input_bindings b
+    where b.id=c.binding_id and b.host_id=new.host_id
+      and c.consumed_at is null and c.revoked_at is null;
+  elsif new.expires_at<old.expires_at then
+    -- A shorter host lease caps native proofs; renewal requires a new bind.
+    update public.backroom_android_native_bindings n
+    set expires_at=least(n.expires_at,new.expires_at)
+    from public.backroom_input_bindings b
+    where b.id=n.binding_id and b.host_id=new.host_id and n.revoked_at is null;
+    update public.backroom_android_native_binding_challenges c
+    set expires_at=least(c.expires_at,new.expires_at)
     from public.backroom_input_bindings b
     where b.id=c.binding_id and b.host_id=new.host_id
       and c.consumed_at is null and c.revoked_at is null;
   end if;
   return new;
 end;
-$function$;
+$function$
 revoke all on function public.revoke_backroom_android_native_binding_on_host_change()
   from public,anon,authenticated;
 grant execute on function public.revoke_backroom_android_native_binding_on_host_change() to service_role;
@@ -249,18 +278,20 @@ language plpgsql
 security invoker
 set search_path=''
 as $function$
+declare
+  v_now timestamptz:=pg_catalog.clock_timestamp();
 begin
   if new.status is distinct from 'active' then
     update public.backroom_android_native_bindings
-    set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp())
+    set revoked_at=coalesce(revoked_at,v_now),expires_at=least(expires_at,v_now)
     where device_id=new.device_id and revoked_at is null;
     update public.backroom_android_native_binding_challenges
-    set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp())
+    set revoked_at=coalesce(revoked_at,v_now),expires_at=least(expires_at,v_now)
     where device_id=new.device_id and consumed_at is null and revoked_at is null;
   end if;
   return new;
 end;
-$function$;
+$function$
 revoke all on function public.revoke_backroom_android_native_binding_on_device_change()
   from public,anon,authenticated;
 grant execute on function public.revoke_backroom_android_native_binding_on_device_change() to service_role;
@@ -289,6 +320,7 @@ declare
   v_device public.backroom_devices%rowtype;
   v_device_room_binding public.backroom_device_room_bindings%rowtype;
   v_app public.backroom_device_apps%rowtype;
+  v_agent_connection public.agent_connections%rowtype;
   v_host public.backroom_hosts%rowtype;
   v_mapping public.backroom_android_native_bindings%rowtype;
   v_phone_mapping public.backroom_android_native_bindings%rowtype;
@@ -346,15 +378,7 @@ begin
   if not exists(select 1 from public.participants p
     where p.id=v_binding.participant_id and p.room_id=v_binding.room_id
       and p.kind in ('original_session','model','external_agent')
-      and p.status in ('connected','active','autonomous'))
-    or not exists(select 1 from public.agent_connections ac
-      where ac.credential_digest=v_mcp.agent_credential_digest
-        and ac.owner_id=v_binding.owner_id and ac.room_id=v_binding.room_id
-        and ac.participant_id=v_binding.participant_id and ac.revoked_at is null
-        and ac.expires_at>v_now)
-    or not exists(select 1 from public.backroom_hosts h
-      where h.host_id=v_binding.host_id and h.owner_id=v_binding.owner_id
-        and h.revoked_at is null and h.expires_at>v_now) then
+      and p.status in ('connected','active','autonomous')) then
     return pg_catalog.jsonb_build_object('ok',false,'reason','group_authorization_expired');
   end if;
 
@@ -389,11 +413,35 @@ begin
     return pg_catalog.jsonb_build_object('ok',false,'reason','app_signer_not_in_device_inventory');
   end if;
 
+  select * into v_agent_connection from public.agent_connections ac
+  where ac.credential_digest=v_mcp.agent_credential_digest
+    and ac.owner_id=v_binding.owner_id and ac.room_id=v_binding.room_id
+    and ac.participant_id=v_binding.participant_id
+    and ac.revoked_at is null and ac.expires_at>v_now
+  for update;
+  if not found then
+    return pg_catalog.jsonb_build_object('ok',false,'reason','group_authorization_expired');
+  end if;
+
   select * into v_host from public.backroom_hosts h
   where h.host_id=v_binding.host_id and h.owner_id=v_binding.owner_id
     and h.revoked_at is null and h.expires_at>v_now
   for update;
   if not found then
+    return pg_catalog.jsonb_build_object('ok',false,'reason','group_authorization_expired');
+  end if;
+
+  -- Recheck after acquiring every mutable authority lock; waits must not make
+  -- a previously live challenge valid beyond an expired underlying lease.
+  v_now:=pg_catalog.clock_timestamp();
+  if v_challenge.revoked_at is not null or v_challenge.expires_at<=v_now then
+    return pg_catalog.jsonb_build_object('ok',false,'reason','challenge_invalid_or_expired');
+  end if;
+  if v_mcp.terminated_at is not null or v_mcp.expires_at<=v_now
+    or v_screen.status is distinct from 'active' or v_screen.expires_at<=v_now
+    or v_device.status is distinct from 'active'
+    or v_agent_connection.revoked_at is not null or v_agent_connection.expires_at<=v_now
+    or v_host.revoked_at is not null or v_host.expires_at<=v_now then
     return pg_catalog.jsonb_build_object('ok',false,'reason','group_authorization_expired');
   end if;
 
@@ -484,7 +532,8 @@ begin
     p_challenge_id,v_binding.id,v_binding.owner_id,v_binding.room_id,v_binding.participant_id,
     p_device_id,p_screen_session_id,p_app_package_name,p_app_signing_certificate_sha256,
     p_composer_identity_digest,p_send_control_identity_digest,p_provider_conversation_identity_digest,
-    least(v_screen.expires_at,v_now+interval '15 minutes')
+    least(v_screen.expires_at,v_mcp.expires_at,v_agent_connection.expires_at,
+      v_host.expires_at,v_now+interval '15 minutes')
   ) returning id into v_mapping_id;
 
   if v_binding.provider_conversation_identity_digest is null then
@@ -498,7 +547,8 @@ begin
   where id=p_challenge_id and consumed_at is null and revoked_at is null;
   if not found then raise exception 'Android native binding challenge was consumed concurrently'; end if;
   return pg_catalog.jsonb_build_object('ok',true,'nativeBindingId',v_mapping_id,
-    'bindingId',v_binding.id,'expiresAt',least(v_screen.expires_at,v_now+interval '15 minutes'),'replayed',false);
+    'bindingId',v_binding.id,'expiresAt',least(v_screen.expires_at,v_mcp.expires_at,
+      v_agent_connection.expires_at,v_host.expires_at,v_now+interval '15 minutes'),'replayed',false);
 end;
 $function$;
 
