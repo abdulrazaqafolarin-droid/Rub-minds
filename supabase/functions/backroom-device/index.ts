@@ -591,6 +591,35 @@ Deno.serve(async req => {
       return json(201, { ok: true, challengeId, nonce, expiresAt }, origin);
     }
 
+    if (action === 'android/native-binding-revoke') {
+      if (!exactKeys(input, ['action','deviceId','roomId','sessionId','bindingId']) ||
+          !UUID.test(input.deviceId ?? '') || !UUID.test(input.roomId ?? '') ||
+          !UUID.test(input.sessionId ?? '') || !UUID.test(input.bindingId ?? '')) {
+        return json(400, fail('invalid_native_binding_revoke'), origin);
+      }
+      const userId = await owner(req);
+      if (!userId) return json(401, fail('owner_auth_required'), origin);
+      const [actor, deviceBinding] = await Promise.all([
+        authorizeRoomActor(input.roomId, userId),
+        verifyActiveDeviceRoomBinding(input.deviceId, input.roomId),
+      ]);
+      if (!actor.ok) return json(actor.status, fail(actor.reason), origin);
+      if (!deviceBinding.ok) return json(deviceBinding.status, fail(deviceBinding.reason), origin);
+      if (deviceBinding.platform !== 'android') return json(409, fail('android_device_required'), origin);
+      const { data, error } = await db.from('backroom_android_native_bindings')
+        .update({ revoked_at: new Date().toISOString() })
+        .eq('binding_id', input.bindingId).eq('device_id', input.deviceId)
+        .eq('room_id', input.roomId).eq('screen_session_id', input.sessionId)
+        .is('revoked_at', null).select('id');
+      if (error) return json(503, fail('native_binding_revoke_failed'), origin);
+      const { error: challengeError } = await db.from('backroom_android_native_binding_challenges')
+        .update({ revoked_at: new Date().toISOString() })
+        .eq('binding_id', input.bindingId).eq('device_id', input.deviceId)
+        .eq('screen_session_id', input.sessionId).is('consumed_at', null).is('revoked_at', null);
+      if (challengeError) return json(503, fail('native_binding_revoke_failed'), origin);
+      return json(200, { ok: true, revoked: Array.isArray(data) && data.length > 0 }, origin);
+    }
+
     if (action === 'android/native-binding-complete') {
       if (!exactKeys(input, [
         'action','challengeId','nonce','screenSessionId','appPackageName',
