@@ -84,6 +84,10 @@ declare
   v_native_nonce_screen_cap text := repeat('2',64);
   v_native_challenge_host_cap uuid := '83000000-0000-4000-8000-000000000013';
   v_native_nonce_host_cap text := repeat('3',64);
+  v_native_screen_cap_expiry timestamptz;
+  v_native_screen_challenge_cap_expiry timestamptz;
+  v_native_host_cap_expiry timestamptz;
+  v_native_host_challenge_cap_expiry timestamptz;
 begin
   select pg_catalog.pg_get_functiondef(
     'public.settle_backroom_android_native_wake_result(uuid,text,text,uuid,text,uuid,uuid,uuid,text,integer,text,text,text,jsonb)'::regprocedure
@@ -302,6 +306,20 @@ begin
         and c.expires_at<=s.expires_at) then
     raise exception 'Shortening a screen lease must cap its mapping and pending challenge';
   end if;
+  select n.expires_at into v_native_screen_cap_expiry
+  from public.backroom_android_native_bindings n where n.id=v_native_mapping_id;
+  select c.expires_at into v_native_screen_challenge_cap_expiry
+  from public.backroom_android_native_binding_challenges c where c.id=v_native_challenge_screen_cap;
+  -- Extending the screen later must not silently renew either proof.
+  update public.backroom_desktop_sessions
+  set expires_at=pg_catalog.clock_timestamp()+interval '1 hour'
+  where session_id=v_native_screen_session and status='active';
+  if (select n.expires_at from public.backroom_android_native_bindings n where n.id=v_native_mapping_id)
+       is distinct from v_native_screen_cap_expiry
+    or (select c.expires_at from public.backroom_android_native_binding_challenges c
+       where c.id=v_native_challenge_screen_cap) is distinct from v_native_screen_challenge_cap_expiry then
+    raise exception 'Screen renewal must not silently extend a native mapping or challenge';
+  end if;
 
   -- Stopping the exact Android screen session revokes both active and pending phone authority.
   update public.backroom_desktop_sessions
@@ -372,10 +390,20 @@ begin
         and c.expires_at<=h.expires_at) then
     raise exception 'Shortening a host lease must cap its native mapping and pending challenge';
   end if;
+  select n.expires_at into v_native_host_cap_expiry
+  from public.backroom_android_native_bindings n where n.id=v_native_mapping_retry_id;
+  select c.expires_at into v_native_host_challenge_cap_expiry
+  from public.backroom_android_native_binding_challenges c where c.id=v_native_challenge_host_cap;
   -- A renewed host does not silently renew an already-issued native attestation.
   update public.backroom_hosts
   set expires_at=pg_catalog.clock_timestamp()+interval '48 hours'
   where host_id=v_host_test;
+  if (select n.expires_at from public.backroom_android_native_bindings n
+      where n.id=v_native_mapping_retry_id) is distinct from v_native_host_cap_expiry
+    or (select c.expires_at from public.backroom_android_native_binding_challenges c
+      where c.id=v_native_challenge_host_cap) is distinct from v_native_host_challenge_cap_expiry then
+    raise exception 'Host renewal must not silently extend a native mapping or challenge';
+  end if;
 
   -- A consumed challenge can still acknowledge an exact duplicate after the
   -- group owner explicitly arms wake; it must not create a second mapping.
