@@ -24,7 +24,7 @@ const sha256 = v => createHash('sha256').update(v,'utf8').digest('hex');
  * shape (which silently hid required gateway dependencies).
  *
  * @typedef {{hostId:string,ownerId:string,credentialDigest:string,expiresAt:string,revokedAt?:string|null}} WakeHostRecord
- * @typedef {{bindingId:string,hostId:string,ownerId:string,sessionDigest:string,surface:string,providerConversationIdentityDigest?:string|null,revokedAt?:string|null,wakeEnabled?:boolean,confirmedAt?:string|null,wakeExpiresAt?:string|null}} WakeBindingRecord
+ * @typedef {{bindingId:string,hostId:string,ownerId:string,sessionDigest:string,surface:string,providerConversationIdentityDigest?:string|null,nativeBindingAttested?:boolean,revokedAt?:string|null,wakeEnabled?:boolean,confirmedAt?:string|null,wakeExpiresAt?:string|null}} WakeBindingRecord
  * @typedef {{claim:(input:any)=>Promise<any>,acknowledge:(input:any)=>Promise<any>,retry:(input:any)=>Promise<any>}} WakeQueueStore
  * @typedef {{lookupHost:(hostId:string)=>Promise<WakeHostRecord|null>,lookupBinding:(bindingId:string)=>Promise<WakeBindingRecord|null>,store:WakeQueueStore,activateBinding?:(input:any)=>Promise<any>,deactivateBinding?:(input:any)=>Promise<any>,now?:()=>number}} WakeGatewayFactoryOptions
  * @param {Partial<WakeGatewayFactoryOptions>} [options]
@@ -33,7 +33,7 @@ export function createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,a
   if(typeof lookupHost!=='function'||typeof lookupBinding!=='function')throw new TypeError('Trusted host and binding lookups required');
   if(!store||typeof store.claim!=='function'||typeof store.acknowledge!=='function'||typeof store.retry!=='function')throw new TypeError('Private durable store required');
   if(typeof now!=='function')throw new TypeError('Clock required');
-  async function authorize({hostId,hostToken,sessionDigest,bindingId},requireConsent=true) {
+  async function authorize({hostId,hostToken,sessionDigest,bindingId},requireConsent=true,requireNativeAttestation=true) {
     if(!UUID.test(hostId??'')||!TOKEN.test(hostToken??'')||!DIGEST.test(sessionDigest??'')||!UUID.test(bindingId??''))return null;
     const host=await lookupHost(hostId);
     // No host-controlled owner identity or binding metadata is trusted.
@@ -45,6 +45,8 @@ export function createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,a
     const binding=await lookupBinding(bindingId);
     if(!binding||binding.bindingId!==bindingId||binding.hostId!==hostId||binding.ownerId!==host.ownerId||
        binding.sessionDigest!==sessionDigest||binding.revokedAt!=null||!SURFACES.has(binding.surface))return null;
+    // Android native Send is authorized only while its server-side device/app/screen attestation is live.
+    if(requireNativeAttestation&&binding.surface==='android_app'&&binding.nativeBindingAttested!==true)return null;
     if(requireConsent&&(binding.wakeEnabled!==true||binding.confirmedAt==null||
        !Number.isFinite(Date.parse(binding.wakeExpiresAt))||Date.parse(binding.wakeExpiresAt)<=now()))return null;
     const providerConversationIdentityDigest=binding.providerConversationIdentityDigest??null;
@@ -57,7 +59,7 @@ export function createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,a
     // previously registered inactive binding after checking a local wake grant.
     async activate(input) {
       if(typeof activateBinding!=='function')return Object.freeze({ok:false,reason:'unauthorized'});
-      const scope=await authorize(input??{},false);
+      const scope=await authorize(input??{},false,true);
       if(!scope||(NATIVE_SURFACES.has(scope.surface)&&scope.providerConversationIdentityDigest===null))
         return Object.freeze({ok:false,reason:'unauthorized'});
       if(!UUID.test(input.grantId??'')||!Number.isSafeInteger(input.ttlSeconds)||
@@ -67,7 +69,7 @@ export function createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,a
     },
     async deactivate(input) {
       if(typeof deactivateBinding!=='function')return Object.freeze({ok:false,reason:'unauthorized'});
-      const scope=await authorize(input??{},false);
+      const scope=await authorize(input??{},false,false);
       if(!scope)return Object.freeze({ok:false,reason:'unauthorized'});
       if(!UUID.test(input.grantId??''))return invalidRequest();
       const {providerConversationIdentityDigest: _providerDigest,surface: _surface,...hostScope}=scope;
@@ -92,7 +94,8 @@ export function createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,a
       return Object.freeze({ok:true,leases:Object.freeze(leases)});
     },
     async acknowledge(input) {
-      const scope=await authorize(input??{});
+      // Settlement must remain possible after device attestation or local consent is revoked.
+      const scope=await authorize(input??{},false,false);
       if(!scope)return Object.freeze({ok:false,reason:'unauthorized'});
       if(!UUID.test(input.jobId??'')||!UUID.test(input.leaseToken??'')||
          !['acknowledged','ignored'].includes(input.outcome))return invalidRequest();
@@ -100,7 +103,8 @@ export function createAuthenticatedWakeGateway({lookupHost,lookupBinding,store,a
       return Object.freeze({ok:true,accepted:await store.acknowledge({...hostScope,jobId:input.jobId,leaseToken:input.leaseToken,outcome:input.outcome})});
     },
     async retry(input) {
-      const scope=await authorize(input??{});
+      // Retry/lease cleanup does not perform a native Send; preserve it after attestation revocation.
+      const scope=await authorize(input??{},false,false);
       if(!scope)return Object.freeze({ok:false,reason:'unauthorized'});
       const errorCode=input.errorCode??'other';
       if(!UUID.test(input.jobId??'')||!UUID.test(input.leaseToken??'')||
