@@ -34,7 +34,7 @@ create or replace function public.settle_backroom_android_native_wake_result(
 )
 returns text
 language plpgsql
-security definer
+security invoker
 set search_path=''
 as $function$
 declare
