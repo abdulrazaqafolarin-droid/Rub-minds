@@ -31,6 +31,7 @@ export function classifyExistingBinding({ownerId,input,existingSession=null,exis
  if(!existing)return Object.freeze({action:'insert'});
  const matches=FIELDS.every(([column,key])=>{
    const expected=key==='ownerId'?ownerId:input[key];
+   if(column==='provider_conversation_identity_digest'&&expected===undefined) return true;
    if(column==='provider_conversation_identity_digest')
     return (existing[column]??null)===(expected??null);
    return existing[column]===expected;
