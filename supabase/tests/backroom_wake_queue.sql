@@ -350,6 +350,33 @@ begin
   end if;
   v_native_mapping_retry_id:=(v_native_attestation->>'nativeBindingId')::uuid;
 
+  -- Shortening the paired host lease caps both the native mapping and outstanding challenge.
+  insert into public.backroom_android_native_binding_challenges(
+    id,owner_id,room_id,binding_id,device_id,screen_session_id,app_package_name,nonce_digest,expires_at
+  ) values(
+    v_native_challenge_host_cap,v_owner,v_room,v_binding_native_draft,v_native_device,
+    v_native_screen_session_retry,'com.example.notes',
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_nonce_host_cap,'UTF8')),'hex'),
+    pg_catalog.clock_timestamp()+interval '45 minutes'
+  );
+  update public.backroom_hosts
+  set expires_at=pg_catalog.clock_timestamp()+interval '10 minutes'
+  where host_id=v_host_test;
+  if not exists(select 1 from public.backroom_android_native_bindings n
+      join public.backroom_hosts h on h.host_id=v_host_test
+      where n.id=v_native_mapping_retry_id and n.revoked_at is null
+        and n.expires_at<=h.expires_at)
+    or not exists(select 1 from public.backroom_android_native_binding_challenges c
+      join public.backroom_hosts h on h.host_id=v_host_test
+      where c.id=v_native_challenge_host_cap and c.revoked_at is null
+        and c.expires_at<=h.expires_at) then
+    raise exception 'Shortening a host lease must cap its native mapping and pending challenge';
+  end if;
+  -- A renewed host does not silently renew an already-issued native attestation.
+  update public.backroom_hosts
+  set expires_at=pg_catalog.clock_timestamp()+interval '48 hours'
+  where host_id=v_host_test;
+
   -- A consumed challenge can still acknowledge an exact duplicate after the
   -- group owner explicitly arms wake; it must not create a second mapping.
   if not public.activate_backroom_wake_grant(
