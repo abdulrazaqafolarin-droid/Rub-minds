@@ -323,41 +323,6 @@ begin
   where c.id=p_challenge_id for update;
 
   if not found then return pg_catalog.jsonb_build_object('ok',false,'reason','challenge_not_found'); end if;
-  if v_challenge.consumed_at is not null then
-    -- A mapping may have been created by an earlier challenge for this exact
-    -- binding. Keep the challenge's nonce receipt, and replay only while the
-    -- same attested mapping is still active and its complete evidence matches.
-    select * into v_mapping from public.backroom_android_native_bindings n
-    where n.binding_id=v_challenge.binding_id and n.revoked_at is null
-    order by n.attested_at desc limit 1;
-    if found
-      and v_challenge.nonce_digest is not distinct from p_nonce_digest
-      and v_challenge.device_id is not distinct from p_device_id
-      and v_challenge.screen_session_id is not distinct from p_screen_session_id
-      and v_challenge.app_package_name is not distinct from p_app_package_name
-      and v_mapping.device_id=p_device_id
-      and v_mapping.screen_session_id=p_screen_session_id
-      and v_mapping.app_package_name=p_app_package_name
-      and v_mapping.app_signing_certificate_sha256=p_app_signing_certificate_sha256
-      and v_mapping.composer_identity_digest=p_composer_identity_digest
-      and v_mapping.send_control_identity_digest=p_send_control_identity_digest
-      and v_mapping.provider_conversation_identity_digest=p_provider_conversation_identity_digest
-      and v_mapping.revoked_at is null
-      and v_mapping.expires_at>v_now then
-      return pg_catalog.jsonb_build_object('ok',true,'nativeBindingId',v_mapping.id,
-        'bindingId',v_mapping.binding_id,'expiresAt',v_mapping.expires_at,'replayed',true);
-    end if;
-    return pg_catalog.jsonb_build_object('ok',false,'reason','challenge_already_consumed');
-  end if;
-  if v_challenge.revoked_at is not null or v_challenge.expires_at<=v_now
-    or v_challenge.nonce_digest is distinct from p_nonce_digest
-    or v_challenge.device_id is distinct from p_device_id
-    or v_challenge.screen_session_id is distinct from p_screen_session_id
-    or v_challenge.app_package_name is distinct from p_app_package_name
-    or v_challenge.room_id is distinct from v_binding.room_id
-    or v_challenge.owner_id is distinct from v_binding.owner_id then
-    return pg_catalog.jsonb_build_object('ok',false,'reason','challenge_invalid_or_expired');
-  end if;
 
   if v_binding.surface is distinct from 'android_app'
     or v_binding.revoked_at is not null or v_binding.wake_enabled
@@ -421,6 +386,52 @@ begin
   for update;
   if not found then
     return pg_catalog.jsonb_build_object('ok',false,'reason','group_authorization_expired');
+  end if;
+
+  -- Replays are acknowledged only after the live MCP, group, screen, device,
+  -- room pairing, app signer and host authorities have been locked and checked.
+  -- This closes the race where a consumed challenge could report success after
+  -- its screen/device mapping had already been revoked.
+  if v_challenge.consumed_at is not null then
+    select * into v_mapping from public.backroom_android_native_bindings n
+    where n.binding_id=v_challenge.binding_id and n.revoked_at is null
+    order by n.attested_at desc limit 1;
+    if found
+      and v_challenge.nonce_digest is not distinct from p_nonce_digest
+      and v_challenge.device_id is not distinct from p_device_id
+      and v_challenge.screen_session_id is not distinct from p_screen_session_id
+      and v_challenge.app_package_name is not distinct from p_app_package_name
+      and v_challenge.revoked_at is null
+      and v_mapping.device_id=p_device_id
+      and v_mapping.screen_session_id=p_screen_session_id
+      and v_mapping.app_package_name=p_app_package_name
+      and v_mapping.app_signing_certificate_sha256=p_app_signing_certificate_sha256
+      and v_mapping.composer_identity_digest=p_composer_identity_digest
+      and v_mapping.send_control_identity_digest=p_send_control_identity_digest
+      and v_mapping.provider_conversation_identity_digest=p_provider_conversation_identity_digest
+      and v_mapping.expires_at>v_now then
+      return pg_catalog.jsonb_build_object('ok',true,'nativeBindingId',v_mapping.id,
+        'bindingId',v_mapping.binding_id,'expiresAt',v_mapping.expires_at,'replayed',true);
+    end if;
+    return pg_catalog.jsonb_build_object('ok',false,'reason','challenge_already_consumed');
+  end if;
+
+  if v_challenge.revoked_at is not null or v_challenge.expires_at<=v_now
+    or v_challenge.nonce_digest is distinct from p_nonce_digest
+    or v_challenge.device_id is distinct from p_device_id
+    or v_challenge.screen_session_id is distinct from p_screen_session_id
+    or v_challenge.app_package_name is distinct from p_app_package_name
+    or v_challenge.room_id is distinct from v_binding.room_id
+    or v_challenge.owner_id is distinct from v_binding.owner_id then
+    return pg_catalog.jsonb_build_object('ok',false,'reason','challenge_invalid_or_expired');
+  end if;
+
+  if v_binding.surface is distinct from 'android_app'
+    or v_binding.revoked_at is not null
+    or (v_binding.provider_conversation_identity_digest is not null
+      and v_binding.provider_conversation_identity_digest is distinct from p_provider_conversation_identity_digest)
+    or exists(select 1 from public.backroom_wake_jobs j where j.binding_id=v_binding.id) then
+    return pg_catalog.jsonb_build_object('ok',false,'reason','group_binding_not_eligible');
   end if;
 
   select * into v_mapping from public.backroom_android_native_bindings n
