@@ -65,6 +65,13 @@ declare
   v_session_lock_position integer;
   v_binding_lock_position integer;
   v_job_lock_position integer;
+  v_native_binding_definition text;
+  v_attest_advisory_position integer;
+  v_attest_session_position integer;
+  v_attest_binding_position integer;
+  v_attest_challenge_position integer;
+  v_attest_screen_position integer;
+  v_attest_device_position integer;
   v_native_challenge uuid := '83000000-0000-4000-8000-000000000010';
   v_native_nonce text := repeat('f',64);
   v_native_attestation jsonb;
@@ -87,6 +94,28 @@ begin
       and v_session_lock_position<v_binding_lock_position
       and v_binding_lock_position<v_job_lock_position) then
     raise exception 'Native settlement must lock session, binding, then job to serialize with consent revocation';
+  end if;
+
+  select pg_catalog.pg_get_functiondef(
+    'public.register_backroom_android_native_binding(uuid,text,uuid,uuid,text,text,text,text,text)'::regprocedure
+  ) into v_native_binding_definition;
+  v_attest_advisory_position:=pg_catalog.position('pg_advisory_xact_lock' in v_native_binding_definition);
+  v_attest_session_position:=pg_catalog.position('from public.rub_minds_mcp_sessions s' in v_native_binding_definition);
+  v_attest_binding_position:=pg_catalog.position('where b.id=v_challenge.binding_id for update' in v_native_binding_definition);
+  v_attest_challenge_position:=pg_catalog.position('where c.id=p_challenge_id for update' in v_native_binding_definition);
+  v_attest_screen_position:=pg_catalog.position('where s.session_id=p_screen_session_id' in v_native_binding_definition);
+  v_attest_device_position:=pg_catalog.position('where d.device_id=p_device_id' in v_native_binding_definition);
+  if v_attest_advisory_position=0 or v_attest_session_position=0
+    or v_attest_binding_position=0 or v_attest_challenge_position=0
+    or v_attest_screen_position=0 or v_attest_device_position=0
+    or not (v_attest_advisory_position<v_attest_session_position
+      and v_attest_session_position<v_attest_binding_position
+      and v_attest_binding_position<v_attest_challenge_position
+      and v_attest_challenge_position<v_attest_screen_position
+      and v_attest_screen_position<v_attest_device_position)
+    or (select p.prosecdef from pg_catalog.pg_proc p
+      where p.oid='public.register_backroom_android_native_binding(uuid,text,uuid,uuid,text,text,text,text,text)'::regprocedure) then
+    raise exception 'Native binding registration must use invoker privileges and consistent session-to-device lock ordering';
   end if;
 
   insert into auth.users(id) values (v_owner);
