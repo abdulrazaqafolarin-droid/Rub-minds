@@ -69,6 +69,10 @@ declare
   v_native_nonce text := repeat('f',64);
   v_native_attestation jsonb;
   v_native_mapping_id uuid;
+  v_native_challenge_retry uuid := '83000000-0000-4000-8000-000000000011';
+  v_native_nonce_retry text := repeat('1',64);
+  v_native_screen_session_retry uuid := '82000000-0000-4000-8000-000000000011';
+  v_native_mapping_retry_id uuid;
 begin
   select pg_catalog.pg_get_functiondef(
     'public.settle_backroom_android_native_wake_result(uuid,text,text,uuid,text,uuid,uuid,uuid,text,integer,text,text,text,jsonb)'::regprocedure
@@ -251,6 +255,42 @@ begin
     where n.id=v_native_mapping_id and n.revoked_at is not null) then
     raise exception 'Stopping the Android screen session must revoke its native group binding';
   end if;
+  select public.register_backroom_android_native_binding(
+    v_native_challenge,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_nonce,'UTF8')),'hex'),
+    v_native_device,v_native_screen_session,'com.example.notes',repeat('e',64),
+    repeat('c',64),repeat('d',64),v_native_provider_digest
+  ) into v_native_attestation;
+  if v_native_attestation->>'ok' is distinct from 'false'
+    or v_native_attestation->>'reason' is distinct from 'challenge_already_consumed' then
+    raise exception 'A consumed challenge must not replay a revoked phone attestation';
+  end if;
+
+  -- Rebind the same exact group AI to a new live screen session with a fresh
+  -- owner challenge; MCP Leave later must revoke this still-active mapping.
+  insert into public.backroom_desktop_sessions(
+    session_id,device_id,room_id,requested_by,session_type,status,expires_at
+  ) values(v_native_screen_session_retry,v_native_device,v_room,v_owner,'screen','active',
+    pg_catalog.clock_timestamp()+interval '1 hour');
+  insert into public.backroom_android_native_binding_challenges(
+    id,owner_id,room_id,binding_id,device_id,screen_session_id,app_package_name,nonce_digest,expires_at
+  ) values(
+    v_native_challenge_retry,v_owner,v_room,v_binding_native_draft,v_native_device,
+    v_native_screen_session_retry,'com.example.notes',
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_nonce_retry,'UTF8')),'hex'),
+    pg_catalog.clock_timestamp()+interval '90 seconds'
+  );
+  select public.register_backroom_android_native_binding(
+    v_native_challenge_retry,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_nonce_retry,'UTF8')),'hex'),
+    v_native_device,v_native_screen_session_retry,'com.example.notes',repeat('e',64),
+    repeat('c',64),repeat('d',64),v_native_provider_digest
+  ) into v_native_attestation;
+  if v_native_attestation->>'ok' is distinct from 'true'
+    or v_native_attestation->>'replayed' is distinct from 'false' then
+    raise exception 'A fresh owner challenge must rebind the exact group AI to a new live phone session';
+  end if;
+  v_native_mapping_retry_id:=(v_native_attestation->>'nativeBindingId')::uuid;
 
   -- A registered binding cannot silently switch to a different valid provider conversation.
   v_conflict := false;
@@ -1108,6 +1148,10 @@ begin
       join public.backroom_input_bindings b on b.id=n.binding_id
       where b.room_id=v_room and b.participant_id=v_participant and n.revoked_at is null) then
     raise exception 'MCP Leave must revoke every device-attested Android group binding';
+  end if;
+  if not exists(select 1 from public.backroom_android_native_bindings n
+      where n.id=v_native_mapping_retry_id and n.revoked_at is not null) then
+    raise exception 'MCP Leave must revoke a live Android native mapping for the exact group AI';
   end if;
   if exists(select 1 from public.backroom_wake_jobs
       where room_id=v_room and participant_id=v_participant and state in ('pending','leased')) then
