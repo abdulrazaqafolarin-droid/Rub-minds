@@ -461,7 +461,7 @@ Deno.serve(async req => {
           .eq('room_id', input.roomId).in('id', participantIds)
           .in('kind', ['original_session','model','external_agent'])
           .in('status', ['connected','active','autonomous']),
-        db.from('backroom_hosts').select('host_id')
+        db.from('backroom_hosts').select('host_id,expires_at')
           .eq('owner_id', userId).in('host_id', hostIds)
           .is('revoked_at', null).gt('expires_at', new Date().toISOString()),
         db.from('backroom_android_native_bindings').select('binding_id')
@@ -479,7 +479,7 @@ Deno.serve(async req => {
         .map(row => row.agent_credential_digest)
         .filter(value => typeof value === 'string' && HEX.test(value)))];
       const connections = credentialDigests.length
-        ? await db.from('agent_connections').select('credential_digest')
+        ? await db.from('agent_connections').select('credential_digest,expires_at')
             .eq('owner_id', userId).eq('room_id', input.roomId)
             .is('revoked_at', null).gt('expires_at', new Date().toISOString())
             .in('credential_digest', credentialDigests)
@@ -572,6 +572,8 @@ Deno.serve(async req => {
         Date.now() + 90_000,
         Date.parse(screen.session.expires_at),
         Date.parse(mcp.data.expires_at),
+        Date.parse(connection.expires_at),
+        Date.parse(host.data.expires_at),
       )).toISOString();
       if (Date.parse(expiresAt) <= Date.now()) return json(409, fail('native_binding_challenge_expired'), origin);
       const now = new Date().toISOString();
