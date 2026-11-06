@@ -53,6 +53,9 @@ declare
   v_preflight_claim record;
   v_preflight_handoff uuid := '80000000-0000-4000-8000-000000000011';
   v_preflight_result jsonb;
+  v_preflight_retry_claim record;
+  v_preflight_retry_handoff uuid := '80000000-0000-4000-8000-000000000013';
+  v_preflight_retry_result jsonb;
   v_review_job jsonb;
   v_review_claim record;
   v_review_handoff uuid := '80000000-0000-4000-8000-000000000012';
@@ -563,6 +566,44 @@ begin
       and j.last_error_code='approval_required' and j.lease_token_hash is null
       and j.native_result_payload=v_preflight_result) then
     raise exception 'A proven no-effect permission denial must be returned to bounded retry';
+  end if;
+
+  -- A later attempt may settle this same job, but must not overwrite the
+  -- first handoff receipt: a delayed exact ACK from that attempt stays replayable.
+  update public.backroom_wake_jobs
+  set available_at=pg_catalog.clock_timestamp()-interval '1 second'
+  where id=v_preflight_claim.out_job_id and state='pending';
+  select * into v_preflight_retry_claim from public.claim_backroom_wake_jobs_with_provider_identity(
+    v_host_test,repeat('8',64),v_binding_native,5,30) limit 1;
+  if not found or v_preflight_retry_claim.out_job_id<>v_preflight_claim.out_job_id then
+    raise exception 'Preflight retry must reclaim the same durable job';
+  end if;
+  v_preflight_retry_result:=jsonb_build_object(
+    'version',1,'kind','native_wake_result','handoffId',v_preflight_retry_handoff::text,
+    'jobId',v_preflight_retry_claim.out_job_id::text,'deviceId',v_native_device::text,
+    'roomId',v_room::text,'screenSessionId',v_native_screen_session::text,
+    'bindingId',v_binding_native::text,'targetId','target-native','targetRevision',1,
+    'state','needs_review','promptInserted',false,'sendInvoked',false,
+    'composerCleared',false,'reason','device_disconnected'
+  );
+  if public.settle_backroom_android_native_wake_result(
+    v_preflight_retry_claim.out_job_id,v_host_test,repeat('8',64),v_binding_native,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_preflight_retry_claim.out_lease_token,'UTF8')),'hex'),
+    v_preflight_retry_handoff,v_native_device,v_native_screen_session,'target-native',1,
+    repeat('a',64),repeat('b',64),v_native_provider_digest,v_preflight_retry_result
+  )<>'failed' or not exists(select 1 from public.backroom_wake_jobs j
+    where j.id=v_preflight_retry_claim.out_job_id and j.state='failed'
+      and pg_catalog.jsonb_array_length(j.native_result_receipts)=2
+      and j.native_result_payload=v_preflight_retry_result) then
+    raise exception 'The later uncertain attempt must settle while retaining both handoff receipts';
+  end if;
+  if public.settle_backroom_android_native_wake_result(
+    v_preflight_claim.out_job_id,v_host_test,repeat('8',64),v_binding_native,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_preflight_claim.out_lease_token,'UTF8')),'hex'),
+    v_preflight_handoff,v_native_device,v_native_screen_session,'target-native',1,
+    repeat('a',64),repeat('b',64),v_native_provider_digest,v_preflight_result
+  )<>'replayed' then
+    raise exception 'A delayed duplicate ACK must replay after a later retry has settled';
   end if;
 
   -- A post-effect uncertain result is terminal and must never be replayed automatically.
