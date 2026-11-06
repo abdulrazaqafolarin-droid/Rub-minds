@@ -97,23 +97,27 @@ set search_path=''
 as $function$
 declare
   v_now timestamptz:=pg_catalog.clock_timestamp();
+  v_identity_changed boolean;
 begin
-  if new.status is distinct from 'active' or new.expires_at<=v_now then
+  v_identity_changed:=new.session_id is distinct from old.session_id
+    or new.device_id is distinct from old.device_id
+    or new.room_id is distinct from old.room_id
+    or new.requested_by is distinct from old.requested_by
+    or new.session_type is distinct from old.session_type;
+  if v_identity_changed or new.status is distinct from 'active' or new.expires_at<=v_now then
     update public.backroom_android_native_bindings
     set revoked_at=coalesce(revoked_at,v_now),expires_at=least(expires_at,v_now)
-    where screen_session_id=new.session_id and revoked_at is null;
+    where screen_session_id=old.session_id and revoked_at is null;
     update public.backroom_android_native_binding_challenges
     set revoked_at=coalesce(revoked_at,v_now),expires_at=least(expires_at,v_now)
-    where screen_session_id=new.session_id and consumed_at is null and revoked_at is null;
+    where screen_session_id=old.session_id and consumed_at is null and revoked_at is null;
   elsif new.expires_at<old.expires_at then
-    -- Shortening a screen lease caps every dependent proof immediately.
-    -- Extending the screen does not silently extend a native attestation.
     update public.backroom_android_native_bindings
     set expires_at=least(expires_at,new.expires_at)
-    where screen_session_id=new.session_id and revoked_at is null;
+    where screen_session_id=old.session_id and revoked_at is null;
     update public.backroom_android_native_binding_challenges
     set expires_at=least(expires_at,new.expires_at)
-    where screen_session_id=new.session_id and consumed_at is null and revoked_at is null;
+    where screen_session_id=old.session_id and consumed_at is null and revoked_at is null;
   end if;
   return new;
 end;
@@ -124,7 +128,7 @@ grant execute on function public.revoke_backroom_android_native_binding_on_scree
 drop trigger if exists backroom_android_native_binding_screen_lifecycle_trigger
   on public.backroom_desktop_sessions;
 create trigger backroom_android_native_binding_screen_lifecycle_trigger
-after update of status,expires_at on public.backroom_desktop_sessions
+after update of session_id,device_id,room_id,requested_by,session_type,status,expires_at on public.backroom_desktop_sessions
 for each row execute function public.revoke_backroom_android_native_binding_on_screen_change();
 
 create or replace function public.revoke_backroom_android_native_binding_on_group_binding_change()
@@ -133,14 +137,30 @@ language plpgsql
 security invoker
 set search_path=''
 as $function$
+declare
+  v_identity_changed boolean;
+  v_now timestamptz:=pg_catalog.clock_timestamp();
 begin
-  if new.revoked_at is not null then
+  v_identity_changed:=new.owner_id is distinct from old.owner_id
+    or new.room_id is distinct from old.room_id
+    or new.participant_id is distinct from old.participant_id
+    or new.host_id is distinct from old.host_id
+    or new.session_digest is distinct from old.session_digest
+    or new.space_id is distinct from old.space_id
+    or new.session_id is distinct from old.session_id
+    or new.target_id is distinct from old.target_id
+    or new.target_identity_fingerprint is distinct from old.target_identity_fingerprint
+    or new.target_revision is distinct from old.target_revision
+    or new.surface is distinct from old.surface
+    or new.locator_kind is distinct from old.locator_kind
+    or new.locator_value is distinct from old.locator_value;
+  if new.revoked_at is not null or v_identity_changed then
     update public.backroom_android_native_bindings
-    set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp())
-    where binding_id=new.id and revoked_at is null;
+    set revoked_at=coalesce(revoked_at,v_now),expires_at=least(expires_at,v_now)
+    where binding_id=old.id and revoked_at is null;
     update public.backroom_android_native_binding_challenges
-    set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp())
-    where binding_id=new.id and consumed_at is null and revoked_at is null;
+    set revoked_at=coalesce(revoked_at,v_now),expires_at=least(expires_at,v_now)
+    where binding_id=old.id and consumed_at is null and revoked_at is null;
   end if;
   return new;
 end;
@@ -151,7 +171,7 @@ grant execute on function public.revoke_backroom_android_native_binding_on_group
 drop trigger if exists backroom_android_native_binding_group_binding_lifecycle_trigger
   on public.backroom_input_bindings;
 create trigger backroom_android_native_binding_group_binding_lifecycle_trigger
-after update of revoked_at on public.backroom_input_bindings
+after update of owner_id,room_id,participant_id,host_id,session_digest,space_id,session_id,target_id,target_identity_fingerprint,target_revision,surface,locator_kind,locator_value,revoked_at on public.backroom_input_bindings
 for each row execute function public.revoke_backroom_android_native_binding_on_group_binding_change();
 
 create or replace function public.revoke_backroom_android_native_binding_on_room_unpair()
@@ -160,20 +180,32 @@ language plpgsql
 security invoker
 set search_path=''
 as $function$
+declare
+  v_now timestamptz:=pg_catalog.clock_timestamp();
+  v_identity_changed boolean:=false;
 begin
-  if tg_op='DELETE' or new.revoked_at is not null then
+  if tg_op='DELETE' then
     update public.backroom_android_native_bindings
-    set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp())
-    where device_id=case when tg_op='DELETE' then old.device_id else new.device_id end
-      and room_id=case when tg_op='DELETE' then old.room_id else new.room_id end
-      and revoked_at is null;
+    set revoked_at=coalesce(revoked_at,v_now),expires_at=least(expires_at,v_now)
+    where device_id=old.device_id and room_id=old.room_id and revoked_at is null;
     update public.backroom_android_native_binding_challenges
-    set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp())
-    where device_id=case when tg_op='DELETE' then old.device_id else new.device_id end
-      and room_id=case when tg_op='DELETE' then old.room_id else new.room_id end
+    set revoked_at=coalesce(revoked_at,v_now),expires_at=least(expires_at,v_now)
+    where device_id=old.device_id and room_id=old.room_id
+      and consumed_at is null and revoked_at is null;
+    return old;
+  end if;
+  v_identity_changed:=new.device_id is distinct from old.device_id
+    or new.room_id is distinct from old.room_id
+    or new.owner_id is distinct from old.owner_id;
+  if new.revoked_at is not null or v_identity_changed then
+    update public.backroom_android_native_bindings
+    set revoked_at=coalesce(revoked_at,v_now),expires_at=least(expires_at,v_now)
+    where device_id=old.device_id and room_id=old.room_id and revoked_at is null;
+    update public.backroom_android_native_binding_challenges
+    set revoked_at=coalesce(revoked_at,v_now),expires_at=least(expires_at,v_now)
+    where device_id=old.device_id and room_id=old.room_id
       and consumed_at is null and revoked_at is null;
   end if;
-  if tg_op='DELETE' then return old; end if;
   return new;
 end;
 $function$;
@@ -183,7 +215,7 @@ grant execute on function public.revoke_backroom_android_native_binding_on_room_
 drop trigger if exists backroom_android_native_binding_room_unpair_trigger
   on public.backroom_device_room_bindings;
 create trigger backroom_android_native_binding_room_unpair_trigger
-after update of revoked_at or delete on public.backroom_device_room_bindings
+after update of device_id,room_id,owner_id,revoked_at or delete on public.backroom_device_room_bindings
 for each row execute function public.revoke_backroom_android_native_binding_on_room_unpair();
 
 create or replace function public.revoke_backroom_android_native_binding_on_app_signer_change()
@@ -238,26 +270,27 @@ as $function$
 declare
   v_now timestamptz:=pg_catalog.clock_timestamp();
 begin
-  if new.revoked_at is not null or new.expires_at<=v_now then
+  if new.revoked_at is not null or new.expires_at<=v_now
+    or new.host_id is distinct from old.host_id
+    or new.owner_id is distinct from old.owner_id then
     update public.backroom_android_native_bindings n
     set revoked_at=coalesce(n.revoked_at,v_now),expires_at=least(n.expires_at,v_now)
     from public.backroom_input_bindings b
-    where b.id=n.binding_id and b.host_id=new.host_id and n.revoked_at is null;
+    where b.id=n.binding_id and b.host_id=old.host_id and n.revoked_at is null;
     update public.backroom_android_native_binding_challenges c
     set revoked_at=coalesce(c.revoked_at,v_now),expires_at=least(c.expires_at,v_now)
     from public.backroom_input_bindings b
-    where b.id=c.binding_id and b.host_id=new.host_id
+    where b.id=c.binding_id and b.host_id=old.host_id
       and c.consumed_at is null and c.revoked_at is null;
   elsif new.expires_at<old.expires_at then
-    -- A shorter host lease caps native proofs; renewal requires a new bind.
     update public.backroom_android_native_bindings n
     set expires_at=least(n.expires_at,new.expires_at)
     from public.backroom_input_bindings b
-    where b.id=n.binding_id and b.host_id=new.host_id and n.revoked_at is null;
+    where b.id=n.binding_id and b.host_id=old.host_id and n.revoked_at is null;
     update public.backroom_android_native_binding_challenges c
     set expires_at=least(c.expires_at,new.expires_at)
     from public.backroom_input_bindings b
-    where b.id=c.binding_id and b.host_id=new.host_id
+    where c.binding_id=b.id and b.host_id=old.host_id
       and c.consumed_at is null and c.revoked_at is null;
   end if;
   return new;
@@ -269,7 +302,7 @@ grant execute on function public.revoke_backroom_android_native_binding_on_host_
 drop trigger if exists backroom_android_native_binding_host_lifecycle_trigger
   on public.backroom_hosts;
 create trigger backroom_android_native_binding_host_lifecycle_trigger
-after update of revoked_at,expires_at on public.backroom_hosts
+after update of host_id,owner_id,revoked_at,expires_at on public.backroom_hosts
 for each row execute function public.revoke_backroom_android_native_binding_on_host_change();
 
 create or replace function public.revoke_backroom_android_native_binding_on_device_change()
@@ -281,13 +314,14 @@ as $function$
 declare
   v_now timestamptz:=pg_catalog.clock_timestamp();
 begin
-  if new.status is distinct from 'active' then
+  if new.status is distinct from 'active' or new.platform is distinct from 'android'
+    or new.device_id is distinct from old.device_id or new.owner_id is distinct from old.owner_id then
     update public.backroom_android_native_bindings
     set revoked_at=coalesce(revoked_at,v_now),expires_at=least(expires_at,v_now)
-    where device_id=new.device_id and revoked_at is null;
+    where device_id=old.device_id and revoked_at is null;
     update public.backroom_android_native_binding_challenges
     set revoked_at=coalesce(revoked_at,v_now),expires_at=least(expires_at,v_now)
-    where device_id=new.device_id and consumed_at is null and revoked_at is null;
+    where device_id=old.device_id and consumed_at is null and revoked_at is null;
   end if;
   return new;
 end;
@@ -298,7 +332,7 @@ grant execute on function public.revoke_backroom_android_native_binding_on_devic
 drop trigger if exists backroom_android_native_binding_device_lifecycle_trigger
   on public.backroom_devices;
 create trigger backroom_android_native_binding_device_lifecycle_trigger
-after update of status on public.backroom_devices
+after update of device_id,owner_id,platform,status on public.backroom_devices
 for each row execute function public.revoke_backroom_android_native_binding_on_device_change();
 
 create or replace function public.revoke_backroom_android_native_binding_on_agent_connection_change()
@@ -393,7 +427,20 @@ as $function$
 declare
   v_now timestamptz:=pg_catalog.clock_timestamp();
 begin
+  if tg_op='DELETE' then
+    update public.backroom_android_native_bindings n
+    set revoked_at=coalesce(n.revoked_at,v_now),expires_at=least(n.expires_at,v_now)
+    from public.backroom_input_bindings b
+    where n.binding_id=b.id and b.session_digest=old.session_digest and n.revoked_at is null;
+    update public.backroom_android_native_binding_challenges c
+    set revoked_at=coalesce(c.revoked_at,v_now),expires_at=least(c.expires_at,v_now)
+    from public.backroom_input_bindings b
+    where c.binding_id=b.id and b.session_digest=old.session_digest
+      and c.consumed_at is null and c.revoked_at is null;
+    return old;
+  end if;
   if new.terminated_at is not null or new.expires_at<=v_now
+    or new.session_digest is distinct from old.session_digest
     or new.agent_credential_digest is distinct from old.agent_credential_digest
     or new.participant_id is distinct from old.participant_id
     or new.room_id is distinct from old.room_id then
@@ -407,8 +454,6 @@ begin
     where c.binding_id=b.id and b.session_digest=old.session_digest
       and c.consumed_at is null and c.revoked_at is null;
   elsif new.expires_at<old.expires_at then
-    -- A shortened MCP lease caps all dependent native proofs; renewal never
-    -- extends a proof already accepted by the phone.
     update public.backroom_android_native_bindings n
     set expires_at=least(n.expires_at,new.expires_at)
     from public.backroom_input_bindings b
@@ -428,8 +473,8 @@ grant execute on function public.revoke_backroom_android_native_binding_on_mcp_s
 drop trigger if exists backroom_android_native_binding_mcp_session_lifecycle_trigger
   on public.rub_minds_mcp_sessions;
 create trigger backroom_android_native_binding_mcp_session_lifecycle_trigger
-after update of terminated_at,expires_at,agent_credential_digest,participant_id,room_id
-on public.rub_minds_mcp_sessions
+after update of session_digest,terminated_at,expires_at,agent_credential_digest,participant_id,room_id
+or delete on public.rub_minds_mcp_sessions
 for each row execute function public.revoke_backroom_android_native_binding_on_mcp_session_change();
 
 create or replace function public.register_backroom_android_native_binding(
