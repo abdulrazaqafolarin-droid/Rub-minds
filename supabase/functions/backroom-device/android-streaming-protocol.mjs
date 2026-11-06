@@ -39,6 +39,25 @@ function validSdp(sdp) {
     sdp.length <= MAX_SDP_CHARS && sdp.startsWith("v=0");
 }
 
+export function validateAndroidNativeBindingRegistration(value, { now = Date.now() } = {}) {
+  const keys = [
+    "bindingId", "roomId", "screenSessionId", "issuedAt", "appPackageName",
+    "appSignerDigest", "composerIdentityDigest", "sendControlIdentityDigest",
+    "providerConversationIdentityDigest",
+  ];
+  if (!exactKeys(value, keys) ||
+      !UUID.test(value.bindingId ?? "") || !UUID.test(value.roomId ?? "") ||
+      !UUID.test(value.screenSessionId ?? "") ||
+      !Number.isSafeInteger(value.issuedAt) || !Number.isSafeInteger(now) ||
+      Math.abs(now - value.issuedAt) > MAX_REQUEST_AGE_MS ||
+      !isPackageName(value.appPackageName) ||
+      !HEX.test(value.appSignerDigest ?? "") ||
+      !HEX.test(value.composerIdentityDigest ?? "") ||
+      !HEX.test(value.sendControlIdentityDigest ?? "") ||
+      !HEX.test(value.providerConversationIdentityDigest ?? "")) return null;
+  return Object.freeze({ ...value });
+}
+
 export function validateAndroidSessionStart(value, { now = Date.now() } = {}) {
   const keys = ["deviceId", "roomId", "requestId", "issuedAt", "sessionId", "appPackageName", "offer"];
   if (!exactKeys(value, keys) || !UUID.test(value.deviceId ?? "") || !UUID.test(value.roomId ?? "") ||
