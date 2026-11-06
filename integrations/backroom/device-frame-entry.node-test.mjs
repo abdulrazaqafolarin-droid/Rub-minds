@@ -117,8 +117,12 @@ test("Android composer selection and Send recheck expose only a stable digest an
   assert.match(service, /ProviderConversationIdentityResolver\.resolve\(packageName, root\)/);
   assert.match(service, /sameBoundConversation/);
   assert.match(screen, /providerConversationIdentityDigest/);
-  assert.match(control, /providerConversationIdentityDigestRef/);
-  assert.match(control, /recheckedProviderDigest === providerConversationIdentityDigestRef\.current/);
+  // The provider digest is deliberately kept inside Android. WebRTC exposes only
+  // boolean availability/match signals; the browser must never receive the digest.
+  assert.match(control, /providerConversationIdentityAvailable/);
+  assert.match(control, /providerConversationIdentityMatchesSelection/);
+  assert.match(control, /Only a boolean capability result crosses WebRTC/);
+  assert.doesNotMatch(control, /providerConversationIdentityDigestRef|recheckedProviderDigest/);
   assert.match(control, /Native wake is blocked; draft insertion remains available/);
   assert.match(provider, /private val adapters: Map<String, ProviderConversationIdentityAdapter> = emptyMap\(\)/);
   assert.doesNotMatch(screen, /stableConversationId|activeConversationStableId/);
