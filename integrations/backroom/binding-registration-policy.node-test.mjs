@@ -47,14 +47,15 @@ test('changed input identity or target revision is never silently rebound',()=>{
   assert.equal(result.bindingId,existing.id);
  }
 });
-test('provider-conversation digest is part of immutable binding identity',()=>{
+test('generic registration cannot read or rewrite the device-attested provider digest',()=>{
  const digest='d'.repeat(64);
- const nativeInput={...input,surface:'android_app',locatorKind:'accessibility',providerConversationIdentityDigest:digest};
+ const nativeInput={...input,surface:'android_app',locatorKind:'accessibility'};
  const nativeExisting={...existing,surface:'android_app',locator_kind:'accessibility',provider_conversation_identity_digest:digest};
  assert.equal(classifyExistingBinding({ownerId,input:nativeInput,existingSession:nativeExisting}).action,'reuse');
- const changed=classifyExistingBinding({ownerId,input:nativeInput,existingSession:{...nativeExisting,provider_conversation_identity_digest:'e'.repeat(64)}});
- assert.equal(changed.action,'conflict');
- assert.equal(changed.reason,'existing_binding_requires_revoke');
+ assert.equal(nativeExisting.provider_conversation_identity_digest,digest);
+ const explicitDigest={...nativeInput,providerConversationIdentityDigest:'e'.repeat(64)};
+ assert.equal(classifyExistingBinding({ownerId,input:explicitDigest,existingSession:nativeExisting}).action,'conflict');
+ assert.equal(classifyExistingBinding({ownerId,input:explicitDigest,existingSession:nativeExisting}).reason,'existing_binding_requires_revoke');
 });
 
 test('active target occupied by another AI returns existing binding for explicit revocation',()=>{
