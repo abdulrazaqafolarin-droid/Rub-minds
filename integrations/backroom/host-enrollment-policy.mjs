@@ -44,7 +44,7 @@ export function validatePendingWakeBinding(raw){
    'targetId','targetIdentityFingerprint','providerConversationIdentityDigest','targetRevision','surface',
    'locatorKind','locatorValue','participationMode','maxWakesPerMinute']);
  const providerConversationIdentityDigest=v.providerConversationIdentityDigest;
- if(providerConversationIdentityDigest!==undefined &&
+ if(providerConversationIdentityDigest!=null &&
   (typeof providerConversationIdentityDigest!=='string'||!HEX64.test(providerConversationIdentityDigest)))
   throw new TypeError('Invalid providerConversationIdentityDigest');
  const result={
@@ -67,6 +67,6 @@ export function validatePendingWakeBinding(raw){
  // The database consent constraint requires the digest only when wake is activated.
  if(!Number.isSafeInteger(result.maxWakesPerMinute)||result.maxWakesPerMinute<1||result.maxWakesPerMinute>6)
   throw new RangeError('Invalid wake rate');
- if(providerConversationIdentityDigest!==undefined) result.providerConversationIdentityDigest=providerConversationIdentityDigest;
+ if(providerConversationIdentityDigest!=null) result.providerConversationIdentityDigest=providerConversationIdentityDigest;
  return Object.freeze(result);
 }
