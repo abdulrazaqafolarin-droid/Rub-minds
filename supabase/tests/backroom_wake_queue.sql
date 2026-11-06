@@ -79,6 +79,8 @@ declare
   v_attest_mapping_position integer;
   v_native_challenge uuid := '83000000-0000-4000-8000-000000000010';
   v_native_nonce text := repeat('f',64);
+  v_native_challenge_wrong_owner uuid := '83000000-0000-4000-8000-000000000014';
+  v_native_nonce_wrong_owner text := repeat('4',64);
   v_native_attestation jsonb;
   v_native_mapping_id uuid;
   v_native_challenge_retry uuid := '83000000-0000-4000-8000-000000000011';
@@ -217,6 +219,7 @@ begin
   end if;
 
   insert into auth.users(id) values (v_owner);
+  insert into auth.users(id) values ('20000000-0000-0000-0000-000000000098');
   insert into public.rooms(id,owner_id,title) values (v_room,v_owner,'Backroom wake queue test room');
   insert into public.participants(id,room_id,display_name,kind,status) values (v_participant,v_room,'Test Backroom Agent','external_agent','active');
   insert into public.agent_connections(room_id,participant_id,owner_id,credential_digest,expires_at,revoked_at)
@@ -308,6 +311,26 @@ begin
     session_id,device_id,room_id,requested_by,session_type,status,expires_at
   ) values(v_native_screen_session,v_native_device,v_room,v_owner,'screen','active',
     pg_catalog.clock_timestamp()+interval '1 hour');
+  -- The database must reject a challenge whose owner is not the room owner.
+  insert into public.backroom_android_native_binding_challenges(
+    id,owner_id,room_id,binding_id,device_id,screen_session_id,app_package_name,nonce_digest,expires_at
+  ) values(
+    v_native_challenge_wrong_owner,'20000000-0000-0000-0000-000000000098',v_room,
+    v_binding_native_draft,v_native_device,v_native_screen_session,'com.example.notes',
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_nonce_wrong_owner,'UTF8')),'hex'),
+    pg_catalog.clock_timestamp()+interval '90 seconds'
+  );
+  select public.register_backroom_android_native_binding(
+    v_native_challenge_wrong_owner,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_nonce_wrong_owner,'UTF8')),'hex'),
+    v_native_device,v_native_screen_session,'com.example.notes',repeat('e',64),
+    repeat('c',64),repeat('d',64),v_native_provider_digest
+  ) into v_native_attestation;
+  if v_native_attestation->>'ok' is distinct from 'false'
+    or v_native_attestation->>'reason' is distinct from 'room_owner_changed' then
+    raise exception 'Native binding registration must reject a challenge from a non-owner';
+  end if;
+
   insert into public.backroom_android_native_binding_challenges(
     id,owner_id,room_id,binding_id,device_id,screen_session_id,app_package_name,nonce_digest,expires_at
   ) values(
