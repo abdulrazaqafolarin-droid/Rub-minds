@@ -16,7 +16,10 @@ where b.id=j.binding_id
   and b.session_id=j.session_id and b.target_id=j.target_id
   and b.target_identity_fingerprint=j.target_identity_fingerprint
   and b.target_revision=j.target_revision
-  and j.provider_conversation_identity_digest is distinct from b.provider_conversation_identity_digest;
+  -- Only fill an absent digest. Never overwrite a non-null mismatch: the
+  -- following native-job cleanup must be able to detect and cancel it.
+  and j.provider_conversation_identity_digest is null
+  and b.provider_conversation_identity_digest is not null;
 
 -- Old native work without a verifiable provider conversation is not safe to replay.
 update public.backroom_wake_jobs j
