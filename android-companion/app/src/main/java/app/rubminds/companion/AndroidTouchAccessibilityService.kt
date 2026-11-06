@@ -366,7 +366,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
     }
 
     /** Return proof only while the same selected composer, Send and provider thread revalidate locally. */
-    fun nativeBindingEvidence(sessionId: String, packageName: String): NativeBindingEvidence? = synchronized(this) {
+    internal fun nativeBindingEvidence(sessionId: String, packageName: String): NativeBindingEvidence? = synchronized(this) {
         if (boundSessionId != sessionId || boundPackageName != packageName ||
             !isServiceEnabled(this)
         ) return null
@@ -1135,7 +1135,7 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
             sessionId, packageName, providerConversationIdentityDigest
         ) == true
 
-        fun nativeBindingEvidence(sessionId: String, packageName: String): NativeBindingEvidence? =
+        internal fun nativeBindingEvidence(sessionId: String, packageName: String): NativeBindingEvidence? =
             instance?.nativeBindingEvidence(sessionId, packageName)
 
 
