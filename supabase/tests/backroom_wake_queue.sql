@@ -1015,12 +1015,13 @@ begin
     'state','preflight_denied','promptInserted',false,'sendInvoked',false,
     'composerCleared',false,'reason','permission_denied'
   );
-  if public.settle_backroom_android_native_wake_result(
+  v_native_settlement := public.settle_backroom_android_native_wake_result(
     v_preflight_claim.out_job_id,v_host_test,repeat('8',64),v_binding_native,
     pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_preflight_claim.out_lease_token,'UTF8')),'hex'),
     v_preflight_handoff,v_native_device,v_native_screen_session,'target-native',1,
     repeat('a',64),repeat('b',64),v_native_provider_digest,v_preflight_result
-  )<>'pending' or not exists(select 1 from public.backroom_wake_jobs j
+  );
+  if v_native_settlement<>'pending' or not exists(select 1 from public.backroom_wake_jobs j
     where j.id=v_preflight_claim.out_job_id and j.state='pending'
       and j.last_error_code='approval_required' and j.lease_token_hash is null
       and j.native_result_payload=v_preflight_result) then
@@ -1045,12 +1046,13 @@ begin
     'state','needs_review','promptInserted',false,'sendInvoked',false,
     'composerCleared',false,'reason','device_disconnected'
   );
-  if public.settle_backroom_android_native_wake_result(
+  v_native_settlement := public.settle_backroom_android_native_wake_result(
     v_preflight_retry_claim.out_job_id,v_host_test,repeat('8',64),v_binding_native,
     pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_preflight_retry_claim.out_lease_token,'UTF8')),'hex'),
     v_preflight_retry_handoff,v_native_device,v_native_screen_session,'target-native',1,
     repeat('a',64),repeat('b',64),v_native_provider_digest,v_preflight_retry_result
-  )<>'failed' or not exists(select 1 from public.backroom_wake_jobs j
+  );
+  if v_native_settlement<>'failed' or not exists(select 1 from public.backroom_wake_jobs j
     where j.id=v_preflight_retry_claim.out_job_id and j.state='failed'
       and pg_catalog.jsonb_array_length(j.native_result_receipts)=2
       and j.native_result_payload=v_preflight_retry_result) then
@@ -1103,12 +1105,13 @@ begin
     'state','needs_review','promptInserted',true,'sendInvoked',false,
     'composerCleared',false,'reason','outcome_unknown'
   );
-  if public.settle_backroom_android_native_wake_result(
+  v_native_settlement := public.settle_backroom_android_native_wake_result(
     v_review_claim.out_job_id,v_host_test,repeat('8',64),v_binding_native,
     pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_review_claim.out_lease_token,'UTF8')),'hex'),
     v_review_handoff,v_native_device,v_native_screen_session,'target-native',1,
     repeat('a',64),repeat('b',64),v_native_provider_digest,v_review_result
-  )<>'failed' or not exists(select 1 from public.backroom_wake_jobs j
+  );
+  if v_native_settlement<>'failed' or not exists(select 1 from public.backroom_wake_jobs j
     where j.id=v_review_claim.out_job_id and j.state='failed'
       and j.last_error_code='result_unconfirmed' and j.lease_token_hash is null
       and j.native_result_payload=v_review_result) then
