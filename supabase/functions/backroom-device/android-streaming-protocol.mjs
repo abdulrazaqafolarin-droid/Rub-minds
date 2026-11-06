@@ -238,7 +238,7 @@ export function validateAndroidNativeBindingCompletion(value) {
       !UUID.test(value.challengeId ?? "") || !HEX.test(value.nonce ?? "") ||
       !UUID.test(value.screenSessionId ?? "") || !isPackageName(value.appPackageName) ||
       typeof value.appSigningCertificateSha256 !== "string" ||
-      !/^[a-f0-9]{64}(?:\\.[a-f0-9]{64})*$/.test(value.appSigningCertificateSha256) ||
+      !/^[a-f0-9]{64}(?:\.[a-f0-9]{64})*$/.test(value.appSigningCertificateSha256) ||
       !HEX.test(value.composerIdentityDigest ?? "") ||
       !HEX.test(value.sendControlIdentityDigest ?? "") ||
       !HEX.test(value.providerConversationIdentityDigest ?? "")) return null;
