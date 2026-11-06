@@ -153,7 +153,9 @@ object AndroidSendControlPolicy {
             return SendControlDecision(null, "invalid_app_or_composer_bounds")
         }
         val maxVerticalGap = maxOf(96, composerBounds.height * 3, rootBounds.height / 10)
-        val maxHorizontalGap = maxOf(96, composerBounds.width / 2, rootBounds.width / 10)
+        // The Send action must stay close to the selected composer, not merely
+        // share its row. A wide app window must not make distant controls eligible.
+        val maxHorizontalGap = maxOf(48, minOf(composerBounds.height / 3, rootBounds.width / 20))
         val matches = candidates.filter { candidate ->
             if (candidate.packageName != packageName ||
                 !candidate.clickable || !candidate.enabled || !candidate.visible ||
