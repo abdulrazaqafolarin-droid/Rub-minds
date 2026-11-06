@@ -531,7 +531,8 @@ begin
   perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(v_binding.session_digest,0));
   select * into v_mcp from public.rub_minds_mcp_sessions s
   where s.session_digest=v_binding.session_digest for update;
-  if not found or v_mcp.terminated_at is not null or v_mcp.expires_at<=v_now
+  if not found or v_mcp.session_digest is distinct from v_binding.session_digest
+    or v_mcp.terminated_at is not null or v_mcp.expires_at<=v_now
     or v_mcp.agent_credential_ciphertext is null
     or v_mcp.room_id is distinct from v_binding.room_id
     or v_mcp.participant_id is distinct from v_binding.participant_id then
@@ -541,10 +542,23 @@ begin
   select * into v_binding from public.backroom_input_bindings b
   where b.id=v_challenge.binding_id for update;
   if not found then return pg_catalog.jsonb_build_object('ok',false,'reason','group_binding_not_found'); end if;
+  if v_mcp.session_digest is distinct from v_binding.session_digest
+    or v_mcp.room_id is distinct from v_binding.room_id
+    or v_mcp.participant_id is distinct from v_binding.participant_id then
+    return pg_catalog.jsonb_build_object('ok',false,'reason','group_session_inactive');
+  end if;
+
   select * into v_challenge from public.backroom_android_native_binding_challenges c
   where c.id=p_challenge_id for update;
 
   if not found then return pg_catalog.jsonb_build_object('ok',false,'reason','challenge_not_found'); end if;
+  if v_challenge.binding_id is distinct from v_binding.id then
+    return pg_catalog.jsonb_build_object('ok',false,'reason','group_binding_not_eligible');
+  end if;
+  if not exists(select 1 from public.rooms r
+    where r.id=v_challenge.room_id and r.owner_id=v_challenge.owner_id) then
+    return pg_catalog.jsonb_build_object('ok',false,'reason','room_owner_changed');
+  end if;
 
   if v_binding.surface is distinct from 'android_app'
     or v_binding.revoked_at is not null
