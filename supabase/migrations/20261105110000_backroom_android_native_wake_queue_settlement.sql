@@ -82,7 +82,6 @@ begin
     or p_result_payload->>'handoffId' is distinct from p_handoff_id::text
     or p_result_payload->>'jobId' is distinct from p_job_id::text
     or p_result_payload->>'deviceId' is distinct from p_device_id::text
-    or p_result_payload->>'roomId' is distinct from v_job.room_id::text
     or p_result_payload->>'screenSessionId' is distinct from p_screen_session_id::text
     or p_result_payload->>'bindingId' is distinct from p_binding_id::text
     or p_result_payload->>'targetId' is distinct from p_target_id
