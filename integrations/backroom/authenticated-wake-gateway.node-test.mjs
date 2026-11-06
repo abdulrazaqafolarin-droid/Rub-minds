@@ -45,6 +45,46 @@ test('native wake claims and activation fail closed without a provider-conversat
  assert.equal(calls.length,0);
 });
 
+test('Android native wake activation and claims require a live device-attested binding',async()=>{
+ const digest='d'.repeat(64);
+ const calls=[];
+ const grantId='40000000-0000-4000-8000-000000000066';
+ const {gateway}=setup({
+  binding:{surface:'android_app',providerConversationIdentityDigest:digest,nativeBindingAttested:false},
+  activateBinding:async input=>{calls.push(input);return true;},
+ });
+ assert.deepEqual(await gateway.claim(scope),{ok:false,reason:'unauthorized'});
+ assert.deepEqual(await gateway.activate({...scope,grantId,ttlSeconds:3600}),{ok:false,reason:'unauthorized'});
+ assert.equal(calls.length,0);
+});
+test('Android native activation and claims succeed only with the exact active attestation flag',async()=>{
+ const digest='d'.repeat(64);
+ const calls=[];
+ const grantId='40000000-0000-4000-8000-000000000066';
+ const {gateway}=setup({
+  binding:{surface:'android_app',providerConversationIdentityDigest:digest,nativeBindingAttested:true},
+  activateBinding:async input=>{calls.push(input);return true;},
+ });
+ assert.deepEqual(await gateway.claim(scope),{ok:true,leases:[]});
+ assert.deepEqual(await gateway.activate({...scope,grantId,ttlSeconds:3600}),{ok:true,activated:true});
+ assert.equal(calls.length,1);
+ assert.equal(calls[0].providerConversationIdentityDigest,undefined);
+});
+test('deactivation, acknowledgement and retry remain available after native attestation revocation',async()=>{
+ const digest='d'.repeat(64);
+ const grantId='40000000-0000-4000-8000-000000000066';
+ const {gateway,calls}=setup({
+  binding:{surface:'android_app',providerConversationIdentityDigest:digest,nativeBindingAttested:false},
+  deactivateBinding:async input=>{calls.push(['deactivate',input]);return true;},
+ });
+ assert.deepEqual(await gateway.deactivate({...scope,grantId}),{ok:true,deactivated:true});
+ assert.deepEqual(await gateway.acknowledge({...scope,jobId,leaseToken,outcome:'ignored'}),{ok:true,accepted:true});
+ assert.deepEqual(await gateway.retry({...scope,jobId,leaseToken,errorCode:'provider_busy',retryAfterSeconds:5}),{ok:true,state:'pending'});
+ assert.equal(calls[0][0],'deactivate');
+ assert.equal(calls[0][1].hostToken,undefined);
+ assert.deepEqual(calls.slice(1).map(call=>call[0]),['acknowledge','retry']);
+});
+
 test('claim passes the exact provider conversation digest from the authenticated binding',async()=>{
  const digest='d'.repeat(64);
  const {gateway,calls}=setup({binding:{providerConversationIdentityDigest:digest}});
