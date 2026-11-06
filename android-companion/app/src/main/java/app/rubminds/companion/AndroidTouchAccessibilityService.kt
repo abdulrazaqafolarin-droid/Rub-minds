@@ -756,13 +756,13 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                     ) {
                         false
                     } else {
-                        val textLabel = exactSendNode.text?.toString().orEmpty()
-                        val descriptionLabel = exactSendNode.contentDescription?.toString().orEmpty()
-                        val recognizedLabel = AndroidSendControlPolicy.isRecognizedLabel(textLabel) ||
-                            AndroidSendControlPolicy.isRecognizedLabel(descriptionLabel)
-                        val fallbackResource = textLabel.isBlank() && descriptionLabel.isBlank() &&
-                            AndroidSendControlPolicy.isRecognizedResourceId(exactSendNode.viewIdResourceName.orEmpty())
-                        if (recognizedLabel || fallbackResource) {
+                        // Never inspect visible node text or descriptions: they can
+                        // contain user-authored content. Native Send requires an opaque
+                        // app resource ID that matches the narrowly scoped allowlist.
+                        val fallbackResource = AndroidSendControlPolicy.isRecognizedResourceId(
+                            exactSendNode.viewIdResourceName.orEmpty()
+                        )
+                        if (fallbackResource) {
                             sendControlIdentityRevalidated = true
                             // Session/selection invalidation uses this same monitor.
                             // The deadline is checked immediately before the only
@@ -967,19 +967,14 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 false
             }
             if (!bounds.isEmpty && clickActionAvailable) {
-                val textLabel = node.text?.toString().orEmpty().take(120)
-                val descriptionLabel = node.contentDescription?.toString().orEmpty().take(120)
-                val label = when {
-                    AndroidSendControlPolicy.isRecognizedLabel(textLabel) -> textLabel
-                    AndroidSendControlPolicy.isRecognizedLabel(descriptionLabel) -> descriptionLabel
-                    textLabel.isNotBlank() -> textLabel
-                    else -> descriptionLabel
-                }
+                // Resource IDs are app metadata, not user-authored content.
+                // Keep candidate labels empty so the policy cannot fall back to
+                // reading accessibility text or content descriptions.
                 candidates += SendControlCandidate(
                     targetId = composerTargetId(node, packageName),
                     packageName = packageName,
                     bounds = ComposerScreenRect(bounds.left, bounds.top, bounds.right, bounds.bottom),
-                    label = label,
+                    label = "",
                     resourceId = node.viewIdResourceName.orEmpty(),
                     clickable = node.isClickable,
                     enabled = node.isEnabled,
