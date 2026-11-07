@@ -323,13 +323,29 @@ test('native wake fails closed without provider conversation identity and carrie
   assert.match(executionRequest, /providerConversationIdentityDigest: String/);
   assert.doesNotMatch(executionRequest, /providerConversationIdentityDigest: String\s*=/);
 });
-test('Android frame has no device-attested group-binding registration path yet', () => {
-  // The current phone frame knows device + room and a local selection result.
-  // It does not receive a selected AI participant/MCP session or send the
-  // provider digest through a browser-visible owner binding request.
+test('Android Frame completes group binding through an owner challenge and phone-local device attestation', () => {
   assert.match(androidFrameUi, /export default function BackroomAndroidControl\(\{ device, roomId \}/);
-  assert.doesNotMatch(androidFrameUi, /backroom-config\/binding|providerConversationIdentityDigest|sessionDigest|participantId/);
-  assert.match(androidFrameUi, /providerConversationIdentityAvailable/);
+  assert.match(androidFrameUi, /listAndroidNativeBindingCandidates\(roomId\)/);
+  assert.match(androidFrameUi, /createAndroidNativeBindingChallenge\(/);
+  assert.match(androidFrameUi, /deviceId: device\.device_id, roomId, sessionId: activeSession/);
+  assert.match(androidFrameUi, /appPackageName: appPackage, bindingId/);
+  assert.match(androidFrameUi, /kind: 'bind_native_group_target'/);
+  assert.match(androidFrameUi, /challengeId: challenge\.challengeId/);
+  assert.match(androidFrameUi, /nonce: challenge\.nonce/);
+  assert.match(androidFrameUi, /acknowledgement\.kind === 'native_binding_ack'/);
+  assert.match(androidFrameUi, /activeNativeBindingRef\.current = completedBindingId/);
+  assert.doesNotMatch(androidFrameUi, /providerConversationIdentityDigest|sessionDigest|participantId/);
+  assert.match(screen, /api\?\.completeNativeBinding\(token/);
+  assert.match(screen, /AppIdentity\.signingCertificateSha256/);
+  assert.match(screen, /evidence\.composerIdentityDigest/);
+  assert.match(screen, /evidence\.sendControlIdentityDigest/);
+  assert.match(screen, /evidence\.providerConversationIdentityDigest/);
+  assert.match(deviceEdge, /android\/native-binding-complete/);
+  assert.match(deviceEdge, /const current = await device\(req\)/);
+  assert.match(deviceEdge, /p_app_signing_certificate_sha256: evidence\.appSigningCertificateSha256/);
+  assert.match(deviceEdge, /p_provider_conversation_identity_digest: evidence\.providerConversationIdentityDigest/);
+  assert.match(cloudApi, /fun completeNativeBinding\(deviceToken: String, fields: JSONObject\)/);
+  assert.match(cloudApi, /post\("android\/native-binding-complete", deviceToken, fields\)/);
 });
 
 test('composer selection distinguishes Send discovery from provider-conversation readiness without exporting its digest', () => {
