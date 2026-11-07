@@ -442,6 +442,39 @@ test("native Android identity proof travels from Accessibility directly to the d
   assert.doesNotMatch(browserMessage, /composerIdentityDigest|sendControlIdentityDigest|providerConversationIdentityDigest/);
 });
 
+test("Android frame revokes active mappings and pending challenges on every binding cancellation path", async () => {
+  const frame = await read("src/BackroomAndroidControl.tsx");
+  const helper = frame.indexOf("const revokeNativeBinding = useCallback");
+  const clear = frame.indexOf("const clearComposerTarget = useCallback");
+  const dispose = frame.indexOf("const disposePeer = useCallback");
+  const stop = frame.indexOf("const stopRemote = useCallback");
+  const bind = frame.indexOf("const bindSelectedGroupAI = async");
+  const pointer = frame.indexOf("const pointerUp =");
+  const channelStart = frame.indexOf("const channel = supabase.channel");
+  const cleanup = frame.slice(frame.indexOf("return () => {", channelStart),
+    frame.indexOf("  }, [device.device_id", channelStart));
+
+  assert.ok(helper >= 0 && clear > helper && dispose > clear && stop > dispose);
+  const clearBlock = frame.slice(clear, dispose);
+  assert.match(clearBlock, /pendingNativeBindingRequestRef\.current/);
+  assert.match(clearBlock, /revokeNativeBinding\(/);
+
+  const disposeBlock = frame.slice(dispose, stop);
+  assert.match(disposeBlock, /activeNativeBindingRef\.current/);
+  assert.match(disposeBlock, /revokeNativeBinding\(/);
+
+  const bindBlock = frame.slice(bind, pointer);
+  assert.match(bindBlock, /nativeBindingTimerRef\.current = window\.setTimeout/);
+  assert.equal((bindBlock.match(/revokeNativeBinding\(/g) || []).length, 3);
+  assert.match(bindBlock, /Binding timed out/);
+  assert.match(bindBlock, /UI may have cleared the target or timed out/);
+  assert.match(bindBlock, /transport error can occur after the server created the challenge/);
+
+  assert.match(cleanup, /revokeAndroidNativeBinding\(/);
+  assert.match(cleanup, /pendingNativeBindingRequestRef\.current = ''/);
+  assert.match(cleanup, /nativeBindingTimerRef\.current = null/);
+});
+
 test("native attestation migration revokes phone mappings on every parent authority transition", async () => {
   const migration = await read("supabase/migrations/20261106143000_backroom_android_native_binding_attestation.sql");
   for (const name of [
