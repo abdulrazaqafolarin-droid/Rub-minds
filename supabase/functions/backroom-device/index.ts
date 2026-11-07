@@ -685,10 +685,26 @@ Deno.serve(async req => {
         .eq('screen_session_id', input.sessionId)
         .is('consumed_at', null).is('revoked_at', null).select('id');
       if (challengeError) return json(503, fail('native_binding_revoke_failed'), origin);
+
+      // Registration locks and consumes the challenge before inserting its
+      // attested mapping. If it was already in flight when the first mapping
+      // sweep ran, this challenge update waits for that transaction. Sweep
+      // once more afterwards so a mapping committed during that race cannot
+      // survive a UI cancel/timeout.
+      const { data: revokedBindingsAfterChallenge, error: finalMappingError } =
+        await db.from('backroom_android_native_bindings')
+          .update({ revoked_at: revokedAt })
+          .eq('binding_id', input.bindingId).eq('owner_id', userId)
+          .eq('device_id', input.deviceId).eq('room_id', input.roomId)
+          .eq('screen_session_id', input.sessionId)
+          .is('revoked_at', null).select('id');
+      if (finalMappingError) return json(503, fail('native_binding_revoke_failed'), origin);
+
       return json(200, {
         ok: true,
         revoked: (Array.isArray(data) && data.length > 0) ||
-          (Array.isArray(revokedChallenges) && revokedChallenges.length > 0),
+          (Array.isArray(revokedChallenges) && revokedChallenges.length > 0) ||
+          (Array.isArray(revokedBindingsAfterChallenge) && revokedBindingsAfterChallenge.length > 0),
       }, origin);
     }
 
