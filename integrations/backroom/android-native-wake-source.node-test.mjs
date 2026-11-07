@@ -385,13 +385,13 @@ test('the server-side Android forwarder checks the exact live lease, current dev
   assert.match(nativeForwarder, /v_binding\.wake_enabled is distinct from true/);
   assert.match(nativeForwarder, /v_binding\.confirmed_at is null/);
   assert.match(nativeForwarder, /v_native\.provider_conversation_identity_digest is distinct from v_job\.provider_conversation_identity_digest/);
-  assert.match(nativeForwarder, /v_native\.revoked_at is null/);
-  assert.match(nativeForwarder, /v_native\.expires_at>v_now/);
+  assert.match(nativeForwarder, /n\.revoked_at is null/);
+  assert.match(nativeForwarder, /n\.expires_at>v_now/);
   assert.match(nativeForwarder, /v_job\.state is distinct from 'leased'/);
   assert.match(nativeForwarder, /v_job\.lease_owner is distinct from p_host_id/);
   assert.match(nativeForwarder, /v_job\.lease_token_hash is distinct from[\s\S]*sha256/);
-  assert.match(nativeForwarder, /v_screen\.session_type/);
-  assert.match(nativeForwarder, /v_device\.platform='android'/);
+  assert.match(nativeForwarder, /s\.session_type='screen'/);
+  assert.match(nativeForwarder, /d\.platform='android'/);
   assert.match(nativeForwarder, /v_app\.signing_certificate_sha256/);
   assert.match(nativeForwarder, /'identityFingerprint',v_native\.app_signing_certificate_sha256/);
   assert.match(nativeForwarder, /'leaseTokenDigest',v_job\.lease_token_hash/);
