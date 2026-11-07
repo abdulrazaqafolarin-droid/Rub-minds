@@ -158,7 +158,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     setSendControlStatus('No native Send control verified.');
     setSelectionPreview(null);
     setSelectionMode(false);
-  }, [appPackage, activeNativeBindingId, device.device_id, roomId, revokeNativeBinding]);
+  }, [appPackage, device.device_id, roomId, revokeNativeBinding]);
 
 
   const disposePeer = useCallback(() => {
@@ -216,7 +216,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     sessionRef.current = ''; pointerRef.current = null; pendingControlRequestRef.current = '';
     sourceVisibilityRef.current = null;
     setSessionId(''); setViewReady(false); setSourceVisible(false); setDataReady(false); setControlGranted(false); setRemoteText(''); setRemoteTextBusy(false); setSelectionMode(false); setComposerTargetId(''); setSendControlVerified(false); setProviderConversationIdentityAvailable(false); setSendControlCheckPending(false); setSendControlStatus('No native Send control verified.'); setSelectionPreview(null); setRemoteTextStatus('Select the actual composer in the streamed app before inserting text.'); setBusy(false);
-  }, []);
+  }, [revokeNativeBinding]);
 
   const stopRemote = useCallback(async (expectedSession = sessionRef.current) => {
     if (!supabase || !expectedSession || !device.device_id) {
@@ -813,7 +813,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         !composerTarget || !sendTarget || !viewReady || !sourceVisible || !dataReady) {
       setSendControlVerified(false);
       setProviderConversationIdentityAvailable(false);
-      sendTargetRef.current = ''
+      sendTargetRef.current = '';
       setSendControlStatus('Recheck unavailable: the live phone session or selected target is missing.');
       return;
     }
@@ -829,7 +829,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       setSendControlCheckPending(false);
       setSendControlVerified(false);
       setProviderConversationIdentityAvailable(false);
-      sendTargetRef.current = ''
+      sendTargetRef.current = '';
       setSendControlStatus('Recheck timed out. The Send control is not currently verified; no action was taken.');
       notify('The phone did not confirm the Send-control recheck. The frame remains draft-only.', true);
     }, 8_000);
@@ -851,7 +851,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       setSendControlCheckPending(false);
       setSendControlVerified(false);
       setProviderConversationIdentityAvailable(false);
-      sendTargetRef.current = ''
+      sendTargetRef.current = '';
       setSendControlStatus('The phone data channel rejected the Send-control recheck.');
     }
   };
