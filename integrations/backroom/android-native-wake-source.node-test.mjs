@@ -557,7 +557,7 @@ test('native device ACK stores the exact receipt before settlement and survives 
   const duplicate = ack.slice(duplicateStart, duplicateEnd);
   assert.match(duplicate, /sameNativeWakeResult\(row\.result_payload, ack\.nativeWakeResult \?\? null\)/);
   assert.match(duplicate, /settleNativeWakeGroupJob\(\)/);
-  assert.match(duplicate, /broadcastNativeWakeResult\(settlement !== 'lease_mismatch'\)/);
+  assert.match(duplicate, /broadcastNativeWakeResult\(settlement\)/);
 });
 
 test('native result receipt can be retained after room-pair revocation without reopening non-native ACKs', () => {
@@ -572,6 +572,9 @@ test('native result receipt can be retained after room-pair revocation without r
   assert.match(binding, /SQL settlement will classify the result as cancelled/);
   assert.match(attestedSettlement, /v_session_active/);
   assert.match(attestedSettlement, /v_lease_expired/);
+  assert.match(attestedSettlement, /return case when v_job\.state='acknowledged' then 'replayed' else v_job\.state end/);
+  assert.match(deviceEdge, /groupAcknowledged = settlement === 'acknowledged' \|\| settlement === 'replayed'/);
+  assert.match(deviceEdge, /ok: ack\.nativeWakeResult\.state === 'submitted' && groupAcknowledged/);
   assert.match(attestedSettlement, /v_error_code:='lease_expired'/);
   assert.match(attestedSettlement, /native_result_receipts=j\.native_result_receipts \|\|/);
 });
