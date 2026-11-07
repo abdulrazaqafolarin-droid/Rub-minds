@@ -1181,8 +1181,10 @@ Deno.serve(async req => {
         return data;
       };
 
-      const broadcastNativeWakeResult = async (groupSettled = true) => {
+      const broadcastNativeWakeResult = async (settlement: string | null) => {
         if (!isNativeWakeCommand || !nativeWakeHandoff || !ack.nativeWakeResult) return;
+        const groupSettled = settlement !== null && settlement !== 'lease_mismatch';
+        const groupAcknowledged = settlement === 'acknowledged' || settlement === 'replayed';
         // The room Realtime event carries outcome metadata only. Exact composer /
         // Send digests remain in the service-role-only result_payload receipt.
         await broadcastPrivateDeviceEvent({
@@ -1193,8 +1195,9 @@ Deno.serve(async req => {
             requestId: ack.requestId, sessionId: ack.sessionId,
             handoffId: nativeWakeHandoff.handoffId, jobId: nativeWakeHandoff.jobId,
             state: ack.nativeWakeResult.state,
-            ok: ack.nativeWakeResult.state === 'submitted' && groupSettled,
+            ok: ack.nativeWakeResult.state === 'submitted' && groupAcknowledged,
             groupSettled,
+            groupSettlement: settlement,
             ...(ack.nativeWakeResult.reason ? { reason: ack.nativeWakeResult.reason } : {}),
           },
         });
@@ -1221,7 +1224,7 @@ Deno.serve(async req => {
         try {
           const settlement = await settleNativeWakeGroupJob();
           await broadcastControlResult();
-          await broadcastNativeWakeResult(settlement !== 'lease_mismatch');
+          await broadcastNativeWakeResult(settlement);
           return json(200, {
             ok: true, acked: true, replayed: true,
             ...(isNativeWakeCommand ? {
@@ -1275,7 +1278,7 @@ Deno.serve(async req => {
 
         try {
           const settlement = await settleNativeWakeGroupJob();
-          await broadcastNativeWakeResult(settlement !== 'lease_mismatch');
+          await broadcastNativeWakeResult(settlement);
           return json(200, {
             ok: true, acked: true, nativeWakeResultStored: true,
             groupSettled: settlement !== 'lease_mismatch',
