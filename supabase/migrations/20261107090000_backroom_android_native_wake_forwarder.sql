@@ -4,6 +4,49 @@
 -- The command row is the short-lived outbox. Its unique job/lease key makes a
 -- repeated Edge request idempotent if the first HTTP response was lost.
 
+-- The original registration routine intentionally uses invoker checks, but it
+-- SELECTs the room-pair row FOR UPDATE. That table grants service_role SELECT
+-- only. Keep the implementation unchanged and expose it through a locked-down
+-- SECURITY DEFINER wrapper, instead of granting broad direct UPDATE access.
+alter function public.register_backroom_android_native_binding(
+  uuid,text,uuid,uuid,text,text,text,text,text
+) rename to register_backroom_android_native_binding_impl;
+
+revoke all on function public.register_backroom_android_native_binding_impl(
+  uuid,text,uuid,uuid,text,text,text,text,text
+) from public,anon,authenticated,service_role;
+
+create function public.register_backroom_android_native_binding(
+  p_challenge_id uuid,p_nonce_digest text,p_device_id uuid,p_screen_session_id uuid,
+  p_app_package_name text,p_app_signing_certificate_sha256 text,
+  p_composer_identity_digest text,p_send_control_identity_digest text,
+  p_provider_conversation_identity_digest text
+)
+returns jsonb
+language sql
+security definer
+set search_path=''
+as $function$
+  select public.register_backroom_android_native_binding_impl(
+    p_challenge_id,p_nonce_digest,p_device_id,p_screen_session_id,
+    p_app_package_name,p_app_signing_certificate_sha256,
+    p_composer_identity_digest,p_send_control_identity_digest,
+    p_provider_conversation_identity_digest
+  );
+$function$;
+
+revoke all on function public.register_backroom_android_native_binding(
+  uuid,text,uuid,uuid,text,text,text,text,text
+) from public,anon,authenticated;
+grant execute on function public.register_backroom_android_native_binding(
+  uuid,text,uuid,uuid,text,text,text,text,text
+) to service_role;
+
+comment on function public.register_backroom_android_native_binding(
+  uuid,text,uuid,uuid,text,text,text,text,text
+) is
+  'Service-role-only SECURITY DEFINER wrapper for device-attested Android native binding registration. The invoker implementation remains private and is executed with the locked wrapper owner privileges required for row locks.';
+  
 create unique index if not exists backroom_android_commands_native_wake_lease_uq
   on public.backroom_android_commands (
     device_id,
