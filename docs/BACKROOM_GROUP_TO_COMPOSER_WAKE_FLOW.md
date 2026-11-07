@@ -1,6 +1,6 @@
 # Backroom group-to-composer wake flow
 
-Status snapshot: 2026-11-07, PR #66. The Android service-role group-to-device forwarder and durable ACK-recovery path now exist in source and pass isolated SQL/Node checks. This remains a source-branch status, not a claim of production deployment, physical-device acceptance, or a completed ChatGPT/Claude round trip.
+Status snapshot: 2026-11-07, PR #66. The Android service-role group-to-device forwarder and durable ACK-recovery path now exist in source. Focused Node contract runs are documented as 49/49 plus 12/12, and focused binding-policy tests passed 13/13; the complete PostgreSQL migration/regression suite and full application/Android/Windows CI still need fresh successful runner evidence. This remains a source-branch status, not a claim of production deployment, physical-device acceptance, or a completed ChatGPT/Claude round trip.
 
 ## The invariant
 
