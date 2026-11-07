@@ -1094,18 +1094,22 @@ Deno.serve(async req => {
         .eq('session_id', ack.sessionId).eq('request_id', ack.requestId).maybeSingle();
       if (lookupError) return json(503, fail('android_ack_lookup_failed'), origin);
       if (!row) return json(404, fail('android_command_not_found'), origin);
+      const isControlCommand = row.command?.action === 'request_control';
+      const isNativeWakeCommand = row.command?.action === 'native_wake_trigger';
       const ackBinding = await verifyActiveDeviceRoomBinding(current.device_id, row.room_id);
       if (!ackBinding.ok || ackBinding.platform !== 'android') {
         if (!ackBinding.ok && ackBinding.status === 503) return json(503, fail('android_ack_binding_check_failed'), origin);
-        await db.from('backroom_android_commands')
-          .update({ status: 'rejected', result: 'device_room_binding_revoked', lease_until: null })
-          .eq('id', ack.commandId).eq('device_id', current.device_id)
-          .in('status', ['pending','leased']);
-        return json(403, fail('android_ack_room_binding_revoked'), origin);
+        if (!isNativeWakeCommand) {
+          await db.from('backroom_android_commands')
+            .update({ status: 'rejected', result: 'device_room_binding_revoked', lease_until: null })
+            .eq('id', ack.commandId).eq('device_id', current.device_id)
+            .in('status', ['pending','leased']);
+          return json(403, fail('android_ack_room_binding_revoked'), origin);
+        }
+        // A native result is already a device-authenticated immutable receipt.
+        // Let it be stored even if room pairing was revoked after the possible
+        // provider action; SQL settlement will classify the result as cancelled.
       }
-
-      const isControlCommand = row.command?.action === 'request_control';
-      const isNativeWakeCommand = row.command?.action === 'native_wake_trigger';
       let nativeWakeHandoff: ReturnType<typeof validateAndroidNativeWakeHandoff> = null;
       if (isNativeWakeCommand) {
         // Re-validate the immutable handoff at its issue time. The device
