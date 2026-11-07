@@ -42,7 +42,12 @@ begin
     or p_composer_identity_digest is null or p_composer_identity_digest !~ '^[0-9a-f]{64}$'
     or p_send_control_identity_digest is null or p_send_control_identity_digest !~ '^[0-9a-f]{64}$'
     or p_provider_conversation_identity_digest is null
-      or p_provider_conversation_identity_digest !~ '^[0-9a-f]{64} or pg_catalog.jsonb_typeof(p_result_payload)<>'object'
+      or p_provider_conversation_identity_digest !~ '^[0-9a-f]{64}$'
+    or p_app_package_name is null
+      or p_app_package_name !~ '^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$'
+    or p_app_signing_certificate_sha256 is null
+      or p_app_signing_certificate_sha256 !~ '^[0-9a-f]{64}(\.[0-9a-f]{64})*$'
+    or p_result_payload is null or pg_catalog.jsonb_typeof(p_result_payload)<>'object'
     or pg_catalog.octet_length(p_result_payload::text)>8192 then
     raise exception 'Invalid native wake result settlement input';
   end if;
