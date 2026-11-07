@@ -221,6 +221,8 @@ test('Backroom capability copy reports provider identity and deployment gates af
   assert.match(devicesUi, /AI-directed sending \/ native Off · On · Auto/);
   assert.match(devicesUi, /Not available · provider identity \+ deployment\/device acceptance pending/);
   assert.doesNotMatch(devicesUi, /group forwarding missing|wake queue not connected/);
+  assert.match(androidFrameUi, /server-side bridge remains source-only until deployed and device-accepted/);
+  assert.doesNotMatch(androidFrameUi, /trusted queue bridge.*still required/);
 });
 
 test('native consent and one-shot journal mutations share a process-wide lock across store instances', () => {
