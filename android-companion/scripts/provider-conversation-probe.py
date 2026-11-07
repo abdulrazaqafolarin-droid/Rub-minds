@@ -63,10 +63,20 @@ def _same_primary(left: frozenset[str], right: frozenset[str]) -> bool:
 
 def read_snapshot(path: Path, package: str, key: bytes) -> Snapshot:
     try:
-        root = ET.parse(path).getroot()
+        if path.stat().st_size > 8_000_000:
+            raise ValueError("Accessibility snapshot exceeds the 8 MB local safety limit.")
+        raw_xml = path.read_bytes()
+        upper_xml = raw_xml[:4096].upper()
+        if b"<!DOCTYPE" in upper_xml or b"<!ENTITY" in upper_xml:
+            raise ValueError("DTD/entity declarations are not accepted in accessibility snapshots.")
+        root = ET.fromstring(raw_xml)
+    except ValueError:
+        raise
     except (ET.ParseError, OSError) as exc:
         raise ValueError("Could not read one accessibility snapshot as XML.") from exc
 
+    if root.tag != "hierarchy":
+        raise ValueError("Input is not an Android UIAutomator hierarchy.")
     nodes = list(root.iter("node"))
     if not nodes:
         raise ValueError("Snapshot contains no accessibility nodes.")
@@ -132,46 +142,49 @@ def read_snapshot(path: Path, package: str, key: bytes) -> Snapshot:
 
 
 def analyse(package: str, a1: Path, b: Path, a2: Path, delete_inputs: bool = False) -> dict[str, object]:
-    if package not in {"com.openai.chatgpt", "com.anthropic.claude"}:
-        raise ValueError("Only the official ChatGPT and Claude Android packages are supported.")
-    key = secrets.token_bytes(32)
-    snapshots = [read_snapshot(path, package, key) for path in (a1, b, a2)]
-    first, other, repeat = snapshots
+    try:
+        if package not in {"com.openai.chatgpt", "com.anthropic.claude"}:
+            raise ValueError("Only the official ChatGPT and Claude Android packages are supported.")
+        key = secrets.token_bytes(32)
+        snapshots = [read_snapshot(path, package, key) for path in (a1, b, a2)]
+        first, other, repeat = snapshots
 
-    repeat_overlap = _overlap(first.header_signals, repeat.header_signals)
-    different_overlap = _overlap(first.header_signals, other.header_signals)
-    candidate_signal = (
-        len(first.header_signals) >= 2
-        and len(repeat.header_signals) >= 2
-        and repeat_overlap >= 0.70
-        and different_overlap <= 0.40
-    )
+        repeat_overlap = _overlap(first.header_signals, repeat.header_signals)
+        different_overlap = _overlap(first.header_signals, other.header_signals)
+        candidate_signal = (
+            len(first.header_signals) >= 2
+            and len(repeat.header_signals) >= 2
+            and repeat_overlap >= 0.70
+            and different_overlap <= 0.40
+        )
 
-    report: dict[str, object] = {
-        "provider": "ChatGPT" if package == "com.openai.chatgpt" else "Claude",
-        "snapshots": "A1, B, A2",
-        "node_counts": [item.node_count for item in snapshots],
-        "header_candidate_counts": [len(item.header_signals) for item in snapshots],
-        "a1_a2_header_similarity": round(repeat_overlap, 3),
-        "a1_b_header_similarity": round(different_overlap, 3),
-        "composer_control_reused_a_to_b": _same_primary(first.composer_signals, other.composer_signals),
-        "send_control_reused_a_to_b": _same_primary(first.send_signals, other.send_signals),
-        "repeatable_distinct_header_signal": candidate_signal,
-        "interpretation": (
-            "candidate_signal_only_manual_adapter_review_required"
-            if candidate_signal else "no_reliable_accessibility_candidate_found"
-        ),
-        "native_send_enabled": False,
-        "raw_text_printed_or_uploaded": False,
-    }
+        report: dict[str, object] = {
+            "provider": "ChatGPT" if package == "com.openai.chatgpt" else "Claude",
+            "snapshots": "A1, B, A2",
+            "node_counts": [item.node_count for item in snapshots],
+            "header_candidate_counts": [len(item.header_signals) for item in snapshots],
+            "a1_a2_header_similarity": round(repeat_overlap, 3),
+            "a1_b_header_similarity": round(different_overlap, 3),
+            "composer_control_reused_a_to_b": _same_primary(first.composer_signals, other.composer_signals),
+            "send_control_reused_a_to_b": _same_primary(first.send_signals, other.send_signals),
+            "repeatable_distinct_header_signal": candidate_signal,
+            "stable_provider_conversation_id_exposed": False,
+            "interpretation": (
+                "candidate_signal_only_manual_adapter_review_required"
+                if candidate_signal else "no_reliable_accessibility_candidate_found"
+            ),
+            "native_send_enabled": False,
+            "raw_text_printed_or_uploaded": False,
+        }
 
-    if delete_inputs:
-        for path in (a1, b, a2):
-            try:
-                path.unlink()
-            except OSError:
-                pass
-    return report
+        return report
+    finally:
+        if delete_inputs:
+            for path in (a1, b, a2):
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
 
 
 def main() -> int:
