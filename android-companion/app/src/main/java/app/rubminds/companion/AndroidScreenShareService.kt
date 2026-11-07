@@ -201,6 +201,9 @@ class AndroidScreenShareService : Service() {
     private fun pollDeviceCommands() {
         val token = deviceToken ?: return stopCapture("device_credential_missing")
         try {
+            // Replay saved result receipts first, independently of command polling.
+            // This makes ACK recovery progress even when command retrieval fails.
+            val nativeAckCommandIds = retryPendingNativeWakeAcknowledgements(token)
             val pollFields = JSONObject()
             val sessionId = activeSessionId
             val roomId = activeRoomId
@@ -217,12 +220,11 @@ class AndroidScreenShareService : Service() {
                 return
             }
             val commands = result.optJSONArray("commands") ?: return
-            val pendingNativeAckIds = retryPendingNativeWakeAcknowledgements(token)
             for (index in 0 until commands.length()) {
                 if (stopping) break
                 val command = commands.optJSONObject(index) ?: continue
                 if (command.optString("action") == "native_wake_trigger" &&
-                    (pendingNativeAckIds == null || command.optString("commandId") in pendingNativeAckIds)
+                    (nativeAckCommandIds == null || command.optString("commandId") in nativeAckCommandIds)
                 ) continue
                 processCommand(token, command)
             }
@@ -476,6 +478,9 @@ class AndroidScreenShareService : Service() {
     private fun retryPendingNativeWakeAcknowledgements(token: String): Set<String>? {
         val store = AndroidNativeWakeConsentStore(this)
         var pending = store.pendingNativeWakeAcknowledgements() ?: return null
+        // Suppress commands that were in the durable outbox at the start of
+        // this poll even when their ACK succeeds and removes them from disk.
+        val attemptedCommandIds = pending.map { it.commandId }.toMutableSet()
         for (entry in pending.filter { it.stage == NativeWakeAckOutboxStage.PREPARED }) {
             val placeholder = runCatching { JSONObject(entry.payloadJson) }.getOrNull() ?: return null
             if (!store.savePendingNativeWakeAcknowledgement(
@@ -498,7 +503,9 @@ class AndroidScreenShareService : Service() {
                 // before it is permitted to dispatch any matching command.
             }
         }
-        return store.pendingNativeWakeAcknowledgements()?.map { it.commandId }?.toSet()
+        val remaining = store.pendingNativeWakeAcknowledgements() ?: return null
+        attemptedCommandIds += remaining.map { it.commandId }
+        return attemptedCommandIds
     }
 
     private fun processCommand(token: String, command: JSONObject) {
