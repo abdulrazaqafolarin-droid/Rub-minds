@@ -26,6 +26,8 @@ declare
   v_native_binding_active boolean := false;
   v_job public.backroom_wake_jobs%rowtype;
   v_binding_active boolean := false;
+  v_session_active boolean := false;
+  v_lease_expired boolean := false;
   v_result_state text;
   v_next_state text;
   v_error_code text;
@@ -136,11 +138,11 @@ begin
   from public.rub_minds_mcp_sessions s
   where s.session_digest=p_session_digest
   for update;
-  if not found or v_session.terminated_at is not null
-    or v_session.expires_at<=pg_catalog.clock_timestamp()
-    or v_session.agent_credential_ciphertext is null then
-    return 'lease_mismatch';
-  end if;
+  if not found then return 'lease_mismatch'; end if;
+  v_session_active :=
+    v_session.terminated_at is null
+    and v_session.expires_at>pg_catalog.clock_timestamp()
+    and v_session.agent_credential_ciphertext is not null;
 
   select * into v_binding
   from public.backroom_input_bindings b
@@ -200,11 +202,17 @@ begin
   if v_job.state is distinct from 'leased' or v_job.lease_owner is distinct from p_host_id
     or v_job.lease_token_hash is distinct from p_lease_token_digest
     or v_job.target_id is distinct from p_target_id or v_job.target_revision is distinct from p_target_revision
-    or v_job.provider_conversation_identity_digest is distinct from p_provider_conversation_identity_digest
-    or v_job.lease_expires_at is null or v_job.lease_expires_at<=pg_catalog.clock_timestamp()
-    or v_job.expires_at<=pg_catalog.clock_timestamp() then
+    or v_job.provider_conversation_identity_digest is distinct from p_provider_conversation_identity_digest then
     return 'lease_mismatch';
   end if;
+  -- A device may be offline after a provider action. Preserve its exact saved
+  -- receipt even if the original lease has elapsed, but never acknowledge it
+  -- as successful outside the lease window. Late submissions become terminal
+  -- failed/cancelled evidence for human review.
+  v_lease_expired :=
+    v_job.lease_expires_at is null
+    or v_job.lease_expires_at<=pg_catalog.clock_timestamp()
+    or v_job.expires_at<=pg_catalog.clock_timestamp();
 
   -- The binding row is locked before the job row is changed. A concurrent
   -- grant revocation/rebind must therefore finish first, or wait until this
@@ -228,17 +236,21 @@ begin
     and v_binding.confirmed_at is not null
     and v_binding.wake_expires_at is not null
     and v_binding.wake_expires_at>pg_catalog.clock_timestamp()
-    and v_native_binding_active;
+    and v_native_binding_active
+    and v_session_active;
 
-  if v_result_state='submitted' then
-    v_next_state:=case when v_binding_active then 'acknowledged' else 'cancelled' end;
-    v_error_code:=case when v_binding_active then null else 'authorization_denied' end;
+  if not v_binding_active then
+    v_next_state:='cancelled';
+    v_error_code:='authorization_denied';
+  elsif v_lease_expired then
+    v_next_state:='failed';
+    v_error_code:='lease_expired';
+  elsif v_result_state='submitted' then
+    v_next_state:='acknowledged';
+    v_error_code:=null;
   elsif v_result_state='needs_review' then
     v_next_state:='failed';
     v_error_code:='result_unconfirmed';
-  elsif not v_binding_active then
-    v_next_state:='cancelled';
-    v_error_code:='authorization_denied';
   elsif v_job.attempt_count>=5 then
     v_next_state:='failed';
     v_error_code:='max_attempts';
