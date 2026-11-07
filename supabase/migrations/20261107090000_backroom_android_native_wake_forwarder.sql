@@ -391,6 +391,8 @@ begin
     and c.command->>'action'='native_wake_trigger'
     and c.command->'nativeWakeHandoff'->>'jobId'=v_job.id::text
     and c.command->'nativeWakeHandoff'->>'leaseTokenDigest'=v_job.lease_token_hash
+    and c.status in ('pending','leased')
+    and c.expires_at>v_now
   limit 1;
 
   if not found then
