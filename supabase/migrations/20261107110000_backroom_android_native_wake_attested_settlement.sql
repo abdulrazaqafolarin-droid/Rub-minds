@@ -1,3 +1,14 @@
+-- Preserve a distinct terminal reason when a native device reports an
+-- exact result after its original group lease has already elapsed.
+alter table public.backroom_wake_jobs
+  drop constraint if exists backroom_wake_jobs_last_error_code_check;
+alter table public.backroom_wake_jobs
+  add constraint backroom_wake_jobs_last_error_code_check
+  check (last_error_code is null or last_error_code in (
+    'target_unavailable','approval_required','provider_busy','transport_error',
+    'result_unconfirmed','authorization_denied','max_attempts','other','lease_expired'
+  ));
+
 -- Native Android ACK settlement also verifies that the exact attestation is
 -- still current. A revoked/replaced screen, app signer, or group mapping cannot
 -- acknowledge an old command. Result evidence is still recorded as cancelled
