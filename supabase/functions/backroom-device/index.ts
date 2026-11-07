@@ -556,7 +556,7 @@ Deno.serve(async req => {
           bindingId: row.id,
           participantId: row.participant_id,
           displayName: typeof participant.display_name === 'string'
-            ? participant.display_name.replace(/[\\u0000-\\u001f\\u007f-\\u009f]/g, '').trim().slice(0, 80) || 'AI participant'
+            ? participant.display_name.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim().slice(0, 80) || 'AI participant'
             : 'AI participant',
         }];
       });
