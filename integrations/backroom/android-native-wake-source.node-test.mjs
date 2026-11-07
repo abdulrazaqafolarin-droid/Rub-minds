@@ -377,7 +377,10 @@ test('Android group leases are forwarded by the service-role gateway and never r
       claimStore.indexOf('return []'),
     'the native command must be persisted before the host receives an empty claim'
   );
-  assert.doesNotMatch(claimStore.slice(claimStore.indexOf("if(surface==='android_app')")), /return leases/);
+  const androidBranchStart = claimStore.indexOf("if(surface==='android_app')");
+  const androidBranchEnd = claimStore.indexOf('return []', androidBranchStart) + 'return []'.length;
+  assert.ok(androidBranchStart >= 0 && androidBranchEnd > androidBranchStart);
+  assert.doesNotMatch(claimStore.slice(androidBranchStart, androidBranchEnd), /return leases/);
 });
 
 test('the server-side Android forwarder checks the exact live lease, current device attestation and owner consent atomically', () => {
