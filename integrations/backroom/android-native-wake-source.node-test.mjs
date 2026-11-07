@@ -427,7 +427,10 @@ test('Android device delivery rechecks the current group consent and exact phone
   assert.match(deviceEdge, /\.eq\('send_control_identity_digest', handoff\.sendControlIdentityDigest\)/);
   assert.match(deviceEdge, /\.eq\('provider_conversation_identity_digest', handoff\.providerConversationIdentityDigest\)/);
   assert.equal((deviceEdge.match(/verifyCurrentNativeWakeHandoff\(row, current\.device_id\)/g) ?? []).length, 2);
-  assert.match(deviceEdge, /native_wake_binding_or_consent_revoked/);
+  assert.match(deviceEdge, /native_wake_binding_or_consent_or_lease_revoked/);
+  assert.match(deviceEdge, /backroom_wake_jobs/);
+  assert.match(deviceEdge, /\.eq\('lease_token_hash', handoff\.leaseTokenDigest\)/);
+  assert.match(deviceEdge, /\.gt\('lease_expires_at', now\)/);
 });
 
 test('native ACK settlement is tied to the exact attested app package, signer, screen and identity digests', () => {
@@ -435,6 +438,9 @@ test('native ACK settlement is tied to the exact attested app package, signer, s
   assert.match(deviceEdge, /p_app_package_name: nativeWakeHandoff\.appId/);
   assert.match(deviceEdge, /p_app_signing_certificate_sha256: nativeWakeHandoff\.identityFingerprint/);
   assert.match(attestedSettlement, /v_native_binding_active boolean := false/);
+  assert.match(attestedSettlement, /p_app_package_name is null/);
+  assert.match(attestedSettlement, /p_app_signing_certificate_sha256 is null/);
+  assert.match(attestedSettlement, /n\.expires_at>pg_catalog\.clock_timestamp\(\)/);
   assert.match(attestedSettlement, /n\.app_package_name=p_app_package_name/);
   assert.match(attestedSettlement, /n\.app_signing_certificate_sha256=p_app_signing_certificate_sha256/);
   assert.match(attestedSettlement, /n\.screen_session_id=p_screen_session_id/);
