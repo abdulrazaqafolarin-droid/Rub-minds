@@ -376,7 +376,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
             providerConversationIdentityAvailable;
           setSendControlVerified(remainsSameTarget);
           setProviderConversationIdentityAvailable(sameProviderConversation);
-          if (!sameProviderConversation)           if (!remainsSameTarget) sendTargetRef.current = '';
+          if (!remainsSameTarget) sendTargetRef.current = '';
           setSendControlStatus(remainsSameTarget
             ? sameProviderConversation
               ? 'Rechecked: the same Send control and the same provider conversation are still selected. No action was taken.'
