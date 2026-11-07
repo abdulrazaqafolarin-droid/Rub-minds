@@ -182,11 +182,17 @@ def analyse(package: str, a1: Path, b: Path, a2: Path, delete_inputs: bool = Fal
         return report
     finally:
         if delete_inputs:
-            for path in (a1, b, a2):
+            cleanup_failed = False
+            for input_path in (a1, b, a2):
                 try:
-                    path.unlink()
+                    input_path.unlink(missing_ok=True)
                 except OSError:
-                    pass
+                    cleanup_failed = True
+            if cleanup_failed:
+                raise RuntimeError(
+                    "Could not delete one or more local XML captures. "
+                    "Remove all three capture files manually before sharing or continuing."
+                )
 
 
 def main() -> int:
