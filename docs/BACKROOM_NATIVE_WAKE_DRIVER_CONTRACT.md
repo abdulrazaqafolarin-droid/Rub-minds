@@ -2,7 +2,7 @@
 
 > For the upstream group-event, drag-select, binding and downstream MCP response lifecycle around this driver, see [Backroom group-to-composer wake flow](BACKROOM_GROUP_TO_COMPOSER_WAKE_FLOW.md).
 
-Status (2026-11-07): **The source branch now includes the service-role Android group-lease forwarder, device-attested phone binding, attestation-bound ACK settlement and a durable phone ACK outbox. Local PostgreSQL and Node regressions pass, but the migrations/Edge changes are not deployed and no physical-device acceptance has run. The Android provider resolver registry is still empty, Windows has no native Send driver, and native Off / On / Auto remain disabled.**
+Status (2026-11-07): **The source branch now includes the service-role Android group-lease forwarder, device-attested phone binding, attestation-bound ACK settlement and a durable phone ACK outbox. Focused Node contract runs are documented as 49/49 plus 12/12, and focused binding-policy tests passed 13/13. The complete PostgreSQL migration/regression suite and full application/Android/Windows CI have not been verified by a fresh successful runner; recent private Actions attempts ended with no job steps/logs. Migrations/Edge changes remain undeployed and no physical-device acceptance has run. The Android provider resolver registry is still empty, Windows has no native Send driver, and native Off / On / Auto remain disabled.**
 
 This document defines the boundary between the existing group coordination/durable wake system and a future Android or Windows native composer driver. It does not enable native Off / On / Auto, native Send or a new host-server route.
 
