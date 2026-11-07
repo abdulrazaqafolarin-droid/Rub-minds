@@ -23,7 +23,7 @@ For each provider separately:
    Claude:
    `python android-companion/scripts/provider-conversation-probe.py --package com.anthropic.claude --delete-inputs chat-a1.xml chat-b.xml chat-a2.xml`
 
-The --delete-inputs option removes all three local XML captures even when analysis fails. The probe rejects non-UIAutomator XML, DTD/entity declarations and files over 8 MB. The probe also uses a fresh random HMAC key in memory for each run, prints no raw text or accessibility labels, and does not upload data. Keep the XML captures local and use only disposable test chats.
+The --delete-inputs option removes all three local XML captures even when analysis fails. The probe accepts UTF-8 UIAutomator XML only, rejects NUL-bearing UTF-16/UTF-32 payloads, DTD/entity declarations and files over 8 MB, and prints no raw text or accessibility labels. The probe also uses a fresh random HMAC key in memory for each run, prints no raw text or accessibility labels, and does not upload data. Keep the XML captures local and use only disposable test chats.
 
 ## What the report means
 
