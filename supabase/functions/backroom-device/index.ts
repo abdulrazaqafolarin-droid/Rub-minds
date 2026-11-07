@@ -122,31 +122,42 @@ async function verifyCurrentNativeWakeHandoff(
   }
 
   const now = new Date().toISOString();
-  const [{ data: groupBinding, error: groupBindingError }, { data: nativeBinding, error: nativeBindingError }] =
-    await Promise.all([
-      db.from('backroom_input_bindings').select('id')
-        .eq('id', handoff.bindingId).eq('host_id', handoff.hostId)
-        .eq('session_digest', handoff.sessionDigest).eq('room_id', row.room_id)
-        .eq('session_id', handoff.sessionId).eq('target_id', handoff.targetId)
-        .eq('target_revision', handoff.targetRevision).eq('surface', 'android_app')
-        .eq('wake_enabled', true).not('confirmed_at', 'is', null)
-        .eq('provider_conversation_identity_digest', handoff.providerConversationIdentityDigest)
-        .is('revoked_at', null).gt('wake_expires_at', now).maybeSingle(),
-      db.from('backroom_android_native_bindings').select('id')
-        .eq('binding_id', handoff.bindingId).eq('room_id', row.room_id)
-        .eq('device_id', deviceId).eq('screen_session_id', row.session_id)
-        .eq('app_package_name', handoff.appId)
-        .eq('app_signing_certificate_sha256', handoff.identityFingerprint)
-        .eq('composer_identity_digest', handoff.composerIdentityDigest)
-        .eq('send_control_identity_digest', handoff.sendControlIdentityDigest)
-        .eq('provider_conversation_identity_digest', handoff.providerConversationIdentityDigest)
-        .is('revoked_at', null).gt('expires_at', now).maybeSingle(),
-    ]);
-  if (groupBindingError || nativeBindingError) {
+  const [
+    { data: groupBinding, error: groupBindingError },
+    { data: nativeBinding, error: nativeBindingError },
+    { data: wakeJob, error: wakeJobError },
+  ] = await Promise.all([
+    db.from('backroom_input_bindings').select('id')
+      .eq('id', handoff.bindingId).eq('host_id', handoff.hostId)
+      .eq('session_digest', handoff.sessionDigest).eq('room_id', row.room_id)
+      .eq('session_id', handoff.sessionId).eq('target_id', handoff.targetId)
+      .eq('target_revision', handoff.targetRevision).eq('surface', 'android_app')
+      .eq('wake_enabled', true).not('confirmed_at', 'is', null)
+      .eq('provider_conversation_identity_digest', handoff.providerConversationIdentityDigest)
+      .is('revoked_at', null).gt('wake_expires_at', now).maybeSingle(),
+    db.from('backroom_android_native_bindings').select('id')
+      .eq('binding_id', handoff.bindingId).eq('room_id', row.room_id)
+      .eq('device_id', deviceId).eq('screen_session_id', row.session_id)
+      .eq('app_package_name', handoff.appId)
+      .eq('app_signing_certificate_sha256', handoff.identityFingerprint)
+      .eq('composer_identity_digest', handoff.composerIdentityDigest)
+      .eq('send_control_identity_digest', handoff.sendControlIdentityDigest)
+      .eq('provider_conversation_identity_digest', handoff.providerConversationIdentityDigest)
+      .is('revoked_at', null).gt('expires_at', now).maybeSingle(),
+    db.from('backroom_wake_jobs').select('id')
+      .eq('id', handoff.jobId).eq('event_id', handoff.eventId)
+      .eq('host_id', handoff.hostId).eq('session_digest', handoff.sessionDigest)
+      .eq('binding_id', handoff.bindingId).eq('room_id', row.room_id)
+      .eq('lease_token_hash', handoff.leaseTokenDigest).eq('state', 'leased')
+      .eq('target_id', handoff.targetId).eq('target_revision', handoff.targetRevision)
+      .eq('provider_conversation_identity_digest', handoff.providerConversationIdentityDigest)
+      .gt('lease_expires_at', now).gt('expires_at', now).maybeSingle(),
+  ]);
+  if (groupBindingError || nativeBindingError || wakeJobError) {
     return { ok: false as const, status: 503, reason: 'native_wake_attestation_check_unavailable' };
   }
-  if (!groupBinding || !nativeBinding) {
-    return { ok: false as const, status: 403, reason: 'native_wake_binding_or_consent_revoked' };
+  if (!groupBinding || !nativeBinding || !wakeJob) {
+    return { ok: false as const, status: 403, reason: 'native_wake_binding_or_consent_or_lease_revoked' };
   }
   return { ok: true as const, handoff };
 }
