@@ -57,6 +57,8 @@ jobs:
         with:
           gradle-version: '8.10.2'
           cache-provider: basic
+      - name: Test read-only provider identity probe (no device data)
+        run: python3 -m unittest discover -s android-companion/scripts -p 'test_provider_conversation_probe.py' -v
       - name: Verify Android, streaming, endpoint and Phone Frame tests
         run: node --test android-companion/scripts/manifest-policy.node-test.mjs supabase/functions/backroom-device/android-streaming-protocol.node-test.mjs supabase/functions/backroom-device/realtime-broadcast.node-test.mjs supabase/functions/backroom-device/android-streaming-endpoint.node-test.mjs integrations/backroom/android-touch-policy.node-test.mjs integrations/backroom/device-frame-entry.node-test.mjs
       - name: Run Android unit tests and merged-manifest gate

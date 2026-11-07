@@ -11,7 +11,7 @@ import { validateDesktopApps } from './desktop-app-protocol.mjs';
 import { validateDesktopCommand, validateDesktopSignal } from './desktop-command-protocol.mjs';
 import { validateDesktopSessionClose } from './desktop-session-close-protocol.mjs';
 import { validateDesktopSessionAbandon } from './desktop-session-abandon-protocol.mjs';
-import { validateAndroidSessionStart, validateAndroidDeviceCommand, validateAndroidSignal, validateAndroidCommandAck, validateAndroidNativeWakeHandoff, validateAndroidNativeWakeResult, validateAndroidSessionClose, mapAndroidQueuedCommand } from './android-streaming-protocol.mjs';
+import { validateAndroidSessionStart, validateAndroidDeviceCommand, validateAndroidSignal, validateAndroidCommandAck, validateAndroidNativeWakeHandoff, validateAndroidNativeWakeResult, validateAndroidNativeBindingChallenge, validateAndroidNativeBindingCompletion, validateAndroidSessionClose, mapAndroidQueuedCommand } from './android-streaming-protocol.mjs';
 import { broadcastPrivateDeviceEvent } from './realtime-broadcast.mjs';
 
 const url = Deno.env.get('SUPABASE_URL');
@@ -100,6 +100,66 @@ async function activeDesktopSession(sessionId: string, deviceId: string, roomId:
   if (error) return { ok: false as const, status: 503, reason: 'desktop_session_unavailable' };
   if (!data) return { ok: false as const, status: 404, reason: 'desktop_session_not_active' };
   return { ok: true as const, session: data };
+}
+
+async function verifyCurrentNativeWakeHandoff(
+  row: {
+    id: string; device_id: string; room_id: string; session_id: string; request_id: string;
+    command: Record<string, unknown>;
+  },
+  deviceId: string,
+) {
+  const command = row.command;
+  const issuedAt = (command.nativeWakeHandoff as { issuedAt?: number } | undefined)?.issuedAt;
+  const handoff = validateAndroidNativeWakeHandoff(command.nativeWakeHandoff, { now: Date.now() });
+  if (!handoff || command.action !== 'native_wake_trigger' ||
+      command.deviceId !== deviceId || command.roomId !== row.room_id ||
+      command.sessionId !== row.session_id || command.requestId !== row.request_id ||
+      command.issuedAt !== issuedAt || command.appPackageName !== handoff.appId ||
+      handoff.deviceId !== deviceId || handoff.roomId !== row.room_id ||
+      handoff.screenSessionId !== row.session_id) {
+    return { ok: false as const, status: 409, reason: 'native_wake_handoff_expired_or_invalid' };
+  }
+
+  const now = new Date().toISOString();
+  const [
+    { data: groupBinding, error: groupBindingError },
+    { data: nativeBinding, error: nativeBindingError },
+    { data: wakeJob, error: wakeJobError },
+  ] = await Promise.all([
+    db.from('backroom_input_bindings').select('id')
+      .eq('id', handoff.bindingId).eq('host_id', handoff.hostId)
+      .eq('session_digest', handoff.sessionDigest).eq('room_id', row.room_id)
+      .eq('session_id', handoff.sessionId).eq('target_id', handoff.targetId)
+      .eq('target_revision', handoff.targetRevision).eq('surface', 'android_app')
+      .eq('wake_enabled', true).not('confirmed_at', 'is', null)
+      .eq('provider_conversation_identity_digest', handoff.providerConversationIdentityDigest)
+      .is('revoked_at', null).gt('wake_expires_at', now).maybeSingle(),
+    db.from('backroom_android_native_bindings').select('id')
+      .eq('binding_id', handoff.bindingId).eq('room_id', row.room_id)
+      .eq('device_id', deviceId).eq('screen_session_id', row.session_id)
+      .eq('app_package_name', handoff.appId)
+      .eq('app_signing_certificate_sha256', handoff.identityFingerprint)
+      .eq('composer_identity_digest', handoff.composerIdentityDigest)
+      .eq('send_control_identity_digest', handoff.sendControlIdentityDigest)
+      .eq('provider_conversation_identity_digest', handoff.providerConversationIdentityDigest)
+      .is('revoked_at', null).gt('expires_at', now).maybeSingle(),
+    db.from('backroom_wake_jobs').select('id')
+      .eq('id', handoff.jobId).eq('event_id', handoff.eventId)
+      .eq('host_id', handoff.hostId).eq('session_digest', handoff.sessionDigest)
+      .eq('binding_id', handoff.bindingId).eq('room_id', row.room_id)
+      .eq('lease_token_hash', handoff.leaseTokenDigest).eq('state', 'leased')
+      .eq('target_id', handoff.targetId).eq('target_revision', handoff.targetRevision)
+      .eq('provider_conversation_identity_digest', handoff.providerConversationIdentityDigest)
+      .gt('lease_expires_at', now).gt('expires_at', now).maybeSingle(),
+  ]);
+  if (groupBindingError || nativeBindingError || wakeJobError) {
+    return { ok: false as const, status: 503, reason: 'native_wake_attestation_check_unavailable' };
+  }
+  if (!groupBinding || !nativeBinding || !wakeJob) {
+    return { ok: false as const, status: 403, reason: 'native_wake_binding_or_consent_or_lease_revoked' };
+  }
+  return { ok: true as const, handoff };
 }
 
 Deno.serve(async req => {
@@ -429,6 +489,266 @@ Deno.serve(async req => {
         capabilities: current.capabilities }, origin);
     }
 
+    if (action === 'android/native-binding-candidates') {
+      if (!exactKeys(input, ['action','roomId']) || typeof input.roomId !== 'string' || !UUID.test(input.roomId)) {
+        return json(400, fail('invalid_native_binding_candidate_query'), origin);
+      }
+      const userId = await owner(req);
+      if (!userId) return json(401, fail('owner_auth_required'), origin);
+      const { data: room, error: roomError } = await db.from('rooms').select('id')
+        .eq('id', input.roomId).eq('owner_id', userId).maybeSingle();
+      if (roomError) return json(503, fail('native_binding_candidate_lookup_failed'), origin);
+      if (!room) return json(403, fail('room_owner_required'), origin);
+
+      const { data: bindings, error: bindingError } = await db.from('backroom_input_bindings')
+        .select('id,participant_id,session_digest,host_id')
+        .eq('owner_id', userId).eq('room_id', input.roomId)
+        .eq('surface', 'android_app').eq('wake_enabled', false).is('revoked_at', null)
+        .order('updated_at', { ascending: false }).limit(20);
+      if (bindingError) return json(503, fail('native_binding_candidate_lookup_failed'), origin);
+      if (!bindings?.length) return json(200, { ok: true, candidates: [] }, origin);
+
+      const sessionDigests = [...new Set(bindings.map(row => row.session_digest))];
+      const hostIds = [...new Set(bindings.map(row => row.host_id))];
+      const participantIds = [...new Set(bindings.map(row => row.participant_id))];
+      const [sessions, participants, hosts, activeMappings] = await Promise.all([
+        db.from('rub_minds_mcp_sessions')
+          .select('session_digest,participant_id,agent_credential_digest,expires_at')
+          .in('session_digest', sessionDigests).eq('room_id', input.roomId)
+          .is('terminated_at', null).not('agent_credential_ciphertext', 'is', null)
+          .gt('expires_at', new Date().toISOString()),
+        db.from('participants').select('id,display_name,kind,status')
+          .eq('room_id', input.roomId).in('id', participantIds)
+          .in('kind', ['original_session','model','external_agent'])
+          .in('status', ['connected','active','autonomous']),
+        db.from('backroom_hosts').select('host_id,expires_at')
+          .eq('owner_id', userId).in('host_id', hostIds)
+          .is('revoked_at', null).gt('expires_at', new Date().toISOString()),
+        db.from('backroom_android_native_bindings').select('binding_id')
+          .in('binding_id', bindings.map(row => row.id)).is('revoked_at', null)
+          .gt('expires_at', new Date().toISOString()),
+      ]);
+      if (sessions.error || participants.error || hosts.error || activeMappings.error) {
+        return json(503, fail('native_binding_candidate_lookup_failed'), origin);
+      }
+      const sessionByDigest = new Map((sessions.data ?? []).map(row => [row.session_digest, row]));
+      const participantById = new Map((participants.data ?? []).map(row => [row.id, row]));
+      const validHostIds = new Set((hosts.data ?? []).map(row => row.host_id));
+      const activeBindingIds = new Set((activeMappings.data ?? []).map(row => row.binding_id));
+      const credentialDigests = [...new Set((sessions.data ?? [])
+        .map(row => row.agent_credential_digest)
+        .filter(value => typeof value === 'string' && HEX.test(value)))];
+      const connections = credentialDigests.length
+        ? await db.from('agent_connections').select('credential_digest,expires_at')
+            .eq('owner_id', userId).eq('room_id', input.roomId)
+            .is('revoked_at', null).gt('expires_at', new Date().toISOString())
+            .in('credential_digest', credentialDigests)
+        : { data: [], error: null };
+      if (connections.error) return json(503, fail('native_binding_candidate_lookup_failed'), origin);
+      const validCredentialDigests = new Set((connections.data ?? []).map(row => row.credential_digest));
+      const candidates = (bindings ?? []).flatMap(row => {
+        const session = sessionByDigest.get(row.session_digest);
+        const participant = participantById.get(row.participant_id);
+        if (!session || session.participant_id !== row.participant_id ||
+            !validCredentialDigests.has(session.agent_credential_digest) ||
+            !participant || !validHostIds.has(row.host_id) || activeBindingIds.has(row.id)) return [];
+        return [{
+          bindingId: row.id,
+          participantId: row.participant_id,
+          displayName: typeof participant.display_name === 'string'
+            ? participant.display_name.replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim().slice(0, 80) || 'AI participant'
+            : 'AI participant',
+        }];
+      });
+      return json(200, { ok: true, candidates }, origin);
+    }
+
+    if (action === 'android/native-binding-challenge') {
+      const challenge = validateAndroidNativeBindingChallenge({
+        deviceId: input.deviceId, roomId: input.roomId, requestId: input.requestId,
+        issuedAt: input.issuedAt, sessionId: input.sessionId,
+        appPackageName: input.appPackageName, bindingId: input.bindingId,
+      });
+      if (!challenge || !exactKeys(input, [
+        'action','deviceId','roomId','requestId','issuedAt','sessionId','appPackageName','bindingId'
+      ])) return json(400, fail('invalid_native_binding_challenge'), origin);
+      const userId = await owner(req);
+      if (!userId) return json(401, fail('owner_auth_required'), origin);
+
+      const [actor, deviceBinding, screen, groupBinding] = await Promise.all([
+        authorizeRoomActor(challenge.roomId, userId),
+        verifyActiveDeviceRoomBinding(challenge.deviceId, challenge.roomId),
+        activeDesktopSession(challenge.sessionId, challenge.deviceId, challenge.roomId),
+        db.from('backroom_input_bindings').select(
+          'id,owner_id,room_id,participant_id,host_id,session_digest,surface,wake_enabled,revoked_at'
+        ).eq('id', challenge.bindingId).eq('owner_id', userId)
+          .eq('room_id', challenge.roomId).maybeSingle(),
+      ]);
+      if (!actor.ok) return json(actor.status, fail(actor.reason), origin);
+      if (!deviceBinding.ok) return json(deviceBinding.status, fail(deviceBinding.reason), origin);
+      if (deviceBinding.platform !== 'android') return json(409, fail('android_device_required'), origin);
+      if (!screen.ok) return json(screen.status, fail(screen.reason), origin);
+      if (screen.session.session_type !== 'screen') return json(409, fail('android_screen_session_required'), origin);
+      if (groupBinding.error) return json(503, fail('native_binding_group_lookup_failed'), origin);
+      const binding = groupBinding.data;
+      if (!binding || binding.surface !== 'android_app' || binding.wake_enabled ||
+          binding.revoked_at !== null || binding.owner_id !== userId) {
+        return json(409, fail('native_group_binding_not_eligible'), origin);
+      }
+      const [app, host, mcp, participant] = await Promise.all([
+        db.from('backroom_device_apps').select('package_name')
+          .eq('device_id', challenge.deviceId).eq('package_name', challenge.appPackageName).maybeSingle(),
+        db.from('backroom_hosts').select('host_id')
+          .eq('host_id', binding.host_id).eq('owner_id', userId)
+          .is('revoked_at', null).gt('expires_at', new Date().toISOString()).maybeSingle(),
+        db.from('rub_minds_mcp_sessions')
+          .select('session_digest,agent_credential_digest,expires_at')
+          .eq('session_digest', binding.session_digest).eq('room_id', challenge.roomId)
+          .eq('participant_id', binding.participant_id).is('terminated_at', null)
+          .not('agent_credential_ciphertext', 'is', null).gt('expires_at', new Date().toISOString())
+          .maybeSingle(),
+        db.from('participants').select('id')
+          .eq('id', binding.participant_id).eq('room_id', challenge.roomId)
+          .in('kind', ['original_session','model','external_agent'])
+          .in('status', ['connected','active','autonomous']).maybeSingle(),
+      ]);
+      if (app.error || host.error || mcp.error || participant.error) {
+        return json(503, fail('native_binding_authorization_lookup_failed'), origin);
+      }
+      if (!app.data) return json(403, fail('app_not_selected_on_device'), origin);
+      if (!host.data || !mcp.data || !participant.data) {
+        return json(403, fail('group_binding_authorization_expired'), origin);
+      }
+      const { data: connection, error: connectionError } = await db.from('agent_connections')
+        .select('credential_digest').eq('credential_digest', mcp.data.agent_credential_digest)
+        .eq('owner_id', userId).eq('room_id', challenge.roomId)
+        .eq('participant_id', binding.participant_id).is('revoked_at', null)
+        .gt('expires_at', new Date().toISOString()).maybeSingle();
+      if (connectionError) return json(503, fail('native_binding_authorization_lookup_failed'), origin);
+      if (!connection) return json(403, fail('group_binding_authorization_expired'), origin);
+
+      const nonce = randomHex(32);
+      const expiresAt = new Date(Math.min(
+        Date.now() + 90_000,
+        Date.parse(screen.session.expires_at),
+        Date.parse(mcp.data.expires_at),
+        Date.parse(connection.expires_at),
+        Date.parse(host.data.expires_at),
+      )).toISOString();
+      if (Date.parse(expiresAt) <= Date.now()) return json(409, fail('native_binding_challenge_expired'), origin);
+      const now = new Date().toISOString();
+      const { error: revokeChallengeError } = await db.from('backroom_android_native_binding_challenges')
+        .update({ revoked_at: now })
+        .eq('binding_id', binding.id).eq('device_id', challenge.deviceId)
+        .eq('screen_session_id', challenge.sessionId).is('consumed_at', null).is('revoked_at', null);
+      if (revokeChallengeError) return json(503, fail('native_binding_challenge_unavailable'), origin);
+      const challengeId = crypto.randomUUID();
+      const { error: insertChallengeError } = await db.from('backroom_android_native_binding_challenges').insert({
+        id: challengeId, owner_id: userId, room_id: challenge.roomId,
+        binding_id: binding.id, device_id: challenge.deviceId,
+        screen_session_id: challenge.sessionId, app_package_name: challenge.appPackageName,
+        nonce_digest: await sha256(nonce), expires_at: expiresAt,
+      });
+      if (insertChallengeError) return json(503, fail('native_binding_challenge_unavailable'), origin);
+      return json(201, { ok: true, challengeId, nonce, expiresAt }, origin);
+    }
+
+    if (action === 'android/native-binding-revoke') {
+      if (!exactKeys(input, ['action','deviceId','roomId','sessionId','bindingId']) ||
+          !UUID.test(input.deviceId ?? '') || !UUID.test(input.roomId ?? '') ||
+          !UUID.test(input.sessionId ?? '') || !UUID.test(input.bindingId ?? '')) {
+        return json(400, fail('invalid_native_binding_revoke'), origin);
+      }
+      const userId = await owner(req);
+      if (!userId) return json(401, fail('owner_auth_required'), origin);
+      const [binding, deviceBinding] = await Promise.all([
+        db.from('backroom_input_bindings').select('id')
+          .eq('id', input.bindingId).eq('owner_id', userId).eq('room_id', input.roomId).maybeSingle(),
+        verifyActiveDeviceRoomBinding(input.deviceId, input.roomId),
+      ]);
+      if (binding.error) return json(503, fail('native_binding_revoke_failed'), origin);
+      if (!binding.data) return json(404, fail('native_group_binding_not_found'), origin);
+      if (!deviceBinding.ok) return json(deviceBinding.status, fail(deviceBinding.reason), origin);
+      if (deviceBinding.platform !== 'android') return json(409, fail('android_device_required'), origin);
+      const revokedAt = new Date().toISOString();
+      const { data, error } = await db.from('backroom_android_native_bindings')
+        .update({ revoked_at: revokedAt })
+        .eq('binding_id', input.bindingId).eq('owner_id', userId)
+        .eq('device_id', input.deviceId).eq('room_id', input.roomId)
+        .eq('screen_session_id', input.sessionId)
+        .is('revoked_at', null).select('id');
+      if (error) return json(503, fail('native_binding_revoke_failed'), origin);
+      const { data: revokedChallenges, error: challengeError } = await db.from('backroom_android_native_binding_challenges')
+        .update({ revoked_at: revokedAt })
+        .eq('binding_id', input.bindingId).eq('owner_id', userId)
+        .eq('device_id', input.deviceId).eq('room_id', input.roomId)
+        .eq('screen_session_id', input.sessionId)
+        .is('consumed_at', null).is('revoked_at', null).select('id');
+      if (challengeError) return json(503, fail('native_binding_revoke_failed'), origin);
+
+      // Registration locks and consumes the challenge before inserting its
+      // attested mapping. If it was already in flight when the first mapping
+      // sweep ran, this challenge update waits for that transaction. Sweep
+      // once more afterwards so a mapping committed during that race cannot
+      // survive a UI cancel/timeout.
+      const { data: revokedBindingsAfterChallenge, error: finalMappingError } =
+        await db.from('backroom_android_native_bindings')
+          .update({ revoked_at: revokedAt })
+          .eq('binding_id', input.bindingId).eq('owner_id', userId)
+          .eq('device_id', input.deviceId).eq('room_id', input.roomId)
+          .eq('screen_session_id', input.sessionId)
+          .is('revoked_at', null).select('id');
+      if (finalMappingError) return json(503, fail('native_binding_revoke_failed'), origin);
+
+      return json(200, {
+        ok: true,
+        revoked: (Array.isArray(data) && data.length > 0) ||
+          (Array.isArray(revokedChallenges) && revokedChallenges.length > 0) ||
+          (Array.isArray(revokedBindingsAfterChallenge) && revokedBindingsAfterChallenge.length > 0),
+      }, origin);
+    }
+
+    if (action === 'android/native-binding-complete') {
+      if (!exactKeys(input, [
+        'action','challengeId','nonce','screenSessionId','appPackageName',
+        'appSigningCertificateSha256','composerIdentityDigest','sendControlIdentityDigest',
+        'providerConversationIdentityDigest'
+      ])) return json(400, fail('invalid_native_binding_evidence'), origin);
+      const evidence = validateAndroidNativeBindingCompletion({
+        challengeId: input.challengeId, nonce: input.nonce, screenSessionId: input.screenSessionId,
+        appPackageName: input.appPackageName,
+        appSigningCertificateSha256: input.appSigningCertificateSha256,
+        composerIdentityDigest: input.composerIdentityDigest,
+        sendControlIdentityDigest: input.sendControlIdentityDigest,
+        providerConversationIdentityDigest: input.providerConversationIdentityDigest,
+      });
+      if (!evidence) return json(400, fail('invalid_native_binding_evidence'), origin);
+      const current = await device(req);
+      if (!current) return json(401, fail('device_not_approved'), origin);
+      if (current.platform !== 'android') return json(409, fail('android_device_required'), origin);
+      const { data, error } = await db.rpc('register_backroom_android_native_binding', {
+        p_challenge_id: evidence.challengeId,
+        p_nonce_digest: await sha256(evidence.nonce),
+        p_device_id: current.device_id,
+        p_screen_session_id: evidence.screenSessionId,
+        p_app_package_name: evidence.appPackageName,
+        p_app_signing_certificate_sha256: evidence.appSigningCertificateSha256,
+        p_composer_identity_digest: evidence.composerIdentityDigest,
+        p_send_control_identity_digest: evidence.sendControlIdentityDigest,
+        p_provider_conversation_identity_digest: evidence.providerConversationIdentityDigest,
+      });
+      if (error) return json(503, fail('native_binding_registration_unavailable'), origin);
+      if (!data || data.ok !== true) {
+        const reason = typeof data?.reason === 'string' ? data.reason : 'native_binding_registration_rejected';
+        const status = ['challenge_not_found','challenge_invalid_or_expired','challenge_already_consumed'].includes(reason) ? 409 : 403;
+        return json(status, fail(reason), origin);
+      }
+      return json(200, {
+        ok: true, nativeBindingId: data.nativeBindingId, bindingId: data.bindingId,
+        expiresAt: data.expiresAt, replayed: data.replayed === true,
+      }, origin);
+    }
+
     if (action === 'android/session-start') {
       const userId = await owner(req);
       if (!userId) return json(401, fail('owner_auth_required'), origin);
@@ -634,6 +954,20 @@ Deno.serve(async req => {
               .eq('id', row.id).eq('device_id', current.device_id).eq('status', 'pending');
             continue;
           }
+          if (row.command?.action === 'native_wake_trigger') {
+            if (session.session.session_type !== 'screen') {
+              await db.from('backroom_android_commands').update({ status: 'rejected', result: 'native_wake_screen_required', lease_until: null })
+                .eq('id', row.id).eq('device_id', current.device_id).eq('status', 'pending');
+              continue;
+            }
+            const nativeScope = await verifyCurrentNativeWakeHandoff(row, current.device_id);
+            if (!nativeScope.ok && nativeScope.status === 503) return json(503, fail(nativeScope.reason), origin);
+            if (!nativeScope.ok) {
+              await db.from('backroom_android_commands').update({ status: 'rejected', result: nativeScope.reason, lease_until: null })
+                .eq('id', row.id).eq('device_id', current.device_id).eq('status', 'pending');
+              continue;
+            }
+          }
         }
         const leaseUntil = new Date(Date.now() + 60_000).toISOString();
         const { data, error } = await db.from('backroom_android_commands')
@@ -667,6 +1001,20 @@ Deno.serve(async req => {
             await db.from('backroom_android_commands').update({ status: 'expired', result: 'session_not_active', lease_until: null })
               .eq('id', row.id).eq('device_id', current.device_id).eq('status', 'leased');
             continue;
+          }
+          if (row.command?.action === 'native_wake_trigger') {
+            if (session.session.session_type !== 'screen') {
+              await db.from('backroom_android_commands').update({ status: 'rejected', result: 'native_wake_screen_required', lease_until: null })
+                .eq('id', row.id).eq('device_id', current.device_id).eq('status', 'leased');
+              continue;
+            }
+            const nativeScope = await verifyCurrentNativeWakeHandoff(row, current.device_id);
+            if (!nativeScope.ok && nativeScope.status === 503) return json(503, fail(nativeScope.reason), origin);
+            if (!nativeScope.ok) {
+              await db.from('backroom_android_commands').update({ status: 'rejected', result: nativeScope.reason, lease_until: null })
+                .eq('id', row.id).eq('device_id', current.device_id).eq('status', 'leased');
+              continue;
+            }
           }
         }
         const leaseUntil = new Date(Date.now() + 60_000).toISOString();
@@ -765,23 +1113,27 @@ Deno.serve(async req => {
         return json(400, fail('invalid_android_ack'), origin);
       }
       const { data: row, error: lookupError } = await db.from('backroom_android_commands')
-        .select('id,device_id,room_id,session_id,request_id,command,status,lease_until,expires_at,result,result_payload')
+        .select('id,device_id,room_id,session_id,request_id,command,status,lease_until,expires_at,created_at,result,result_payload')
         .eq('id', ack.commandId).eq('device_id', current.device_id)
         .eq('session_id', ack.sessionId).eq('request_id', ack.requestId).maybeSingle();
       if (lookupError) return json(503, fail('android_ack_lookup_failed'), origin);
       if (!row) return json(404, fail('android_command_not_found'), origin);
+      const isControlCommand = row.command?.action === 'request_control';
+      const isNativeWakeCommand = row.command?.action === 'native_wake_trigger';
       const ackBinding = await verifyActiveDeviceRoomBinding(current.device_id, row.room_id);
       if (!ackBinding.ok || ackBinding.platform !== 'android') {
         if (!ackBinding.ok && ackBinding.status === 503) return json(503, fail('android_ack_binding_check_failed'), origin);
-        await db.from('backroom_android_commands')
-          .update({ status: 'rejected', result: 'device_room_binding_revoked', lease_until: null })
-          .eq('id', ack.commandId).eq('device_id', current.device_id)
-          .in('status', ['pending','leased']);
-        return json(403, fail('android_ack_room_binding_revoked'), origin);
+        if (!isNativeWakeCommand) {
+          await db.from('backroom_android_commands')
+            .update({ status: 'rejected', result: 'device_room_binding_revoked', lease_until: null })
+            .eq('id', ack.commandId).eq('device_id', current.device_id)
+            .in('status', ['pending','leased']);
+          return json(403, fail('android_ack_room_binding_revoked'), origin);
+        }
+        // A native result is already a device-authenticated immutable receipt.
+        // Let it be stored even if room pairing was revoked after the possible
+        // provider action; SQL settlement will classify the result as cancelled.
       }
-
-      const isControlCommand = row.command?.action === 'request_control';
-      const isNativeWakeCommand = row.command?.action === 'native_wake_trigger';
       let nativeWakeHandoff: ReturnType<typeof validateAndroidNativeWakeHandoff> = null;
       if (isNativeWakeCommand) {
         // Re-validate the immutable handoff at its issue time. The device
@@ -826,8 +1178,37 @@ Deno.serve(async req => {
             capability: 'control', ...(controlGranted ? {} : { reason: 'local_touch_permission_missing' }) },
         });
       };
-      const broadcastNativeWakeResult = async () => {
+      const settleNativeWakeGroupJob = async () => {
+        if (!isNativeWakeCommand || !nativeWakeHandoff || !ack.nativeWakeResult) return null;
+        const { data, error } = await db.rpc('settle_backroom_android_native_wake_result_attested', {
+          p_job_id: nativeWakeHandoff.jobId,
+          p_host_id: nativeWakeHandoff.hostId,
+          p_session_digest: nativeWakeHandoff.sessionDigest,
+          p_binding_id: nativeWakeHandoff.bindingId,
+          p_lease_token_digest: nativeWakeHandoff.leaseTokenDigest,
+          p_handoff_id: nativeWakeHandoff.handoffId,
+          p_device_id: current.device_id,
+          p_screen_session_id: nativeWakeHandoff.screenSessionId,
+          p_app_package_name: nativeWakeHandoff.appId,
+          p_app_signing_certificate_sha256: nativeWakeHandoff.identityFingerprint,
+          p_target_id: nativeWakeHandoff.targetId,
+          p_target_revision: nativeWakeHandoff.targetRevision,
+          p_composer_identity_digest: nativeWakeHandoff.composerIdentityDigest,
+          p_send_control_identity_digest: nativeWakeHandoff.sendControlIdentityDigest,
+          p_provider_conversation_identity_digest: nativeWakeHandoff.providerConversationIdentityDigest,
+          p_result_payload: ack.nativeWakeResult,
+        });
+        if (error) throw new Error('native_wake_group_result_settlement_failed');
+        if (!['acknowledged','pending','failed','cancelled','replayed','lease_mismatch'].includes(data)) {
+          throw new Error('native_wake_group_result_state_invalid');
+        }
+        return data;
+      };
+
+      const broadcastNativeWakeResult = async (settlement: string | null) => {
         if (!isNativeWakeCommand || !nativeWakeHandoff || !ack.nativeWakeResult) return;
+        const groupSettled = settlement !== null && settlement !== 'lease_mismatch';
+        const groupAcknowledged = settlement === 'acknowledged' || settlement === 'replayed';
         // The room Realtime event carries outcome metadata only. Exact composer /
         // Send digests remain in the service-role-only result_payload receipt.
         await broadcastPrivateDeviceEvent({
@@ -838,7 +1219,9 @@ Deno.serve(async req => {
             requestId: ack.requestId, sessionId: ack.sessionId,
             handoffId: nativeWakeHandoff.handoffId, jobId: nativeWakeHandoff.jobId,
             state: ack.nativeWakeResult.state,
-            ok: ack.nativeWakeResult.state === 'submitted',
+            ok: ack.nativeWakeResult.state === 'submitted' && groupAcknowledged,
+            groupSettled,
+            groupSettlement: settlement,
             ...(ack.nativeWakeResult.reason ? { reason: ack.nativeWakeResult.reason } : {}),
           },
         });
@@ -863,13 +1246,76 @@ Deno.serve(async req => {
           return json(409, fail('android_ack_result_conflict'), origin);
         }
         try {
+          const settlement = await settleNativeWakeGroupJob();
           await broadcastControlResult();
-          await broadcastNativeWakeResult();
-        } catch {
-          return json(503, fail('android_ack_result_delivery_failed'), origin);
+          await broadcastNativeWakeResult(settlement);
+          return json(200, {
+            ok: true, acked: true, replayed: true,
+            ...(isNativeWakeCommand ? {
+              groupSettled: settlement !== 'lease_mismatch',
+              ...(settlement === 'lease_mismatch' ? { groupSettlement: 'stale_lease_review' } : {}),
+            } : {}),
+          }, origin);
+        } catch (error) {
+          return json(503, fail(error instanceof Error ? error.message : 'android_ack_result_delivery_failed'), origin);
         }
-        return json(200, { ok: true, acked: true, replayed: true }, origin);
       }
+
+      if (isNativeWakeCommand) {
+        // Persist the exact native receipt before settlement or Realtime. The
+        // phone keeps its durable outbox until this row says ACKed. An exact
+        // authenticated receipt remains recordable even after long outages;
+        // the group SQL routine will mark an expired/revoked lease failed or
+        // cancelled, never as a late success.
+        const createdAt = Date.parse(row.created_at);
+        const now = Date.now();
+        if (!['leased','expired','rejected'].includes(row.status) ||
+            !Number.isFinite(createdAt) || createdAt > now) {
+          return json(409, fail('android_native_wake_receipt_window_closed'), origin);
+        }
+        const ackedAt = new Date(now).toISOString();
+        const { data, error } = await db.from('backroom_android_commands')
+          .update({
+            status: 'acked', result: ack.result,
+            result_payload: ack.nativeWakeResult,
+            acked_at: ackedAt, lease_until: null
+          })
+          .eq('id', ack.commandId).eq('device_id', current.device_id)
+          .in('status', ['leased','expired','rejected'])
+          .select('id');
+        if (error) return json(503, fail('android_native_wake_receipt_store_failed'), origin);
+
+        let receiptStored = Array.isArray(data) && data.length === 1;
+        if (!receiptStored) {
+          const { data: latest, error: latestError } = await db.from('backroom_android_commands')
+            .select('status,result,result_payload')
+            .eq('id', ack.commandId).eq('device_id', current.device_id).maybeSingle();
+          if (latestError) return json(503, fail('android_native_wake_receipt_verify_failed'), origin);
+          if (latest?.status !== 'acked' || latest.result !== ack.result ||
+              !sameNativeWakeResult(latest.result_payload, ack.nativeWakeResult)) {
+            return json(409, fail(latest?.status === 'acked'
+              ? 'android_ack_result_conflict' : 'android_native_wake_receipt_store_conflict'), origin);
+          }
+          receiptStored = true;
+        }
+        if (!receiptStored) return json(503, fail('android_native_wake_receipt_store_failed'), origin);
+
+        try {
+          const settlement = await settleNativeWakeGroupJob();
+          await broadcastNativeWakeResult(settlement);
+          return json(200, {
+            ok: true, acked: true, nativeWakeResultStored: true,
+            groupSettled: settlement !== 'lease_mismatch',
+            ...(settlement === 'lease_mismatch' ? { groupSettlement: 'stale_lease_review' } : {}),
+          }, origin);
+        } catch (error) {
+          // The exact command receipt is already durable. A phone retry will
+          // enter the row.status === 'acked' replay branch and finish settlement.
+          return json(503, fail(error instanceof Error ? error.message :
+            'android_native_wake_result_delivery_failed'), origin);
+        }
+      }
+
       if (row.status !== 'leased' || !row.lease_until || Date.parse(row.lease_until) <= Date.now() ||
           Date.parse(row.expires_at) <= Date.now()) {
         return json(409, fail('android_command_lease_expired'), origin);
@@ -878,12 +1324,15 @@ Deno.serve(async req => {
       // Publish before committing the ACK. If Realtime is temporarily unavailable,
       // the device keeps the command leased and will retry it after lease expiry.
       try {
+        // Settle the original group job before recording the Android command ACK.
+        // If this response is lost, an identical device ACK replays the same evidence safely.
+        await settleNativeWakeGroupJob();
         await broadcastControlResult();
         await broadcastNativeWakeResult();
-      } catch {
-        return json(503, fail(isNativeWakeCommand
-          ? 'android_native_wake_result_delivery_failed'
-          : 'android_control_result_delivery_failed'), origin);
+      } catch (error) {
+        const mismatch = error instanceof Error && error.message === 'native_wake_group_lease_mismatch';
+        return json(mismatch ? 409 : 503, fail(error instanceof Error ? error.message :
+          (isNativeWakeCommand ? 'android_native_wake_result_delivery_failed' : 'android_control_result_delivery_failed')), origin);
       }
 
       const ackedAt = new Date().toISOString();

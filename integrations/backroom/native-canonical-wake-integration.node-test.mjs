@@ -8,6 +8,7 @@ import {NativeCanonicalWakeAdapter} from './native-canonical-wake-adapter.mjs';
 import {buildCanonicalWakePrompt} from './coordination-core.mjs';
 import {dispatchClaimedWake} from './durable-wake-runtime.mjs';
 
+const providerConversationIdentityDigest='c'.repeat(64);
 const target = Object.freeze({
   id:'native-target-1', roomId:'room-1', hostId:'host-1', spaceId:'space-1',
   sessionId:'session-1', appId:'com.example.chat',
@@ -17,7 +18,6 @@ const target = Object.freeze({
   locatorValue:'native-composer-opaque', revision:3,
 });
 const eventId='message-001';
-const providerConversationIdentityDigest='c'.repeat(64);
 const prompt=buildCanonicalWakePrompt(eventId);
 const sessionDigest='d'.repeat(64);
 const binding=Object.freeze({

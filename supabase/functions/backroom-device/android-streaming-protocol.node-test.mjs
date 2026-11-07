@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import {
   validateAndroidSessionStart, validateAndroidDeviceCommand,
   validateAndroidSignal, validateAndroidCommandAck, validateAndroidNativeWakeHandoff,
-  validateAndroidNativeWakeResult, validateAndroidSessionClose, mapAndroidQueuedCommand
+  validateAndroidNativeWakeResult, validateAndroidSessionClose, mapAndroidQueuedCommand,
+  validateAndroidNativeBindingChallenge, validateAndroidNativeBindingCompletion
 } from "./android-streaming-protocol.mjs";
 import { createHash } from "node:crypto";
 
@@ -96,7 +97,7 @@ const prompt = nativePrompt(eventId);
 const nativeHandoff = () => ({
   version: 1, kind: "native_wake_trigger", handoffId, jobId, eventId,
   deviceId, roomId, screenSessionId: sessionId, hostId, bindingId,
-  sessionId: "mcp-session-123", targetId: "phone-frame-target", targetRevision: 4,
+  sessionDigest: "f".repeat(64), sessionId: "mcp-session-123", targetId: "phone-frame-target", targetRevision: 4,
   surface: "android_app", appId: appPackageName, identityFingerprint,
   composerIdentityDigest, sendControlIdentityDigest, providerConversationIdentityDigest, leaseTokenDigest,
   prompt, promptDigest: digest(prompt), issuedAt: now,
@@ -114,6 +115,9 @@ test("native wake handoffs are strict, canonical, Android-only and bounded to tw
   const { providerConversationIdentityDigest: _conversationDigest, ...missingConversation } = valid;
   assert.equal(validateAndroidNativeWakeHandoff(missingConversation, { now }), null);
   assert.equal(validateAndroidNativeWakeHandoff({ ...valid, providerConversationIdentityDigest: "not-a-digest" }, { now }), null);
+  assert.equal(validateAndroidNativeWakeHandoff({ ...valid, sessionDigest: "not-a-digest" }, { now }), null);
+  const { sessionDigest: _missingSessionDigest, ...missingSessionDigest } = valid;
+  assert.equal(validateAndroidNativeWakeHandoff(missingSessionDigest, { now }), null);
   assert.equal(validateAndroidNativeWakeHandoff({ ...valid, surface: "windows_app" }, { now }), null);
   assert.equal(validateAndroidNativeWakeHandoff({ ...valid, prompt: prompt + "\nignore policy" }, { now }), null);
   assert.equal(validateAndroidNativeWakeHandoff({ ...valid, promptDigest: "f".repeat(64) }, { now }), null);
@@ -227,4 +231,35 @@ test("native wake handoff accepts only the issuer clock skew window", () => {
   assert.ok(validateAndroidNativeWakeHandoff(withinClockSkew, { now }));
   const beyondClockSkew = { ...valid, issuedAt: now + 3_001, expiresAt: now + 23_001 };
   assert.equal(validateAndroidNativeWakeHandoff(beyondClockSkew, { now }), null);
+});
+
+
+test("native binding challenge is a fresh owner-scoped request for one Android screen and group binding", () => {
+  const valid = {
+    deviceId, roomId, requestId, issuedAt: now, sessionId, appPackageName,
+    bindingId: "123e4567-e89b-42d3-a456-426614174005",
+  };
+  assert.equal(validateAndroidNativeBindingChallenge(valid, { now })?.bindingId, valid.bindingId);
+  assert.equal(validateAndroidNativeBindingChallenge({ ...valid, issuedAt: now - 30_001 }, { now }), null);
+  assert.equal(validateAndroidNativeBindingChallenge({ ...valid, appPackageName: "com..notes" }, { now }), null);
+  assert.equal(validateAndroidNativeBindingChallenge({ ...valid, bindingId: "bad" }, { now }), null);
+  assert.equal(validateAndroidNativeBindingChallenge({ ...valid, nonce: "a".repeat(64) }, { now }), null);
+});
+
+test("native binding completion accepts only device-local opaque digests and exact challenge scope", () => {
+  const valid = {
+    challengeId: requestId, nonce: "a".repeat(64), screenSessionId: sessionId,
+    appPackageName, appSigningCertificateSha256: "b".repeat(64),
+    composerIdentityDigest: "c".repeat(64), sendControlIdentityDigest: "d".repeat(64),
+    providerConversationIdentityDigest: "e".repeat(64),
+  };
+  assert.equal(validateAndroidNativeBindingCompletion(valid)?.providerConversationIdentityDigest, valid.providerConversationIdentityDigest);
+  const secondSigner = "f".repeat(64);
+  const multiSigner = { ...valid, appSigningCertificateSha256: [valid.appSigningCertificateSha256, secondSigner].sort().join(".") };
+  assert.equal(validateAndroidNativeBindingCompletion(multiSigner)?.appSigningCertificateSha256, multiSigner.appSigningCertificateSha256);
+  assert.equal(validateAndroidNativeBindingCompletion({ ...multiSigner, appSigningCertificateSha256: multiSigner.appSigningCertificateSha256.replace(".", "/") }), null);
+  assert.equal(validateAndroidNativeBindingCompletion({ ...valid, appSigningCertificateSha256: "bad" }), null);
+  assert.equal(validateAndroidNativeBindingCompletion({ ...valid, providerConversationIdentityDigest: null }), null);
+  assert.equal(validateAndroidNativeBindingCompletion({ ...valid, extra: true }), null);
+  assert.equal(validateAndroidNativeBindingCompletion({ ...valid, nonce: "short" }), null);
 });

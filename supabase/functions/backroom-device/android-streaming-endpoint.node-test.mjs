@@ -86,7 +86,10 @@ test("control ACK broadcasts before marking the leased queue row acknowledged an
   const handler = endpoint.slice(endpoint.indexOf("if (action === 'android/ack')"), endpoint.indexOf("if (action === 'desktop/inventory')"));
   assert.match(handler, /row.status === 'acked'/);
   assert.match(handler, /row.result !== ack.result/);
-  assert.ok(handler.indexOf("await broadcastControlResult()") < handler.indexOf(".update({ status: 'acked'"));
+  const broadcastIndex = handler.lastIndexOf("await broadcastControlResult()");
+  const ackStatusIndex = handler.indexOf("status: 'acked'");
+  assert.ok(broadcastIndex >= 0 && ackStatusIndex > broadcastIndex,
+    "the private control result must be delivered before the ACK row is committed");
   assert.match(handler, /android_control_result_delivery_failed/);
   assert.match(handler, /replayed: true/);
 });
@@ -314,11 +317,17 @@ test("native wake ACK is bound to the stored Android device, room, session, requ
   assert.match(handler, /android_ack_result_conflict/);
   assert.match(handler, /native_wake_submitted/);
   assert.match(handler, /row\.status !== 'leased'/);
+  assert.match(handler, /db\.rpc\('settle_backroom_android_native_wake_result'/);
+  assert.match(handler, /p_session_digest: nativeWakeHandoff\.sessionDigest/);
+  assert.match(handler, /p_lease_token_digest: nativeWakeHandoff\.leaseTokenDigest/);
+  assert.ok(handler.indexOf('await settleNativeWakeGroupJob()') < handler.indexOf('await broadcastNativeWakeResult()'),
+    'group lease settlement must precede Android command ACK/broadcast');
 });
 
 test("native wake ACK stores bounded evidence privately and broadcasts no target identity digests", async () => {
   const endpoint = await read("supabase/functions/backroom-device/index.ts");
   const migration = await read("supabase/migrations/20261103133000_backroom_android_native_wake_result_evidence.sql");
+  const settlementMigration = await read("supabase/migrations/20261105110000_backroom_android_native_wake_queue_settlement.sql");
   const handler = endpoint.slice(
     endpoint.indexOf("if (action === 'android/ack')"),
     endpoint.indexOf("if (action === 'desktop/inventory')")
@@ -328,10 +337,159 @@ test("native wake ACK stores bounded evidence privately and broadcasts no target
   const broadcast = handler.slice(broadcastStart, broadcastEnd);
   assert.match(migration, /add column if not exists result_payload jsonb/);
   assert.match(migration, /octet_length\(result_payload::text\) <= 8192/);
+  assert.match(settlementMigration, /add column if not exists native_result_payload jsonb/);
+  assert.match(settlementMigration, /grant execute on function public\.settle_backroom_android_native_wake_result/);
+  assert.match(settlementMigration, /lease_token_hash=p_lease_token_digest/);
+  assert.match(settlementMigration, /v_result_state='needs_review'[\s\S]*?v_next_state:='failed'/);
   assert.match(endpoint, /result_payload: ack\.nativeWakeResult \?\? null/);
   assert.match(handler, /sameNativeWakeResult\(row\.result_payload, ack\.nativeWakeResult \?\? null\)/);
   assert.match(broadcast, /event: 'android_native_wake_result'/);
   assert.match(broadcast, /handoffId: nativeWakeHandoff\.handoffId/);
   assert.match(broadcast, /state: ack\.nativeWakeResult\.state/);
   assert.doesNotMatch(broadcast, /composerIdentityDigest|sendControlIdentityDigest|nativeWakeResult: ack\.nativeWakeResult/);
+});
+
+test("a new Android drag selection clears the previous frame-side composer and provider digest before sending the request", async () => {
+  const browser = await read("src/BackroomAndroidControl.tsx");
+  const start = browser.indexOf("const selectComposer =");
+  const end = browser.indexOf("const recheckSendControl =", start);
+  const selection = browser.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  assert.ok(selection.indexOf("clearComposerTarget(false)") >= 0);
+  assert.ok(selection.indexOf("clearComposerTarget(false)") < selection.indexOf("const selectionId = uuid()"));
+});
+
+test("provider-identity migration backfills only missing digests and preserves mismatches for cancellation", async () => {
+  const migration = await read("supabase/migrations/20261104111500_backroom_provider_conversation_identity_queue.sql");
+  const assignment = "set provider_conversation_identity_digest=b.provider_conversation_identity_digest";
+  const assignmentIndex = migration.indexOf(assignment);
+  const start = migration.lastIndexOf("update public.backroom_wake_jobs j", assignmentIndex);
+  const end = migration.indexOf("-- Old native work", assignmentIndex);
+  assert.ok(start >= 0 && end > start, "provider digest backfill block must exist");
+  const backfill = migration.slice(start, end);
+  assert.ok(backfill.includes("j.provider_conversation_identity_digest is null"));
+  assert.ok(backfill.includes("b.provider_conversation_identity_digest is not null"));
+  assert.equal(backfill.includes("is distinct from b.provider_conversation_identity_digest"), false);
+  assert.ok(migration.includes("b.provider_conversation_identity_digest=j.provider_conversation_identity_digest"));
+});
+
+
+test("Android native binding challenge remains owner-authenticated and device completion remains bearer-authenticated", async () => {
+  const endpoint = await read("supabase/functions/backroom-device/index.ts");
+  const candidatesStart = endpoint.indexOf("if (action === 'android/native-binding-candidates')");
+  const challengeStart = endpoint.indexOf("if (action === 'android/native-binding-challenge')");
+  const completionStart = endpoint.indexOf("if (action === 'android/native-binding-complete')");
+  const revokeStart = endpoint.indexOf("if (action === 'android/native-binding-revoke')");
+  const sessionStart = endpoint.indexOf("if (action === 'android/session-start')");
+  assert.ok(candidatesStart >= 0 && challengeStart > candidatesStart);
+  assert.ok(revokeStart > challengeStart && completionStart > revokeStart && sessionStart > completionStart);
+  const candidates = endpoint.slice(candidatesStart, challengeStart);
+  assert.match(candidates, /const userId = await owner\(req\)/);
+  assert.match(candidates, /\.eq\('owner_id', userId\)/);
+  assert.doesNotMatch(candidates, /provider_conversation_identity_digest|composerIdentityDigest|sendControlIdentityDigest/);
+  const challenge = endpoint.slice(challengeStart, revokeStart);
+  assert.match(challenge, /validateAndroidNativeBindingChallenge/);
+  assert.match(challenge, /authorizeRoomActor\(/);
+  assert.match(challenge, /verifyActiveDeviceRoomBinding\(/);
+  assert.match(challenge, /activeDesktopSession\(/);
+  assert.match(challenge, /nonce_digest: await sha256\(nonce\)/);
+  assert.match(challenge, /nonce, expiresAt/);
+  assert.doesNotMatch(challenge, /composerIdentityDigest|sendControlIdentityDigest|providerConversationIdentityDigest/);
+  const completion = endpoint.slice(completionStart, sessionStart);
+  assert.match(completion, /validateAndroidNativeBindingCompletion/);
+  assert.match(completion, /const current = await device\(req\)/);
+  assert.match(completion, /register_backroom_android_native_binding/);
+  assert.match(completion, /p_composer_identity_digest/);
+  assert.match(completion, /p_send_control_identity_digest/);
+  assert.match(completion, /p_provider_conversation_identity_digest/);
+  const revoke = endpoint.slice(revokeStart, completionStart);
+  assert.match(revoke, /const userId = await owner\(req\)/);
+  assert.match(revoke, /backroom_android_native_bindings/);
+  assert.match(revoke, /backroom_android_native_binding_challenges/);
+  assert.match(revoke, /\.eq\('binding_id', input\.bindingId\)\.eq\('owner_id', userId\)/);
+  assert.match(revoke, /\.eq\('device_id', input\.deviceId\)\.eq\('room_id', input\.roomId\)/);
+  assert.match(revoke, /\.eq\('screen_session_id', input\.sessionId\)/);
+  assert.match(revoke, /\.is\('consumed_at', null\)\.is\('revoked_at', null\)/);
+  assert.match(revoke, /revokedChallenges\.length > 0/);
+  const firstMappingSweep = revoke.indexOf("db.from('backroom_android_native_bindings')");
+  const challengeSweep = revoke.indexOf("db.from('backroom_android_native_binding_challenges')");
+  const finalMappingSweep = revoke.lastIndexOf("db.from('backroom_android_native_bindings')");
+  assert.ok(firstMappingSweep >= 0 && challengeSweep > firstMappingSweep);
+  assert.ok(finalMappingSweep > challengeSweep,
+    "a second mapping sweep must follow challenge-row serialization to close in-flight registration races");
+  assert.match(revoke, /revokedBindingsAfterChallenge\.length > 0/);
+});
+
+test("native Android identity proof travels from Accessibility directly to the device bearer endpoint, not through browser data", async () => {
+  const android = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  const accessibility = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidTouchAccessibilityService.kt");
+  const frame = await read("src/BackroomAndroidControl.tsx");
+  assert.match(android, /bind_native_group_target/);
+  assert.match(android, /AndroidTouchAccessibilityService\.nativeBindingEvidence/);
+  assert.match(android, /api\?\.completeNativeBinding/);
+  assert.match(android, /composerIdentityDigest/);
+  assert.match(android, /sendControlIdentityDigest/);
+  assert.match(android, /providerConversationIdentityDigest/);
+  const ack = android.slice(android.indexOf("private fun sendNativeBindingAcknowledgement"), android.indexOf("private fun sendRemoteTextAcknowledgement"));
+  assert.match(ack, /\.put\("bound", bound\)/);
+  assert.doesNotMatch(ack, /composerIdentityDigest|sendControlIdentityDigest|providerConversationIdentityDigest/);
+  assert.match(accessibility, /fun nativeBindingEvidence\(/);
+  assert.match(accessibility, /revalidateSelectedSendControl\(/);
+  const browserMessage = frame.slice(frame.indexOf("channel.send(JSON.stringify({\n        kind: 'bind_native_group_target'"),
+    frame.indexOf("channel.send(JSON.stringify({\n        kind: 'bind_native_group_target'") + 1000);
+  assert.match(browserMessage, /challengeId/);
+  assert.match(browserMessage, /nonce/);
+  assert.doesNotMatch(browserMessage, /composerIdentityDigest|sendControlIdentityDigest|providerConversationIdentityDigest/);
+});
+
+test("Android frame revokes active mappings and pending challenges on every binding cancellation path", async () => {
+  const frame = await read("src/BackroomAndroidControl.tsx");
+  const helper = frame.indexOf("const revokeNativeBinding = useCallback");
+  const clear = frame.indexOf("const clearComposerTarget = useCallback");
+  const dispose = frame.indexOf("const disposePeer = useCallback");
+  const stop = frame.indexOf("const stopRemote = useCallback");
+  const bind = frame.indexOf("const bindSelectedGroupAI = async");
+  const pointer = frame.indexOf("const pointerUp =");
+  const channelStart = frame.indexOf("const channel = supabase.channel");
+  const cleanup = frame.slice(frame.indexOf("return () => {", channelStart),
+    frame.indexOf("  }, [device.device_id", channelStart));
+
+  assert.ok(helper >= 0 && clear > helper && dispose > clear && stop > dispose);
+  const clearBlock = frame.slice(clear, dispose);
+  assert.match(clearBlock, /pendingNativeBindingRequestRef\.current/);
+  assert.match(clearBlock, /revokeNativeBinding\(/);
+
+  const disposeBlock = frame.slice(dispose, stop);
+  assert.match(disposeBlock, /activeNativeBindingRef\.current/);
+  assert.match(disposeBlock, /revokeNativeBinding\(/);
+
+  const bindBlock = frame.slice(bind, pointer);
+  assert.match(bindBlock, /nativeBindingTimerRef\.current = window\.setTimeout/);
+  assert.equal((bindBlock.match(/revokeNativeBinding\(/g) || []).length, 3);
+  assert.match(bindBlock, /Binding timed out/);
+  assert.match(bindBlock, /UI may have cleared the target or timed out/);
+  assert.match(bindBlock, /transport error can occur after the server created the challenge/);
+
+  assert.match(cleanup, /revokeAndroidNativeBinding\(/);
+  assert.match(cleanup, /pendingNativeBindingRequestRef\.current = ''/);
+  assert.match(cleanup, /nativeBindingTimerRef\.current = null/);
+});
+
+test("native attestation migration revokes phone mappings on every parent authority transition", async () => {
+  const migration = await read("supabase/migrations/20261106143000_backroom_android_native_binding_attestation.sql");
+  for (const name of [
+    "backroom_android_native_binding_challenges",
+    "backroom_android_native_bindings",
+    "register_backroom_android_native_binding",
+    "revoke_backroom_android_native_binding_on_screen_change",
+    "revoke_backroom_android_native_binding_on_device_change",
+    "revoke_backroom_android_native_binding_on_group_binding_change",
+    "revoke_backroom_android_native_binding_on_room_unpair",
+    "revoke_backroom_android_native_binding_on_app_signer_change",
+    "revoke_backroom_android_native_binding_on_host_change",
+  ]) assert.ok(migration.includes(name), "missing native attestation contract: " + name);
+  assert.match(migration, /enable row level security/);
+  assert.match(migration, /revoke all on table public\.backroom_android_native_bindings from public,anon,authenticated/);
+  assert.match(migration, /grant select,insert,update,delete on table public\.backroom_android_native_bindings to service_role/);
+  assert.match(migration, /provider_conversation_identity_digest is distinct from old\.provider_conversation_identity_digest/);
 });

@@ -510,7 +510,7 @@ class MainActivity : Activity() {
             }
             row.addView(wakeConsent)
             row.addView(TextView(this).apply {
-                text = "App/signer-level consent only; it does not pin a particular ChatGPT/Claude conversation. Native autonomous sending stays unavailable until a provider-specific adapter can re-identify the same active conversation after navigation, and trusted group-to-device forwarding with result reconciliation is connected. Saving consent alone triggers no action."
+                text = "Save app-level consent for 24 hours. The phone-side native-wake queue consumer exists, but this consent does not identify or pin a specific AI conversation/thread. Saving this consent alone will not trigger any action in ChatGPT, Claude or another app. If an app cannot expose a stable conversation identity, native autonomous Send must remain unavailable for that app until a provider-conversation identity adapter can re-identify the same conversation after navigation and trusted group-to-device forwarding with result reconciliation is connected."
                 textSize = 10f
                 setTextColor(0xff7b5b24.toInt())
                 setPadding(dp(8), 0, dp(8), dp(4))

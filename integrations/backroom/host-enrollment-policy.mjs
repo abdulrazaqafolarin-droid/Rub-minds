@@ -41,8 +41,12 @@ export function validateHostEnrollment(raw){
 export function validatePendingWakeBinding(raw){
  const v=object(raw);
  keys(v,['roomId','participantId','hostId','sessionDigest','spaceId','sessionId',
-   'targetId','targetIdentityFingerprint','targetRevision','surface',
+   'targetId','targetIdentityFingerprint','providerConversationIdentityDigest','targetRevision','surface',
    'locatorKind','locatorValue','participationMode','maxWakesPerMinute']);
+ const providerConversationIdentityDigest=v.providerConversationIdentityDigest;
+ if(providerConversationIdentityDigest!=null &&
+  (typeof providerConversationIdentityDigest!=='string'||!HEX64.test(providerConversationIdentityDigest)))
+  throw new TypeError('Invalid providerConversationIdentityDigest');
  const result={
   roomId:uuid(v.roomId,'roomId'),participantId:uuid(v.participantId,'participantId'),
   hostId:uuid(v.hostId,'hostId'),
@@ -59,7 +63,10 @@ export function validatePendingWakeBinding(raw){
   throw new RangeError('Invalid targetRevision');
  if(!SURFACES.has(result.surface)||!LOCATORS.has(result.locatorKind)||!MODES.has(result.participationMode))
   throw new TypeError('Invalid surface, locator or participation mode');
+ // Registering a native composer is also used for human-approved draft typing.
+ // The database consent constraint requires the digest only when wake is activated.
  if(!Number.isSafeInteger(result.maxWakesPerMinute)||result.maxWakesPerMinute<1||result.maxWakesPerMinute>6)
   throw new RangeError('Invalid wake rate');
+ if(providerConversationIdentityDigest!=null) result.providerConversationIdentityDigest=providerConversationIdentityDigest;
  return Object.freeze(result);
 }

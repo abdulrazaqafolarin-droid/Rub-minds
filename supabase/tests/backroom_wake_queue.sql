@@ -1,4 +1,4 @@
--- Integration contract for supabase/migrations/20261029090000_backroom_wake_queue.sql.
+-- Integration contract for the durable wake queue, provider-identity and native-settlement migrations.
 do $test$
 declare
   v_owner uuid := '20000000-0000-0000-0000-000000000099';
@@ -7,6 +7,7 @@ declare
   v_trigger_human uuid := '30000000-0000-4000-8000-000000000097';
   v_trigger_binding uuid := '60000000-0000-4000-8000-000000000008';
   v_trigger_message uuid;
+  v_trigger_session_digest text := pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('backroom-trigger-session','UTF8')),'hex');
   v_room uuid := '10000000-0000-0000-0000-000000000099';
   v_participant uuid := '30000000-0000-0000-0000-000000000099';
   v_session_digest text := repeat('b',64);
@@ -36,8 +37,208 @@ declare
   v_binding_5 uuid := '60000000-0000-4000-8000-000000000005';
   v_binding_6 uuid := '60000000-0000-4000-8000-000000000006';
   v_binding_7 uuid := '60000000-0000-4000-8000-000000000007';
+  v_binding_native uuid := '60000000-0000-4000-8000-000000000010';
+  v_binding_native_draft uuid := '60000000-0000-4000-8000-000000000011';
+  v_native_provider_digest text := repeat('9',64);
+  v_native_job jsonb;
+  v_native_claim record;
+  v_native_handoff uuid := '80000000-0000-4000-8000-000000000010';
+  v_native_device uuid := '81000000-0000-4000-8000-000000000010';
+  v_native_screen_session uuid := '82000000-0000-4000-8000-000000000010';
+  v_native_result jsonb;
+  v_bad_native_result jsonb;
+  v_native_settlement text;
+  v_rejected boolean;
+  v_error_message text;
+  v_preflight_job jsonb;
+  v_preflight_claim record;
+  v_preflight_handoff uuid := '80000000-0000-4000-8000-000000000011';
+  v_preflight_result jsonb;
+  v_preflight_retry_claim record;
+  v_preflight_retry_handoff uuid := '80000000-0000-4000-8000-000000000013';
+  v_preflight_retry_result jsonb;
+  v_review_job jsonb;
+  v_review_claim record;
+  v_review_handoff uuid := '80000000-0000-4000-8000-000000000012';
+  v_review_result jsonb;
+  v_forward_job jsonb;
+  v_forward_claim record;
+  v_forward_call jsonb;
+  v_forward_handoff uuid := '80000000-0000-4000-8000-000000000014';
+  v_forward_result jsonb;
+  v_forward_settlement text;
+  v_forward_command jsonb;
+  v_forward_command_id uuid;
+  v_forward_job_stale jsonb;
+  v_forward_stale_claim record;
+  v_forward_stale_call jsonb;
+  v_forward_stale_result jsonb;
+  v_forward_stale_settlement text;
+  v_forward_lock_position integer;
+  v_registration_wrapper_is_definer boolean;
+  v_settlement_definition text;
+  v_advisory_lock_position integer;
+  v_session_lock_position integer;
+  v_binding_lock_position integer;
+  v_job_lock_position integer;
+  v_native_binding_definition text;
+  v_trigger_definition text;
+  v_attest_advisory_position integer;
+  v_attest_session_position integer;
+  v_attest_binding_position integer;
+  v_attest_challenge_position integer;
+  v_attest_challenge_scope_position integer;
+  v_attest_screen_position integer;
+  v_attest_device_position integer;
+  v_attest_app_position integer;
+  v_attest_connection_position integer;
+  v_attest_host_position integer;
+  v_attest_mapping_position integer;
+  v_native_challenge uuid := '83000000-0000-4000-8000-000000000010';
+  v_native_nonce text := repeat('f',64);
+  v_native_challenge_wrong_owner uuid := '83000000-0000-4000-8000-000000000014';
+  v_native_nonce_wrong_owner text := repeat('4',64);
+  v_native_attestation jsonb;
+  v_native_mapping_id uuid;
+  v_native_challenge_retry uuid := '83000000-0000-4000-8000-000000000011';
+  v_native_nonce_retry text := repeat('1',64);
+  v_native_screen_session_retry uuid := '82000000-0000-4000-8000-000000000011';
+  v_native_mapping_retry_id uuid;
+  v_native_challenge_screen_cap uuid := '83000000-0000-4000-8000-000000000012';
+  v_native_nonce_screen_cap text := repeat('2',64);
+  v_native_challenge_host_cap uuid := '83000000-0000-4000-8000-000000000013';
+  v_native_nonce_host_cap text := repeat('3',64);
+  v_native_screen_cap_expiry timestamptz;
+  v_native_screen_challenge_cap_expiry timestamptz;
+  v_native_host_cap_expiry timestamptz;
+  v_native_host_challenge_cap_expiry timestamptz;
+  v_native_authority_cap_expiry timestamptz;
+  v_native_authority_challenge_cap_expiry timestamptz;
 begin
+  select pg_catalog.pg_get_functiondef(
+    'public.settle_backroom_android_native_wake_result_attested(uuid,text,text,uuid,text,uuid,uuid,uuid,text,text,text,integer,text,text,text,jsonb)'::regprocedure
+  ) into v_settlement_definition;
+  v_advisory_lock_position:=position('pg_advisory_xact_lock' in v_settlement_definition);
+  v_session_lock_position:=position('from public.rub_minds_mcp_sessions s' in v_settlement_definition);
+  v_binding_lock_position:=position('from public.backroom_input_bindings b' in v_settlement_definition);
+  v_job_lock_position:=position('from public.backroom_wake_jobs j' in v_settlement_definition);
+  if v_advisory_lock_position=0 or v_session_lock_position=0
+    or v_binding_lock_position=0 or v_job_lock_position=0
+    or not (v_advisory_lock_position<v_session_lock_position
+      and v_session_lock_position<v_binding_lock_position
+      and v_binding_lock_position<v_job_lock_position) then
+    raise exception 'Native settlement must lock session, binding, then job to serialize with consent revocation';
+  end if;
+
+  select pg_catalog.pg_get_functiondef(
+    'public.register_backroom_android_native_binding_impl(uuid,text,uuid,uuid,text,text,text,text,text)'::regprocedure
+  ) into v_native_binding_definition;
+  v_attest_advisory_position:=position('pg_advisory_xact_lock' in v_native_binding_definition);
+  v_attest_session_position:=position('from public.rub_minds_mcp_sessions s' in v_native_binding_definition);
+  v_attest_binding_position:=position('where b.id=v_challenge.binding_id for update' in v_native_binding_definition);
+  v_attest_challenge_position:=position('where c.id=p_challenge_id for update' in v_native_binding_definition);
+  v_attest_challenge_scope_position:=position('v_challenge.binding_id is distinct from v_binding.id' in v_native_binding_definition);
+  v_attest_screen_position:=position('where s.session_id=p_screen_session_id' in v_native_binding_definition);
+  v_attest_device_position:=position('where d.device_id=p_device_id' in v_native_binding_definition);
+  v_attest_app_position:=position('from public.backroom_device_apps a' in v_native_binding_definition);
+  v_attest_connection_position:=position('from public.agent_connections ac' in v_native_binding_definition);
+  v_attest_host_position:=position('from public.backroom_hosts h' in v_native_binding_definition);
+  v_attest_mapping_position:=position('where n.binding_id=v_binding.id and n.revoked_at is null for update' in v_native_binding_definition);
+  if v_attest_advisory_position=0 or v_attest_session_position=0
+    or v_attest_binding_position=0 or v_attest_challenge_position=0
+    or v_attest_challenge_scope_position<=v_attest_challenge_position
+    or v_attest_screen_position=0 or v_attest_device_position=0
+    or v_attest_app_position=0 or v_attest_connection_position=0
+    or v_attest_host_position=0 or v_attest_mapping_position=0
+    or not (v_attest_advisory_position<v_attest_session_position
+      and v_attest_session_position<v_attest_binding_position
+      and v_attest_binding_position<v_attest_challenge_position
+      and v_attest_challenge_position<v_attest_screen_position
+      and v_attest_screen_position<v_attest_device_position
+      and v_attest_device_position<v_attest_app_position
+      and v_attest_app_position<v_attest_connection_position
+      and v_attest_connection_position<v_attest_host_position
+      and v_attest_host_position<v_attest_mapping_position)
+    or (select p.prosecdef from pg_catalog.pg_proc p
+      where p.oid='public.register_backroom_android_native_binding_impl(uuid,text,uuid,uuid,text,text,text,text,text)'::regprocedure) then
+    raise exception 'Private native binding implementation must retain invoker privileges and consistent session-to-device lock ordering';
+  end if;
+
+  -- Parent identity changes and deletes must invalidate the exact phone proof.
+  select pg_catalog.pg_get_triggerdef(t.oid) into v_trigger_definition
+  from pg_catalog.pg_trigger t
+  where t.tgrelid='public.backroom_desktop_sessions'::regclass
+    and t.tgname='backroom_android_native_binding_screen_lifecycle_trigger';
+  if v_trigger_definition is null or position('device_id' in v_trigger_definition)=0
+    or position('room_id' in v_trigger_definition)=0 then
+    raise exception 'Screen lifecycle trigger must observe parent device and room identity changes';
+  end if;
+
+  select pg_catalog.pg_get_triggerdef(t.oid) into v_trigger_definition
+  from pg_catalog.pg_trigger t
+  where t.tgrelid='public.backroom_input_bindings'::regclass
+    and t.tgname='backroom_android_native_binding_group_binding_lifecycle_trigger';
+  if v_trigger_definition is null or position('target_id' in v_trigger_definition)=0
+    or position('host_id' in v_trigger_definition)=0
+    or position('session_digest' in v_trigger_definition)=0 then
+    raise exception 'Group binding lifecycle trigger must observe target and host/session identity changes';
+  end if;
+
+  select pg_catalog.pg_get_triggerdef(t.oid) into v_trigger_definition
+  from pg_catalog.pg_trigger t
+  where t.tgrelid='public.backroom_device_room_bindings'::regclass
+    and t.tgname='backroom_android_native_binding_room_unpair_trigger';
+  if v_trigger_definition is null or position('DELETE' in v_trigger_definition)=0
+    or position('device_id' in v_trigger_definition)=0 then
+    raise exception 'Deleting or reassigning the room-device pairing must revoke native proofs';
+  end if;
+
+  select pg_catalog.pg_get_triggerdef(t.oid) into v_trigger_definition
+  from pg_catalog.pg_trigger t
+  where t.tgrelid='public.backroom_device_apps'::regclass
+    and t.tgname='backroom_android_native_binding_app_signer_trigger';
+  if v_trigger_definition is null or position('DELETE' in v_trigger_definition)=0
+    or position('package_name' in v_trigger_definition)=0 then
+    raise exception 'App package/signer replacement and deletion must revoke native proofs';
+  end if;
+
+  select pg_catalog.pg_get_triggerdef(t.oid) into v_trigger_definition
+  from pg_catalog.pg_trigger t
+  where t.tgrelid='public.backroom_hosts'::regclass
+    and t.tgname='backroom_android_native_binding_host_lifecycle_trigger';
+  if v_trigger_definition is null or position('host_id' in v_trigger_definition)=0 then
+    raise exception 'Host identity changes must revoke dependent native proofs';
+  end if;
+
+  select pg_catalog.pg_get_triggerdef(t.oid) into v_trigger_definition
+  from pg_catalog.pg_trigger t
+  where t.tgrelid='public.backroom_devices'::regclass
+    and t.tgname='backroom_android_native_binding_device_lifecycle_trigger';
+  if v_trigger_definition is null or position('platform' in v_trigger_definition)=0
+    or position('owner_id' in v_trigger_definition)=0 then
+    raise exception 'Device owner/platform reassignment must revoke native proofs';
+  end if;
+
+  select pg_catalog.pg_get_triggerdef(t.oid) into v_trigger_definition
+  from pg_catalog.pg_trigger t
+  where t.tgrelid='public.rub_minds_mcp_sessions'::regclass
+    and t.tgname='backroom_android_native_binding_mcp_session_lifecycle_trigger';
+  if v_trigger_definition is null or position('DELETE' in v_trigger_definition)=0
+    or position('session_digest' in v_trigger_definition)=0 then
+    raise exception 'MCP session deletion or identity replacement must revoke native proofs';
+  end if;
+
+  select pg_catalog.pg_get_triggerdef(t.oid) into v_trigger_definition
+  from pg_catalog.pg_trigger t
+  where t.tgrelid='public.agent_connections'::regclass
+    and t.tgname='backroom_android_native_binding_agent_connection_lifecycle_trigger';
+  if v_trigger_definition is null or position('DELETE' in v_trigger_definition)=0
+    or position('credential_digest' in v_trigger_definition)=0 then
+    raise exception 'Agent credential deletion or replacement must revoke native proofs';
+  end if;
+
   insert into auth.users(id) values (v_owner);
+  insert into auth.users(id) values ('20000000-0000-0000-0000-000000000098');
   insert into public.rooms(id,owner_id,title) values (v_room,v_owner,'Backroom wake queue test room');
   insert into public.participants(id,room_id,display_name,kind,status) values (v_participant,v_room,'Test Backroom Agent','external_agent','active');
   insert into public.agent_connections(room_id,participant_id,owner_id,credential_digest,expires_at,revoked_at)
@@ -53,6 +254,10 @@ begin
     (repeat('6',64),'ci-ciphertext-6',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
   insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,agent_credential_digest,room_id,participant_id,expires_at,terminated_at)
     values (repeat('7',64),'ci-ciphertext-7',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
+  insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,agent_credential_digest,room_id,participant_id,expires_at,terminated_at)
+    values (repeat('8',64),'ci-ciphertext-8',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
+  insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,agent_credential_digest,room_id,participant_id,expires_at,terminated_at)
+    values (repeat('5',64),'ci-ciphertext-5',repeat('a',64),v_room,v_participant,pg_catalog.clock_timestamp()+interval '1 hour',null);
 
   insert into public.backroom_hosts(host_id,owner_id,credential_digest,expires_at,revoked_at)
   values (v_host_test,v_owner,repeat('1',64),pg_catalog.clock_timestamp()+interval '48 hours',null),
@@ -70,6 +275,606 @@ begin
     (v_binding_5,v_owner,v_room,v_participant,v_host_test,repeat('f',64),'space-1','session-5','target-5','fingerprint-5',1,'browser_tab','dom','composer-5','mentions',true,'70000000-0000-4000-8000-000000000005'::uuid,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null),
     (v_binding_6,v_owner,v_room,v_participant,v_host_test,repeat('6',64),'space-1','session-6','target-6','fingerprint-6',1,'browser_tab','dom','composer-6','mentions',true,'70000000-0000-4000-8000-000000000006'::uuid,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null),
     (v_binding_7,v_owner,v_room,v_participant,v_host_capacity,repeat('7',64),'space-capacity','session-capacity','target-capacity','fingerprint-capacity',1,'browser_tab','dom','composer-capacity','mentions',true,'70000000-0000-4000-8000-000000000007'::uuid,pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null);
+
+  insert into public.backroom_input_bindings(
+    id,owner_id,room_id,participant_id,host_id,session_digest,space_id,session_id,target_id,
+    target_identity_fingerprint,provider_conversation_identity_digest,target_revision,surface,
+    locator_kind,locator_value,participation_mode,wake_enabled,wake_grant_id,wake_expires_at,
+    max_wakes_per_minute,confirmed_at,revoked_at
+  ) values (
+    v_binding_native,v_owner,v_room,v_participant,v_host_test,repeat('8',64),
+    'space-native','session-native','target-native','fingerprint-native',v_native_provider_digest,1,
+    'android_app','accessibility','composer-native','mentions',true,
+    '70000000-0000-4000-8000-000000000020'::uuid,
+    pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null
+  );
+
+  -- Native composer selection remains available for manual draft typing without a provider resolver.
+  insert into public.backroom_input_bindings(
+    id,owner_id,room_id,participant_id,host_id,session_digest,space_id,session_id,target_id,
+    target_identity_fingerprint,provider_conversation_identity_digest,target_revision,surface,
+    locator_kind,locator_value,participation_mode,wake_enabled,wake_grant_id,wake_expires_at,
+    max_wakes_per_minute,confirmed_at,revoked_at
+  ) values (
+    v_binding_native_draft,v_owner,v_room,v_participant,v_host_test,repeat('5',64),
+    'space-native-draft','session-native-draft','target-native-draft','fingerprint-native-draft',null,1,
+    'android_app','accessibility','composer-native-draft','mentions',false,
+    null,null,6,null,null
+  );
+
+  v_conflict := false;
+  begin
+    update public.backroom_input_bindings
+    set wake_enabled=true,wake_grant_id='70000000-0000-4000-8000-000000000021'::uuid,
+        confirmed_at=pg_catalog.clock_timestamp(),
+        wake_expires_at=pg_catalog.clock_timestamp()+interval '1 hour'
+    where id=v_binding_native_draft;
+  exception when check_violation then
+    v_conflict := true;
+  end;
+  if not v_conflict then
+    raise exception 'Native draft binding without provider identity must not enable autonomous wake';
+  end if;
+
+  -- Create a paired Android device, live app-screen session and owner-approved
+  -- one-time challenge. Only the device-bearer completion RPC may attach the
+  -- first provider digest to this draft-only group binding.
+  insert into public.backroom_devices(device_id,owner_id,token_digest,device_label,platform,status)
+  values(v_native_device,v_owner,repeat('d',64),'Android CI device','android','active');
+  insert into public.backroom_device_room_bindings(device_id,room_id,owner_id)
+  values(v_native_device,v_room,v_owner);
+  insert into public.backroom_device_apps(
+    device_id,package_name,app_label,signing_certificate_sha256,version_name
+  ) values(v_native_device,'com.example.notes','Example Notes',repeat('e',64),'1.0');
+  insert into public.backroom_desktop_sessions(
+    session_id,device_id,room_id,requested_by,session_type,status,expires_at
+  ) values(v_native_screen_session,v_native_device,v_room,v_owner,'screen','active',
+    pg_catalog.clock_timestamp()+interval '1 hour');
+  -- The database must reject a challenge whose owner is not the room owner.
+  insert into public.backroom_android_native_binding_challenges(
+    id,owner_id,room_id,binding_id,device_id,screen_session_id,app_package_name,nonce_digest,expires_at
+  ) values(
+    v_native_challenge_wrong_owner,'20000000-0000-0000-0000-000000000098',v_room,
+    v_binding_native_draft,v_native_device,v_native_screen_session,'com.example.notes',
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_nonce_wrong_owner,'UTF8')),'hex'),
+    pg_catalog.clock_timestamp()+interval '90 seconds'
+  );
+  select public.register_backroom_android_native_binding(
+    v_native_challenge_wrong_owner,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_nonce_wrong_owner,'UTF8')),'hex'),
+    v_native_device,v_native_screen_session,'com.example.notes',repeat('e',64),
+    repeat('c',64),repeat('d',64),v_native_provider_digest
+  ) into v_native_attestation;
+  if v_native_attestation->>'ok' is distinct from 'false'
+    or v_native_attestation->>'reason' is distinct from 'room_owner_changed' then
+    raise exception 'Native binding registration must reject a challenge from a non-owner';
+  end if;
+
+  insert into public.backroom_android_native_binding_challenges(
+    id,owner_id,room_id,binding_id,device_id,screen_session_id,app_package_name,nonce_digest,expires_at
+  ) values(
+    v_native_challenge,v_owner,v_room,v_binding_native_draft,v_native_device,
+    v_native_screen_session,'com.example.notes',
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_nonce,'UTF8')),'hex'),
+    pg_catalog.clock_timestamp()+interval '90 seconds'
+  );
+
+  if has_function_privilege('anon','public.register_backroom_android_native_binding(uuid,text,uuid,uuid,text,text,text,text,text)','EXECUTE')
+    or has_function_privilege('authenticated','public.register_backroom_android_native_binding(uuid,text,uuid,uuid,text,text,text,text,text)','EXECUTE')
+    or not has_function_privilege('service_role','public.register_backroom_android_native_binding(uuid,text,uuid,uuid,text,text,text,text,text)','EXECUTE') then
+    raise exception 'Android native binding registration RPC must be service-role only';
+  end if;
+
+  select public.register_backroom_android_native_binding(
+    v_native_challenge,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_nonce,'UTF8')),'hex'),
+    v_native_device,v_native_screen_session,'com.example.notes',repeat('e',64),
+    repeat('c',64),repeat('d',64),v_native_provider_digest
+  ) into v_native_attestation;
+  if v_native_attestation->>'ok' is distinct from 'true'
+    or v_native_attestation->>'replayed' is distinct from 'false'
+    or not exists(select 1 from public.backroom_input_bindings b
+      where b.id=v_binding_native_draft
+        and b.provider_conversation_identity_digest=v_native_provider_digest
+        and b.wake_enabled=false and b.wake_grant_id is null)
+    or not exists(select 1 from public.backroom_android_native_bindings n
+      where n.id=(v_native_attestation->>'nativeBindingId')::uuid
+        and n.binding_id=v_binding_native_draft and n.device_id=v_native_device
+        and n.screen_session_id=v_native_screen_session
+        and n.app_signing_certificate_sha256=repeat('e',64)
+        and n.composer_identity_digest=repeat('c',64)
+        and n.send_control_identity_digest=repeat('d',64)
+        and n.provider_conversation_identity_digest=v_native_provider_digest
+        and n.revoked_at is null) then
+    raise exception 'Android device evidence must create the exact group-to-phone native binding without enabling wake';
+  end if;
+  v_native_mapping_id:=(v_native_attestation->>'nativeBindingId')::uuid;
+
+  -- The same consumed challenge/evidence may be replayed idempotently; a new
+  -- set of digests cannot reuse that challenge.
+  select public.register_backroom_android_native_binding(
+    v_native_challenge,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_nonce,'UTF8')),'hex'),
+    v_native_device,v_native_screen_session,'com.example.notes',repeat('e',64),
+    repeat('c',64),repeat('d',64),v_native_provider_digest
+  ) into v_native_attestation;
+  if v_native_attestation->>'ok' is distinct from 'true'
+    or v_native_attestation->>'replayed' is distinct from 'true'
+    or (v_native_attestation->>'nativeBindingId')::uuid is distinct from v_native_mapping_id then
+    raise exception 'The same device binding evidence must replay idempotently';
+  end if;
+
+  v_conflict:=false;
+  begin
+    update public.backroom_input_bindings
+    set provider_conversation_identity_digest=repeat('a',64)
+    where id=v_binding_native_draft;
+  exception when check_violation then
+    v_conflict:=true;
+  end;
+  if not v_conflict then
+    raise exception 'A device-attested provider digest must remain immutable after first registration';
+  end if;
+
+  -- Shortening a live screen lease caps both the attestation and any pending challenge.
+  insert into public.backroom_android_native_binding_challenges(
+    id,owner_id,room_id,binding_id,device_id,screen_session_id,app_package_name,nonce_digest,expires_at
+  ) values(
+    v_native_challenge_screen_cap,v_owner,v_room,v_binding_native_draft,v_native_device,
+    v_native_screen_session,'com.example.notes',
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_nonce_screen_cap,'UTF8')),'hex'),
+    pg_catalog.clock_timestamp()+interval '45 minutes'
+  );
+  update public.backroom_desktop_sessions
+  set expires_at=pg_catalog.clock_timestamp()+interval '5 minutes'
+  where session_id=v_native_screen_session and status='active';
+  if not exists(select 1 from public.backroom_android_native_bindings n
+      join public.backroom_desktop_sessions s on s.session_id=n.screen_session_id
+      where n.id=v_native_mapping_id and n.revoked_at is null
+        and n.expires_at<=s.expires_at)
+    or not exists(select 1 from public.backroom_android_native_binding_challenges c
+      join public.backroom_desktop_sessions s on s.session_id=c.screen_session_id
+      where c.id=v_native_challenge_screen_cap and c.revoked_at is null
+        and c.expires_at<=s.expires_at) then
+    raise exception 'Shortening a screen lease must cap its mapping and pending challenge';
+  end if;
+  select n.expires_at into v_native_screen_cap_expiry
+  from public.backroom_android_native_bindings n where n.id=v_native_mapping_id;
+  select c.expires_at into v_native_screen_challenge_cap_expiry
+  from public.backroom_android_native_binding_challenges c where c.id=v_native_challenge_screen_cap;
+  -- Extending the screen later must not silently renew either proof.
+  update public.backroom_desktop_sessions
+  set expires_at=pg_catalog.clock_timestamp()+interval '1 hour'
+  where session_id=v_native_screen_session and status='active';
+  if (select n.expires_at from public.backroom_android_native_bindings n where n.id=v_native_mapping_id)
+       is distinct from v_native_screen_cap_expiry
+    or (select c.expires_at from public.backroom_android_native_binding_challenges c
+       where c.id=v_native_challenge_screen_cap) is distinct from v_native_screen_challenge_cap_expiry then
+    raise exception 'Screen renewal must not silently extend a native mapping or challenge';
+  end if;
+
+  -- Stopping the exact Android screen session revokes both active and pending phone authority.
+  update public.backroom_desktop_sessions
+  set status='stopped',stopped_at=pg_catalog.clock_timestamp()
+  where session_id=v_native_screen_session and status='active';
+  if not exists(select 1 from public.backroom_android_native_bindings n
+    where n.id=v_native_mapping_id and n.revoked_at is not null)
+    or not exists(select 1 from public.backroom_android_native_binding_challenges c
+      where c.id=v_native_challenge_screen_cap and c.revoked_at is not null) then
+    raise exception 'Stopping the Android screen session must revoke its native mapping and pending challenges';
+  end if;
+  select public.register_backroom_android_native_binding(
+    v_native_challenge,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_nonce,'UTF8')),'hex'),
+    v_native_device,v_native_screen_session,'com.example.notes',repeat('e',64),
+    repeat('c',64),repeat('d',64),v_native_provider_digest
+  ) into v_native_attestation;
+  if v_native_attestation->>'ok' is distinct from 'false'
+    or v_native_attestation->>'reason' is distinct from 'screen_session_inactive' then
+    raise exception 'A consumed challenge must not replay a revoked phone attestation';
+  end if;
+
+  -- Rebind the same exact group AI to a new live screen session with a fresh
+  -- owner challenge; MCP Leave later must revoke this still-active mapping.
+  insert into public.backroom_desktop_sessions(
+    session_id,device_id,room_id,requested_by,session_type,status,expires_at
+  ) values(v_native_screen_session_retry,v_native_device,v_room,v_owner,'screen','active',
+    pg_catalog.clock_timestamp()+interval '1 hour');
+  insert into public.backroom_android_native_binding_challenges(
+    id,owner_id,room_id,binding_id,device_id,screen_session_id,app_package_name,nonce_digest,expires_at
+  ) values(
+    v_native_challenge_retry,v_owner,v_room,v_binding_native_draft,v_native_device,
+    v_native_screen_session_retry,'com.example.notes',
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_nonce_retry,'UTF8')),'hex'),
+    pg_catalog.clock_timestamp()+interval '90 seconds'
+  );
+  select public.register_backroom_android_native_binding(
+    v_native_challenge_retry,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_nonce_retry,'UTF8')),'hex'),
+    v_native_device,v_native_screen_session_retry,'com.example.notes',repeat('e',64),
+    repeat('c',64),repeat('d',64),v_native_provider_digest
+  ) into v_native_attestation;
+  if v_native_attestation->>'ok' is distinct from 'true'
+    or v_native_attestation->>'replayed' is distinct from 'false' then
+    raise exception 'A fresh owner challenge must rebind the exact group AI to a new live phone session';
+  end if;
+  v_native_mapping_retry_id:=(v_native_attestation->>'nativeBindingId')::uuid;
+
+  -- Shortening the paired host lease caps both the native mapping and outstanding challenge.
+  insert into public.backroom_android_native_binding_challenges(
+    id,owner_id,room_id,binding_id,device_id,screen_session_id,app_package_name,nonce_digest,expires_at
+  ) values(
+    v_native_challenge_host_cap,v_owner,v_room,v_binding_native_draft,v_native_device,
+    v_native_screen_session_retry,'com.example.notes',
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_nonce_host_cap,'UTF8')),'hex'),
+    pg_catalog.clock_timestamp()+interval '45 minutes'
+  );
+  update public.backroom_hosts
+  set expires_at=pg_catalog.clock_timestamp()+interval '10 minutes'
+  where host_id=v_host_test;
+  if not exists(select 1 from public.backroom_android_native_bindings n
+      join public.backroom_hosts h on h.host_id=v_host_test
+      where n.id=v_native_mapping_retry_id and n.revoked_at is null
+        and n.expires_at<=h.expires_at)
+    or not exists(select 1 from public.backroom_android_native_binding_challenges c
+      join public.backroom_hosts h on h.host_id=v_host_test
+      where c.id=v_native_challenge_host_cap and c.revoked_at is null
+        and c.expires_at<=h.expires_at) then
+    raise exception 'Shortening a host lease must cap its native mapping and pending challenge';
+  end if;
+  select n.expires_at into v_native_host_cap_expiry
+  from public.backroom_android_native_bindings n where n.id=v_native_mapping_retry_id;
+  select c.expires_at into v_native_host_challenge_cap_expiry
+  from public.backroom_android_native_binding_challenges c where c.id=v_native_challenge_host_cap;
+  -- A renewed host does not silently renew an already-issued native attestation.
+  update public.backroom_hosts
+  set expires_at=pg_catalog.clock_timestamp()+interval '48 hours'
+  where host_id=v_host_test;
+  if (select n.expires_at from public.backroom_android_native_bindings n
+      where n.id=v_native_mapping_retry_id) is distinct from v_native_host_cap_expiry
+    or (select c.expires_at from public.backroom_android_native_binding_challenges c
+      where c.id=v_native_challenge_host_cap) is distinct from v_native_host_challenge_cap_expiry then
+    raise exception 'Host renewal must not silently extend a native mapping or challenge';
+  end if;
+
+  -- Expiring the exact MCP session caps its phone attestation and outstanding challenge.
+  update public.rub_minds_mcp_sessions
+  set expires_at=pg_catalog.clock_timestamp()+interval '8 minutes'
+  where session_digest=repeat('5',64);
+  if not exists(select 1 from public.backroom_android_native_bindings n
+      join public.rub_minds_mcp_sessions m on m.session_digest=repeat('5',64)
+      where n.id=v_native_mapping_retry_id and n.revoked_at is null
+        and n.expires_at<=m.expires_at)
+    or not exists(select 1 from public.backroom_android_native_binding_challenges c
+      join public.rub_minds_mcp_sessions m on m.session_digest=repeat('5',64)
+      where c.id=v_native_challenge_host_cap and c.revoked_at is null
+        and c.expires_at<=m.expires_at) then
+    raise exception 'Shortening an MCP session must cap its native mapping and pending challenge';
+  end if;
+  update public.rub_minds_mcp_sessions
+  set expires_at=pg_catalog.clock_timestamp()+interval '1 hour'
+  where session_digest=repeat('5',64);
+  select n.expires_at into v_native_authority_cap_expiry
+  from public.backroom_android_native_bindings n where n.id=v_native_mapping_retry_id;
+  select c.expires_at into v_native_authority_challenge_cap_expiry
+  from public.backroom_android_native_binding_challenges c where c.id=v_native_challenge_host_cap;
+  if (select n.expires_at from public.backroom_android_native_bindings n
+      where n.id=v_native_mapping_retry_id) is distinct from v_native_authority_cap_expiry
+    or (select c.expires_at from public.backroom_android_native_binding_challenges c
+      where c.id=v_native_challenge_host_cap) is distinct from v_native_authority_challenge_cap_expiry then
+    raise exception 'MCP session renewal must not silently extend native proofs';
+  end if;
+
+  -- Revoking or shortening the exact agent credential is another independent consent boundary.
+  update public.agent_connections
+  set expires_at=pg_catalog.clock_timestamp()+interval '6 minutes'
+  where credential_digest=repeat('a',64);
+  if not exists(select 1 from public.backroom_android_native_bindings n
+      where n.id=v_native_mapping_retry_id and n.revoked_at is null
+        and n.expires_at<=pg_catalog.clock_timestamp()+interval '6 minutes')
+    or not exists(select 1 from public.backroom_android_native_binding_challenges c
+      where c.id=v_native_challenge_host_cap and c.revoked_at is null
+        and c.expires_at<=pg_catalog.clock_timestamp()+interval '6 minutes') then
+    raise exception 'Shortening an AI credential must cap its native mapping and pending challenge';
+  end if;
+  update public.agent_connections
+  set expires_at=pg_catalog.clock_timestamp()+interval '48 hours'
+  where credential_digest=repeat('a',64);
+  select n.expires_at into v_native_authority_cap_expiry
+  from public.backroom_android_native_bindings n where n.id=v_native_mapping_retry_id;
+  select c.expires_at into v_native_authority_challenge_cap_expiry
+  from public.backroom_android_native_binding_challenges c where c.id=v_native_challenge_host_cap;
+  if (select n.expires_at from public.backroom_android_native_bindings n
+      where n.id=v_native_mapping_retry_id) is distinct from v_native_authority_cap_expiry
+    or (select c.expires_at from public.backroom_android_native_binding_challenges c
+      where c.id=v_native_challenge_host_cap) is distinct from v_native_authority_challenge_cap_expiry then
+    raise exception 'AI credential renewal must not silently extend native proofs';
+  end if;
+
+  -- A consumed challenge can still acknowledge an exact duplicate after the
+  -- group owner explicitly arms wake; it must not create a second mapping.
+  if not public.activate_backroom_wake_grant(
+    v_host_test,repeat('5',64),v_binding_native_draft,
+    '70000000-0000-4000-8000-000000000022'::uuid,300
+  ) then
+    raise exception 'A device-attested native binding with a provider digest may be explicitly armed';
+  end if;
+  select public.register_backroom_android_native_binding(
+    v_native_challenge_retry,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_nonce_retry,'UTF8')),'hex'),
+    v_native_device,v_native_screen_session_retry,'com.example.notes',repeat('e',64),
+    repeat('c',64),repeat('d',64),v_native_provider_digest
+  ) into v_native_attestation;
+  if v_native_attestation->>'ok' is distinct from 'true'
+    or v_native_attestation->>'replayed' is distinct from 'true'
+    or (v_native_attestation->>'nativeBindingId')::uuid is distinct from v_native_mapping_retry_id
+    or (select count(*) from public.backroom_android_native_bindings
+      where binding_id=v_binding_native_draft and revoked_at is null)<>1 then
+    raise exception 'Exact duplicate attestation replay must remain idempotent after wake activation';
+  end if;
+
+  -- Exercise the complete server-owned group-job -> Android private command
+  -- outbox -> attestation-bound ACK path. The browser host never receives the
+  -- native lease itself and duplicate forward requests are idempotent.
+  v_forward_job := public.enqueue_backroom_wake_job(
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('native-attested-forwarder-job','UTF8')),'hex'),
+    v_owner,v_room,v_participant,v_host_test,'space-native-draft','session-native-draft',repeat('5',64),
+    v_binding_native_draft,'target-native-draft','fingerprint-native-draft',1,'native-forward-event',
+    '@RMconnects'||chr(10)||'Event: native-forward-event'||chr(10)||
+    'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600
+  );
+  select * into v_forward_claim
+  from public.claim_backroom_wake_jobs_with_provider_identity(
+    v_host_test,repeat('5',64),v_binding_native_draft,5,120
+  ) limit 1;
+  if not found
+    or v_forward_claim.out_job_id::text is distinct from (v_forward_job->>'job_id')
+    or v_forward_claim.out_provider_conversation_identity_digest is distinct from v_native_provider_digest then
+    raise exception 'Android forwarder test must claim the exact attested group job';
+  end if;
+  select public.queue_backroom_android_native_wake_command(
+    v_forward_claim.out_job_id,v_host_test,repeat('5',64),v_binding_native_draft,
+    v_forward_claim.out_lease_token
+  ) into v_forward_call;
+  if v_forward_call->>'ok' is distinct from 'true'
+    or v_forward_call->>'state' is distinct from 'queued' then
+    raise exception 'The trusted server forwarder must queue the native device command';
+  end if;
+  select c.id,c.command into v_forward_command_id,v_forward_command
+  from public.backroom_android_commands c
+  where c.device_id=v_native_device and c.room_id=v_room
+    and c.command->>'action'='native_wake_trigger'
+    and c.command->'nativeWakeHandoff'->>'jobId'=v_forward_claim.out_job_id::text
+    and c.command->'nativeWakeHandoff'->>'leaseTokenDigest'=
+      pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_forward_claim.out_lease_token,'UTF8')),'hex');
+  if not found
+    or v_forward_command->'nativeWakeHandoff'->>'identityFingerprint' is distinct from repeat('e',64)
+    or v_forward_command->'nativeWakeHandoff'->>'appId' is distinct from 'com.example.notes'
+    or v_forward_command->'nativeWakeHandoff'->>'composerIdentityDigest' is distinct from repeat('c',64)
+    or v_forward_command->'nativeWakeHandoff'->>'sendControlIdentityDigest' is distinct from repeat('d',64)
+    or v_forward_command->'nativeWakeHandoff'->>'providerConversationIdentityDigest' is distinct from v_native_provider_digest
+    or v_forward_command->'nativeWakeHandoff'->>'promptDigest' is distinct from
+      pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+        '@RMconnects'||chr(10)||'Event: native-forward-event'||chr(10)||
+        'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.','UTF8')),'hex')
+    or v_forward_command->'nativeWakeHandoff' ? 'leaseToken'
+    or v_forward_command->'nativeWakeHandoff' ? 'providerCredential'
+    or v_forward_command->'nativeWakeHandoff' ? 'conversationUrl' then
+    raise exception 'Forwarded Android command must contain exact attested identity and no raw lease/provider secrets';
+  end if;
+  select public.queue_backroom_android_native_wake_command(
+    v_forward_claim.out_job_id,v_host_test,repeat('5',64),v_binding_native_draft,
+    v_forward_claim.out_lease_token
+  ) into v_forward_call;
+  if v_forward_call->>'ok' is distinct from 'true'
+    or v_forward_call->>'state' is distinct from 'already_queued'
+    or (select count(*) from public.backroom_android_commands c
+       where c.device_id=v_native_device and c.command->>'action'='native_wake_trigger'
+         and c.command->'nativeWakeHandoff'->>'jobId'=v_forward_claim.out_job_id::text)<>1 then
+    raise exception 'Repeated server forward requests must not create duplicate Android commands';
+  end if;
+
+  v_forward_result:=jsonb_build_object(
+    'version',1,'kind','native_wake_result',
+    'handoffId',v_forward_command->'nativeWakeHandoff'->>'handoffId',
+    'jobId',v_forward_claim.out_job_id::text,'deviceId',v_native_device::text,
+    'roomId',v_room::text,'screenSessionId',v_native_screen_session_retry::text,
+    'bindingId',v_binding_native_draft::text,'targetId','target-native-draft','targetRevision',1,
+    'state','submitted','promptInserted',true,'sendInvoked',true,'composerCleared',true,
+    'promptReadbackVerified',true,'composerIdentityRevalidated',true,
+    'sendControlIdentityRevalidated',true,'composerIdentityDigest',repeat('c',64),
+    'sendControlIdentityDigest',repeat('d',64),
+    'providerConversationIdentityRevalidated',true,
+    'providerConversationIdentityDigest',v_native_provider_digest
+  );
+  v_forward_settlement:=public.settle_backroom_android_native_wake_result_attested(
+    v_forward_claim.out_job_id,v_host_test,repeat('5',64),v_binding_native_draft,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_forward_claim.out_lease_token,'UTF8')),'hex'),
+    (v_forward_command->'nativeWakeHandoff'->>'handoffId')::uuid,
+    v_native_device,v_native_screen_session_retry,'com.example.notes',repeat('e',64),
+    'target-native-draft',1,repeat('c',64),repeat('d',64),v_native_provider_digest,v_forward_result
+  );
+  if v_forward_settlement is distinct from 'acknowledged'
+    or not exists(select 1 from public.backroom_wake_jobs j
+      where j.id=v_forward_claim.out_job_id and j.state='acknowledged'
+        and j.native_result_payload=v_forward_result) then
+    raise exception 'An exact active phone attestation must settle the original group lease';
+  end if;
+  if public.settle_backroom_android_native_wake_result_attested(
+    v_forward_claim.out_job_id,v_host_test,repeat('5',64),v_binding_native_draft,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_forward_claim.out_lease_token,'UTF8')),'hex'),
+    (v_forward_command->'nativeWakeHandoff'->>'handoffId')::uuid,
+    v_native_device,v_native_screen_session_retry,'com.example.notes',repeat('e',64),
+    'target-native-draft',1,repeat('c',64),repeat('d',64),v_native_provider_digest,v_forward_result
+  ) is distinct from 'replayed' then
+    raise exception 'An exact duplicate native ACK must be replayable after settlement';
+  end if;
+
+  -- A valid-looking result from a different installed-app signer must not
+  -- acknowledge the job even when its composer and provider digests look right.
+  v_forward_job_stale:=public.enqueue_backroom_wake_job(
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('native-stale-signer-job','UTF8')),'hex'),
+    v_owner,v_room,v_participant,v_host_test,'space-native-draft','session-native-draft',repeat('5',64),
+    v_binding_native_draft,'target-native-draft','fingerprint-native-draft',1,'native-stale-signer-event',
+    '@RMconnects'||chr(10)||'Event: native-stale-signer-event'||chr(10)||
+    'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600
+  );
+  select * into v_forward_stale_claim
+  from public.claim_backroom_wake_jobs_with_provider_identity(
+    v_host_test,repeat('5',64),v_binding_native_draft,5,120
+  ) limit 1;
+  if not found or v_forward_stale_claim.out_job_id::text is distinct from (v_forward_job_stale->>'job_id') then
+    raise exception 'Stale signer test must claim its own native group job';
+  end if;
+  select public.queue_backroom_android_native_wake_command(
+    v_forward_stale_claim.out_job_id,v_host_test,repeat('5',64),v_binding_native_draft,
+    v_forward_stale_claim.out_lease_token
+  ) into v_forward_stale_call;
+  if v_forward_stale_call->>'ok' is distinct from 'true' then
+    raise exception 'Stale signer fixture must queue before testing ACK rejection';
+  end if;
+  select c.command into v_forward_command
+  from public.backroom_android_commands c
+  where c.device_id=v_native_device and c.command->>'action'='native_wake_trigger'
+    and c.command->'nativeWakeHandoff'->>'jobId'=v_forward_stale_claim.out_job_id::text;
+  if not found then raise exception 'Stale signer test command missing'; end if;
+  -- A rejected outbox row is not a successful idempotent forward. The same
+  -- still-live group lease must not be told "already queued" when no command
+  -- remains eligible for phone delivery.
+  update public.backroom_android_commands
+  set status='rejected',result='test_rejected'
+  where device_id=v_native_device
+    and command->>'action'='native_wake_trigger'
+    and command->'nativeWakeHandoff'->>'jobId'=v_forward_stale_claim.out_job_id::text;
+  v_rejected:=false;
+  v_error_message:=null;
+  begin
+    perform public.queue_backroom_android_native_wake_command(
+      v_forward_stale_claim.out_job_id,v_host_test,repeat('5',64),v_binding_native_draft,
+      v_forward_stale_claim.out_lease_token
+    );
+  exception when others then
+    get stacked diagnostics v_error_message = message_text;
+    v_rejected := v_error_message = 'Android native wake command idempotency conflict';
+  end;
+  if not v_rejected then
+    raise exception 'A rejected Android command must not be reported as already queued';
+  end if;
+  v_forward_stale_result:=jsonb_build_object(
+    'version',1,'kind','native_wake_result',
+    'handoffId',v_forward_command->'nativeWakeHandoff'->>'handoffId',
+    'jobId',v_forward_stale_claim.out_job_id::text,'deviceId',v_native_device::text,
+    'roomId',v_room::text,'screenSessionId',v_native_screen_session_retry::text,
+    'bindingId',v_binding_native_draft::text,'targetId','target-native-draft','targetRevision',1,
+    'state','submitted','promptInserted',true,'sendInvoked',true,'composerCleared',true,
+    'promptReadbackVerified',true,'composerIdentityRevalidated',true,
+    'sendControlIdentityRevalidated',true,'composerIdentityDigest',repeat('c',64),
+    'sendControlIdentityDigest',repeat('d',64),
+    'providerConversationIdentityRevalidated',true,
+    'providerConversationIdentityDigest',v_native_provider_digest
+  );
+  v_forward_stale_settlement:=public.settle_backroom_android_native_wake_result_attested(
+    v_forward_stale_claim.out_job_id,v_host_test,repeat('5',64),v_binding_native_draft,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_forward_stale_claim.out_lease_token,'UTF8')),'hex'),
+    (v_forward_command->'nativeWakeHandoff'->>'handoffId')::uuid,
+    v_native_device,v_native_screen_session_retry,'com.example.notes',repeat('f',64),
+    'target-native-draft',1,repeat('c',64),repeat('d',64),v_native_provider_digest,v_forward_stale_result
+  );
+  if v_forward_stale_settlement is distinct from 'cancelled'
+    or not exists(select 1 from public.backroom_wake_jobs j
+      where j.id=v_forward_stale_claim.out_job_id and j.state='cancelled'
+        and j.last_error_code='authorization_denied') then
+    raise exception 'A mismatched installed-app signer must cancel, never acknowledge, the group job';
+  end if;
+
+  -- A saved phone receipt can arrive after a command/network outage has
+  -- crossed the original group lease. Preserve it as a terminal failure for
+  -- review, never as a late success and never as a lost/duplicated Send.
+  v_forward_job_stale:=public.enqueue_backroom_wake_job(
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('native-late-ack-job','UTF8')),'hex'),
+    v_owner,v_room,v_participant,v_host_test,'space-native-draft','session-native-draft',repeat('5',64),
+    v_binding_native_draft,'target-native-draft','fingerprint-native-draft',1,'native-late-ack-event',
+    '@RMconnects'||chr(10)||'Event: native-late-ack-event'||chr(10)||
+    'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600
+  );
+  select * into v_forward_stale_claim
+  from public.claim_backroom_wake_jobs_with_provider_identity(
+    v_host_test,repeat('5',64),v_binding_native_draft,5,120
+  ) limit 1;
+  if not found or v_forward_stale_claim.out_job_id::text is distinct from (v_forward_job_stale->>'job_id') then
+    raise exception 'Late ACK test must claim its own Android native group job';
+  end if;
+  select public.queue_backroom_android_native_wake_command(
+    v_forward_stale_claim.out_job_id,v_host_test,repeat('5',64),v_binding_native_draft,
+    v_forward_stale_claim.out_lease_token
+  ) into v_forward_stale_call;
+  if v_forward_stale_call->>'ok' is distinct from 'true' then
+    raise exception 'Late ACK test must queue an exact device command';
+  end if;
+  select c.command into v_forward_command
+  from public.backroom_android_commands c
+  where c.device_id=v_native_device and c.command->>'action'='native_wake_trigger'
+    and c.command->'nativeWakeHandoff'->>'jobId'=v_forward_stale_claim.out_job_id::text;
+  if not found then raise exception 'Late ACK device command is missing'; end if;
+  update public.backroom_wake_jobs
+  set lease_expires_at=pg_catalog.clock_timestamp()-interval '1 second'
+  where id=v_forward_stale_claim.out_job_id;
+  v_forward_result:=jsonb_build_object(
+    'version',1,'kind','native_wake_result',
+    'handoffId',v_forward_command->'nativeWakeHandoff'->>'handoffId',
+    'jobId',v_forward_stale_claim.out_job_id::text,'deviceId',v_native_device::text,
+    'roomId',v_room::text,'screenSessionId',v_native_screen_session_retry::text,
+    'bindingId',v_binding_native_draft::text,'targetId','target-native-draft','targetRevision',1,
+    'state','submitted','promptInserted',true,'sendInvoked',true,'composerCleared',true,
+    'promptReadbackVerified',true,'composerIdentityRevalidated',true,
+    'sendControlIdentityRevalidated',true,'composerIdentityDigest',repeat('c',64),
+    'sendControlIdentityDigest',repeat('d',64),
+    'providerConversationIdentityRevalidated',true,
+    'providerConversationIdentityDigest',v_native_provider_digest
+  );
+  v_forward_stale_settlement:=public.settle_backroom_android_native_wake_result_attested(
+    v_forward_stale_claim.out_job_id,v_host_test,repeat('5',64),v_binding_native_draft,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_forward_stale_claim.out_lease_token,'UTF8')),'hex'),
+    (v_forward_command->'nativeWakeHandoff'->>'handoffId')::uuid,
+    v_native_device,v_native_screen_session_retry,'com.example.notes',repeat('e',64),
+    'target-native-draft',1,repeat('c',64),repeat('d',64),v_native_provider_digest,v_forward_result
+  );
+  if v_forward_stale_settlement is distinct from 'failed'
+    or not exists(select 1 from public.backroom_wake_jobs j
+      where j.id=v_forward_stale_claim.out_job_id and j.state='failed'
+        and j.last_error_code='lease_expired'
+        and j.native_result_payload=v_forward_result) then
+    raise exception 'A late native ACK must be stored as failed review evidence, not acknowledged';
+  end if;
+  if public.settle_backroom_android_native_wake_result_attested(
+    v_forward_stale_claim.out_job_id,v_host_test,repeat('5',64),v_binding_native_draft,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_forward_stale_claim.out_lease_token,'UTF8')),'hex'),
+    (v_forward_command->'nativeWakeHandoff'->>'handoffId')::uuid,
+    v_native_device,v_native_screen_session_retry,'com.example.notes',repeat('e',64),
+    'target-native-draft',1,repeat('c',64),repeat('d',64),v_native_provider_digest,v_forward_result
+  ) is distinct from 'failed' then
+    raise exception 'The duplicate late result must preserve its failed terminal outcome';
+  end if;
+
+  -- A registered binding cannot silently switch to a different valid provider conversation.
+  v_conflict := false;
+  begin
+    update public.backroom_input_bindings set provider_conversation_identity_digest=repeat('a',64)
+    where id=v_binding_native;
+  exception when check_violation then
+    v_conflict := true;
+  end;
+  if not v_conflict then raise exception 'Provider conversation identity must be immutable for a binding'; end if;
+
+  -- An enabled native binding must not lose its provider-conversation digest.
+  v_conflict := false;
+  begin
+    update public.backroom_input_bindings set provider_conversation_identity_digest=null
+    where id=v_binding_native;
+  exception when check_violation then
+    v_conflict := true;
+  end;
+  if not v_conflict then raise exception 'An enabled native binding must retain its provider-conversation digest'; end if;
 
   -- A wake grant is a single, explicit persisted consent state; inconsistent deactivation is forbidden.
   v_conflict := false;
@@ -354,6 +1159,254 @@ begin
     or v_claim.out_prompt_digest <> pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_claim.out_prompt,'UTF8')),'hex') then
     raise exception 'Claim must return the job and a one-shot lease token';
   end if;
+
+  if has_function_privilege('anon','public.claim_backroom_wake_jobs_with_provider_identity(text,text,uuid,integer,integer)','EXECUTE')
+    or has_function_privilege('authenticated','public.claim_backroom_wake_jobs_with_provider_identity(text,text,uuid,integer,integer)','EXECUTE')
+    or not has_function_privilege('service_role','public.claim_backroom_wake_jobs_with_provider_identity(text,text,uuid,integer,integer)','EXECUTE') then
+    raise exception 'Provider-aware claim wrapper privileges are unsafe';
+  end if;
+  v_native_job := public.enqueue_backroom_wake_job(
+    repeat('8',64),v_owner,v_room,v_participant,v_host_test,'space-native','session-native',repeat('8',64),
+    v_binding_native,'target-native','fingerprint-native',1,'native-provider-event',
+    '@RMconnects'||chr(10)||'Event: native-provider-event'||chr(10)||
+    'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
+  if not exists(select 1 from public.backroom_wake_jobs j
+      where j.id=(v_native_job->>'job_id')::uuid
+        and j.provider_conversation_identity_digest=v_native_provider_digest) then
+    raise exception 'Queue trigger must copy the exact binding provider-conversation digest';
+  end if;
+  select * into v_native_claim from public.claim_backroom_wake_jobs_with_provider_identity(
+    v_host_test,repeat('8',64),v_binding_native,5,30) limit 1;
+  if not found or v_native_claim.out_job_id::text<>(v_native_job->>'job_id')
+    or v_native_claim.out_provider_conversation_identity_digest<>v_native_provider_digest then
+    raise exception 'Provider-aware claim must return the exact native conversation digest';
+  end if;
+  if has_function_privilege('anon','public.settle_backroom_android_native_wake_result_attested(uuid,text,text,uuid,text,uuid,uuid,uuid,text,text,text,integer,text,text,text,jsonb)','EXECUTE')
+    or has_function_privilege('authenticated','public.settle_backroom_android_native_wake_result_attested(uuid,text,text,uuid,text,uuid,uuid,uuid,text,text,text,integer,text,text,text,jsonb)','EXECUTE')
+    or not has_function_privilege('service_role','public.settle_backroom_android_native_wake_result_attested(uuid,text,text,uuid,text,uuid,uuid,uuid,text,text,text,integer,text,text,text,jsonb)','EXECUTE')
+    or (select p.prosecdef from pg_catalog.pg_proc p
+      where p.oid='public.settle_backroom_android_native_wake_result_attested(uuid,text,text,uuid,text,uuid,uuid,uuid,text,text,text,integer,text,text,text,jsonb)'::regprocedure) then
+    raise exception 'Attested native result settlement must be service-role-only SECURITY INVOKER';
+  end if;
+  if has_function_privilege('service_role','public.settle_backroom_android_native_wake_result(uuid,text,text,uuid,text,uuid,uuid,uuid,text,integer,text,text,text,jsonb)','EXECUTE') then
+    raise exception 'Unattested legacy native settlement must not remain executable by service_role';
+  end if;
+  if has_function_privilege('anon','public.queue_backroom_android_native_wake_command(uuid,text,text,uuid,text)','EXECUTE')
+    or has_function_privilege('authenticated','public.queue_backroom_android_native_wake_command(uuid,text,text,uuid,text)','EXECUTE')
+    or not has_function_privilege('service_role','public.queue_backroom_android_native_wake_command(uuid,text,text,uuid,text)','EXECUTE')
+    or not (select p.prosecdef from pg_catalog.pg_proc p
+      where p.oid='public.queue_backroom_android_native_wake_command(uuid,text,text,uuid,text)'::regprocedure) then
+    raise exception 'Android group-to-device forwarder must be service-role-only SECURITY DEFINER';
+  end if;
+  select p.prosecdef into v_registration_wrapper_is_definer
+  from pg_catalog.pg_proc p
+  where p.oid='public.register_backroom_android_native_binding(uuid,text,uuid,uuid,text,text,text,text,text)'::regprocedure;
+  if not v_registration_wrapper_is_definer
+    or has_function_privilege('anon','public.register_backroom_android_native_binding_impl(uuid,text,uuid,uuid,text,text,text,text,text)','EXECUTE')
+    or has_function_privilege('authenticated','public.register_backroom_android_native_binding_impl(uuid,text,uuid,uuid,text,text,text,text,text)','EXECUTE')
+    or has_function_privilege('service_role','public.register_backroom_android_native_binding_impl(uuid,text,uuid,uuid,text,text,text,text,text)','EXECUTE') then
+    raise exception 'Private registration implementation and service-role wrapper permissions are unsafe';
+  end if;
+
+  v_native_result := jsonb_build_object(
+    'version',1,'kind','native_wake_result','handoffId',v_native_handoff::text,
+    'jobId',v_native_claim.out_job_id::text,'deviceId',v_native_device::text,
+    'roomId',v_room::text,'screenSessionId',v_native_screen_session::text,
+    'bindingId',v_binding_native::text,'targetId','target-native','targetRevision',1,
+    'state','submitted','promptInserted',true,'sendInvoked',true,'composerCleared',true,
+    'promptReadbackVerified',true,'composerIdentityRevalidated',true,
+    'sendControlIdentityRevalidated',true,
+    'composerIdentityDigest',repeat('a',64),'sendControlIdentityDigest',repeat('b',64),
+    'providerConversationIdentityRevalidated',true,
+    'providerConversationIdentityDigest',v_native_provider_digest
+  );
+  -- SQL is an independent trust boundary: JSON nulls must not pass through
+  -- PL/pgSQL three-valued comparisons as an apparently valid native result.
+  foreach v_bad_native_result in array array[
+    v_native_result || jsonb_build_object('state',null),
+    v_native_result || jsonb_build_object('promptInserted',null),
+    v_native_result || jsonb_build_object('roomId',null)
+  ] loop
+    v_rejected := false;
+    v_error_message := null;
+    begin
+      perform public.settle_backroom_android_native_wake_result(
+        v_native_claim.out_job_id,v_host_test,repeat('8',64),v_binding_native,
+        pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_claim.out_lease_token,'UTF8')),'hex'),
+        v_native_handoff,v_native_device,v_native_screen_session,'target-native',1,
+        repeat('a',64),repeat('b',64),v_native_provider_digest,v_bad_native_result
+      );
+    exception when others then
+      get stacked diagnostics v_error_message = message_text;
+      v_rejected := v_error_message = 'Invalid native wake result evidence';
+    end;
+    if not v_rejected then
+      raise exception 'Native settlement must reject JSON null for required result fields';
+    end if;
+    if not exists(select 1 from public.backroom_wake_jobs j
+        where j.id=v_native_claim.out_job_id and j.state='leased'
+          and j.lease_token_hash=pg_catalog.encode(pg_catalog.sha256(
+            pg_catalog.convert_to(v_native_claim.out_lease_token,'UTF8')),'hex')) then
+      raise exception 'Rejected null evidence must leave the original lease untouched';
+    end if;
+  end loop;
+
+  v_native_settlement := public.settle_backroom_android_native_wake_result(
+    v_native_claim.out_job_id,v_host_test,repeat('8',64),v_binding_native,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_claim.out_lease_token,'UTF8')),'hex'),
+    v_native_handoff,v_native_device,v_native_screen_session,'target-native',1,
+    repeat('a',64),repeat('b',64),v_native_provider_digest,v_native_result
+  );
+  if v_native_settlement<>'acknowledged'
+    or not exists(select 1 from public.backroom_wake_jobs j
+      where j.id=v_native_claim.out_job_id and j.state='acknowledged'
+        and j.lease_token_hash is null and j.native_result_payload=v_native_result
+        and j.native_result_at is not null) then
+    raise exception 'A proven Android Send must settle the original group job as acknowledged';
+  end if;
+  if public.settle_backroom_android_native_wake_result(
+    v_native_claim.out_job_id,v_host_test,repeat('8',64),v_binding_native,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_native_claim.out_lease_token,'UTF8')),'hex'),
+    v_native_handoff,v_native_device,v_native_screen_session,'target-native',1,
+    repeat('a',64),repeat('b',64),v_native_provider_digest,v_native_result
+  )<>'replayed' then
+    raise exception 'Duplicate native result ACK must be idempotent';
+  end if;
+
+  -- A preflight denial proves no insertion and no Send; only this outcome may retry.
+  v_preflight_job := public.enqueue_backroom_wake_job(
+    repeat('4',64),v_owner,v_room,v_participant,v_host_test,'space-native','session-native',repeat('8',64),
+    v_binding_native,'target-native','fingerprint-native',1,'native-preflight-event',
+    '@RMconnects'||chr(10)||'Event: native-preflight-event'||chr(10)||
+    'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
+  select * into v_preflight_claim from public.claim_backroom_wake_jobs_with_provider_identity(
+    v_host_test,repeat('8',64),v_binding_native,5,30) limit 1;
+  if not found or v_preflight_claim.out_job_id::text<>(v_preflight_job->>'job_id') then
+    raise exception 'Preflight test must claim the next native job';
+  end if;
+  v_preflight_result:=jsonb_build_object(
+    'version',1,'kind','native_wake_result','handoffId',v_preflight_handoff::text,
+    'jobId',v_preflight_claim.out_job_id::text,'deviceId',v_native_device::text,
+    'roomId',v_room::text,'screenSessionId',v_native_screen_session::text,
+    'bindingId',v_binding_native::text,'targetId','target-native','targetRevision',1,
+    'state','preflight_denied','promptInserted',false,'sendInvoked',false,
+    'composerCleared',false,'reason','permission_denied'
+  );
+  v_native_settlement := public.settle_backroom_android_native_wake_result(
+    v_preflight_claim.out_job_id,v_host_test,repeat('8',64),v_binding_native,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_preflight_claim.out_lease_token,'UTF8')),'hex'),
+    v_preflight_handoff,v_native_device,v_native_screen_session,'target-native',1,
+    repeat('a',64),repeat('b',64),v_native_provider_digest,v_preflight_result
+  );
+  if v_native_settlement<>'pending' or not exists(select 1 from public.backroom_wake_jobs j
+    where j.id=v_preflight_claim.out_job_id and j.state='pending'
+      and j.last_error_code='approval_required' and j.lease_token_hash is null
+      and j.native_result_payload=v_preflight_result) then
+    raise exception 'A proven no-effect permission denial must be returned to bounded retry';
+  end if;
+
+  -- A later attempt may settle this same job, but must not overwrite the
+  -- first handoff receipt: a delayed exact ACK from that attempt stays replayable.
+  update public.backroom_wake_jobs
+  set available_at=pg_catalog.clock_timestamp()-interval '1 second'
+  where id=v_preflight_claim.out_job_id and state='pending';
+  select * into v_preflight_retry_claim from public.claim_backroom_wake_jobs_with_provider_identity(
+    v_host_test,repeat('8',64),v_binding_native,5,30) limit 1;
+  if not found or v_preflight_retry_claim.out_job_id<>v_preflight_claim.out_job_id then
+    raise exception 'Preflight retry must reclaim the same durable job';
+  end if;
+  v_preflight_retry_result:=jsonb_build_object(
+    'version',1,'kind','native_wake_result','handoffId',v_preflight_retry_handoff::text,
+    'jobId',v_preflight_retry_claim.out_job_id::text,'deviceId',v_native_device::text,
+    'roomId',v_room::text,'screenSessionId',v_native_screen_session::text,
+    'bindingId',v_binding_native::text,'targetId','target-native','targetRevision',1,
+    'state','needs_review','promptInserted',false,'sendInvoked',false,
+    'composerCleared',false,'reason','device_disconnected'
+  );
+  v_native_settlement := public.settle_backroom_android_native_wake_result(
+    v_preflight_retry_claim.out_job_id,v_host_test,repeat('8',64),v_binding_native,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_preflight_retry_claim.out_lease_token,'UTF8')),'hex'),
+    v_preflight_retry_handoff,v_native_device,v_native_screen_session,'target-native',1,
+    repeat('a',64),repeat('b',64),v_native_provider_digest,v_preflight_retry_result
+  );
+  if v_native_settlement<>'failed' or not exists(select 1 from public.backroom_wake_jobs j
+    where j.id=v_preflight_retry_claim.out_job_id and j.state='failed'
+      and pg_catalog.jsonb_array_length(j.native_result_receipts)=2
+      and j.native_result_payload=v_preflight_retry_result) then
+    raise exception 'The later uncertain attempt must settle while retaining both handoff receipts';
+  end if;
+  if public.settle_backroom_android_native_wake_result(
+    v_preflight_claim.out_job_id,v_host_test,repeat('8',64),v_binding_native,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_preflight_claim.out_lease_token,'UTF8')),'hex'),
+    v_preflight_handoff,v_native_device,v_native_screen_session,'target-native',1,
+    repeat('a',64),repeat('b',64),v_native_provider_digest,v_preflight_result
+  )<>'replayed' then
+    raise exception 'A delayed duplicate ACK must replay after a later retry has settled';
+  end if;
+
+  -- Reusing one handoff ID with altered evidence is a conflict, not a replay.
+  v_bad_native_result:=v_preflight_result || jsonb_build_object('reason','other');
+  v_rejected:=false;
+  v_error_message:=null;
+  begin
+    perform public.settle_backroom_android_native_wake_result(
+      v_preflight_claim.out_job_id,v_host_test,repeat('8',64),v_binding_native,
+      pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_preflight_claim.out_lease_token,'UTF8')),'hex'),
+      v_preflight_handoff,v_native_device,v_native_screen_session,'target-native',1,
+      repeat('a',64),repeat('b',64),v_native_provider_digest,v_bad_native_result
+    );
+  exception when others then
+    get stacked diagnostics v_error_message = message_text;
+    v_rejected := v_error_message = 'Conflicting native wake result for a previously settled handoff';
+  end;
+  if not v_rejected then
+    raise exception 'A native handoff must not be reused with different result evidence';
+  end if;
+
+  -- A post-effect uncertain result is terminal and must never be replayed automatically.
+  v_review_job:=public.enqueue_backroom_wake_job(
+    repeat('3',64),v_owner,v_room,v_participant,v_host_test,'space-native','session-native',repeat('8',64),
+    v_binding_native,'target-native','fingerprint-native',1,'native-review-event',
+    '@RMconnects'||chr(10)||'Event: native-review-event'||chr(10)||
+    'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
+  select * into v_review_claim from public.claim_backroom_wake_jobs_with_provider_identity(
+    v_host_test,repeat('8',64),v_binding_native,5,30) limit 1;
+  if not found or v_review_claim.out_job_id::text<>(v_review_job->>'job_id') then
+    raise exception 'Review test must claim the next native job';
+  end if;
+  v_review_result:=jsonb_build_object(
+    'version',1,'kind','native_wake_result','handoffId',v_review_handoff::text,
+    'jobId',v_review_claim.out_job_id::text,'deviceId',v_native_device::text,
+    'roomId',v_room::text,'screenSessionId',v_native_screen_session::text,
+    'bindingId',v_binding_native::text,'targetId','target-native','targetRevision',1,
+    'state','needs_review','promptInserted',true,'sendInvoked',false,
+    'composerCleared',false,'reason','outcome_unknown'
+  );
+  v_native_settlement := public.settle_backroom_android_native_wake_result(
+    v_review_claim.out_job_id,v_host_test,repeat('8',64),v_binding_native,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_review_claim.out_lease_token,'UTF8')),'hex'),
+    v_review_handoff,v_native_device,v_native_screen_session,'target-native',1,
+    repeat('a',64),repeat('b',64),v_native_provider_digest,v_review_result
+  );
+  if v_native_settlement<>'failed' or not exists(select 1 from public.backroom_wake_jobs j
+    where j.id=v_review_claim.out_job_id and j.state='failed'
+      and j.last_error_code='result_unconfirmed' and j.lease_token_hash is null
+      and j.native_result_payload=v_review_result) then
+    raise exception 'Uncertain native effect must be terminal review, never replayed';
+  end if;
+
+  -- The durable job's provider identity is immutable after enqueue.
+  v_conflict := false;
+  begin
+    update public.backroom_wake_jobs
+    set provider_conversation_identity_digest=repeat('8',64)
+    where id=(v_native_job->>'job_id')::uuid;
+  exception when check_violation then
+    v_conflict := true;
+  end;
+  if not v_conflict then
+    raise exception 'A queued native wake must not be retargeted to another provider conversation';
+  end if;
   select count(*) into v_count from public.claim_backroom_wake_jobs(v_host_test,v_session_digest,v_binding_1,5,30);
   if v_count <> 0 then raise exception 'An active lease must prevent duplicate concurrent claims'; end if;
   select count(*) into v_count from public.claim_backroom_wake_jobs(v_host_wrong,v_session_digest,v_binding_1,5,30);
@@ -412,7 +1465,7 @@ begin
   -- Session6 termination is exercised below through the atomic MCP Leave RPC.
 
   v_cancel_job := public.enqueue_backroom_wake_job(
-    repeat('3',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-3',repeat('d',64),
+    repeat('7',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-3',repeat('d',64),
     v_binding_3,'target-3','fingerprint-3',1,'event-3','@RMconnects'||chr(10)||'Event: event-3'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   if public.cancel_backroom_wake_job((v_cancel_job->>'job_id')::uuid,'20000000-0000-0000-0000-000000000098') then
     raise exception 'A different owner must not cancel a wake';
@@ -425,7 +1478,7 @@ begin
   end if;
 
   v_expire_job := public.enqueue_backroom_wake_job(
-    repeat('4',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-4',repeat('e',64),
+    repeat('0',64),v_owner,v_room,v_participant,v_host_test,'space-1','session-4',repeat('e',64),
     v_binding_4,'target-4','fingerprint-4',1,'event-4','@RMconnects'||chr(10)||'Event: event-4'||chr(10)||'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600);
   update public.rub_minds_mcp_sessions set terminated_at=pg_catalog.clock_timestamp() where session_digest=repeat('e',64);
   select count(*) into v_count from public.claim_backroom_wake_jobs(v_host_test,repeat('e',64),v_binding_4,5,30);
@@ -491,13 +1544,13 @@ begin
   insert into public.agent_connections(room_id,participant_id,owner_id,credential_digest,expires_at,revoked_at)
   values (v_trigger_room,v_trigger_ai,v_owner,repeat('8',64),pg_catalog.clock_timestamp()+interval '1 hour',null);
   insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,agent_credential_digest,room_id,participant_id,expires_at,terminated_at)
-  values (repeat('8',64),'ci-ciphertext-trigger',repeat('8',64),v_trigger_room,v_trigger_ai,pg_catalog.clock_timestamp()+interval '1 hour',null);
+  values (v_trigger_session_digest,'ci-ciphertext-trigger',repeat('8',64),v_trigger_room,v_trigger_ai,pg_catalog.clock_timestamp()+interval '1 hour',null);
   insert into public.backroom_input_bindings(
     id,owner_id,room_id,participant_id,host_id,session_digest,space_id,session_id,target_id,
     target_identity_fingerprint,target_revision,surface,locator_kind,locator_value,participation_mode,
     wake_enabled,wake_grant_id,wake_expires_at,max_wakes_per_minute,confirmed_at,revoked_at
   ) values (
-    v_trigger_binding,v_owner,v_trigger_room,v_trigger_ai,v_host_test,repeat('8',64),
+    v_trigger_binding,v_owner,v_trigger_room,v_trigger_ai,v_host_test,v_trigger_session_digest,
     'space-trigger','session-trigger','target-trigger','fingerprint-trigger',1,'browser_tab','dom',
     'composer-trigger','mentions',true,'70000000-0000-4000-8000-000000000008'::uuid,
     pg_catalog.clock_timestamp()+interval '1 hour',6,pg_catalog.clock_timestamp(),null
@@ -676,6 +1729,15 @@ begin
         and (revoked_at is null or wake_enabled or wake_grant_id is not null
           or confirmed_at is not null or wake_expires_at is not null)) then
     raise exception 'MCP Leave must revoke every Backroom input binding for the participant';
+  end if;
+  if exists(select 1 from public.backroom_android_native_bindings n
+      join public.backroom_input_bindings b on b.id=n.binding_id
+      where b.room_id=v_room and b.participant_id=v_participant and n.revoked_at is null) then
+    raise exception 'MCP Leave must revoke every device-attested Android group binding';
+  end if;
+  if not exists(select 1 from public.backroom_android_native_bindings n
+      where n.id=v_native_mapping_retry_id and n.revoked_at is not null) then
+    raise exception 'MCP Leave must revoke a live Android native mapping for the exact group AI';
   end if;
   if exists(select 1 from public.backroom_wake_jobs
       where room_id=v_room and participant_id=v_participant and state in ('pending','leased')) then

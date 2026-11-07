@@ -22,11 +22,19 @@ async function lookupHost(hostId:string) {
 }
 async function lookupBinding(bindingId:string) {
  const {data,error}=await db.from('backroom_input_bindings')
-  .select('id,owner_id,host_id,session_digest,room_id,participant_id,wake_enabled,confirmed_at,wake_expires_at,revoked_at')
+  .select('id,owner_id,host_id,session_digest,room_id,participant_id,surface,provider_conversation_identity_digest,wake_enabled,confirmed_at,wake_expires_at,revoked_at')
   .eq('id',bindingId).maybeSingle();
  if(error||!data)return null;
  const now=new Date().toISOString();
- const [session,participant,connection]=await Promise.all([
+ const nativeBindingLookup=data.surface==='android_app'&&
+  typeof data.provider_conversation_identity_digest==='string'
+  ? db.from('backroom_android_native_bindings').select('id')
+    .eq('binding_id',data.id).eq('owner_id',data.owner_id).eq('room_id',data.room_id)
+    .eq('participant_id',data.participant_id)
+    .eq('provider_conversation_identity_digest',data.provider_conversation_identity_digest)
+    .is('revoked_at',null).gt('expires_at',now).maybeSingle()
+  : Promise.resolve({data:null,error:null});
+ const [session,participant,connection,nativeBinding]=await Promise.all([
   db.from('rub_minds_mcp_sessions').select('session_digest')
    .eq('session_digest',data.session_digest).eq('room_id',data.room_id)
    .eq('participant_id',data.participant_id).is('terminated_at',null)
@@ -36,14 +44,21 @@ async function lookupBinding(bindingId:string) {
    .in('status',['connected','active','autonomous']).maybeSingle(),
   db.from('agent_connections').select('id')
    .eq('room_id',data.room_id).eq('participant_id',data.participant_id)
-   .eq('owner_id',data.owner_id).is('revoked_at',null).gt('expires_at',now).maybeSingle()
+   .eq('owner_id',data.owner_id).is('revoked_at',null).gt('expires_at',now).maybeSingle(),
+  nativeBindingLookup
  ]);
  // An expired/terminated MCP handle, disconnected participant or revoked
  // participant credential invalidates the host's local poller. Returning null
  // causes the paired host to stop rather than spin on an empty queue forever.
  if(session.error||participant.error||connection.error||!session.data||!participant.data||!connection.data)return null;
+ // The mapping is service-role-only and its DB triggers revoke it when its
+ // screen, room pairing, host, MCP credential, device or installed signer changes.
+ // A lookup failure is treated as unattested: it must never enable native Send.
+ const nativeBindingAttested=data.surface==='android_app'&&!nativeBinding.error&&!!nativeBinding.data;
  return {bindingId:data.id,hostId:data.host_id,ownerId:data.owner_id,sessionDigest:data.session_digest,
-  wakeEnabled:data.wake_enabled,confirmedAt:data.confirmed_at,wakeExpiresAt:data.wake_expires_at,
+  surface:data.surface,wakeEnabled:data.wake_enabled,confirmedAt:data.confirmed_at,wakeExpiresAt:data.wake_expires_at,
+  providerConversationIdentityDigest:data.provider_conversation_identity_digest??null,
+  nativeBindingAttested,
   revokedAt:data.revoked_at};
 }
 async function rpc(name:string,args:Record<string,unknown>) {
@@ -52,26 +67,54 @@ async function rpc(name:string,args:Record<string,unknown>) {
  return data;
 }
 const store={
- async claim({hostId,sessionDigest,bindingId,limit}:{hostId:string,sessionDigest:string,bindingId:string,limit:number}) {
-  const rows=await rpc('claim_backroom_wake_jobs',{
-   p_host_id:hostId,p_session_digest:sessionDigest,p_binding_id:bindingId,p_limit:limit,p_lease_seconds:30
+ async claim({hostId,sessionDigest,bindingId,surface,limit,providerConversationIdentityDigest}:{
+  hostId:string,sessionDigest:string,bindingId:string,surface:string,limit:number,providerConversationIdentityDigest:string|null
+ }) {
+  const rows=await rpc('claim_backroom_wake_jobs_with_provider_identity',{
+   p_host_id:hostId,p_session_digest:sessionDigest,p_binding_id:bindingId,p_limit:limit,
+   // Android commands carry an independent 60-second device lease and ACK.
+   // Keep the parent group lease alive through that settlement window; browser
+   // workers retain the existing shorter lease.
+   p_lease_seconds:surface==='android_app'?120:30
   });
   if(!Array.isArray(rows)||rows.length>limit)throw new Error('Invalid private queue response');
-  return rows.map(row=>{
-   if(!row||row.out_binding_id!==bindingId||!row.out_job_id||!row.out_lease_token)
+  const leases=rows.map(row=>{
+   if(!row||row.out_binding_id!==bindingId||!row.out_job_id||!row.out_lease_token||
+    (row.out_provider_conversation_identity_digest!==null &&
+     (typeof row.out_provider_conversation_identity_digest!=='string'||!/^[a-f0-9]{64}$/.test(row.out_provider_conversation_identity_digest))) ||
+    (row.out_provider_conversation_identity_digest??null)!==providerConversationIdentityDigest ||
+    (surface==='android_app'&&typeof row.out_provider_conversation_identity_digest!=='string'))
     throw new Error('Invalid private queue lease');
-   // Keep only exact server-issued scoped fields; no token or row records from the
-   // database are ever accepted from remote clients.
+   // Keep only exact server-issued scoped fields; no token or row records are
+   // ever accepted from a remote client.
    return {
     jobId:row.out_job_id,jobKey:row.out_job_key,eventId:row.out_event_id,
     ownerId:row.out_owner_id,roomId:row.out_room_id,participantId:row.out_participant_id,
-    hostId,sessionDigest,bindingId,
+    hostId,sessionDigest,bindingId,surface,
     spaceId:row.out_space_id,sessionId:row.out_session_id,
     targetId:row.out_target_id,targetIdentityFingerprint:row.out_target_identity_fingerprint,
-    targetRevision:row.out_target_revision,prompt:row.out_prompt,promptDigest:row.out_prompt_digest,
+    targetRevision:row.out_target_revision,
+    ...(typeof row.out_provider_conversation_identity_digest==='string'
+     ? {providerConversationIdentityDigest:row.out_provider_conversation_identity_digest} : {}),
+    prompt:row.out_prompt,promptDigest:row.out_prompt_digest,
     attemptCount:row.out_attempt_count,expiresAt:row.out_expires_at,leaseToken:row.out_lease_token
    };
   });
+  if(surface==='android_app'){
+   // Android-native jobs are forwarded entirely inside the service-role Edge
+   // function. The browser host must never receive a lease that its generic
+   // dispatcher could also execute against a different provider surface.
+   for(const lease of leases){
+    const {data,error}=await db.rpc('queue_backroom_android_native_wake_command',{
+     p_job_id:lease.jobId,p_host_id:hostId,p_session_digest:sessionDigest,
+     p_binding_id:bindingId,p_lease_token:lease.leaseToken
+    });
+    if(error||data?.ok!==true||!['queued','already_queued'].includes(data.state))
+     throw new Error('Android native wake forwarding unavailable');
+   }
+   return [];
+  }
+  return leases;
  },
  async acknowledge({hostId,sessionDigest,bindingId,jobId,leaseToken,outcome}:Record<string,string>) {
   return await rpc('ack_backroom_wake_job',{

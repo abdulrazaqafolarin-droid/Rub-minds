@@ -247,12 +247,16 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                     }
                 }
                 if (!committed) return ComposerSelectionDecision(null, "session_or_selection_changed")
+                val selectedProviderDigest = providerConversationDigest.takeIf {
+                    ProviderConversationIdentityPolicy.isValidDigest(it)
+                }
                 return ComposerSelectionDecision(
                     selected,
                     "selected",
                     null,
                     "accessibility_tree_too_large",
-                    ProviderConversationIdentityPolicy.isValidDigest(providerConversationDigest)
+                    selectedProviderDigest != null,
+                    selectedProviderDigest
                 )
             }
             val sendDecision = AndroidSendControlPolicy.choose(
@@ -273,12 +277,16 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 boundSendTargetId = sendDecision.candidate?.targetId
                 boundProviderConversationIdentityDigest = providerConversationDigest
             }
+            val selectedProviderDigest = providerConversationDigest.takeIf {
+                ProviderConversationIdentityPolicy.isValidDigest(it)
+            }
             return ComposerSelectionDecision(
                 selected,
                 "selected",
                 sendDecision.candidate,
                 sendDecision.reason,
-                ProviderConversationIdentityPolicy.isValidDigest(providerConversationDigest)
+                selectedProviderDigest != null,
+                selectedProviderDigest
             )
         } finally {
             root.recycle()
@@ -343,10 +351,37 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 return SendControlDecision(null,
                     if (current.candidate == null) current.reason else "send_control_identity_changed")
             }
-            return current
+            val currentProviderDigest = ProviderConversationIdentityResolver.resolve(packageName, root)
+            val sameBoundConversation = ProviderConversationIdentityPolicy.matches(
+                boundProviderConversationIdentityDigest, currentProviderDigest
+            )
+            return SendControlDecision(
+                current.candidate,
+                current.reason,
+                currentProviderDigest.takeIf { sameBoundConversation }
+            )
         } finally {
             root.recycle()
         }
+    }
+
+    /** Return proof only while the same selected composer, Send and provider thread revalidate locally. */
+    internal fun nativeBindingEvidence(sessionId: String, packageName: String): NativeBindingEvidence? = synchronized(this) {
+        if (boundSessionId != sessionId || boundPackageName != packageName ||
+            !isServiceEnabled(this)
+        ) return null
+        val composerTargetId = boundComposerTargetId ?: return null
+        val sendTargetId = boundSendTargetId ?: return null
+        val decision = revalidateSelectedSendControl(
+            sessionId, packageName, composerTargetId, sendTargetId
+        )
+        val providerDigest = decision.providerConversationIdentityDigest ?: return null
+        if (decision.candidate?.targetId != sendTargetId ||
+            !ProviderConversationIdentityPolicy.isValidDigest(composerTargetId) ||
+            !ProviderConversationIdentityPolicy.isValidDigest(sendTargetId) ||
+            !ProviderConversationIdentityPolicy.isValidDigest(providerDigest)
+        ) return null
+        NativeBindingEvidence(composerTargetId, sendTargetId, providerDigest)
     }
 
     fun isSelectedComposerFocused(sessionId: String, packageName: String, targetId: String): Boolean {
@@ -721,13 +756,13 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                     ) {
                         false
                     } else {
-                        val textLabel = exactSendNode.text?.toString().orEmpty()
-                        val descriptionLabel = exactSendNode.contentDescription?.toString().orEmpty()
-                        val recognizedLabel = AndroidSendControlPolicy.isRecognizedLabel(textLabel) ||
-                            AndroidSendControlPolicy.isRecognizedLabel(descriptionLabel)
-                        val fallbackResource = textLabel.isBlank() && descriptionLabel.isBlank() &&
-                            AndroidSendControlPolicy.isRecognizedResourceId(exactSendNode.viewIdResourceName.orEmpty())
-                        if (recognizedLabel || fallbackResource) {
+                        // Never inspect visible node text or descriptions: they can
+                        // contain user-authored content. Native Send requires an opaque
+                        // app resource ID that matches the narrowly scoped allowlist.
+                        val fallbackResource = AndroidSendControlPolicy.isRecognizedResourceId(
+                            exactSendNode.viewIdResourceName.orEmpty()
+                        )
+                        if (fallbackResource) {
                             sendControlIdentityRevalidated = true
                             // Session/selection invalidation uses this same monitor.
                             // The deadline is checked immediately before the only
@@ -932,19 +967,14 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
                 false
             }
             if (!bounds.isEmpty && clickActionAvailable) {
-                val textLabel = node.text?.toString().orEmpty().take(120)
-                val descriptionLabel = node.contentDescription?.toString().orEmpty().take(120)
-                val label = when {
-                    AndroidSendControlPolicy.isRecognizedLabel(textLabel) -> textLabel
-                    AndroidSendControlPolicy.isRecognizedLabel(descriptionLabel) -> descriptionLabel
-                    textLabel.isNotBlank() -> textLabel
-                    else -> descriptionLabel
-                }
+                // Resource IDs are app metadata, not user-authored content.
+                // Keep candidate labels empty so the policy cannot fall back to
+                // reading accessibility text or content descriptions.
                 candidates += SendControlCandidate(
                     targetId = composerTargetId(node, packageName),
                     packageName = packageName,
                     bounds = ComposerScreenRect(bounds.left, bounds.top, bounds.right, bounds.bottom),
-                    label = label,
+                    label = "",
                     resourceId = node.viewIdResourceName.orEmpty(),
                     clickable = node.isClickable,
                     enabled = node.isEnabled,
@@ -1099,6 +1129,9 @@ class AndroidTouchAccessibilityService : AccessibilityService() {
         ): Boolean = instance?.isBoundToProviderConversation(
             sessionId, packageName, providerConversationIdentityDigest
         ) == true
+
+        internal fun nativeBindingEvidence(sessionId: String, packageName: String): NativeBindingEvidence? =
+            instance?.nativeBindingEvidence(sessionId, packageName)
 
 
         fun submitCanonicalWake(

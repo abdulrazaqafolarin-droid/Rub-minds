@@ -13,12 +13,12 @@ const expiresAt='2030-01-01T00:00:00.000Z';
 const scope={hostId,hostToken:token,bindingId,sessionDigest};
 const jobId='40000000-0000-4000-8000-000000000033';
 const leaseToken='40000000-0000-4000-8000-000000000044';
-function setup({host={},binding={},now=()=>Date.parse('2026-10-29T00:00:00Z'),activateBinding=async()=>true,deactivateBinding=async()=>true}={}) {
+function setup({host={},binding={},leases=[],now=()=>Date.parse('2026-10-29T00:00:00Z'),activateBinding=async()=>true,deactivateBinding=async()=>true}={}) {
  const calls=[];
  const hostRecord={hostId,ownerId,credentialDigest,expiresAt,revokedAt:null,...host};
- const bindingRecord={bindingId,hostId,ownerId,sessionDigest,wakeEnabled:true,confirmedAt:'2026-10-28T00:00:00Z',wakeExpiresAt:expiresAt,revokedAt:null,...binding};
+ const bindingRecord={bindingId,hostId,ownerId,sessionDigest,surface:'browser_tab',wakeEnabled:true,confirmedAt:'2026-10-28T00:00:00Z',wakeExpiresAt:expiresAt,revokedAt:null,...binding};
  const store={
-  claim:async args=>{calls.push(['claim',args]);return [];},
+  claim:async args=>{calls.push(['claim',args]);return leases;},
   acknowledge:async args=>{calls.push(['acknowledge',args]);return true;},
   retry:async args=>{calls.push(['retry',args]);return 'pending';}
  };
@@ -33,9 +33,92 @@ test('authenticated claims, acknowledgements, retries are scoped to DB-authorita
  assert.deepEqual(await gateway.acknowledge({...scope,jobId,leaseToken,outcome:'ignored'}),{ok:true,accepted:true});
  assert.deepEqual(await gateway.retry({...scope,jobId,leaseToken,errorCode:'provider_busy',retryAfterSeconds:5}),{ok:true,state:'pending'});
  assert.equal(calls.length,3);
- assert.deepEqual(calls[0][1],{hostId,bindingId,sessionDigest,limit:2});
+ assert.deepEqual(calls[0][1],{hostId,bindingId,sessionDigest,surface:'browser_tab',limit:2,providerConversationIdentityDigest:null});
  assert.equal(calls[1][1].hostToken,undefined);
 });
+test('native wake claims and activation fail closed without a provider-conversation digest',async()=>{
+ const calls=[];
+ const {gateway}=setup({binding:{surface:'android_app',providerConversationIdentityDigest:null},activateBinding:async input=>{calls.push(input);return true;}});
+ assert.deepEqual(await gateway.claim(scope),{ok:false,reason:'unauthorized'});
+ const grantId='40000000-0000-4000-8000-000000000066';
+ assert.deepEqual(await gateway.activate({...scope,grantId,ttlSeconds:3600}),{ok:false,reason:'unauthorized'});
+ assert.equal(calls.length,0);
+});
+
+test('Android native wake activation and claims require a live device-attested binding',async()=>{
+ const digest='d'.repeat(64);
+ const calls=[];
+ const grantId='40000000-0000-4000-8000-000000000066';
+ const {gateway}=setup({
+  binding:{surface:'android_app',providerConversationIdentityDigest:digest,nativeBindingAttested:false},
+  activateBinding:async input=>{calls.push(input);return true;},
+ });
+ assert.deepEqual(await gateway.claim(scope),{ok:false,reason:'unauthorized'});
+ assert.deepEqual(await gateway.activate({...scope,grantId,ttlSeconds:3600}),{ok:false,reason:'unauthorized'});
+ assert.equal(calls.length,0);
+});
+test('Android native activation and claims succeed only with the exact active attestation flag',async()=>{
+ const digest='d'.repeat(64);
+ const calls=[];
+ const grantId='40000000-0000-4000-8000-000000000066';
+ const {gateway}=setup({
+  binding:{surface:'android_app',providerConversationIdentityDigest:digest,nativeBindingAttested:true},
+  activateBinding:async input=>{calls.push(input);return true;},
+ });
+ assert.deepEqual(await gateway.claim(scope),{ok:true,leases:[]});
+ assert.deepEqual(await gateway.activate({...scope,grantId,ttlSeconds:3600}),{ok:true,activated:true});
+ assert.equal(calls.length,1);
+ assert.equal(calls[0].providerConversationIdentityDigest,undefined);
+});
+test('deactivation, acknowledgement and retry remain available after native attestation revocation',async()=>{
+ const digest='d'.repeat(64);
+ const grantId='40000000-0000-4000-8000-000000000066';
+ const {gateway,calls}=setup({
+  binding:{surface:'android_app',providerConversationIdentityDigest:digest,nativeBindingAttested:false},
+  deactivateBinding:async input=>{calls.push(['deactivate',input]);return true;},
+ });
+ assert.deepEqual(await gateway.deactivate({...scope,grantId}),{ok:true,deactivated:true});
+ assert.deepEqual(await gateway.acknowledge({...scope,jobId,leaseToken,outcome:'ignored'}),{ok:true,accepted:true});
+ assert.deepEqual(await gateway.retry({...scope,jobId,leaseToken,errorCode:'provider_busy',retryAfterSeconds:5}),{ok:true,state:'pending'});
+ assert.equal(calls[0][0],'deactivate');
+ assert.equal(calls[0][1].hostToken,undefined);
+ assert.deepEqual(calls.slice(1).map(call=>call[0]),['acknowledge','retry']);
+});
+
+test('claim passes the exact provider conversation digest from the authenticated binding',async()=>{
+ const digest='d'.repeat(64);
+ const {gateway,calls}=setup({binding:{providerConversationIdentityDigest:digest}});
+ assert.deepEqual(await gateway.claim({...scope,limit:1}),{ok:true,leases:[]});
+ assert.deepEqual(calls[0],['claim',{hostId,bindingId,sessionDigest,surface:'browser_tab',providerConversationIdentityDigest:digest,limit:1}]);
+});
+
+test('Android claim carries its authenticated surface to the private lease store',async()=>{
+ const digest='d'.repeat(64);
+ const {gateway,calls}=setup({binding:{surface:'android_app',providerConversationIdentityDigest:digest,nativeBindingAttested:true}});
+ assert.deepEqual(await gateway.claim(scope),{ok:true,leases:[]});
+ assert.deepEqual(calls[0],['claim',{
+  hostId,bindingId,sessionDigest,surface:'android_app',
+  providerConversationIdentityDigest:digest,limit:5
+ }]);
+});
+
+test('claim rejects a lease whose provider digest differs from the authenticated binding',async()=>{
+ const digest='d'.repeat(64);
+ const forgedLease={hostId,sessionDigest,bindingId,jobId,leaseToken,providerConversationIdentityDigest:'e'.repeat(64)};
+ const {gateway,calls}=setup({binding:{providerConversationIdentityDigest:digest},leases:[forgedLease]});
+ await assert.rejects(()=>gateway.claim({...scope,limit:1}),/does not match the authenticated input binding/);
+ assert.equal(calls.length,1);
+});
+
+test('claim accepts a lease only when its provider digest matches the binding digest',async()=>{
+ const digest='d'.repeat(64);
+ const lease={hostId,sessionDigest,bindingId,jobId,leaseToken,providerConversationIdentityDigest:digest};
+ const {gateway}=setup({binding:{providerConversationIdentityDigest:digest},leases:[lease]});
+ const result=await gateway.claim({...scope,limit:1});
+ assert.equal(result.ok,true);
+ assert.equal(result.leases[0].providerConversationIdentityDigest,digest);
+});
+
 test('wrong token, host, binding, session digest denied without private RPC',async()=>{
  const {gateway,calls}=setup();
  for(const input of [{...scope,hostToken:'c'.repeat(64)},{...scope,hostId:ownerId},{...scope,bindingId:ownerId},{...scope,sessionDigest:'f'.repeat(64)},{...scope,hostToken:'invalid'}]){
@@ -85,7 +168,7 @@ test('malformed acknowledgement and retry identifiers never reach privileged RPC
 
 test('inactive consent can only be activated by a correctly authenticated host for a grant up to 24 hours',async()=>{
  const calls=[];
- const bindingRecord={bindingId,hostId,ownerId,sessionDigest,wakeEnabled:false,
+ const bindingRecord={bindingId,hostId,ownerId,sessionDigest,surface:'browser_tab',wakeEnabled:false,
   confirmedAt:null,wakeExpiresAt:null,revokedAt:null};
  const gateway=createAuthenticatedWakeGateway({
   lookupHost:async()=>({hostId,ownerId,credentialDigest,expiresAt,revokedAt:null}),

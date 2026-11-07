@@ -4,16 +4,23 @@ import {readFile} from 'node:fs/promises';
 
 const read = path => readFile(new URL(path, import.meta.url), 'utf8');
 const service = await read('../../android-companion/app/src/main/java/app/rubminds/companion/AndroidTouchAccessibilityService.kt');
+const cloudApi = await read('../../android-companion/app/src/main/java/app/rubminds/companion/CloudDeviceApi.kt');
 const ime = await read('../../android-companion/app/src/main/java/app/rubminds/companion/DraftInputMethodService.kt');
 const screen = await read('../../android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt');
 const handoffPolicy = await read('../../android-companion/app/src/main/java/app/rubminds/companion/AndroidNativeWakeHandoffPolicy.kt');
 const handoffTest = await read('../../android-companion/app/src/test/java/app/rubminds/companion/AndroidNativeWakeHandoffPolicyTest.kt');
 const bindingPolicy = await read('../../android-companion/app/src/main/java/app/rubminds/companion/NativeWakeBindingPolicy.kt');
 const bindingPolicyTest = await read('../../android-companion/app/src/test/java/app/rubminds/companion/NativeWakeBindingPolicyTest.kt');
+const wakeGateway = await read('../../supabase/functions/backroom-wake/index.ts');
+const nativeForwarder = await read('../../supabase/migrations/20261107090000_backroom_android_native_wake_forwarder.sql');
+const deviceEdge = await read('../../supabase/functions/backroom-device/index.ts');
+const attestedSettlement = await read('../../supabase/migrations/20261107110000_backroom_android_native_wake_attested_settlement.sql');
 const providerConversation = await read('../../android-companion/app/src/main/java/app/rubminds/companion/ProviderConversationIdentity.kt');
 const providerConversationTest = await read('../../android-companion/app/src/test/java/app/rubminds/companion/ProviderConversationIdentityPolicyTest.kt');
 const consent = await read('../../android-companion/app/src/main/java/app/rubminds/companion/NativeWakeConsentPolicy.kt');
 const store = await read('../../android-companion/app/src/main/java/app/rubminds/companion/AndroidNativeWakeConsentStore.kt');
+const ackOutboxPolicy = await read('../../android-companion/app/src/main/java/app/rubminds/companion/NativeWakeAckOutboxPolicy.kt');
+const ackOutboxTest = await read('../../android-companion/app/src/test/java/app/rubminds/companion/NativeWakeAckOutboxPolicyTest.kt');
 const activity = await read('../../android-companion/app/src/main/java/app/rubminds/companion/MainActivity.kt');
 const devicesUi = await read('../../src/BackroomDevicesApp.tsx');
 const androidFrameUi = await read('../../src/BackroomAndroidControl.tsx');
@@ -84,7 +91,7 @@ test('native_wake_trigger is dispatched only by the device queue, separately fro
   assert.match(nativeDispatch, /activeRoomId != roomId/);
   assert.match(nativeDispatch, /activeAppPackage != appPackage/);
   assert.match(nativeDispatch, /currentForegroundPackage\(\) != appPackage/);
-  assert.match(nativeDispatch, /AndroidNativeWakeConsentStore\(this\)\.activeGrant/);
+  assert.match(nativeDispatch, /ackStore\.activeGrant/);
   assert.match(nativeDispatch, /AndroidTouchAccessibilityService\.submitCanonicalWake/);
   assert.doesNotMatch(nativeDispatch, /remote_text|insertRemoteText/);
 });
@@ -103,14 +110,33 @@ test('a replayed local one-shot seal cannot be reported as a retryable preflight
 test('native wake ACK uses normalized reasons and successful identity evidence only', () => {
   const acknowledge = method(
     screen,
-    'private fun acknowledgeNativeWake(',
-    '    private fun processCommand('
+    'private fun createNativeWakeAckPayload(',
+    '    private fun acknowledgeNativeWake('
   );
   assert.match(acknowledge, /safeNativeWakeReason\(result\.reason\)/);
   assert.match(acknowledge, /if \(state == "submitted"\)/);
   assert.match(acknowledge, /composerIdentityDigest/);
   assert.match(acknowledge, /sendControlIdentityDigest/);
   assert.doesNotMatch(acknowledge, /result\.reason\.take\(120\)/);
+});
+
+test('provider-conversation digest never crosses the Android WebRTC browser boundary', () => {
+  const selectionAck = method(
+    screen,
+    'private fun sendComposerTargetAcknowledgement(',
+    '    private fun sendSendControlVerificationAcknowledgement('
+  );
+  const sendRecheckAck = method(
+    screen,
+    'private fun sendSendControlVerificationAcknowledgement(',
+    '    private fun sendRemoteTextAcknowledgement('
+  );
+  assert.match(selectionAck, /providerConversationIdentityAvailable/);
+  assert.doesNotMatch(selectionAck, /payload\.put\("providerConversationIdentityDigest"/);
+  assert.match(sendRecheckAck, /providerConversationIdentityMatchesSelection/);
+  assert.doesNotMatch(sendRecheckAck, /payload\.put\("providerConversationIdentityDigest"/);
+  assert.doesNotMatch(androidFrameUi, /providerConversationIdentityDigest/);
+  assert.match(service, /ProviderConversationIdentityPolicy\.matches\([\s\S]*boundProviderConversationIdentityDigest/);
 });
 
 test('native Send path rechecks composer and Send identity from the final snapshot before ACTION_CLICK', () => {
@@ -151,7 +177,7 @@ test('native wake consent is device, app and signer bound with a 24-hour cap and
   assert.match(consent, /request\.bindingId/);
   assert.match(consent, /request\.leaseTokenDigest/);
   assert.match(store, /row\.jobId, row\.hostId, row\.roomId, row\.bindingId/);
-  assert.match(consent, /it\.grantId == grant\.grantId && it\.eventId == request\.eventId/);
+  assert.match(consent, /retained\.any \{[\s\S]*it\.deviceId == request\.deviceId[\s\S]*it\.roomId == request\.roomId[\s\S]*it\.bindingId == request\.bindingId[\s\S]*it\.jobId == request\.jobId \|\| it\.eventId == request\.eventId \|\|[\s\S]*it\.leaseTokenDigest == request\.leaseTokenDigest/);
   assert.match(store, /\.commit\(\)/);
   assert.match(store, /fun revokeDevice\(deviceId: String\)/);
   assert.match(consent, /native_wake_replay_ledger_corrupt/);
@@ -174,7 +200,7 @@ test('the 20-second native handoff deadline is carried to the driver and recheck
   assert.match(consent, /MAX_HANDOFF_CLOCK_SKEW_MILLIS = 3_000L/);
   assert.match(consent, /handoffExpiresAt - handoffIssuedAt > MAX_HANDOFF_TTL_MILLIS/);
   assert.match(consent, /MAX_HANDOFF_TTL_MILLIS = 20_000L/);
-  assert.match(consent, /request\.handoffExpiresAtMillis <= nowMillis/);
+  assert.match(consent, /handoffExpiresAt <= nowMillis/);
   const nativeInsert = method(
     ime,
     'private fun insertNativeWakeTrigger(request: NativeWakeExecutionRequest)',
@@ -191,10 +217,12 @@ test('the 20-second native handoff deadline is carried to the driver and recheck
   assert.ok(deadlineChecks.length >= 3);
   assert.match(submit, /native_wake_handoff_expired_after_seal/);
 });
-test('Backroom capability copy reports the missing group forwarder rather than a missing phone queue', () => {
+test('Backroom capability copy reports provider identity and deployment gates after source forwarding exists', () => {
   assert.match(devicesUi, /AI-directed sending \/ native Off · On · Auto/);
-  assert.match(devicesUi, /Not available · provider adapters \\+ group forwarding missing/);
-  assert.doesNotMatch(devicesUi, /Not available · wake queue not connected/);
+  assert.match(devicesUi, /Not available · provider identity \+ deployment\/device acceptance pending/);
+  assert.doesNotMatch(devicesUi, /group forwarding missing|wake queue not connected/);
+  assert.match(androidFrameUi, /server-side bridge remains source-only until deployed and device-accepted/);
+  assert.doesNotMatch(androidFrameUi, /trusted queue bridge.*still required/);
 });
 
 test('native consent and one-shot journal mutations share a process-wide lock across store instances', () => {
@@ -241,12 +269,12 @@ test('native Send is serialized against session and composer-target invalidation
   assert.match(submit, /bindingGenerationAtStart/);
   assert.match(submit, /NativeWakeBindingPolicy\.isCurrent/);
   const insertionGuard = method(submit, '            val insertion = synchronized(this)', '            if (insertion == null)');
-  assert.match(insertionGuard, /NativeWakeBindingPolicy\\.isCurrent/);
-  assert.match(insertionGuard, /DraftInputMethodService\\.insertNativeWakeTrigger\\(request\\)/);
+  assert.match(insertionGuard, /NativeWakeBindingPolicy\.isCurrent/);
+  assert.match(insertionGuard, /DraftInputMethodService\.insertNativeWakeTrigger\(request\)/);
 
   const finalClick = method(submit, '            val invoked = try {', '            if (!invoked)');
-  assert.match(finalClick, /synchronized\\(this\\)[\\s\\S]*performAction\\(AccessibilityNodeInfo\\.ACTION_CLICK\\)/);
-  assert.match(finalClick, /NativeWakeBindingPolicy\\.isCurrent/);
+  assert.match(finalClick, /synchronized\(this\)[\s\S]*performAction\(AccessibilityNodeInfo\.ACTION_CLICK\)/);
+  assert.match(finalClick, /NativeWakeBindingPolicy\.isCurrent/);
 
   const clearActive = method(service, '        fun clearActiveSession(', '        fun selectComposerTarget(');
   assert.match(clearActive, /synchronized\(current\)[\s\S]*nativeBindingGeneration\+\+/);
@@ -274,9 +302,9 @@ test('native wake fails closed without provider conversation identity and carrie
   assert.match(service, /boundProviderConversationIdentityDigest = null/);
   assert.match(screen, /isBoundToProviderConversation\(/);
   assert.match(service, /fun isBoundToProviderConversation\([\s\S]*?instance\?\.isBoundToProviderConversation\(/);
-  assert.match(screen, /providerConversationIdentityUnavailable/);
+  assert.match(screen, /provider_conversation_identity_unavailable/);
   assert.match(screen, /provider_conversation.*conversation_scope_unavailable/);
-  const ack = method(screen, '    private fun acknowledgeNativeWake(', '    private fun processCommand(');
+  const ack = method(screen, '    private fun createNativeWakeAckPayload(', '    private fun acknowledgeNativeWake(');
   assert.match(ack, /providerConversationIdentityRevalidated/);
   assert.match(ack, /providerConversationDigest != handoff\.providerConversationIdentityDigest/);
   assert.match(ack, /providerConversationIdentityDigest/);
@@ -296,19 +324,272 @@ test('native wake fails closed without provider conversation identity and carrie
   assert.match(store, /providerConversationIdentityDigest = fields.getOrNull\(16\)/);
   assert.match(store, /fields.size !in 16\.\.17/);
   assert.match(consent, /val providerConversationIdentityDigest: String/);
-  assert.doesNotMatch(consent, /providerConversationIdentityDigest: String =/);
+  const executionRequest = method(consent, 'data class NativeWakeExecutionRequest(', 'data class NativeWakeExecutionReservation(');
+  assert.match(executionRequest, /providerConversationIdentityDigest: String/);
+  assert.doesNotMatch(executionRequest, /providerConversationIdentityDigest: String\s*=/);
 });
+test('Android Frame completes group binding through an owner challenge and phone-local device attestation', () => {
+  assert.match(androidFrameUi, /export default function BackroomAndroidControl\(\{ device, roomId \}/);
+  assert.match(androidFrameUi, /listAndroidNativeBindingCandidates\(roomId\)/);
+  assert.match(androidFrameUi, /createAndroidNativeBindingChallenge\(/);
+  assert.match(androidFrameUi, /deviceId: device\.device_id, roomId, sessionId: activeSession/);
+  assert.match(androidFrameUi, /appPackageName: appPackage, bindingId/);
+  assert.match(androidFrameUi, /kind: 'bind_native_group_target'/);
+  assert.match(androidFrameUi, /challengeId: challenge\.challengeId/);
+  assert.match(androidFrameUi, /nonce: challenge\.nonce/);
+  assert.match(androidFrameUi, /acknowledgement\.kind === 'native_binding_ack'/);
+  assert.match(androidFrameUi, /activeNativeBindingRef\.current = completedBindingId/);
+  assert.doesNotMatch(androidFrameUi, /providerConversationIdentityDigest|sessionDigest|participantId/);
+  assert.match(screen, /api\?\.completeNativeBinding\(token/);
+  assert.match(screen, /AppIdentity\.signingCertificateSha256/);
+  assert.match(screen, /evidence\.composerIdentityDigest/);
+  assert.match(screen, /evidence\.sendControlIdentityDigest/);
+  assert.match(screen, /evidence\.providerConversationIdentityDigest/);
+  assert.match(deviceEdge, /android\/native-binding-complete/);
+  assert.match(deviceEdge, /const current = await device\(req\)/);
+  assert.match(deviceEdge, /p_app_signing_certificate_sha256: evidence\.appSigningCertificateSha256/);
+  assert.match(deviceEdge, /p_provider_conversation_identity_digest: evidence\.providerConversationIdentityDigest/);
+  assert.match(cloudApi, /fun completeNativeBinding\(deviceToken: String, fields: JSONObject\)/);
+  assert.match(cloudApi, /post\("android\/native-binding-complete", deviceToken, fields\)/);
+});
+
 test('composer selection distinguishes Send discovery from provider-conversation readiness without exporting its digest', () => {
   assert.match(composerPolicy, /providerConversationIdentityAvailable: Boolean = false/);
-  assert.match(service, /ProviderConversationIdentityPolicy\.isValidDigest\(providerConversationDigest\)/);
+  assert.match(service, /val selectedProviderDigest = providerConversationDigest\.takeIf \{[\s\S]*ProviderConversationIdentityPolicy\.isValidDigest\(it\)/);
   const composerAck = method(
     screen,
     'private fun sendComposerTargetAcknowledgement(',
     'private fun sendSendControlVerificationAcknowledgement('
   );
   assert.match(composerAck, /providerConversationIdentityAvailable/);
-  assert.doesNotMatch(composerAck, /providerConversationIdentityDigest|providerConversationDigest/);
+  assert.doesNotMatch(composerAck, /\.put\("(?:providerConversationIdentityDigest|providerConversationDigest)"/);
   assert.match(androidFrameUi, /acknowledgement\.providerConversationIdentityAvailable === true/);
   assert.match(androidFrameUi, /native wake blocked/);
   assert.match(androidFrameUi, /does not expose a verified stable conversation identity/);
+});
+
+test('Android native wake activation and claims require an unrevoked, unexpired attestation with the exact provider digest',()=>{
+  const lookup = method(wakeGateway,'async function lookupBinding(', 'async function rpc(');
+  assert.match(lookup,/backroom_android_native_bindings/);
+  assert.match(lookup,/\.eq\('binding_id',data\.id\)/);
+  assert.match(lookup,/\.eq\('provider_conversation_identity_digest',data\.provider_conversation_identity_digest\)/);
+  assert.match(lookup,/\.is\('revoked_at',null\)/);
+  assert.match(lookup,/\.gt\('expires_at',now\)/);
+  assert.match(lookup,/nativeBindingAttested/);
+});
+
+test('native Android group leases cover the independent 60-second device command lease',()=>{
+  const claimStore = method(wakeGateway,'async claim(', 'async acknowledge(');
+  assert.match(claimStore,/surface:string/);
+  assert.match(claimStore,/p_lease_seconds:surface==='android_app'\?120:30/);
+  assert.match(claimStore,/hostId,sessionDigest,bindingId,surface,/);
+});
+
+
+test('Android group leases are forwarded by the service-role gateway and never returned to the generic host dispatcher', () => {
+  const claimStore = method(wakeGateway, 'async claim(', 'async acknowledge(');
+  assert.match(claimStore, /surface==='android_app'/);
+  assert.match(claimStore, /queue_backroom_android_native_wake_command/);
+  assert.match(claimStore, /p_job_id:lease\.jobId[\s\S]*p_lease_token:lease\.leaseToken/);
+  assert.match(claimStore, /\['queued','already_queued'\]/);
+  assert.match(claimStore, /return \[\]/);
+  assert.ok(
+    claimStore.indexOf('queue_backroom_android_native_wake_command') <
+      claimStore.indexOf('return []'),
+    'the native command must be persisted before the host receives an empty claim'
+  );
+  const androidBranchStart = claimStore.indexOf("if(surface==='android_app')");
+  const androidBranchEnd = claimStore.indexOf('return []', androidBranchStart) + 'return []'.length;
+  assert.ok(androidBranchStart >= 0 && androidBranchEnd > androidBranchStart);
+  assert.doesNotMatch(claimStore.slice(androidBranchStart, androidBranchEnd), /return leases/);
+});
+
+test('the server-side Android forwarder checks the exact live lease, current device attestation and owner consent atomically', () => {
+  assert.match(nativeForwarder, /security definer/);
+  assert.match(nativeForwarder, /set search_path=''/);
+  assert.match(nativeForwarder, /pg_advisory_xact_lock/);
+  assert.match(nativeForwarder, /v_binding\.wake_enabled is distinct from true/);
+  assert.match(nativeForwarder, /v_binding\.confirmed_at is null/);
+  assert.match(nativeForwarder, /v_native\.provider_conversation_identity_digest is distinct from v_job\.provider_conversation_identity_digest/);
+  assert.match(nativeForwarder, /n\.revoked_at is null/);
+  assert.match(nativeForwarder, /n\.expires_at>v_now/);
+  assert.match(nativeForwarder, /v_job\.state is distinct from 'leased'/);
+  assert.match(nativeForwarder, /v_job\.lease_owner is distinct from p_host_id/);
+  assert.match(nativeForwarder, /v_job\.lease_token_hash is distinct from[\s\S]*sha256/);
+  assert.match(nativeForwarder, /s\.session_type='screen'/);
+  assert.match(nativeForwarder, /d\.platform='android'/);
+  assert.match(nativeForwarder, /v_app\.signing_certificate_sha256/);
+  assert.match(nativeForwarder, /'identityFingerprint',v_native\.app_signing_certificate_sha256/);
+  assert.match(nativeForwarder, /'leaseTokenDigest',v_job\.lease_token_hash/);
+  assert.match(nativeForwarder, /v_now\+interval '20 seconds'/);
+  assert.match(nativeForwarder, /on conflict do nothing/);
+  assert.match(nativeForwarder, /leaseTokenDigest/);
+  assert.match(nativeForwarder, /grant execute on function public\.queue_backroom_android_native_wake_command[\s\S]*to service_role/);
+});
+
+test('the generated SQL handoff uses the Android protocol signer field rather than the generic target fingerprint', () => {
+  assert.match(nativeForwarder, /'appId',v_native\.app_package_name/);
+  assert.match(nativeForwarder, /'identityFingerprint',v_native\.app_signing_certificate_sha256/);
+  assert.doesNotMatch(nativeForwarder, /'identityFingerprint',v_job\.target_identity_fingerprint/);
+  for (const field of [
+    'handoffId','jobId','eventId','deviceId','roomId','screenSessionId','hostId','bindingId',
+    'sessionDigest','sessionId','targetId','targetRevision','surface','appId','identityFingerprint',
+    'composerIdentityDigest','sendControlIdentityDigest','providerConversationIdentityDigest',
+    'leaseTokenDigest','prompt','promptDigest','issuedAt','leaseExpiresAt','expiresAt'
+  ]) {
+    assert.ok(nativeForwarder.includes("'" + field + "'"), 'missing Android handoff field: ' + field);
+  }
+});
+
+
+test('Android device delivery rechecks the current group consent and exact phone attestation before leasing native wake commands', () => {
+  assert.match(deviceEdge, /async function verifyCurrentNativeWakeHandoff/);
+  assert.match(deviceEdge, /\.eq\('wake_enabled', true\)/);
+  assert.match(deviceEdge, /\.gt\('wake_expires_at', now\)/);
+  assert.match(deviceEdge, /\.eq\('app_signing_certificate_sha256', handoff\.identityFingerprint\)/);
+  assert.match(deviceEdge, /\.eq\('composer_identity_digest', handoff\.composerIdentityDigest\)/);
+  assert.match(deviceEdge, /\.eq\('send_control_identity_digest', handoff\.sendControlIdentityDigest\)/);
+  assert.match(deviceEdge, /\.eq\('provider_conversation_identity_digest', handoff\.providerConversationIdentityDigest\)/);
+  assert.equal((deviceEdge.match(/verifyCurrentNativeWakeHandoff\(row, current\.device_id\)/g) ?? []).length, 2);
+  assert.match(deviceEdge, /native_wake_binding_or_consent_or_lease_revoked/);
+  assert.match(deviceEdge, /backroom_wake_jobs/);
+  assert.match(deviceEdge, /\.eq\('lease_token_hash', handoff\.leaseTokenDigest\)/);
+  assert.match(deviceEdge, /\.gt\('lease_expires_at', now\)/);
+});
+
+test('native ACK settlement is tied to the exact attested app package, signer, screen and identity digests', () => {
+  assert.match(deviceEdge, /settle_backroom_android_native_wake_result_attested/);
+  assert.match(deviceEdge, /p_app_package_name: nativeWakeHandoff\.appId/);
+  assert.match(deviceEdge, /p_app_signing_certificate_sha256: nativeWakeHandoff\.identityFingerprint/);
+  assert.match(attestedSettlement, /v_native_binding_active boolean := false/);
+  assert.match(attestedSettlement, /p_app_package_name is null/);
+  assert.match(attestedSettlement, /p_app_signing_certificate_sha256 is null/);
+  assert.match(attestedSettlement, /n\.expires_at>pg_catalog\.clock_timestamp\(\)/);
+  assert.match(attestedSettlement, /n\.app_package_name=p_app_package_name/);
+  assert.match(attestedSettlement, /n\.app_signing_certificate_sha256=p_app_signing_certificate_sha256/);
+  assert.match(attestedSettlement, /n\.screen_session_id=p_screen_session_id/);
+  assert.match(attestedSettlement, /n\.composer_identity_digest=p_composer_identity_digest/);
+  assert.match(attestedSettlement, /n\.send_control_identity_digest=p_send_control_identity_digest/);
+  assert.match(attestedSettlement, /n\.provider_conversation_identity_digest=p_provider_conversation_identity_digest/);
+  assert.match(attestedSettlement, /for update/);
+  assert.match(attestedSettlement, /and v_native_binding_active/);
+  assert.match(attestedSettlement, /from public,anon,authenticated,service_role/);
+});
+
+test('device-attested registration uses a service-role-only definer wrapper instead of broad table write grants', () => {
+  assert.match(nativeForwarder, /alter function public\.register_backroom_android_native_binding\([\s\S]*rename to register_backroom_android_native_binding_impl/);
+  assert.match(nativeForwarder, /create function public\.register_backroom_android_native_binding\([\s\S]*security definer/);
+  assert.match(nativeForwarder, /register_backroom_android_native_binding_impl[\s\S]*from public,anon,authenticated,service_role/);
+  assert.doesNotMatch(nativeForwarder, /grant update on table public\.backroom_device_room_bindings/);
+});
+
+
+test('Android candidate display names sanitize Unicode control characters with valid regex ranges', () => {
+  assert.ok(deviceEdge.includes(String.raw`participant.display_name.replace(/[\u0000-\u001f\u007f-\u009f]/g`));
+  assert.ok(!deviceEdge.includes(String.raw`participant.display_name.replace(/[\\u0000`));
+});
+
+
+test('native Send reserves a durable ACK placeholder before scheduling the provider effect', () => {
+  const dispatch = method(
+    screen,
+    'private fun processNativeWakeTrigger(',
+    'private fun safeNativeWakeReason('
+  );
+  const prepare = dispatch.indexOf('savePendingNativeWakeAcknowledgement(');
+  const submit = dispatch.indexOf('submitCanonicalWake(request)');
+  assert.ok(prepare >= 0 && submit > prepare);
+  assert.match(dispatch, /NativeWakeAckOutboxStage\.PREPARED/);
+  assert.match(dispatch, /NativeWakeSubmissionState\.NEEDS_REVIEW, "outcome_unknown"/);
+  assert.match(dispatch, /pendingAcks\.any \{ it\.commandId == commandId \}/);
+});
+
+test('native ACK receipt is persisted before HTTP and retried before matching commands can be redispatched', () => {
+  const poll = method(screen, 'private fun pollDeviceCommands()', 'private fun processNativeWakeTrigger(');
+  const retry = method(screen, 'private fun retryPendingNativeWakeAcknowledgements(', 'private fun processCommand(');
+  const acknowledge = method(screen, 'private fun acknowledgeNativeWake(', 'private fun processCommand(');
+  assert.ok(poll.indexOf('retryPendingNativeWakeAcknowledgements(token)') <
+    poll.indexOf('api?.post("android/commands", token, pollFields)'));
+  assert.ok(poll.indexOf('retryPendingNativeWakeAcknowledgements(token)') <
+    poll.indexOf('processCommand(token, command)'));
+  assert.match(poll, /nativeAckCommandIds == null/);
+  assert.match(poll, /command\.optString\("commandId"\) in nativeAckCommandIds/);
+  assert.match(retry, /attemptedCommandIds = pending\.map \{ it\.commandId \}/);
+  assert.match(retry, /attemptedCommandIds \+= remaining\.map \{ it\.commandId \}/);
+  assert.ok(acknowledge.indexOf('savePendingNativeWakeAcknowledgement(') <
+    acknowledge.indexOf('retryPendingNativeWakeAcknowledgements(token)'));
+  assert.match(acknowledge, /NativeWakeAckOutboxStage\.FINAL/);
+  assert.match(retry, /api\?\.post\("android\/ack", token, JSONObject\(entry\.payloadJson\)\)/);
+  assert.match(retry, /response\?\.optBoolean\("ok"\) == true && response\.optBoolean\("acked"\) == true/);
+  assert.match(retry, /removePendingNativeWakeAcknowledgement\(entry\.commandId, entry\.payloadJson\)/);
+  assert.match(retry, /NativeWakeAckOutboxStage\.PREPARED[\s\S]*NativeWakeAckOutboxStage\.FINAL/);
+});
+
+test('durable ACK outbox is bounded, exact-payload scoped and never stores the device bearer token', () => {
+  assert.match(ackOutboxPolicy, /MAX_PENDING_ACKS = 64/);
+  assert.match(ackOutboxPolicy, /stage != NativeWakeAckOutboxStage\.PREPARED/);
+  assert.match(ackOutboxPolicy, /incoming\.stage != NativeWakeAckOutboxStage\.FINAL/);
+  assert.match(ackOutboxPolicy, /prior\.payloadJson != expectedPayloadJson/);
+  assert.match(ackOutboxPolicy, /prior\.stage != NativeWakeAckOutboxStage\.FINAL/);
+  assert.match(store, /KEY_PENDING_NATIVE_WAKE_ACKS/);
+  assert.match(store, /\.commit\(\)/);
+  assert.match(store, /isValidNativeWakeAckPayload/);
+  assert.match(ackOutboxPolicy, /fun isValidTargetId\(targetId: String\)/);
+  assert.match(store, /NativeWakeAckOutboxPolicy\.isValidTargetId\(evidence\.optString\("targetId"\)\)/);
+  assert.match(store, /evidence\.optString\("reason"\) == "outcome_unknown"/);
+  assert.doesNotMatch(
+    method(store, 'fun savePendingNativeWakeAcknowledgement(', 'fun pendingNativeWakeAcknowledgements('),
+    /token|authorization|bearer/i
+  );
+  assert.match(ackOutboxTest, /preparedPlaceholderIsPromotedToOneExactFinalReceipt/);
+  assert.match(ackOutboxTest, /receiptRemainsPendingUntilTheExactFinalPayloadIsConfirmed/);
+  assert.match(ackOutboxTest, /outboxIsBoundedAndMalformedEntriesFailClosed/);
+});
+
+
+test('native device ACK stores the exact receipt before settlement and survives command lease expiry', () => {
+  const ack = method(deviceEdge, "if (action === 'android/ack')", "if (action === 'desktop/inventory')");
+  const nativeReceiptStart = ack.indexOf('// Persist the exact native receipt before settlement or Realtime.');
+  const nativeReceiptEnd = ack.indexOf("if (row.status !== 'leased'", nativeReceiptStart);
+  const nativeBranch = ack.slice(nativeReceiptStart, nativeReceiptEnd);
+  assert.match(ack, /created_at,result,result_payload/);
+  assert.match(nativeBranch, /\['leased','expired','rejected'\]/);
+  assert.doesNotMatch(nativeBranch, /24 \* 60 \* 60 \* 1000/);
+  assert.match(nativeBranch, /createdAt > now/);
+  assert.ok(nativeBranch.indexOf("status: 'acked'") < nativeBranch.indexOf('await settleNativeWakeGroupJob()'));
+  assert.ok(nativeBranch.indexOf("status: 'acked'") < nativeBranch.indexOf('await broadcastNativeWakeResult('));
+  assert.match(nativeBranch, /nativeWakeResultStored: true/);
+  assert.match(nativeBranch, /groupSettled: settlement !== 'lease_mismatch'/);
+  const duplicateStart = ack.indexOf("if (row.status === 'acked')");
+  const duplicateEnd = ack.indexOf('// Persist the exact native receipt before settlement or Realtime.', duplicateStart);
+  const duplicate = ack.slice(duplicateStart, duplicateEnd);
+  assert.match(duplicate, /sameNativeWakeResult\(row\.result_payload, ack\.nativeWakeResult \?\? null\)/);
+  assert.match(duplicate, /settleNativeWakeGroupJob\(\)/);
+  assert.match(duplicate, /broadcastNativeWakeResult\(settlement\)/);
+});
+
+test('native result receipt can be retained after room-pair revocation without reopening non-native ACKs', () => {
+  const ack = method(deviceEdge, "if (action === 'android/ack')", "if (action === 'desktop/inventory')");
+  const binding = ack.slice(
+    ack.indexOf('const isControlCommand = row.command?.action'),
+    ack.indexOf('let nativeWakeHandoff')
+  );
+  assert.match(binding, /if \(!isNativeWakeCommand\)/);
+  assert.match(binding, /device_room_binding_revoked/);
+  assert.match(binding, /device-authenticated immutable receipt/);
+  assert.match(binding, /SQL settlement will classify the result as cancelled/);
+  assert.match(attestedSettlement, /v_session_active/);
+  assert.match(attestedSettlement, /v_lease_expired/);
+  assert.match(attestedSettlement, /return case when v_job\.state='acknowledged' then 'replayed' else v_job\.state end/);
+  assert.match(deviceEdge, /groupAcknowledged = settlement === 'acknowledged' \|\| settlement === 'replayed'/);
+  assert.match(deviceEdge, /ok: ack\.nativeWakeResult\.state === 'submitted' && groupAcknowledged/);
+  assert.match(attestedSettlement, /v_error_code:='lease_expired'/);
+  assert.match(attestedSettlement, /native_result_receipts=j\.native_result_receipts \|\|/);
+});
+
+test('late native group ACK evidence is durable but can never become a late success', () => {
+  assert.match(attestedSettlement, /v_job\.lease_expires_at<=pg_catalog\.clock_timestamp\(\)/);
+  assert.match(attestedSettlement, /v_job\.expires_at<=pg_catalog\.clock_timestamp\(\)/);
+  assert.match(attestedSettlement, /elsif v_lease_expired then[\s\S]*v_next_state:='failed'/);
+  assert.match(attestedSettlement, /v_session_active;[\s\S]*if not v_binding_active then/);
 });

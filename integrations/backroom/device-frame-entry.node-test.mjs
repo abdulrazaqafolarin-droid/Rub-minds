@@ -106,6 +106,28 @@ test("Android composer selection binds one real non-password accessibility node 
   assert.match(policy, /MIN_NODE_COVERAGE/);
 });
 
+
+test("Android composer selection and Send recheck expose only a stable digest and detect conversation switches", async () => {
+  const control = await read("src/BackroomAndroidControl.tsx");
+  const screen = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  const service = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidTouchAccessibilityService.kt");
+  const policy = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidComposerTargetPolicy.kt");
+  const provider = await read("android-companion/app/src/main/java/app/rubminds/companion/ProviderConversationIdentity.kt");
+  assert.match(policy, /providerConversationIdentityDigest: String\? = null/);
+  assert.match(service, /ProviderConversationIdentityResolver\.resolve\(packageName, root\)/);
+  assert.match(service, /sameBoundConversation/);
+  assert.match(screen, /providerConversationIdentityDigest/);
+  // The provider digest is deliberately kept inside Android. WebRTC exposes only
+  // boolean availability/match signals; the browser must never receive the digest.
+  assert.match(control, /providerConversationIdentityAvailable/);
+  assert.match(control, /providerConversationIdentityMatchesSelection/);
+  assert.match(control, /Only a boolean capability result crosses WebRTC/);
+  assert.doesNotMatch(control, /providerConversationIdentityDigestRef|recheckedProviderDigest/);
+  assert.match(control, /Native wake is blocked; draft insertion remains available/);
+  assert.match(provider, /private val adapters: Map<String, ProviderConversationIdentityAdapter> = emptyMap\(\)/);
+  assert.doesNotMatch(screen, /stableConversationId|activeConversationStableId/);
+});
+
 test("Android touch-control requests have a bounded pending state and exact request correlation", async () => {
   const control = await read("src/BackroomAndroidControl.tsx");
   assert.match(control, /pendingControlRequestRef/);

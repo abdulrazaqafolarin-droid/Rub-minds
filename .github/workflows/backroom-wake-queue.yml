@@ -83,12 +83,95 @@ jobs:
           create table public.rub_minds_mcp_sessions (
             session_digest text primary key,
             agent_credential_ciphertext text,
+            agent_credential_digest text,
             room_id uuid,
             participant_id uuid,
             last_seen_at timestamptz not null default now(),
             expires_at timestamptz not null,
             terminated_at timestamptz
           );
+          -- The bridge-state rejoin function locks and deletes the prior
+          -- idempotency row. This is a pre-existing production table, so the
+          -- isolated CI database must model its minimum contract explicitly.
+          create table public.rub_minds_mcp_join_requests (
+            session_digest text primary key
+              check (length(session_digest) = 64 and session_digest !~ '[^a-f0-9]'),
+            invite_token_hash text not null
+              check (length(invite_token_hash) = 64 and invite_token_hash !~ '[^a-f0-9]'),
+            agent_label text not null
+              check (char_length(agent_label) between 1 and 80),
+            credential_digest text not null
+              check (length(credential_digest) = 64 and credential_digest !~ '[^a-f0-9]'),
+            room_id uuid not null,
+            participant_id uuid not null,
+            expires_at timestamptz not null,
+            created_at timestamptz not null default now()
+          );
+          alter table public.rub_minds_mcp_join_requests enable row level security;
+          revoke all on table public.rub_minds_mcp_join_requests from public, anon, authenticated;
+          grant all on table public.rub_minds_mcp_join_requests to service_role;
+          create index rub_minds_mcp_join_requests_expiry_idx
+            on public.rub_minds_mcp_join_requests (expires_at);
+          -- Minimal isolated device/screen schema required by the native binding attestation migration.
+          create table public.backroom_devices (
+            device_id uuid primary key,
+            owner_id uuid not null references auth.users(id),
+            token_digest text not null,
+            device_label text not null,
+            platform text not null,
+            status text not null default 'active'
+          );
+          create table public.backroom_device_room_bindings (
+            device_id uuid not null references public.backroom_devices(device_id),
+            room_id uuid not null references public.rooms(id),
+            owner_id uuid not null references auth.users(id),
+            created_at timestamptz not null default now(),
+            revoked_at timestamptz,
+            primary key(device_id,room_id)
+          );
+          create table public.backroom_device_apps (
+            device_id uuid not null references public.backroom_devices(device_id),
+            package_name text not null,
+            app_label text not null,
+            signing_certificate_sha256 text not null,
+            version_name text not null default '',
+            primary key(device_id,package_name)
+          );
+          create table public.backroom_desktop_sessions (
+            session_id uuid primary key,
+            device_id uuid not null references public.backroom_devices(device_id),
+            room_id uuid not null references public.rooms(id),
+            requested_by uuid not null references auth.users(id),
+            session_type text not null,
+            status text not null default 'active',
+            created_at timestamptz not null default now(),
+            expires_at timestamptz not null,
+            stopped_at timestamptz
+          );
+          -- Minimal private Android command outbox contract used by the native
+          -- forwarder migration. Keep its key/lease/result constraints in sync
+          -- with backroom_android_streaming_commands.sql.
+          create table public.backroom_android_commands (
+            id uuid primary key default gen_random_uuid(),
+            device_id uuid not null references public.backroom_devices(device_id) on delete cascade,
+            room_id uuid not null references public.rooms(id) on delete cascade,
+            session_id uuid not null references public.backroom_desktop_sessions(session_id) on delete cascade,
+            request_id uuid not null,
+            command jsonb not null,
+            status text not null default 'pending'
+              check (status in ('pending','leased','acked','rejected','expired')),
+            result text,
+            result_payload jsonb,
+            created_at timestamptz not null default now(),
+            expires_at timestamptz not null,
+            lease_until timestamptz,
+            acked_at timestamptz,
+            unique(device_id,request_id),
+            check(expires_at>created_at)
+          );
+          alter table public.backroom_android_commands enable row level security;
+          revoke all on table public.backroom_android_commands from public,anon,authenticated;
+          grant all on table public.backroom_android_commands to service_role;
           SQL
       - name: Apply durable wake queue migration
         env:
@@ -106,6 +189,26 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261102223000_revoke_backroom_wake_on_mcp_leave.sql
+      - name: Add provider-conversation identity to bindings and durable wake leases
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261104111500_backroom_provider_conversation_identity_queue.sql
+      - name: Add Android native result settlement to durable wake leases
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261105110000_backroom_android_native_wake_queue_settlement.sql
+      - name: Add device-attested Android native group bindings
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261106143000_backroom_android_native_binding_attestation.sql
+      - name: Add atomic Android native wake queue forwarder
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261107090000_backroom_android_native_wake_forwarder.sql
+      - name: Require current device attestation for native ACK settlement
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261107110000_backroom_android_native_wake_attested_settlement.sql
       - name: Test idempotency, claims, leases, retry, cancellation and least privilege
         env:
           PGPASSWORD: postgres

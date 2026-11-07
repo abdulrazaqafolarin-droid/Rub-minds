@@ -43,3 +43,11 @@
 .br-android-composer-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .br-android-composer-actions button{border:1px solid #c4cfe4;border-radius:8px;padding:8px 10px;background:#dce6ff;color:#25365f;font-size:10px;font-weight:750}
 .br-android-composer-actions button:disabled{opacity:.45;cursor:not-allowed}
+
+.br-android-native-binding{display:grid;gap:7px;padding:9px;border:1px solid #cbd4e6;border-radius:9px;background:#fff}
+.br-android-native-binding label{font-size:10px;font-weight:750;color:#36476a}
+.br-android-native-binding select{width:100%;min-width:0;border:1px solid #c4cfe4;border-radius:8px;padding:8px;background:#fff;color:#17233d;font:inherit;font-size:11px}
+.br-android-native-binding button{justify-self:start;border:1px solid #b5c5e5;border-radius:8px;padding:8px 10px;background:#e4ecff;color:#25365f;font-size:10px;font-weight:750}
+.br-android-native-binding button:disabled{opacity:.45;cursor:not-allowed}
+.br-android-native-binding p{margin:0;padding:6px 7px;border-radius:6px;background:#e8eef9;color:#465675;font-size:10px;line-height:1.4}
+.br-android-native-binding small{color:#71809d;font-size:9px;line-height:1.45}
