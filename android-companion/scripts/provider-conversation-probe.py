@@ -68,10 +68,18 @@ def read_snapshot(path: Path, package: str, key: bytes) -> Snapshot:
         raw_xml = path.read_bytes()
         if len(raw_xml) > 8_000_000:
             raise ValueError("Accessibility snapshot exceeds the 8 MB local safety limit.")
-        upper_xml = raw_xml.upper()
-        if b"<!DOCTYPE" in upper_xml or b"<!ENTITY" in upper_xml:
+        try:
+            decoded_xml = raw_xml.decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
+            raise ValueError("Accessibility snapshots must use UTF-8 XML.") from exc
+        # UIAutomator dumps are UTF-8. Reject NULs so UTF-16/32 encodings cannot
+        # bypass the byte-level DTD guard before reaching the XML parser.
+        if "\x00" in decoded_xml:
+            raise ValueError("Accessibility snapshots must use UTF-8 XML.")
+        upper_xml = decoded_xml.upper()
+        if "<!DOCTYPE" in upper_xml or "<!ENTITY" in upper_xml:
             raise ValueError("DTD/entity declarations are not accepted in accessibility snapshots.")
-        root = ET.fromstring(raw_xml)
+        root = ET.fromstring(decoded_xml)
     except ValueError:
         raise
     except (ET.ParseError, OSError) as exc:
