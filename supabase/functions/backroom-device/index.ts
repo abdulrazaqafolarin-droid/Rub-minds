@@ -670,18 +670,26 @@ Deno.serve(async req => {
       if (!binding.data) return json(404, fail('native_group_binding_not_found'), origin);
       if (!deviceBinding.ok) return json(deviceBinding.status, fail(deviceBinding.reason), origin);
       if (deviceBinding.platform !== 'android') return json(409, fail('android_device_required'), origin);
+      const revokedAt = new Date().toISOString();
       const { data, error } = await db.from('backroom_android_native_bindings')
-        .update({ revoked_at: new Date().toISOString() })
-        .eq('binding_id', input.bindingId).eq('device_id', input.deviceId)
-        .eq('room_id', input.roomId).eq('screen_session_id', input.sessionId)
+        .update({ revoked_at: revokedAt })
+        .eq('binding_id', input.bindingId).eq('owner_id', userId)
+        .eq('device_id', input.deviceId).eq('room_id', input.roomId)
+        .eq('screen_session_id', input.sessionId)
         .is('revoked_at', null).select('id');
       if (error) return json(503, fail('native_binding_revoke_failed'), origin);
-      const { error: challengeError } = await db.from('backroom_android_native_binding_challenges')
-        .update({ revoked_at: new Date().toISOString() })
-        .eq('binding_id', input.bindingId).eq('device_id', input.deviceId)
-        .eq('screen_session_id', input.sessionId).is('consumed_at', null).is('revoked_at', null);
+      const { data: revokedChallenges, error: challengeError } = await db.from('backroom_android_native_binding_challenges')
+        .update({ revoked_at: revokedAt })
+        .eq('binding_id', input.bindingId).eq('owner_id', userId)
+        .eq('device_id', input.deviceId).eq('room_id', input.roomId)
+        .eq('screen_session_id', input.sessionId)
+        .is('consumed_at', null).is('revoked_at', null).select('id');
       if (challengeError) return json(503, fail('native_binding_revoke_failed'), origin);
-      return json(200, { ok: true, revoked: Array.isArray(data) && data.length > 0 }, origin);
+      return json(200, {
+        ok: true,
+        revoked: (Array.isArray(data) && data.length > 0) ||
+          (Array.isArray(revokedChallenges) && revokedChallenges.length > 0),
+      }, origin);
     }
 
     if (action === 'android/native-binding-complete') {
