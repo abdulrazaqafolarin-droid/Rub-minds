@@ -1089,7 +1089,7 @@ Deno.serve(async req => {
         return json(400, fail('invalid_android_ack'), origin);
       }
       const { data: row, error: lookupError } = await db.from('backroom_android_commands')
-        .select('id,device_id,room_id,session_id,request_id,command,status,lease_until,expires_at,result,result_payload')
+        .select('id,device_id,room_id,session_id,request_id,command,status,lease_until,expires_at,created_at,result,result_payload')
         .eq('id', ack.commandId).eq('device_id', current.device_id)
         .eq('session_id', ack.sessionId).eq('request_id', ack.requestId).maybeSingle();
       if (lookupError) return json(503, fail('android_ack_lookup_failed'), origin);
@@ -1171,13 +1171,13 @@ Deno.serve(async req => {
           p_result_payload: ack.nativeWakeResult,
         });
         if (error) throw new Error('native_wake_group_result_settlement_failed');
-        if (!['acknowledged','pending','failed','cancelled','replayed'].includes(data)) {
-          throw new Error('native_wake_group_lease_mismatch');
+        if (!['acknowledged','pending','failed','cancelled','replayed','lease_mismatch'].includes(data)) {
+          throw new Error('native_wake_group_result_state_invalid');
         }
         return data;
       };
 
-      const broadcastNativeWakeResult = async () => {
+      const broadcastNativeWakeResult = async (groupSettled = true) => {
         if (!isNativeWakeCommand || !nativeWakeHandoff || !ack.nativeWakeResult) return;
         // The room Realtime event carries outcome metadata only. Exact composer /
         // Send digests remain in the service-role-only result_payload receipt.
@@ -1189,7 +1189,8 @@ Deno.serve(async req => {
             requestId: ack.requestId, sessionId: ack.sessionId,
             handoffId: nativeWakeHandoff.handoffId, jobId: nativeWakeHandoff.jobId,
             state: ack.nativeWakeResult.state,
-            ok: ack.nativeWakeResult.state === 'submitted',
+            ok: ack.nativeWakeResult.state === 'submitted' && groupSettled,
+            groupSettled,
             ...(ack.nativeWakeResult.reason ? { reason: ack.nativeWakeResult.reason } : {}),
           },
         });
@@ -1214,15 +1215,78 @@ Deno.serve(async req => {
           return json(409, fail('android_ack_result_conflict'), origin);
         }
         try {
-          await settleNativeWakeGroupJob();
+          const settlement = await settleNativeWakeGroupJob();
           await broadcastControlResult();
-          await broadcastNativeWakeResult();
+          await broadcastNativeWakeResult(settlement !== 'lease_mismatch');
+          return json(200, {
+            ok: true, acked: true, replayed: true,
+            ...(isNativeWakeCommand ? {
+              groupSettled: settlement !== 'lease_mismatch',
+              ...(settlement === 'lease_mismatch' ? { groupSettlement: 'stale_lease_review' } : {}),
+            } : {}),
+          }, origin);
         } catch (error) {
-          return json(error instanceof Error && error.message === 'native_wake_group_lease_mismatch' ? 409 : 503,
-            fail(error instanceof Error ? error.message : 'android_ack_result_delivery_failed'), origin);
+          return json(503, fail(error instanceof Error ? error.message : 'android_ack_result_delivery_failed'), origin);
         }
-        return json(200, { ok: true, acked: true, replayed: true }, origin);
       }
+
+      if (isNativeWakeCommand) {
+        // Persist the exact native receipt before settlement or Realtime. The
+        // phone keeps its durable outbox until this row says ACKed. If an
+        // outage crosses the command lease, the exact saved receipt is still
+        // accepted for up to 24 hours; the group SQL routine will record it as
+        // failed/cancelled review rather than a late success.
+        const createdAt = Date.parse(row.created_at);
+        const now = Date.now();
+        if (!['leased','expired'].includes(row.status) ||
+            !Number.isFinite(createdAt) || createdAt > now ||
+            now - createdAt > 24 * 60 * 60 * 1000) {
+          return json(409, fail('android_native_wake_receipt_window_closed'), origin);
+        }
+        const ackedAt = new Date(now).toISOString();
+        const { data, error } = await db.from('backroom_android_commands')
+          .update({
+            status: 'acked', result: ack.result,
+            result_payload: ack.nativeWakeResult,
+            acked_at: ackedAt, lease_until: null
+          })
+          .eq('id', ack.commandId).eq('device_id', current.device_id)
+          .in('status', ['leased','expired'])
+          .gt('created_at', new Date(now - 24 * 60 * 60 * 1000).toISOString())
+          .select('id');
+        if (error) return json(503, fail('android_native_wake_receipt_store_failed'), origin);
+
+        let receiptStored = Array.isArray(data) && data.length === 1;
+        if (!receiptStored) {
+          const { data: latest, error: latestError } = await db.from('backroom_android_commands')
+            .select('status,result,result_payload')
+            .eq('id', ack.commandId).eq('device_id', current.device_id).maybeSingle();
+          if (latestError) return json(503, fail('android_native_wake_receipt_verify_failed'), origin);
+          if (latest?.status !== 'acked' || latest.result !== ack.result ||
+              !sameNativeWakeResult(latest.result_payload, ack.nativeWakeResult)) {
+            return json(409, fail(latest?.status === 'acked'
+              ? 'android_ack_result_conflict' : 'android_native_wake_receipt_store_conflict'), origin);
+          }
+          receiptStored = true;
+        }
+        if (!receiptStored) return json(503, fail('android_native_wake_receipt_store_failed'), origin);
+
+        try {
+          const settlement = await settleNativeWakeGroupJob();
+          await broadcastNativeWakeResult(settlement !== 'lease_mismatch');
+          return json(200, {
+            ok: true, acked: true, nativeWakeResultStored: true,
+            groupSettled: settlement !== 'lease_mismatch',
+            ...(settlement === 'lease_mismatch' ? { groupSettlement: 'stale_lease_review' } : {}),
+          }, origin);
+        } catch (error) {
+          // The exact command receipt is already durable. A phone retry will
+          // enter the row.status === 'acked' replay branch and finish settlement.
+          return json(503, fail(error instanceof Error ? error.message :
+            'android_native_wake_result_delivery_failed'), origin);
+        }
+      }
+
       if (row.status !== 'leased' || !row.lease_until || Date.parse(row.lease_until) <= Date.now() ||
           Date.parse(row.expires_at) <= Date.now()) {
         return json(409, fail('android_command_lease_expired'), origin);
