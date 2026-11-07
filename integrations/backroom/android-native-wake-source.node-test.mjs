@@ -537,3 +537,46 @@ test('durable ACK outbox is bounded, exact-payload scoped and never stores the d
   assert.match(ackOutboxTest, /receiptRemainsPendingUntilTheExactFinalPayloadIsConfirmed/);
   assert.match(ackOutboxTest, /outboxIsBoundedAndMalformedEntriesFailClosed/);
 });
+
+
+test('native device ACK stores the exact receipt before settlement and survives command lease expiry', () => {
+  const ack = method(deviceEdge, "if (action === 'android/ack')", "if (action === 'desktop/inventory')");
+  const nativeBranch = ack.slice(
+    ack.indexOf('if (isNativeWakeCommand) {'),
+    ack.indexOf("if (row.status !== 'leased'", ack.indexOf('if (isNativeWakeCommand) {'))
+  );
+  assert.match(ack, /created_at,result,result_payload/);
+  assert.match(nativeBranch, /\['leased','expired'\]/);
+  assert.match(nativeBranch, /24 \* 60 \* 60 \* 1000/);
+  assert.ok(nativeBranch.indexOf("status: 'acked'") < nativeBranch.indexOf('await settleNativeWakeGroupJob()'));
+  assert.ok(nativeBranch.indexOf("status: 'acked'") < nativeBranch.indexOf('await broadcastNativeWakeResult('));
+  assert.match(nativeBranch, /nativeWakeResultStored: true/);
+  assert.match(nativeBranch, /groupSettled: settlement !== 'lease_mismatch'/);
+  const duplicate = ack.slice(ack.indexOf("if (row.status === 'acked')"), ack.indexOf('if (isNativeWakeCommand) {'));
+  assert.match(duplicate, /sameNativeWakeResult\(row\.result_payload, ack\.nativeWakeResult \?\? null\)/);
+  assert.match(duplicate, /settleNativeWakeGroupJob\(\)/);
+  assert.match(duplicate, /broadcastNativeWakeResult\(settlement !== 'lease_mismatch'\)/);
+});
+
+test('native result receipt can be retained after room-pair revocation without reopening non-native ACKs', () => {
+  const ack = method(deviceEdge, "if (action === 'android/ack')", "if (action === 'desktop/inventory')");
+  const binding = ack.slice(
+    ack.indexOf('const isControlCommand = row.command?.action'),
+    ack.indexOf('let nativeWakeHandoff')
+  );
+  assert.match(binding, /if \(!isNativeWakeCommand\)/);
+  assert.match(binding, /device_room_binding_revoked/);
+  assert.match(binding, /device-authenticated immutable receipt/);
+  assert.match(binding, /SQL settlement will classify the result as cancelled/);
+  assert.match(attestedSettlement, /v_session_active/);
+  assert.match(attestedSettlement, /v_lease_expired/);
+  assert.match(attestedSettlement, /v_error_code:='lease_expired'/);
+  assert.match(attestedSettlement, /native_result_receipts=j\.native_result_receipts \|\|/);
+});
+
+test('late native group ACK evidence is durable but can never become a late success', () => {
+  assert.match(attestedSettlement, /v_job\.lease_expires_at<=pg_catalog\.clock_timestamp\(\)/);
+  assert.match(attestedSettlement, /v_job\.expires_at<=pg_catalog\.clock_timestamp\(\)/);
+  assert.match(attestedSettlement, /elsif v_lease_expired then[\s\S]*v_next_state:='failed'/);
+  assert.match(attestedSettlement, /v_session_active;[\s\S]*if not v_binding_active then/);
+});
