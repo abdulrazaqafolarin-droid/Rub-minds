@@ -18,6 +18,8 @@ const providerConversation = await read('../../android-companion/app/src/main/ja
 const providerConversationTest = await read('../../android-companion/app/src/test/java/app/rubminds/companion/ProviderConversationIdentityPolicyTest.kt');
 const consent = await read('../../android-companion/app/src/main/java/app/rubminds/companion/NativeWakeConsentPolicy.kt');
 const store = await read('../../android-companion/app/src/main/java/app/rubminds/companion/AndroidNativeWakeConsentStore.kt');
+const ackOutboxPolicy = await read('../../android-companion/app/src/main/java/app/rubminds/companion/NativeWakeAckOutboxPolicy.kt');
+const ackOutboxTest = await read('../../android-companion/app/src/test/java/app/rubminds/companion/NativeWakeAckOutboxPolicyTest.kt');
 const activity = await read('../../android-companion/app/src/main/java/app/rubminds/companion/MainActivity.kt');
 const devicesUi = await read('../../src/BackroomDevicesApp.tsx');
 const androidFrameUi = await read('../../src/BackroomAndroidControl.tsx');
@@ -482,4 +484,55 @@ test('device-attested registration uses a service-role-only definer wrapper inst
 test('Android candidate display names sanitize Unicode control characters with valid regex ranges', () => {
   assert.ok(deviceEdge.includes(String.raw`participant.display_name.replace(/[\u0000-\u001f\u007f-\u009f]/g`));
   assert.ok(!deviceEdge.includes(String.raw`participant.display_name.replace(/[\\u0000`));
+});
+
+
+test('native Send reserves a durable ACK placeholder before scheduling the provider effect', () => {
+  const dispatch = method(
+    screen,
+    'private fun processNativeWakeTrigger(',
+    'private fun safeNativeWakeReason('
+  );
+  const prepare = dispatch.indexOf('savePendingNativeWakeAcknowledgement(');
+  const submit = dispatch.indexOf('submitCanonicalWake(request)');
+  assert.ok(prepare >= 0 && submit > prepare);
+  assert.match(dispatch, /NativeWakeAckOutboxStage\.PREPARED/);
+  assert.match(dispatch, /NativeWakeSubmissionState\.NEEDS_REVIEW, "outcome_unknown"/);
+  assert.match(dispatch, /pendingAcks\.any \{ it\.commandId == commandId \}/);
+});
+
+test('native ACK receipt is persisted before HTTP and retried before matching commands can be redispatched', () => {
+  const poll = method(screen, 'private fun pollDeviceCommands()', 'private fun processNativeWakeTrigger(');
+  const retry = method(screen, 'private fun retryPendingNativeWakeAcknowledgements(', 'private fun processCommand(');
+  const acknowledge = method(screen, 'private fun acknowledgeNativeWake(', 'private fun processCommand(');
+  assert.ok(poll.indexOf('retryPendingNativeWakeAcknowledgements(token)') <
+    poll.indexOf('processCommand(token, command)'));
+  assert.match(poll, /pendingNativeAckIds == null/);
+  assert.match(poll, /command\.optString\("commandId"\) in pendingNativeAckIds/);
+  assert.ok(acknowledge.indexOf('savePendingNativeWakeAcknowledgement(') <
+    acknowledge.indexOf('retryPendingNativeWakeAcknowledgements(token)'));
+  assert.match(acknowledge, /NativeWakeAckOutboxStage\.FINAL/);
+  assert.match(retry, /api\?\.post\("android\/ack", token, JSONObject\(entry\.payloadJson\)\)/);
+  assert.match(retry, /response\?\.optBoolean\("ok"\) == true && response\.optBoolean\("acked"\) == true/);
+  assert.match(retry, /removePendingNativeWakeAcknowledgement\(entry\.commandId, entry\.payloadJson\)/);
+  assert.match(retry, /NativeWakeAckOutboxStage\.PREPARED[\s\S]*NativeWakeAckOutboxStage\.FINAL/);
+});
+
+test('durable ACK outbox is bounded, exact-payload scoped and never stores the device bearer token', () => {
+  assert.match(ackOutboxPolicy, /MAX_PENDING_ACKS = 64/);
+  assert.match(ackOutboxPolicy, /stage != NativeWakeAckOutboxStage\.PREPARED/);
+  assert.match(ackOutboxPolicy, /incoming\.stage != NativeWakeAckOutboxStage\.FINAL/);
+  assert.match(ackOutboxPolicy, /prior\.payloadJson != expectedPayloadJson/);
+  assert.match(ackOutboxPolicy, /prior\.stage != NativeWakeAckOutboxStage\.FINAL/);
+  assert.match(store, /KEY_PENDING_NATIVE_WAKE_ACKS/);
+  assert.match(store, /\.commit\(\)/);
+  assert.match(store, /isValidNativeWakeAckPayload/);
+  assert.match(store, /evidence\.optString\("reason"\) == "outcome_unknown"/);
+  assert.doesNotMatch(
+    method(store, 'fun savePendingNativeWakeAcknowledgement(', 'fun pendingNativeWakeAcknowledgements('),
+    /token|authorization|bearer/i
+  );
+  assert.match(ackOutboxTest, /preparedPlaceholderIsPromotedToOneExactFinalReceipt/);
+  assert.match(ackOutboxTest, /receiptRemainsPendingUntilTheExactFinalPayloadIsConfirmed/);
+  assert.match(ackOutboxTest, /outboxIsBoundedAndMalformedEntriesFailClosed/);
 });
