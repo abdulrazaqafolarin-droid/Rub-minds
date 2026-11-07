@@ -22,6 +22,33 @@ class ProviderConversationIdentityPolicyTest {
         assertFalse(first!!.contains("conversation-A"))
     }
 
+    @Test fun reusedComposerAndSendControlsCannotMakeTwoProviderChatsMatch() {
+        // Accessibility may reuse the same composer and Send nodes when the user
+        // switches conversations. Those target identities must not stand in for
+        // the provider's conversation identity.
+        val packageName = "com.example.ai"
+        val composerTargetId = "a".repeat(64)
+        val sendTargetId = "b".repeat(64)
+        val chatA = ProviderConversationIdentityPolicy.digest(packageName, "opaque-thread-A")
+        val chatB = ProviderConversationIdentityPolicy.digest(packageName, "opaque-thread-B")
+
+        assertEquals(composerTargetId, composerTargetId)
+        assertEquals(sendTargetId, sendTargetId)
+        assertNotNull(chatA)
+        assertNotNull(chatB)
+        assertFalse(ProviderConversationIdentityPolicy.matches(chatA, chatB))
+    }
+
+    @Test fun providerPackageIsPartOfTheConversationDigestNamespace() {
+        val stableProviderId = "provider-native-thread-id"
+        val chatGpt = ProviderConversationIdentityPolicy.digest("com.openai.chatgpt", stableProviderId)
+        val claude = ProviderConversationIdentityPolicy.digest("com.anthropic.claude", stableProviderId)
+
+        assertNotNull(chatGpt)
+        assertNotNull(claude)
+        assertNotEquals(chatGpt, claude)
+    }
+
     @Test fun missingOrMalformedProviderConversationIdentityFailsClosed() {
         assertNull(ProviderConversationIdentityPolicy.digest("com.example.ai", null))
         assertNull(ProviderConversationIdentityPolicy.digest("com.example.ai", ""))
