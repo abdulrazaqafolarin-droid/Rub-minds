@@ -852,8 +852,8 @@ begin
     (v_forward_command->'nativeWakeHandoff'->>'handoffId')::uuid,
     v_native_device,v_native_screen_session_retry,'com.example.notes',repeat('e',64),
     'target-native-draft',1,repeat('c',64),repeat('d',64),v_native_provider_digest,v_forward_result
-  ) is distinct from 'replayed' then
-    raise exception 'The exact late result must remain idempotently replayable';
+  ) is distinct from 'failed' then
+    raise exception 'The duplicate late result must preserve its failed terminal outcome';
   end if;
 
   -- A registered binding cannot silently switch to a different valid provider conversation.
