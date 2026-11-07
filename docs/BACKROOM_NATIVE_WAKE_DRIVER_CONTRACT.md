@@ -62,6 +62,10 @@ The adapter has now been exercised through the real source-level `dispatchClaime
 
 The focused combined Node 22.16.0 sandbox run of the shared guard, adapter policy, native authorization, durable-dispatch integration and native handoff tests passed **49/49**. The isolated handoff suite also passed **12/12**. These tests did not load an actual Android Accessibility/IME or Windows UIA driver.
 
+## Native binding challenge cancellation
+
+Owner-initiated composer clear, request timeout, stale challenge response, failed challenge creation and Backroom view teardown revoke both the exact attested mapping and any outstanding one-time challenge. The Edge revoke endpoint scopes updates by owner, binding, device, room and screen session. It updates the challenge row and then performs a final mapping sweep; that second sweep is required to catch a device registration that committed while the first mapping sweep was running. The registration routine locks and consumes the challenge before inserting the mapping, so this ordering closes the in-flight registration race.
+
 ## Device-bound handoff contract — 2026-11-03
 
 A separate `native_wake_trigger` envelope now defines the short-lived handoff from a trusted durable-queue worker to a selected native companion. It is deliberately distinct from Android `remote_text` (draft insertion) and from screen-stream control messages. The envelope includes the one durable job/event/lease, paired device ID, room, exact active screen-session ID, binding, AI MCP session, target ID/revision, app identity, previously inspected composer/Send identity digests, canonical fixed prompt and bounded expiry. The original durable queue lease token never leaves the trusted worker; the envelope carries only its SHA-256 digest for replay deduplication. It rejects additional fields—including group-message bodies and generated AI response text.
