@@ -31,12 +31,19 @@ class ProviderConversationIdentityPolicyTest {
         val sendTargetId = "b".repeat(64)
         val chatA = ProviderConversationIdentityPolicy.digest(packageName, "opaque-thread-A")
         val chatB = ProviderConversationIdentityPolicy.digest(packageName, "opaque-thread-B")
-
-        assertEquals(composerTargetId, composerTargetId)
-        assertEquals(sendTargetId, sendTargetId)
         assertNotNull(chatA)
         assertNotNull(chatB)
-        assertFalse(ProviderConversationIdentityPolicy.matches(chatA, chatB))
+
+        val sampleA = NativeBindingEvidence(composerTargetId, sendTargetId, chatA!!)
+        val sampleB = NativeBindingEvidence(composerTargetId, sendTargetId, chatB!!)
+        assertEquals(sampleA.composerIdentityDigest, sampleB.composerIdentityDigest)
+        assertEquals(sampleA.sendControlIdentityDigest, sampleB.sendControlIdentityDigest)
+        assertFalse(
+            ProviderConversationIdentityPolicy.matches(
+                sampleA.providerConversationIdentityDigest,
+                sampleB.providerConversationIdentityDigest
+            )
+        )
     }
 
     @Test fun providerPackageIsPartOfTheConversationDigestNamespace() {
