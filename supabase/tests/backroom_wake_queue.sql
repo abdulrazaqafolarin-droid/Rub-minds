@@ -131,7 +131,7 @@ begin
   end if;
 
   select pg_catalog.pg_get_functiondef(
-    'public.register_backroom_android_native_binding(uuid,text,uuid,uuid,text,text,text,text,text)'::regprocedure
+    'public.register_backroom_android_native_binding_impl(uuid,text,uuid,uuid,text,text,text,text,text)'::regprocedure
   ) into v_native_binding_definition;
   v_attest_advisory_position:=position('pg_advisory_xact_lock' in v_native_binding_definition);
   v_attest_session_position:=position('from public.rub_minds_mcp_sessions s' in v_native_binding_definition);
@@ -160,8 +160,8 @@ begin
       and v_attest_connection_position<v_attest_host_position
       and v_attest_host_position<v_attest_mapping_position)
     or (select p.prosecdef from pg_catalog.pg_proc p
-      where p.oid='public.register_backroom_android_native_binding(uuid,text,uuid,uuid,text,text,text,text,text)'::regprocedure) then
-    raise exception 'Native binding registration must use invoker privileges and consistent session-to-device lock ordering';
+      where p.oid='public.register_backroom_android_native_binding_impl(uuid,text,uuid,uuid,text,text,text,text,text)'::regprocedure) then
+    raise exception 'Private native binding implementation must retain invoker privileges and consistent session-to-device lock ordering';
   end if;
 
   -- Parent identity changes and deletes must invalidate the exact phone proof.
