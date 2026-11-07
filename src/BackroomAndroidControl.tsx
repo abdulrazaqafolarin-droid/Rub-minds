@@ -988,7 +988,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       <p role="status">{remoteTextStatus}</p>
       <small>{sendControlVerified
         ? providerConversationIdentityAvailable
-          ? 'The phone found one unique Send control and detected a provider-conversation identity locally. The digest stays on the phone. This is not permission to click Send: the trusted queue bridge, local wake consent and execution rechecks are still required. Labels and editor/message contents are never transmitted to Rub Minds.'
+          ? 'The phone found one unique Send control and detected a provider-conversation identity locally. The digest stays on the phone. This is not permission to click Send: local wake consent and execution rechecks are required, and the server-side bridge remains source-only until deployed and device-accepted. Labels and editor/message contents are never transmitted to Rub Minds.'
           : 'The phone found one unique Send control, but this app has no verified stable provider-conversation identity. Native autonomous Send is blocked for this app. Manual draft insertion remains available; the control is not permission to click it. Labels and editor/message contents are never transmitted to Rub Minds.'
         : 'Selection resolves to one editable, visible, non-password field in the selected foreground app. The phone checks nearby accessibility metadata locally for one Send control; ambiguous or missing controls stay draft-only. Labels and editor/message contents are never transmitted to Rub Minds.'}</small>
       <p className="br-android-stream-disclaimer">{sendControlStatus}</p>
