@@ -551,7 +551,9 @@ test('native device ACK stores the exact receipt before settlement and survives 
   assert.ok(nativeBranch.indexOf("status: 'acked'") < nativeBranch.indexOf('await broadcastNativeWakeResult('));
   assert.match(nativeBranch, /nativeWakeResultStored: true/);
   assert.match(nativeBranch, /groupSettled: settlement !== 'lease_mismatch'/);
-  const duplicate = ack.slice(ack.indexOf("if (row.status === 'acked')"), ack.indexOf('if (isNativeWakeCommand) {'));
+  const duplicateStart = ack.indexOf("if (row.status === 'acked')");
+  const duplicateEnd = ack.indexOf('// Persist the exact native receipt before settlement or Realtime.', duplicateStart);
+  const duplicate = ack.slice(duplicateStart, duplicateEnd);
   assert.match(duplicate, /sameNativeWakeResult\(row\.result_payload, ack\.nativeWakeResult \?\? null\)/);
   assert.match(duplicate, /settleNativeWakeGroupJob\(\)/);
   assert.match(duplicate, /broadcastNativeWakeResult\(settlement !== 'lease_mismatch'\)/);
