@@ -1,6 +1,6 @@
 # Backroom group-to-composer wake flow
 
-Status snapshot: 2026-11-04, follow-on source branches #65–#66. This document describes source-level contracts; it is not a claim of production deployment, connected-device acceptance, or a completed ChatGPT/Claude round trip.
+Status snapshot: 2026-11-07, PR #66. The Android service-role group-to-device forwarder and durable ACK-recovery path now exist in source and pass isolated SQL/Node checks. This remains a source-branch status, not a claim of production deployment, physical-device acceptance, or a completed ChatGPT/Claude round trip.
 
 ## The invariant
 
@@ -30,19 +30,19 @@ flowchart TD
     E --> F["Resolve current binding, target and active session"]
     F --> G{"Surface with an integrated wake runner?"}
     G -->|Managed browser| H["Local host guard + scoped grant + execution journal"]
-    G -->|Android native| I["Trusted host-to-device forwarder is still missing"]
+    G -->|Android native| I["Service-role Edge forwarder queues exact phone command"]
     G -->|Windows native| J["Native canonical Send driver is still missing"]
     H --> K["Recheck exact empty composer and unique Send identity"]
     K --> L["Insert fixed event prompt, read back, invoke once"]
     L --> M["Verify same composer clears; acknowledge durable lease"]
-    I -.-> N["Android device queue / native driver exist separately"]
-    N -.-> O["Device ACK settles original group lease; attested binding/forwarder still missing"]
+    I --> N["Paired phone rechecks attestation, consent and one-shot seal"]
+    N --> O["Phone stores exact ACK; Edge settles or records late/revoked outcome"]
     M --> P["Original AI reads event through its joined MCP session"]
     P --> Q["AI replies to group through MCP; event/response ACK is separate"]
     O -.-> P
 ```
 
-The dashed Android path is deliberately shown as incomplete. A device command receiver and a phone-side native driver do not mean that the group wake queue can currently reach them.
+The Android path is connected in source through the authenticated Edge claim gateway and private service-role forwarding RPC. It is still not deployed or physically accepted. The provider-conversation resolver registry is empty, so ChatGPT and Claude are not currently eligible for autonomous native sending.
 
 ## Layer 1 — group event and participation policy
 
@@ -283,4 +283,4 @@ The earlier note above that no device-attested registration route existed is sup
 
 The database permits the first NULL-to-provider-digest transition only after the matching live phone attestation exists, while wake remains off and no durable wake job exists. Thereafter provider identity remains immutable and requires revoke/re-register to change. Registration locks the exact MCP session and related live authorization rows; mapping expiry is capped by screen, MCP, agent-connection, host and a fifteen-minute maximum.
 
-**Limits remain important.** The handset provider resolver registry is still empty, so ChatGPT, Claude and other providers do not yet yield a verified stable conversation digest. The phone frame requires an existing owner-authorized group input binding on an active Backroom host; this phone flow does not create that upstream host/target binding. The trusted group-lease-to-device forwarder is still absent, as are native Android Off / On / Auto and physical-device acceptance. The new migration and Edge changes are source-only and have not been applied or deployed.
+**Limits remain important.** The handset provider resolver registry is still empty, so ChatGPT, Claude and other providers do not yet yield a verified stable conversation digest. The phone frame requires an existing owner-authorized group input binding on an active Backroom host; this phone flow does not create that upstream host/target binding. The trusted group-lease-to-device forwarder is now implemented in source through the `backroom-wake` Edge claim path and private idempotent SQL RPC. Native Android Off / On / Auto and physical-device acceptance remain unavailable. The migrations and Edge changes are source-only and have not been applied or deployed.
