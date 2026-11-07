@@ -210,7 +210,7 @@ class AndroidNativeWakeConsentStore(context: Context) {
             !UUID_PATTERN.matches(evidence.optString("screenSessionId")) ||
             evidence.optString("screenSessionId") != entry.sessionId ||
             !UUID_PATTERN.matches(evidence.optString("bindingId")) ||
-            !Regex("^[a-f0-9]{64}$").matches(evidence.optString("targetId")) ||
+            !NativeWakeAckOutboxPolicy.isValidTargetId(evidence.optString("targetId")) ||
             evidence.optInt("targetRevision", 0) <= 0 ||
             evidence.opt("promptInserted") !is Boolean ||
             evidence.opt("sendInvoked") !is Boolean ||
