@@ -82,6 +82,14 @@ class ProviderConversationProbeTests(unittest.TestCase):
         self.assertFalse(self.b.exists())
         self.assertFalse(self.a2.exists())
 
+    def test_dtd_after_long_leading_comment_is_rejected(self) -> None:
+        self.b.write_text("<!-- " + "x" * 5000 + " -->\\n<!DOCTYPE hierarchy [<!ENTITY x 'boom'>]><hierarchy/>", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "DTD/entity"):
+            analyse("com.openai.chatgpt", self.a1, self.b, self.a2, delete_inputs=True)
+        self.assertFalse(self.a1.exists())
+        self.assertFalse(self.b.exists())
+        self.assertFalse(self.a2.exists())
+
     def test_non_hierarchy_xml_is_rejected(self) -> None:
         self.a1.write_text("<wrong><node /></wrong>", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "UIAutomator hierarchy"):
