@@ -545,8 +545,9 @@ test('native device ACK stores the exact receipt before settlement and survives 
   const nativeReceiptEnd = ack.indexOf("if (row.status !== 'leased'", nativeReceiptStart);
   const nativeBranch = ack.slice(nativeReceiptStart, nativeReceiptEnd);
   assert.match(ack, /created_at,result,result_payload/);
-  assert.match(nativeBranch, /\['leased','expired'\]/);
-  assert.match(nativeBranch, /24 \* 60 \* 60 \* 1000/);
+  assert.match(nativeBranch, /\['leased','expired','rejected'\]/);
+  assert.doesNotMatch(nativeBranch, /24 \* 60 \* 60 \* 1000/);
+  assert.match(nativeBranch, /createdAt > now/);
   assert.ok(nativeBranch.indexOf("status: 'acked'") < nativeBranch.indexOf('await settleNativeWakeGroupJob()'));
   assert.ok(nativeBranch.indexOf("status: 'acked'") < nativeBranch.indexOf('await broadcastNativeWakeResult('));
   assert.match(nativeBranch, /nativeWakeResultStored: true/);
