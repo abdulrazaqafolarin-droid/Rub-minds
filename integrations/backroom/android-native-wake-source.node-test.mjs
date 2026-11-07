@@ -217,10 +217,10 @@ test('the 20-second native handoff deadline is carried to the driver and recheck
   assert.ok(deadlineChecks.length >= 3);
   assert.match(submit, /native_wake_handoff_expired_after_seal/);
 });
-test('Backroom capability copy reports the missing group forwarder rather than a missing phone queue', () => {
+test('Backroom capability copy reports provider identity and deployment gates after source forwarding exists', () => {
   assert.match(devicesUi, /AI-directed sending \/ native Off · On · Auto/);
-  assert.match(devicesUi, /Not available · provider adapters \+ group forwarding missing/);
-  assert.doesNotMatch(devicesUi, /Not available · wake queue not connected/);
+  assert.match(devicesUi, /Not available · provider identity \+ deployment\/device acceptance pending/);
+  assert.doesNotMatch(devicesUi, /group forwarding missing|wake queue not connected/);
 });
 
 test('native consent and one-shot journal mutations share a process-wide lock across store instances', () => {
