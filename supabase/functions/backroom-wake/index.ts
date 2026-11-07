@@ -78,14 +78,15 @@ const store={
    p_lease_seconds:surface==='android_app'?120:30
   });
   if(!Array.isArray(rows)||rows.length>limit)throw new Error('Invalid private queue response');
-  return rows.map(row=>{
+  const leases=rows.map(row=>{
    if(!row||row.out_binding_id!==bindingId||!row.out_job_id||!row.out_lease_token||
     (row.out_provider_conversation_identity_digest!==null &&
      (typeof row.out_provider_conversation_identity_digest!=='string'||!/^[a-f0-9]{64}$/.test(row.out_provider_conversation_identity_digest))) ||
-    (row.out_provider_conversation_identity_digest??null)!==providerConversationIdentityDigest)
+    (row.out_provider_conversation_identity_digest??null)!==providerConversationIdentityDigest ||
+    (surface==='android_app'&&typeof row.out_provider_conversation_identity_digest!=='string'))
     throw new Error('Invalid private queue lease');
-   // Keep only exact server-issued scoped fields; no token or row records from the
-   // database are ever accepted from remote clients.
+   // Keep only exact server-issued scoped fields; no token or row records are
+   // ever accepted from a remote client.
    return {
     jobId:row.out_job_id,jobKey:row.out_job_key,eventId:row.out_event_id,
     ownerId:row.out_owner_id,roomId:row.out_room_id,participantId:row.out_participant_id,
@@ -99,6 +100,21 @@ const store={
     attemptCount:row.out_attempt_count,expiresAt:row.out_expires_at,leaseToken:row.out_lease_token
    };
   });
+  if(surface==='android_app'){
+   // Android-native jobs are forwarded entirely inside the service-role Edge
+   // function. The browser host must never receive a lease that its generic
+   // dispatcher could also execute against a different provider surface.
+   for(const lease of leases){
+    const {data,error}=await db.rpc('queue_backroom_android_native_wake_command',{
+     p_job_id:lease.jobId,p_host_id:hostId,p_session_digest:sessionDigest,
+     p_binding_id:bindingId,p_lease_token:lease.leaseToken
+    });
+    if(error||data?.ok!==true||!['queued','already_queued'].includes(data.state))
+     throw new Error('Android native wake forwarding unavailable');
+   }
+   return [];
+  }
+  return leases;
  },
  async acknowledge({hostId,sessionDigest,bindingId,jobId,leaseToken,outcome}:Record<string,string>) {
   return await rpc('ack_backroom_wake_job',{
