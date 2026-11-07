@@ -177,6 +177,14 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261106143000_backroom_android_native_binding_attestation.sql
+      - name: Add atomic Android native wake queue forwarder
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261107090000_backroom_android_native_wake_forwarder.sql
+      - name: Require current device attestation for native ACK settlement
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261107110000_backroom_android_native_wake_attested_settlement.sql
       - name: Test idempotency, claims, leases, retry, cancellation and least privilege
         env:
           PGPASSWORD: postgres
