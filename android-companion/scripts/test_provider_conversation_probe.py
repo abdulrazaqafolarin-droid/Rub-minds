@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from provider_conversation_probe import analyse
 
@@ -89,6 +90,11 @@ class ProviderConversationProbeTests(unittest.TestCase):
         self.assertFalse(self.a1.exists())
         self.assertFalse(self.b.exists())
         self.assertFalse(self.a2.exists())
+
+    def test_cleanup_failure_is_reported_instead_of_silently_ignored(self) -> None:
+        with patch.object(Path, "unlink", side_effect=PermissionError("blocked")):
+            with self.assertRaisesRegex(RuntimeError, "Could not delete"):
+                analyse("com.openai.chatgpt", self.a1, self.b, self.a2, delete_inputs=True)
 
     def test_non_hierarchy_xml_is_rejected(self) -> None:
         self.a1.write_text("<wrong><node /></wrong>", encoding="utf-8")
