@@ -45,6 +45,7 @@ class ProviderConversationProbeTests(unittest.TestCase):
         self.assertTrue(report["composer_control_reused_a_to_b"])
         self.assertTrue(report["send_control_reused_a_to_b"])
         self.assertFalse(report["native_send_enabled"])
+        self.assertFalse(report["stable_provider_conversation_id_exposed"])
 
     def test_identical_conversation_snapshots_do_not_claim_distinction(self) -> None:
         self.b.write_text(make_xml("Research chat A"), encoding="utf-8")
@@ -71,6 +72,25 @@ class ProviderConversationProbeTests(unittest.TestCase):
         report = analyse("com.openai.chatgpt", self.a1, self.b, self.a2)
         self.assertNotIn("Research chat A", str(report))
         self.assertNotIn("Business chat B", str(report))
+        self.assertFalse(report["stable_provider_conversation_id_exposed"])
+
+    def test_invalid_xml_still_deletes_all_inputs_when_requested(self) -> None:
+        self.b.write_text("<!DOCTYPE hierarchy [<!ENTITY x 'boom'>]><hierarchy/>", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "DTD/entity"):
+            analyse("com.openai.chatgpt", self.a1, self.b, self.a2, delete_inputs=True)
+        self.assertFalse(self.a1.exists())
+        self.assertFalse(self.b.exists())
+        self.assertFalse(self.a2.exists())
+
+    def test_non_hierarchy_xml_is_rejected(self) -> None:
+        self.a1.write_text("<wrong><node /></wrong>", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "UIAutomator hierarchy"):
+            analyse("com.openai.chatgpt", self.a1, self.b, self.a2)
+
+    def test_oversized_snapshot_is_rejected(self) -> None:
+        self.a1.write_text("x" * (8_000_001), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "8 MB"):
+            analyse("com.openai.chatgpt", self.a1, self.b, self.a2)
 
 
 if __name__ == "__main__":
