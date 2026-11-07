@@ -61,6 +61,21 @@ declare
   v_review_claim record;
   v_review_handoff uuid := '80000000-0000-4000-8000-000000000012';
   v_review_result jsonb;
+  v_forward_job jsonb;
+  v_forward_claim record;
+  v_forward_call jsonb;
+  v_forward_handoff uuid := '80000000-0000-4000-8000-000000000014';
+  v_forward_result jsonb;
+  v_forward_settlement text;
+  v_forward_command jsonb;
+  v_forward_command_id uuid;
+  v_forward_job_stale jsonb;
+  v_forward_stale_claim record;
+  v_forward_stale_call jsonb;
+  v_forward_stale_result jsonb;
+  v_forward_stale_settlement text;
+  v_forward_lock_position integer;
+  v_registration_wrapper_is_definer boolean;
   v_settlement_definition text;
   v_advisory_lock_position integer;
   v_session_lock_position integer;
@@ -101,7 +116,7 @@ declare
   v_native_authority_challenge_cap_expiry timestamptz;
 begin
   select pg_catalog.pg_get_functiondef(
-    'public.settle_backroom_android_native_wake_result(uuid,text,text,uuid,text,uuid,uuid,uuid,text,integer,text,text,text,jsonb)'::regprocedure
+    'public.settle_backroom_android_native_wake_result_attested(uuid,text,text,uuid,text,uuid,uuid,uuid,text,text,text,integer,text,text,text,jsonb)'::regprocedure
   ) into v_settlement_definition;
   v_advisory_lock_position:=position('pg_advisory_xact_lock' in v_settlement_definition);
   v_session_lock_position:=position('from public.rub_minds_mcp_sessions s' in v_settlement_definition);
@@ -598,6 +613,158 @@ begin
     raise exception 'Exact duplicate attestation replay must remain idempotent after wake activation';
   end if;
 
+  -- Exercise the complete server-owned group-job -> Android private command
+  -- outbox -> attestation-bound ACK path. The browser host never receives the
+  -- native lease itself and duplicate forward requests are idempotent.
+  v_forward_job := public.enqueue_backroom_wake_job(
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('native-attested-forwarder-job','UTF8')),'hex'),
+    v_owner,v_room,v_participant,v_host_test,'space-native-draft','session-native-draft',repeat('5',64),
+    v_binding_native_draft,'target-native-draft','fingerprint-native-draft',1,'native-forward-event',
+    '@RMconnects'||chr(10)||'Event: native-forward-event'||chr(10)||
+    'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600
+  );
+  select * into v_forward_claim
+  from public.claim_backroom_wake_jobs_with_provider_identity(
+    v_host_test,repeat('5',64),v_binding_native_draft,5,120
+  ) limit 1;
+  if not found
+    or v_forward_claim.out_job_id::text is distinct from (v_forward_job->>'job_id')
+    or v_forward_claim.out_provider_conversation_identity_digest is distinct from v_native_provider_digest then
+    raise exception 'Android forwarder test must claim the exact attested group job';
+  end if;
+  select public.queue_backroom_android_native_wake_command(
+    v_forward_claim.out_job_id,v_host_test,repeat('5',64),v_binding_native_draft,
+    v_forward_claim.out_lease_token
+  ) into v_forward_call;
+  if v_forward_call->>'ok' is distinct from 'true'
+    or v_forward_call->>'state' is distinct from 'queued' then
+    raise exception 'The trusted server forwarder must queue the native device command';
+  end if;
+  select c.id,c.command into v_forward_command_id,v_forward_command
+  from public.backroom_android_commands c
+  where c.device_id=v_native_device and c.room_id=v_room
+    and c.command->>'action'='native_wake_trigger'
+    and c.command->'nativeWakeHandoff'->>'jobId'=v_forward_claim.out_job_id::text
+    and c.command->'nativeWakeHandoff'->>'leaseTokenDigest'=
+      pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_forward_claim.out_lease_token,'UTF8')),'hex');
+  if not found
+    or v_forward_command->'nativeWakeHandoff'->>'identityFingerprint' is distinct from repeat('e',64)
+    or v_forward_command->'nativeWakeHandoff'->>'appId' is distinct from 'com.example.notes'
+    or v_forward_command->'nativeWakeHandoff'->>'composerIdentityDigest' is distinct from repeat('c',64)
+    or v_forward_command->'nativeWakeHandoff'->>'sendControlIdentityDigest' is distinct from repeat('d',64)
+    or v_forward_command->'nativeWakeHandoff'->>'providerConversationIdentityDigest' is distinct from v_native_provider_digest
+    or v_forward_command->'nativeWakeHandoff'->>'promptDigest' is distinct from
+      pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+        '@RMconnects'||chr(10)||'Event: native-forward-event'||chr(10)||
+        'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.','UTF8')),'hex')
+    or v_forward_command->'nativeWakeHandoff' ? 'leaseToken'
+    or v_forward_command->'nativeWakeHandoff' ? 'providerCredential'
+    or v_forward_command->'nativeWakeHandoff' ? 'conversationUrl' then
+    raise exception 'Forwarded Android command must contain exact attested identity and no raw lease/provider secrets';
+  end if;
+  select public.queue_backroom_android_native_wake_command(
+    v_forward_claim.out_job_id,v_host_test,repeat('5',64),v_binding_native_draft,
+    v_forward_claim.out_lease_token
+  ) into v_forward_call;
+  if v_forward_call->>'ok' is distinct from 'true'
+    or v_forward_call->>'state' is distinct from 'already_queued'
+    or (select count(*) from public.backroom_android_commands c
+       where c.device_id=v_native_device and c.command->>'action'='native_wake_trigger'
+         and c.command->'nativeWakeHandoff'->>'jobId'=v_forward_claim.out_job_id::text)<>1 then
+    raise exception 'Repeated server forward requests must not create duplicate Android commands';
+  end if;
+
+  v_forward_result:=jsonb_build_object(
+    'version',1,'kind','native_wake_result',
+    'handoffId',v_forward_command->'nativeWakeHandoff'->>'handoffId',
+    'jobId',v_forward_claim.out_job_id::text,'deviceId',v_native_device::text,
+    'roomId',v_room::text,'screenSessionId',v_native_screen_session_retry::text,
+    'bindingId',v_binding_native_draft::text,'targetId','target-native-draft','targetRevision',1,
+    'state','submitted','promptInserted',true,'sendInvoked',true,'composerCleared',true,
+    'promptReadbackVerified',true,'composerIdentityRevalidated',true,
+    'sendControlIdentityRevalidated',true,'composerIdentityDigest',repeat('c',64),
+    'sendControlIdentityDigest',repeat('d',64),
+    'providerConversationIdentityRevalidated',true,
+    'providerConversationIdentityDigest',v_native_provider_digest
+  );
+  v_forward_settlement:=public.settle_backroom_android_native_wake_result_attested(
+    v_forward_claim.out_job_id,v_host_test,repeat('5',64),v_binding_native_draft,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_forward_claim.out_lease_token,'UTF8')),'hex'),
+    (v_forward_command->'nativeWakeHandoff'->>'handoffId')::uuid,
+    v_native_device,v_native_screen_session_retry,'com.example.notes',repeat('e',64),
+    'target-native-draft',1,repeat('c',64),repeat('d',64),v_native_provider_digest,v_forward_result
+  );
+  if v_forward_settlement is distinct from 'acknowledged'
+    or not exists(select 1 from public.backroom_wake_jobs j
+      where j.id=v_forward_claim.out_job_id and j.state='acknowledged'
+        and j.native_result_payload=v_forward_result) then
+    raise exception 'An exact active phone attestation must settle the original group lease';
+  end if;
+  if public.settle_backroom_android_native_wake_result_attested(
+    v_forward_claim.out_job_id,v_host_test,repeat('5',64),v_binding_native_draft,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_forward_claim.out_lease_token,'UTF8')),'hex'),
+    (v_forward_command->'nativeWakeHandoff'->>'handoffId')::uuid,
+    v_native_device,v_native_screen_session_retry,'com.example.notes',repeat('e',64),
+    'target-native-draft',1,repeat('c',64),repeat('d',64),v_native_provider_digest,v_forward_result
+  ) is distinct from 'replayed' then
+    raise exception 'An exact duplicate native ACK must be replayable after settlement';
+  end if;
+
+  -- A valid-looking result from a different installed-app signer must not
+  -- acknowledge the job even when its composer and provider digests look right.
+  v_forward_job_stale:=public.enqueue_backroom_wake_job(
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('native-stale-signer-job','UTF8')),'hex'),
+    v_owner,v_room,v_participant,v_host_test,'space-native-draft','session-native-draft',repeat('5',64),
+    v_binding_native_draft,'target-native-draft','fingerprint-native-draft',1,'native-stale-signer-event',
+    '@RMconnects'||chr(10)||'Event: native-stale-signer-event'||chr(10)||
+    'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600
+  );
+  select * into v_forward_stale_claim
+  from public.claim_backroom_wake_jobs_with_provider_identity(
+    v_host_test,repeat('5',64),v_binding_native_draft,5,120
+  ) limit 1;
+  if not found or v_forward_stale_claim.out_job_id::text is distinct from (v_forward_job_stale->>'job_id') then
+    raise exception 'Stale signer test must claim its own native group job';
+  end if;
+  select public.queue_backroom_android_native_wake_command(
+    v_forward_stale_claim.out_job_id,v_host_test,repeat('5',64),v_binding_native_draft,
+    v_forward_stale_claim.out_lease_token
+  ) into v_forward_stale_call;
+  if v_forward_stale_call->>'ok' is distinct from 'true' then
+    raise exception 'Stale signer fixture must queue before testing ACK rejection';
+  end if;
+  select c.command into v_forward_command
+  from public.backroom_android_commands c
+  where c.device_id=v_native_device and c.command->>'action'='native_wake_trigger'
+    and c.command->'nativeWakeHandoff'->>'jobId'=v_forward_stale_claim.out_job_id::text;
+  if not found then raise exception 'Stale signer test command missing'; end if;
+  v_forward_stale_result:=jsonb_build_object(
+    'version',1,'kind','native_wake_result',
+    'handoffId',v_forward_command->'nativeWakeHandoff'->>'handoffId',
+    'jobId',v_forward_stale_claim.out_job_id::text,'deviceId',v_native_device::text,
+    'roomId',v_room::text,'screenSessionId',v_native_screen_session_retry::text,
+    'bindingId',v_binding_native_draft::text,'targetId','target-native-draft','targetRevision',1,
+    'state','submitted','promptInserted',true,'sendInvoked',true,'composerCleared',true,
+    'promptReadbackVerified',true,'composerIdentityRevalidated',true,
+    'sendControlIdentityRevalidated',true,'composerIdentityDigest',repeat('c',64),
+    'sendControlIdentityDigest',repeat('d',64),
+    'providerConversationIdentityRevalidated',true,
+    'providerConversationIdentityDigest',v_native_provider_digest
+  );
+  v_forward_stale_settlement:=public.settle_backroom_android_native_wake_result_attested(
+    v_forward_stale_claim.out_job_id,v_host_test,repeat('5',64),v_binding_native_draft,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_forward_stale_claim.out_lease_token,'UTF8')),'hex'),
+    (v_forward_command->'nativeWakeHandoff'->>'handoffId')::uuid,
+    v_native_device,v_native_screen_session_retry,'com.example.notes',repeat('f',64),
+    'target-native-draft',1,repeat('c',64),repeat('d',64),v_native_provider_digest,v_forward_stale_result
+  );
+  if v_forward_stale_settlement is distinct from 'cancelled'
+    or not exists(select 1 from public.backroom_wake_jobs j
+      where j.id=v_forward_stale_claim.out_job_id and j.state='cancelled'
+        and j.last_error_code='authorization_denied') then
+    raise exception 'A mismatched installed-app signer must cancel, never acknowledge, the group job';
+  end if;
+
   -- A registered binding cannot silently switch to a different valid provider conversation.
   v_conflict := false;
   begin
@@ -923,12 +1090,31 @@ begin
     or v_native_claim.out_provider_conversation_identity_digest<>v_native_provider_digest then
     raise exception 'Provider-aware claim must return the exact native conversation digest';
   end if;
-  if has_function_privilege('anon','public.settle_backroom_android_native_wake_result(uuid,text,text,uuid,text,uuid,uuid,uuid,text,integer,text,text,text,jsonb)','EXECUTE')
-    or has_function_privilege('authenticated','public.settle_backroom_android_native_wake_result(uuid,text,text,uuid,text,uuid,uuid,uuid,text,integer,text,text,text,jsonb)','EXECUTE')
-    or not has_function_privilege('service_role','public.settle_backroom_android_native_wake_result(uuid,text,text,uuid,text,uuid,uuid,uuid,text,integer,text,text,text,jsonb)','EXECUTE')
+  if has_function_privilege('anon','public.settle_backroom_android_native_wake_result_attested(uuid,text,text,uuid,text,uuid,uuid,uuid,text,text,text,integer,text,text,text,jsonb)','EXECUTE')
+    or has_function_privilege('authenticated','public.settle_backroom_android_native_wake_result_attested(uuid,text,text,uuid,text,uuid,uuid,uuid,text,text,text,integer,text,text,text,jsonb)','EXECUTE')
+    or not has_function_privilege('service_role','public.settle_backroom_android_native_wake_result_attested(uuid,text,text,uuid,text,uuid,uuid,uuid,text,text,text,integer,text,text,text,jsonb)','EXECUTE')
     or (select p.prosecdef from pg_catalog.pg_proc p
-      where p.oid='public.settle_backroom_android_native_wake_result(uuid,text,text,uuid,text,uuid,uuid,uuid,text,integer,text,text,text,jsonb)'::regprocedure) then
-    raise exception 'Native result settlement must be service-role only';
+      where p.oid='public.settle_backroom_android_native_wake_result_attested(uuid,text,text,uuid,text,uuid,uuid,uuid,text,text,text,integer,text,text,text,jsonb)'::regprocedure) then
+    raise exception 'Attested native result settlement must be service-role-only SECURITY INVOKER';
+  end if;
+  if has_function_privilege('service_role','public.settle_backroom_android_native_wake_result(uuid,text,text,uuid,text,uuid,uuid,uuid,text,integer,text,text,text,jsonb)','EXECUTE') then
+    raise exception 'Unattested legacy native settlement must not remain executable by service_role';
+  end if;
+  if has_function_privilege('anon','public.queue_backroom_android_native_wake_command(uuid,text,text,uuid,text)','EXECUTE')
+    or has_function_privilege('authenticated','public.queue_backroom_android_native_wake_command(uuid,text,text,uuid,text)','EXECUTE')
+    or not has_function_privilege('service_role','public.queue_backroom_android_native_wake_command(uuid,text,text,uuid,text)','EXECUTE')
+    or not (select p.prosecdef from pg_catalog.pg_proc p
+      where p.oid='public.queue_backroom_android_native_wake_command(uuid,text,text,uuid,text)'::regprocedure) then
+    raise exception 'Android group-to-device forwarder must be service-role-only SECURITY DEFINER';
+  end if;
+  select p.prosecdef into v_registration_wrapper_is_definer
+  from pg_catalog.pg_proc p
+  where p.oid='public.register_backroom_android_native_binding(uuid,text,uuid,uuid,text,text,text,text,text)'::regprocedure;
+  if not v_registration_wrapper_is_definer
+    or has_function_privilege('anon','public.register_backroom_android_native_binding_impl(uuid,text,uuid,uuid,text,text,text,text,text)','EXECUTE')
+    or has_function_privilege('authenticated','public.register_backroom_android_native_binding_impl(uuid,text,uuid,uuid,text,text,text,text,text)','EXECUTE')
+    or has_function_privilege('service_role','public.register_backroom_android_native_binding_impl(uuid,text,uuid,uuid,text,text,text,text,text)','EXECUTE') then
+    raise exception 'Private registration implementation and service-role wrapper permissions are unsafe';
   end if;
 
   v_native_result := jsonb_build_object(
