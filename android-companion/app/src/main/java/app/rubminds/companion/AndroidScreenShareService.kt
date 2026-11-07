@@ -217,9 +217,13 @@ class AndroidScreenShareService : Service() {
                 return
             }
             val commands = result.optJSONArray("commands") ?: return
+            val pendingNativeAckIds = retryPendingNativeWakeAcknowledgements(token)
             for (index in 0 until commands.length()) {
                 if (stopping) break
                 val command = commands.optJSONObject(index) ?: continue
+                if (command.optString("action") == "native_wake_trigger" &&
+                    (pendingNativeAckIds == null || command.optString("commandId") in pendingNativeAckIds)
+                ) continue
                 processCommand(token, command)
             }
             if (System.currentTimeMillis() - projectionStartedAt > MAX_WAIT_WITHOUT_SESSION_MS &&
@@ -283,7 +287,13 @@ class AndroidScreenShareService : Service() {
             return
         }
 
-        val grant = AndroidNativeWakeConsentStore(this).activeGrant(
+        val ackStore = AndroidNativeWakeConsentStore(this)
+        val pendingAcks = ackStore.pendingNativeWakeAcknowledgements() ?: return
+        // A previously received command with an outstanding receipt must never
+        // enter the native driver again. The poller retries its exact ACK first.
+        if (pendingAcks.any { it.commandId == commandId }) return
+
+        val grant = ackStore.activeGrant(
             handoff.deviceId, handoff.packageName, handoff.signingCertificateSha256
         )
         if (grant == null) {
@@ -312,6 +322,18 @@ class AndroidScreenShareService : Service() {
         }
 
         val request = handoff.toExecutionRequest(grant.grantId)
+        // Reserve a durable ambiguous-outcome receipt before scheduling any
+        // native provider effect. If the process dies after this point, the
+        // outbox settles needs_review rather than repeating a possible Send.
+        val prepared = createNativeWakeAckPayload(
+            commandId, requestId, screenSessionId, handoff,
+            NativeWakeSubmissionResult(NativeWakeSubmissionState.NEEDS_REVIEW, "outcome_unknown")
+        ) ?: return
+        if (!ackStore.savePendingNativeWakeAcknowledgement(
+                commandId, requestId, screenSessionId, prepared, NativeWakeAckOutboxStage.PREPARED
+            )
+        ) return
+
         val accepted = AndroidTouchAccessibilityService.submitCanonicalWake(request) { result ->
             // submitCanonicalWake completes on the Accessibility main thread;
             // keep network I/O on the service's bounded command executor.
@@ -357,17 +379,16 @@ class AndroidScreenShareService : Service() {
         }
     }
 
-    private fun acknowledgeNativeWake(
-        token: String,
+    private fun createNativeWakeAckPayload(
         commandId: String,
         requestId: String,
         screenSessionId: String,
         handoff: ValidatedAndroidNativeWakeHandoff,
         result: NativeWakeSubmissionResult
-    ) {
+    ): JSONObject? {
         if (!UUID_PATTERN.matches(commandId) || !UUID_PATTERN.matches(requestId) ||
             !UUID_PATTERN.matches(screenSessionId)
-        ) return
+        ) return null
         val state = when (result.state) {
             NativeWakeSubmissionState.PRECHECK_DENIED -> "preflight_denied"
             NativeWakeSubmissionState.SUBMITTED -> "submitted"
@@ -395,18 +416,14 @@ class AndroidScreenShareService : Service() {
             .put("composerCleared", result.composerCleared)
 
         // Only a fully confirmed submission carries the stronger read-back and
-        // same-target revalidation claims. Preflight denials and ambiguous
-        // outcomes never masquerade as a verified send.
+        // same-target revalidation claims. All ambiguous outcomes stay review-only.
         if (state == "submitted") {
-            val composerDigest = result.composerIdentityDigest
-                ?: return
-            val sendDigest = result.sendControlIdentityDigest
-                ?: return
-            val providerConversationDigest = result.providerConversationIdentityDigest
-                ?: return
+            val composerDigest = result.composerIdentityDigest ?: return null
+            val sendDigest = result.sendControlIdentityDigest ?: return null
+            val providerConversationDigest = result.providerConversationIdentityDigest ?: return null
             if (!result.providerConversationIdentityRevalidated ||
                 providerConversationDigest != handoff.providerConversationIdentityDigest
-            ) return
+            ) return null
             evidence
                 .put("promptReadbackVerified", true)
                 .put("composerIdentityRevalidated", true)
@@ -416,24 +433,72 @@ class AndroidScreenShareService : Service() {
                 .put("sendControlIdentityDigest", sendDigest)
                 .put("providerConversationIdentityDigest", providerConversationDigest)
         } else {
-            val reason = safeNativeWakeReason(result.reason)
-            evidence.put("reason", reason)
+            evidence.put("reason", safeNativeWakeReason(result.reason))
         }
-        try {
-            api?.post(
-                "android/ack",
-                token,
-                JSONObject()
-                    .put("commandId", commandId)
-                    .put("requestId", requestId)
-                    .put("sessionId", screenSessionId)
-                    .put("result", resultName)
-                    .put("nativeWakeResult", evidence)
+        return JSONObject()
+            .put("commandId", commandId)
+            .put("requestId", requestId)
+            .put("sessionId", screenSessionId)
+            .put("result", resultName)
+            .put("nativeWakeResult", evidence)
+    }
+
+    private fun acknowledgeNativeWake(
+        token: String,
+        commandId: String,
+        requestId: String,
+        screenSessionId: String,
+        handoff: ValidatedAndroidNativeWakeHandoff,
+        result: NativeWakeSubmissionResult
+    ) {
+        val payload = createNativeWakeAckPayload(
+            commandId, requestId, screenSessionId, handoff, result
+        ) ?: return
+        val store = AndroidNativeWakeConsentStore(this)
+        // A failed disk commit must not be hidden by an HTTP attempt: the exact
+        // receipt remains recoverable as PREPARED or is retried on the next poll.
+        if (!store.savePendingNativeWakeAcknowledgement(
+                commandId, requestId, screenSessionId, payload, NativeWakeAckOutboxStage.FINAL
             )
-        } catch (_: Exception) {
-            // The queue lease will expire. The local one-shot journal remains
-            // sealed, so a redelivery cannot blindly repeat an uncertain Send.
+        ) return
+        retryPendingNativeWakeAcknowledgements(token)
+    }
+
+    /**
+     * Replays the same device-authenticated ACK until the server confirms the
+     * Android command row is ACKed. PREPARED means the process may have died
+     * during a provider effect, so it is promoted to an explicit needs_review
+     * receipt before delivery. Raw device credentials never enter the outbox.
+     *
+     * null means corrupt/unreadable durable state; callers must skip all native
+     * commands rather than risk a duplicate native action.
+     */
+    private fun retryPendingNativeWakeAcknowledgements(token: String): Set<String>? {
+        val store = AndroidNativeWakeConsentStore(this)
+        var pending = store.pendingNativeWakeAcknowledgements() ?: return null
+        for (entry in pending.filter { it.stage == NativeWakeAckOutboxStage.PREPARED }) {
+            val placeholder = runCatching { JSONObject(entry.payloadJson) }.getOrNull() ?: return null
+            if (!store.savePendingNativeWakeAcknowledgement(
+                    entry.commandId, entry.requestId, entry.sessionId,
+                    placeholder, NativeWakeAckOutboxStage.FINAL
+                )
+            ) return null
         }
+
+        pending = store.pendingNativeWakeAcknowledgements() ?: return null
+        for (entry in pending) {
+            if (entry.stage != NativeWakeAckOutboxStage.FINAL) continue
+            try {
+                val response = api?.post("android/ack", token, JSONObject(entry.payloadJson))
+                if (response?.optBoolean("ok") == true && response.optBoolean("acked") == true) {
+                    store.removePendingNativeWakeAcknowledgement(entry.commandId, entry.payloadJson)
+                }
+            } catch (_: Exception) {
+                // Keep the exact receipt on disk. The next device poll retries it
+                // before it is permitted to dispatch any matching command.
+            }
+        }
+        return store.pendingNativeWakeAcknowledgements()?.map { it.commandId }?.toSet()
     }
 
     private fun processCommand(token: String, command: JSONObject) {
