@@ -21,6 +21,10 @@ object NativeWakeAckOutboxPolicy {
     const val MAX_ACK_PAYLOAD_CHARS = 16_384
     private val uuid = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 
+    fun isValidTargetId(targetId: String): Boolean =
+        targetId.isNotBlank() && targetId.length <= 128 &&
+            targetId.none { it.code in 0..31 || it.code in 127..159 }
+
     fun isValid(entry: PendingNativeWakeAcknowledgement): Boolean =
         uuid.matches(entry.commandId) &&
             uuid.matches(entry.requestId) &&
