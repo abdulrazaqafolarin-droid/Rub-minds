@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -27,6 +29,16 @@ def make_xml(title: str, package: str = "com.openai.chatgpt") -> str:
 
 
 class ProviderConversationProbeTests(unittest.TestCase):
+    def test_documented_cli_wrapper_imports_the_probe_module(self) -> None:
+        script = Path(__file__).with_name("provider-conversation-probe.py")
+        result = subprocess.run(
+            [sys.executable, str(script), "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--package", result.stdout)
     def setUp(self) -> None:
         self.folder = tempfile.TemporaryDirectory()
         self.root = Path(self.folder.name)
