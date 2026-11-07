@@ -12,7 +12,7 @@ def make_xml(title: str, package: str = "com.openai.chatgpt") -> str:
 <hierarchy rotation="0">
   <node index="0" text="" resource-id="" class="android.widget.FrameLayout"
     package="{package}" bounds="[0,0][1080,2400]" visible-to-user="true">
-    <node index="0" text="{title}" content-desc="" resource-id="com.openai.chatgpt:id/conversation_title"
+    <node index="0" text="{title}" content-desc="Selected conversation: {title}" resource-id="com.openai.chatgpt:id/conversation_title"
       class="android.widget.TextView" package="{package}" bounds="[20,80][900,170]"
       visible-to-user="true" />
     <node index="1" text="" content-desc="" resource-id="com.openai.chatgpt:id/prompt"
