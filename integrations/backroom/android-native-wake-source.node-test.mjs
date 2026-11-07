@@ -11,6 +11,7 @@ const handoffTest = await read('../../android-companion/app/src/test/java/app/ru
 const bindingPolicy = await read('../../android-companion/app/src/main/java/app/rubminds/companion/NativeWakeBindingPolicy.kt');
 const bindingPolicyTest = await read('../../android-companion/app/src/test/java/app/rubminds/companion/NativeWakeBindingPolicyTest.kt');
 const wakeGateway = await read('../../supabase/functions/backroom-wake/index.ts');
+const nativeForwarder = await read('../../supabase/migrations/20261107090000_backroom_android_native_wake_forwarder.sql');
 const providerConversation = await read('../../android-companion/app/src/main/java/app/rubminds/companion/ProviderConversationIdentity.kt');
 const providerConversationTest = await read('../../android-companion/app/src/test/java/app/rubminds/companion/ProviderConversationIdentityPolicyTest.kt');
 const consent = await read('../../android-companion/app/src/main/java/app/rubminds/companion/NativeWakeConsentPolicy.kt');
@@ -359,4 +360,57 @@ test('native Android group leases cover the independent 60-second device command
   assert.match(claimStore,/surface:string/);
   assert.match(claimStore,/p_lease_seconds:surface==='android_app'\?120:30/);
   assert.match(claimStore,/hostId,sessionDigest,bindingId,surface,/);
+});
+
+
+test('Android group leases are forwarded by the service-role gateway and never returned to the generic host dispatcher', () => {
+  const claimStore = method(wakeGateway, 'async claim(', 'async acknowledge(');
+  assert.match(claimStore, /surface==='android_app'/);
+  assert.match(claimStore, /queue_backroom_android_native_wake_command/);
+  assert.match(claimStore, /p_job_id:lease\.jobId[\s\S]*p_lease_token:lease\.leaseToken/);
+  assert.match(claimStore, /\['queued','already_queued'\]/);
+  assert.match(claimStore, /return \[\]/);
+  assert.ok(
+    claimStore.indexOf('queue_backroom_android_native_wake_command') <
+      claimStore.indexOf('return []'),
+    'the native command must be persisted before the host receives an empty claim'
+  );
+  assert.doesNotMatch(claimStore.slice(claimStore.indexOf("if(surface==='android_app')")), /return leases/);
+});
+
+test('the server-side Android forwarder checks the exact live lease, current device attestation and owner consent atomically', () => {
+  assert.match(nativeForwarder, /security definer/);
+  assert.match(nativeForwarder, /set search_path=''/);
+  assert.match(nativeForwarder, /pg_advisory_xact_lock/);
+  assert.match(nativeForwarder, /v_binding\.wake_enabled is distinct from true/);
+  assert.match(nativeForwarder, /v_binding\.confirmed_at is null/);
+  assert.match(nativeForwarder, /v_native\.provider_conversation_identity_digest is distinct from v_job\.provider_conversation_identity_digest/);
+  assert.match(nativeForwarder, /v_native\.revoked_at is null/);
+  assert.match(nativeForwarder, /v_native\.expires_at>v_now/);
+  assert.match(nativeForwarder, /v_job\.state is distinct from 'leased'/);
+  assert.match(nativeForwarder, /v_job\.lease_owner is distinct from p_host_id/);
+  assert.match(nativeForwarder, /v_job\.lease_token_hash is distinct from[\s\S]*sha256/);
+  assert.match(nativeForwarder, /v_screen\.session_type/);
+  assert.match(nativeForwarder, /v_device\.platform='android'/);
+  assert.match(nativeForwarder, /v_app\.signing_certificate_sha256/);
+  assert.match(nativeForwarder, /'identityFingerprint',v_native\.app_signing_certificate_sha256/);
+  assert.match(nativeForwarder, /'leaseTokenDigest',v_job\.lease_token_hash/);
+  assert.match(nativeForwarder, /v_now\+interval '20 seconds'/);
+  assert.match(nativeForwarder, /on conflict do nothing/);
+  assert.match(nativeForwarder, /leaseTokenDigest/);
+  assert.match(nativeForwarder, /grant execute on function public\.queue_backroom_android_native_wake_command[\s\S]*to service_role/);
+});
+
+test('the generated SQL handoff uses the Android protocol signer field rather than the generic target fingerprint', () => {
+  assert.match(nativeForwarder, /'appId',v_native\.app_package_name/);
+  assert.match(nativeForwarder, /'identityFingerprint',v_native\.app_signing_certificate_sha256/);
+  assert.doesNotMatch(nativeForwarder, /'identityFingerprint',v_job\.target_identity_fingerprint/);
+  for (const field of [
+    'handoffId','jobId','eventId','deviceId','roomId','screenSessionId','hostId','bindingId',
+    'sessionDigest','sessionId','targetId','targetRevision','surface','appId','identityFingerprint',
+    'composerIdentityDigest','sendControlIdentityDigest','providerConversationIdentityDigest',
+    'leaseTokenDigest','prompt','promptDigest','issuedAt','leaseExpiresAt','expiresAt'
+  ]) {
+    assert.ok(nativeForwarder.includes("'" + field + "'"), 'missing Android handoff field: ' + field);
+  }
 });
