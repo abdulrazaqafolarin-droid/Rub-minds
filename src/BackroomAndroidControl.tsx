@@ -136,12 +136,14 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     activeNativeBindingRef.current = '';
     nativeBindingSessionRef.current = '';
     setActiveNativeBindingId('');
-    revokeNativeBinding(
-      oldBindingId,
-      oldBindingSessionId,
-      'Phone target cleared locally; server revocation could not be confirmed.'
-    );
-    if (pendingBindingId && pendingBindingId !== oldBindingId) {
+    if (oldBindingId && oldBindingSessionId === activeSession) {
+      revokeNativeBinding(
+        oldBindingId,
+        oldBindingSessionId,
+        'Phone target cleared locally; server revocation could not be confirmed.'
+      );
+    }
+    if (pendingBindingId && pendingBindingId !== oldBindingId && activeSession) {
       revokeNativeBinding(
         pendingBindingId,
         activeSession,
@@ -188,12 +190,14 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     activeNativeBindingRef.current = '';
     nativeBindingSessionRef.current = '';
     setActiveNativeBindingId('');
-    revokeNativeBinding(
-      oldBindingId,
-      oldBindingSessionId,
-      'Phone target session ended locally; server revocation could not be confirmed.'
-    );
-    if (pendingBindingId && pendingBindingId !== oldBindingId) {
+    if (oldBindingId && oldBindingSessionId === activeSession) {
+      revokeNativeBinding(
+        oldBindingId,
+        oldBindingSessionId,
+        'Phone target session ended locally; server revocation could not be confirmed.'
+      );
+    }
+    if (pendingBindingId && pendingBindingId !== oldBindingId && activeSession) {
       revokeNativeBinding(
         pendingBindingId,
         activeSession,
@@ -278,12 +282,28 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       disposed = true;
       void supabase?.removeChannel(channel);
       const active = sessionRef.current;
+      const oldBindingId = activeNativeBindingRef.current;
+      const pendingBindingId = pendingNativeBindingRequestRef.current
+        ? selectedNativeBindingIdRef.current : '';
+      const bindingIdToRevoke = oldBindingId || pendingBindingId;
+      const bindingSessionIdToRevoke = nativeBindingSessionRef.current || active;
+      if (bindingIdToRevoke && bindingSessionIdToRevoke) {
+        void revokeAndroidNativeBinding({
+          deviceId: device.device_id, roomId,
+          sessionId: bindingSessionIdToRevoke, bindingId: bindingIdToRevoke,
+        }).catch(() => undefined);
+      }
       if (active) {
         void supabase?.functions.invoke('backroom-device', {
           body: { action: 'android/command', deviceId: device.device_id, roomId, requestId: uuid(),
             issuedAt: Date.now(), sessionId: active, command: 'stop_session', appPackageName: appPackage },
         });
       }
+      if (nativeBindingTimerRef.current !== null) window.clearTimeout(nativeBindingTimerRef.current);
+      nativeBindingTimerRef.current = null;
+      pendingNativeBindingRequestRef.current = '';
+      activeNativeBindingRef.current = '';
+      nativeBindingSessionRef.current = '';
       // Avoid React state writes from an unmount cleanup.
       if (controlExpiryRef.current !== null) window.clearTimeout(controlExpiryRef.current);
       if (startTimerRef.current !== null) window.clearTimeout(startTimerRef.current);
