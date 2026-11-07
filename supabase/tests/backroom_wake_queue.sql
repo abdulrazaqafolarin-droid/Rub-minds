@@ -738,6 +738,28 @@ begin
   where c.device_id=v_native_device and c.command->>'action'='native_wake_trigger'
     and c.command->'nativeWakeHandoff'->>'jobId'=v_forward_stale_claim.out_job_id::text;
   if not found then raise exception 'Stale signer test command missing'; end if;
+  -- A rejected outbox row is not a successful idempotent forward. The same
+  -- still-live group lease must not be told "already queued" when no command
+  -- remains eligible for phone delivery.
+  update public.backroom_android_commands
+  set status='rejected',result='test_rejected'
+  where device_id=v_native_device
+    and command->>'action'='native_wake_trigger'
+    and command->'nativeWakeHandoff'->>'jobId'=v_forward_stale_claim.out_job_id::text;
+  v_rejected:=false;
+  v_error_message:=null;
+  begin
+    perform public.queue_backroom_android_native_wake_command(
+      v_forward_stale_claim.out_job_id,v_host_test,repeat('5',64),v_binding_native_draft,
+      v_forward_stale_claim.out_lease_token
+    );
+  exception when others then
+    get stacked diagnostics v_error_message = message_text;
+    v_rejected := v_error_message = 'Android native wake command idempotency conflict';
+  end;
+  if not v_rejected then
+    raise exception 'A rejected Android command must not be reported as already queued';
+  end if;
   v_forward_stale_result:=jsonb_build_object(
     'version',1,'kind','native_wake_result',
     'handoffId',v_forward_command->'nativeWakeHandoff'->>'handoffId',
