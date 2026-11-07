@@ -541,10 +541,9 @@ test('durable ACK outbox is bounded, exact-payload scoped and never stores the d
 
 test('native device ACK stores the exact receipt before settlement and survives command lease expiry', () => {
   const ack = method(deviceEdge, "if (action === 'android/ack')", "if (action === 'desktop/inventory')");
-  const nativeBranch = ack.slice(
-    ack.indexOf('if (isNativeWakeCommand) {'),
-    ack.indexOf("if (row.status !== 'leased'", ack.indexOf('if (isNativeWakeCommand) {'))
-  );
+  const nativeReceiptStart = ack.indexOf('// Persist the exact native receipt before settlement or Realtime.');
+  const nativeReceiptEnd = ack.indexOf("if (row.status !== 'leased'", nativeReceiptStart);
+  const nativeBranch = ack.slice(nativeReceiptStart, nativeReceiptEnd);
   assert.match(ack, /created_at,result,result_payload/);
   assert.match(nativeBranch, /\['leased','expired'\]/);
   assert.match(nativeBranch, /24 \* 60 \* 60 \* 1000/);
