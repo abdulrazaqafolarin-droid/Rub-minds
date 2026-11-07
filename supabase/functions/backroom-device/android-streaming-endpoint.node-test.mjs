@@ -406,6 +406,11 @@ test("Android native binding challenge remains owner-authenticated and device co
   assert.match(revoke, /const userId = await owner\(req\)/);
   assert.match(revoke, /backroom_android_native_bindings/);
   assert.match(revoke, /backroom_android_native_binding_challenges/);
+  assert.match(revoke, /\.eq\('binding_id', input\.bindingId\)\.eq\('owner_id', userId\)/);
+  assert.match(revoke, /\.eq\('device_id', input\.deviceId\)\.eq\('room_id', input\.roomId\)/);
+  assert.match(revoke, /\.eq\('screen_session_id', input\.sessionId\)/);
+  assert.match(revoke, /\.is\('consumed_at', null\)\.is\('revoked_at', null\)/);
+  assert.match(revoke, /revokedChallenges\.length > 0/);
 });
 
 test("native Android identity proof travels from Accessibility directly to the device bearer endpoint, not through browser data", async () => {
