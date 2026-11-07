@@ -68,6 +68,21 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     setMessage(text); setMessageError(error);
   }, []);
 
+  const revokeNativeBinding = useCallback((
+    bindingId: string,
+    screenSessionId: string,
+    failureMessage: string
+  ) => {
+    if (!bindingId || !screenSessionId) return;
+    void revokeAndroidNativeBinding({
+      deviceId: device.device_id,
+      roomId,
+      sessionId: screenSessionId,
+      bindingId,
+    }).catch(() => setNativeBindingStatus(failureMessage));
+  }, [device.device_id, roomId]);
+
+
   useEffect(() => {
     let cancelled = false;
     if (!roomId || !sessionId) {
@@ -116,13 +131,22 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     setProviderConversationIdentityAvailable(false);
     const oldBindingId = activeNativeBindingRef.current;
     const oldBindingSessionId = nativeBindingSessionRef.current;
+    const pendingBindingId = pendingNativeBindingRequestRef.current
+      ? selectedNativeBindingIdRef.current : '';
     activeNativeBindingRef.current = '';
     nativeBindingSessionRef.current = '';
     setActiveNativeBindingId('');
-    if (oldBindingId && oldBindingSessionId) {
-      void revokeAndroidNativeBinding({
-        deviceId: device.device_id, roomId, sessionId: oldBindingSessionId, bindingId: oldBindingId,
-      }).catch(() => setNativeBindingStatus('Phone target cleared locally; server revocation will be rechecked before any future wake.'));
+    revokeNativeBinding(
+      oldBindingId,
+      oldBindingSessionId,
+      'Phone target cleared locally; server revocation could not be confirmed.'
+    );
+    if (pendingBindingId && pendingBindingId !== oldBindingId) {
+      revokeNativeBinding(
+        pendingBindingId,
+        activeSession,
+        'Pending phone binding was cancelled locally; server challenge revocation could not be confirmed.'
+      );
     }
     if (nativeBindingTimerRef.current !== null) window.clearTimeout(nativeBindingTimerRef.current);
     nativeBindingTimerRef.current = null;
@@ -132,7 +156,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     setSendControlStatus('No native Send control verified.');
     setSelectionPreview(null);
     setSelectionMode(false);
-  }, [appPackage, device.device_id, roomId]);
+  }, [appPackage, activeNativeBindingId, device.device_id, roomId, revokeNativeBinding]);
 
 
   const disposePeer = useCallback(() => {
@@ -156,9 +180,34 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     pendingRemoteTextAcksRef.current.clear();
     for (const timer of pendingComposerSelectionAcksRef.current.values()) window.clearTimeout(timer);
     pendingComposerSelectionAcksRef.current.clear();
+    const activeSession = sessionRef.current;
+    const oldBindingId = activeNativeBindingRef.current;
+    const oldBindingSessionId = nativeBindingSessionRef.current;
+    const pendingBindingId = pendingNativeBindingRequestRef.current
+      ? selectedNativeBindingIdRef.current : '';
+    activeNativeBindingRef.current = '';
+    nativeBindingSessionRef.current = '';
+    setActiveNativeBindingId('');
+    revokeNativeBinding(
+      oldBindingId,
+      oldBindingSessionId,
+      'Phone target session ended locally; server revocation could not be confirmed.'
+    );
+    if (pendingBindingId && pendingBindingId !== oldBindingId) {
+      revokeNativeBinding(
+        pendingBindingId,
+        activeSession,
+        'Pending phone binding was cancelled; server challenge revocation could not be confirmed.'
+      );
+    }
+    if (nativeBindingTimerRef.current !== null) window.clearTimeout(nativeBindingTimerRef.current);
+    nativeBindingTimerRef.current = null;
+    pendingNativeBindingRequestRef.current = '';
+    setNativeBindingBusy(false);
+    setNativeBindingStatus('No group AI linked to this phone composer.');
     composerTargetRef.current = '';
     sendTargetRef.current = '';
-        streamRef.current?.getTracks().forEach(track => track.stop()); streamRef.current = null;
+    streamRef.current?.getTracks().forEach(track => track.stop()); streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
     sessionRef.current = ''; pointerRef.current = null; pendingControlRequestRef.current = '';
     sourceVisibilityRef.current = null;
@@ -744,7 +793,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         !composerTarget || !sendTarget || !viewReady || !sourceVisible || !dataReady) {
       setSendControlVerified(false);
       setProviderConversationIdentityAvailable(false);
-            sendTargetRef.current = '';
+      sendTargetRef.current = ''
       setSendControlStatus('Recheck unavailable: the live phone session or selected target is missing.');
       return;
     }
@@ -760,7 +809,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       setSendControlCheckPending(false);
       setSendControlVerified(false);
       setProviderConversationIdentityAvailable(false);
-            sendTargetRef.current = '';
+      sendTargetRef.current = ''
       setSendControlStatus('Recheck timed out. The Send control is not currently verified; no action was taken.');
       notify('The phone did not confirm the Send-control recheck. The frame remains draft-only.', true);
     }, 8_000);
@@ -782,7 +831,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       setSendControlCheckPending(false);
       setSendControlVerified(false);
       setProviderConversationIdentityAvailable(false);
-            sendTargetRef.current = '';
+      sendTargetRef.current = ''
       setSendControlStatus('The phone data channel rejected the Send-control recheck.');
     }
   };
@@ -808,7 +857,12 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       pendingNativeBindingRequestRef.current = '';
       nativeBindingTimerRef.current = null;
       setNativeBindingBusy(false);
-      setNativeBindingStatus('The phone did not confirm the binding. The challenge has expired; request a new one.');
+      revokeNativeBinding(
+        bindingId,
+        activeSession,
+        'Binding timed out; server-side challenge revocation could not be confirmed.'
+      );
+      setNativeBindingStatus('The phone did not confirm the binding. The request was revoked; create a fresh challenge.');
     }, 30_000);
     try {
       const challenge = await createAndroidNativeBindingChallenge({
@@ -817,7 +871,17 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       });
       if (pendingNativeBindingRequestRef.current !== requestId ||
           sessionRef.current !== activeSession || dataRef.current !== channel ||
-          channel.readyState !== 'open') return;
+          channel.readyState !== 'open') {
+        // The UI may have cleared the target or timed out while the challenge
+        // request was in flight. Revoke after creation as well, so a late
+        // response cannot leave an untracked device-attested mapping.
+        revokeNativeBinding(
+          bindingId,
+          activeSession,
+          'A stale binding challenge may still exist; server-side revocation could not be confirmed.'
+        );
+        return;
+      }
       channel.send(JSON.stringify({
         kind: 'bind_native_group_target',
         requestId,
@@ -832,6 +896,13 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       nativeBindingTimerRef.current = null;
       pendingNativeBindingRequestRef.current = '';
       setNativeBindingBusy(false);
+      // A transport error can occur after the server created the challenge but
+      // before its response reached the browser. Revoke that possible orphan.
+      revokeNativeBinding(
+        bindingId,
+        activeSession,
+        'Challenge creation failed; any server-side challenge could not be confirmed revoked.'
+      );
       setNativeBindingStatus(error instanceof Error
         ? 'Could not create the binding challenge: ' + error.message
         : 'Could not create the binding challenge.');
