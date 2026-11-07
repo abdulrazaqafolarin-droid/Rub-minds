@@ -96,6 +96,19 @@ class ProviderConversationProbeTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Could not delete"):
                 analyse("com.openai.chatgpt", self.a1, self.b, self.a2, delete_inputs=True)
 
+    def test_utf16_dtd_snapshot_is_rejected_and_all_inputs_are_deleted(self) -> None:
+        payload = (
+            '<?xml version="1.0" encoding="UTF-16"?>'
+            '<!DOCTYPE hierarchy [<!ENTITY x "expanded">]>'
+            '<hierarchy><node package="com.openai.chatgpt" /></hierarchy>'
+        )
+        self.b.write_bytes(payload.encode("utf-16"))
+        with self.assertRaisesRegex(ValueError, "UTF-8 XML"):
+            analyse("com.openai.chatgpt", self.a1, self.b, self.a2, delete_inputs=True)
+        self.assertFalse(self.a1.exists())
+        self.assertFalse(self.b.exists())
+        self.assertFalse(self.a2.exists())
+
     def test_non_hierarchy_xml_is_rejected(self) -> None:
         self.a1.write_text("<wrong><node /></wrong>", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "UIAutomator hierarchy"):
