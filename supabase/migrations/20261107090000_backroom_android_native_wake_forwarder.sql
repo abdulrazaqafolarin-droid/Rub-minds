@@ -21,7 +21,7 @@ create or replace function public.queue_backroom_android_native_wake_command(
 )
 returns jsonb
 language plpgsql
-security invoker
+security definer
 set search_path=''
 as $function$
 declare
@@ -302,7 +302,7 @@ begin
     'targetRevision',v_job.target_revision,
     'surface','android_app',
     'appId',v_native.app_package_name,
-    'identityFingerprint',v_job.target_identity_fingerprint,
+    'identityFingerprint',v_native.app_signing_certificate_sha256,
     'composerIdentityDigest',v_native.composer_identity_digest,
     'sendControlIdentityDigest',v_native.send_control_identity_digest,
     'providerConversationIdentityDigest',v_native.provider_conversation_identity_digest,
