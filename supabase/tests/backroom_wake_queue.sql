@@ -787,6 +787,75 @@ begin
     raise exception 'A mismatched installed-app signer must cancel, never acknowledge, the group job';
   end if;
 
+  -- A saved phone receipt can arrive after a command/network outage has
+  -- crossed the original group lease. Preserve it as a terminal failure for
+  -- review, never as a late success and never as a lost/duplicated Send.
+  v_forward_job_stale:=public.enqueue_backroom_wake_job(
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('native-late-ack-job','UTF8')),'hex'),
+    v_owner,v_room,v_participant,v_host_test,'space-native-draft','session-native-draft',repeat('5',64),
+    v_binding_native_draft,'target-native-draft','fingerprint-native-draft',1,'native-late-ack-event',
+    '@RMconnects'||chr(10)||'Event: native-late-ack-event'||chr(10)||
+    'Retrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.',3600
+  );
+  select * into v_forward_stale_claim
+  from public.claim_backroom_wake_jobs_with_provider_identity(
+    v_host_test,repeat('5',64),v_binding_native_draft,5,120
+  ) limit 1;
+  if not found or v_forward_stale_claim.out_job_id::text is distinct from (v_forward_job_stale->>'job_id') then
+    raise exception 'Late ACK test must claim its own Android native group job';
+  end if;
+  select public.queue_backroom_android_native_wake_command(
+    v_forward_stale_claim.out_job_id,v_host_test,repeat('5',64),v_binding_native_draft,
+    v_forward_stale_claim.out_lease_token
+  ) into v_forward_stale_call;
+  if v_forward_stale_call->>'ok' is distinct from 'true' then
+    raise exception 'Late ACK test must queue an exact device command';
+  end if;
+  select c.command into v_forward_command
+  from public.backroom_android_commands c
+  where c.device_id=v_native_device and c.command->>'action'='native_wake_trigger'
+    and c.command->'nativeWakeHandoff'->>'jobId'=v_forward_stale_claim.out_job_id::text;
+  if not found then raise exception 'Late ACK device command is missing'; end if;
+  update public.backroom_wake_jobs
+  set lease_expires_at=pg_catalog.clock_timestamp()-interval '1 second'
+  where id=v_forward_stale_claim.out_job_id;
+  v_forward_result:=jsonb_build_object(
+    'version',1,'kind','native_wake_result',
+    'handoffId',v_forward_command->'nativeWakeHandoff'->>'handoffId',
+    'jobId',v_forward_stale_claim.out_job_id::text,'deviceId',v_native_device::text,
+    'roomId',v_room::text,'screenSessionId',v_native_screen_session_retry::text,
+    'bindingId',v_binding_native_draft::text,'targetId','target-native-draft','targetRevision',1,
+    'state','submitted','promptInserted',true,'sendInvoked',true,'composerCleared',true,
+    'promptReadbackVerified',true,'composerIdentityRevalidated',true,
+    'sendControlIdentityRevalidated',true,'composerIdentityDigest',repeat('c',64),
+    'sendControlIdentityDigest',repeat('d',64),
+    'providerConversationIdentityRevalidated',true,
+    'providerConversationIdentityDigest',v_native_provider_digest
+  );
+  v_forward_stale_settlement:=public.settle_backroom_android_native_wake_result_attested(
+    v_forward_stale_claim.out_job_id,v_host_test,repeat('5',64),v_binding_native_draft,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_forward_stale_claim.out_lease_token,'UTF8')),'hex'),
+    (v_forward_command->'nativeWakeHandoff'->>'handoffId')::uuid,
+    v_native_device,v_native_screen_session_retry,'com.example.notes',repeat('e',64),
+    'target-native-draft',1,repeat('c',64),repeat('d',64),v_native_provider_digest,v_forward_result
+  );
+  if v_forward_stale_settlement is distinct from 'failed'
+    or not exists(select 1 from public.backroom_wake_jobs j
+      where j.id=v_forward_stale_claim.out_job_id and j.state='failed'
+        and j.last_error_code='lease_expired'
+        and j.native_result_payload=v_forward_result) then
+    raise exception 'A late native ACK must be stored as failed review evidence, not acknowledged';
+  end if;
+  if public.settle_backroom_android_native_wake_result_attested(
+    v_forward_stale_claim.out_job_id,v_host_test,repeat('5',64),v_binding_native_draft,
+    pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(v_forward_stale_claim.out_lease_token,'UTF8')),'hex'),
+    (v_forward_command->'nativeWakeHandoff'->>'handoffId')::uuid,
+    v_native_device,v_native_screen_session_retry,'com.example.notes',repeat('e',64),
+    'target-native-draft',1,repeat('c',64),repeat('d',64),v_native_provider_digest,v_forward_result
+  ) is distinct from 'replayed' then
+    raise exception 'The exact late result must remain idempotently replayable';
+  end if;
+
   -- A registered binding cannot silently switch to a different valid provider conversation.
   v_conflict := false;
   begin
