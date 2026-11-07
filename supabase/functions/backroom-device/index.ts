@@ -1064,7 +1064,7 @@ Deno.serve(async req => {
       };
       const settleNativeWakeGroupJob = async () => {
         if (!isNativeWakeCommand || !nativeWakeHandoff || !ack.nativeWakeResult) return null;
-        const { data, error } = await db.rpc('settle_backroom_android_native_wake_result', {
+        const { data, error } = await db.rpc('settle_backroom_android_native_wake_result_attested', {
           p_job_id: nativeWakeHandoff.jobId,
           p_host_id: nativeWakeHandoff.hostId,
           p_session_digest: nativeWakeHandoff.sessionDigest,
@@ -1073,6 +1073,8 @@ Deno.serve(async req => {
           p_handoff_id: nativeWakeHandoff.handoffId,
           p_device_id: current.device_id,
           p_screen_session_id: nativeWakeHandoff.screenSessionId,
+          p_app_package_name: nativeWakeHandoff.appId,
+          p_app_signing_certificate_sha256: nativeWakeHandoff.identityFingerprint,
           p_target_id: nativeWakeHandoff.targetId,
           p_target_revision: nativeWakeHandoff.targetRevision,
           p_composer_identity_digest: nativeWakeHandoff.composerIdentityDigest,
