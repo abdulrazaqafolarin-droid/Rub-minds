@@ -509,9 +509,13 @@ test('native ACK receipt is persisted before HTTP and retried before matching co
   const retry = method(screen, 'private fun retryPendingNativeWakeAcknowledgements(', 'private fun processCommand(');
   const acknowledge = method(screen, 'private fun acknowledgeNativeWake(', 'private fun processCommand(');
   assert.ok(poll.indexOf('retryPendingNativeWakeAcknowledgements(token)') <
+    poll.indexOf('api?.post("android/commands", token, pollFields)'));
+  assert.ok(poll.indexOf('retryPendingNativeWakeAcknowledgements(token)') <
     poll.indexOf('processCommand(token, command)'));
-  assert.match(poll, /pendingNativeAckIds == null/);
-  assert.match(poll, /command\.optString\("commandId"\) in pendingNativeAckIds/);
+  assert.match(poll, /nativeAckCommandIds == null/);
+  assert.match(poll, /command\.optString\("commandId"\) in nativeAckCommandIds/);
+  assert.match(retry, /attemptedCommandIds = pending\.map \{ it\.commandId \}/);
+  assert.match(retry, /attemptedCommandIds \+= remaining\.map \{ it\.commandId \}/);
   assert.ok(acknowledge.indexOf('savePendingNativeWakeAcknowledgement(') <
     acknowledge.indexOf('retryPendingNativeWakeAcknowledgements(token)'));
   assert.match(acknowledge, /NativeWakeAckOutboxStage\.FINAL/);
