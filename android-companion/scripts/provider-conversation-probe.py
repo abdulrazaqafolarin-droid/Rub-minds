@@ -66,7 +66,9 @@ def read_snapshot(path: Path, package: str, key: bytes) -> Snapshot:
         if path.stat().st_size > 8_000_000:
             raise ValueError("Accessibility snapshot exceeds the 8 MB local safety limit.")
         raw_xml = path.read_bytes()
-        upper_xml = raw_xml[:4096].upper()
+        if len(raw_xml) > 8_000_000:
+            raise ValueError("Accessibility snapshot exceeds the 8 MB local safety limit.")
+        upper_xml = raw_xml.upper()
         if b"<!DOCTYPE" in upper_xml or b"<!ENTITY" in upper_xml:
             raise ValueError("DTD/entity declarations are not accepted in accessibility snapshots.")
         root = ET.fromstring(raw_xml)
