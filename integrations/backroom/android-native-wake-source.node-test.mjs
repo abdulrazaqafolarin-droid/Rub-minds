@@ -90,7 +90,7 @@ test('native_wake_trigger is dispatched only by the device queue, separately fro
   assert.match(nativeDispatch, /activeRoomId != roomId/);
   assert.match(nativeDispatch, /activeAppPackage != appPackage/);
   assert.match(nativeDispatch, /currentForegroundPackage\(\) != appPackage/);
-  assert.match(nativeDispatch, /AndroidNativeWakeConsentStore\(this\)\.activeGrant/);
+  assert.match(nativeDispatch, /ackStore\.activeGrant/);
   assert.match(nativeDispatch, /AndroidTouchAccessibilityService\.submitCanonicalWake/);
   assert.doesNotMatch(nativeDispatch, /remote_text|insertRemoteText/);
 });
@@ -109,8 +109,8 @@ test('a replayed local one-shot seal cannot be reported as a retryable preflight
 test('native wake ACK uses normalized reasons and successful identity evidence only', () => {
   const acknowledge = method(
     screen,
-    'private fun acknowledgeNativeWake(',
-    '    private fun processCommand('
+    'private fun createNativeWakeAckPayload(',
+    '    private fun acknowledgeNativeWake('
   );
   assert.match(acknowledge, /safeNativeWakeReason\(result\.reason\)/);
   assert.match(acknowledge, /if \(state == "submitted"\)/);
@@ -301,7 +301,7 @@ test('native wake fails closed without provider conversation identity and carrie
   assert.match(service, /fun isBoundToProviderConversation\([\s\S]*?instance\?\.isBoundToProviderConversation\(/);
   assert.match(screen, /provider_conversation_identity_unavailable/);
   assert.match(screen, /provider_conversation.*conversation_scope_unavailable/);
-  const ack = method(screen, '    private fun acknowledgeNativeWake(', '    private fun processCommand(');
+  const ack = method(screen, '    private fun createNativeWakeAckPayload(', '    private fun acknowledgeNativeWake(');
   assert.match(ack, /providerConversationIdentityRevalidated/);
   assert.match(ack, /providerConversationDigest != handoff\.providerConversationIdentityDigest/);
   assert.match(ack, /providerConversationIdentityDigest/);
