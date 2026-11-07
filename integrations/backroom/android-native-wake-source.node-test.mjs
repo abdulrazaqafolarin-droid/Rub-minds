@@ -461,3 +461,9 @@ test('device-attested registration uses a service-role-only definer wrapper inst
   assert.match(nativeForwarder, /register_backroom_android_native_binding_impl[\s\S]*from public,anon,authenticated,service_role/);
   assert.doesNotMatch(nativeForwarder, /grant update on table public\.backroom_device_room_bindings/);
 });
+
+
+test('Android candidate display names sanitize Unicode control characters with valid regex ranges', () => {
+  assert.ok(deviceEdge.includes(String.raw`participant.display_name.replace(/[\u0000-\u001f\u007f-\u009f]/g`));
+  assert.ok(!deviceEdge.includes(String.raw`participant.display_name.replace(/[\\u0000`));
+});
