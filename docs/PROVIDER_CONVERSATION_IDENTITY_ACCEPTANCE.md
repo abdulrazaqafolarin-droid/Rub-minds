@@ -4,7 +4,7 @@
 
 This is a **read-only investigation** for ChatGPT and Claude on Android. Do not enable native wake, invoke Send, or use a real private conversation. Use two disposable test conversations with harmless titles and no personal data. The probe only compares accessibility-tree snapshots; it does not interact with either provider.
 
-The current resolver registry is intentionally empty. Both official Android packages must remain draft-only until a provider-specific adapter is proven against a physical device. A successful probe result is only a candidate signal; it is not approval to register an adapter or enable native sending.
+The current resolver registry is intentionally empty. Both official Android packages must remain draft-only until a provider-specific adapter is proven against a physical device. This tool only compares repeatable accessibility header signals; it does **not** extract or prove a provider-owned conversation ID. Its report always states stable_provider_conversation_id_exposed=false. A positive heuristic result is only a lead for manual investigation, not approval to register an adapter or enable native sending.
 
 ## Capture A → B → A
 
@@ -23,7 +23,7 @@ For each provider separately:
    Claude:
    `python android-companion/scripts/provider-conversation-probe.py --package com.anthropic.claude --delete-inputs chat-a1.xml chat-b.xml chat-a2.xml`
 
-The --delete-inputs option removes the local XML captures after analysis. The probe also uses a fresh random HMAC key in memory for each run, prints no raw text or accessibility labels, and does not upload data. Keep the XML captures local and use only disposable test chats.
+The --delete-inputs option removes all three local XML captures even when analysis fails. The probe rejects non-UIAutomator XML, DTD/entity declarations and files over 8 MB. The probe also uses a fresh random HMAC key in memory for each run, prints no raw text or accessibility labels, and does not upload data. Keep the XML captures local and use only disposable test chats.
 
 ## What the report means
 
