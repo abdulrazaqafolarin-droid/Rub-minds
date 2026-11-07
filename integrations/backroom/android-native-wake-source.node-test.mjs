@@ -12,6 +12,8 @@ const bindingPolicy = await read('../../android-companion/app/src/main/java/app/
 const bindingPolicyTest = await read('../../android-companion/app/src/test/java/app/rubminds/companion/NativeWakeBindingPolicyTest.kt');
 const wakeGateway = await read('../../supabase/functions/backroom-wake/index.ts');
 const nativeForwarder = await read('../../supabase/migrations/20261107090000_backroom_android_native_wake_forwarder.sql');
+const deviceEdge = await read('../../supabase/functions/backroom-device/index.ts');
+const attestedSettlement = await read('../../supabase/migrations/20261107110000_backroom_android_native_wake_attested_settlement.sql');
 const providerConversation = await read('../../android-companion/app/src/main/java/app/rubminds/companion/ProviderConversationIdentity.kt');
 const providerConversationTest = await read('../../android-companion/app/src/test/java/app/rubminds/companion/ProviderConversationIdentityPolicyTest.kt');
 const consent = await read('../../android-companion/app/src/main/java/app/rubminds/companion/NativeWakeConsentPolicy.kt');
@@ -413,4 +415,40 @@ test('the generated SQL handoff uses the Android protocol signer field rather th
   ]) {
     assert.ok(nativeForwarder.includes("'" + field + "'"), 'missing Android handoff field: ' + field);
   }
+});
+
+
+test('Android device delivery rechecks the current group consent and exact phone attestation before leasing native wake commands', () => {
+  assert.match(deviceEdge, /async function verifyCurrentNativeWakeHandoff/);
+  assert.match(deviceEdge, /\.eq\('wake_enabled', true\)/);
+  assert.match(deviceEdge, /\.gt\('wake_expires_at', now\)/);
+  assert.match(deviceEdge, /\.eq\('app_signing_certificate_sha256', handoff\.identityFingerprint\)/);
+  assert.match(deviceEdge, /\.eq\('composer_identity_digest', handoff\.composerIdentityDigest\)/);
+  assert.match(deviceEdge, /\.eq\('send_control_identity_digest', handoff\.sendControlIdentityDigest\)/);
+  assert.match(deviceEdge, /\.eq\('provider_conversation_identity_digest', handoff\.providerConversationIdentityDigest\)/);
+  assert.equal((deviceEdge.match(/verifyCurrentNativeWakeHandoff\(row, current\.device_id\)/g) ?? []).length, 2);
+  assert.match(deviceEdge, /native_wake_binding_or_consent_revoked/);
+});
+
+test('native ACK settlement is tied to the exact attested app package, signer, screen and identity digests', () => {
+  assert.match(deviceEdge, /settle_backroom_android_native_wake_result_attested/);
+  assert.match(deviceEdge, /p_app_package_name: nativeWakeHandoff\.appId/);
+  assert.match(deviceEdge, /p_app_signing_certificate_sha256: nativeWakeHandoff\.identityFingerprint/);
+  assert.match(attestedSettlement, /v_native_binding_active boolean := false/);
+  assert.match(attestedSettlement, /n\.app_package_name=p_app_package_name/);
+  assert.match(attestedSettlement, /n\.app_signing_certificate_sha256=p_app_signing_certificate_sha256/);
+  assert.match(attestedSettlement, /n\.screen_session_id=p_screen_session_id/);
+  assert.match(attestedSettlement, /n\.composer_identity_digest=p_composer_identity_digest/);
+  assert.match(attestedSettlement, /n\.send_control_identity_digest=p_send_control_identity_digest/);
+  assert.match(attestedSettlement, /n\.provider_conversation_identity_digest=p_provider_conversation_identity_digest/);
+  assert.match(attestedSettlement, /for update/);
+  assert.match(attestedSettlement, /and v_native_binding_active/);
+  assert.match(attestedSettlement, /from public,anon,authenticated,service_role/);
+});
+
+test('device-attested registration uses a service-role-only definer wrapper instead of broad table write grants', () => {
+  assert.match(nativeForwarder, /alter function public\.register_backroom_android_native_binding\([\s\S]*rename to register_backroom_android_native_binding_impl/);
+  assert.match(nativeForwarder, /create function public\.register_backroom_android_native_binding\([\s\S]*security definer/);
+  assert.match(nativeForwarder, /register_backroom_android_native_binding_impl[\s\S]*from public,anon,authenticated,service_role/);
+  assert.doesNotMatch(nativeForwarder, /grant update on table public\.backroom_device_room_bindings/);
 });
