@@ -926,7 +926,7 @@ Deno.serve(async req => {
               continue;
             }
             const nativeScope = await verifyCurrentNativeWakeHandoff(row, current.device_id);
-            if (nativeScope.status === 503) return json(503, fail(nativeScope.reason), origin);
+            if (!nativeScope.ok && nativeScope.status === 503) return json(503, fail(nativeScope.reason), origin);
             if (!nativeScope.ok) {
               await db.from('backroom_android_commands').update({ status: 'rejected', result: nativeScope.reason, lease_until: null })
                 .eq('id', row.id).eq('device_id', current.device_id).eq('status', 'pending');
@@ -974,7 +974,7 @@ Deno.serve(async req => {
               continue;
             }
             const nativeScope = await verifyCurrentNativeWakeHandoff(row, current.device_id);
-            if (nativeScope.status === 503) return json(503, fail(nativeScope.reason), origin);
+            if (!nativeScope.ok && nativeScope.status === 503) return json(503, fail(nativeScope.reason), origin);
             if (!nativeScope.ok) {
               await db.from('backroom_android_commands').update({ status: 'rejected', result: nativeScope.reason, lease_until: null })
                 .eq('id', row.id).eq('device_id', current.device_id).eq('status', 'leased');
