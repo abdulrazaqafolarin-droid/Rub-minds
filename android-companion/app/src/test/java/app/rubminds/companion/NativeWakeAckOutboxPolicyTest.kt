@@ -63,6 +63,15 @@ class NativeWakeAckOutboxPolicyTest {
         )))
     }
 
+    @Test fun targetIdsFollowTheOpaqueProtocolIdentifierContract() {
+        assertTrue(NativeWakeAckOutboxPolicy.isValidTargetId("target-native-draft"))
+        assertTrue(NativeWakeAckOutboxPolicy.isValidTargetId("composer:provider/session"))
+        assertFalse(NativeWakeAckOutboxPolicy.isValidTargetId(""))
+        assertFalse(NativeWakeAckOutboxPolicy.isValidTargetId("   "))
+        assertFalse(NativeWakeAckOutboxPolicy.isValidTargetId("target\u0000native"))
+        assertFalse(NativeWakeAckOutboxPolicy.isValidTargetId("x".repeat(129)))
+    }
+
     @Test fun receiptRemainsPendingUntilTheExactFinalPayloadIsConfirmed() {
         val final = entry(
             payload = """{"result":"native_wake_submitted","nativeWakeResult":{"state":"submitted"}}""",
