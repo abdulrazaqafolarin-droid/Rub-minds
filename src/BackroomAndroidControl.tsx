@@ -333,14 +333,14 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
               : 'phone companion update required';
             setSendControlStatus(sendVerified
               ? conversationIdentityAvailable
-                ? 'One unique Send control and a stable provider-conversation identity were found at selection time. Native wake still requires the trusted queue bridge, local consent and a fresh identity recheck.'
+                ? 'One unique Send control and a stable provider-conversation identity were found. Native wake is still disabled: the server-side phone forwarder is source-only, and local consent plus a fresh identity recheck are required.'
                 : 'One unique Send control was found, but this app has no verified stable conversation identity. Native autonomous wake is unavailable; the control is not permission to send.'
               : 'Send control not verified: ' + sendReason + '.');
             setSelectionPreview(null);
             setSelectionMode(false);
             setRemoteTextStatus(sendVerified
               ? conversationIdentityAvailable
-                ? 'Composer and Send control selected. A provider-conversation identity was detected locally. Focus the exact field before inserting a draft; native wake remains unavailable until the trusted queue bridge and consented execution path are complete.'
+                ? 'Composer and Send control selected. A provider-conversation identity was detected locally. Focus the exact field before inserting a draft; native wake remains disabled until the backend changes are deployed, the phone path is accepted and local consent is granted.'
                 : 'Composer and Send control selected, but this app does not expose a verified stable conversation identity. Native autonomous wake is blocked; manual draft insertion remains available.'
               : 'Composer selected. Tap that exact field on the phone so it is focused, then insert a draft.');
             notify(sendVerified
@@ -406,7 +406,7 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
             nativeBindingSessionRef.current = nextSessionId;
             setActiveNativeBindingId(completedBindingId);
             setNativeBindingStatus(
-              'Phone target linked to the selected group AI. Native autonomous sending remains disabled until a verified provider resolver and trusted forwarder are available.'
+              'Phone target linked to the selected group AI. Native autonomous sending remains disabled until this app has a verified provider resolver and the source-only backend forwarding/ACK changes are deployed and accepted on a real phone.'
             );
             notify('The Android companion confirmed the group binding using phone-local identity proof. No message was sent.');
           } else {
