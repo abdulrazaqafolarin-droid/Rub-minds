@@ -199,14 +199,16 @@ begin
   -- advance the same durable job and replace its latest result, but it must
   -- not erase the receipt needed to acknowledge a delayed duplicate device ACK.
   if v_job.native_result_payload=p_result_payload then
-    return 'replayed';
+    return case when v_job.state='acknowledged' then 'replayed' else v_job.state end;
   end if;
   select receipt.value into v_prior_receipt
   from pg_catalog.jsonb_array_elements(v_job.native_result_receipts) as receipt(value)
   where receipt.value->>'handoffId'=p_handoff_id::text
   limit 1;
   if found then
-    if v_prior_receipt=p_result_payload then return 'replayed'; end if;
+    if v_prior_receipt=p_result_payload then
+      return case when v_job.state='acknowledged' then 'replayed' else v_job.state end;
+    end if;
     raise exception 'Conflicting native wake result for a previously settled handoff';
   end if;
 
