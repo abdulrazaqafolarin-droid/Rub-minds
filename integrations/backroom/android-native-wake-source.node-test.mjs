@@ -528,6 +528,8 @@ test('durable ACK outbox is bounded, exact-payload scoped and never stores the d
   assert.match(store, /KEY_PENDING_NATIVE_WAKE_ACKS/);
   assert.match(store, /\.commit\(\)/);
   assert.match(store, /isValidNativeWakeAckPayload/);
+  assert.match(ackOutboxPolicy, /fun isValidTargetId\(targetId: String\)/);
+  assert.match(store, /NativeWakeAckOutboxPolicy\.isValidTargetId\(evidence\.optString\("targetId"\)\)/);
   assert.match(store, /evidence\.optString\("reason"\) == "outcome_unknown"/);
   assert.doesNotMatch(
     method(store, 'fun savePendingNativeWakeAcknowledgement(', 'fun pendingNativeWakeAcknowledgements('),
