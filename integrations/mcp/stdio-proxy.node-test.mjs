@@ -85,6 +85,10 @@ test("tool discovery and calls are forwarded without mutating the existing MCP c
     arguments: inviteArgs,
     _meta: {
       "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientInfo": {
+        name: "rub-minds-terminal-mcp-bridge",
+        version: "0.1.0",
+      },
       "io.modelcontextprotocol/clientCapabilities": {},
     },
   });
