@@ -10,7 +10,6 @@
  */
 const SURFACES = new Set(["android_app", "desktop_app", "windows_app", "terminal"]);
 const AI_KINDS = new Set(["original_session", "model", "external_agent"]);
-const HEX_256 = /^[a-f0-9]{64}$/i;
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -112,10 +111,7 @@ export function classifyFrameAiSession(input, { now = Date.now() } = {}) {
   const runtimeIdentityVerified = terminal
     ? runtime.processIdentityVerified === true &&
       binding.processIdentityFingerprint === runtime.identityFingerprint
-    : runtime.providerConversationIdentityVerified === true &&
-      HEX_256.test(runtime.providerConversationIdentityDigest || "") &&
-      HEX_256.test(binding.providerConversationIdentityDigest || "") &&
-      runtime.providerConversationIdentityDigest === binding.providerConversationIdentityDigest;
+    : runtime.providerConversationBindingAttested === true;
 
   if (!runtimeIdentityVerified) {
     return output("bound_draft_only", terminal
