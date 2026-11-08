@@ -195,6 +195,16 @@ test("AI task claiming requires an explicit human assignment before work begins"
 });
 
 test("official MCP SDK integration exercises the human-governed task lifecycle end to end", () => {
+  console.log("SAFE_SDK_TASK_LIFECYCLE_CONTRACT", JSON.stringify({
+    propose: sdkTaskE2e.includes("propose_group_task"),
+    assign: sdkTaskE2e.includes("assign_room_task"),
+    claim: sdkTaskE2e.includes("claim_group_task"),
+    submit: sdkTaskE2e.includes("submit_group_task_result"),
+    review: sdkTaskE2e.includes("review_room_task"),
+    lifecycle: sdkTaskE2e.includes("human-governed task lifecycle"),
+    unassignedProposal: sdkTaskE2e.includes("unassigned proposal"),
+    wrongAssigneeDenied: sdkTaskE2e.includes("different AI must not claim work assigned to AI one")
+  }));
   assert.match(sdkTaskE2e, /propose_group_task/);
   assert.match(sdkTaskE2e, /assign_room_task/);
   assert.match(sdkTaskE2e, /claim_group_task/);
