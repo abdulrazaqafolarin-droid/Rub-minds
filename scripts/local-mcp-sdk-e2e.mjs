@@ -79,6 +79,42 @@ const rooms = await request("/rest/v1/rooms", {
 });
 assert.equal(rooms.length, 1);
 const room = rooms[0];
+
+const publicKey = process.env.LOCAL_SUPABASE_ANON_KEY;
+assert.ok(publicKey, "local anon key is required for authenticated Backroom frame API tests");
+const ownerPassword = "Local-CI-Official-MCP-Owner-923!x";
+const ownerLoginResponse = await fetch(apiUrl + "/auth/v1/token?grant_type=password", {
+  method: "POST", headers: { apikey: publicKey, "Content-Type": "application/json" },
+  body: JSON.stringify({ email: "rub-minds-official-mcp-owner@example.test", password: ownerPassword }),
+});
+const ownerLogin = await ownerLoginResponse.json();
+assert.equal(ownerLoginResponse.status, 200, "room owner sign-in failed");
+assert.ok(ownerLogin.access_token);
+const ownerHeaders = { apikey: publicKey, Authorization: "Bearer " + ownerLogin.access_token, "Content-Type": "application/json" };
+async function ownerRequest(path, init = {}) {
+  const response = await fetch(apiUrl + path, { ...init, headers: { ...ownerHeaders, ...(init.headers || {}) } });
+  const payload = await response.json().catch(() => null);
+  assert.ok(response.ok, "owner request failed " + path + " (" + response.status + "): " + JSON.stringify(payload));
+  return payload;
+}
+async function backroomEdge(action, fields, accessToken = ownerLogin.access_token) {
+  const response = await fetch(apiUrl + "/functions/v1/backroom-device", {
+    method: "POST",
+    headers: { apikey: publicKey, ...(accessToken ? { Authorization: "Bearer " + accessToken } : {}), "Content-Type": "application/json" },
+    body: JSON.stringify({ action, ...fields }),
+  });
+  return { status: response.status, body: await response.json().catch(() => null) };
+}
+const nonMemberEmail = "rub-minds-official-mcp-outsider@example.test";
+const nonMemberPassword = "Local-CI-Official-MCP-Outsider-923!x";
+await request("/auth/v1/admin/users", { method: "POST", body: JSON.stringify({ email: nonMemberEmail, password: nonMemberPassword, email_confirm: true }) });
+const nonMemberLoginResponse = await fetch(apiUrl + "/auth/v1/token?grant_type=password", {
+  method: "POST", headers: { apikey: publicKey, "Content-Type": "application/json" },
+  body: JSON.stringify({ email: nonMemberEmail, password: nonMemberPassword }),
+});
+const nonMemberLogin = await nonMemberLoginResponse.json();
+assert.equal(nonMemberLoginResponse.status, 200, "outsider sign-in failed");
+assert.ok(nonMemberLogin.access_token);
 const inviteToken = "e".repeat(64);
 const tokenHash = createHash("sha256").update(inviteToken, "utf8").digest("hex");
 await request("/rest/v1/room_invites", {
@@ -228,9 +264,12 @@ try {
   // The challenge is scoped to one exact AI participant AND its MCP session digest.
   const frameDeviceId = randomUUID();
   const frameRuntimeId = randomUUID();
+  const frameRuntimeTwoId = randomUUID();
   const frameChallengeId = randomUUID();
   const frameAppId = randomUUID();
+  const frameAppTwoId = randomUUID();
   const frameAppFingerprint = createHash("sha256").update("rub-minds-ci-frame-app-fingerprint").digest("hex");
+  const frameAppFingerprintTwo = createHash("sha256").update("rub-minds-ci-frame-app-fingerprint-two").digest("hex");
   const frameNonce = createHash("sha256").update("rub-minds-ci-frame-one-time-nonce").digest("hex");
   const frameSessionDigest = createHash("sha256").update(one.session_handle, "utf8").digest("hex");
 
@@ -274,30 +313,30 @@ try {
       target_app_fingerprint: frameAppFingerprint,
     }),
   });
-  await request("/rest/v1/backroom_device_frame_binding_challenges", {
-    method: "POST",
-    body: JSON.stringify({
-      id: frameChallengeId,
-      requested_by: owner.id,
-      target_participant_id: one.participant_id,
-      target_session_digest: frameSessionDigest,
-      room_id: room.id,
-      device_id: frameDeviceId,
-      runtime_session_id: frameRuntimeId,
-      surface: "desktop_app",
-      target_app_id: frameAppId,
-      target_app_fingerprint: frameAppFingerprint,
-      nonce_digest: createHash("sha256").update(frameNonce, "utf8").digest("hex"),
-      expires_at: new Date(Date.now() + 90 * 1000).toISOString(),
-    }),
-  });
+  const frameRequest = {
+    deviceId: frameDeviceId, roomId: room.id, requestId: randomUUID(),
+    issuedAt: Date.now(), runtimeSessionId: frameRuntimeId,
+    participantId: one.participant_id, surface: "desktop_app",
+  };
+  const noAuthChallenge = await backroomEdge("device-frame/binding-challenge", frameRequest, null);
+  assert.equal(noAuthChallenge.status, 401, "frame challenge requires authentication");
+  const outsiderChallenge = await backroomEdge("device-frame/binding-challenge", frameRequest, nonMemberLogin.access_token);
+  assert.equal(outsiderChallenge.status, 403, "non-member cannot issue a frame challenge");
+  const candidates = await backroomEdge("device-frame/ai-candidates", { roomId: room.id });
+  assert.equal(candidates.status, 200);
+  assert.ok(candidates.body.candidates.some(row => row.participantId === one.participant_id));
+  const ownerChallenge = await backroomEdge("device-frame/binding-challenge", frameRequest);
+  assert.equal(ownerChallenge.status, 201, "owner challenge failed: " + JSON.stringify(ownerChallenge.body));
+  assert.equal(ownerChallenge.body.participantId, one.participant_id);
+  const frameChallengeIdFromOwner = ownerChallenge.body.challengeId;
+  const frameNonceFromOwner = ownerChallenge.body.nonce;
 
   const wrongSessionFrameBind = await second.callTool({
     name: "bind_device_frame",
     arguments: {
       session_handle: two.session_handle,
-      challenge_id: frameChallengeId,
-      nonce: frameNonce,
+      challenge_id: frameChallengeIdFromOwner,
+      nonce: frameNonceFromOwner,
       confirm_bind: true,
     },
   });
@@ -308,8 +347,8 @@ try {
     name: "bind_device_frame",
     arguments: {
       session_handle: one.session_handle,
-      challenge_id: frameChallengeId,
-      nonce: frameNonce,
+      challenge_id: frameChallengeIdFromOwner,
+      nonce: frameNonceFromOwner,
       confirm_bind: true,
     },
   });
@@ -327,8 +366,8 @@ try {
     name: "bind_device_frame",
     arguments: {
       session_handle: one.session_handle,
-      challenge_id: frameChallengeId,
-      nonce: frameNonce,
+      challenge_id: frameChallengeIdFromOwner,
+      nonce: frameNonceFromOwner,
       confirm_bind: true,
     },
   });
@@ -336,13 +375,58 @@ try {
   assert.equal(frameBindRetry.structuredContent?.binding_id, frameBind.structuredContent.binding_id);
   assert.equal(frameBindRetry.structuredContent?.replayed, true);
   const persistedFrameBinding = await request(
-    "/rest/v1/backroom_device_frame_bindings?select=id,participant_id,session_digest,revoked_at&challenge_id=eq." + frameChallengeId,
+    "/rest/v1/backroom_device_frame_bindings?select=id,participant_id,session_digest,revoked_at&challenge_id=eq." + frameChallengeIdFromOwner,
   );
   assert.equal(persistedFrameBinding.length, 1);
   assert.equal(persistedFrameBinding[0].participant_id, one.participant_id);
   assert.equal(persistedFrameBinding[0].session_digest, frameSessionDigest);
   assert.equal(persistedFrameBinding[0].revoked_at, null);
   console.log("Official MCP SDK verified exact-session desktop-frame binding, wrong-session rejection and safe replay.");
+
+  // A second runtime tests owner status/revoke routes while AI one's link remains
+  // active until Leave below, preserving the independent lifecycle assertion.
+  await request("/rest/v1/backroom_desktop_apps", { method: "POST", body: JSON.stringify({
+    device_id: frameDeviceId, app_id: frameAppTwoId, app_label: "Disposable AI app two",
+    executable_sha256: frameAppFingerprintTwo,
+  }) });
+  await request("/rest/v1/backroom_desktop_sessions", { method: "POST", body: JSON.stringify({
+    session_id: frameRuntimeTwoId, device_id: frameDeviceId, room_id: room.id, requested_by: owner.id,
+    session_type: "screen", status: "active", expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    target_app_id: frameAppTwoId, target_app_fingerprint: frameAppFingerprintTwo,
+  }) });
+  const secondFrameRequest = {
+    deviceId: frameDeviceId, roomId: room.id, requestId: randomUUID(),
+    issuedAt: Date.now(), runtimeSessionId: frameRuntimeTwoId,
+    participantId: two.participant_id, surface: "desktop_app",
+  };
+  const secondOwnerChallenge = await backroomEdge("device-frame/binding-challenge", secondFrameRequest);
+  assert.equal(secondOwnerChallenge.status, 201, "owner could not issue second AI frame challenge");
+  const secondFrameBind = await second.callTool({ name: "bind_device_frame", arguments: {
+    session_handle: two.session_handle, challenge_id: secondOwnerChallenge.body.challengeId,
+    nonce: secondOwnerChallenge.body.nonce, confirm_bind: true,
+  } });
+  assert.notEqual(secondFrameBind.isError, true, "second selected AI could not bind");
+  assert.equal(secondFrameBind.structuredContent?.participant_id, two.participant_id);
+  const statusRequest = { deviceId: frameDeviceId, roomId: room.id, runtimeSessionId: frameRuntimeTwoId };
+  const outsiderStatus = await backroomEdge("device-frame/binding-status", statusRequest, nonMemberLogin.access_token);
+  assert.equal(outsiderStatus.status, 403, "non-member cannot read frame status");
+  const ownerStatus = await backroomEdge("device-frame/binding-status", statusRequest);
+  assert.equal(ownerStatus.status, 200);
+  assert.equal(ownerStatus.body.binding?.participant_id, two.participant_id);
+  const outsiderRevoke = await backroomEdge("device-frame/binding-revoke", {
+    ...statusRequest, bindingId: ownerStatus.body.binding.id,
+  }, nonMemberLogin.access_token);
+  assert.equal(outsiderRevoke.status, 403, "non-member cannot revoke frame binding");
+  const ownerRevoke = await backroomEdge("device-frame/binding-revoke", {
+    ...statusRequest, bindingId: ownerStatus.body.binding.id,
+  });
+  assert.equal(ownerRevoke.status, 200);
+  assert.equal(ownerRevoke.body.revoked, true);
+  const postRevokeStatus = await backroomEdge("device-frame/binding-status", statusRequest);
+  assert.equal(postRevokeStatus.status, 200);
+  assert.equal(postRevokeStatus.body.binding, null);
+  console.log("Owner-only frame challenge/status/revoke routes passed; non-member access denied.");
+
 
 
   // Create a real baseline message and use its exact ID + timestamp as the
@@ -1009,29 +1093,7 @@ try {
 
   // Exercise the complete group-task lifecycle through the hosted MCP tools
   // and human RPCs. Proposals remain unassigned until a signed-in human assigns them.
-  const ownerPassword = "Local-CI-Official-MCP-Owner-923!x";
-  const ownerLoginResponse = await fetch(apiUrl + "/auth/v1/token?grant_type=password", {
-    method: "POST",
-    headers: { apikey: publicKey, "Content-Type": "application/json" },
-    body: JSON.stringify({ email: "rub-minds-official-mcp-owner@example.test", password: ownerPassword }),
-  });
-  const ownerLogin = await ownerLoginResponse.json();
-  assert.equal(ownerLoginResponse.status, 200, "room owner sign-in failed for task approval: " + JSON.stringify(ownerLogin));
-  assert.ok(ownerLogin.access_token, "room owner session has no access token");
-  const ownerHeaders = {
-    apikey: publicKey,
-    Authorization: "Bearer " + ownerLogin.access_token,
-    "Content-Type": "application/json",
-  };
-  async function ownerRequest(path, init = {}) {
-    const response = await fetch(apiUrl + path, {
-      ...init,
-      headers: { ...ownerHeaders, ...(init.headers || {}) },
-    });
-    const payload = await response.json().catch(() => null);
-    assert.ok(response.ok, "owner task RPC failed " + path + " (" + response.status + "): " + JSON.stringify(payload));
-    return payload;
-  }
+  // Reuse the owner-authenticated helper created before the MCP clients.
 
   // A room owner is a human participant; seed one only if room creation did not
   // create it, then require exactly one identity before executing lifecycle RPCs.
