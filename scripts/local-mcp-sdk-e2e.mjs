@@ -79,6 +79,7 @@ const rooms = await request("/rest/v1/rooms", {
 });
 assert.equal(rooms.length, 1);
 const room = rooms[0];
+console.log("SAFE_MCP_E2E_STAGE: owner and disposable room ready");
 
 const publicKey = process.env.LOCAL_SUPABASE_ANON_KEY;
 assert.ok(publicKey, "local anon key is required for authenticated Backroom frame API tests");
@@ -115,6 +116,7 @@ const nonMemberLoginResponse = await fetch(apiUrl + "/auth/v1/token?grant_type=p
 const nonMemberLogin = await nonMemberLoginResponse.json();
 assert.equal(nonMemberLoginResponse.status, 200, "outsider sign-in failed");
 assert.ok(nonMemberLogin.access_token);
+console.log("SAFE_MCP_E2E_STAGE: owner and outsider auth fixtures ready");
 const inviteToken = "e".repeat(64);
 const tokenHash = createHash("sha256").update(inviteToken, "utf8").digest("hex");
 await request("/rest/v1/room_invites", {
@@ -175,6 +177,7 @@ try {
   await Promise.all([first.connect(firstTransport), second.connect(secondTransport)]);
   assert.equal(first.getProtocolEra(), "modern", "official client must negotiate the 2026 MCP protocol");
   assert.equal(second.getProtocolEra(), "modern", "second official client must negotiate the 2026 MCP protocol");
+  console.log("SAFE_MCP_E2E_STAGE: two official SDK clients negotiated modern MCP");
 
   const catalog = await first.listTools();
   const names = catalog.tools.map(tool => tool.name);
@@ -187,6 +190,7 @@ try {
   assert.ok(names.includes("forget_memory"), "official client did not discover forget_memory");
   assert.ok(names.includes("load_original_session_bridge_state"), "official client did not discover bridge-state load");
   assert.ok(names.includes("save_original_session_bridge_state"), "official client did not discover bridge-state save");
+  console.log("SAFE_MCP_E2E_STAGE: MCP tool catalog discovery passed");
 
   for (const entry of rejectedInvites) {
     const rejected = await first.callTool({
@@ -225,7 +229,7 @@ try {
     "/rest/v1/participants?select=id&room_id=eq." + room.id + "&display_name=eq.CI%20no%20consent",
   );
   assert.equal(noConsentParticipants.length, 0, "missing consent must not create a participant");
-  console.log("Official MCP SDK rejected expired, revoked, human-only, and unconfirmed AI invitations.");
+  console.log("SAFE_MCP_E2E_STAGE: negative invitation and consent rejection passed");
 
   const [joinOne, joinTwo] = await Promise.all([
     first.callTool({
@@ -259,6 +263,7 @@ try {
   assert.ok(typeof two?.session_handle === "string" && /^[a-f0-9]{64}$/i.test(two.session_handle));
   assert.notEqual(one.participant_id, two.participant_id, "independent clients must have distinct participants");
   assert.notEqual(one.session_handle, two.session_handle, "independent clients must have distinct session handles");
+  console.log("SAFE_MCP_E2E_STAGE: two independent AI participants joined the same group");
 
   // Create a disposable desktop frame using the existing privileged registration RPC.
   // The challenge is scoped to one exact AI participant AND its MCP session digest.
@@ -379,7 +384,7 @@ try {
   assert.equal(persistedFrameBinding[0].participant_id, one.participant_id);
   assert.equal(persistedFrameBinding[0].session_digest, frameSessionDigest);
   assert.equal(persistedFrameBinding[0].revoked_at, null);
-  console.log("Official MCP SDK verified exact-session desktop-frame binding, wrong-session rejection and safe replay.");
+  console.log("SAFE_MCP_E2E_STAGE: desktop frame exact-session bind, wrong-session denial and retry passed");
 
   // A second runtime tests owner status/revoke routes while AI one's link remains
   // active until Leave below, preserving the independent lifecycle assertion.
@@ -423,7 +428,7 @@ try {
   const postRevokeStatus = await backroomEdge("device-frame/binding-status", statusRequest);
   assert.equal(postRevokeStatus.status, 200);
   assert.equal(postRevokeStatus.body.binding, null);
-  console.log("Owner-only frame challenge/status/revoke routes passed; non-member access denied.");
+  console.log("SAFE_MCP_E2E_STAGE: frame challenge, status and revoke owner boundaries passed");
 
 
 
@@ -495,7 +500,7 @@ try {
     !realtimeRead.structuredContent?.messages?.some(message => message.id === cursorMessage.id || message.body === cursorBody),
     "Realtime wait replayed the exact cursor message",
   );
-  console.log("Official MCP SDK received a new group message through the bounded Supabase Realtime wait without replaying its exact cursor.");
+  console.log("SAFE_MCP_E2E_STAGE: Supabase Realtime wait woke on the new message without cursor replay");
 
   // Exercise real PostgreSQL composite pagination when two messages share
   // the exact same microsecond timestamp. A timestamp-only cursor would skip
@@ -553,7 +558,7 @@ try {
   assert.deepEqual(secondTiePage.structuredContent?.messages?.map(message => message.id), [tieMessageTwoId]);
   assert.equal(secondTiePage.structuredContent?.has_more, false);
   assert.equal(secondTiePage.structuredContent?.next_cursor?.after_message_id, tieMessageTwoId);
-  console.log("Official MCP SDK paged same-timestamp group messages without skipping or replaying either row.");
+  console.log("SAFE_MCP_E2E_STAGE: same-timestamp composite pagination passed");
 
 
   // Two successful AI joins exhaust this invitation's AI quota. A third
@@ -577,7 +582,7 @@ try {
     "/rest/v1/participants?select=id&room_id=eq." + room.id + "&display_name=eq.CI%20quota%20exceeded",
   );
   assert.equal(quotaParticipants.length, 0, "quota rejection must not create a participant");
-  console.log("Official MCP SDK enforced the AI invitation quota without creating an extra participant.");
+  console.log("SAFE_MCP_E2E_STAGE: AI invitation quota enforcement passed");
 
   // Import the original conversation context privately to AI one. AI two must
   // not receive the raw import or participant-private memory.
@@ -799,7 +804,7 @@ try {
   assert.equal(repeatedForget.structuredContent?.forgotten, false, "repeated deletion must be a harmless idempotent no-op");
   assert.equal(repeatedForget.structuredContent?.not_found, true);
   console.log("Official MCP SDK verified recovery-only deletion: participant-scoped, preserves ordinary private notes and group memory, and safe to retry.");
-  console.log("Official MCP SDK private session-context and explicit group-memory isolation passed.");
+  console.log("SAFE_MCP_E2E_STAGE: private session context and explicit group-memory isolation passed");
 
   const sent = await first.callTool({
     name: "send_group_message",
@@ -827,7 +832,7 @@ try {
   );
   assert.equal(matchingMessages.length, 1,
     "repeated AI delivery must persist exactly one group message");
-  console.log("MCP message retry idempotency passed: one source ID, one persisted message.");
+  console.log("SAFE_MCP_E2E_STAGE: message retry idempotency passed");
 
   const read = await second.callTool({
     name: "read_group_messages",
@@ -999,7 +1004,7 @@ try {
     "/rest/v1/messages?select=id&body=eq.CI%20human%20impersonation%20must%20be%20rejected",
   );
   assert.deepEqual(forbiddenRows, [], "rejected sender impersonation must not persist");
-  console.log("Authenticated human and MCP AI exchanged messages in both directions; outsider RLS denied room access.");
+  console.log("SAFE_MCP_E2E_STAGE: human/AI two-way messaging and outsider RLS checks passed");
 
   // Exercise private, revision-checked original-session bridge state through
   // the real hosted MCP handler. Each MCP session receives a distinct row.
@@ -1231,7 +1236,7 @@ try {
   });
   assert.notEqual(submissionRetry.isError, true, "submission retry must remain idempotent after approval");
   assert.equal(submissionRetry.structuredContent?.replayed, true);
-  console.log("Official MCP SDK completed the human-governed task lifecycle: propose → human assign → AI claim → submit → owner approve.");
+  console.log("SAFE_MCP_E2E_STAGE: human-governed group-task lifecycle passed");
 
   // Revoke AI two outside the MCP session while keeping its opaque MCP
   // handle alive. A new invite on that same handle must clear the old private
@@ -1454,7 +1459,7 @@ try {
   assert.equal(connections.length, 3, "both original credentials plus one fresh rejoin credential must be present");
   const firstConnection = connections.find(connection => connection.participant_id === one.participant_id);
   assert.ok(firstConnection?.revoked_at, "leaving must revoke the first AI credential even when join retries race with leave");
-  console.log("Official MCP SDK interoperability passed: discovery, two AI joins, idempotent rebind, credential rotation, shared message relay, and revocation.");
+  console.log("SAFE_MCP_E2E_STAGE: full official MCP SDK collaboration and leave/rejoin lifecycle passed");
 } finally {
   await Promise.allSettled([first.close(), second.close()]);
 }
