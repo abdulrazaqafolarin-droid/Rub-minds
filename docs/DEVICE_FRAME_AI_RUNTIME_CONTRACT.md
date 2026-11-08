@@ -38,6 +38,8 @@ The desired device-frame association must not require a `backroom_hosts` row or 
 - `terminal_connected`: the terminal AI is connected through MCP; it does not gain native composer Send;
 - `native_wake_ready`: exact provider conversation, binding, device consent and group wake grant are all active.
 
+The classifier deliberately does not promise that draft typing is permitted: local control and one-shot draft grants remain separate. Active MCP tools permit bounded polling, not unsolicited push delivery.
+
 This module is **not authorization**. The server must independently enforce participant, MCP session, device approval, runtime session, target/app identity, expiry, revocation and consent before any write or native action.
 
 ## Next backend slice
