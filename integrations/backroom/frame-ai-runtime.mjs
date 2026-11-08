@@ -62,32 +62,41 @@ export function classifyFrameAiSession(input, { now = Date.now() } = {}) {
     return output("ai_not_joined", "active_ai_participant_required");
   }
 
-  if (!isRecord(mcpSession) ||
-      mcpSession.participantId !== participant.participantId ||
-      mcpSession.roomId !== roomId || mcpSession.terminatedAt != null ||
+  if (!isRecord(mcpSession) || mcpSession.terminatedAt != null ||
       !isFuture(mcpSession.expiresAt, now) || !hasText(mcpSession.sessionId)) {
     return output("ai_not_joined", "live_joined_mcp_session_required");
   }
+  if (mcpSession.participantId !== participant.participantId ||
+      mcpSession.roomId !== roomId) {
+    return output("scope_mismatch", "mcp_session_participant_or_room_mismatch");
+  }
 
   const mcpFlags = { canUseGroupTools: true, canPollGroupEventsWhileActive: true };
-  if (!isRecord(device) || device.roomId !== roomId ||
-      device.status !== "active" ||
-      !hasText(device.deviceId)) {
+  if (!isRecord(device) || !hasText(device.deviceId) || device.status !== "active") {
     return output("device_unavailable", "approved_device_in_this_group_required", mcpFlags);
+  }
+  if (device.roomId !== roomId) {
+    return output("scope_mismatch", "device_group_mismatch", mcpFlags);
   }
 
   if (!isRecord(runtime) || runtime.status !== "active" ||
-      runtime.deviceId !== device.deviceId || runtime.roomId !== roomId ||
-      runtime.surface !== surface || !hasText(runtime.sessionId) ||
-      !hasText(runtime.appId) || !hasText(runtime.identityFingerprint)) {
+      !hasText(runtime.sessionId) || !hasText(runtime.appId) ||
+      !hasText(runtime.identityFingerprint)) {
     return output("runtime_unavailable", "exact_live_frame_runtime_required", mcpFlags);
+  }
+  if (runtime.deviceId !== device.deviceId || runtime.roomId !== roomId ||
+      runtime.surface !== surface) {
+    return output("scope_mismatch", "runtime_device_room_or_surface_mismatch", mcpFlags);
   }
 
   if (!isRecord(binding)) {
     return output("ai_joined_unbound", "bind_this_ai_session_to_the_selected_frame_runtime", mcpFlags);
   }
 
-  if (binding.revokedAt != null || binding.roomId !== roomId ||
+  if (binding.revokedAt != null) {
+    return output("binding_revoked", "frame_binding_revoked", mcpFlags);
+  }
+  if (binding.roomId !== roomId ||
       binding.participantId !== participant.participantId ||
       binding.mcpSessionId !== mcpSession.sessionId ||
       binding.deviceId !== device.deviceId ||
@@ -157,6 +166,7 @@ export const FRAME_AI_RUNTIME_STATES = Object.freeze([
   "runtime_unavailable",
   "ai_joined_unbound",
   "scope_mismatch",
+  "binding_revoked",
   "binding_expired",
   "bound_draft_only",
   "bound_manual_only",
