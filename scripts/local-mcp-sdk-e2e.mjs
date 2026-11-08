@@ -1236,7 +1236,7 @@ try {
   });
   assert.notEqual(submissionRetry.isError, true, "submission retry must remain idempotent after approval");
   assert.equal(submissionRetry.structuredContent?.replayed, true);
-  console.log("SAFE_MCP_E2E_STAGE: human-governed group-task lifecycle passed");
+  console.log("SAFE_MCP_E2E_STAGE: human-governed task lifecycle passed");
 
   // Revoke AI two outside the MCP session while keeping its opaque MCP
   // handle alive. A new invite on that same handle must clear the old private
