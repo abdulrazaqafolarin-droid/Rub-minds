@@ -392,12 +392,13 @@ try {
     device_id: frameDeviceId, app_id: frameAppTwoId, app_label: "Disposable AI app two",
     executable_sha256: frameAppFingerprintTwo,
   }) });
+  console.log("SAFE_MCP_E2E_STAGE: second desktop app registered");
   await request("/rest/v1/backroom_desktop_sessions", { method: "POST", body: JSON.stringify({
     session_id: frameRuntimeTwoId, device_id: frameDeviceId, room_id: room.id, requested_by: owner.id,
     session_type: "screen", status: "active", expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
     target_app_id: frameAppTwoId, target_app_fingerprint: frameAppFingerprintTwo,
   }) });
-  console.log("SAFE_MCP_E2E_STAGE: second desktop app and runtime seeded");
+  console.log("SAFE_MCP_E2E_STAGE: second desktop runtime registered");
   const secondFrameRequest = {
     deviceId: frameDeviceId, roomId: room.id, requestId: randomUUID(),
     issuedAt: Date.now(), runtimeSessionId: frameRuntimeTwoId,
