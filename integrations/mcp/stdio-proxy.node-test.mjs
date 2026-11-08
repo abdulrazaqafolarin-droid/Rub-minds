@@ -176,10 +176,17 @@ test("request timeout remains active while the upstream response body is being r
       };
     },
   });
-  const result = await proxy.handle({ jsonrpc: "2.0", id: 99, method: "tools/list" });
-  assert.equal(aborted, true);
-  assert.equal(result.error.code, -32000);
-  assert.match(result.error.message, /Could not reach or read/);
+  // The production timeout is intentionally unref'ed so an idle CLI can exit.
+  // Keep this test process alive while waiting for that timeout to fire.
+  const keepAlive = setInterval(() => {}, 250);
+  try {
+    const result = await proxy.handle({ jsonrpc: "2.0", id: 99, method: "tools/list" });
+    assert.equal(aborted, true);
+    assert.equal(result.error.code, -32000);
+    assert.match(result.error.message, /Could not reach or read/);
+  } finally {
+    clearInterval(keepAlive);
+  }
 });
 
 test("the proxy caps concurrent upstream calls and releases capacity after completion", async () => {
