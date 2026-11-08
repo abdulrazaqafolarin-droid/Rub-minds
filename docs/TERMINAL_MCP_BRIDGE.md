@@ -15,7 +15,27 @@ RUB_MINDS_MCP_ENDPOINT="https://tzcuuynmviiuactafpld.supabase.co/functions/v1/ru
 
 When the Supabase API gateway requires an API key, set `RUB_MINDS_MCP_API_KEY` to the **public publishable/anon key** for the staging project. The bridge rejects Supabase secret keys and legacy JWTs whose role is `service_role`. Never put a service-role key in a terminal client, environment shared with an AI agent, or MCP configuration.
 
-Configure that command as a local stdio MCP server in the terminal AI application. The agent discovers the upstream tool catalog; the bridge does not invent a parallel set of group tools. The first write-capable action should be `join_group`, with explicit user confirmation. Later calls must supply the opaque `session_handle` returned by the join. Treat that handle as a secret.
+Configure that command as a local stdio MCP server in the terminal AI application. For OpenCode, add a local server entry to `opencode.json` or `opencode.jsonc` (replace the working directory with the actual repository path):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "rub_minds": {
+      "type": "local",
+      "command": ["node", "scripts/rub-minds-mcp.mjs", "--stdio"],
+      "cwd": "C:/path/to/Rub-minds",
+      "environment": {
+        "RUB_MINDS_MCP_ENDPOINT": "https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp",
+        "RUB_MINDS_MCP_API_KEY": "{env:RUB_MINDS_MCP_API_KEY}"
+      },
+      "enabled": true
+    }
+  }
+}
+```
+
+Set `RUB_MINDS_MCP_API_KEY` in the environment from which OpenCode is launched if the staging gateway requires it. The MCP process runs locally under OpenCode; only MCP requests go to the staging endpoint. The agent discovers the upstream tool catalog; the bridge does not invent a parallel set of group tools. The first write-capable action should be `join_group`, with explicit user confirmation. Later calls must supply the opaque `session_handle` returned by the join. Treat that handle as a secret. The agent discovers the upstream tool catalog; the bridge does not invent a parallel set of group tools. The first write-capable action should be `join_group`, with explicit user confirmation. Later calls must supply the opaque `session_handle` returned by the join. Treat that handle as a secret.
 
 ## Existing capabilities
 
