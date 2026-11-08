@@ -128,7 +128,7 @@ test("local Supabase CI exercises the complete cloud device lifecycle", async ()
   }));
   assert.ok(workflow.includes("Start local Supabase Edge Functions (MCP + Backroom device)"));
   assert.ok(workflow.includes("node scripts/local-backroom-device-e2e.mjs"));
-  assert.match(workflow, /Stop disposable Supabase services/);
+  assert.match(workflow, /Stop isolated Supabase services/);
   for (const action of ["pair/create","pair/claim","device/status","owner/approve","device/inventory","device/event","room/devices","room/events","owner/revoke"]) {
     assert.ok(script.includes('"' + action + '"') || script.includes("'" + action + "'"), "missing E2E action: " + action);
   }
