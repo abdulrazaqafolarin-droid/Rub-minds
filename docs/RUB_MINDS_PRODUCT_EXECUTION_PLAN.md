@@ -34,19 +34,19 @@ There is one source of truth for membership, messages, memory, tasks and permiss
 
 The repository contains an Android companion app and Android-side policy/tests. It supports device pairing, selected-app inventory, device credentials, screen-sharing setup, Accessibility-based local target inspection and permission-gated control paths.
 
-**Not yet proven:** a completed host-independent association between an already-joined AI MCP session and an exact phone app frame; real ChatGPT/Claude consumer-app joining through supported client tooling; provider-stable conversation identity; physical device acceptance for the full flow. The provider resolver is documented as empty in the current provider-identity draft, so autonomous native Send must remain unavailable until it is implemented and physically verified.
+**Implemented on the PR #69 development branch, not yet physically accepted:** the Android frame can now be attached to an already-joined MCP participant through an owner-issued one-time challenge tied to the exact MCP session, selected Android package and signing-certificate fingerprint. This is group-collaboration identity, not proof of the provider's exact conversation; that provider identity is a separate native-wake gate. Real ChatGPT/Claude mobile-client connector support, provider-stable conversation identity and full physical acceptance remain unproven. The provider resolver remains empty, so autonomous native Send is unavailable.
 
 ### Desktop
 
 The repository contains a Tauri/Rust desktop companion, Windows/macOS/Linux device-registration/runtime foundations, app inventory, screen/terminal session handling and permission-gated commands.
 
-**Not yet proven:** full native builds and physical acceptance on each target operating system. The host-independent AI-session/frame backend is in the PR #69 development branch, but the desktop OS picker currently proves a whole-monitor capture rather than a particular native app window; selected desktop app identity is owner-confirmed context, not window/process attestation.
+**Implemented on the PR #69 development branch, not yet physically accepted:** the desktop app and terminal runtimes use the same owner-issued challenge and exact MCP-session binding route. The desktop OS picker proves a whole-monitor capture, not a particular native app window; selected desktop app identity is owner-confirmed context, not window/process attestation. Terminal linkage identifies the live Backroom PTY session, not a separately attested AI process. Full native builds and physical acceptance on each OS remain outstanding.
 
 ### Terminal
 
 A Rub Minds MCP stdio bridge exists in the terminal draft branch. It is designed to expose the existing hosted group's invitation, messaging, memory and task tools to an MCP-compatible terminal AI. It does not create a new participant backend or require an always-on local browser host.
 
-**Not yet proven:** clean runner execution and a real terminal AI-client acceptance test against the intended staging service.
+**Implemented but not yet accepted:** the MCP tool can bind the exact joined terminal AI session to the active PTY runtime using the shared one-time challenge. The official SDK E2E now covers the binding protocol on a disposable database, but a real OpenCode/Claude Code client and physical desktop terminal acceptance remain outstanding.
 
 ### Group collaboration and AI access
 
@@ -129,7 +129,7 @@ Do not weaken the legacy host-scoped wake queue to make the hostless group-bindi
 - Production is separate from the current development branches. Do not deploy or mutate production during this work.
 - PR **#66** (provider-conversation identity/native wake) is open and draft.
 - PR **#68** (terminal MCP bridge) is open and draft; its base is PR #66's branch.
-- PR **#69** (Device Frame AI session classification contract) is open and draft; its base is PR #68's branch.
+- The current dependency stack is therefore **#66 → #68 → #69**. Review dependency and changed-file scope before changing that relationship; do not merge out of order.
 - The current dependency stack is therefore **#66 → #68 → #69**. Review dependency and changed-file scope before changing that relationship; do not merge out of order.
 - The latest observed PR #69 Actions run (run `42473274802`) completed with failed jobs whose `steps` values were null and whose logs were unavailable. This is **not a CI pass** and does not identify a source-level test failure.
 - PR #69 describes a focused 12/12 policy test run in an isolated Node harness. That is not a complete repository test/build, a Supabase migration replay or real device/provider acceptance.
@@ -152,6 +152,6 @@ Do not weaken the legacy host-scoped wake queue to make the hostless group-bindi
 
 ## 8. Immediate next task
 
-Continue Stage A by completing the **host-independent AI-session-to-device-frame association** already committed in PR #69. Execute the local Supabase migration reset, expanded SQL functional test and official MCP SDK bind/replay/Leave-revocation test; correct any migration/trigger failures. Then add local Backroom Edge Function owner challenge/status/revoke coverage and verify the same selected AI participant across Android, desktop app context and terminal PTY. Keep native Send/wake out of scope for this slice. Follow with the same association for terminal frames and desktop/phone app frames as the shared contract permits.
+Run the manual-only RUTONOMOUS validation workflow on `feat/device-frame-ai-runtime-contract` (and first resolve its preflight if the read-only `RUB_MINDS_READ_TOKEN` is absent). Fix every migration, SQL, MCP SDK, Node/build or native error it reports. Then extend the local Backroom Edge Function test to exercise the authenticated owner challenge/status/revoke HTTP routes—not just the MCP/database completion path—and complete real phone/desktop/terminal acceptance with supported AI clients. Keep native Send/wake separate. After the three core surfaces work coherently, move to the full UI/UX redesign, then the complete product acceptance phase.
 
 Only after the association and the shared AI collaboration path work coherently across all three surfaces should the project move to the full UI/UX redesign.

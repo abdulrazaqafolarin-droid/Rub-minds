@@ -38,7 +38,7 @@ The desired device-frame association must not require a `backroom_hosts` row or 
 - `terminal_connected`: the terminal AI is connected through MCP; it does not gain native composer Send;
 - `native_wake_ready`: exact provider conversation, binding, device consent and group wake grant are all active.
 
-The classifier deliberately does not promise that draft typing is permitted: local control and one-shot draft grants remain separate. Active MCP tools permit bounded polling, not unsolicited push delivery. It accepts only a backend-verified provider-conversation-binding status; raw provider IDs and their digests stay on the phone and trusted server and must never be sent to the browser.
+The classifier deliberately does not promise that draft typing is permitted: local control and one-shot draft grants remain separate. Active MCP tools permit bounded polling, not unsolicited push delivery. Frame association only establishes the existing AI participant's collaboration relationship to a live runtime; it does not automatically provide a transcript bridge, provider conversation introspection, native Send, or autonomous wake. It accepts only a backend-verified provider-conversation-binding status; raw provider IDs and their digests stay on the phone and trusted server and must never be sent to the browser.
 
 This module is **not authorization**. The server must independently enforce participant, MCP session, device approval, runtime session, target/app identity, expiry, revocation and consent before any write or native action.
 
@@ -52,13 +52,10 @@ Required server checks: same room, active AI participant, active joined MCP sess
 
 ## Validation in this slice
 
-`node --test integrations/backroom/frame-ai-runtime.node-test.mjs` covers joined-vs-unjoined identity, inventory-vs-participation, all four frame surfaces, exact scope mismatch, expiry/revocation, app conversation identity, terminal process identity, and separate native wake consent. It does not call Supabase or prove device/AI-provider compatibility.
+`node --test integrations/backroom/frame-ai-runtime.node-test.mjs` covers joined-vs-unjoined identity, inventory-vs-participation, all four frame surfaces, exact scope mismatch, expiry/revocation, app conversation identity, terminal process identity, and separate native wake consent. `supabase/tests/device_frame_bindings.sql` exercises the transactional database contract and lifecycle. `scripts/local-mcp-sdk-e2e.mjs` exercises exact-session MCP bind, wrong-session rejection, idempotent replay and Leave revocation against disposable Supabase. Both integration tests are wired into the private CI/test-lab flows but have not yet run successfully on a clean runner. None of these tests proves actual ChatGPT/Claude mobile support or physical device acceptance.
 
 
 The project-wide sequencing, surface scope and release discipline are locked in [Rub Minds — Product Execution Plan](RUB_MINDS_PRODUCT_EXECUTION_PLAN.md). This execution plan governs the order: core phone/desktop/terminal capabilities first, full UI/UX redesign second, complete product testing third, then controlled release.
-
-
-**Desktop evidence limitation:** the current Windows OS picker only establishes a whole-monitor capture. The owner-selected app ID and executable fingerprint are checked against inventory, but they do not prove that the chosen monitor contains that app or that a particular native window is being streamed. The frame link is owner-confirmed context, not window/process attestation. The terminal path is likewise an owner-approved live PTY attachment, not OS process attestation.
 
 
 **Desktop evidence limitation:** the current Windows OS picker confirms a whole-monitor capture, not a particular native app window. The owner-selected app ID and executable fingerprint are checked against inventory, but they do not prove the selected monitor contains that app or a particular window. Desktop linkage is owner-confirmed app context, not native window/process capture attestation. Terminal linkage is an owner-approved live PTY attachment, not OS process attestation.
