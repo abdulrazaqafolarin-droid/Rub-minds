@@ -33,6 +33,12 @@ begin
     and position('ON DELETE CASCADE' in upper(pg_catalog.pg_get_constraintdef(c.oid)))>0) then
     raise exception 'MCP session cascade FK missing';
   end if;
+  if not exists(select 1 from pg_catalog.pg_constraint c where c.conrelid=v_challenge
+    and c.confrelid='public.rub_minds_mcp_sessions'::regclass
+    and position('target_session_digest' in pg_catalog.pg_get_constraintdef(c.oid))>0
+    and position('ON DELETE CASCADE' in upper(pg_catalog.pg_get_constraintdef(c.oid)))>0) then
+    raise exception 'Challenge must cascade with the exact target MCP session';
+  end if;
   if not exists(select 1 from pg_catalog.pg_index i where i.indexrelid='public.backroom_device_frame_binding_active_participant_idx'::regclass and i.indisunique)
     or not exists(select 1 from pg_catalog.pg_index i where i.indexrelid='public.backroom_device_frame_binding_active_session_idx'::regclass and i.indisunique)
     or not exists(select 1 from pg_catalog.pg_index i where i.indexrelid='public.backroom_device_frame_binding_active_runtime_idx'::regclass and i.indisunique) then
@@ -45,7 +51,7 @@ begin
     raise exception 'Completion RPC privilege/search_path boundary incorrect';
   end if;
   select pg_catalog.lower(pg_catalog.pg_get_functiondef(v_rpc)) into v_def;
-  foreach v_name in array array['rub_minds_mcp_sessions','participants','agent_connections','backroom_device_room_bindings',
+  foreach v_name in array array['target_session_digest','rub_minds_mcp_sessions','participants','agent_connections','backroom_device_room_bindings',
     'backroom_desktop_sessions','backroom_devices','backroom_device_apps','backroom_desktop_apps','target_participant_id'] loop
     if position(v_name in v_def)=0 then raise exception 'Completion RPC missing check for %',v_name; end if;
   end loop;
@@ -60,8 +66,6 @@ begin
   end loop;
 end;
 $test$;
-rollback;
-
 -- Exercise real binding behavior against disposable rows. The enclosing file
 -- transaction rolls every identity, credential and runtime back at the end.
 do $device_frame_functional$
@@ -83,6 +87,7 @@ declare
   v_android_package text:='com.rubminds.framebindingtest';
   v_android_signer text:=pg_catalog.repeat('b',64);
   v_android_session text:=pg_catalog.repeat('1',64);
+  v_android_alt_session text:=pg_catalog.repeat('7',64);
   v_android_credential text:=pg_catalog.repeat('a',64);
   v_windows_session text:=pg_catalog.repeat('2',64);
   v_windows_credential text:=pg_catalog.repeat('c',64);
@@ -120,6 +125,7 @@ begin
     session_digest,agent_credential_ciphertext,agent_credential_digest,room_id,participant_id,expires_at
   ) values
     (v_android_session,'test-encrypted-ai-credential',v_android_credential,v_room,v_ai_one,pg_catalog.clock_timestamp()+interval '2 hours'),
+    (v_android_alt_session,'test-encrypted-ai-credential',v_android_credential,v_room,v_ai_one,pg_catalog.clock_timestamp()+interval '2 hours'),
     (v_windows_session,'test-encrypted-ai-credential',v_windows_credential,v_room,v_ai_two,pg_catalog.clock_timestamp()+interval '2 hours'),
     (v_expired_session,'test-encrypted-ai-credential',v_expired_credential,v_room,v_ai_three,pg_catalog.clock_timestamp()+interval '2 hours');
 
@@ -172,9 +178,9 @@ begin
   end;
 
   insert into public.backroom_device_frame_binding_challenges(
-    id,requested_by,target_participant_id,room_id,device_id,runtime_session_id,
+    id,requested_by,target_participant_id,target_session_digest,room_id,device_id,runtime_session_id,
     surface,target_app_id,target_app_fingerprint,nonce_digest,expires_at
-  ) values(v_android_challenge,v_owner,v_ai_one,v_room,v_android,v_android_runtime,
+  ) values(v_android_challenge,v_owner,v_ai_one,v_android_session,v_room,v_android,v_android_runtime,
     'android_app',v_android_package,v_android_signer,v_android_nonce,
     pg_catalog.clock_timestamp()+interval '90 seconds');
 
@@ -188,6 +194,10 @@ begin
   v_result:=public.complete_backroom_device_frame_binding(v_android_challenge,v_android_nonce,v_windows_session);
   if v_result->>'ok'<>'false' or v_result->>'reason'<>'selected_ai_session_mismatch' then
     raise exception 'Wrong AI participant was not rejected: %',v_result;
+  end if;
+  v_result:=public.complete_backroom_device_frame_binding(v_android_challenge,v_android_nonce,v_android_alt_session);
+  if v_result->>'ok'<>'false' or v_result->>'reason'<>'selected_ai_session_mismatch' then
+    raise exception 'A different MCP handle for the same participant was not rejected: %',v_result;
   end if;
 
   v_result:=public.complete_backroom_device_frame_binding(v_android_challenge,v_android_nonce,v_android_session);
@@ -210,9 +220,9 @@ begin
   end if;
 
   insert into public.backroom_device_frame_binding_challenges(
-    id,requested_by,target_participant_id,room_id,device_id,runtime_session_id,
+    id,requested_by,target_participant_id,target_session_digest,room_id,device_id,runtime_session_id,
     surface,target_app_id,target_app_fingerprint,nonce_digest,expires_at
-  ) values(v_terminal_challenge,v_owner,v_ai_two,v_room,v_windows,v_terminal_runtime,
+  ) values(v_terminal_challenge,v_owner,v_ai_two,v_windows_session,v_room,v_windows,v_terminal_runtime,
     'terminal',null,null,v_terminal_nonce,pg_catalog.clock_timestamp()+interval '90 seconds');
 
   v_result:=public.complete_backroom_device_frame_binding(v_terminal_challenge,v_terminal_nonce,v_windows_session);
@@ -232,9 +242,9 @@ begin
   end if;
 
   insert into public.backroom_device_frame_binding_challenges(
-    id,requested_by,target_participant_id,room_id,device_id,runtime_session_id,
+    id,requested_by,target_participant_id,target_session_digest,room_id,device_id,runtime_session_id,
     surface,target_app_id,target_app_fingerprint,nonce_digest,created_at,expires_at
-  ) values(v_expired_challenge,v_owner,v_ai_three,v_room,v_windows,v_expired_runtime,
+  ) values(v_expired_challenge,v_owner,v_ai_three,v_expired_session,v_room,v_windows,v_expired_runtime,
     'terminal',null,null,v_expired_nonce,
     pg_catalog.clock_timestamp()-interval '5 minutes',
     pg_catalog.clock_timestamp()-interval '1 minute');
@@ -244,3 +254,5 @@ begin
   end if;
 end;
 $device_frame_functional$;
+
+rollback;

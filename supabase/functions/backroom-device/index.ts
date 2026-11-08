@@ -646,6 +646,7 @@ Deno.serve(async req => {
       const expiresAt = new Date(expiresMs).toISOString();
       const { error: insertError } = await db.from('backroom_device_frame_binding_challenges').insert({
         id: challengeId, requested_by: userId, target_participant_id: challenge.participantId,
+        target_session_digest: aiSession.session_digest,
         room_id: challenge.roomId, device_id: challenge.deviceId,
         runtime_session_id: challenge.runtimeSessionId, surface: challenge.surface,
         target_app_id: targetAppId, target_app_fingerprint: targetAppFingerprint,

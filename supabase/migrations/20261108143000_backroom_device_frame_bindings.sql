@@ -30,6 +30,7 @@ create table if not exists public.backroom_device_frame_binding_challenges (
   id uuid primary key default pg_catalog.gen_random_uuid(),
   requested_by uuid not null references auth.users(id) on delete cascade,
   target_participant_id uuid not null references public.participants(id) on delete cascade,
+  target_session_digest text not null references public.rub_minds_mcp_sessions(session_digest) on delete cascade,
   room_id uuid not null references public.rooms(id) on delete cascade,
   device_id uuid not null references public.backroom_devices(device_id) on delete cascade,
   runtime_session_id uuid not null references public.backroom_desktop_sessions(session_id) on delete cascade,
@@ -61,6 +62,9 @@ create index if not exists backroom_device_frame_challenges_pending_idx
   where consumed_at is null and revoked_at is null;
 create index if not exists backroom_device_frame_challenges_requester_idx
   on public.backroom_device_frame_binding_challenges(requested_by,created_at desc);
+create index if not exists backroom_device_frame_challenges_session_idx
+  on public.backroom_device_frame_binding_challenges(target_session_digest,expires_at)
+  where consumed_at is null and revoked_at is null;
 
 create table if not exists public.backroom_device_frame_bindings (
   id uuid primary key default pg_catalog.gen_random_uuid(),
@@ -141,7 +145,8 @@ begin
     or v_session.room_id is null or v_session.participant_id is null then
     return pg_catalog.jsonb_build_object('ok',false,'reason','active_joined_mcp_session_required');
   end if;
-  if v_session.room_id is distinct from v_challenge.room_id
+  if v_session.session_digest is distinct from v_challenge.target_session_digest
+    or v_session.room_id is distinct from v_challenge.room_id
     or v_session.participant_id is distinct from v_challenge.target_participant_id then
     return pg_catalog.jsonb_build_object('ok',false,'reason','selected_ai_session_mismatch');
   end if;
@@ -269,6 +274,8 @@ begin
     or new.room_id is distinct from old.room_id or new.participant_id is distinct from old.participant_id then
     update public.backroom_device_frame_bindings set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp())
       where session_digest=old.session_digest and revoked_at is null;
+    update public.backroom_device_frame_binding_challenges set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp())
+      where target_session_digest=old.session_digest and consumed_at is null and revoked_at is null;
   end if;
   return new;
 end;

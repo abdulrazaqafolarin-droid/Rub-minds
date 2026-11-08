@@ -135,7 +135,7 @@ Do not weaken the legacy host-scoped wake queue to make the hostless group-bindi
 - PR #69 describes a focused 12/12 policy test run in an isolated Node harness. That is not a complete repository test/build, a Supabase migration replay or real device/provider acceptance.
 - PR #68's own description states that its tests have not executed on a runner and that no real terminal AI client has been connected.
 - PR #66's description records the provider resolver/physical provider acceptance and full CI/database/native-build gaps. Its native-wake work is not deployed or physically accepted.
-- The host-independent device-frame binding schema, owner challenge/status/revoke routes and `bind_device_frame` MCP tool are committed on the PR #69 development branch. Functional SQL coverage is now being added; a successful migration reset, clean workflow execution and real phone/desktop/terminal acceptance are still required before this backend slice is treated as complete.
+- The host-independent device-frame binding schema, owner challenge/status/revoke routes and `bind_device_frame` MCP tool are committed on the PR #69 development branch. Challenges now target the exact MCP session digest as well as the participant. Transactional SQL functional tests and an official MCP SDK test for wrong-session rejection, successful bind, idempotent replay and Leave revocation are being wired; they have not yet executed on a clean runner. Real phone/desktop/terminal acceptance remains outstanding.
 
 ## 7. Rules for keeping the work on course
 
@@ -152,6 +152,6 @@ Do not weaken the legacy host-scoped wake queue to make the hostless group-bindi
 
 ## 8. Immediate next task
 
-Continue Stage A by completing the **host-independent AI-session-to-device-frame association** already committed in PR #69. Execute the local Supabase migration reset and expanded functional SQL test; correct any migration/trigger failures. Then run focused protocol and MCP tests, add a local Edge Function challenge-to-bind integration test, and verify the same selected AI participant across Android, desktop app context and terminal PTY. Keep native Send/wake out of scope for this slice. Follow with the same association for terminal frames and desktop/phone app frames as the shared contract permits.
+Continue Stage A by completing the **host-independent AI-session-to-device-frame association** already committed in PR #69. Execute the local Supabase migration reset, expanded SQL functional test and official MCP SDK bind/replay/Leave-revocation test; correct any migration/trigger failures. Then add local Backroom Edge Function owner challenge/status/revoke coverage and verify the same selected AI participant across Android, desktop app context and terminal PTY. Keep native Send/wake out of scope for this slice. Follow with the same association for terminal frames and desktop/phone app frames as the shared contract permits.
 
 Only after the association and the shared AI collaboration path work coherently across all three surfaces should the project move to the full UI/UX redesign.

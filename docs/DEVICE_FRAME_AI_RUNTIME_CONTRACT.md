@@ -1,6 +1,6 @@
 # Device-frame AI runtime connection contract
 
-**Status:** source-only policy contract on `feat/device-frame-ai-runtime-contract`. No database migration, Edge Function deployment, device change or production change is included.
+**Status:** source implementation on unmerged PR #69. The branch contains a host-independent frame-binding migration, owner challenge/status/revoke APIs, the MCP `bind_device_frame` tool, and focused SQL/protocol/MCP tests. Nothing has been deployed to staging or production; real device/client acceptance remains pending.
 
 ## Product rule
 
@@ -42,9 +42,11 @@ The classifier deliberately does not promise that draft typing is permitted: loc
 
 This module is **not authorization**. The server must independently enforce participant, MCP session, device approval, runtime session, target/app identity, expiry, revocation and consent before any write or native action.
 
-## Next backend slice
+## Current backend slice
 
-The next implementation should replace the host-bound native attachment dependency with one server-owned, device-frame binding contract shared by Android and desktop, then add a terminal-process attachment handshake. Keep the existing group AI participant/MCP session as the authority; do not create duplicate participants for the device, a second message store, or a second task system.
+The host-independent backend is committed on PR #69: migration `20261108143000_backroom_device_frame_bindings.sql`, `device-frame/ai-candidates`, `device-frame/binding-challenge`, `device-frame/binding-status`, `device-frame/binding-revoke`, and MCP `bind_device_frame`. Each challenge records both the selected AI participant and the exact MCP session digest. Only that same live session can redeem it; another handle, even for the same participant, is rejected. Successful redemption attaches the existing participant to the selected live frame without creating a second participant.
+
+The legacy Android native-wake route remains separate and still uses `backroom_input_bindings`/`backroom_hosts`; do not weaken or reinterpret that older route. Keep the existing group AI participant/MCP session as the authority; do not create duplicate participants for the device, a second message store, or a second task system.
 
 Required server checks: same room, active AI participant, active joined MCP session, approved device, active runtime session, exact app/process identity, compare the phone-local provider-conversation digest against the stored binding on the trusted server, one active binding per participant/runtime, expiry/revocation, idempotent challenge completion, server-side consent, and replay-safe event delivery. Return only a bounded attestation status to the UI. Keep raw provider IDs, identity digests and all bearer handles out of the browser.
 
@@ -57,3 +59,6 @@ The project-wide sequencing, surface scope and release discipline are locked in 
 
 
 **Desktop evidence limitation:** the current Windows OS picker only establishes a whole-monitor capture. The owner-selected app ID and executable fingerprint are checked against inventory, but they do not prove that the chosen monitor contains that app or that a particular native window is being streamed. The frame link is owner-confirmed context, not window/process attestation. The terminal path is likewise an owner-approved live PTY attachment, not OS process attestation.
+
+
+**Desktop evidence limitation:** the current Windows OS picker confirms a whole-monitor capture, not a particular native app window. The owner-selected app ID and executable fingerprint are checked against inventory, but they do not prove the selected monitor contains that app or a particular window. Desktop linkage is owner-confirmed app context, not native window/process capture attestation. Terminal linkage is an owner-approved live PTY attachment, not OS process attestation.
