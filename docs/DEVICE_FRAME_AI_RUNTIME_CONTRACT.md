@@ -38,7 +38,7 @@ The desired device-frame association must not require a `backroom_hosts` row or 
 - `terminal_connected`: the terminal AI is connected through MCP; it does not gain native composer Send;
 - `native_wake_ready`: exact provider conversation, binding, device consent and group wake grant are all active.
 
-The classifier deliberately does not promise that draft typing is permitted: local control and one-shot draft grants remain separate. Active MCP tools permit bounded polling, not unsolicited push delivery.
+The classifier deliberately does not promise that draft typing is permitted: local control and one-shot draft grants remain separate. Active MCP tools permit bounded polling, not unsolicited push delivery. It accepts only a backend-verified provider-conversation-binding status; raw provider IDs and their digests stay on the phone and trusted server and must never be sent to the browser.
 
 This module is **not authorization**. The server must independently enforce participant, MCP session, device approval, runtime session, target/app identity, expiry, revocation and consent before any write or native action.
 
@@ -46,7 +46,7 @@ This module is **not authorization**. The server must independently enforce part
 
 The next implementation should replace the host-bound native attachment dependency with one server-owned, device-frame binding contract shared by Android and desktop, then add a terminal-process attachment handshake. Keep the existing group AI participant/MCP session as the authority; do not create duplicate participants for the device, a second message store, or a second task system.
 
-Required server checks: same room, active AI participant, active joined MCP session, approved device, active runtime session, exact app/process identity, one active binding per participant/runtime, expiry/revocation, idempotent challenge completion, server-side consent, and replay-safe event delivery. Keep identity digests and all bearer handles out of the browser UI.
+Required server checks: same room, active AI participant, active joined MCP session, approved device, active runtime session, exact app/process identity, compare the phone-local provider-conversation digest against the stored binding on the trusted server, one active binding per participant/runtime, expiry/revocation, idempotent challenge completion, server-side consent, and replay-safe event delivery. Return only a bounded attestation status to the UI. Keep raw provider IDs, identity digests and all bearer handles out of the browser.
 
 ## Validation in this slice
 
