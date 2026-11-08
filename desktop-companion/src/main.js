@@ -5,12 +5,6 @@ import { validateTerminalDraftMessage, validateTerminalSubmitMessage, createTerm
 import { waitForIceGatheringComplete } from '../../integrations/backroom/ice-gathering.mjs';
 import { validatePeerHeartbeat } from '../../integrations/backroom/peer-heartbeat.mjs';
 import { beginTargetSelection, confirmTargetSelection, invalidateTargetSelection, rejectTargetSelection, canStageDraftForCurrentSelection, isPendingDraftForCurrentSelection, enqueuePeerOperation } from '../../integrations/backroom/desktop-target-selection.mjs';
-import {
-  listDesktopWorkspaceRooms,
-  loadDesktopGroupWorkspace,
-  sendDesktopGroupMessage,
-  subscribeDesktopGroupWorkspace,
-} from './group-workspace.mjs';
 import './style.css';
 
 const app = document.querySelector('#app');
@@ -26,8 +20,6 @@ const state = {
   channel: null, apps: [], pending: [], peers: new Map(), streams: new Map(), terminals: new Map(), exitedTerminals: new Set(), pendingCandidates: new Map(), draftCorrelations: new Map(),
   seenCommands: new Map(), heartbeat: null, heartbeatMisses: 0, peerWatchdog: null,
   status: 'Not connected', terminalOutput: '', unlisten: [],
-  workspaceRooms: [], workspaceRoomId: '', workspaceSnapshot: null,
-  workspaceChannel: null, workspaceRefreshGeneration: 0, workspaceSending: false,
 };
 function notify(message, kind='') {
   const node = document.querySelector('#notice');
@@ -55,28 +47,6 @@ function shell() {
       <div class="row"><button class="primary" id="register-device">Connect this computer</button><button class="danger hidden" id="revoke-device">Revoke this computer</button></div>
       <div class="muted" style="margin-top:9px">Registration requires group ownership. Other group members can send requests, but the computer still asks you locally before opening or controlling anything.</div>
     </section>
-    <section class="card hidden" id="workspace-card">
-      <div class="row"><div><h2>Group workspace</h2><p class="muted">Join the same conversation, shared memory and task progress as the Rub Minds web and AI participants.</p></div><button class="ghost fixed" id="workspace-refresh">Refresh group</button></div>
-      <label for="workspace-room">Your groups</label><select id="workspace-room"><option value="">Loading groups…</option></select>
-      <p class="muted" id="workspace-objective">Choose a group to open its shared workspace.</p>
-      <div class="workspace-grid">
-        <section class="workspace-pane">
-          <h3>Group conversation</h3>
-          <div id="workspace-messages" class="workspace-messages" aria-live="polite"><div class="muted">Messages will appear here.</div></div>
-          <form id="workspace-message-form" class="workspace-compose">
-            <label for="workspace-message">Message the group</label>
-            <textarea id="workspace-message" maxlength="10000" rows="3" placeholder="Write a message for your group…" required></textarea>
-            <button class="primary" id="workspace-send" type="submit">Send to group</button>
-          </form>
-        </section>
-        <section class="workspace-pane">
-          <h3>Shared memory</h3>
-          <div id="workspace-memory" class="workspace-side-list"><div class="muted">Shared decisions and insights will appear here.</div></div>
-          <h3 class="workspace-subhead">Task progress</h3>
-          <div id="workspace-tasks" class="workspace-side-list"><div class="muted">Group tasks will appear here when available.</div></div>
-        </section>
-      </div>
-    </section>
     <section class="card hidden" id="apps-card">
       <div class="row"><div><h2>Installed desktop applications</h2><p class="muted">Pick the exact Windows .exe installed on this computer. The path stays local; only the selected app label and binary fingerprint are shared with your group.</p></div><button class="primary fixed" id="add-app">＋ Add .exe</button></div>
       <div id="app-list" class="inline-list"></div>
@@ -97,13 +67,6 @@ function shell() {
     <div class="footer">Local native execution · no cloud computer replaces this PC · protected windows may reject capture or input.</div>`;
   document.querySelector('#login-form').addEventListener('submit', signIn);
   document.querySelector('#register-device').addEventListener('click', registerDevice);
-  document.querySelector('#workspace-room').addEventListener('change', event => {
-    void openGroupWorkspace(event.target.value).catch(error => notify(error.message || 'Could not open this group.', 'error'));
-  });
-  document.querySelector('#workspace-refresh').addEventListener('click', () => {
-    void refreshGroupWorkspace().catch(error => notify(error.message || 'Could not refresh this group.', 'error'));
-  });
-  document.querySelector('#workspace-message-form').addEventListener('submit', sendWorkspaceMessage);
   document.querySelector('#revoke-device').addEventListener('click', revokeDevice);
   document.querySelector('#add-app').addEventListener('click', addApp);
   document.querySelector('#start-terminal').addEventListener('click', startTerminalLocal);
@@ -124,7 +87,6 @@ function showSignedIn(user) {
   document.querySelector('#device-card').classList.remove('hidden');
   document.querySelector('#apps-card').classList.remove('hidden');
   document.querySelector('#terminal-card').classList.remove('hidden');
-  document.querySelector('#workspace-card').classList.remove('hidden');
 }
 function createAuthClient(){
   if(!cfg.url||!cfg.key)throw new Error('Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in the project environment before building the companion.');
@@ -150,149 +112,12 @@ async function signIn(event){
   }catch(error){notify(error?.message||'Sign-in failed.','error');}
 }
 async function loadRooms(){
-  const rooms=await listDesktopWorkspaceRooms(state.client);
-  state.workspaceRooms=rooms;
-  const owned=rooms.filter(room=>room.owner_id===state.user.id);
-  const deviceSelect=document.querySelector('#room');
-  deviceSelect.replaceChildren();
-  const ownerPlaceholder=document.createElement('option');
-  ownerPlaceholder.value='';
-  ownerPlaceholder.textContent=owned.length?'Choose a group you own…':'No owner-managed groups available';
-  deviceSelect.append(ownerPlaceholder);
-  for(const room of owned){
-    const option=document.createElement('option');option.value=room.id;option.textContent=room.title;deviceSelect.append(option);
-  }
-
-  const workspaceSelect=document.querySelector('#workspace-room');
-  workspaceSelect.replaceChildren();
-  const workspacePlaceholder=document.createElement('option');
-  workspacePlaceholder.value='';
-  workspacePlaceholder.textContent=rooms.length?'Choose a group…':'Join or create a group in Rub Minds first';
-  workspaceSelect.append(workspacePlaceholder);
-  for(const room of rooms){
-    const option=document.createElement('option');option.value=room.id;option.textContent=room.title;workspaceSelect.append(option);
-  }
-  const preferred=rooms.some(room=>room.id===state.workspaceRoomId)
-    ?state.workspaceRoomId
-    :rooms.some(room=>room.id===state.roomId)?state.roomId:(rooms[0]?.id||'');
-  workspaceSelect.value=preferred;
-  if(preferred) await openGroupWorkspace(preferred);
-  else {
-    closeWorkspaceChannel();
-    state.workspaceRoomId='';state.workspaceSnapshot=null;
-    renderWorkspaceEmpty('No groups are available on this account yet.');
-  }
-  if(!owned.length && rooms.length){
-    notify('You can use the shared group workspace. Connecting this computer for remote execution still requires group-owner approval.','');
-  }else if(!rooms.length){
-    notify('Join or create a Rub Minds group to start collaborating here.','');
-  }
-}
-function closeWorkspaceChannel(){
-  state.workspaceRefreshGeneration+=1;
-  if(state.workspaceChannel){
-    const channel=state.workspaceChannel;state.workspaceChannel=null;
-    void state.client?.removeChannel(channel).catch(()=>{});
-  }
-}
-function renderWorkspaceEmpty(message){
-  const objective=document.querySelector('#workspace-objective');
-  if(objective)objective.textContent=message;
-  for(const id of ['workspace-messages','workspace-memory','workspace-tasks']){
-    const node=document.querySelector('#'+id);
-    if(node){node.replaceChildren();const text=document.createElement('div');text.className='muted';text.textContent=message;node.append(text);}
-  }
-  const send=document.querySelector('#workspace-send');if(send)send.disabled=true;
-}
-function renderWorkspaceSnapshot(snapshot){
-  const objective=document.querySelector('#workspace-objective');
-  if(objective)objective.textContent=snapshot.room.objective||'This group has not added an objective yet.';
-  const participantNames=new Map(snapshot.participants.map(person=>[person.id,person.display_name+' · '+(person.kind||'participant')]));
-  const messages=document.querySelector('#workspace-messages');
-  messages.replaceChildren();
-  if(!snapshot.messages.length){
-    const empty=document.createElement('div');empty.className='muted';empty.textContent='No group messages yet. Start the conversation.';messages.append(empty);
-  }
-  for(const item of snapshot.messages){
-    const card=document.createElement('article');card.className='workspace-message';
-    const header=document.createElement('div');header.className='workspace-message-head';
-    const sender=document.createElement('b');sender.textContent=participantNames.get(item.sender_id)||'Group participant';
-    const time=document.createElement('time');const date=new Date(item.created_at);time.textContent=Number.isNaN(date.getTime())?'':date.toLocaleString();
-    header.append(sender,time);
-    const body=document.createElement('p');body.textContent=item.body;
-    card.append(header,body);messages.append(card);
-  }
-  messages.scrollTop=messages.scrollHeight;
-
-  const memory=document.querySelector('#workspace-memory');memory.replaceChildren();
-  if(!snapshot.memories.length){
-    const empty=document.createElement('div');empty.className='muted';empty.textContent='No shared memory has been saved yet.';memory.append(empty);
-  }
-  for(const item of snapshot.memories){
-    const card=document.createElement('article');card.className='workspace-side-item';
-    const type=document.createElement('b');type.textContent=String(item.entry_type||'insight').replaceAll('_',' ');
-    const body=document.createElement('p');body.textContent=item.content;
-    card.append(type,body);memory.append(card);
-  }
-
-  const tasks=document.querySelector('#workspace-tasks');tasks.replaceChildren();
-  if(!snapshot.tasksAvailable){
-    const note=document.createElement('div');note.className='muted';note.textContent='Group tasks are not available on this server version yet. Messages and shared memory remain available.';tasks.append(note);
-  }else if(!snapshot.tasks.length){
-    const empty=document.createElement('div');empty.className='muted';empty.textContent='No group tasks have been created yet.';tasks.append(empty);
-  }else{
-    for(const item of snapshot.tasks){
-      const card=document.createElement('article');card.className='workspace-side-item';
-      const title=document.createElement('b');title.textContent=item.title;
-      const detail=document.createElement('small');detail.textContent=(item.status||'backlog').replaceAll('_',' ')+' · priority '+(item.priority??'—');
-      card.append(title,detail);tasks.append(card);
-    }
-  }
-  const send=document.querySelector('#workspace-send');if(send)send.disabled=false;
-}
-async function refreshGroupWorkspace(expectedRoom=state.workspaceRoomId){
-  if(!expectedRoom)return;
-  const generation=++state.workspaceRefreshGeneration;
-  const snapshot=await loadDesktopGroupWorkspace(state.client,expectedRoom);
-  if(generation!==state.workspaceRefreshGeneration||expectedRoom!==state.workspaceRoomId)return;
-  state.workspaceSnapshot=snapshot;
-  renderWorkspaceSnapshot(snapshot);
-}
-async function openGroupWorkspace(roomId){
-  if(!roomId){closeWorkspaceChannel();state.workspaceRoomId='';state.workspaceSnapshot=null;renderWorkspaceEmpty('Choose a group to open its shared workspace.');return;}
-  if(!state.workspaceRooms.some(room=>room.id===roomId))throw new Error('This group is not available to the signed-in account.');
-  closeWorkspaceChannel();
-  state.workspaceRoomId=roomId;
-  document.querySelector('#workspace-room').value=roomId;
-  renderWorkspaceEmpty('Loading the shared group workspace…');
-  await refreshGroupWorkspace(roomId);
-  if(state.workspaceRoomId!==roomId)return;
-  state.workspaceChannel=subscribeDesktopGroupWorkspace(state.client,roomId,()=>{
-    void refreshGroupWorkspace(roomId).catch(error=>notify(error.message||'Group updates could not be refreshed.','error'));
-  });
-}
-async function sendWorkspaceMessage(event){
-  event.preventDefault();
-  if(state.workspaceSending||!state.workspaceRoomId)return;
-  const input=document.querySelector('#workspace-message');
-  const button=document.querySelector('#workspace-send');
-  const body=input.value;
-  if(!body.trim())return;
-  state.workspaceSending=true;button.disabled=true;
-  try{
-    await sendDesktopGroupMessage(state.client,state.workspaceRoomId,body);
-    if(input.value===body)input.value='';
-    await refreshGroupWorkspace();
-    notify('Message sent to the group.','success');
-  }catch(error){
-    // A network failure can happen after the database committed the message.
-    // Refresh before offering a retry; retain the draft so the user can inspect it.
-    try{await refreshGroupWorkspace();}catch{}
-    notify((error.message||'The message could not be confirmed.')+' Check the conversation before retrying to avoid a duplicate.','error');
-  }finally{
-    state.workspaceSending=false;
-    if(button)button.disabled=!state.workspaceRoomId;
-  }
+  const {data,error}=await state.client.from('rooms').select('id,title,owner_id').eq('owner_id',state.user.id).order('created_at',{ascending:false});
+  if(error)throw error;
+  const select=document.querySelector('#room');
+  select.innerHTML='<option value="">Choose a group you own…</option>';
+  for(const room of data||[]){const option=document.createElement('option');option.value=room.id;option.textContent=room.title;select.append(option);}
+  if(!data?.length)notify('This account does not own a group yet. Create one in Rub Minds first.','error');
 }
 async function currentSession(){
   const {data,error}=await state.client.auth.getSession();
@@ -1121,7 +946,7 @@ async function disconnect(){
   else if(stopResult.peerError)notify('Disconnected; peer cleanup did not complete: '+(stopResult.peerError?.message||stopResult.peerError),'error');
 }
 async function signOut(){
-  try{closeWorkspaceChannel();await emergencyStop();await disconnect();await state.client.auth.signOut();state.user=null;state.session=null;location.reload();}
+  try{await emergencyStop();await disconnect();await state.client.auth.signOut();state.user=null;state.session=null;location.reload();}
   catch(error){notify(error.message,'error');}
 }
 async function setupTerminalEvents(){
