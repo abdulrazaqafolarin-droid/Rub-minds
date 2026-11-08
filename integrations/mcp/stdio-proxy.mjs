@@ -1,6 +1,7 @@
 const REMOTE_PROTOCOL_VERSION = "2026-07-28";
 const LOCAL_PROTOCOL_VERSION = "2025-06-18";
 const MAX_MESSAGE_BYTES = 1_200_000;
+const MAX_IN_FLIGHT_REQUESTS = 32;
 const STAGING_MCP_HOST = "tzcuuynmviiuactafpld.supabase.co";
 
 function isRecord(value) {
@@ -153,6 +154,7 @@ export function createMcpStdioProxy({
   }
 
   let discoveryPromise;
+  let inFlightRequests = 0;
   async function discover() {
     if (!discoveryPromise) {
       discoveryPromise = remoteRequest("server/discover", {}).then((result) => {
@@ -188,6 +190,10 @@ export function createMcpStdioProxy({
           (typeof id === "number" && Number.isFinite(id)))) {
         return jsonRpcError(null, -32600, "Request id must be a string or number.");
       }
+      if (inFlightRequests >= MAX_IN_FLIGHT_REQUESTS) {
+        return jsonRpcError(id, -32000, "Rub Minds MCP is busy; retry after an active request finishes.");
+      }
+      inFlightRequests += 1;
       const params = isRecord(message.params) ? message.params : {};
 
       try {
@@ -227,6 +233,8 @@ export function createMcpStdioProxy({
         const code = Number.isInteger(error?.code) ? error.code : -32000;
         const messageText = error instanceof Error ? error.message : "Rub Minds MCP request failed.";
         return jsonRpcError(id, code, messageText.slice(0, 300));
+      } finally {
+        inFlightRequests -= 1;
       }
     },
   });
@@ -234,6 +242,7 @@ export function createMcpStdioProxy({
 
 export const MCP_PROXY_LIMITS = Object.freeze({
   maxMessageBytes: MAX_MESSAGE_BYTES,
+  maxInFlightRequests: MAX_IN_FLIGHT_REQUESTS,
   remoteTimeoutMs: 30_000,
   localProtocolVersion: LOCAL_PROTOCOL_VERSION,
   remoteProtocolVersion: REMOTE_PROTOCOL_VERSION,
