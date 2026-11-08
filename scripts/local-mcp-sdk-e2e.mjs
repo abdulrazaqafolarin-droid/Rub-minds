@@ -397,6 +397,7 @@ try {
     session_type: "screen", status: "active", expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
     target_app_id: frameAppTwoId, target_app_fingerprint: frameAppFingerprintTwo,
   }) });
+  console.log("SAFE_MCP_E2E_STAGE: second desktop app and runtime seeded");
   const secondFrameRequest = {
     deviceId: frameDeviceId, roomId: room.id, requestId: randomUUID(),
     issuedAt: Date.now(), runtimeSessionId: frameRuntimeTwoId,
@@ -404,30 +405,36 @@ try {
   };
   const secondOwnerChallenge = await backroomEdge("device-frame/binding-challenge", secondFrameRequest);
   assert.equal(secondOwnerChallenge.status, 201, "owner could not issue second AI frame challenge");
+  console.log("SAFE_MCP_E2E_STAGE: second AI frame challenge issued");
   const secondFrameBind = await second.callTool({ name: "bind_device_frame", arguments: {
     session_handle: two.session_handle, challenge_id: secondOwnerChallenge.body.challengeId,
     nonce: secondOwnerChallenge.body.nonce, confirm_bind: true,
   } });
   assert.notEqual(secondFrameBind.isError, true, "second selected AI could not bind");
   assert.equal(secondFrameBind.structuredContent?.participant_id, two.participant_id);
+  console.log("SAFE_MCP_E2E_STAGE: second AI frame binding succeeded");
   const statusRequest = { deviceId: frameDeviceId, roomId: room.id, runtimeSessionId: frameRuntimeTwoId };
   const outsiderStatus = await backroomEdge("device-frame/binding-status", statusRequest, nonMemberLogin.access_token);
   assert.equal(outsiderStatus.status, 403, "non-member cannot read frame status");
   const ownerStatus = await backroomEdge("device-frame/binding-status", statusRequest);
   assert.equal(ownerStatus.status, 200);
   assert.equal(ownerStatus.body.binding?.participant_id, two.participant_id);
+  console.log("SAFE_MCP_E2E_STAGE: owner read second binding status; outsider status denied");
   const outsiderRevoke = await backroomEdge("device-frame/binding-revoke", {
     ...statusRequest, bindingId: ownerStatus.body.binding.id,
   }, nonMemberLogin.access_token);
   assert.equal(outsiderRevoke.status, 403, "non-member cannot revoke frame binding");
+  console.log("SAFE_MCP_E2E_STAGE: outsider binding revoke denied");
   const ownerRevoke = await backroomEdge("device-frame/binding-revoke", {
     ...statusRequest, bindingId: ownerStatus.body.binding.id,
   });
   assert.equal(ownerRevoke.status, 200);
   assert.equal(ownerRevoke.body.revoked, true);
+  console.log("SAFE_MCP_E2E_STAGE: owner binding revoke succeeded");
   const postRevokeStatus = await backroomEdge("device-frame/binding-status", statusRequest);
   assert.equal(postRevokeStatus.status, 200);
   assert.equal(postRevokeStatus.body.binding, null);
+  console.log("SAFE_MCP_E2E_STAGE: revoked binding no longer appears in status");
   console.log("SAFE_MCP_E2E_STAGE: frame challenge, status and revoke owner boundaries passed");
 
 
