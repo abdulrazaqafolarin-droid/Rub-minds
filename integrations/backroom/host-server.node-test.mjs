@@ -858,7 +858,8 @@ test("binding revoke confirms no local worker after restart only from a complete
  const bindingId="52345678-1234-4234-9234-123456789012";
  const browserRuntime={
   status:()=>({running:true,pages:1,capabilities:{browserCanonicalWake:true}}),
-  revokeWakeBinding:()=>false
+  revokeWakeBinding:()=>false,
+  stop:async()=>({})
  };
  const wakeService={
   status:{configured:false,count:0,bindings:[],gatewayHost:"project.supabase.co"},
@@ -869,7 +870,6 @@ test("binding revoke confirms no local worker after restart only from a complete
   const headers={Origin:origin,Authorization:"Bearer "+credentials.sessionToken,"Content-Type":"application/json"};
   const response=await fetch(base+"/v1/browser/wake/bindings/revoke",{method:"POST",headers,body:JSON.stringify({bindingId})});
   const diagnosticBody=await response.json();
-  console.log("SAFE_BINDING_REVOKE_DIAG",JSON.stringify({label:"empty inventory",status:response.status,error:typeof diagnosticBody.error==="string"?diagnosticBody.error:null,keys:Object.keys(diagnosticBody).sort(),revoked:diagnosticBody.revoked,localPollingStopped:diagnosticBody.localPollingStopped,grantRevoked:diagnosticBody.grantRevoked,noLocalWorker:diagnosticBody.noLocalWorker,remoteDeactivationConfirmed:diagnosticBody.remoteDeactivationConfirmed,remoteDeactivationPending:diagnosticBody.remoteDeactivationPending}));
   assert.equal(response.status,200);
   assert.deepEqual(diagnosticBody,{
    revoked:true,localPollingStopped:true,grantRevoked:false,noLocalWorker:true,
@@ -882,7 +882,8 @@ test("binding revoke remains unconfirmed if local poller inventory is missing",a
  const bindingId="52345678-1234-4234-9234-123456789015";
  const browserRuntime={
   status:()=>({running:true,pages:1,capabilities:{browserCanonicalWake:true}}),
-  revokeWakeBinding:()=>false
+  revokeWakeBinding:()=>false,
+  stop:async()=>({})
  };
  const wakeService={status:{configured:false,count:0},stop:async()=>({stopped:true,bindings:[],remotelyDeactivated:null})};
  await withHost(async({base,origin})=>{
@@ -890,7 +891,6 @@ test("binding revoke remains unconfirmed if local poller inventory is missing",a
   const headers={Origin:origin,Authorization:"Bearer "+credentials.sessionToken,"Content-Type":"application/json"};
   const response=await fetch(base+"/v1/browser/wake/bindings/revoke",{method:"POST",headers,body:JSON.stringify({bindingId})});
   const diagnosticBody=await response.json();
-  console.log("SAFE_BINDING_REVOKE_DIAG",JSON.stringify({label:"missing inventory",status:response.status,error:typeof diagnosticBody.error==="string"?diagnosticBody.error:null,keys:Object.keys(diagnosticBody).sort(),revoked:diagnosticBody.revoked,localPollingStopped:diagnosticBody.localPollingStopped,grantRevoked:diagnosticBody.grantRevoked,noLocalWorker:diagnosticBody.noLocalWorker,remoteDeactivationConfirmed:diagnosticBody.remoteDeactivationConfirmed,remoteDeactivationPending:diagnosticBody.remoteDeactivationPending}));
   assert.equal(response.status,200);
   const value=diagnosticBody;
   assert.equal(value.localPollingStopped,false);
@@ -903,7 +903,8 @@ test("binding revoke confirms local stop only for the exact poller it stopped",a
  const otherBindingId="52345678-1234-4234-9234-123456789014";
  const browserRuntime={
   status:()=>({running:true,pages:1,capabilities:{browserCanonicalWake:true}}),
-  revokeWakeBinding:()=>false
+  revokeWakeBinding:()=>false,
+  stop:async()=>({})
  };
  const wakeService={stop:async id=>({stopped:true,bindings:[{bindingId:otherBindingId,stopped:true},{bindingId:id,stopped:true}],remotelyDeactivated:true})};
  await withHost(async({base,origin})=>{
@@ -911,7 +912,6 @@ test("binding revoke confirms local stop only for the exact poller it stopped",a
   const headers={Origin:origin,Authorization:"Bearer "+credentials.sessionToken,"Content-Type":"application/json"};
   const response=await fetch(base+"/v1/browser/wake/bindings/revoke",{method:"POST",headers,body:JSON.stringify({bindingId})});
   const diagnosticBody=await response.json();
-  console.log("SAFE_BINDING_REVOKE_DIAG",JSON.stringify({label:"exact stop",status:response.status,error:typeof diagnosticBody.error==="string"?diagnosticBody.error:null,keys:Object.keys(diagnosticBody).sort(),revoked:diagnosticBody.revoked,localPollingStopped:diagnosticBody.localPollingStopped,grantRevoked:diagnosticBody.grantRevoked,noLocalWorker:diagnosticBody.noLocalWorker,remoteDeactivationConfirmed:diagnosticBody.remoteDeactivationConfirmed,remoteDeactivationPending:diagnosticBody.remoteDeactivationPending}));
   assert.equal(response.status,200);
   assert.deepEqual(diagnosticBody,{
    revoked:true,localPollingStopped:true,grantRevoked:false,noLocalWorker:false,
