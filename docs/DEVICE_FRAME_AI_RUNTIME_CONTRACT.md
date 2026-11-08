@@ -1,53 +1,33 @@
-# Device-frame AI runtime connection contract
+# Device Frame AI Runtime Contract
 
-**Status:** source-only policy contract on `feat/device-frame-ai-runtime-contract`. No database migration, Edge Function deployment, device change or production change is included.
+## Product identity
 
-## Product rule
+The AI's existing joined Rub Minds MCP session is the group participant. A device login, installed-app inventory entry, process or open terminal is not an AI participant and never creates a second group identity.
 
-The **AI session is the group participant**. A phone, desktop or terminal login is not an AI participant, and an app appearing in inventory does not mean that its conversation has joined a group.
+Phone, desktop and terminal runtimes are first-class surfaces. The browser host is optional and may be used as an additional integration, but cannot be a prerequisite for group membership or shared group tools.
 
-1. The AI in the selected application/runtime joins the Rub Minds group through the existing MCP `join_group` flow. Its participant and live MCP session are the source of group identity.
-2. The user selects the exact running app conversation or terminal process in a Device Frame.
-3. Rub Minds binds that existing AI participant/MCP session to that exact device, runtime session, app/process identity and group.
-4. The AI uses its joined MCP session to read messages, memory and tasks and to send group responses.
-5. Native app wake is a separate capability. It requires verified provider-conversation identity and separate, time-limited consent. A composer or Send-button match alone is never enough.
+## Relationship
 
-## Surface-specific behavior
+A frame binding associates one active joined MCP session and its group participant with one exact approved device runtime and one selected app/process identity. The identity relationship is separate from:
+- the AI's group invitation and membership;
+- device approval and device-to-room pairing;
+- the runtime's active screen or terminal session;
+- app signer/executable identity;
+- provider conversation/composer identity evidence;
+- explicit native wake/Send consent.
 
-| Surface | AI participant path | Frame attachment evidence | Honest limitation |
-|---|---|---|---|
-| Phone app | The AI app's supported MCP connector joins the group; otherwise it is not yet a direct tool-connected participant. | Approved phone, live screen session, package/signer, exact composer and provider conversation. | ChatGPT custom MCP apps are web-only; Claude mobile can use remote connectors already configured on claude.ai, on supported paid plans. The Android provider resolver registry in this source is empty, so native autonomous sending remains blocked. |
-| Desktop app | The AI application joins through its own supported MCP connector/session. | Approved computer, launched process/window, exact screen session, composer and provider conversation. | Current desktop source can launch an approved app and stream a display; Windows can discover/recheck composer and Send controls but does not have a native canonical-wake Send driver. |
-| Terminal | OpenCode or another MCP-capable AI client joins directly through its own MCP session. | Approved computer plus exact PTY/runtime process session and its process identity. | The terminal is not a generic shell recipient for group prompts. Keep native command execution separate from MCP message collaboration; an active terminal AI can use bounded MCP polling to read group events and reply through its own MCP session. This is polling while the AI session is active, not unsolicited push or background wake. |
+## Host-independent binding implementation
 
-## Host independence
+The database foundation is in `supabase/migrations/20261108110000_backroom_frame_ai_bindings.sql`. It creates service-role-only challenge and binding tables, one-use nonce checks, session/frame uniqueness, short-lived challenges, parent-derived binding expiry and lifecycle invalidation. It deliberately retains the old host-scoped wake queue unchanged.
 
-The desired device-frame association must not require a `backroom_hosts` row or browser-host process. The host may remain an optional coordinator/worker. The device frame's own authenticated device/runtime identity and the AI's joined MCP session are the primary association.
+The challenge expiry is only the time allowed to complete the handshake. A successfully completed binding expires no later than the MCP session, AI participant credential or runtime session; it must not inherit the 90-second challenge lifetime.
 
-**Important existing dependency found during audit:** the current Android attestation path creates its native binding on top of `backroom_input_bindings`, which references `backroom_hosts`. That path therefore does not yet meet the host-independent product requirement. Do not simply remove the FK or weaken the existing wake queue: its security assumptions and claim/settlement flow are host-scoped. Introduce a reviewed device-frame binding/dispatch path instead.
+## Capability limits
 
-## Shared classification contract
+A frame binding alone is not evidence that Rub Minds can control or send through the provider application. Provider composer and conversation identities must be independently attested by the trusted device runtime. Native Send and automatic wake remain separate, explicit capabilities and are not enabled by this migration. Terminal associations do not claim provider composer identities or unsolicited background wake.
 
-`integrations/backroom/frame-ai-runtime.mjs` provides display/acceptance classification for the states:
+The runtime identity digest is device-reported evidence; it is not, by itself, proof of hardware-backed attestation or a cryptographic measurement of the operating system process. The selected app's signer/executable fingerprint is checked against the registered device inventory.
 
-- `ai_not_joined`: no active AI participant and joined MCP session;
-- `device_unavailable` / `runtime_unavailable`: the approved device or selected running surface is not live;
-- `ai_joined_unbound`: the AI is already a group member but is not attached to this exact frame runtime;
-- `bound_draft_only`: the runtime is attached but provider/process identity evidence is not sufficient for unattended wake;
-- `bound_manual_only`: the exact app conversation is verified, but wake consent is absent or expired;
-- `terminal_connected`: the terminal AI is connected through MCP; it does not gain native composer Send;
-- `native_wake_ready`: exact provider conversation, binding, device consent and group wake grant are all active.
+## Verification
 
-The classifier deliberately does not promise that draft typing is permitted: local control and one-shot draft grants remain separate. Active MCP tools permit bounded polling, not unsolicited push delivery. It accepts only a backend-verified provider-conversation-binding status; raw provider IDs and their digests stay on the phone and trusted server and must never be sent to the browser.
-
-This module is **not authorization**. The server must independently enforce participant, MCP session, device approval, runtime session, target/app identity, expiry, revocation and consent before any write or native action.
-
-## Next backend slice
-
-The next implementation should replace the host-bound native attachment dependency with one server-owned, device-frame binding contract shared by Android and desktop, then add a terminal-process attachment handshake. Keep the existing group AI participant/MCP session as the authority; do not create duplicate participants for the device, a second message store, or a second task system.
-
-Required server checks: same room, active AI participant, active joined MCP session, approved device, active runtime session, exact app/process identity, compare the phone-local provider-conversation digest against the stored binding on the trusted server, one active binding per participant/runtime, expiry/revocation, idempotent challenge completion, server-side consent, and replay-safe event delivery. Return only a bounded attestation status to the UI. Keep raw provider IDs, identity digests and all bearer handles out of the browser.
-
-## Validation in this slice
-
-`node --test integrations/backroom/frame-ai-runtime.node-test.mjs` covers joined-vs-unjoined identity, inventory-vs-participation, all four frame surfaces, exact scope mismatch, expiry/revocation, app conversation identity, terminal process identity, and separate native wake consent. It does not call Supabase or prove device/AI-provider compatibility.
+The migration must pass a full local Supabase migration rebuild and the SQL contract test. Edge Function challenge issuance, device-bearer completion and revocation routes, MCP-session selection, protocol tests and actual phone/desktop/terminal device acceptance remain separate implementation and verification steps. Source-only changes must not be described as deployed, merged or physically tested.
