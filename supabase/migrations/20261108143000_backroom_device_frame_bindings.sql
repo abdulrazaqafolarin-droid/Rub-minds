@@ -14,6 +14,7 @@ begin
     alter table public.backroom_desktop_sessions add constraint backroom_desktop_sessions_target_app_pair_check
       check ((target_app_id is null and target_app_fingerprint is null)
         or (target_app_id is not null and char_length(btrim(target_app_id)) between 1 and 255
+          and target_app_fingerprint is not null
           and target_app_fingerprint ~ '^[0-9a-f]{64}(\\.[0-9a-f]{64})*$'));
   end if;
   if not exists (select 1 from pg_catalog.pg_constraint
@@ -44,11 +45,11 @@ create table if not exists public.backroom_device_frame_binding_challenges (
   constraint backroom_device_frame_challenge_target_check check (
     (surface='terminal' and target_app_id is null and target_app_fingerprint is null)
     or (surface='android_app'
-      and target_app_id ~ '^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$'
-      and target_app_fingerprint ~ '^[0-9a-f]{64}(\\.[0-9a-f]{64})*$')
+      and target_app_id is not null and target_app_id ~ '^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$'
+      and target_app_fingerprint is not null and target_app_fingerprint ~ '^[0-9a-f]{64}(\\.[0-9a-f]{64})*$')
     or (surface='desktop_app'
-      and target_app_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
-      and target_app_fingerprint ~ '^[0-9a-f]{64}$')
+      and target_app_id is not null and target_app_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+      and target_app_fingerprint is not null and target_app_fingerprint ~ '^[0-9a-f]{64}$')
   ),
   constraint backroom_device_frame_challenge_terminal_state_check check (not (consumed_at is not null and revoked_at is not null))
 );
@@ -81,11 +82,11 @@ create table if not exists public.backroom_device_frame_bindings (
   constraint backroom_device_frame_binding_target_check check (
     (surface='terminal' and target_app_id is null and target_app_fingerprint is null)
     or (surface='android_app'
-      and target_app_id ~ '^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$'
-      and target_app_fingerprint ~ '^[0-9a-f]{64}(\\.[0-9a-f]{64})*$')
+      and target_app_id is not null and target_app_id ~ '^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$'
+      and target_app_fingerprint is not null and target_app_fingerprint ~ '^[0-9a-f]{64}(\\.[0-9a-f]{64})*$')
     or (surface='desktop_app'
-      and target_app_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
-      and target_app_fingerprint ~ '^[0-9a-f]{64}$')
+      and target_app_id is not null and target_app_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+      and target_app_fingerprint is not null and target_app_fingerprint ~ '^[0-9a-f]{64}$')
   )
 );
 alter table public.backroom_device_frame_bindings enable row level security;

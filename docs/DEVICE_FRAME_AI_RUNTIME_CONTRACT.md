@@ -24,7 +24,7 @@ The **AI session is the group participant**. A phone, desktop or terminal login 
 
 The desired device-frame association must not require a `backroom_hosts` row or browser-host process. The host may remain an optional coordinator/worker. The device frame's own authenticated device/runtime identity and the AI's joined MCP session are the primary association.
 
-**Important existing dependency found during audit:** the current Android attestation path creates its native binding on top of `backroom_input_bindings`, which references `backroom_hosts`. That path therefore does not yet meet the host-independent product requirement. Do not simply remove the FK or weaken the existing wake queue: its security assumptions and claim/settlement flow are host-scoped. Introduce a reviewed device-frame binding/dispatch path instead.
+**Important existing dependency found during audit:** the legacy Android native-wake attestation path still uses `backroom_input_bindings`, which references `backroom_hosts`. The new group-collaboration frame association is separate and host-independent; do not weaken or reinterpret the older native-wake route. Do not simply remove the FK or weaken the existing wake queue: its security assumptions and claim/settlement flow are host-scoped. Introduce a reviewed device-frame binding/dispatch path instead.
 
 ## Shared classification contract
 
@@ -54,3 +54,6 @@ Required server checks: same room, active AI participant, active joined MCP sess
 
 
 The project-wide sequencing, surface scope and release discipline are locked in [Rub Minds — Product Execution Plan](RUB_MINDS_PRODUCT_EXECUTION_PLAN.md). This execution plan governs the order: core phone/desktop/terminal capabilities first, full UI/UX redesign second, complete product testing third, then controlled release.
+
+
+**Desktop evidence limitation:** the current Windows OS picker only establishes a whole-monitor capture. The owner-selected app ID and executable fingerprint are checked against inventory, but they do not prove that the chosen monitor contains that app or that a particular native window is being streamed. The frame link is owner-confirmed context, not window/process attestation. The terminal path is likewise an owner-approved live PTY attachment, not OS process attestation.

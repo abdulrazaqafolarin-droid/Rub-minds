@@ -40,7 +40,7 @@ The repository contains an Android companion app and Android-side policy/tests. 
 
 The repository contains a Tauri/Rust desktop companion, Windows/macOS/Linux device-registration/runtime foundations, app inventory, screen/terminal session handling and permission-gated commands.
 
-**Not yet proven:** full native builds and physical acceptance on each target operating system, and the same host-independent AI-session-to-frame association needed by the product.
+**Not yet proven:** full native builds and physical acceptance on each target operating system. The host-independent AI-session/frame backend is in the PR #69 development branch, but the desktop OS picker currently proves a whole-monitor capture rather than a particular native app window; selected desktop app identity is owner-confirmed context, not window/process attestation.
 
 ### Terminal
 
@@ -135,7 +135,7 @@ Do not weaken the legacy host-scoped wake queue to make the hostless group-bindi
 - PR #69 describes a focused 12/12 policy test run in an isolated Node harness. That is not a complete repository test/build, a Supabase migration replay or real device/provider acceptance.
 - PR #68's own description states that its tests have not executed on a runner and that no real terminal AI client has been connected.
 - PR #66's description records the provider resolver/physical provider acceptance and full CI/database/native-build gaps. Its native-wake work is not deployed or physically accepted.
-- The attempted host-independent frame-binding implementation discussed during the 8 November work was not committed at this checkpoint. The next backend slice is still to be designed, implemented, tested and reviewed; do not report it as present until the branch proves it.
+- The host-independent device-frame binding schema, owner challenge/status/revoke routes and `bind_device_frame` MCP tool are committed on the PR #69 development branch. Functional SQL coverage is now being added; a successful migration reset, clean workflow execution and real phone/desktop/terminal acceptance are still required before this backend slice is treated as complete.
 
 ## 7. Rules for keeping the work on course
 
@@ -152,6 +152,6 @@ Do not weaken the legacy host-scoped wake queue to make the hostless group-bindi
 
 ## 8. Immediate next task
 
-Continue Stage A with the **host-independent AI-session-to-device-frame association**. First finish reviewing the current schema and the PR #69 classifier contract; then implement a separate owner-issued, short-lived challenge and MCP completion route with server-side verification, single-use/replay protection, lifecycle revocation, focused protocol tests and local SQL security tests. Keep native Send/wake out of scope for this slice. Follow with the same association for terminal frames and desktop/phone app frames as the shared contract permits.
+Continue Stage A by completing the **host-independent AI-session-to-device-frame association** already committed in PR #69. Execute the local Supabase migration reset and expanded functional SQL test; correct any migration/trigger failures. Then run focused protocol and MCP tests, add a local Edge Function challenge-to-bind integration test, and verify the same selected AI participant across Android, desktop app context and terminal PTY. Keep native Send/wake out of scope for this slice. Follow with the same association for terminal frames and desktop/phone app frames as the shared contract permits.
 
 Only after the association and the shared AI collaboration path work coherently across all three surfaces should the project move to the full UI/UX redesign.
