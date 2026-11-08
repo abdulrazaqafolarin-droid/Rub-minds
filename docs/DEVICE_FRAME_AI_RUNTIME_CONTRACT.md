@@ -51,3 +51,6 @@ Required server checks: same room, active AI participant, active joined MCP sess
 ## Validation in this slice
 
 `node --test integrations/backroom/frame-ai-runtime.node-test.mjs` covers joined-vs-unjoined identity, inventory-vs-participation, all four frame surfaces, exact scope mismatch, expiry/revocation, app conversation identity, terminal process identity, and separate native wake consent. It does not call Supabase or prove device/AI-provider compatibility.
+
+
+The project-wide sequencing, surface scope and release discipline are locked in [Rub Minds — Product Execution Plan](RUB_MINDS_PRODUCT_EXECUTION_PLAN.md). This execution plan governs the order: core phone/desktop/terminal capabilities first, full UI/UX redesign second, complete product testing third, then controlled release.
