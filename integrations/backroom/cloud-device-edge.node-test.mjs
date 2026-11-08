@@ -116,7 +116,7 @@ test("Supabase config declares the device Edge Function exactly once with manual
 test("local Supabase CI exercises the complete cloud device lifecycle", async () => {
   const workflow = await read(".github/workflows/ci.yml");
   const script = await read("scripts/local-backroom-device-e2e.mjs");
-  assert.match(workflow, /Start Backroom device Edge Function/);
+  assert.match(workflow, /Start local Supabase Edge Functions \(MCP \+ Backroom device\)/);
   assert.match(workflow, /node scripts\/local-backroom-device-e2e\.mjs/);
   assert.match(workflow, /Stop isolated Supabase services/);
   for (const action of ["pair/create","pair/claim","device/status","owner/approve","device/inventory","device/event","room/devices","room/events","owner/revoke"]) {
