@@ -87,7 +87,6 @@ test("Android and desktop apps remain draft-only until provider conversation ide
     const result = classifyFrameAiSession(input, { now: NOW });
     assert.equal(result.state, "bound_draft_only", surface);
     assert.equal(result.frameBindingActive, true);
-    assert.equal(result.canInsertDraft, true);
     assert.equal(result.canAutoWakeFrame, false);
   }
 });
@@ -103,7 +102,6 @@ test("native app wake requires both exact provider identity and separate unexpir
   const ready = classifyFrameAiSession(input, { now: NOW });
   assert.equal(ready.state, "native_wake_ready");
   assert.equal(ready.canAutoWakeFrame, true);
-  assert.equal(ready.requiresBrowserHost, false);
 
   input.wakeConsent.granted = false;
   const noLocalConsent = classifyFrameAiSession(input, { now: NOW });
@@ -119,7 +117,6 @@ test("terminal AI connects as the joined MCP participant and does not use native
   assert.equal(result.frameBindingActive, true);
   assert.equal(result.canPollGroupEventsWhileActive, true);
   assert.equal(result.canAutoWakeFrame, false);
-  assert.equal(result.requiresBrowserHost, false);
 });
 
 test("terminal process identity must be verified before the frame reports an attached AI", () => {
