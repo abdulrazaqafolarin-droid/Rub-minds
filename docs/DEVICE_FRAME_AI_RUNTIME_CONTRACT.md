@@ -62,3 +62,6 @@ The project-wide sequencing, surface scope and release discipline are locked in 
 
 
 **Desktop evidence limitation:** the current Windows OS picker confirms a whole-monitor capture, not a particular native app window. The owner-selected app ID and executable fingerprint are checked against inventory, but they do not prove the selected monitor contains that app or a particular window. Desktop linkage is owner-confirmed app context, not native window/process capture attestation. Terminal linkage is an owner-approved live PTY attachment, not OS process attestation.
+
+
+A live phone screen runtime uses a renewable lease. Its active frame association is extended by the server-side runtime heartbeat trigger, but never beyond the AI MCP session or active agent-credential expiry. The update cannot revive an already expired/revoked association; shortening or stopping the runtime shortens/revokes the frame link.

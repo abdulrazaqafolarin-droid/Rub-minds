@@ -98,6 +98,9 @@ declare
   v_expired_nonce text:=pg_catalog.repeat('9',64);
   v_result jsonb;
   v_revoked_at timestamptz;
+  v_binding_expiry_before timestamptz;
+  v_binding_expiry_after timestamptz;
+  v_parent_expiry timestamptz;
   v_desktop_app uuid:=pg_catalog.gen_random_uuid();
 begin
   insert into auth.users(id,aud,role,email,encrypted_password,email_confirmed_at,created_at,updated_at)
@@ -203,6 +206,32 @@ begin
   v_result:=public.complete_backroom_device_frame_binding(v_android_challenge,v_android_nonce,v_android_session);
   if v_result->>'ok'<>'true' or v_result->>'replayed'<>'true' then
     raise exception 'Same-session challenge retry was not idempotent: %',v_result;
+  end if;
+
+  -- Renewed phone screen leases must extend an unexpired AI/frame link, capped
+  -- by the MCP session and credential. A shortened lease must shorten the link.
+  select expires_at into v_binding_expiry_before
+  from public.backroom_device_frame_bindings where challenge_id=v_android_challenge;
+  update public.backroom_desktop_sessions
+  set expires_at=pg_catalog.clock_timestamp()+interval '3 hours'
+  where session_id=v_android_runtime;
+  select b.expires_at into v_binding_expiry_after
+  from public.backroom_device_frame_bindings b where b.challenge_id=v_android_challenge;
+  select least(s.expires_at,ac.expires_at) into v_parent_expiry
+  from public.rub_minds_mcp_sessions s
+  join public.agent_connections ac on ac.credential_digest=s.agent_credential_digest
+  where s.session_digest=v_android_session;
+  if v_binding_expiry_after<=v_binding_expiry_before or v_binding_expiry_after>v_parent_expiry then
+    raise exception 'Frame binding did not renew within MCP/credential expiry: before %, after %, cap %',
+      v_binding_expiry_before,v_binding_expiry_after,v_parent_expiry;
+  end if;
+  update public.backroom_desktop_sessions
+  set expires_at=pg_catalog.clock_timestamp()+interval '30 minutes'
+  where session_id=v_android_runtime;
+  select expires_at into v_binding_expiry_after
+  from public.backroom_device_frame_bindings where challenge_id=v_android_challenge;
+  if v_binding_expiry_after>pg_catalog.clock_timestamp()+interval '31 minutes' then
+    raise exception 'Shortened runtime lease did not shorten the frame link: %',v_binding_expiry_after;
   end if;
 
   v_result:=public.complete_backroom_device_frame_binding(v_android_challenge,pg_catalog.repeat('8',64),v_android_session);

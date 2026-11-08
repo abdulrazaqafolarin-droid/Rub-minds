@@ -305,11 +305,28 @@ begin
       where runtime_session_id=old.session_id and revoked_at is null;
     update public.backroom_device_frame_binding_challenges set revoked_at=coalesce(revoked_at,pg_catalog.clock_timestamp())
       where runtime_session_id=old.session_id and consumed_at is null and revoked_at is null;
-  elsif new.expires_at<old.expires_at then
-    update public.backroom_device_frame_bindings set expires_at=least(expires_at,new.expires_at)
-      where runtime_session_id=old.session_id and revoked_at is null;
-    update public.backroom_device_frame_binding_challenges set expires_at=least(expires_at,new.expires_at)
-      where runtime_session_id=old.session_id and consumed_at is null and revoked_at is null;
+  else
+    -- Android screen runtimes use short rolling leases. Extend a still-live
+    -- frame association on heartbeat, but never beyond the MCP session or its
+    -- active AI credential. Never revive an expired or revoked association.
+    update public.backroom_device_frame_bindings b
+      set expires_at=least(new.expires_at,s.expires_at,ac.expires_at)
+      from public.rub_minds_mcp_sessions s
+      join public.agent_connections ac on ac.credential_digest=s.agent_credential_digest
+      where s.session_digest=b.session_digest
+        and b.runtime_session_id=old.session_id
+        and b.revoked_at is null and b.expires_at>pg_catalog.clock_timestamp()
+        and s.terminated_at is null and s.expires_at>pg_catalog.clock_timestamp()
+        and ac.revoked_at is null and ac.expires_at>pg_catalog.clock_timestamp();
+
+    -- Shorten pending challenges when a runtime lease is shortened; a longer
+    -- heartbeat never extends the original one-time challenge window.
+    if new.expires_at<old.expires_at then
+      update public.backroom_device_frame_binding_challenges
+        set expires_at=least(expires_at,new.expires_at)
+        where runtime_session_id=old.session_id
+          and consumed_at is null and revoked_at is null;
+    end if;
   end if;
   return new;
 end;
@@ -373,6 +390,12 @@ begin
     update public.backroom_device_frame_bindings b set revoked_at=coalesce(b.revoked_at,pg_catalog.clock_timestamp())
       from public.rub_minds_mcp_sessions s
       where s.session_digest=b.session_digest and s.agent_credential_digest=old.credential_digest and b.revoked_at is null;
+    update public.backroom_device_frame_binding_challenges c
+      set revoked_at=coalesce(c.revoked_at,pg_catalog.clock_timestamp())
+      from public.rub_minds_mcp_sessions s
+      where s.session_digest=c.target_session_digest
+        and s.agent_credential_digest=old.credential_digest
+        and c.consumed_at is null and c.revoked_at is null;
     return old;
   end if;
   if new.revoked_at is not null or new.expires_at<=pg_catalog.clock_timestamp()
@@ -382,6 +405,12 @@ begin
     update public.backroom_device_frame_bindings b set revoked_at=coalesce(b.revoked_at,pg_catalog.clock_timestamp())
       from public.rub_minds_mcp_sessions s
       where s.session_digest=b.session_digest and s.agent_credential_digest=old.credential_digest and b.revoked_at is null;
+    update public.backroom_device_frame_binding_challenges c
+      set revoked_at=coalesce(c.revoked_at,pg_catalog.clock_timestamp())
+      from public.rub_minds_mcp_sessions s
+      where s.session_digest=c.target_session_digest
+        and s.agent_credential_digest=old.credential_digest
+        and c.consumed_at is null and c.revoked_at is null;
   end if;
   return new;
 end;
