@@ -33,6 +33,7 @@ function base(surface = "android_app") {
       appId: surface === "terminal" ? "opencode" : APP,
       identityFingerprint: FINGERPRINT,
       providerConversationIdentityVerified: surface !== "terminal",
+      providerConversationIdentityDigest: surface === "terminal" ? null : PROVIDER_DIGEST,
       processIdentityVerified: surface === "terminal",
     },
     binding: {
@@ -83,6 +84,7 @@ test("Android and desktop apps remain draft-only until provider conversation ide
   for (const surface of ["android_app", "desktop_app", "windows_app"]) {
     const input = base(surface);
     input.runtime.providerConversationIdentityVerified = false;
+    input.runtime.providerConversationIdentityDigest = null;
     input.binding.providerConversationIdentityDigest = null;
     const result = classifyFrameAiSession(input, { now: NOW });
     assert.equal(result.state, "bound_draft_only", surface);
@@ -184,4 +186,19 @@ test("every reported state is part of the documented closed set", () => {
   const input = base();
   assert.ok(FRAME_AI_RUNTIME_STATES.includes(classifyFrameAiSession(input, { now: NOW }).state));
   assert.equal(classifyFrameAiSession(base(), { now: -1 }).state, "invalid");
+});
+
+test("provider conversation digest must match exactly between the live frame and stored binding", () => {
+  const changedThread = base("android_app");
+  changedThread.runtime.providerConversationIdentityDigest = "c".repeat(64);
+  assert.equal(classifyFrameAiSession(changedThread, { now: NOW }).state, "bound_draft_only");
+  assert.equal(classifyFrameAiSession(changedThread, { now: NOW }).canAutoWakeFrame, false);
+
+  const unverified = base("android_app");
+  unverified.runtime.providerConversationIdentityVerified = false;
+  assert.equal(classifyFrameAiSession(unverified, { now: NOW }).state, "bound_draft_only");
+
+  const absent = base("android_app");
+  absent.runtime.providerConversationIdentityDigest = null;
+  assert.equal(classifyFrameAiSession(absent, { now: NOW }).state, "bound_draft_only");
 });
