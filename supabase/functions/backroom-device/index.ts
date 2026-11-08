@@ -1544,9 +1544,9 @@ Deno.serve(async req => {
       try {
         // Settle the original group job before recording the Android command ACK.
         // If this response is lost, an identical device ACK replays the same evidence safely.
-        await settleNativeWakeGroupJob();
+        const settlement = await settleNativeWakeGroupJob();
         await broadcastControlResult();
-        await broadcastNativeWakeResult();
+        await broadcastNativeWakeResult(settlement);
       } catch (error) {
         const mismatch = error instanceof Error && error.message === 'native_wake_group_lease_mismatch';
         return json(mismatch ? 409 : 503, fail(error instanceof Error ? error.message :
