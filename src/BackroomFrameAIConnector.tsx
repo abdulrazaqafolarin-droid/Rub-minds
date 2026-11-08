@@ -136,7 +136,7 @@ export default function BackroomFrameAIConnector({
     </div>
     {!ready ? <p className="br-frame-ai-note">{unavailableReason || 'Start and approve the selected app or terminal frame first.'}</p> :
       binding ? <div className="br-frame-ai-linked">
-        <span><CheckCircle2 size={15}/> Linked to **{linkedName}**</span>
+        <span><CheckCircle2 size={15}/> Linked to <strong>{linkedName}</strong></span>
         <small>Group identity stays with this AI MCP session. Link expires {new Date(binding.expires_at).toLocaleString()}.</small>
         <button type="button" onClick={() => void revoke()} disabled={busy}><Unlink size={13}/> Revoke frame link</button>
       </div> : <>
