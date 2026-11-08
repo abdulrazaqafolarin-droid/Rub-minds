@@ -108,6 +108,27 @@ const nativeCommand = (handoff = nativeHandoff()) => ({
   sessionId, appPackageName, nativeWakeHandoff: handoff,
 });
 
+test("host-independent frame binding challenge commands are session-bound and one-use-shaped", () => {
+  const row = {
+    id: commandId, device_id: deviceId, room_id: roomId, session_id: sessionId,
+    request_id: requestId,
+    command: {
+      action:"frame_ai_binding_challenge",deviceId,roomId,requestId,issuedAt:now,
+      sessionId,challengeId:"123e4567-e89b-42d3-a456-426614174005",
+      nonce:"a".repeat(64),expiresAt:new Date(now+60_000).toISOString(),
+      surface:"android_app",appId:appPackageName,appPackageName,
+    },
+  };
+  const mapped=mapAndroidQueuedCommand(row,{now});
+  assert.equal(mapped?.action,"frame_ai_binding_challenge");
+  assert.equal(mapped?.commandId,commandId);
+  assert.equal(mapAndroidQueuedCommand({...row,command:{...row.command,nonce:"bad"}},{now}),null);
+  assert.equal(mapAndroidQueuedCommand({...row,command:{...row.command,sessionId:roomId}},{now}),null);
+  assert.equal(mapAndroidQueuedCommand({...row,command:{...row.command,surface:"terminal"}},{now}),null);
+  assert.equal(mapAndroidQueuedCommand({...row,command:{...row.command,appPackageName:"com.other.ai"}},{now}),null);
+  assert.equal(mapAndroidQueuedCommand({...row,command:{...row.command,extra:true}},{now}),null);
+});
+
 test("native wake handoffs are strict, canonical, Android-only and bounded to twenty seconds", () => {
   const valid = nativeHandoff();
   assert.ok(validateAndroidNativeWakeHandoff(valid, { now }));

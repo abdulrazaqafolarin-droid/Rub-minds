@@ -186,6 +186,25 @@ export function mapAndroidQueuedCommand(row, { now = Date.now() } = {}) {
   if (command.deviceId !== row.device_id || command.roomId !== row.room_id ||
       !UUID.test(command.requestId ?? "") || command.requestId !== row.request_id) return null;
 
+  if (action === "frame_ai_binding_challenge") {
+    const keys = [
+      "action","deviceId","roomId","requestId","issuedAt","sessionId",
+      "challengeId","nonce","expiresAt","surface","appId","appPackageName",
+    ];
+    if (!exactKeys(command,keys) || !UUID.test(command.sessionId??"") ||
+        !UUID.test(command.challengeId??"") || !HEX.test(command.nonce??"") ||
+        command.surface!=="android_app" || !isPackageName(command.appId) ||
+        command.appId!==command.appPackageName ||
+        typeof command.expiresAt!=="string" || !Number.isFinite(Date.parse(command.expiresAt)) ||
+        Date.parse(command.expiresAt)<=now || !Number.isSafeInteger(command.issuedAt) ||
+        command.issuedAt>now+3_000 || now-command.issuedAt>90_000 ||
+        command.sessionId!==row.session_id || command.issuedAt<0) return null;
+    return Object.freeze({
+      ...command, action, commandId:row.id, requestId:row.request_id,
+      sessionId:row.session_id,
+    });
+  }
+
   if (action === "native_wake_trigger") {
     const outerKeys = [
       "action", "deviceId", "roomId", "requestId", "issuedAt", "sessionId",

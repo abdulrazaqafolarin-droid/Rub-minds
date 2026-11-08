@@ -13,6 +13,7 @@ import { validateDesktopSessionClose } from './desktop-session-close-protocol.mj
 import { validateDesktopSessionAbandon } from './desktop-session-abandon-protocol.mjs';
 import { validateAndroidSessionStart, validateAndroidDeviceCommand, validateAndroidSignal, validateAndroidCommandAck, validateAndroidNativeWakeHandoff, validateAndroidNativeWakeResult, validateAndroidNativeBindingChallenge, validateAndroidNativeBindingCompletion, validateAndroidSessionClose, mapAndroidQueuedCommand } from './android-streaming-protocol.mjs';
 import { broadcastPrivateDeviceEvent } from './realtime-broadcast.mjs';
+import { validateFrameAIBindingChallengeRequest, validateFrameAIBindingCompletion, validateFrameAIBindingRevoke } from './frame-ai-binding-protocol.mjs';
 
 const url = Deno.env.get('SUPABASE_URL');
 const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
@@ -487,6 +488,148 @@ Deno.serve(async req => {
       await db.from('backroom_devices').update({ last_seen_at: new Date().toISOString() }).eq('device_id', current.device_id);
       return json(200, { ok: true, deviceId: current.device_id, status: current.status,
         capabilities: current.capabilities }, origin);
+    }
+
+    if (action === 'frame-ai/binding-challenge') {
+      const request = validateFrameAIBindingChallengeRequest({
+        deviceId: input.deviceId, roomId: input.roomId, runtimeSessionId: input.runtimeSessionId,
+        participantId: input.participantId, surface: input.surface, appId: input.appId,
+        requestId: input.requestId, issuedAt: input.issuedAt,
+      });
+      if (!request || !exactKeys(input, [
+        'action','deviceId','roomId','runtimeSessionId','participantId','surface','appId','requestId','issuedAt'
+      ])) return json(400, fail('invalid_frame_ai_binding_challenge'), origin);
+      const userId = await owner(req);
+      if (!userId) return json(401, fail('owner_auth_required'), origin);
+
+      const { data: room, error: roomError } = await db.from('rooms')
+        .select('id,owner_id').eq('id',request.roomId).maybeSingle();
+      if (roomError) return json(503,fail('frame_ai_binding_room_lookup_failed'),origin);
+      if (!room || room.owner_id!==userId) return json(403,fail('room_owner_required'),origin);
+
+      const { data: session, error: sessionError } = await db.from('rub_minds_mcp_sessions')
+        .select('session_digest,room_id,participant_id,agent_credential_digest,expires_at')
+        .eq('room_id',request.roomId).eq('participant_id',request.participantId)
+        .is('terminated_at',null).not('agent_credential_ciphertext','is',null)
+        .gt('expires_at',new Date().toISOString()).maybeSingle();
+      if (sessionError) return json(503,fail('frame_ai_binding_session_lookup_failed'),origin);
+      if (!session || session.room_id!==request.roomId || session.participant_id!==request.participantId ||
+          typeof session.session_digest!=='string' || !HEX.test(session.session_digest) ||
+          typeof session.agent_credential_digest!=='string' || !HEX.test(session.agent_credential_digest)) {
+        return json(404,fail('joined_ai_session_not_active'),origin);
+      }
+
+      const challengeId=crypto.randomUUID();
+      const nonce=randomHex(32);
+      const { data: challenge, error: challengeError } = await db.rpc('create_backroom_frame_ai_binding_challenge',{
+        p_challenge_id:challengeId,p_nonce_digest:await sha256(nonce),p_owner_id:userId,
+        p_room_id:request.roomId,p_participant_id:request.participantId,
+        p_session_digest:session.session_digest,p_device_id:request.deviceId,
+        p_runtime_session_id:request.runtimeSessionId,p_surface:request.surface,p_app_id:request.appId,
+      });
+      if (challengeError) return json(503,fail('frame_ai_binding_challenge_creation_failed'),origin);
+      if (!challenge || challenge.ok!==true) {
+        const reason=typeof challenge?.reason==='string'?challenge.reason:'frame_ai_binding_challenge_rejected';
+        const status=['frame_ai_binding_already_active','device_not_active','runtime_session_inactive',
+          'device_room_binding_inactive','app_not_selected_on_device','group_ai_credential_inactive'].includes(reason)?409:403;
+        return json(status,fail(reason),origin);
+      }
+
+      const expiresAt=typeof challenge.expires_at==='string'?challenge.expires_at:
+        new Date(Date.now()+90_000).toISOString();
+      const commandId=crypto.randomUUID();
+      const command={
+        action:'frame_ai_binding_challenge',deviceId:request.deviceId,roomId:request.roomId,
+        requestId:commandId,issuedAt:Date.now(),sessionId:request.runtimeSessionId,
+        challengeId,nonce,expiresAt,surface:request.surface,appId:request.appId,
+        ...(request.surface==='android_app'?{appPackageName:request.appId}:{})
+      };
+      if (request.surface==='android_app') {
+        const { error: queueError } = await db.from('backroom_android_commands').insert({
+          device_id:request.deviceId,room_id:request.roomId,session_id:request.runtimeSessionId,
+          request_id:commandId,command,status:'pending',expires_at:expiresAt,
+        });
+        if (queueError) {
+          await db.from('backroom_frame_ai_binding_challenges').update({revoked_at:new Date().toISOString()})
+            .eq('id',challengeId).is('consumed_at',null).is('revoked_at',null);
+          return json(503,fail('frame_ai_binding_device_delivery_failed'),origin);
+        }
+      } else {
+        try {
+          await broadcastPrivateDeviceEvent({
+            projectUrl:url,apiKey:serviceKey,deviceId:request.deviceId,event:'command',
+            payload:command,
+          });
+        } catch {
+          await db.from('backroom_frame_ai_binding_challenges').update({revoked_at:new Date().toISOString()})
+            .eq('id',challengeId).is('consumed_at',null).is('revoked_at',null);
+          return json(503,fail('frame_ai_binding_device_delivery_failed'),origin);
+        }
+      }
+      return json(202,{ok:true,challengeId,expiresAt,surface:request.surface,
+        delivery:request.surface==='android_app'?'device_queue':'private_device_channel'},origin);
+    }
+
+    if (action==='android/frame-ai-binding-complete' || action==='desktop/frame-ai-binding-complete') {
+      const evidence=validateFrameAIBindingCompletion({
+        challengeId:input.challengeId,nonce:input.nonce,runtimeSessionId:input.runtimeSessionId,
+        surface:input.surface,appId:input.appId,appIdentityFingerprint:input.appIdentityFingerprint,
+        runtimeIdentityDigest:input.runtimeIdentityDigest,
+        ...(Object.hasOwn(input,'composerIdentityDigest')?{composerIdentityDigest:input.composerIdentityDigest}:{}),
+        ...(Object.hasOwn(input,'sendControlIdentityDigest')?{sendControlIdentityDigest:input.sendControlIdentityDigest}:{}),
+        ...(Object.hasOwn(input,'providerConversationIdentityDigest')?{providerConversationIdentityDigest:input.providerConversationIdentityDigest}:{})
+      });
+      const requiredKeys=['action','challengeId','nonce','runtimeSessionId','surface','appId',
+        'appIdentityFingerprint','runtimeIdentityDigest'];
+      const optionalKeys=['composerIdentityDigest','sendControlIdentityDigest','providerConversationIdentityDigest'];
+      if (!evidence || !exactKeys(input,[...requiredKeys,...optionalKeys],requiredKeys)) {
+        return json(400,fail('invalid_frame_ai_binding_evidence'),origin);
+      }
+      const current=await device(req);
+      if (!current) return json(401,fail('device_not_approved'),origin);
+      if (evidence.surface==='android_app' && (action!=='android/frame-ai-binding-complete'||current.platform!=='android')) {
+        return json(409,fail('android_device_required'),origin);
+      }
+      if (evidence.surface!=='android_app' && (action!=='desktop/frame-ai-binding-complete'||current.platform==='android')) {
+        return json(409,fail('desktop_device_required'),origin);
+      }
+      const {data,error}=await db.rpc('complete_backroom_frame_ai_binding',{
+        p_challenge_id:evidence.challengeId,p_nonce_digest:await sha256(evidence.nonce),
+        p_device_id:current.device_id,p_runtime_session_id:evidence.runtimeSessionId,
+        p_app_id:evidence.appId,p_app_identity_fingerprint:evidence.appIdentityFingerprint,
+        p_runtime_identity_digest:evidence.runtimeIdentityDigest,
+        p_composer_identity_digest:evidence.composerIdentityDigest??null,
+        p_send_control_identity_digest:evidence.sendControlIdentityDigest??null,
+        p_provider_conversation_identity_digest:evidence.providerConversationIdentityDigest??null,
+      });
+      if(error) return json(503,fail('frame_ai_binding_completion_unavailable'),origin);
+      if(!data||data.ok!==true){
+        const reason=typeof data?.reason==='string'?data.reason:'frame_ai_binding_completion_rejected';
+        const status=['binding_challenge_not_found','binding_challenge_invalid_or_expired',
+          'binding_challenge_already_consumed','frame_ai_binding_already_active','app_identity_changed',
+          'runtime_session_inactive','device_room_binding_inactive'].includes(reason)?409:403;
+        return json(status,fail(reason),origin);
+      }
+      return json(200,{ok:true,bindingId:data.binding_id,expiresAt:data.expires_at,
+        replayed:data.replayed===true,providerConversationAttested:data.provider_conversation_attested===true,
+        capabilities:{groupCollaboration:true,nativeSend:false,automaticWake:false}},origin);
+    }
+
+    if (action==='frame-ai/binding-revoke') {
+      const request=validateFrameAIBindingRevoke({
+        bindingId:input.bindingId,roomId:input.roomId,deviceId:input.deviceId,
+      });
+      if(!request||!exactKeys(input,['action','bindingId','roomId','deviceId'])) {
+        return json(400,fail('invalid_frame_ai_binding_revoke'),origin);
+      }
+      const userId=await owner(req);
+      if(!userId) return json(401,fail('owner_auth_required'),origin);
+      const {data,error}=await db.rpc('revoke_backroom_frame_ai_binding',{
+        p_binding_id:request.bindingId,p_owner_id:userId,
+        p_room_id:request.roomId,p_device_id:request.deviceId,
+      });
+      if(error) return json(503,fail('frame_ai_binding_revoke_failed'),origin);
+      return json(200,{ok:true,revoked:data===true},origin);
     }
 
     if (action === 'android/native-binding-candidates') {
