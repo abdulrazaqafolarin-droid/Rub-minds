@@ -13,6 +13,7 @@ import { validateDesktopSessionClose } from './desktop-session-close-protocol.mj
 import { validateDesktopSessionAbandon } from './desktop-session-abandon-protocol.mjs';
 import { validateAndroidSessionStart, validateAndroidDeviceCommand, validateAndroidSignal, validateAndroidCommandAck, validateAndroidNativeWakeHandoff, validateAndroidNativeWakeResult, validateAndroidNativeBindingChallenge, validateAndroidNativeBindingCompletion, validateAndroidSessionClose, mapAndroidQueuedCommand } from './android-streaming-protocol.mjs';
 import { broadcastPrivateDeviceEvent } from './realtime-broadcast.mjs';
+import { validateDeviceFrameBindingChallenge, validateDeviceFrameBindingRevoke, validateDeviceFrameBindingStatus } from './device-frame-binding-protocol.mjs';
 
 const url = Deno.env.get('SUPABASE_URL');
 const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
@@ -328,9 +329,19 @@ Deno.serve(async req => {
       if (!binding.ok) return json(binding.status, fail(binding.reason), origin);
 
       if (command.command === 'launch_app') {
-        const { data: app } = await db.from('backroom_desktop_apps').select('app_id')
+        const { data: app, error: appError } = await db.from('backroom_desktop_apps').select('app_id')
           .eq('device_id', command.deviceId).eq('app_id', command.details.appId).maybeSingle();
+        if (appError) return json(503, fail('desktop_app_inventory_unavailable'), origin);
         if (!app) return json(403, fail('app_not_registered_on_device'), origin);
+      }
+      let targetApp: { id: string; fingerprint: string } | null = null;
+      if (command.command === 'view_offer' && typeof command.details.appId === 'string') {
+        const { data: app, error: appError } = await db.from('backroom_desktop_apps')
+          .select('app_id,executable_sha256').eq('device_id', command.deviceId)
+          .eq('app_id', command.details.appId).maybeSingle();
+        if (appError) return json(503, fail('desktop_app_inventory_unavailable'), origin);
+        if (!app) return json(403, fail('app_not_registered_on_device'), origin);
+        targetApp = { id: app.app_id, fingerprint: app.executable_sha256 };
       }
 
       let sessionType: 'screen' | 'terminal' | null = null;
@@ -342,6 +353,7 @@ Deno.serve(async req => {
           session_id: command.details.sessionId,
           device_id: command.deviceId, room_id: command.roomId,
           requested_by: userId, session_type: sessionType, status: 'active', expires_at: expiresAt,
+          target_app_id: targetApp?.id ?? null, target_app_fingerprint: targetApp?.fingerprint ?? null,
         });
         if (error) return json(409, fail('desktop_session_id_conflict'), origin);
       } else if (command.command === 'stop_session') {
@@ -487,6 +499,210 @@ Deno.serve(async req => {
       await db.from('backroom_devices').update({ last_seen_at: new Date().toISOString() }).eq('device_id', current.device_id);
       return json(200, { ok: true, deviceId: current.device_id, status: current.status,
         capabilities: current.capabilities }, origin);
+    }
+
+    if (action === 'device-frame/ai-candidates') {
+      if (!strictKeys(input, ['action','roomId']) || !UUID.test(input.roomId ?? '')) {
+        return json(400, fail('invalid_device_frame_ai_candidates'), origin);
+      }
+      const userId = await owner(req);
+      if (!userId) return json(401, fail('owner_auth_required'), origin);
+      const actor = await authorizeRoomActor(input.roomId, userId);
+      if (!actor.ok) return json(actor.status, fail(actor.reason), origin);
+      const now = new Date().toISOString();
+      const { data: connections, error: connectionsError } = await db.from('agent_connections')
+        .select('participant_id,credential_digest')
+        .eq('room_id', input.roomId).is('revoked_at', null).gt('expires_at', now).limit(100);
+      if (connectionsError) return json(503, fail('device_frame_ai_candidates_unavailable'), origin);
+      const connectionRows = Array.isArray(connections) ? connections : [];
+      const digests = [...new Set(connectionRows.map((row: any) => row.credential_digest)
+        .filter((value: unknown) => typeof value === 'string' && HEX.test(value)))];
+      if (!digests.length) return json(200, { ok: true, candidates: [] }, origin);
+
+      const { data: sessions, error: sessionsError } = await db.from('rub_minds_mcp_sessions')
+        .select('participant_id,room_id,agent_credential_digest')
+        .eq('room_id', input.roomId).in('agent_credential_digest', digests)
+        .not('agent_credential_ciphertext', 'is', null).is('terminated_at', null)
+        .gt('expires_at', now).limit(100);
+      if (sessionsError) return json(503, fail('device_frame_ai_candidates_unavailable'), origin);
+      const sessionRows = Array.isArray(sessions) ? sessions : [];
+      const liveDigests = new Set(sessionRows.map((row: any) => row.agent_credential_digest));
+      const liveConnections = new Set(connectionRows.filter((row: any) => liveDigests.has(row.credential_digest))
+        .map((row: any) => row.credential_digest));
+      const participantIds = [...new Set(sessionRows.map((row: any) => row.participant_id)
+        .filter((value: unknown) => typeof value === 'string' && UUID.test(value)))];
+      if (!participantIds.length) return json(200, { ok: true, candidates: [] }, origin);
+      const { data: participants, error: participantError } = await db.from('participants')
+        .select('id,display_name,kind,status').eq('room_id', input.roomId)
+        .in('id', participantIds).in('kind', ['original_session','model','external_agent'])
+        .in('status', ['waiting','connected','active','autonomous']);
+      if (participantError) return json(503, fail('device_frame_ai_candidates_unavailable'), origin);
+      const participantById = new Map((participants || []).map((row: any) => [row.id, row]));
+      const seen = new Set<string>();
+      const candidates = sessionRows.flatMap((row: any) => {
+        const participant = participantById.get(row.participant_id);
+        if (!participant || !liveConnections.has(row.agent_credential_digest) || seen.has(row.participant_id)) return [];
+        seen.add(row.participant_id);
+        return [{ participantId: row.participant_id, displayName: String(participant.display_name || 'AI participant').slice(0,80), kind: participant.kind }];
+      });
+      return json(200, { ok: true, candidates }, origin);
+    }
+
+    if (action === 'device-frame/binding-challenge') {
+      const challenge = validateDeviceFrameBindingChallenge({
+        deviceId: input.deviceId, roomId: input.roomId, requestId: input.requestId,
+        issuedAt: input.issuedAt, runtimeSessionId: input.runtimeSessionId,
+        participantId: input.participantId, surface: input.surface,
+      });
+      if (!challenge || !strictKeys(input, [
+        'action','deviceId','roomId','requestId','issuedAt','runtimeSessionId','participantId','surface'
+      ])) return json(400, fail('invalid_device_frame_binding_challenge'), origin);
+      const userId = await owner(req);
+      if (!userId) return json(401, fail('owner_auth_required'), origin);
+      const actor = await authorizeRoomActor(challenge.roomId, userId);
+      if (!actor.ok) return json(actor.status, fail(actor.reason), origin);
+
+      const [deviceResult, roomBinding, runtimeResult, participantResult, connectionResult] = await Promise.all([
+        db.from('backroom_devices').select('device_id,owner_id,status,platform')
+          .eq('device_id', challenge.deviceId).maybeSingle(),
+        db.from('backroom_device_room_bindings').select('device_id,room_id,owner_id')
+          .eq('device_id', challenge.deviceId).eq('room_id', challenge.roomId)
+          .eq('owner_id', userId).is('revoked_at', null).maybeSingle(),
+        db.from('backroom_desktop_sessions')
+          .select('session_id,device_id,room_id,requested_by,session_type,status,expires_at,target_app_id,target_app_fingerprint')
+          .eq('session_id', challenge.runtimeSessionId).eq('device_id', challenge.deviceId)
+          .eq('room_id', challenge.roomId).eq('requested_by', userId)
+          .eq('status', 'active').gt('expires_at', new Date().toISOString()).maybeSingle(),
+        db.from('participants').select('id,room_id,kind,status')
+          .eq('id', challenge.participantId).eq('room_id', challenge.roomId)
+          .in('kind', ['original_session','model','external_agent'])
+          .in('status', ['waiting','connected','active','autonomous']).maybeSingle(),
+        db.from('agent_connections').select('credential_digest,expires_at')
+          .eq('room_id', challenge.roomId).eq('participant_id', challenge.participantId)
+          .is('revoked_at', null).gt('expires_at', new Date().toISOString()).maybeSingle(),
+      ]);
+      if (deviceResult.error || roomBinding.error || runtimeResult.error || participantResult.error || connectionResult.error) {
+        return json(503, fail('device_frame_binding_lookup_failed'), origin);
+      }
+      const selectedDevice = deviceResult.data;
+      const runtime = runtimeResult.data;
+      if (!selectedDevice || selectedDevice.status !== 'active' || selectedDevice.owner_id !== userId || !roomBinding.data) {
+        return json(403, fail('device_owner_and_group_pairing_required'), origin);
+      }
+      if (!runtime) return json(404, fail('selected_frame_runtime_not_active'), origin);
+      if (!participantResult.data || !connectionResult.data) return json(404, fail('selected_ai_participant_not_active'), origin);
+
+      const { data: aiSession, error: aiSessionError } = await db.from('rub_minds_mcp_sessions')
+        .select('session_digest,participant_id,room_id,expires_at')
+        .eq('room_id', challenge.roomId).eq('participant_id', challenge.participantId)
+        .eq('agent_credential_digest', connectionResult.data.credential_digest)
+        .not('agent_credential_ciphertext', 'is', null).is('terminated_at', null)
+        .gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (aiSessionError) return json(503, fail('device_frame_binding_lookup_failed'), origin);
+      if (!aiSession) return json(409, fail('selected_ai_has_no_live_mcp_session'), origin);
+
+      let targetAppId: string | null = null;
+      let targetAppFingerprint: string | null = null;
+      if (challenge.surface === 'android_app') {
+        if (selectedDevice.platform !== 'android' || runtime.session_type !== 'screen' ||
+            !runtime.target_app_id || !runtime.target_app_fingerprint) {
+          return json(409, fail('android_frame_must_be_bound_to_selected_app'), origin);
+        }
+        targetAppId = runtime.target_app_id;
+        targetAppFingerprint = runtime.target_app_fingerprint;
+        const { data: app, error } = await db.from('backroom_device_apps')
+          .select('package_name').eq('device_id', challenge.deviceId)
+          .eq('package_name', targetAppId).eq('signing_certificate_sha256', targetAppFingerprint).maybeSingle();
+        if (error) return json(503, fail('device_frame_app_lookup_failed'), origin);
+        if (!app) return json(409, fail('selected_android_app_identity_not_current'), origin);
+      } else if (challenge.surface === 'desktop_app') {
+        if (!['windows','macos','linux'].includes(selectedDevice.platform) || runtime.session_type !== 'screen' ||
+            !runtime.target_app_id || !runtime.target_app_fingerprint) {
+          return json(409, fail('desktop_frame_must_be_bound_to_selected_app'), origin);
+        }
+        targetAppId = runtime.target_app_id;
+        targetAppFingerprint = runtime.target_app_fingerprint;
+        const { data: app, error } = await db.from('backroom_desktop_apps')
+          .select('app_id').eq('device_id', challenge.deviceId)
+          .eq('app_id', targetAppId).eq('executable_sha256', targetAppFingerprint).maybeSingle();
+        if (error) return json(503, fail('device_frame_app_lookup_failed'), origin);
+        if (!app) return json(409, fail('selected_desktop_app_identity_not_current'), origin);
+      } else if (!['windows','macos','linux'].includes(selectedDevice.platform) ||
+        runtime.session_type !== 'terminal' || runtime.target_app_id !== null || runtime.target_app_fingerprint !== null) {
+        return json(409, fail('terminal_frame_runtime_required'), origin);
+      }
+
+      const expiresMs = Math.min(Date.now() + 90_000, Date.parse(runtime.expires_at),
+        Date.parse(aiSession.expires_at), Date.parse(connectionResult.data.expires_at));
+      if (!Number.isFinite(expiresMs) || expiresMs <= Date.now()) return json(409, fail('device_frame_challenge_expired'), origin);
+      const now = new Date().toISOString();
+      const { error: revokeError } = await db.from('backroom_device_frame_binding_challenges')
+        .update({ revoked_at: now }).eq('device_id', challenge.deviceId)
+        .eq('runtime_session_id', challenge.runtimeSessionId).eq('target_participant_id', challenge.participantId)
+        .is('consumed_at', null).is('revoked_at', null);
+      if (revokeError) return json(503, fail('device_frame_challenge_unavailable'), origin);
+      const nonce = randomHex(32);
+      const challengeId = crypto.randomUUID();
+      const expiresAt = new Date(expiresMs).toISOString();
+      const { error: insertError } = await db.from('backroom_device_frame_binding_challenges').insert({
+        id: challengeId, requested_by: userId, target_participant_id: challenge.participantId,
+        room_id: challenge.roomId, device_id: challenge.deviceId,
+        runtime_session_id: challenge.runtimeSessionId, surface: challenge.surface,
+        target_app_id: targetAppId, target_app_fingerprint: targetAppFingerprint,
+        nonce_digest: await sha256(nonce), expires_at: expiresAt,
+      });
+      if (insertError) return json(409, fail('device_frame_challenge_conflict'), origin);
+      return json(201, { ok: true, challengeId, nonce, expiresAt, participantId: challenge.participantId,
+        surface: challenge.surface,
+        instruction: 'Give this one-time challenge to the exact AI conversation selected in this group. That AI must call bind_device_frame in its own joined MCP session. This only attaches its existing participant; it does not grant app control, native Send or automatic wake.' }, origin);
+    }
+
+    if (action === 'device-frame/binding-status') {
+      const status = validateDeviceFrameBindingStatus({
+        deviceId: input.deviceId, roomId: input.roomId, runtimeSessionId: input.runtimeSessionId,
+      });
+      if (!status || !strictKeys(input, ['action','deviceId','roomId','runtimeSessionId'])) {
+        return json(400, fail('invalid_device_frame_binding_status'), origin);
+      }
+      const userId = await owner(req);
+      if (!userId) return json(401, fail('owner_auth_required'), origin);
+      const actor = await authorizeRoomActor(status.roomId, userId);
+      if (!actor.ok) return json(actor.status, fail(actor.reason), origin);
+      const { data: deviceRow, error: deviceError } = await db.from('backroom_devices')
+        .select('device_id,owner_id').eq('device_id', status.deviceId).maybeSingle();
+      if (deviceError) return json(503, fail('device_frame_binding_status_failed'), origin);
+      if (!deviceRow || deviceRow.owner_id !== userId) return json(403, fail('device_owner_required'), origin);
+      const { data, error } = await db.from('backroom_device_frame_bindings')
+        .select('id,participant_id,surface,target_app_id,expires_at,created_at')
+        .eq('device_id', status.deviceId).eq('room_id', status.roomId)
+        .eq('runtime_session_id', status.runtimeSessionId)
+        .is('revoked_at', null).gt('expires_at', new Date().toISOString()).maybeSingle();
+      if (error) return json(503, fail('device_frame_binding_status_failed'), origin);
+      return json(200, { ok: true, binding: data || null }, origin);
+    }
+
+    if (action === 'device-frame/binding-revoke') {
+      const revoke = validateDeviceFrameBindingRevoke({
+        deviceId: input.deviceId, roomId: input.roomId,
+        runtimeSessionId: input.runtimeSessionId, bindingId: input.bindingId,
+      });
+      if (!revoke || !strictKeys(input, ['action','deviceId','roomId','runtimeSessionId','bindingId'])) {
+        return json(400, fail('invalid_device_frame_binding_revoke'), origin);
+      }
+      const userId = await owner(req);
+      if (!userId) return json(401, fail('owner_auth_required'), origin);
+      const actor = await authorizeRoomActor(revoke.roomId, userId);
+      if (!actor.ok) return json(actor.status, fail(actor.reason), origin);
+      const { data: deviceRow, error: deviceError } = await db.from('backroom_devices')
+        .select('device_id,owner_id').eq('device_id', revoke.deviceId).maybeSingle();
+      if (deviceError) return json(503, fail('device_frame_binding_revoke_failed'), origin);
+      if (!deviceRow || deviceRow.owner_id !== userId) return json(403, fail('device_owner_required'), origin);
+      const { data, error } = await db.from('backroom_device_frame_bindings').update({ revoked_at: new Date().toISOString() })
+        .eq('id', revoke.bindingId).eq('requested_by', userId).eq('room_id', revoke.roomId)
+        .eq('device_id', revoke.deviceId).eq('runtime_session_id', revoke.runtimeSessionId)
+        .is('revoked_at', null).select('id');
+      if (error) return json(503, fail('device_frame_binding_revoke_failed'), origin);
+      return json(200, { ok: true, revoked: Array.isArray(data) && data.length === 1 }, origin);
     }
 
     if (action === 'android/native-binding-candidates') {
@@ -768,7 +984,7 @@ Deno.serve(async req => {
       if (!binding.ok) return json(binding.status, fail(binding.reason), origin);
       if (binding.platform !== 'android') return json(409, fail('android_device_required'), origin);
       const { data: app, error: appError } = await db.from('backroom_device_apps')
-        .select('package_name').eq('device_id', start.deviceId)
+        .select('package_name,signing_certificate_sha256').eq('device_id', start.deviceId)
         .eq('package_name', start.appPackageName).maybeSingle();
       if (appError) return json(503, fail('android_app_inventory_unavailable'), origin);
       if (!app) return json(403, fail('app_not_selected_on_device'), origin);
@@ -792,6 +1008,7 @@ Deno.serve(async req => {
       const { error: sessionError } = await db.from('backroom_desktop_sessions').insert({
         session_id: start.sessionId, device_id: start.deviceId, room_id: start.roomId,
         requested_by: userId, session_type: 'screen', status: 'active', expires_at: expiresAt,
+        target_app_id: app.package_name, target_app_fingerprint: app.signing_certificate_sha256,
       });
       if (sessionError) return json(409, fail('android_session_id_conflict'), origin);
       const command = {
