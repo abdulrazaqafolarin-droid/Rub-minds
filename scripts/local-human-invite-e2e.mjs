@@ -96,8 +96,20 @@ let browser;
 try {
   await server.listen();
   console.log('E2E_STAGE: Vite server listening');
-  browser = await chromium.launch({ headless: true });
-  console.log('E2E_STAGE: browser started');
+  try {
+    browser = await chromium.launch({ headless: true });
+    console.log('E2E_STAGE: browser started');
+  } catch (cause) {
+    const errorType = cause instanceof Error ? cause.name : typeof cause;
+    const message = cause instanceof Error ? cause.message : '';
+    const category = /executable.*does not exist|browser.*not found/i.test(message) ? 'browser_executable_missing'
+      : /shared librar|cannot open shared object/i.test(message) ? 'browser_system_library_missing'
+      : /sandbox/i.test(message) ? 'browser_sandbox_launch_failure'
+      : /browser.*process|launch.*process/i.test(message) ? 'browser_process_launch_failure'
+      : 'other_browser_launch_failure';
+    console.log('E2E_STARTUP_DIAG: Chromium launch failed (' + errorType + ', ' + category + ')');
+    throw cause;
+  }
   const page = await browser.newPage();
   const email = 'rub-minds-human-ci-joiner@example.test';
   const password = 'Local-CI-Human-Password-923!x';
