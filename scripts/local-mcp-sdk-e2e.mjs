@@ -4,7 +4,7 @@
  * against the disposable local Supabase Edge Function.
  */
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 
 const endpoint = process.env.LOCAL_MCP_ENDPOINT;
@@ -144,6 +144,7 @@ try {
   const names = catalog.tools.map(tool => tool.name);
   assert.ok(names.includes("join_group"), "official client did not discover join_group");
   assert.ok(names.includes("leave_group"), "official client did not discover leave_group");
+  assert.ok(names.includes("bind_device_frame"), "official client did not discover bind_device_frame");
   assert.ok(names.includes("send_group_message"), "official client did not discover send_group_message");
   assert.ok(names.includes("read_group_messages"), "official client did not discover read_group_messages");
   assert.ok(names.includes("wait_for_group_messages"), "official client did not discover wait_for_group_messages");
@@ -222,6 +223,127 @@ try {
   assert.ok(typeof two?.session_handle === "string" && /^[a-f0-9]{64}$/i.test(two.session_handle));
   assert.notEqual(one.participant_id, two.participant_id, "independent clients must have distinct participants");
   assert.notEqual(one.session_handle, two.session_handle, "independent clients must have distinct session handles");
+
+  // Create a disposable desktop frame using the existing privileged registration RPC.
+  // The challenge is scoped to one exact AI participant AND its MCP session digest.
+  const frameDeviceId = randomUUID();
+  const frameRuntimeId = randomUUID();
+  const frameChallengeId = randomUUID();
+  const frameAppId = randomUUID();
+  const frameAppFingerprint = createHash("sha256").update("rub-minds-ci-frame-app-fingerprint").digest("hex");
+  const frameNonce = createHash("sha256").update("rub-minds-ci-frame-one-time-nonce").digest("hex");
+  const frameSessionDigest = createHash("sha256").update(one.session_handle, "utf8").digest("hex");
+
+  const registeredFrameDevice = await request("/rest/v1/rpc/register_backroom_desktop_device", {
+    method: "POST",
+    body: JSON.stringify({
+      p_device_id: frameDeviceId,
+      p_owner_id: owner.id,
+      p_room_id: room.id,
+      p_token_digest: createHash("sha256").update("rub-minds-ci-device-token").digest("hex"),
+      p_device_public_key: createHash("sha256").update("rub-minds-ci-device-public-key").digest("hex"),
+      p_device_label: "Disposable MCP frame computer",
+      p_platform: "windows",
+      p_os_version: "CI",
+      p_app_version: "0.1.0",
+    }),
+  });
+  assert.equal(registeredFrameDevice?.[0]?.device_id, frameDeviceId,
+    "desktop registration must create the disposable device and room binding");
+
+  await request("/rest/v1/backroom_desktop_apps", {
+    method: "POST",
+    body: JSON.stringify({
+      device_id: frameDeviceId,
+      app_id: frameAppId,
+      app_label: "Disposable AI app",
+      executable_sha256: frameAppFingerprint,
+    }),
+  });
+  await request("/rest/v1/backroom_desktop_sessions", {
+    method: "POST",
+    body: JSON.stringify({
+      session_id: frameRuntimeId,
+      device_id: frameDeviceId,
+      room_id: room.id,
+      requested_by: owner.id,
+      session_type: "screen",
+      status: "active",
+      expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      target_app_id: frameAppId,
+      target_app_fingerprint: frameAppFingerprint,
+    }),
+  });
+  await request("/rest/v1/backroom_device_frame_binding_challenges", {
+    method: "POST",
+    body: JSON.stringify({
+      id: frameChallengeId,
+      requested_by: owner.id,
+      target_participant_id: one.participant_id,
+      target_session_digest: frameSessionDigest,
+      room_id: room.id,
+      device_id: frameDeviceId,
+      runtime_session_id: frameRuntimeId,
+      surface: "desktop_app",
+      target_app_id: frameAppId,
+      target_app_fingerprint: frameAppFingerprint,
+      nonce_digest: createHash("sha256").update(frameNonce, "utf8").digest("hex"),
+      expires_at: new Date(Date.now() + 90 * 1000).toISOString(),
+    }),
+  });
+
+  const wrongSessionFrameBind = await second.callTool({
+    name: "bind_device_frame",
+    arguments: {
+      session_handle: two.session_handle,
+      challenge_id: frameChallengeId,
+      nonce: frameNonce,
+      confirm_bind: true,
+    },
+  });
+  assert.equal(wrongSessionFrameBind.isError, true,
+    "a different AI conversation must not redeem the selected AI session's frame challenge");
+
+  const frameBind = await first.callTool({
+    name: "bind_device_frame",
+    arguments: {
+      session_handle: one.session_handle,
+      challenge_id: frameChallengeId,
+      nonce: frameNonce,
+      confirm_bind: true,
+    },
+  });
+  assert.notEqual(frameBind.isError, true,
+    "the selected joined AI session could not bind to its desktop frame: " + JSON.stringify(frameBind));
+  assert.equal(frameBind.structuredContent?.bound, true);
+  assert.equal(frameBind.structuredContent?.participant_id, one.participant_id);
+  assert.equal(frameBind.structuredContent?.surface, "desktop_app");
+  assert.equal(frameBind.structuredContent?.capabilities?.group_collaboration, true);
+  assert.equal(frameBind.structuredContent?.capabilities?.app_control, false);
+  assert.equal(frameBind.structuredContent?.capabilities?.native_send, false);
+  assert.equal(frameBind.structuredContent?.capabilities?.automatic_wake, false);
+
+  const frameBindRetry = await first.callTool({
+    name: "bind_device_frame",
+    arguments: {
+      session_handle: one.session_handle,
+      challenge_id: frameChallengeId,
+      nonce: frameNonce,
+      confirm_bind: true,
+    },
+  });
+  assert.notEqual(frameBindRetry.isError, true, "same-session frame-binding retry must be idempotent");
+  assert.equal(frameBindRetry.structuredContent?.binding_id, frameBind.structuredContent.binding_id);
+  assert.equal(frameBindRetry.structuredContent?.replayed, true);
+  const persistedFrameBinding = await request(
+    "/rest/v1/backroom_device_frame_bindings?select=id,participant_id,session_digest,revoked_at&challenge_id=eq." + frameChallengeId,
+  );
+  assert.equal(persistedFrameBinding.length, 1);
+  assert.equal(persistedFrameBinding[0].participant_id, one.participant_id);
+  assert.equal(persistedFrameBinding[0].session_digest, frameSessionDigest);
+  assert.equal(persistedFrameBinding[0].revoked_at, null);
+  console.log("Official MCP SDK verified exact-session desktop-frame binding, wrong-session rejection and safe replay.");
+
 
   // Create a real baseline message and use its exact ID + timestamp as the
   // cursor. This proves the wait returns subsequent activity without replaying
@@ -1253,6 +1375,12 @@ try {
   assert.equal(terminatedSessions.length, 1, "leaving must retain the session tombstone by its digest");
   assert.ok(terminatedSessions[0].terminated_at, "leaving must mark the session as terminated");
   assert.equal(terminatedSessions[0].participant_id, null, "a tombstoned session must no longer be bound to a participant");
+  const frameBindingAfterLeave = await request(
+    "/rest/v1/backroom_device_frame_bindings?select=id,revoked_at&challenge_id=eq." + frameChallengeId,
+  );
+  assert.equal(frameBindingAfterLeave.length, 1);
+  assert.ok(frameBindingAfterLeave[0].revoked_at,
+    "leaving the group must revoke the exact AI session device-frame association");
   const residualBridgeState = await request(
     "/rest/v1/rub_minds_mcp_bridge_state?select=session_digest&session_digest=eq." + firstSessionDigest,
   );
