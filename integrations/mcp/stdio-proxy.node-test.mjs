@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createMcpStdioProxy, validateMcpEndpoint } from "./stdio-proxy.mjs";
 
-const ENDPOINT = "https://rub-minds-staging.supabase.co/functions/v1/rub-minds-mcp";
+const ENDPOINT = "https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp";
 
 function upstream(fetchImpl) {
   const requests = [];
@@ -38,6 +38,7 @@ test("accepts only a clean HTTPS Supabase Rub Minds MCP function URL", () => {
     "https://rub-minds-staging.supabase.co/functions/v1/other",
     ENDPOINT + "?token=secret",
     ENDPOINT + "#fragment",
+    "https://zucaeevlbwhcvjwbhwmq.supabase.co/functions/v1/rub-minds-mcp",
     "https://evil.example/functions/v1/rub-minds-mcp",
   ]) assert.throws(() => validateMcpEndpoint(value));
 });
@@ -109,7 +110,7 @@ test("rejects redirects, oversized calls and mismatched upstream response ids", 
   });
   const redirectResult = await redirectProxy.handle({ jsonrpc: "2.0", id: 1, method: "tools/list" });
   assert.equal(redirectResult.error.code, -32000);
-  assert.match(redirectResult.error.message, /Could not reach/);
+  assert.match(redirectResult.error.message, /Could not reach or read/);
 
   const mismatchProxy = createMcpStdioProxy({
     endpoint: ENDPOINT,
