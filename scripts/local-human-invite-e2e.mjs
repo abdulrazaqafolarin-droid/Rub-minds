@@ -83,9 +83,11 @@ console.log('E2E_STAGE: local invitation seeded');
 const server = await createServer({
   server: { host: '127.0.0.1', port: 4173, strictPort: true },
 });
+console.log('E2E_STAGE: Vite server constructed');
 let browser;
 try {
   await server.listen();
+  console.log('E2E_STAGE: Vite server listening');
   browser = await chromium.launch({ headless: true });
   console.log('E2E_STAGE: browser started');
   const page = await browser.newPage();
