@@ -282,7 +282,7 @@ end;
 $function$;
 revoke all on function public.revoke_device_frame_bindings_on_mcp_change() from public,anon,authenticated;
 create trigger backroom_device_frame_mcp_lifecycle_trigger
-after update of agent_credential_digest,room_id,participant_id,terminated_at,expires_at
+after update of agent_credential_ciphertext,agent_credential_digest,room_id,participant_id,terminated_at,expires_at
 on public.rub_minds_mcp_sessions for each row execute function public.revoke_device_frame_bindings_on_mcp_change();
 
 create or replace function public.revoke_device_frame_bindings_on_runtime_change()

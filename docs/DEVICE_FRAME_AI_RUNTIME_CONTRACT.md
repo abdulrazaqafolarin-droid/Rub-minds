@@ -62,3 +62,6 @@ The project-wide sequencing, surface scope and release discipline are locked in 
 
 
 A live phone screen runtime uses a renewable lease. Its active frame association is extended by the server-side runtime heartbeat trigger, but never beyond the AI MCP session or active agent-credential expiry. The update cannot revive an already expired/revoked association; shortening or stopping the runtime shortens/revokes the frame link.
+
+
+**MCP identity prerequisite:** the ordered migration history now creates `rub_minds_mcp_sessions.agent_credential_digest` before the native-binding migration that already uses it. The digest is format-checked and cleared automatically whenever the encrypted credential is removed during Leave or rejoin.

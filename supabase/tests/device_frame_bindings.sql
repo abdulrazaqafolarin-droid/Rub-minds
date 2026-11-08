@@ -15,6 +15,13 @@ begin
       and table_name='backroom_desktop_sessions' and column_name='target_app_fingerprint') then
     raise exception 'Selected app identity is not persisted on the runtime';
   end if;
+  if not exists(select 1 from information_schema.columns where table_schema='public'
+      and table_name='rub_minds_mcp_sessions' and column_name='agent_credential_digest') then
+    raise exception 'Exact AI credential digest is missing from MCP sessions';
+  end if;
+  if not exists(select 1 from pg_catalog.pg_trigger t where t.tgname='rub_minds_mcp_session_credential_digest_guard' and not t.tgisinternal) then
+    raise exception 'Unjoined MCP session credential digest guard is missing';
+  end if;
   foreach v_table in array array[v_challenge,v_binding] loop
     if not (select c.relrowsecurity from pg_catalog.pg_class c where c.oid=v_table) then raise exception 'RLS missing'; end if;
     if exists(select 1 from pg_catalog.pg_policies p where p.schemaname='public'
@@ -87,6 +94,7 @@ declare
   v_android_package text:='com.rubminds.framebindingtest';
   v_android_signer text:=pg_catalog.repeat('b',64);
   v_android_session text:=pg_catalog.repeat('1',64);
+  v_unjoined_session text:=pg_catalog.repeat('8',64);
   v_android_alt_session text:=pg_catalog.repeat('7',64);
   v_android_credential text:=pg_catalog.repeat('a',64);
   v_windows_session text:=pg_catalog.repeat('2',64);
@@ -131,6 +139,19 @@ begin
     (v_android_alt_session,'test-encrypted-ai-credential',v_android_credential,v_room,v_ai_one,pg_catalog.clock_timestamp()+interval '2 hours'),
     (v_windows_session,'test-encrypted-ai-credential',v_windows_credential,v_room,v_ai_two,pg_catalog.clock_timestamp()+interval '2 hours'),
     (v_expired_session,'test-encrypted-ai-credential',v_expired_credential,v_room,v_ai_three,pg_catalog.clock_timestamp()+interval '2 hours');
+
+  insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_digest,expires_at)
+  values(v_unjoined_session,pg_catalog.repeat('9',64),pg_catalog.clock_timestamp()+interval '2 hours');
+  if (select agent_credential_digest from public.rub_minds_mcp_sessions where session_digest=v_unjoined_session) is not null then
+    raise exception 'Unjoined MCP session retained a stale AI credential digest';
+  end if;
+
+  begin
+    insert into public.rub_minds_mcp_sessions(session_digest,agent_credential_ciphertext,agent_credential_digest,room_id,participant_id,expires_at)
+    values(pg_catalog.repeat('0',64),'test-encrypted-ai-credential','invalid',v_room,v_ai_three,pg_catalog.clock_timestamp()+interval '2 hours');
+    raise exception 'MCP session accepted a malformed AI credential digest';
+  exception when check_violation then null;
+  end;
 
   insert into public.backroom_devices(
     device_id,owner_id,token_digest,device_label,platform,status,approved_at
