@@ -80,10 +80,18 @@ await request('/rest/v1/room_invites', {
 });
 console.log('E2E_STAGE: local invitation seeded');
 
-const server = await createServer({
-  server: { host: '127.0.0.1', port: 4173, strictPort: true },
-});
-console.log('E2E_STAGE: Vite server constructed');
+let server;
+try {
+  server = await createServer({
+    server: { host: '127.0.0.1', port: 4173, strictPort: true },
+  });
+  console.log('E2E_STAGE: Vite server constructed');
+} catch (cause) {
+  const errorType = cause instanceof Error ? cause.name : typeof cause;
+  const errorCode = cause && typeof cause === 'object' && 'code' in cause ? String(cause.code) : 'none';
+  console.log('E2E_STARTUP_DIAG: Vite createServer failed (' + errorType + ', ' + errorCode + ')');
+  throw cause;
+}
 let browser;
 try {
   await server.listen();
