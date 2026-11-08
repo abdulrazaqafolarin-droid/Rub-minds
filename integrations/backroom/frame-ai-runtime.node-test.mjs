@@ -29,7 +29,7 @@ function base(surface = "android_app") {
     },
     device: { deviceId: DEVICE, roomId: ROOM, status: "active" },
     runtime: {
-      sessionId: RUNTIME_SESSION, deviceId: DEVICE, roomId: ROOM, surface,
+      sessionId: RUNTIME_SESSION, deviceId: DEVICE, roomId: ROOM, surface, status: "active",
       appId: surface === "terminal" ? "opencode" : APP,
       identityFingerprint: FINGERPRINT,
       providerConversationIdentityVerified: surface !== "terminal",
@@ -132,6 +132,10 @@ test("room, participant, MCP session, device, frame session, app, surface and bi
   const mutations = [
     x => { x.mcpSession.roomId = "other-room"; },
     x => { x.mcpSession.participantId = "other-ai"; },
+    x => { x.device.roomId = "other-room"; },
+    x => { x.runtime.deviceId = "other-device"; },
+    x => { x.runtime.roomId = "other-room"; },
+    x => { x.runtime.surface = "terminal"; },
     x => { x.binding.participantId = "other-ai"; },
     x => { x.binding.mcpSessionId = "other-mcp-session"; },
     x => { x.device.deviceId = "other-device"; },
@@ -154,7 +158,7 @@ test("expired, revoked, or inactive identities never stay connected", () => {
 
   const revokedBinding = base();
   revokedBinding.binding.revokedAt = "2026-11-08T09:00:00.000Z";
-  assert.equal(classifyFrameAiSession(revokedBinding, { now: NOW }).state, "scope_mismatch");
+  assert.equal(classifyFrameAiSession(revokedBinding, { now: NOW }).state, "binding_revoked");
 
   const expiredBinding = base();
   expiredBinding.binding.expiresAt = "2026-11-08T09:59:59.000Z";
