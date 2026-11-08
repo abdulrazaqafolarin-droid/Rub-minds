@@ -182,5 +182,5 @@ test("wake consent is scoped to the exact AI, device and runtime session", () =>
 test("every reported state is part of the documented closed set", () => {
   const input = base();
   assert.ok(FRAME_AI_RUNTIME_STATES.includes(classifyFrameAiSession(input, { now: NOW }).state));
-  assert.throws(() => classifyFrameAiSession(base(), { now: -1 }), /never/);
+  assert.equal(classifyFrameAiSession(base(), { now: -1 }).state, "invalid");
 });
