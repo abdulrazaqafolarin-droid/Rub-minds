@@ -686,6 +686,104 @@ grant execute on function public.revoke_backroom_frame_ai_bindings_for_scope(
   uuid,uuid,uuid,text,uuid,text,text,text
 ) to service_role;
 
+-- Renew frame-binding expiry when an otherwise-valid parent runtime/session
+-- extends its lease. A heartbeat is not an identity change and must not revoke
+-- the frame association; bindings remain capped by the minimum live parent.
+create or replace function public.refresh_backroom_frame_ai_bindings_for_scope(
+  p_runtime_session_id uuid default null,
+  p_mcp_session_digest text default null,
+  p_agent_credential_digest text default null
+) returns void
+language plpgsql
+security definer
+set search_path=''
+as $function$
+declare
+  v_now timestamptz:=pg_catalog.clock_timestamp();
+begin
+  if p_runtime_session_id is null and p_mcp_session_digest is null
+    and p_agent_credential_digest is null then
+    raise exception 'At least one frame-binding refresh scope is required';
+  end if;
+
+  -- Recompute the active binding's maximum lifetime from all three parents.
+  update public.backroom_frame_ai_bindings b
+  set expires_at=x.parent_expires_at,
+      wake_expires_at=case when b.wake_enabled
+        then least(b.wake_expires_at,x.parent_expires_at)
+        else b.wake_expires_at end
+  from (
+    select b0.id,least(m.expires_at,r.expires_at,a.expires_at) as parent_expires_at
+    from public.backroom_frame_ai_bindings b0
+    join public.rub_minds_mcp_sessions m on m.session_digest=b0.mcp_session_digest
+    join public.backroom_desktop_sessions r on r.session_id=b0.runtime_session_id
+    join public.agent_connections a on a.credential_digest=b0.agent_credential_digest
+    where b0.revoked_at is null
+      and (p_runtime_session_id is null or b0.runtime_session_id=p_runtime_session_id)
+      and (p_mcp_session_digest is null or b0.mcp_session_digest=p_mcp_session_digest)
+      and (p_agent_credential_digest is null or b0.agent_credential_digest=p_agent_credential_digest)
+  ) x
+  where b.id=x.id and x.parent_expires_at>v_now
+    and b.expires_at is distinct from x.parent_expires_at;
+
+  -- If a parent has actually elapsed, revoke rather than violate the table's
+  -- expires_at > attested_at invariant or leave a wake capability alive.
+  update public.backroom_frame_ai_bindings b
+  set revoked_at=coalesce(b.revoked_at,v_now),
+      wake_enabled=false,wake_expires_at=null
+  from (
+    select b0.id,least(m.expires_at,r.expires_at,a.expires_at) as parent_expires_at
+    from public.backroom_frame_ai_bindings b0
+    join public.rub_minds_mcp_sessions m on m.session_digest=b0.mcp_session_digest
+    join public.backroom_desktop_sessions r on r.session_id=b0.runtime_session_id
+    join public.agent_connections a on a.credential_digest=b0.agent_credential_digest
+    where b0.revoked_at is null
+      and (p_runtime_session_id is null or b0.runtime_session_id=p_runtime_session_id)
+      and (p_mcp_session_digest is null or b0.mcp_session_digest=p_mcp_session_digest)
+      and (p_agent_credential_digest is null or b0.agent_credential_digest=p_agent_credential_digest)
+  ) x
+  where b.id=x.id and x.parent_expires_at<=v_now and b.revoked_at is null;
+
+  -- Pending one-use challenges may be shortened with a parent lease, but a
+  -- later heartbeat must never extend their original 90-second handshake TTL.
+  update public.backroom_frame_ai_binding_challenges c
+  set expires_at=x.parent_expires_at
+  from (
+    select c0.id,least(m.expires_at,r.expires_at,a.expires_at) as parent_expires_at
+    from public.backroom_frame_ai_binding_challenges c0
+    join public.rub_minds_mcp_sessions m on m.session_digest=c0.mcp_session_digest
+    join public.backroom_desktop_sessions r on r.session_id=c0.runtime_session_id
+    join public.agent_connections a on a.credential_digest=c0.agent_credential_digest
+    where c0.consumed_at is null and c0.revoked_at is null
+      and (p_runtime_session_id is null or c0.runtime_session_id=p_runtime_session_id)
+      and (p_mcp_session_digest is null or c0.mcp_session_digest=p_mcp_session_digest)
+      and (p_agent_credential_digest is null or c0.agent_credential_digest=p_agent_credential_digest)
+  ) x
+  where c.id=x.id and x.parent_expires_at>v_now
+    and x.parent_expires_at>c.created_at and x.parent_expires_at<c.expires_at;
+
+  update public.backroom_frame_ai_binding_challenges c
+  set revoked_at=coalesce(c.revoked_at,v_now)
+  from (
+    select c0.id,least(m.expires_at,r.expires_at,a.expires_at) as parent_expires_at
+    from public.backroom_frame_ai_binding_challenges c0
+    join public.rub_minds_mcp_sessions m on m.session_digest=c0.mcp_session_digest
+    join public.backroom_desktop_sessions r on r.session_id=c0.runtime_session_id
+    join public.agent_connections a on a.credential_digest=c0.agent_credential_digest
+    where c0.consumed_at is null and c0.revoked_at is null
+      and (p_runtime_session_id is null or c0.runtime_session_id=p_runtime_session_id)
+      and (p_mcp_session_digest is null or c0.mcp_session_digest=p_mcp_session_digest)
+      and (p_agent_credential_digest is null or c0.agent_credential_digest=p_agent_credential_digest)
+  ) x
+  where c.id=x.id and (x.parent_expires_at<=v_now or x.parent_expires_at<=c.created_at)
+    and c.revoked_at is null;
+end;
+$function$;
+revoke all on function public.refresh_backroom_frame_ai_bindings_for_scope(uuid,text,text)
+  from public,anon,authenticated;
+grant execute on function public.refresh_backroom_frame_ai_bindings_for_scope(uuid,text,text)
+  to service_role;
+
 create or replace function public.revoke_backroom_frame_ai_bindings_on_parent_change()
 returns trigger
 language plpgsql
@@ -696,6 +794,7 @@ declare
   v_old jsonb:=pg_catalog.to_jsonb(old);
   v_new jsonb:=case when tg_op='DELETE' then '{}'::jsonb else pg_catalog.to_jsonb(new) end;
   v_changed boolean:=tg_op='DELETE';
+  v_expiry_changed boolean:=false;
 begin
   if tg_table_name='rooms' then
     v_changed:=v_changed or v_new->>'owner_id' is distinct from v_old->>'owner_id';
@@ -710,10 +809,14 @@ begin
       or v_new->>'room_id' is distinct from v_old->>'room_id'
       or v_new->>'requested_by' is distinct from v_old->>'requested_by'
       or v_new->>'session_type' is distinct from v_old->>'session_type'
-      or v_new->>'status' is distinct from 'active'
-      or v_new->>'expires_at' is distinct from v_old->>'expires_at';
+      or v_new->>'status' is distinct from 'active';
+    v_expiry_changed:=v_new->>'expires_at' is distinct from v_old->>'expires_at';
     if v_changed then
       perform public.revoke_backroom_frame_ai_bindings_for_scope(
+        p_runtime_session_id => (v_old->>'session_id')::uuid
+      );
+    elsif v_expiry_changed then
+      perform public.refresh_backroom_frame_ai_bindings_for_scope(
         p_runtime_session_id => (v_old->>'session_id')::uuid
       );
     end if;
@@ -722,9 +825,14 @@ begin
       or v_new->>'participant_id' is distinct from v_old->>'participant_id'
       or v_new->>'agent_credential_digest' is distinct from v_old->>'agent_credential_digest'
       or v_new->>'terminated_at' is distinct from v_old->>'terminated_at'
-      or v_new->>'expires_at' is distinct from v_old->>'expires_at';
+      or v_new->>'terminated_at' is not null;
+    v_expiry_changed:=v_new->>'expires_at' is distinct from v_old->>'expires_at';
     if v_changed then
       perform public.revoke_backroom_frame_ai_bindings_for_scope(
+        p_mcp_session_digest => v_old->>'session_digest'
+      );
+    elsif v_expiry_changed then
+      perform public.refresh_backroom_frame_ai_bindings_for_scope(
         p_mcp_session_digest => v_old->>'session_digest'
       );
     end if;
@@ -743,9 +851,14 @@ begin
       or v_new->>'room_id' is distinct from v_old->>'room_id'
       or v_new->>'participant_id' is distinct from v_old->>'participant_id'
       or v_new->>'revoked_at' is distinct from v_old->>'revoked_at'
-      or v_new->>'expires_at' is distinct from v_old->>'expires_at';
+      or v_new->>'revoked_at' is not null;
+    v_expiry_changed:=v_new->>'expires_at' is distinct from v_old->>'expires_at';
     if v_changed then
       perform public.revoke_backroom_frame_ai_bindings_for_scope(
+        p_agent_credential_digest => v_old->>'credential_digest'
+      );
+    elsif v_expiry_changed then
+      perform public.refresh_backroom_frame_ai_bindings_for_scope(
         p_agent_credential_digest => v_old->>'credential_digest'
       );
     end if;
@@ -787,8 +900,6 @@ begin
       or v_new->>'app_id' is distinct from v_old->>'app_id'
       or v_new->>'executable_sha256' is distinct from v_old->>'executable_sha256';
     if v_changed then
-      -- Desktop app UUIDs can be used by different desktop frame surfaces.
-      -- Revoke any association to that selected executable on this device.
       perform public.revoke_backroom_frame_ai_bindings_for_scope(
         p_device_id => (v_old->>'device_id')::uuid,
         p_app_id => v_old->>'app_id'

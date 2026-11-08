@@ -119,6 +119,20 @@ begin
     raise exception 'Exactly one frame completion RPC definition must exist';
   end if;
 
+  if pg_catalog.to_regprocedure('public.refresh_backroom_frame_ai_bindings_for_scope(uuid,text,text)') is null then
+    raise exception 'Parent lease refresh helper is missing';
+  end if;
+  if position('refresh_backroom_frame_ai_bindings_for_scope' in lower(
+      pg_catalog.pg_get_functiondef('public.revoke_backroom_frame_ai_bindings_on_parent_change()'::regprocedure)
+    ))=0 then
+    raise exception 'Runtime/MCP/credential expiry updates must refresh live frame bindings rather than revoke them';
+  end if;
+  if position('new.expires_at' in lower(pg_catalog.pg_get_functiondef(
+      'public.revoke_backroom_frame_ai_bindings_on_parent_change()'::regprocedure
+    )))=0 then
+    raise exception 'Lifecycle trigger must distinguish expiry updates from identity revocation';
+  end if;
+
   if pg_catalog.to_regclass('public.backroom_frame_ai_bindings_active_mcp_session_uq') is null
     or pg_catalog.to_regclass('public.backroom_frame_ai_bindings_active_runtime_uq') is null then
     raise exception 'One-active-session and one-active-frame uniqueness indexes are required';
