@@ -11,6 +11,9 @@ declare
   v_revoke oid := pg_catalog.to_regprocedure('public.revoke_backroom_frame_ai_binding(uuid,uuid,uuid,uuid)');
   v_create_def text;
   v_complete_def text;
+  v_app_android_pos integer;
+  v_app_desktop_pos integer;
+  v_challenge_lock_pos integer;
   v_trigger_count integer;
   v_table oid;
 begin
@@ -91,6 +94,23 @@ begin
     or position('for update' in lower(v_complete_def))=0
     or position('for update' in lower(v_complete_def))>position('from public.backroom_frame_ai_binding_challenges c' in v_complete_def) then
     raise exception 'Completion must lock selected app inventory before the challenge row';
+  end if;
+
+  if (select pg_catalog.count(*) from pg_catalog.pg_proc p
+      where p.proname='complete_backroom_frame_ai_binding'
+        and p.pronamespace='public'::regnamespace)<>1 then
+    raise exception 'Exactly one frame completion RPC definition must exist';
+  end if;
+
+  v_app_android_pos := position('select a.* into v_android_app' in v_complete_def);
+  v_app_desktop_pos := position('select a.* into v_desktop_app' in v_complete_def);
+  v_challenge_lock_pos := position('select c.* into v_challenge' in v_complete_def);
+  if v_app_android_pos=0 or v_app_desktop_pos=0 or v_challenge_lock_pos=0
+    or v_app_android_pos>=v_challenge_lock_pos
+    or v_app_desktop_pos>=v_challenge_lock_pos
+    or position('for update' in pg_catalog.substr(v_complete_def,v_app_android_pos,v_challenge_lock_pos-v_app_android_pos))=0
+    or position('for update' in pg_catalog.substr(v_complete_def,v_app_desktop_pos,v_challenge_lock_pos-v_app_desktop_pos))=0 then
+    raise exception 'Completion must lock selected app inventory before locking the one-use challenge';
   end if;
 
   if (select pg_catalog.count(*) from pg_catalog.pg_proc p
