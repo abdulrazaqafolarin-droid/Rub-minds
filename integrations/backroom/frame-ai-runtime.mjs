@@ -33,10 +33,8 @@ function output(state, reason, flags = {}) {
     reason,
     canUseGroupTools: flags.canUseGroupTools === true,
     frameBindingActive: flags.frameBindingActive === true,
-    canInsertDraft: flags.canInsertDraft === true,
     canPollGroupEventsWhileActive: flags.canPollGroupEventsWhileActive === true,
     canAutoWakeFrame: flags.canAutoWakeFrame === true,
-    requiresBrowserHost: false,
   });
 }
 
@@ -115,7 +113,6 @@ export function classifyFrameAiSession(input, { now = Date.now() } = {}) {
       : "provider_conversation_identity_not_verified", {
       ...mcpFlags,
       frameBindingActive: true,
-      canInsertDraft: true,
     });
   }
 
@@ -125,7 +122,6 @@ export function classifyFrameAiSession(input, { now = Date.now() } = {}) {
     return output("terminal_connected", "terminal_ai_uses_its_joined_mcp_session", {
       ...mcpFlags,
       frameBindingActive: true,
-      canInsertDraft: true,
       canPollGroupEventsWhileActive: true,
       canAutoWakeFrame: false,
     });
@@ -144,14 +140,12 @@ export function classifyFrameAiSession(input, { now = Date.now() } = {}) {
     return output("bound_manual_only", "separate_device_and_group_wake_consent_required", {
       ...mcpFlags,
       frameBindingActive: true,
-      canInsertDraft: true,
     });
   }
 
   return output("native_wake_ready", "exact_provider_conversation_and_consent_verified", {
     ...mcpFlags,
     frameBindingActive: true,
-    canInsertDraft: true,
     canAutoWakeFrame: true,
   });
 }
