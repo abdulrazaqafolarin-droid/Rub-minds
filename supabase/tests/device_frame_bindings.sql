@@ -192,9 +192,9 @@ begin
 
   begin
     insert into public.backroom_device_frame_binding_challenges(
-      id,requested_by,target_participant_id,room_id,device_id,runtime_session_id,
+      id,requested_by,target_participant_id,target_session_digest,room_id,device_id,runtime_session_id,
       surface,target_app_id,target_app_fingerprint,nonce_digest,expires_at
-    ) values(pg_catalog.gen_random_uuid(),v_owner,v_ai_one,v_room,v_android,v_android_runtime,
+    ) values(pg_catalog.gen_random_uuid(),v_owner,v_ai_one,v_android_session,v_room,v_android,v_android_runtime,
       'android_app',null,null,pg_catalog.repeat('8',64),pg_catalog.clock_timestamp()+interval '90 seconds');
     raise exception 'Android challenge accepted a missing app identity';
   exception when check_violation then
