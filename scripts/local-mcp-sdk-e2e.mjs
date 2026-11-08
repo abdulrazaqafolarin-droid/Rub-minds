@@ -268,6 +268,7 @@ try {
   // Create a disposable desktop frame using the existing privileged registration RPC.
   // The challenge is scoped to one exact AI participant AND its MCP session digest.
   const frameDeviceId = randomUUID();
+  const frameDeviceTwoId = randomUUID();
   const frameRuntimeId = randomUUID();
   const frameRuntimeTwoId = randomUUID();
   const frameAppId = randomUUID();
@@ -386,16 +387,33 @@ try {
   assert.equal(persistedFrameBinding[0].revoked_at, null);
   console.log("SAFE_MCP_E2E_STAGE: desktop frame exact-session bind, wrong-session denial and retry passed");
 
-  // A second runtime tests owner status/revoke routes while AI one's link remains
-  // active until Leave below, preserving the independent lifecycle assertion.
+  // Each physical desktop device supports one active screen peer. Use a second
+  // independently enrolled device to test AI two's owner status/revoke lifecycle
+  // while AI one's original frame binding remains active.
+  const registeredFrameDeviceTwo = await request("/rest/v1/rpc/register_backroom_desktop_device", {
+    method: "POST",
+    body: JSON.stringify({
+      p_device_id: frameDeviceTwoId,
+      p_owner_id: owner.id,
+      p_room_id: room.id,
+      p_token_digest: createHash("sha256").update("rub-minds-ci-device-token-two").digest("hex"),
+      p_device_public_key: createHash("sha256").update("rub-minds-ci-device-public-key-two").digest("hex"),
+      p_device_label: "Disposable MCP frame computer two",
+      p_platform: "windows",
+      p_os_version: "CI",
+      p_app_version: "0.1.0",
+    }),
+  });
+  assert.equal(registeredFrameDeviceTwo?.[0]?.device_id, frameDeviceTwoId,
+    "second desktop registration must create an independent device and room binding");
   await request("/rest/v1/backroom_desktop_apps", { method: "POST", body: JSON.stringify({
-    device_id: frameDeviceId, app_id: frameAppTwoId, app_label: "Disposable AI app two",
+    device_id: frameDeviceTwoId, app_id: frameAppTwoId, app_label: "Disposable AI app two",
     executable_sha256: frameAppFingerprintTwo,
   }) });
-  console.log("SAFE_MCP_E2E_STAGE: second desktop app registered");
+  console.log("SAFE_MCP_E2E_STAGE: second desktop device and app registered");
   try {
     await request("/rest/v1/backroom_desktop_sessions", { method: "POST", body: JSON.stringify({
-      session_id: frameRuntimeTwoId, device_id: frameDeviceId, room_id: room.id, requested_by: owner.id,
+      session_id: frameRuntimeTwoId, device_id: frameDeviceTwoId, room_id: room.id, requested_by: owner.id,
       session_type: "screen", status: "active", expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       target_app_id: frameAppTwoId, target_app_fingerprint: frameAppFingerprintTwo,
     }) });
@@ -420,7 +438,7 @@ try {
   }
   console.log("SAFE_MCP_E2E_STAGE: second desktop runtime registered");
   const secondFrameRequest = {
-    deviceId: frameDeviceId, roomId: room.id, requestId: randomUUID(),
+    deviceId: frameDeviceTwoId, roomId: room.id, requestId: randomUUID(),
     issuedAt: Date.now(), runtimeSessionId: frameRuntimeTwoId,
     participantId: two.participant_id, surface: "desktop_app",
   };
@@ -434,7 +452,7 @@ try {
   assert.notEqual(secondFrameBind.isError, true, "second selected AI could not bind");
   assert.equal(secondFrameBind.structuredContent?.participant_id, two.participant_id);
   console.log("SAFE_MCP_E2E_STAGE: second AI frame binding succeeded");
-  const statusRequest = { deviceId: frameDeviceId, roomId: room.id, runtimeSessionId: frameRuntimeTwoId };
+  const statusRequest = { deviceId: frameDeviceTwoId, roomId: room.id, runtimeSessionId: frameRuntimeTwoId };
   const outsiderStatus = await backroomEdge("device-frame/binding-status", statusRequest, nonMemberLogin.access_token);
   assert.equal(outsiderStatus.status, 403, "non-member cannot read frame status");
   const ownerStatus = await backroomEdge("device-frame/binding-status", statusRequest);
