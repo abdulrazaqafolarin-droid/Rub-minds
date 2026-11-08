@@ -16,7 +16,7 @@ export function validateMcpEndpoint(value) {
   }
   if (
     url.protocol !== "https:" ||
-    !url.hostname !== STAGING_MCP_HOST ||
+    url.hostname !== STAGING_MCP_HOST ||
     url.username ||
     url.password ||
     (url.port && url.port !== "443") ||
