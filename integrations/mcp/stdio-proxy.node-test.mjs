@@ -142,3 +142,37 @@ test("upstream HTTP and JSON-RPC failures never leak credentials into the respon
   assert.doesNotMatch(JSON.stringify(result), new RegExp(credential));
   assert.equal(result.error.code, -32000);
 });
+
+test("rejects Supabase secret and legacy service-role API keys before any network request", () => {
+  const serviceRole = Buffer.from(JSON.stringify({ role: "service_role" })).toString("base64url");
+  const jwt = "e30." + serviceRole + ".signature";
+  for (const apiKey of ["sb_secret_do_not_use", jwt]) {
+    assert.throws(() => createMcpStdioProxy({
+      endpoint: ENDPOINT,
+      apiKey,
+      fetchImpl: async () => { throw new Error("must not be called"); },
+    }), /not allowed|forbidden/);
+  }
+});
+
+test("request timeout remains active while the upstream response body is being read", async () => {
+  let aborted = false;
+  const proxy = createMcpStdioProxy({
+    endpoint: ENDPOINT,
+    timeoutMs: 1000,
+    fetchImpl: async (_url, init) => {
+      init.signal.addEventListener("abort", () => { aborted = true; }, { once: true });
+      return {
+        ok: true,
+        status: 200,
+        text: () => new Promise((_resolve, reject) => {
+          init.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        }),
+      };
+    },
+  });
+  const result = await proxy.handle({ jsonrpc: "2.0", id: 99, method: "tools/list" });
+  assert.equal(aborted, true);
+  assert.equal(result.error.code, -32000);
+  assert.match(result.error.message, /Could not reach or read/);
+});
