@@ -126,8 +126,8 @@ test("local Supabase CI exercises the complete cloud device lifecycle", async ()
     revokedInventoryDenial: script.includes("revoked device inventory denial"),
     groupMemberRead: script.includes("group members must be able to view")
   }));
-  assert.match(workflow, /Start local Supabase Edge Functions \(MCP \+ Backroom device\)/);
-  assert.match(workflow, /node scripts\/local-backroom-device-e2e\.mjs/);
+  assert.ok(workflow.includes("Start local Supabase Edge Functions (MCP + Backroom device)"));
+  assert.ok(workflow.includes("node scripts/local-backroom-device-e2e.mjs"));
   assert.match(workflow, /Stop isolated Supabase services/);
   for (const action of ["pair/create","pair/claim","device/status","owner/approve","device/inventory","device/event","room/devices","room/events","owner/revoke"]) {
     assert.ok(script.includes('"' + action + '"') || script.includes("'" + action + "'"), "missing E2E action: " + action);
