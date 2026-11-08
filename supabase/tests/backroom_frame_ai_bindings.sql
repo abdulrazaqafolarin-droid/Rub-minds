@@ -86,6 +86,19 @@ begin
     raise exception 'Completion must bind to a live MCP session and cap lifetime by live parent sessions, not challenge TTL';
   end if;
 
+  if position('from public.backroom_device_apps' in v_complete_def)=0
+    or position('from public.backroom_desktop_apps' in v_complete_def)=0
+    or position('for update' in lower(v_complete_def))=0
+    or position('for update' in lower(v_complete_def))>position('from public.backroom_frame_ai_binding_challenges c' in v_complete_def) then
+    raise exception 'Completion must lock selected app inventory before the challenge row';
+  end if;
+
+  if (select pg_catalog.count(*) from pg_catalog.pg_proc p
+      where p.proname='complete_backroom_frame_ai_binding'
+        and p.pronamespace='public'::regnamespace)<>1 then
+    raise exception 'Exactly one frame completion RPC definition must exist';
+  end if;
+
   if pg_catalog.to_regclass('public.backroom_frame_ai_bindings_active_mcp_session_uq') is null
     or pg_catalog.to_regclass('public.backroom_frame_ai_bindings_active_runtime_uq') is null then
     raise exception 'One-active-session and one-active-frame uniqueness indexes are required';

@@ -342,7 +342,7 @@ set search_path=''
 as $function$
 declare
   v_now timestamptz:=pg_catalog.clock_timestamp();
-  v_session_digest text;
+  v_challenge_snapshot public.backroom_frame_ai_binding_challenges%rowtype;
   v_challenge public.backroom_frame_ai_binding_challenges%rowtype;
   v_mcp public.rub_minds_mcp_sessions%rowtype;
   v_participant public.participants%rowtype;
@@ -353,9 +353,10 @@ declare
   v_android_app public.backroom_device_apps%rowtype;
   v_desktop_app public.backroom_desktop_apps%rowtype;
   v_current_fingerprint text;
+  v_session_digest text;
+  v_expected_session_type text;
   v_expires_at timestamptz;
   v_binding_id uuid;
-  v_expected_session_type text;
 begin
   if p_challenge_id is null or p_device_id is null or p_runtime_session_id is null
     or p_nonce_digest is null or p_nonce_digest !~ '^[0-9a-f]{64}$'
@@ -368,13 +369,20 @@ begin
     return pg_catalog.jsonb_build_object('ok',false,'reason','invalid_frame_ai_evidence');
   end if;
 
-  select c.mcp_session_digest into v_session_digest
+  -- The first read is deliberately non-locking. It provides only the parent
+  -- session key needed to acquire locks in this order:
+  -- MCP session -> participant -> device -> room pair -> runtime -> credential
+  -- -> selected app inventory -> challenge -> active binding uniqueness.
+  -- Parent lifecycle triggers take the parent row first and revoke challenges
+  -- last; following this order avoids a challenge/app lock inversion.
+  select c.* into v_challenge_snapshot
   from public.backroom_frame_ai_binding_challenges c
   where c.id=p_challenge_id and c.device_id=p_device_id
     and c.runtime_session_id=p_runtime_session_id;
-  if v_session_digest is null then
+  if not found then
     return pg_catalog.jsonb_build_object('ok',false,'reason','binding_challenge_not_found');
   end if;
+  v_session_digest:=v_challenge_snapshot.mcp_session_digest;
 
   perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(v_session_digest,0));
 
@@ -383,12 +391,11 @@ begin
   where s.session_digest=v_session_digest
   for update;
   if not found or v_mcp.terminated_at is not null or v_mcp.expires_at<=v_now
-    or v_mcp.agent_credential_ciphertext is null then
+    or v_mcp.agent_credential_ciphertext is null
+    or v_mcp.agent_credential_digest is null then
     return pg_catalog.jsonb_build_object('ok',false,'reason','group_ai_session_inactive');
   end if;
 
-  -- Lock the remaining parents before the challenge row. Parent lifecycle
-  -- triggers use this order so leave/revoke cannot deadlock with completion.
   select p.* into v_participant
   from public.participants p
   where p.id=v_mcp.participant_id and p.room_id=v_mcp.room_id
@@ -403,7 +410,7 @@ begin
   from public.backroom_devices d
   where d.device_id=p_device_id and d.status='active' and d.revoked_at is null
   for update;
-  if not found then
+  if not found or v_device.owner_id is distinct from v_challenge_snapshot.owner_id then
     return pg_catalog.jsonb_build_object('ok',false,'reason','device_not_active');
   end if;
 
@@ -416,14 +423,22 @@ begin
     return pg_catalog.jsonb_build_object('ok',false,'reason','device_room_binding_inactive');
   end if;
 
+  v_expected_session_type:=case when v_challenge_snapshot.surface='terminal' then 'terminal' else 'screen' end;
   select s.* into v_runtime
   from public.backroom_desktop_sessions s
   where s.session_id=p_runtime_session_id and s.device_id=p_device_id
     and s.room_id=v_mcp.room_id and s.requested_by=v_device.owner_id
+    and s.session_type=v_expected_session_type
     and s.status='active' and s.expires_at>v_now
   for update;
   if not found then
     return pg_catalog.jsonb_build_object('ok',false,'reason','runtime_session_inactive');
+  end if;
+
+  if (v_challenge_snapshot.surface='android_app' and v_device.platform<>'android')
+    or (v_challenge_snapshot.surface='windows_app' and v_device.platform<>'windows')
+    or (v_challenge_snapshot.surface in ('desktop_app','terminal') and v_device.platform not in ('windows','macos','linux')) then
+    return pg_catalog.jsonb_build_object('ok',false,'reason','device_platform_mismatch');
   end if;
 
   select a.* into v_agent
@@ -437,16 +452,48 @@ begin
     return pg_catalog.jsonb_build_object('ok',false,'reason','group_ai_credential_inactive');
   end if;
 
+  -- App inventory rows are parent identity. Lock and verify them BEFORE the
+  -- challenge row because app-inventory lifecycle triggers revoke challenges.
+  if v_challenge_snapshot.surface='android_app' then
+    select a.* into v_android_app
+    from public.backroom_device_apps a
+    where a.device_id=p_device_id and a.package_name=v_challenge_snapshot.app_id
+    for update;
+    if not found then
+      return pg_catalog.jsonb_build_object('ok',false,'reason','app_not_selected_on_device');
+    end if;
+    v_current_fingerprint:=v_android_app.signing_certificate_sha256;
+  else
+    select a.* into v_desktop_app
+    from public.backroom_desktop_apps a
+    where a.device_id=p_device_id and a.app_id=v_challenge_snapshot.app_id::uuid
+    for update;
+    if not found then
+      return pg_catalog.jsonb_build_object('ok',false,'reason','app_not_selected_on_device');
+    end if;
+    v_current_fingerprint:=v_desktop_app.executable_sha256;
+  end if;
+  if v_challenge_snapshot.app_id is distinct from p_app_id
+    or v_current_fingerprint is distinct from v_challenge_snapshot.app_identity_fingerprint
+    or v_current_fingerprint is distinct from p_app_identity_fingerprint then
+    return pg_catalog.jsonb_build_object('ok',false,'reason','app_identity_changed');
+  end if;
+
+  -- Re-read and lock the challenge only after all of its parent identities.
   select c.* into v_challenge
   from public.backroom_frame_ai_binding_challenges c
   where c.id=p_challenge_id and c.device_id=p_device_id
     and c.runtime_session_id=p_runtime_session_id
   for update;
-  if not found or v_challenge.mcp_session_digest is distinct from v_session_digest
+  if not found
+    or v_challenge.mcp_session_digest is distinct from v_session_digest
     or v_challenge.owner_id is distinct from v_device.owner_id
     or v_challenge.room_id is distinct from v_mcp.room_id
     or v_challenge.participant_id is distinct from v_mcp.participant_id
-    or v_challenge.agent_credential_digest is distinct from v_mcp.agent_credential_digest then
+    or v_challenge.agent_credential_digest is distinct from v_mcp.agent_credential_digest
+    or v_challenge.surface is distinct from v_challenge_snapshot.surface
+    or v_challenge.app_id is distinct from v_challenge_snapshot.app_id
+    or v_challenge.app_identity_fingerprint is distinct from v_challenge_snapshot.app_identity_fingerprint then
     return pg_catalog.jsonb_build_object('ok',false,'reason','binding_challenge_scope_mismatch');
   end if;
 
@@ -472,44 +519,8 @@ begin
 
   if v_challenge.revoked_at is not null or v_challenge.expires_at<=v_now
     or v_challenge.nonce_digest is distinct from p_nonce_digest
-    or v_challenge.app_id is distinct from p_app_id
-    or v_challenge.app_identity_fingerprint is distinct from p_app_identity_fingerprint
-    or v_mcp.agent_credential_digest is distinct from v_challenge.agent_credential_digest then
+    or v_challenge.agent_credential_digest is distinct from v_mcp.agent_credential_digest then
     return pg_catalog.jsonb_build_object('ok',false,'reason','binding_challenge_invalid_or_expired');
-  end if;
-
-  v_expected_session_type:=case when v_challenge.surface='terminal' then 'terminal' else 'screen' end;
-  if v_runtime.session_type is distinct from v_expected_session_type then
-    return pg_catalog.jsonb_build_object('ok',false,'reason','runtime_session_type_mismatch');
-  end if;
-  if (v_challenge.surface='android_app' and v_device.platform<>'android')
-    or (v_challenge.surface='windows_app' and v_device.platform<>'windows')
-    or (v_challenge.surface in ('desktop_app','terminal') and v_device.platform not in ('windows','macos','linux')) then
-    return pg_catalog.jsonb_build_object('ok',false,'reason','device_platform_mismatch');
-  end if;
-
-  if v_challenge.surface='android_app' then
-    select a.* into v_android_app
-    from public.backroom_device_apps a
-    where a.device_id=p_device_id and a.package_name=v_challenge.app_id
-    for update;
-    if not found then
-      return pg_catalog.jsonb_build_object('ok',false,'reason','app_not_selected_on_device');
-    end if;
-    v_current_fingerprint:=v_android_app.signing_certificate_sha256;
-  else
-    select a.* into v_desktop_app
-    from public.backroom_desktop_apps a
-    where a.device_id=p_device_id and a.app_id=v_challenge.app_id::uuid
-    for update;
-    if not found then
-      return pg_catalog.jsonb_build_object('ok',false,'reason','app_not_selected_on_device');
-    end if;
-    v_current_fingerprint:=v_desktop_app.executable_sha256;
-  end if;
-  if v_current_fingerprint is distinct from v_challenge.app_identity_fingerprint
-    or v_current_fingerprint is distinct from p_app_identity_fingerprint then
-    return pg_catalog.jsonb_build_object('ok',false,'reason','app_identity_changed');
   end if;
 
   if v_challenge.surface='terminal' then
@@ -522,8 +533,6 @@ begin
     return pg_catalog.jsonb_build_object('ok',false,'reason','incomplete_provider_conversation_attestation');
   end if;
 
-  -- Challenge creation and completion both reclaim expired active slots so
-  -- partial unique indexes cannot be blocked by a row whose lease elapsed.
   update public.backroom_frame_ai_bindings b
   set revoked_at=v_now,wake_enabled=false,wake_expires_at=null
   where b.revoked_at is null and b.expires_at<=v_now
@@ -538,27 +547,30 @@ begin
     return pg_catalog.jsonb_build_object('ok',false,'reason','frame_ai_binding_already_active');
   end if;
 
-  -- The binding lifetime is governed by its live parents, NOT the short
-  -- challenge TTL. The nonce must be consumed within 90 seconds, but a
-  -- successful attachment can live until any parent session expires.
+  -- The challenge TTL is the handshake window only. A completed binding lives
+  -- no longer than the MCP session, AI credential or selected runtime.
   v_expires_at:=least(v_runtime.expires_at,v_mcp.expires_at,v_agent.expires_at);
   if v_expires_at<=v_now then
     return pg_catalog.jsonb_build_object('ok',false,'reason','frame_ai_binding_expired');
   end if;
 
-  insert into public.backroom_frame_ai_bindings(
-    challenge_id,owner_id,room_id,participant_id,mcp_session_digest,agent_credential_digest,
-    device_id,runtime_session_id,surface,app_id,app_identity_fingerprint,
-    runtime_identity_digest,composer_identity_digest,send_control_identity_digest,
-    provider_conversation_identity_digest,expires_at
-  ) values (
-    v_challenge.id,v_challenge.owner_id,v_challenge.room_id,v_challenge.participant_id,
-    v_session_digest,v_challenge.agent_credential_digest,
-    p_device_id,p_runtime_session_id,v_challenge.surface,v_challenge.app_id,
-    v_challenge.app_identity_fingerprint,p_runtime_identity_digest,
-    p_composer_identity_digest,p_send_control_identity_digest,
-    p_provider_conversation_identity_digest,v_expires_at
-  ) returning id into v_binding_id;
+  begin
+    insert into public.backroom_frame_ai_bindings(
+      challenge_id,owner_id,room_id,participant_id,mcp_session_digest,agent_credential_digest,
+      device_id,runtime_session_id,surface,app_id,app_identity_fingerprint,
+      runtime_identity_digest,composer_identity_digest,send_control_identity_digest,
+      provider_conversation_identity_digest,expires_at
+    ) values (
+      v_challenge.id,v_challenge.owner_id,v_challenge.room_id,v_challenge.participant_id,
+      v_session_digest,v_challenge.agent_credential_digest,
+      p_device_id,p_runtime_session_id,v_challenge.surface,v_challenge.app_id,
+      v_challenge.app_identity_fingerprint,p_runtime_identity_digest,
+      p_composer_identity_digest,p_send_control_identity_digest,
+      p_provider_conversation_identity_digest,v_expires_at
+    ) returning id into v_binding_id;
+  exception when unique_violation then
+    return pg_catalog.jsonb_build_object('ok',false,'reason','frame_ai_binding_already_active');
+  end;
 
   update public.backroom_frame_ai_binding_challenges
   set consumed_at=v_now
