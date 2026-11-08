@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 
-const read = path => readFile(new URL(path, import.meta.url), 'utf8');
+const read = async path => (await readFile(new URL(path, import.meta.url), 'utf8')).replace(/\r\n?/g, '\n');
 const service = await read('../../android-companion/app/src/main/java/app/rubminds/companion/AndroidTouchAccessibilityService.kt');
 const cloudApi = await read('../../android-companion/app/src/main/java/app/rubminds/companion/CloudDeviceApi.kt');
 const ime = await read('../../android-companion/app/src/main/java/app/rubminds/companion/DraftInputMethodService.kt');
