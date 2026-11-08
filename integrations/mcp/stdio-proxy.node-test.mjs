@@ -181,6 +181,12 @@ test("request timeout remains active while the upstream response body is being r
   const keepAlive = setInterval(() => {}, 250);
   try {
     const result = await proxy.handle({ jsonrpc: "2.0", id: 99, method: "tools/list" });
+    console.log("SAFE_MCP_STDIO_TIMEOUT_DIAG", JSON.stringify({
+      aborted,
+      hasError: !!result?.error,
+      errorCode: result?.error?.code ?? null,
+      readFailureMessage: /Could not reach or read/.test(result?.error?.message ?? "")
+    }));
     assert.equal(aborted, true);
     assert.equal(result.error.code, -32000);
     assert.match(result.error.message, /Could not reach or read/);
@@ -208,7 +214,17 @@ test("the proxy caps concurrent upstream calls and releases capacity after compl
   assert.match(overflow.error.message, /busy/);
   release();
   const results = await Promise.all(pending);
-  assert.equal(results.every(result => Array.isArray(result.result.tools)), true);
+  const allPendingValid = results.every(result => Array.isArray(result.result?.tools));
   const after = await proxy.handle({ jsonrpc: "2.0", id: "after", method: "tools/list" });
+  console.log("SAFE_MCP_STDIO_CAPACITY_DIAG", JSON.stringify({
+    pendingCount: pending.length,
+    completedCount: results.length,
+    overflowCode: overflow?.error?.code ?? null,
+    overflowBusy: /busy/.test(overflow?.error?.message ?? ""),
+    allPendingValid,
+    afterHasError: !!after?.error,
+    afterToolsArray: Array.isArray(after?.result?.tools)
+  }));
+  assert.equal(allPendingValid, true);
   assert.deepEqual(after.result.tools, []);
 });
