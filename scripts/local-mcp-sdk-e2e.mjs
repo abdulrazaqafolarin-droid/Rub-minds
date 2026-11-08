@@ -853,8 +853,7 @@ try {
       email_confirm: true,
     }),
   });
-  const publicKey = process.env.LOCAL_SUPABASE_ANON_KEY;
-  assert.ok(publicKey, "local publishable/anon key is required for human RLS checks");
+  assert.ok(publicKey, "local anon key is required for human RLS checks");
   const humanLoginResponse = await fetch(apiUrl + "/auth/v1/token?grant_type=password", {
     method: "POST",
     headers: { apikey: publicKey, "Content-Type": "application/json" },
@@ -1438,7 +1437,7 @@ try {
   assert.ok(terminatedSessions[0].terminated_at, "leaving must mark the session as terminated");
   assert.equal(terminatedSessions[0].participant_id, null, "a tombstoned session must no longer be bound to a participant");
   const frameBindingAfterLeave = await request(
-    "/rest/v1/backroom_device_frame_bindings?select=id,revoked_at&challenge_id=eq." + frameChallengeId,
+    "/rest/v1/backroom_device_frame_bindings?select=id,revoked_at&challenge_id=eq." + frameChallengeIdFromOwner,
   );
   assert.equal(frameBindingAfterLeave.length, 1);
   assert.ok(frameBindingAfterLeave[0].revoked_at,
