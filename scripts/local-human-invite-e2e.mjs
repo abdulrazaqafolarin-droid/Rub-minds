@@ -102,10 +102,11 @@ try {
   } catch (cause) {
     const errorType = cause instanceof Error ? cause.name : typeof cause;
     const message = cause instanceof Error ? cause.message : '';
-    const category = /executable.*does not exist|browser.*not found/i.test(message) ? 'browser_executable_missing'
-      : /shared librar|cannot open shared object/i.test(message) ? 'browser_system_library_missing'
-      : /sandbox/i.test(message) ? 'browser_sandbox_launch_failure'
-      : /browser.*process|launch.*process/i.test(message) ? 'browser_process_launch_failure'
+    const category = /executable.{0,48}(does not exist|doesn't exist|not found)|ENOENT|chromium.{0,48}not found/i.test(message) ? 'browser_executable_missing'
+      : /shared librar|cannot open shared object|\.so(?:\.|\s)|failed to load/i.test(message) ? 'browser_system_library_missing'
+      : /sandbox|zygote.*root|no usable sandbox/i.test(message) ? 'browser_sandbox_launch_failure'
+      : /timed out|timeout/i.test(message) ? 'browser_launch_timeout'
+      : /target page.*closed|browser.*closed|process.*exited|failed to launch|browser.*process|launch.*process/i.test(message) ? 'browser_process_launch_failure'
       : 'other_browser_launch_failure';
     console.log('E2E_STARTUP_DIAG: Chromium launch failed (' + errorType + ', ' + category + ')');
     throw cause;
