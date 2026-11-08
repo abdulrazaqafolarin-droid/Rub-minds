@@ -404,11 +404,14 @@ try {
     const statusMatch = message.match(/failed \((\d{3})\)/);
     const codeMatch = message.match(/"code"\s*:\s*"([^"]+)"/);
     const constraintMatch = message.match(/"constraint"\s*:\s*"([^"]+)"/);
+    const detailsMatch = message.match(/"details"\s*:\s*"([^"]*)"/);
+    const duplicateColumnsMatch = detailsMatch?.[1].match(/Key \(([^)]+)\)=/);
     console.log("SAFE_MCP_E2E_SECOND_RUNTIME_INSERT_FAILURE", JSON.stringify({
       name: error instanceof Error ? error.name : typeof error,
       httpStatus: statusMatch ? Number(statusMatch[1]) : null,
       databaseCode: codeMatch?.[1] ?? null,
       constraint: constraintMatch?.[1] ?? null,
+      duplicateKeyColumns: duplicateColumnsMatch?.[1].split(",").map(value => value.trim()) ?? [],
       foreignKeyFailure: /foreign key/i.test(message),
       checkConstraintFailure: /check constraint/i.test(message),
       duplicateKeyFailure: /duplicate key/i.test(message)
