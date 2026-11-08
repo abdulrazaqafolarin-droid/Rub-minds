@@ -95,6 +95,10 @@ export function createMcpStdioProxy({
         ...params,
         _meta: {
           "io.modelcontextprotocol/protocolVersion": REMOTE_PROTOCOL_VERSION,
+          "io.modelcontextprotocol/clientInfo": {
+            name: "rub-minds-terminal-mcp-bridge",
+            version: "0.1.0",
+          },
           "io.modelcontextprotocol/clientCapabilities": {},
         },
       },
