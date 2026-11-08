@@ -265,12 +265,10 @@ try {
   const frameDeviceId = randomUUID();
   const frameRuntimeId = randomUUID();
   const frameRuntimeTwoId = randomUUID();
-  const frameChallengeId = randomUUID();
   const frameAppId = randomUUID();
   const frameAppTwoId = randomUUID();
   const frameAppFingerprint = createHash("sha256").update("rub-minds-ci-frame-app-fingerprint").digest("hex");
   const frameAppFingerprintTwo = createHash("sha256").update("rub-minds-ci-frame-app-fingerprint-two").digest("hex");
-  const frameNonce = createHash("sha256").update("rub-minds-ci-frame-one-time-nonce").digest("hex");
   const frameSessionDigest = createHash("sha256").update(one.session_handle, "utf8").digest("hex");
 
   const registeredFrameDevice = await request("/rest/v1/rpc/register_backroom_desktop_device", {
