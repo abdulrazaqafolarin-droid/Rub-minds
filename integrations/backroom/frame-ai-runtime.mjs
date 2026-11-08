@@ -8,8 +8,7 @@
  * The model deliberately has no browser-host identifier: a device frame binds
  * directly to a joined group AI participant and an attested runtime session.
  */
-const APP_SURFACES = new Set(["android_app", "desktop_app", "windows_app"]);
-const SURFACES = new Set([...APP_SURFACES, "terminal"]);
+const SURFACES = new Set(["android_app", "desktop_app", "windows_app", "terminal"]);
 const AI_KINDS = new Set(["original_session", "model", "external_agent"]);
 const HEX_256 = /^[a-f0-9]{64}$/i;
 
@@ -114,7 +113,9 @@ export function classifyFrameAiSession(input, { now = Date.now() } = {}) {
     ? runtime.processIdentityVerified === true &&
       binding.processIdentityFingerprint === runtime.identityFingerprint
     : runtime.providerConversationIdentityVerified === true &&
-      HEX_256.test(binding.providerConversationIdentityDigest || "");
+      HEX_256.test(runtime.providerConversationIdentityDigest || "") &&
+      HEX_256.test(binding.providerConversationIdentityDigest || "") &&
+      runtime.providerConversationIdentityDigest === binding.providerConversationIdentityDigest;
 
   if (!runtimeIdentityVerified) {
     return output("bound_draft_only", terminal
