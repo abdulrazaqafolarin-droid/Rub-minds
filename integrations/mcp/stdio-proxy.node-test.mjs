@@ -177,3 +177,27 @@ test("request timeout remains active while the upstream response body is being r
   assert.equal(result.error.code, -32000);
   assert.match(result.error.message, /Could not reach or read/);
 });
+
+test("the proxy caps concurrent upstream calls and releases capacity after completion", async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const proxy = createMcpStdioProxy({
+    endpoint: ENDPOINT,
+    fetchImpl: async (_url, init) => {
+      await gate;
+      const request = JSON.parse(init.body);
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { tools: [] } }), { status: 200 });
+    },
+  });
+  const pending = Array.from({ length: 32 }, (_, id) =>
+    proxy.handle({ jsonrpc: "2.0", id, method: "tools/list" })
+  );
+  const overflow = await proxy.handle({ jsonrpc: "2.0", id: "overflow", method: "tools/list" });
+  assert.equal(overflow.error.code, -32000);
+  assert.match(overflow.error.message, /busy/);
+  release();
+  const results = await Promise.all(pending);
+  assert.equal(results.every(result => Array.isArray(result.result.tools)), true);
+  const after = await proxy.handle({ jsonrpc: "2.0", id: "after", method: "tools/list" });
+  assert.deepEqual(after.result.tools, []);
+});
