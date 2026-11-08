@@ -33,6 +33,22 @@ function validateApiKey(value) {
   if (typeof value !== "string" || value.length > 4096 || /[\u0000-\u0020\u007f]/u.test(value)) {
     throw new TypeError("RUB_MINDS_MCP_API_KEY must be a public Supabase publishable/anon key.");
   }
+  if (value.startsWith("sb_secret_")) {
+    throw new TypeError("Secret Supabase API keys are not allowed in the terminal bridge.");
+  }
+  const parts = value.split(".");
+  if (parts.length === 3) {
+    try {
+      const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+      if (payload?.role === "service_role") {
+        throw new TypeError("The Supabase service-role key is forbidden in the terminal bridge.");
+      }
+    } catch (error) {
+      if (error instanceof TypeError && /service-role key is forbidden/.test(error.message)) throw error;
+      // Public key formats may change. A malformed token is rejected by the
+      // upstream gateway, but a confirmed elevated role is always blocked.
+    }
+  }
   return value;
 }
 
@@ -89,6 +105,7 @@ export function createMcpStdioProxy({
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     timer.unref?.();
     let response;
+    let raw;
     try {
       response = await fetchImpl(target, {
         method: "POST",
@@ -98,17 +115,11 @@ export function createMcpStdioProxy({
         cache: "no-store",
         signal: controller.signal,
       });
-    } catch {
-      throw new Error("Could not reach the configured Rub Minds MCP endpoint. Check the network and endpoint, then retry.");
-    } finally {
-      clearTimeout(timer);
-    }
-
-    let raw;
-    try {
       raw = await response.text();
     } catch {
-      throw new Error("Could not read the Rub Minds MCP response.");
+      throw new Error("Could not reach or read the configured Rub Minds MCP endpoint. Check the network and endpoint, then retry.");
+    } finally {
+      clearTimeout(timer);
     }
     if (Buffer.byteLength(raw, "utf8") > MAX_MESSAGE_BYTES) {
       throw new Error("Rub Minds MCP response exceeds the supported message size.");
