@@ -429,7 +429,7 @@ jobs:
           EOF
           supabase functions serve --env-file "$RUNNER_TEMP/mcp.env" > "$RUNNER_TEMP/mcp-edge.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/mcp-edge.pid"
-          for attempt in $(seq 1 60); do
+          for _attempt in $(seq 1 60); do
             mcp_status="$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:54321/functions/v1/rub-minds-mcp || true)"
             device_status="$(curl --silent --output /dev/null --write-out '%{http_code}' --request POST http://127.0.0.1:54321/functions/v1/backroom-device --header "Content-Type: application/json" --data '{}' || true)"
             if [ "$mcp_status" = "405" ] && [ "$device_status" = "400" ]; then
