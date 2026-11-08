@@ -32,9 +32,9 @@ function output(state, reason, flags = {}) {
     state,
     reason,
     canUseGroupTools: flags.canUseGroupTools === true,
-    canRunInFrame: flags.canRunInFrame === true,
-    canDraftToFrame: flags.canDraftToFrame === true,
-    canReceiveGroupEventsWhileActive: flags.canReceiveGroupEventsWhileActive === true,
+    frameBindingActive: flags.frameBindingActive === true,
+    canInsertDraft: flags.canInsertDraft === true,
+    canPollGroupEventsWhileActive: flags.canPollGroupEventsWhileActive === true,
     canAutoWakeFrame: flags.canAutoWakeFrame === true,
     requiresBrowserHost: false,
   });
@@ -64,16 +64,16 @@ export function classifyFrameAiSession(input, { now = Date.now() } = {}) {
     return output("ai_not_joined", "active_ai_participant_required");
   }
 
-  if (!isRecord(mcpSession) || mcpSession.status !== "active" ||
+  if (!isRecord(mcpSession) ||
       mcpSession.participantId !== participant.participantId ||
       mcpSession.roomId !== roomId || mcpSession.terminatedAt != null ||
       !isFuture(mcpSession.expiresAt, now) || !hasText(mcpSession.sessionId)) {
     return output("ai_not_joined", "live_joined_mcp_session_required");
   }
 
-  const mcpFlags = { canUseGroupTools: true, canReceiveGroupEventsWhileActive: true };
+  const mcpFlags = { canUseGroupTools: true, canPollGroupEventsWhileActive: true };
   if (!isRecord(device) || device.roomId !== roomId ||
-      device.status !== "active" || device.approved !== true ||
+      device.status !== "active" ||
       !hasText(device.deviceId)) {
     return output("device_unavailable", "approved_device_in_this_group_required", mcpFlags);
   }
@@ -114,8 +114,8 @@ export function classifyFrameAiSession(input, { now = Date.now() } = {}) {
       ? "terminal_process_identity_not_verified"
       : "provider_conversation_identity_not_verified", {
       ...mcpFlags,
-      canRunInFrame: true,
-      canDraftToFrame: true,
+      frameBindingActive: true,
+      canInsertDraft: true,
     });
   }
 
@@ -124,9 +124,9 @@ export function classifyFrameAiSession(input, { now = Date.now() } = {}) {
   if (terminal) {
     return output("terminal_connected", "terminal_ai_uses_its_joined_mcp_session", {
       ...mcpFlags,
-      canRunInFrame: true,
-      canDraftToFrame: true,
-      canReceiveGroupEventsWhileActive: true,
+      frameBindingActive: true,
+      canInsertDraft: true,
+      canPollGroupEventsWhileActive: true,
       canAutoWakeFrame: false,
     });
   }
@@ -143,15 +143,15 @@ export function classifyFrameAiSession(input, { now = Date.now() } = {}) {
   if (!consentActive || !bindingWakeActive) {
     return output("bound_manual_only", "separate_device_and_group_wake_consent_required", {
       ...mcpFlags,
-      canRunInFrame: true,
-      canDraftToFrame: true,
+      frameBindingActive: true,
+      canInsertDraft: true,
     });
   }
 
   return output("native_wake_ready", "exact_provider_conversation_and_consent_verified", {
     ...mcpFlags,
-    canRunInFrame: true,
-    canDraftToFrame: true,
+    frameBindingActive: true,
+    canInsertDraft: true,
     canAutoWakeFrame: true,
   });
 }
