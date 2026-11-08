@@ -282,9 +282,12 @@ begin
   end if;
 
   update public.rub_minds_mcp_sessions
-  set agent_credential_ciphertext=null,agent_credential_digest=null,
-      room_id=null,participant_id=null,terminated_at=pg_catalog.clock_timestamp()
+  set agent_credential_ciphertext=null,room_id=null,participant_id=null,
+      terminated_at=pg_catalog.clock_timestamp()
   where session_digest=v_windows_session;
+  if (select agent_credential_digest from public.rub_minds_mcp_sessions where session_digest=v_windows_session) is not null then
+    raise exception 'Removing an MCP encrypted credential did not clear its credential digest';
+  end if;
   select revoked_at into v_revoked_at from public.backroom_device_frame_bindings
     where challenge_id=v_terminal_challenge;
   if v_revoked_at is null then

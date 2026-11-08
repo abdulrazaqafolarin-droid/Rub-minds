@@ -1429,11 +1429,12 @@ try {
 
   const firstSessionDigest = createHash("sha256").update(one.session_handle, "utf8").digest("hex");
   const terminatedSessions = await request(
-    "/rest/v1/rub_minds_mcp_sessions?select=session_digest,participant_id,terminated_at&session_digest=eq." + firstSessionDigest,
+    "/rest/v1/rub_minds_mcp_sessions?select=session_digest,participant_id,terminated_at,agent_credential_digest&session_digest=eq." + firstSessionDigest,
   );
   assert.equal(terminatedSessions.length, 1, "leaving must retain the session tombstone by its digest");
   assert.ok(terminatedSessions[0].terminated_at, "leaving must mark the session as terminated");
   assert.equal(terminatedSessions[0].participant_id, null, "a tombstoned session must no longer be bound to a participant");
+  assert.equal(terminatedSessions[0].agent_credential_digest, null, "Leave must clear the AI credential digest together with its encrypted credential");
   const frameBindingAfterLeave = await request(
     "/rest/v1/backroom_device_frame_bindings?select=id,revoked_at&challenge_id=eq." + frameChallengeIdFromOwner,
   );
