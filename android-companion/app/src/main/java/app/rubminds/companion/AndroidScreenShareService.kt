@@ -32,6 +32,8 @@ import org.webrtc.SurfaceTextureHelper
 import org.webrtc.VideoSource
 import org.webrtc.VideoTrack
 import java.nio.ByteBuffer
+import java.security.MessageDigest
+import java.time.Instant
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
@@ -507,6 +509,92 @@ class AndroidScreenShareService : Service() {
         return attemptedCommandIds
     }
 
+
+    /**
+     * Complete an owner-issued, one-use association for this exact live app frame.
+     * The phone reports only installed-app signer and runtime identity digests.
+     * It does not export provider text or enable typing, native Send, or wake.
+     */
+    private fun processFrameAIBindingChallenge(
+        token: String,
+        commandId: String,
+        requestId: String,
+        screenSessionId: String,
+        appPackage: String,
+        roomId: String,
+        command: JSONObject
+    ) {
+        if (!UUID_PATTERN.matches(commandId) || !UUID_PATTERN.matches(requestId) ||
+            !UUID_PATTERN.matches(screenSessionId) || !UUID_PATTERN.matches(roomId)
+        ) return
+
+        val deviceId = DeviceCredentialVault(this).deviceId() ?: return
+        val challengeId = command.optString("challengeId")
+        val nonce = command.optString("nonce")
+        val expiresAt = command.optString("expiresAt")
+        val surface = command.optString("surface")
+        val appId = command.optString("appId")
+        val signer = if (AppGrantPolicy.isValidPackageName(appPackage))
+            AppIdentity.signingCertificateSha256(this, appPackage) else null
+        val activeFrameMatches = activeSessionId == screenSessionId &&
+            activeRoomId == roomId && activeAppPackage == appPackage &&
+            locallySelectedPackage == appPackage &&
+            AndroidTouchAccessibilityService.currentForegroundPackage() == appPackage &&
+            signer != null && AppGrantStore(this).get(appPackage, signer) != null
+        val now = System.currentTimeMillis()
+        val expiryMillis = runCatching { Instant.parse(expiresAt).toEpochMilli() }.getOrNull()
+        val valid = activeFrameMatches && signer != null &&
+            DeviceFrameBindingPolicy.isValidAndroidChallenge(
+                deviceId = deviceId,
+                runtimeSessionId = screenSessionId,
+                appPackageName = appPackage,
+                challengeId = challengeId,
+                nonce = nonce,
+                surface = surface,
+                appId = appId,
+                appIdentityFingerprint = signer,
+                expiresAtMillis = expiryMillis ?: 0L,
+                nowMillis = now
+            )
+        if (!valid || signer == null) {
+            acknowledge(token, commandId, requestId, screenSessionId, "frame_ai_binding_preflight_denied")
+            return
+        }
+
+        val runtimeDigest = DeviceFrameBindingPolicy.runtimeIdentityDigest(
+            deviceId = deviceId,
+            runtimeSessionId = screenSessionId,
+            appPackageName = appPackage,
+            appIdentityFingerprint = signer
+        )
+        try {
+            api?.post(
+                "android/frame-ai-binding-complete",
+                token,
+                JSONObject()
+                    .put("challengeId", challengeId)
+                    .put("nonce", nonce)
+                    .put("runtimeSessionId", screenSessionId)
+                    .put("surface", "android_app")
+                    .put("appId", appPackage)
+                    .put("appIdentityFingerprint", signer)
+                    .put("runtimeIdentityDigest", runtimeDigest)
+            ) ?: throw IllegalStateException("Frame binding response missing.")
+            // A lost ACK is safe: the database completion RPC replays only the
+            // same consumed challenge and exact evidence, never another binding.
+            acknowledge(token, commandId, requestId, screenSessionId, "frame_ai_binding_completed")
+        } catch (error: CloudDeviceApiException) {
+            // Definitive rejection is terminal for this challenge. Transient
+            // transport/server failures remain retryable until challenge expiry.
+            if (error.statusCode in 400..499 && error.statusCode != 429) {
+                acknowledge(token, commandId, requestId, screenSessionId, "frame_ai_binding_rejected")
+            }
+        } catch (_: Exception) {
+            // Leave unacknowledged so the same one-use challenge is retried;
+            // completion is idempotent if the server already committed it.
+        }
+    }
+
     private fun processCommand(token: String, command: JSONObject) {
         if (stopping) return
         val commandId = command.optString("commandId")
@@ -516,6 +604,9 @@ class AndroidScreenShareService : Service() {
         val appPackage = command.optString("appPackageName")
         val roomId = command.optString("roomId")
         when (action) {
+            "frame_ai_binding_challenge" -> processFrameAIBindingChallenge(
+                token, commandId, requestId, sessionId, appPackage, roomId, command
+            )
             "native_wake_trigger" -> processNativeWakeTrigger(
                 token, commandId, requestId, sessionId, appPackage, roomId, command
             )
