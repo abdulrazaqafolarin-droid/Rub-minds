@@ -393,11 +393,28 @@ try {
     executable_sha256: frameAppFingerprintTwo,
   }) });
   console.log("SAFE_MCP_E2E_STAGE: second desktop app registered");
-  await request("/rest/v1/backroom_desktop_sessions", { method: "POST", body: JSON.stringify({
-    session_id: frameRuntimeTwoId, device_id: frameDeviceId, room_id: room.id, requested_by: owner.id,
-    session_type: "screen", status: "active", expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-    target_app_id: frameAppTwoId, target_app_fingerprint: frameAppFingerprintTwo,
-  }) });
+  try {
+    await request("/rest/v1/backroom_desktop_sessions", { method: "POST", body: JSON.stringify({
+      session_id: frameRuntimeTwoId, device_id: frameDeviceId, room_id: room.id, requested_by: owner.id,
+      session_type: "screen", status: "active", expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      target_app_id: frameAppTwoId, target_app_fingerprint: frameAppFingerprintTwo,
+    }) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    const statusMatch = message.match(/failed \((\d{3})\)/);
+    const codeMatch = message.match(/"code"\s*:\s*"([^"]+)"/);
+    const constraintMatch = message.match(/"constraint"\s*:\s*"([^"]+)"/);
+    console.log("SAFE_MCP_E2E_SECOND_RUNTIME_INSERT_FAILURE", JSON.stringify({
+      name: error instanceof Error ? error.name : typeof error,
+      httpStatus: statusMatch ? Number(statusMatch[1]) : null,
+      databaseCode: codeMatch?.[1] ?? null,
+      constraint: constraintMatch?.[1] ?? null,
+      foreignKeyFailure: /foreign key/i.test(message),
+      checkConstraintFailure: /check constraint/i.test(message),
+      duplicateKeyFailure: /duplicate key/i.test(message)
+    }));
+    throw error;
+  }
   console.log("SAFE_MCP_E2E_STAGE: second desktop runtime registered");
   const secondFrameRequest = {
     deviceId: frameDeviceId, roomId: room.id, requestId: randomUUID(),
