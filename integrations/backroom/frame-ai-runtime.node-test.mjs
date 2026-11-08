@@ -25,9 +25,9 @@ function base(surface = "android_app") {
     },
     mcpSession: {
       sessionId: MCP_SESSION, participantId: PARTICIPANT, roomId: ROOM,
-      status: "active", expiresAt: FUTURE, terminatedAt: null,
+      expiresAt: FUTURE, terminatedAt: null,
     },
-    device: { deviceId: DEVICE, roomId: ROOM, status: "active", approved: true },
+    device: { deviceId: DEVICE, roomId: ROOM, status: "active" },
     runtime: {
       sessionId: RUNTIME_SESSION, deviceId: DEVICE, roomId: ROOM, surface,
       appId: surface === "terminal" ? "opencode" : APP,
@@ -66,8 +66,8 @@ test("a joined AI remains a group participant before any device frame is attache
   const result = classifyFrameAiSession(input, { now: NOW });
   assert.equal(result.state, "device_unavailable");
   assert.equal(result.canUseGroupTools, true);
-  assert.equal(result.canReceiveGroupEventsWhileActive, true);
-  assert.equal(result.canRunInFrame, false);
+  assert.equal(result.canPollGroupEventsWhileActive, true);
+  assert.equal(result.frameBindingActive, false);
 });
 
 test("an approved device and selected app do not attach an AI without an exact frame binding", () => {
@@ -76,7 +76,7 @@ test("an approved device and selected app do not attach an AI without an exact f
   const result = classifyFrameAiSession(input, { now: NOW });
   assert.equal(result.state, "ai_joined_unbound");
   assert.equal(result.canUseGroupTools, true);
-  assert.equal(result.canRunInFrame, false);
+  assert.equal(result.frameBindingActive, false);
 });
 
 test("Android and desktop apps remain draft-only until provider conversation identity is attested", () => {
@@ -86,8 +86,8 @@ test("Android and desktop apps remain draft-only until provider conversation ide
     input.binding.providerConversationIdentityDigest = null;
     const result = classifyFrameAiSession(input, { now: NOW });
     assert.equal(result.state, "bound_draft_only", surface);
-    assert.equal(result.canRunInFrame, true);
-    assert.equal(result.canDraftToFrame, true);
+    assert.equal(result.frameBindingActive, true);
+    assert.equal(result.canInsertDraft, true);
     assert.equal(result.canAutoWakeFrame, false);
   }
 });
@@ -116,8 +116,8 @@ test("terminal AI connects as the joined MCP participant and does not use native
   const result = classifyFrameAiSession(input, { now: NOW });
   assert.equal(result.state, "terminal_connected");
   assert.equal(result.canUseGroupTools, true);
-  assert.equal(result.canRunInFrame, true);
-  assert.equal(result.canReceiveGroupEventsWhileActive, true);
+  assert.equal(result.frameBindingActive, true);
+  assert.equal(result.canPollGroupEventsWhileActive, true);
   assert.equal(result.canAutoWakeFrame, false);
   assert.equal(result.requiresBrowserHost, false);
 });
@@ -127,7 +127,7 @@ test("terminal process identity must be verified before the frame reports an att
   input.runtime.processIdentityVerified = false;
   const result = classifyFrameAiSession(input, { now: NOW });
   assert.equal(result.state, "bound_draft_only");
-  assert.equal(result.canRunInFrame, true);
+  assert.equal(result.frameBindingActive, true);
   assert.equal(result.canAutoWakeFrame, false);
 });
 
