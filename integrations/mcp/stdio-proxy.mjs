@@ -1,6 +1,7 @@
 const REMOTE_PROTOCOL_VERSION = "2026-07-28";
 const LOCAL_PROTOCOL_VERSION = "2025-06-18";
 const MAX_MESSAGE_BYTES = 1_200_000;
+const STAGING_MCP_HOST = "tzcuuynmviiuactafpld.supabase.co";
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -15,7 +16,7 @@ export function validateMcpEndpoint(value) {
   }
   if (
     url.protocol !== "https:" ||
-    !url.hostname.endsWith(".supabase.co") ||
+    !url.hostname !== STAGING_MCP_HOST ||
     url.username ||
     url.password ||
     (url.port && url.port !== "443") ||
@@ -23,7 +24,7 @@ export function validateMcpEndpoint(value) {
     url.search ||
     url.hash
   ) {
-    throw new TypeError("RUB_MINDS_MCP_ENDPOINT must be an HTTPS Supabase /functions/v1/rub-minds-mcp URL without credentials, query or fragment.");
+    throw new TypeError("RUB_MINDS_MCP_ENDPOINT must be the approved Rub Minds Staging MCP URL without credentials, query or fragment.");
   }
   return url.toString().replace(/\/$/, "");
 }
@@ -183,7 +184,8 @@ export function createMcpStdioProxy({
         // Notifications carry no response and must not trigger a remote write.
         return null;
       }
-      if ((typeof id !== "string" && typeof id !== "number") || !Number.isFinite(id)) {
+      if (!((typeof id === "string" && id.length > 0 && id.length <= 128) ||
+          (typeof id === "number" && Number.isFinite(id)))) {
         return jsonRpcError(null, -32600, "Request id must be a string or number.");
       }
       const params = isRecord(message.params) ? message.params : {};
