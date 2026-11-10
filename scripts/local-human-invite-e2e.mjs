@@ -38,6 +38,7 @@ const owner = await request('/auth/v1/admin/users', {
     email_confirm: true,
   }),
 });
+console.log('E2E_STAGE: owner test identity created');
 const existingHumanEmail = 'rub-minds-human-existing@example.test';
 const existingHumanPassword = 'Local-CI-Existing-Password-923!x';
 const existingHuman = await request('/auth/v1/admin/users', {
@@ -59,6 +60,7 @@ const roomRows = await request('/rest/v1/rooms', {
 });
 assert.equal(roomRows.length, 1);
 const room = roomRows[0];
+console.log('E2E_STAGE: local room created');
 const inviteToken = 'd'.repeat(64);
 const tokenHash = createHash('sha256').update(inviteToken, 'utf8').digest('hex');
 await request('/rest/v1/room_invites', {
@@ -76,31 +78,60 @@ await request('/rest/v1/room_invites', {
     ai_uses: 0,
   }),
 });
+console.log('E2E_STAGE: local invitation seeded');
 
-const server = await createServer({
-  server: { host: '127.0.0.1', port: 4173, strictPort: true },
-});
+let server;
+try {
+  server = await createServer({
+    server: { host: '127.0.0.1', port: 4173, strictPort: true },
+  });
+  console.log('E2E_STAGE: Vite server constructed');
+} catch (cause) {
+  const errorType = cause instanceof Error ? cause.name : typeof cause;
+  const errorCode = cause && typeof cause === 'object' && 'code' in cause ? String(cause.code) : 'none';
+  console.log('E2E_STARTUP_DIAG: Vite createServer failed (' + errorType + ', ' + errorCode + ')');
+  throw cause;
+}
 let browser;
 try {
   await server.listen();
-  browser = await chromium.launch({ headless: true });
+  console.log('E2E_STAGE: Vite server listening');
+  try {
+    browser = await chromium.launch({ headless: true });
+    console.log('E2E_STAGE: browser started');
+  } catch (cause) {
+    const errorType = cause instanceof Error ? cause.name : typeof cause;
+    const message = cause instanceof Error ? cause.message : '';
+    const category = /executable.{0,48}(does not exist|doesn't exist|not found)|ENOENT|chromium.{0,48}not found/i.test(message) ? 'browser_executable_missing'
+      : /shared librar|cannot open shared object|\.so(?:\.|\s)|failed to load/i.test(message) ? 'browser_system_library_missing'
+      : /sandbox|zygote.*root|no usable sandbox/i.test(message) ? 'browser_sandbox_launch_failure'
+      : /timed out|timeout/i.test(message) ? 'browser_launch_timeout'
+      : /target page.*closed|browser.*closed|process.*exited|failed to launch|browser.*process|launch.*process/i.test(message) ? 'browser_process_launch_failure'
+      : 'other_browser_launch_failure';
+    console.log('E2E_STARTUP_DIAG: Chromium launch failed (' + errorType + ', ' + category + ')');
+    throw cause;
+  }
   const page = await browser.newPage();
   const email = 'rub-minds-human-ci-joiner@example.test';
   const password = 'Local-CI-Human-Password-923!x';
   await page.goto('http://127.0.0.1:4173/?invite=' + inviteToken, { waitUntil: 'networkidle' });
   await page.getByRole('heading', { name: 'Join a Rub Minds group' }).waitFor();
   await page.getByRole('button', { name: 'Continue as a human' }).click();
+  console.log('E2E_STAGE: human invite route selected');
   await page.getByRole('heading', { name: 'You’re invited to Rub Minds' }).waitFor();
   await page.getByRole('status').getByText('Group invitation detected. Your invite will be kept while you sign in.').waitFor();
   await page.getByRole('button', { name: 'Create an account' }).click();
+  console.log('E2E_STAGE: signup form opened');
   await page.getByLabel('Email address').fill(email);
   await page.getByLabel('Password', { exact: true }).fill(password);
   await page.getByLabel('Confirm password').fill(password);
   await page.getByRole('button', { name: 'Create account', exact: true }).click();
+  console.log('E2E_STAGE: signup submitted');
 
   // A local-only Auth configuration disables email confirmation so this test can
   // verify the complete post-signup invitation flow without sending real email.
   await page.getByRole('heading', { name: 'Local human invitation E2E', exact: true }).waitFor({ timeout: 15000 });
+  console.log('E2E_STAGE: first signup reached invited room');
   const authUser = await request('/auth/v1/admin/users?per_page=100');
   const createdUser = authUser.users?.find(user => user.email === email);
   assert.ok(createdUser, 'signup did not create the human auth user');
@@ -113,6 +144,7 @@ try {
   assert.equal(await page.getByRole('alert').count(), 0, 'a normal first-time visitor must not see a session-restore error');
   console.log('Local browser human signup, invitation preservation, and automatic room join passed:', room.id, createdUser.id);
 
+  console.log('E2E_STAGE: first signup membership verified');
   // A pre-existing account must survive invite-page reload, sign in, and auto-join.
   const existingPage = await browser.newPage();
   const inviteUrl = 'http://127.0.0.1:4173/?invite=' + inviteToken;
@@ -147,6 +179,7 @@ try {
   assert.equal(participantCountAfterReload.length, 2, 'reopening an accepted invite must not create duplicate membership');
   console.log('Existing-account sign-in, invite reload recovery, automatic join, and idempotent re-entry passed:', room.id, existingHuman.id);
 
+  console.log('E2E_STAGE: existing account re-entry verified');
   // Revoking an invitation must block a new authenticated human without
   // deleting existing memberships or incrementing the invitation use count.
   const blockedEmail = 'rub-minds-human-revoked@example.test';
@@ -202,6 +235,7 @@ try {
     'revoked human invitation must be rejected by the authenticated database RPC');
   assert.match(rejectedBody, /Invitation expired or unavailable/i,
     'database should explain that the revoked invitation is unavailable: ' + rejectedBody);
+  console.log('E2E_STAGE: revoked invitation rejected by authenticated RPC');
   await blockedPage.getByRole('alert').waitFor({ timeout: 15000 });
   const blockedAlertText = (await blockedPage.getByRole('alert').innerText()).trim();
   assert.match(blockedAlertText, /Invitation expired or unavailable/i,

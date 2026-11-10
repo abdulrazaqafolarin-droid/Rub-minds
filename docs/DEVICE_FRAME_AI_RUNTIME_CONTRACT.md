@@ -1,0 +1,67 @@
+# Device-frame AI runtime connection contract
+
+**Status:** source implementation on unmerged PR #69. The branch contains a host-independent frame-binding migration, owner challenge/status/revoke APIs, the MCP `bind_device_frame` tool, and focused SQL/protocol/MCP tests. Nothing has been deployed to staging or production; real device/client acceptance remains pending.
+
+## Product rule
+
+The **AI session is the group participant**. A phone, desktop or terminal login is not an AI participant, and an app appearing in inventory does not mean that its conversation has joined a group.
+
+1. The AI in the selected application/runtime joins the Rub Minds group through the existing MCP `join_group` flow. Its participant and live MCP session are the source of group identity.
+2. The user selects the exact running app conversation or terminal process in a Device Frame.
+3. Rub Minds binds that existing AI participant/MCP session to that exact device, runtime session, app/process identity and group.
+4. The AI uses its joined MCP session to read messages, memory and tasks and to send group responses.
+5. Native app wake is a separate capability. It requires verified provider-conversation identity and separate, time-limited consent. A composer or Send-button match alone is never enough.
+
+## Surface-specific behavior
+
+| Surface | AI participant path | Frame attachment evidence | Honest limitation |
+|---|---|---|---|
+| Phone app | The AI app's supported MCP connector joins the group; otherwise it is not yet a direct tool-connected participant. | Approved phone, live screen session, package/signer, exact composer and provider conversation. | ChatGPT custom MCP apps are web-only; Claude mobile can use remote connectors already configured on claude.ai, on supported paid plans. The Android provider resolver registry in this source is empty, so native autonomous sending remains blocked. |
+| Desktop app | The AI application joins through its own supported MCP connector/session. | Approved computer, launched process/window, exact screen session, composer and provider conversation. | Current desktop source can launch an approved app and stream a display; Windows can discover/recheck composer and Send controls but does not have a native canonical-wake Send driver. |
+| Terminal | OpenCode or another MCP-capable AI client joins directly through its own MCP session. | Approved computer plus exact PTY/runtime process session and its process identity. | The terminal is not a generic shell recipient for group prompts. Keep native command execution separate from MCP message collaboration; an active terminal AI can use bounded MCP polling to read group events and reply through its own MCP session. This is polling while the AI session is active, not unsolicited push or background wake. |
+
+## Host independence
+
+The desired device-frame association must not require a `backroom_hosts` row or browser-host process. The host may remain an optional coordinator/worker. The device frame's own authenticated device/runtime identity and the AI's joined MCP session are the primary association.
+
+**Important existing dependency found during audit:** the legacy Android native-wake attestation path still uses `backroom_input_bindings`, which references `backroom_hosts`. The new group-collaboration frame association is separate and host-independent; do not weaken or reinterpret the older native-wake route. Do not simply remove the FK or weaken the existing wake queue: its security assumptions and claim/settlement flow are host-scoped. Introduce a reviewed device-frame binding/dispatch path instead.
+
+## Shared classification contract
+
+`integrations/backroom/frame-ai-runtime.mjs` provides display/acceptance classification for the states:
+
+- `ai_not_joined`: no active AI participant and joined MCP session;
+- `device_unavailable` / `runtime_unavailable`: the approved device or selected running surface is not live;
+- `ai_joined_unbound`: the AI is already a group member but is not attached to this exact frame runtime;
+- `bound_draft_only`: the runtime is attached but provider/process identity evidence is not sufficient for unattended wake;
+- `bound_manual_only`: the exact app conversation is verified, but wake consent is absent or expired;
+- `terminal_connected`: the terminal AI is connected through MCP; it does not gain native composer Send;
+- `native_wake_ready`: exact provider conversation, binding, device consent and group wake grant are all active.
+
+The classifier deliberately does not promise that draft typing is permitted: local control and one-shot draft grants remain separate. Active MCP tools permit bounded polling, not unsolicited push delivery. Frame association only establishes the existing AI participant's collaboration relationship to a live runtime; it does not automatically provide a transcript bridge, provider conversation introspection, native Send, or autonomous wake. It accepts only a backend-verified provider-conversation-binding status; raw provider IDs and their digests stay on the phone and trusted server and must never be sent to the browser.
+
+This module is **not authorization**. The server must independently enforce participant, MCP session, device approval, runtime session, target/app identity, expiry, revocation and consent before any write or native action.
+
+## Current backend slice
+
+The host-independent backend is committed on PR #69: migration `20261108143000_backroom_device_frame_bindings.sql`, `device-frame/ai-candidates`, `device-frame/binding-challenge`, `device-frame/binding-status`, `device-frame/binding-revoke`, and MCP `bind_device_frame`. Each challenge records both the selected AI participant and the exact MCP session digest. Only that same live session can redeem it; another handle, even for the same participant, is rejected. Successful redemption attaches the existing participant to the selected live frame without creating a second participant.
+
+The legacy Android native-wake route remains separate and still uses `backroom_input_bindings`/`backroom_hosts`; do not weaken or reinterpret that older route. Keep the existing group AI participant/MCP session as the authority; do not create duplicate participants for the device, a second message store, or a second task system.
+
+Required server checks: same room, active AI participant, active joined MCP session, approved device, active runtime session, exact app/process identity, compare the phone-local provider-conversation digest against the stored binding on the trusted server, one active binding per participant/runtime, expiry/revocation, idempotent challenge completion, server-side consent, and replay-safe event delivery. Return only a bounded attestation status to the UI. Keep raw provider IDs, identity digests and all bearer handles out of the browser.
+
+## Validation in this slice
+
+`node --test integrations/backroom/frame-ai-runtime.node-test.mjs` covers joined-vs-unjoined identity, inventory-vs-participation, all four frame surfaces, exact scope mismatch, expiry/revocation, app conversation identity, terminal process identity, and separate native wake consent. `supabase/tests/device_frame_bindings.sql` exercises the transactional database contract and lifecycle. `scripts/local-mcp-sdk-e2e.mjs` exercises exact-session MCP bind, wrong-session rejection, idempotent replay and Leave revocation against disposable Supabase. Both integration tests are wired into the private CI/test-lab flows but have not yet run successfully on a clean runner. None of these tests proves actual ChatGPT/Claude mobile support or physical device acceptance.
+
+
+The project-wide sequencing, surface scope and release discipline are locked in [Rub Minds — Product Execution Plan](RUB_MINDS_PRODUCT_EXECUTION_PLAN.md). This execution plan governs the order: core phone/desktop/terminal capabilities first, full UI/UX redesign second, complete product testing third, then controlled release.
+
+
+**Desktop evidence limitation:** the current Windows OS picker confirms a whole-monitor capture, not a particular native app window. The owner-selected app ID and executable fingerprint are checked against inventory, but they do not prove the selected monitor contains that app or a particular window. Desktop linkage is owner-confirmed app context, not native window/process capture attestation. Terminal linkage is an owner-approved live PTY attachment, not OS process attestation.
+
+
+A live phone screen runtime uses a renewable lease. Its active frame association is extended by the server-side runtime heartbeat trigger, but never beyond the AI MCP session or active agent-credential expiry. The update cannot revive an already expired/revoked association; shortening or stopping the runtime shortens/revokes the frame link.
+
+
+**MCP identity prerequisite:** the ordered migration history now creates `rub_minds_mcp_sessions.agent_credential_digest` before the native-binding migration that already uses it. The digest is format-checked and cleared automatically whenever the encrypted credential is removed during Leave or rejoin.

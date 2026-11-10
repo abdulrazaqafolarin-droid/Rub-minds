@@ -16,7 +16,7 @@ Complementary capabilities: importing authorized histories; connecting AI models
 
 Build a room, generate an invitation, let a controlled test agent join, exchange messages, and run a bounded autonomous conversation. Separately validate browser-assisted joining against a controlled test page before attempting a real provider.
 
-Read [Product spec](docs/PRODUCT_SPEC.md), [Architecture](docs/ARCHITECTURE.md), [Group Coordination task workflow](docs/GROUP_COORDINATION_TASKS_V1.md) and [Experiment plan](docs/CONNECTION_EXPERIMENTS.md).
+Read [Product spec](docs/PRODUCT_SPEC.md), [Architecture](docs/ARCHITECTURE.md), [Group Coordination task workflow](docs/GROUP_COORDINATION_TASKS_V1.md) and [Experiment plan](docs/CONNECTION_EXPERIMENTS.md). The device-frame AI identity and host-independent app/process binding contract is documented in [Device Frame AI Runtime Contract](docs/DEVICE_FRAME_AI_RUNTIME_CONTRACT.md).
 
 ## Experimental browser continuation helper
 

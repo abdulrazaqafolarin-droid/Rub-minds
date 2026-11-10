@@ -4,7 +4,7 @@
  * against the disposable local Supabase Edge Function.
  */
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 
 const endpoint = process.env.LOCAL_MCP_ENDPOINT;
@@ -79,6 +79,44 @@ const rooms = await request("/rest/v1/rooms", {
 });
 assert.equal(rooms.length, 1);
 const room = rooms[0];
+console.log("SAFE_MCP_E2E_STAGE: owner and disposable room ready");
+
+const publicKey = process.env.LOCAL_SUPABASE_ANON_KEY;
+assert.ok(publicKey, "local anon key is required for authenticated Backroom frame API tests");
+const ownerPassword = "Local-CI-Official-MCP-Owner-923!x";
+const ownerLoginResponse = await fetch(apiUrl + "/auth/v1/token?grant_type=password", {
+  method: "POST", headers: { apikey: publicKey, "Content-Type": "application/json" },
+  body: JSON.stringify({ email: "rub-minds-official-mcp-owner@example.test", password: ownerPassword }),
+});
+const ownerLogin = await ownerLoginResponse.json();
+assert.equal(ownerLoginResponse.status, 200, "room owner sign-in failed");
+assert.ok(ownerLogin.access_token);
+const ownerHeaders = { apikey: publicKey, Authorization: "Bearer " + ownerLogin.access_token, "Content-Type": "application/json" };
+async function ownerRequest(path, init = {}) {
+  const response = await fetch(apiUrl + path, { ...init, headers: { ...ownerHeaders, ...(init.headers || {}) } });
+  const payload = await response.json().catch(() => null);
+  assert.ok(response.ok, "owner request failed " + path + " (" + response.status + "): " + JSON.stringify(payload));
+  return payload;
+}
+async function backroomEdge(action, fields, accessToken = ownerLogin.access_token) {
+  const response = await fetch(apiUrl + "/functions/v1/backroom-device", {
+    method: "POST",
+    headers: { apikey: publicKey, ...(accessToken ? { Authorization: "Bearer " + accessToken } : {}), "Content-Type": "application/json" },
+    body: JSON.stringify({ action, ...fields }),
+  });
+  return { status: response.status, body: await response.json().catch(() => null) };
+}
+const nonMemberEmail = "rub-minds-official-mcp-outsider@example.test";
+const nonMemberPassword = "Local-CI-Official-MCP-Outsider-923!x";
+await request("/auth/v1/admin/users", { method: "POST", body: JSON.stringify({ email: nonMemberEmail, password: nonMemberPassword, email_confirm: true }) });
+const nonMemberLoginResponse = await fetch(apiUrl + "/auth/v1/token?grant_type=password", {
+  method: "POST", headers: { apikey: publicKey, "Content-Type": "application/json" },
+  body: JSON.stringify({ email: nonMemberEmail, password: nonMemberPassword }),
+});
+const nonMemberLogin = await nonMemberLoginResponse.json();
+assert.equal(nonMemberLoginResponse.status, 200, "outsider sign-in failed");
+assert.ok(nonMemberLogin.access_token);
+console.log("SAFE_MCP_E2E_STAGE: owner and outsider auth fixtures ready");
 const inviteToken = "e".repeat(64);
 const tokenHash = createHash("sha256").update(inviteToken, "utf8").digest("hex");
 await request("/rest/v1/room_invites", {
@@ -139,17 +177,20 @@ try {
   await Promise.all([first.connect(firstTransport), second.connect(secondTransport)]);
   assert.equal(first.getProtocolEra(), "modern", "official client must negotiate the 2026 MCP protocol");
   assert.equal(second.getProtocolEra(), "modern", "second official client must negotiate the 2026 MCP protocol");
+  console.log("SAFE_MCP_E2E_STAGE: two official SDK clients negotiated modern MCP");
 
   const catalog = await first.listTools();
   const names = catalog.tools.map(tool => tool.name);
   assert.ok(names.includes("join_group"), "official client did not discover join_group");
   assert.ok(names.includes("leave_group"), "official client did not discover leave_group");
+  assert.ok(names.includes("bind_device_frame"), "official client did not discover bind_device_frame");
   assert.ok(names.includes("send_group_message"), "official client did not discover send_group_message");
   assert.ok(names.includes("read_group_messages"), "official client did not discover read_group_messages");
   assert.ok(names.includes("wait_for_group_messages"), "official client did not discover wait_for_group_messages");
   assert.ok(names.includes("forget_memory"), "official client did not discover forget_memory");
   assert.ok(names.includes("load_original_session_bridge_state"), "official client did not discover bridge-state load");
   assert.ok(names.includes("save_original_session_bridge_state"), "official client did not discover bridge-state save");
+  console.log("SAFE_MCP_E2E_STAGE: MCP tool catalog discovery passed");
 
   for (const entry of rejectedInvites) {
     const rejected = await first.callTool({
@@ -188,7 +229,7 @@ try {
     "/rest/v1/participants?select=id&room_id=eq." + room.id + "&display_name=eq.CI%20no%20consent",
   );
   assert.equal(noConsentParticipants.length, 0, "missing consent must not create a participant");
-  console.log("Official MCP SDK rejected expired, revoked, human-only, and unconfirmed AI invitations.");
+  console.log("SAFE_MCP_E2E_STAGE: negative invitation and consent rejection passed");
 
   const [joinOne, joinTwo] = await Promise.all([
     first.callTool({
@@ -222,6 +263,220 @@ try {
   assert.ok(typeof two?.session_handle === "string" && /^[a-f0-9]{64}$/i.test(two.session_handle));
   assert.notEqual(one.participant_id, two.participant_id, "independent clients must have distinct participants");
   assert.notEqual(one.session_handle, two.session_handle, "independent clients must have distinct session handles");
+  console.log("SAFE_MCP_E2E_STAGE: two independent AI participants joined the same group");
+
+  // Create a disposable desktop frame using the existing privileged registration RPC.
+  // The challenge is scoped to one exact AI participant AND its MCP session digest.
+  const frameDeviceId = randomUUID();
+  const frameDeviceTwoId = randomUUID();
+  const frameRuntimeId = randomUUID();
+  const frameRuntimeTwoId = randomUUID();
+  const frameAppId = randomUUID();
+  const frameAppTwoId = randomUUID();
+  const frameAppFingerprint = createHash("sha256").update("rub-minds-ci-frame-app-fingerprint").digest("hex");
+  const frameAppFingerprintTwo = createHash("sha256").update("rub-minds-ci-frame-app-fingerprint-two").digest("hex");
+  const frameSessionDigest = createHash("sha256").update(one.session_handle, "utf8").digest("hex");
+
+  const registeredFrameDevice = await request("/rest/v1/rpc/register_backroom_desktop_device", {
+    method: "POST",
+    body: JSON.stringify({
+      p_device_id: frameDeviceId,
+      p_owner_id: owner.id,
+      p_room_id: room.id,
+      p_token_digest: createHash("sha256").update("rub-minds-ci-device-token").digest("hex"),
+      p_device_public_key: createHash("sha256").update("rub-minds-ci-device-public-key").digest("hex"),
+      p_device_label: "Disposable MCP frame computer",
+      p_platform: "windows",
+      p_os_version: "CI",
+      p_app_version: "0.1.0",
+    }),
+  });
+  assert.equal(registeredFrameDevice?.[0]?.device_id, frameDeviceId,
+    "desktop registration must create the disposable device and room binding");
+
+  await request("/rest/v1/backroom_desktop_apps", {
+    method: "POST",
+    body: JSON.stringify({
+      device_id: frameDeviceId,
+      app_id: frameAppId,
+      app_label: "Disposable AI app",
+      executable_sha256: frameAppFingerprint,
+    }),
+  });
+  await request("/rest/v1/backroom_desktop_sessions", {
+    method: "POST",
+    body: JSON.stringify({
+      session_id: frameRuntimeId,
+      device_id: frameDeviceId,
+      room_id: room.id,
+      requested_by: owner.id,
+      session_type: "screen",
+      status: "active",
+      expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      target_app_id: frameAppId,
+      target_app_fingerprint: frameAppFingerprint,
+    }),
+  });
+  const frameRequest = {
+    deviceId: frameDeviceId, roomId: room.id, requestId: randomUUID(),
+    issuedAt: Date.now(), runtimeSessionId: frameRuntimeId,
+    participantId: one.participant_id, surface: "desktop_app",
+  };
+  const noAuthChallenge = await backroomEdge("device-frame/binding-challenge", frameRequest, null);
+  assert.equal(noAuthChallenge.status, 401, "frame challenge requires authentication");
+  const outsiderChallenge = await backroomEdge("device-frame/binding-challenge", frameRequest, nonMemberLogin.access_token);
+  assert.equal(outsiderChallenge.status, 403, "non-member cannot issue a frame challenge");
+  const candidates = await backroomEdge("device-frame/ai-candidates", { roomId: room.id });
+  assert.equal(candidates.status, 200);
+  assert.ok(candidates.body.candidates.some(row => row.participantId === one.participant_id));
+  const ownerChallenge = await backroomEdge("device-frame/binding-challenge", frameRequest);
+  assert.equal(ownerChallenge.status, 201, "owner challenge failed: " + JSON.stringify(ownerChallenge.body));
+  assert.equal(ownerChallenge.body.participantId, one.participant_id);
+  const frameChallengeIdFromOwner = ownerChallenge.body.challengeId;
+  const frameNonceFromOwner = ownerChallenge.body.nonce;
+
+  const wrongSessionFrameBind = await second.callTool({
+    name: "bind_device_frame",
+    arguments: {
+      session_handle: two.session_handle,
+      challenge_id: frameChallengeIdFromOwner,
+      nonce: frameNonceFromOwner,
+      confirm_bind: true,
+    },
+  });
+  assert.equal(wrongSessionFrameBind.isError, true,
+    "a different AI conversation must not redeem the selected AI session's frame challenge");
+
+  const frameBind = await first.callTool({
+    name: "bind_device_frame",
+    arguments: {
+      session_handle: one.session_handle,
+      challenge_id: frameChallengeIdFromOwner,
+      nonce: frameNonceFromOwner,
+      confirm_bind: true,
+    },
+  });
+  assert.notEqual(frameBind.isError, true,
+    "the selected joined AI session could not bind to its desktop frame: " + JSON.stringify(frameBind));
+  assert.equal(frameBind.structuredContent?.bound, true);
+  assert.equal(frameBind.structuredContent?.participant_id, one.participant_id);
+  assert.equal(frameBind.structuredContent?.surface, "desktop_app");
+  assert.equal(frameBind.structuredContent?.capabilities?.group_collaboration, true);
+  assert.equal(frameBind.structuredContent?.capabilities?.app_control, false);
+  assert.equal(frameBind.structuredContent?.capabilities?.native_send, false);
+  assert.equal(frameBind.structuredContent?.capabilities?.automatic_wake, false);
+
+  const frameBindRetry = await first.callTool({
+    name: "bind_device_frame",
+    arguments: {
+      session_handle: one.session_handle,
+      challenge_id: frameChallengeIdFromOwner,
+      nonce: frameNonceFromOwner,
+      confirm_bind: true,
+    },
+  });
+  assert.notEqual(frameBindRetry.isError, true, "same-session frame-binding retry must be idempotent");
+  assert.equal(frameBindRetry.structuredContent?.binding_id, frameBind.structuredContent.binding_id);
+  assert.equal(frameBindRetry.structuredContent?.replayed, true);
+  const persistedFrameBinding = await request(
+    "/rest/v1/backroom_device_frame_bindings?select=id,participant_id,session_digest,revoked_at&challenge_id=eq." + frameChallengeIdFromOwner,
+  );
+  assert.equal(persistedFrameBinding.length, 1);
+  assert.equal(persistedFrameBinding[0].participant_id, one.participant_id);
+  assert.equal(persistedFrameBinding[0].session_digest, frameSessionDigest);
+  assert.equal(persistedFrameBinding[0].revoked_at, null);
+  console.log("SAFE_MCP_E2E_STAGE: desktop frame exact-session bind, wrong-session denial and retry passed");
+
+  // Each physical desktop device supports one active screen peer. Use a second
+  // independently enrolled device to test AI two's owner status/revoke lifecycle
+  // while AI one's original frame binding remains active.
+  const registeredFrameDeviceTwo = await request("/rest/v1/rpc/register_backroom_desktop_device", {
+    method: "POST",
+    body: JSON.stringify({
+      p_device_id: frameDeviceTwoId,
+      p_owner_id: owner.id,
+      p_room_id: room.id,
+      p_token_digest: createHash("sha256").update("rub-minds-ci-device-token-two").digest("hex"),
+      p_device_public_key: createHash("sha256").update("rub-minds-ci-device-public-key-two").digest("hex"),
+      p_device_label: "Disposable MCP frame computer two",
+      p_platform: "windows",
+      p_os_version: "CI",
+      p_app_version: "0.1.0",
+    }),
+  });
+  assert.equal(registeredFrameDeviceTwo?.[0]?.device_id, frameDeviceTwoId,
+    "second desktop registration must create an independent device and room binding");
+  await request("/rest/v1/backroom_desktop_apps", { method: "POST", body: JSON.stringify({
+    device_id: frameDeviceTwoId, app_id: frameAppTwoId, app_label: "Disposable AI app two",
+    executable_sha256: frameAppFingerprintTwo,
+  }) });
+  console.log("SAFE_MCP_E2E_STAGE: second desktop device and app registered");
+  try {
+    await request("/rest/v1/backroom_desktop_sessions", { method: "POST", body: JSON.stringify({
+      session_id: frameRuntimeTwoId, device_id: frameDeviceTwoId, room_id: room.id, requested_by: owner.id,
+      session_type: "screen", status: "active", expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      target_app_id: frameAppTwoId, target_app_fingerprint: frameAppFingerprintTwo,
+    }) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    const statusMatch = message.match(/failed \((\d{3})\)/);
+    const codeMatch = message.match(/"code"\s*:\s*"([^"]+)"/);
+    const constraintMatch = message.match(/"constraint"\s*:\s*"([^"]+)"/);
+    const detailsMatch = message.match(/"details"\s*:\s*"([^"]*)"/);
+    const duplicateColumnsMatch = detailsMatch?.[1].match(/Key \(([^)]+)\)=/);
+    console.log("SAFE_MCP_E2E_SECOND_RUNTIME_INSERT_FAILURE", JSON.stringify({
+      name: error instanceof Error ? error.name : typeof error,
+      httpStatus: statusMatch ? Number(statusMatch[1]) : null,
+      databaseCode: codeMatch?.[1] ?? null,
+      constraint: constraintMatch?.[1] ?? null,
+      duplicateKeyColumns: duplicateColumnsMatch?.[1].split(",").map(value => value.trim()) ?? [],
+      foreignKeyFailure: /foreign key/i.test(message),
+      checkConstraintFailure: /check constraint/i.test(message),
+      duplicateKeyFailure: /duplicate key/i.test(message)
+    }));
+    throw error;
+  }
+  console.log("SAFE_MCP_E2E_STAGE: second desktop runtime registered");
+  const secondFrameRequest = {
+    deviceId: frameDeviceTwoId, roomId: room.id, requestId: randomUUID(),
+    issuedAt: Date.now(), runtimeSessionId: frameRuntimeTwoId,
+    participantId: two.participant_id, surface: "desktop_app",
+  };
+  const secondOwnerChallenge = await backroomEdge("device-frame/binding-challenge", secondFrameRequest);
+  assert.equal(secondOwnerChallenge.status, 201, "owner could not issue second AI frame challenge");
+  console.log("SAFE_MCP_E2E_STAGE: second AI frame challenge issued");
+  const secondFrameBind = await second.callTool({ name: "bind_device_frame", arguments: {
+    session_handle: two.session_handle, challenge_id: secondOwnerChallenge.body.challengeId,
+    nonce: secondOwnerChallenge.body.nonce, confirm_bind: true,
+  } });
+  assert.notEqual(secondFrameBind.isError, true, "second selected AI could not bind");
+  assert.equal(secondFrameBind.structuredContent?.participant_id, two.participant_id);
+  console.log("SAFE_MCP_E2E_STAGE: second AI frame binding succeeded");
+  const statusRequest = { deviceId: frameDeviceTwoId, roomId: room.id, runtimeSessionId: frameRuntimeTwoId };
+  const outsiderStatus = await backroomEdge("device-frame/binding-status", statusRequest, nonMemberLogin.access_token);
+  assert.equal(outsiderStatus.status, 403, "non-member cannot read frame status");
+  const ownerStatus = await backroomEdge("device-frame/binding-status", statusRequest);
+  assert.equal(ownerStatus.status, 200);
+  assert.equal(ownerStatus.body.binding?.participant_id, two.participant_id);
+  console.log("SAFE_MCP_E2E_STAGE: owner read second binding status; outsider status denied");
+  const outsiderRevoke = await backroomEdge("device-frame/binding-revoke", {
+    ...statusRequest, bindingId: ownerStatus.body.binding.id,
+  }, nonMemberLogin.access_token);
+  assert.equal(outsiderRevoke.status, 403, "non-member cannot revoke frame binding");
+  console.log("SAFE_MCP_E2E_STAGE: outsider binding revoke denied");
+  const ownerRevoke = await backroomEdge("device-frame/binding-revoke", {
+    ...statusRequest, bindingId: ownerStatus.body.binding.id,
+  });
+  assert.equal(ownerRevoke.status, 200);
+  assert.equal(ownerRevoke.body.revoked, true);
+  console.log("SAFE_MCP_E2E_STAGE: owner binding revoke succeeded");
+  const postRevokeStatus = await backroomEdge("device-frame/binding-status", statusRequest);
+  assert.equal(postRevokeStatus.status, 200);
+  assert.equal(postRevokeStatus.body.binding, null);
+  console.log("SAFE_MCP_E2E_STAGE: revoked binding no longer appears in status");
+  console.log("SAFE_MCP_E2E_STAGE: frame challenge, status and revoke owner boundaries passed");
+
+
 
   // Create a real baseline message and use its exact ID + timestamp as the
   // cursor. This proves the wait returns subsequent activity without replaying
@@ -291,7 +546,7 @@ try {
     !realtimeRead.structuredContent?.messages?.some(message => message.id === cursorMessage.id || message.body === cursorBody),
     "Realtime wait replayed the exact cursor message",
   );
-  console.log("Official MCP SDK received a new group message through the bounded Supabase Realtime wait without replaying its exact cursor.");
+  console.log("SAFE_MCP_E2E_STAGE: Supabase Realtime wait woke on the new message without cursor replay");
 
   // Exercise real PostgreSQL composite pagination when two messages share
   // the exact same microsecond timestamp. A timestamp-only cursor would skip
@@ -349,7 +604,7 @@ try {
   assert.deepEqual(secondTiePage.structuredContent?.messages?.map(message => message.id), [tieMessageTwoId]);
   assert.equal(secondTiePage.structuredContent?.has_more, false);
   assert.equal(secondTiePage.structuredContent?.next_cursor?.after_message_id, tieMessageTwoId);
-  console.log("Official MCP SDK paged same-timestamp group messages without skipping or replaying either row.");
+  console.log("SAFE_MCP_E2E_STAGE: same-timestamp composite pagination passed");
 
 
   // Two successful AI joins exhaust this invitation's AI quota. A third
@@ -373,7 +628,7 @@ try {
     "/rest/v1/participants?select=id&room_id=eq." + room.id + "&display_name=eq.CI%20quota%20exceeded",
   );
   assert.equal(quotaParticipants.length, 0, "quota rejection must not create a participant");
-  console.log("Official MCP SDK enforced the AI invitation quota without creating an extra participant.");
+  console.log("SAFE_MCP_E2E_STAGE: AI invitation quota enforcement passed");
 
   // Import the original conversation context privately to AI one. AI two must
   // not receive the raw import or participant-private memory.
@@ -595,7 +850,7 @@ try {
   assert.equal(repeatedForget.structuredContent?.forgotten, false, "repeated deletion must be a harmless idempotent no-op");
   assert.equal(repeatedForget.structuredContent?.not_found, true);
   console.log("Official MCP SDK verified recovery-only deletion: participant-scoped, preserves ordinary private notes and group memory, and safe to retry.");
-  console.log("Official MCP SDK private session-context and explicit group-memory isolation passed.");
+  console.log("SAFE_MCP_E2E_STAGE: private session context and explicit group-memory isolation passed");
 
   const sent = await first.callTool({
     name: "send_group_message",
@@ -623,7 +878,7 @@ try {
   );
   assert.equal(matchingMessages.length, 1,
     "repeated AI delivery must persist exactly one group message");
-  console.log("MCP message retry idempotency passed: one source ID, one persisted message.");
+  console.log("SAFE_MCP_E2E_STAGE: message retry idempotency passed");
 
   const read = await second.callTool({
     name: "read_group_messages",
@@ -647,8 +902,7 @@ try {
       email_confirm: true,
     }),
   });
-  const publicKey = process.env.LOCAL_SUPABASE_ANON_KEY;
-  assert.ok(publicKey, "local publishable/anon key is required for human RLS checks");
+  assert.ok(publicKey, "local anon key is required for human RLS checks");
   const humanLoginResponse = await fetch(apiUrl + "/auth/v1/token?grant_type=password", {
     method: "POST",
     headers: { apikey: publicKey, "Content-Type": "application/json" },
@@ -796,7 +1050,7 @@ try {
     "/rest/v1/messages?select=id&body=eq.CI%20human%20impersonation%20must%20be%20rejected",
   );
   assert.deepEqual(forbiddenRows, [], "rejected sender impersonation must not persist");
-  console.log("Authenticated human and MCP AI exchanged messages in both directions; outsider RLS denied room access.");
+  console.log("SAFE_MCP_E2E_STAGE: human/AI two-way messaging and outsider RLS checks passed");
 
   // Exercise private, revision-checked original-session bridge state through
   // the real hosted MCP handler. Each MCP session receives a distinct row.
@@ -887,29 +1141,7 @@ try {
 
   // Exercise the complete group-task lifecycle through the hosted MCP tools
   // and human RPCs. Proposals remain unassigned until a signed-in human assigns them.
-  const ownerPassword = "Local-CI-Official-MCP-Owner-923!x";
-  const ownerLoginResponse = await fetch(apiUrl + "/auth/v1/token?grant_type=password", {
-    method: "POST",
-    headers: { apikey: publicKey, "Content-Type": "application/json" },
-    body: JSON.stringify({ email: "rub-minds-official-mcp-owner@example.test", password: ownerPassword }),
-  });
-  const ownerLogin = await ownerLoginResponse.json();
-  assert.equal(ownerLoginResponse.status, 200, "room owner sign-in failed for task approval: " + JSON.stringify(ownerLogin));
-  assert.ok(ownerLogin.access_token, "room owner session has no access token");
-  const ownerHeaders = {
-    apikey: publicKey,
-    Authorization: "Bearer " + ownerLogin.access_token,
-    "Content-Type": "application/json",
-  };
-  async function ownerRequest(path, init = {}) {
-    const response = await fetch(apiUrl + path, {
-      ...init,
-      headers: { ...ownerHeaders, ...(init.headers || {}) },
-    });
-    const payload = await response.json().catch(() => null);
-    assert.ok(response.ok, "owner task RPC failed " + path + " (" + response.status + "): " + JSON.stringify(payload));
-    return payload;
-  }
+  // Reuse the owner-authenticated helper created before the MCP clients.
 
   // A room owner is a human participant; seed one only if room creation did not
   // create it, then require exactly one identity before executing lifecycle RPCs.
@@ -1050,7 +1282,7 @@ try {
   });
   assert.notEqual(submissionRetry.isError, true, "submission retry must remain idempotent after approval");
   assert.equal(submissionRetry.structuredContent?.replayed, true);
-  console.log("Official MCP SDK completed the human-governed task lifecycle: propose → human assign → AI claim → submit → owner approve.");
+  console.log("SAFE_MCP_E2E_STAGE: human-governed task lifecycle passed");
 
   // Revoke AI two outside the MCP session while keeping its opaque MCP
   // handle alive. A new invite on that same handle must clear the old private
@@ -1248,11 +1480,18 @@ try {
 
   const firstSessionDigest = createHash("sha256").update(one.session_handle, "utf8").digest("hex");
   const terminatedSessions = await request(
-    "/rest/v1/rub_minds_mcp_sessions?select=session_digest,participant_id,terminated_at&session_digest=eq." + firstSessionDigest,
+    "/rest/v1/rub_minds_mcp_sessions?select=session_digest,participant_id,terminated_at,agent_credential_digest&session_digest=eq." + firstSessionDigest,
   );
   assert.equal(terminatedSessions.length, 1, "leaving must retain the session tombstone by its digest");
   assert.ok(terminatedSessions[0].terminated_at, "leaving must mark the session as terminated");
   assert.equal(terminatedSessions[0].participant_id, null, "a tombstoned session must no longer be bound to a participant");
+  assert.equal(terminatedSessions[0].agent_credential_digest, null, "Leave must clear the AI credential digest together with its encrypted credential");
+  const frameBindingAfterLeave = await request(
+    "/rest/v1/backroom_device_frame_bindings?select=id,revoked_at&challenge_id=eq." + frameChallengeIdFromOwner,
+  );
+  assert.equal(frameBindingAfterLeave.length, 1);
+  assert.ok(frameBindingAfterLeave[0].revoked_at,
+    "leaving the group must revoke the exact AI session device-frame association");
   const residualBridgeState = await request(
     "/rest/v1/rub_minds_mcp_bridge_state?select=session_digest&session_digest=eq." + firstSessionDigest,
   );
@@ -1266,7 +1505,7 @@ try {
   assert.equal(connections.length, 3, "both original credentials plus one fresh rejoin credential must be present");
   const firstConnection = connections.find(connection => connection.participant_id === one.participant_id);
   assert.ok(firstConnection?.revoked_at, "leaving must revoke the first AI credential even when join retries race with leave");
-  console.log("Official MCP SDK interoperability passed: discovery, two AI joins, idempotent rebind, credential rotation, shared message relay, and revocation.");
+  console.log("SAFE_MCP_E2E_STAGE: full official MCP SDK collaboration and leave/rejoin lifecycle passed");
 } finally {
   await Promise.allSettled([first.close(), second.close()]);
 }

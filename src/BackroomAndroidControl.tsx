@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'react';
 import { ArrowLeft, Hand, MonitorPlay, Power, ShieldCheck, Smartphone } from 'lucide-react';
 import { supabase } from './supabase';
+import BackroomFrameAIConnector from './BackroomFrameAIConnector';
 import { createAndroidNativeBindingChallenge, listAndroidNativeBindingCandidates, revokeAndroidNativeBinding, type AndroidNativeBindingCandidate, type BackroomDevice } from './backroomCloudDevices';
 import { validateDeviceSignal } from '../integrations/backroom/desktop-realtime-protocol.mjs';
 import { createNormalizedDragSelection, getContainedVideoRect, mapVideoSelectionToFrame, normalizeClientPointToVideo } from '../integrations/backroom/video-selection-overlay.mjs';
@@ -1084,6 +1085,10 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         : 'Selection resolves to one editable, visible, non-password field in the selected foreground app. The phone checks nearby accessibility metadata locally for one Send control; ambiguous or missing controls stay draft-only. Labels and editor/message contents are never transmitted to Rub Minds.'}</small>
       <p className="br-android-stream-disclaimer">{sendControlStatus}</p>
     </div> : null}
+    {sessionId ? <BackroomFrameAIConnector roomId={roomId} deviceId={device.device_id}
+      runtimeSessionId={sessionId} surface="android_app"
+      ready={viewReady && sourceVisible && dataReady}
+      unavailableReason="Approve and load the selected phone app frame before linking its AI conversation."/ > : null}
     <div className="br-android-stream-actions">
       {!sessionId
         ? <button type="button" disabled={!channelReady || !device.apps.length || busy} onClick={() => void startView()}><MonitorPlay size={14}/> Start app view</button>

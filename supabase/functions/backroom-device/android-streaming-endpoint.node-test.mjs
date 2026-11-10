@@ -87,7 +87,7 @@ test("control ACK broadcasts before marking the leased queue row acknowledged an
   assert.match(handler, /row.status === 'acked'/);
   assert.match(handler, /row.result !== ack.result/);
   const broadcastIndex = handler.lastIndexOf("await broadcastControlResult()");
-  const ackStatusIndex = handler.indexOf("status: 'acked'");
+  const ackStatusIndex = handler.lastIndexOf("status: 'acked'");
   assert.ok(broadcastIndex >= 0 && ackStatusIndex > broadcastIndex,
     "the private control result must be delivered before the ACK row is committed");
   assert.match(handler, /android_control_result_delivery_failed/);
@@ -317,10 +317,10 @@ test("native wake ACK is bound to the stored Android device, room, session, requ
   assert.match(handler, /android_ack_result_conflict/);
   assert.match(handler, /native_wake_submitted/);
   assert.match(handler, /row\.status !== 'leased'/);
-  assert.match(handler, /db\.rpc\('settle_backroom_android_native_wake_result'/);
+  assert.match(handler, /db\.rpc\('settle_backroom_android_native_wake_result_attested'/);
   assert.match(handler, /p_session_digest: nativeWakeHandoff\.sessionDigest/);
   assert.match(handler, /p_lease_token_digest: nativeWakeHandoff\.leaseTokenDigest/);
-  assert.ok(handler.indexOf('await settleNativeWakeGroupJob()') < handler.indexOf('await broadcastNativeWakeResult()'),
+  assert.ok(handler.indexOf('await settleNativeWakeGroupJob()') < handler.indexOf('await broadcastNativeWakeResult('),
     'group lease settlement must precede Android command ACK/broadcast');
 });
 
@@ -328,6 +328,7 @@ test("native wake ACK stores bounded evidence privately and broadcasts no target
   const endpoint = await read("supabase/functions/backroom-device/index.ts");
   const migration = await read("supabase/migrations/20261103133000_backroom_android_native_wake_result_evidence.sql");
   const settlementMigration = await read("supabase/migrations/20261105110000_backroom_android_native_wake_queue_settlement.sql");
+  const attestedSettlementMigration = await read("supabase/migrations/20261107110000_backroom_android_native_wake_attested_settlement.sql");
   const handler = endpoint.slice(
     endpoint.indexOf("if (action === 'android/ack')"),
     endpoint.indexOf("if (action === 'desktop/inventory')")
@@ -338,7 +339,10 @@ test("native wake ACK stores bounded evidence privately and broadcasts no target
   assert.match(migration, /add column if not exists result_payload jsonb/);
   assert.match(migration, /octet_length\(result_payload::text\) <= 8192/);
   assert.match(settlementMigration, /add column if not exists native_result_payload jsonb/);
-  assert.match(settlementMigration, /grant execute on function public\.settle_backroom_android_native_wake_result/);
+  assert.match(attestedSettlementMigration, /revoke all on function public\.settle_backroom_android_native_wake_result\(/);
+  assert.match(attestedSettlementMigration, /create or replace function public\.settle_backroom_android_native_wake_result_attested\(/);
+  assert.match(attestedSettlementMigration, /grant execute on function public\.settle_backroom_android_native_wake_result_attested/);
+  assert.match(attestedSettlementMigration, /to service_role/);
   assert.match(settlementMigration, /lease_token_hash=p_lease_token_digest/);
   assert.match(settlementMigration, /v_result_state='needs_review'[\s\S]*?v_next_state:='failed'/);
   assert.match(endpoint, /result_payload: ack\.nativeWakeResult \?\? null/);
