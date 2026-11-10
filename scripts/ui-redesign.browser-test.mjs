@@ -119,11 +119,35 @@ try {
   }, session);
   const workspace = await signedIn.newPage();
   workspace.on('pageerror', error => pageErrors.push(error.message));
-  await workspace.route('https://ui-test.supabase.co/rest/v1/**', route => route.fulfill({
-    status: 200,
-    headers: { 'content-type': 'application/json', 'content-range': '0-0/*' },
-    body: '[]',
-  }));
+  const fixtureRoom = {
+    id: '00000000-0000-4000-8000-000000000002',
+    owner_id: session.user.id,
+    title: 'Design QA Group',
+    objective: 'Verify the group-first collaboration journey.',
+    created_at: '2026-11-10T12:00:00.000Z',
+  };
+  const fixtureParticipant = {
+    id: '00000000-0000-4000-8000-000000000003',
+    room_id: fixtureRoom.id,
+    user_id: session.user.id,
+    display_name: 'QA Human',
+    kind: 'human',
+    status: 'joined',
+  };
+  await workspace.route('https://ui-test.supabase.co/rest/v1/**', async route => {
+    const url = new URL(route.request().url());
+    const table = url.pathname.split('/').pop();
+    const single = (route.request().headers().accept || '').includes('vnd.pgrst.object');
+    let value = [];
+    if (table === 'rooms') value = url.searchParams.has('id') ? fixtureRoom : [fixtureRoom];
+    if (table === 'participants') value = [fixtureParticipant];
+    const payload = single && table === 'rooms' ? fixtureRoom : value;
+    await route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'application/json', 'content-range': '0-0/*' },
+      body: JSON.stringify(payload),
+    });
+  });
   await workspace.route('https://ui-test.supabase.co/auth/v1/**', route => route.abort());
   await workspace.goto(baseURL, { waitUntil: 'networkidle' });
   await workspace.locator('.rm-app-shell').waitFor();
@@ -133,6 +157,22 @@ try {
     'Signed-in group navigation is missing.');
   await noHorizontalOverflow(workspace, 'Signed-in desktop home');
   await workspace.screenshot({ path: resolve(screenshotDir, 'desktop-signed-in-home.png'), fullPage: true });
+
+  await workspace.getByRole('button', { name: /Design QA Group/ }).first().click();
+  await workspace.getByRole('heading', { name: 'Design QA Group' }).waitFor();
+  check(await workspace.locator('.composer').isVisible(),
+    'Group conversation composer did not appear.');
+  await workspace.screenshot({ path: resolve(screenshotDir, 'desktop-group-conversation.png'), fullPage: true });
+  await workspace.getByRole('button', { name: /People/ }).click();
+  await workspace.getByText('QA Human', { exact: true }).waitFor();
+  await workspace.getByRole('button', { name: /Private context/ }).click();
+  await workspace.getByText('Bring context from your existing AI', { exact: true }).waitFor();
+  await workspace.getByRole('button', { name: /Shared memory/ }).click();
+  await workspace.getByText('What the group should remember', { exact: true }).waitFor();
+  await workspace.getByRole('button', { name: /Connections/ }).click();
+  await workspace.getByText('Connect more minds', { exact: true }).waitFor();
+  await noHorizontalOverflow(workspace, 'Signed-in group workspace');
+  await workspace.getByRole('button', { name: /Conversation/ }).click();
 
   await workspace.getByRole('button', { name: 'Create a group' }).first().click();
   await workspace.getByRole('heading', { name: 'Create a live group' }).waitFor();
@@ -201,7 +241,8 @@ try {
 
   check(pageErrors.length === 0, 'Browser runtime errors: ' + pageErrors.join(' | '));
   console.log('PASS: desktop welcome, sign-in and sign-up');
-  console.log('PASS: signed-in home, create-group dialog, invitation dialog and Backroom return path');
+  console.log('PASS: signed-in home, group conversation, People, Private context, Shared memory and Connections');
+  console.log('PASS: create-group dialog, invitation dialog and Backroom return path');
   console.log('PASS: theme toggle and persisted preference');
   console.log('PASS: paste invite before sign-in and preserve invite token');
   console.log('PASS: human, existing-AI and separate-runtime invitation routes');
