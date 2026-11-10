@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, readdirSync } from 'node:fs';
+import { mkdirSync, readdirSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright';
 
@@ -250,9 +250,15 @@ try {
     'mobile-360-dark-sign-in.png',
     'mobile-backroom-access-gate.png',
   ];
-  const generatedScreenshots = readdirSync(screenshotDir).filter(file => file.endsWith('.png')).sort();
+  const screenshotEntries = readdirSync(screenshotDir, { withFileTypes: true });
+  const generatedScreenshots = screenshotEntries.filter(entry => entry.isFile() && entry.name.endsWith('.png')).map(entry => entry.name).sort();
   const missingScreenshots = expectedScreenshots.filter(file => !generatedScreenshots.includes(file));
-  check(missingScreenshots.length === 0, 'Missing visual-review screenshots: ' + missingScreenshots.join(', '));
+  const nonFileScreenshots = screenshotEntries.filter(entry => entry.name.endsWith('.png') && !entry.isFile()).map(entry => entry.name);
+  check(missingScreenshots.length === 0, 'Missing regular visual-review PNG files: ' + missingScreenshots.join(', '));
+  check(nonFileScreenshots.length === 0, 'Screenshot paths are not regular files: ' + nonFileScreenshots.join(', '));
+  for (const file of expectedScreenshots) {
+    check(statSync(resolve(screenshotDir, file)).size > 0, 'Screenshot is empty: ' + file);
+  }
   check(pageErrors.length === 0, 'Browser runtime errors: ' + pageErrors.join(' | '));
   console.log('Visual-review screenshots: ' + generatedScreenshots.join(', '));
   console.log('PASS: desktop welcome, sign-in and sign-up');
