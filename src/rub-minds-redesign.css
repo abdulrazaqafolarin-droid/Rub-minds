@@ -521,3 +521,10 @@ a{color:inherit}
 .rm-backroom-shell .br-surface-option{color:var(--rm-text);border-color:var(--rm-border);background:var(--rm-surface)}
 .rm-backroom-shell .br-surface-option.chosen{color:var(--rm-primary);border-color:var(--rm-primary);background:var(--rm-primary-soft)}
 @media(max-width:720px){.rm-backroom-shell .br-top-right{gap:6px}.rm-backroom-shell .br-collaboration-link{min-height:30px;padding:6px 8px;font-size:9px}}
+
+.rm-danger-action{min-height:40px;display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:9px 13px;border:1px solid var(--rm-danger);border-radius:10px;color:#fff!important;background:var(--rm-danger);font-size:11px;font-weight:800;transition:filter .18s ease,transform .18s ease}
+.rm-danger-action:hover{filter:brightness(1.08);transform:translateY(-1px)}
+.rm-confirm-dialog .modal-icon{color:var(--rm-primary);background:var(--rm-primary-soft);box-shadow:none}
+.rm-copy-fallback textarea{width:100%;min-height:150px;resize:vertical;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:10px;line-height:1.6}
+.rm-confirm-dialog .modal-actions,.rm-copy-fallback .modal-actions{align-items:center}
+@media(max-width:520px){.rm-confirm-dialog,.rm-copy-fallback{width:calc(100vw - 26px);max-height:calc(100vh - 26px);padding:21px 16px}.rm-confirm-dialog .modal-actions>* ,.rm-copy-fallback .modal-actions>*{flex:1}}
