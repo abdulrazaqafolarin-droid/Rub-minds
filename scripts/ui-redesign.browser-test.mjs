@@ -245,8 +245,8 @@ try {
   await backroom.route('https://ui-test.supabase.co/**', route => route.abort());
   await backroom.goto(baseURL + '?backroom=1', { waitUntil: 'networkidle' });
   await backroom.getByRole('heading', { name: 'Backroom access' }).waitFor();
-  check((await backroom.locator('body').innerText()).includes('Please sign in.'),
-    'Backroom did not preserve its signed-in access gate.');
+  check((await backroom.locator('body').innerText()).includes('Sign in to Rub Minds before opening Backroom.'),
+    'Backroom did not preserve its signed-out access gate.');
   await noHorizontalOverflow(backroom, 'Mobile Backroom access gate');
   await backroom.screenshot({ path: resolve(screenshotDir, 'mobile-backroom-access-gate.png'), fullPage: true });
 
