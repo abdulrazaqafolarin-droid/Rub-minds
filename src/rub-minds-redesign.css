@@ -265,3 +265,11 @@ a{color:inherit}
   .br-cloud-header{flex-wrap:wrap;gap:9px}.br-cloud-sidebar{order:1}.br-cloud-stage-panel{order:2}.br-cloud-device-frame{max-width:100%;overflow-x:auto}
 }
 @media(max-width:420px){.rm-backroom-top-actions .rm-button-secondary{display:none}.rm-room-actions{gap:5px}.rm-primary-action{min-height:34px;padding:7px 9px}.rm-home-actions>*{flex:1 1 100%}.rm-orbit-node{min-width:75px;padding:7px 8px;font-size:9px}.rm-orbit-node.people,.rm-orbit-node.phone{left:1%}.rm-orbit-node.ai,.rm-orbit-node.terminal{right:1%}}
+
+.rm-invite-options .rm-eyebrow{margin-top:2px}
+.rm-invite-options h2{margin-top:7px}
+.rm-invite-ai-option{display:flex!important;align-items:flex-start;gap:11px;margin:20px 0 4px!important;padding:14px;border:1px solid var(--rm-primary-line);border-radius:12px;background:var(--rm-primary-soft)}
+.rm-invite-ai-option input{width:18px;height:18px;flex:0 0 18px;margin:2px 0 0!important;accent-color:var(--rm-primary)}
+.rm-invite-ai-option strong,.rm-invite-ai-option small{display:block}
+.rm-invite-ai-option strong{font-size:12px}
+.rm-invite-ai-option small{margin-top:5px;color:var(--rm-muted);font-size:10px;font-weight:500;line-height:1.6}
