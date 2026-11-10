@@ -64,6 +64,8 @@ export default function CloudApp() {
   const [agentConnections, setAgentConnections] = useState<AgentConnection[]>([]);
   const [joinLinkOpen, setJoinLinkOpen] = useState(false);
   const [joinLinkDraft, setJoinLinkDraft] = useState('');
+  const [inviteOptionsOpen, setInviteOptionsOpen] = useState(false);
+  const [inviteAIChoice, setInviteAIChoice] = useState(false);
   useEffect(() => {
     if (!supabase) {
       // Do not leave invite visitors stuck on the loading screen when preview
@@ -122,8 +124,9 @@ export default function CloudApp() {
     if (!room) return;
     setBusy(true); setError('');
     try {
-      const allowAI = window.confirm('Enable the AI authorization route for this invitation? If enabled, up to 3 AI participants can join with separate credentials. Choose Cancel for a human-only invitation.');
+      const allowAI = inviteAIChoice;
       const token = await createCloudInvite(room.id, allowAI, allowAI ? 3 : 0);
+      setInviteOptionsOpen(false);
       setInviteAIEnabled(allowAI);
       const link = new URL('/', window.location.origin);
       link.searchParams.set('invite', token);
@@ -281,6 +284,10 @@ export default function CloudApp() {
     setSelected(id); setError(''); setInviteLink(''); setAgentSecret(''); setActivePanel('conversation');
     setSessionContextNotice(''); setSessionContextDraft(''); setSharedMemoryNotice(''); setShareMemoryDraft('');
     history.replaceState(null, '', id ? '/?room=' + encodeURIComponent(id) : '/');
+  }
+  function openInviteOptions(enableAI = false) {
+    setInviteAIChoice(enableAI);
+    setInviteOptionsOpen(true);
   }
   function openPanel(panel: 'conversation' | 'tasks' | 'participants' | 'private-context' | 'shared-memory' | 'connections') {
     setActivePanel(panel);
@@ -445,7 +452,7 @@ export default function CloudApp() {
       {inviteToken ? <section className="empty rm-invite-accept"><span className="rm-invite-icon"><Link2 size={22}/></span><span className="rm-eyebrow">YOU HAVE AN INVITATION</span><h1>{inviteTokenValid ? 'Join your next great conversation.' : 'This invitation needs attention.'}</h1><p>{inviteTokenValid ? 'Accept this invitation with your Rub Minds account. Your access stays scoped to this group.' : 'This invitation is incomplete. Ask the group owner for a fresh link.'}</p><button className="primary" onClick={() => { void joinInvite(); }} disabled={joining || !inviteTokenValid}>{joining ? 'Joining group…' : 'Accept group invitation'} <ArrowRight size={16}/></button><p className="disclaimer">Invitations expire after 24 hours or 10 successful joins.</p></section>
       : selected && room ? <>
         <header className="rm-room-header"><div className="rm-room-title-block"><span className="rm-eyebrow"><Users size={13}/> COLLABORATION SPACE</span><h2>{room.title}</h2><span className="rm-room-meta"><span className="status-dot"/> {participants.length} participants <span>·</span> {messages.length} messages</span></div>
-          <div className="rm-room-actions"><a className="rm-button-secondary" href={'/?backroom=1&room=' + encodeURIComponent(room.id)}><Monitor size={15}/> Backroom</a><button className="rm-button-secondary" onClick={() => { void copyGroupRelayContext(); }}><Copy size={15}/> {relayCopied ? 'Context copied' : 'Share context with AI'}</button>{room.owner_id === user.id && <button className="rm-primary-action" disabled={busy} onClick={() => { void makeInvite(); }}><UserPlus size={15}/> Invite</button>}</div>
+          <div className="rm-room-actions"><a className="rm-button-secondary" href={'/?backroom=1&room=' + encodeURIComponent(room.id)}><Monitor size={15}/> Backroom</a><button className="rm-button-secondary" onClick={() => { void copyGroupRelayContext(); }}><Copy size={15}/> {relayCopied ? 'Context copied' : 'Share context with AI'}</button>{room.owner_id === user.id && <button className="rm-primary-action" disabled={busy} onClick={() => openInviteOptions()}><UserPlus size={15}/> Invite</button>}</div>
         </header>
         <div className="objective"><Sparkles size={15}/><div><strong>SHARED OBJECTIVE</strong><p>{room.objective || 'Bring perspectives together and make thoughtful progress.'}</p></div></div>
         <nav className="rm-room-tabs" aria-label="Group workspace sections">
@@ -462,7 +469,7 @@ export default function CloudApp() {
         </>}
         {activePanel === 'tasks' && currentHumanParticipant && <GroupTaskBoard key={room.id} roomId={room.id} participants={participants} currentHumanParticipantId={currentHumanParticipant.id} isGroupOwner={room.owner_id === user.id}/>}
         {activePanel === 'tasks' && !currentHumanParticipant && <section className="rm-panel"><strong>Join as a person to manage group tasks</strong><p>Task creation and review require a signed-in human participant.</p></section>}
-        {activePanel === 'participants' && <section className="rm-panel rm-people-panel"><div className="rm-people-heading"><div><span className="rm-eyebrow">THE MINDS IN THIS ROOM</span><h3>{participants.length} participants</h3><p>One group identity for every person and connected AI session.</p></div>{room.owner_id === user.id && <button className="rm-primary-action" onClick={() => { void makeInvite(); }}><UserPlus size={15}/> Invite someone</button>}</div>
+        {activePanel === 'participants' && <section className="rm-panel rm-people-panel"><div className="rm-people-heading"><div><span className="rm-eyebrow">THE MINDS IN THIS ROOM</span><h3>{participants.length} participants</h3><p>One group identity for every person and connected AI session.</p></div>{room.owner_id === user.id && <button className="rm-primary-action" onClick={() => openInviteOptions()}><UserPlus size={15}/> Invite someone</button>}</div>
           <div className="rm-people-grid">{participants.map(p => <article key={p.id} className="rm-person-card"><span className="rm-person-avatar">{p.kind === 'human' ? <Users size={17}/> : <Bot size={18}/>}</span><span className="rm-person-copy"><strong>{p.display_name}</strong><small>{participantKindLabel(p.kind)} · {p.status || 'joined'}</small></span><span className="rm-person-status">{p.status || 'joined'}</span></article>)}</div>
         </section>}
         {activePanel === 'private-context' && <section className="rm-panel private-context-panel"><span className="rm-eyebrow"><LockKeyhole size={13}/> PRIVATE TO YOUR ACCOUNT</span><strong>Bring context from your existing AI</strong><p>Paste the structured JSON context packet from your existing ChatGPT or Claude conversation. It stays private to your account and is not visible to other group members. Review it before saving; never include credentials or unrelated sensitive content.</p>
@@ -477,8 +484,8 @@ export default function CloudApp() {
         </section>}
         {activePanel === 'connections' && <section className="rm-panel rm-connections-panel"><div className="rm-people-heading"><div><span className="rm-eyebrow">INVITATIONS & ACCESS</span><h3>Connect more minds</h3><p>Invite a person, bring an existing AI conversation, or manage a separately configured runtime.</p></div></div>
           <div className="rm-connection-cards">
-            <article><span><Users size={18}/></span><strong>Invite people</strong><p>Share a room-scoped link. They sign in or create an account, then join.</p>{room.owner_id === user.id && <button className="rm-primary-action" disabled={busy} onClick={() => { void makeInvite(); }}>Create invitation <ArrowRight size={14}/></button>}</article>
-            <article><span><MessageCircle size={18}/></span><strong>Bring an existing AI conversation</strong><p>Share an invitation with the same ChatGPT or Claude conversation. Its join route explains what that particular client can actually do.</p><button className="rm-button-secondary" onClick={() => { if (inviteLink) void copyCreatedInviteForAI(); else void makeInvite(); }}>Create / copy AI invitation</button></article>
+            <article><span><Users size={18}/></span><strong>Invite people</strong><p>Share a room-scoped link. They sign in or create an account, then join.</p>{room.owner_id === user.id && <button className="rm-primary-action" disabled={busy} onClick={() => openInviteOptions()}>Create invitation <ArrowRight size={14}/></button>}</article>
+            <article><span><MessageCircle size={18}/></span><strong>Bring an existing AI conversation</strong><p>Share an invitation with the same ChatGPT or Claude conversation. Its join route explains what that particular client can actually do.</p><button className="rm-button-secondary" onClick={() => { if (inviteLink) void copyCreatedInviteForAI(); else openInviteOptions(true); }}>Create / copy AI invitation</button></article>
             <article><span><Bot size={18}/></span><strong>External AI runtime</strong><p>Create a separate room-scoped credential for a configured agent runtime. This does not attach a native ChatGPT or Claude conversation.</p>{room.owner_id === user.id && <button className="rm-button-secondary" disabled={busy} onClick={() => { void addAgent(); }}>Create runtime credential</button>}</article>
           </div>
           <div className="rm-connections-management"><div><strong>Separate AI credentials</strong><p>Active credentials are scoped to this group and can be revoked independently.</p></div><button className="rm-button-secondary" onClick={() => { void manageAgents(); }}>Refresh connections <RefreshCw size={14}/></button>
@@ -494,5 +501,6 @@ export default function CloudApp() {
     </main>
     {creating && <div className="modal-backdrop" onClick={() => setCreating(false)}><form className="modal" onClick={e => e.stopPropagation()} onSubmit={create}><div className="modal-icon"><Users/></div><h2>Create a live group</h2><p>Start a shared collaboration space.</p><label>Group name<input autoFocus required maxLength={80} value={title} onChange={e => setTitle(e.target.value)}/></label><label>Objective<textarea rows={3} maxLength={500} value={objective} onChange={e => setObjective(e.target.value)}/></label><div className="modal-actions"><button type="button" onClick={() => setCreating(false)}>Cancel</button><button className="primary" disabled={busy}>Create group</button></div></form></div>}
     {joinLinkOpen && <div className="modal-backdrop" onClick={() => setJoinLinkOpen(false)}><form className="modal" onClick={e => e.stopPropagation()} onSubmit={e => { e.preventDefault(); beginInviteFromLink(); }}><div className="modal-icon"><Link2/></div><h2>Join a group</h2><p>Paste a Rub Minds invitation link. We’ll preserve it and guide you through sign-in or the available AI onboarding route.</p><label>Invitation link<input autoFocus required value={joinLinkDraft} onChange={e => setJoinLinkDraft(e.target.value)} placeholder="https://rub-minds.vercel.app/?invite=…"/></label><div className="modal-actions"><button type="button" onClick={() => setJoinLinkOpen(false)}>Cancel</button><button className="primary" disabled={!joinLinkDraft.trim()}>Continue <ArrowRight size={15}/></button></div></form></div>}
+    {inviteOptionsOpen && <div className="modal-backdrop" onClick={() => setInviteOptionsOpen(false)}><form className="modal rm-invite-options" onClick={e => e.stopPropagation()} onSubmit={e => { e.preventDefault(); void makeInvite(); }}><div className="modal-icon"><UserPlus/></div><span className="rm-eyebrow">INVITE TO THIS GROUP</span><h2>Create a group invitation</h2><p>Share a secure, time-limited link. People join with their own Rub Minds account. You can also enable a separate AI credential route for a configured runtime.</p><label className="rm-invite-ai-option"><input type="checkbox" checked={inviteAIChoice} onChange={e => setInviteAIChoice(e.target.checked)}/><span><strong>Allow AI runtime credentials</strong><small>Up to 3 separate AI participants can redeem this invitation. This does not automatically connect a native ChatGPT or Claude conversation.</small></span></label><div className="modal-actions"><button type="button" onClick={() => setInviteOptionsOpen(false)}>Cancel</button><button className="primary" disabled={busy}>{busy ? 'Creating invitation…' : 'Create invitation'} <ArrowRight size={15}/></button></div></form></div>}
   </div>;
 }
