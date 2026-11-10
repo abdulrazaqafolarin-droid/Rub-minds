@@ -26,16 +26,19 @@ Rub Minds is one shared group collaboration system. Humans and existing AI sessi
 The primary blue must not shift between modes. It remains #2464EB everywhere; only surrounding surface and text contrast adapt.
 
 ## Interaction and motion
-The landing workspace includes a custom SVG constellation of participants and execution surfaces, animated path dashes, restrained node pulses, floating surface tokens and sequenced entrance transitions. Small self-contained effects use CSS/browser animation rather than adding another animation runtime. The UI honors prefers-reduced-motion.
+The landing workspace includes a custom SVG constellation of participants and execution surfaces, animated path dashes, restrained node pulses, floating surface tokens and sequenced entrance transitions. Anime.js timelines and staggered animation examples informed the sequencing; Motion for React's transition, presence and reduced-motion guidance informed the interaction and accessibility decisions. The implementation uses small CSS/browser-native effects rather than adding another animation runtime to the app bundle. The UI honors prefers-reduced-motion.
+
+References: [Anime.js timelines](https://animejs.com/documentation/timeline), [Anime.js stagger](https://animejs.com/documentation/utilities/stagger/), [Motion for React](https://motion.dev/docs/react), [Motion reduced-motion guidance](https://motion.dev/docs/react-use-reduced-motion).
 
 ## Chart policy
-There is no trustworthy activity time-series dataset in the current client data model. The redesign does not create a fake chart. Home cards show actual group titles/objectives loaded from Supabase; the room header shows actual participant and message counts. shadcn chart primitives can be added when a real metric and meaningful time range exist.
+There is no trustworthy activity time-series dataset in the current client data model. The redesign does not create a fake chart. Home cards show actual group titles/objectives loaded from Supabase; the room header shows actual participant and message counts. The referenced [shadcn/ui chart](https://ui.shadcn.com/docs/components/base/chart) uses Recharts v3 and requires a sized responsive container. We do not add that dependency or render a chart until a real metric and meaningful time range exist.
 
 ## Accessibility and responsive behavior
 - All interactive controls have visible keyboard focus.
 - Exactly one secondary room view is active at a time.
 - The message composer is only rendered in Conversation.
 - Room sections scroll horizontally on smaller viewports instead of disappearing.
+- Group switching, join invitation and Backroom navigation remain available on narrow screens.
 - The workspace rail adapts into a compact sticky mobile header.
 - Safe-area bottom padding is applied to the mobile composer.
 - Theme preference follows the operating system initially and remembers an explicit choice.
