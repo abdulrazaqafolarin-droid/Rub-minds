@@ -47,6 +47,9 @@ export default function BackroomFrameAIConnector({
     setError('');
     setNotice('');
     setCopied(false);
+    return () => {
+      operationEpoch.current += 1;
+    };
   }, [deviceId, ready, roomId, runtimeSessionId, surface]);
 
   const selectedCandidate = useMemo(
@@ -127,11 +130,14 @@ export default function BackroomFrameAIConnector({
 
   const copyToolCall = async () => {
     if (!toolCall) return;
+    const requestEpoch = operationEpoch.current;
     try {
       await navigator.clipboard.writeText(toolCall);
+      if (requestEpoch !== operationEpoch.current) return;
       setCopied(true);
       setNotice('One-time tool call copied. Paste it into the selected AI conversation.');
     } catch {
+      if (requestEpoch !== operationEpoch.current) return;
       setCopied(false);
       setNotice('Clipboard access is unavailable. Select and copy the one-time tool call shown below.');
     }
