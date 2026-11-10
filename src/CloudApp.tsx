@@ -428,7 +428,9 @@ export default function CloudApp() {
     <div className="auth-switch">
       {authMode !== 'signin' && <button type="button" onClick={() => { setAuthMode('signin'); setError(''); setAuthNotice(''); }}>Back to sign in</button>}
       {authMode === 'signin' && <><button type="button" onClick={() => { setAuthMode('signup'); setError(''); setAuthNotice(''); }}>Create an account</button><button type="button" onClick={() => { setAuthMode('forgot'); setError(''); setAuthNotice(''); }}>Forgot password?</button></>}
+      {authMode !== 'reset' && authMode !== 'forgot' && !inviteToken && <button type="button" onClick={() => setJoinLinkOpen(true)}><Link2 size={13}/> Have an invitation? Join with link</button>}
     </div>
+    {joinLinkOpen && <div className="modal-backdrop" onClick={() => setJoinLinkOpen(false)}><form className="modal" onClick={e => e.stopPropagation()} onSubmit={e => { e.preventDefault(); beginInviteFromLink(); }}><div className="modal-icon"><Link2/></div><h2>Join a group</h2><p>Paste the invitation link you received. Your invite stays available while you choose how to join.</p><label>Invitation link<input autoFocus required value={joinLinkDraft} onChange={e => setJoinLinkDraft(e.target.value)} placeholder="https://rub-minds.vercel.app/?invite=…"/></label><div className="modal-actions"><button type="button" onClick={() => setJoinLinkOpen(false)}>Cancel</button><button className="primary" disabled={!joinLinkDraft.trim()}>Continue <ArrowRight size={15}/></button></div></form></div>}
   </div></main>;
   return <div className="app rm-app-shell">
     <aside className="sidebar">
