@@ -92,6 +92,73 @@ try {
   await noHorizontalOverflow(page, 'Desktop sign-up');
   await context.close();
 
+  // Exercise the signed-in workspace with an isolated local Supabase fixture.
+  const signedIn = await browser.newContext({
+    viewport: { width: 1365, height: 900 },
+    colorScheme: 'light',
+    reducedMotion: 'reduce',
+  });
+  const session = {
+    access_token: 'ui-test-access-token',
+    token_type: 'bearer',
+    expires_in: 3600,
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
+    refresh_token: 'ui-test-refresh-token',
+    user: {
+      id: '00000000-0000-4000-8000-000000000001',
+      aud: 'authenticated',
+      role: 'authenticated',
+      email: 'ui-tester@example.invalid',
+      app_metadata: { provider: 'email', providers: ['email'] },
+      user_metadata: {},
+      created_at: '2026-01-01T00:00:00.000Z',
+    },
+  };
+  await signedIn.addInitScript(value => {
+    localStorage.setItem('sb-ui-test-auth-token', JSON.stringify(value));
+  }, session);
+  const workspace = await signedIn.newPage();
+  workspace.on('pageerror', error => pageErrors.push(error.message));
+  await workspace.route('https://ui-test.supabase.co/rest/v1/**', route => route.fulfill({
+    status: 200,
+    headers: { 'content-type': 'application/json', 'content-range': '0-0/*' },
+    body: '[]',
+  }));
+  await workspace.route('https://ui-test.supabase.co/auth/v1/**', route => route.abort());
+  await workspace.goto(baseURL, { waitUntil: 'networkidle' });
+  await workspace.locator('.rm-app-shell').waitFor();
+  check(await workspace.locator('.rm-home-hero').isVisible(),
+    'Signed-in home dashboard did not render.');
+  check(await workspace.getByRole('navigation', { name: 'Your groups' }).isVisible(),
+    'Signed-in group navigation is missing.');
+  await noHorizontalOverflow(workspace, 'Signed-in desktop home');
+  await workspace.screenshot({ path: resolve(screenshotDir, 'desktop-signed-in-home.png'), fullPage: true });
+
+  await workspace.getByRole('button', { name: 'Create a group' }).first().click();
+  await workspace.getByRole('heading', { name: 'Create a live group' }).waitFor();
+  await workspace.getByLabel('Group name').fill('Browser acceptance group');
+  await workspace.getByLabel('Objective').fill('Exercise the signed-in group creation flow without writing to Supabase.');
+  await workspace.getByRole('button', { name: 'Cancel' }).click();
+  check(await workspace.locator('.rm-home-hero').isVisible(),
+    'Closing the group creation dialog lost the home dashboard.');
+
+  await workspace.getByRole('button', { name: 'Join with invitation' }).first().click();
+  await workspace.getByRole('heading', { name: 'Join a group' }).waitFor();
+  await workspace.getByRole('button', { name: 'Cancel' }).click();
+
+  const backroomLink = workspace.getByRole('link', { name: /Backroom device workspace/ });
+  check((await backroomLink.getAttribute('href'))?.includes('backroom=1'),
+    'Backroom entry is not available from the signed-in workspace.');
+  await workspace.goto(baseURL + '?backroom=1', { waitUntil: 'networkidle' });
+  await workspace.locator('.br-shell.rm-backroom-shell').waitFor();
+  check(await workspace.locator('.br-collaboration-link').isVisible(),
+    'Backroom does not provide a return path to Collaboration.');
+  check(await workspace.locator('.rm-theme-toggle.compact').isVisible(),
+    'Backroom does not share the theme toggle.');
+  await noHorizontalOverflow(workspace, 'Signed-in Backroom');
+  await workspace.screenshot({ path: resolve(screenshotDir, 'desktop-backroom-workspace.png'), fullPage: true });
+  await signedIn.close();
+
   for (const width of [390, 360]) {
     const mobile = await browser.newContext({
       viewport: { width, height: 844 },
@@ -134,6 +201,7 @@ try {
 
   check(pageErrors.length === 0, 'Browser runtime errors: ' + pageErrors.join(' | '));
   console.log('PASS: desktop welcome, sign-in and sign-up');
+  console.log('PASS: signed-in home, create-group dialog, invitation dialog and Backroom return path');
   console.log('PASS: theme toggle and persisted preference');
   console.log('PASS: paste invite before sign-in and preserve invite token');
   console.log('PASS: human, existing-AI and separate-runtime invitation routes');
