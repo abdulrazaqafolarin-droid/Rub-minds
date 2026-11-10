@@ -19,6 +19,38 @@ const agentMessagesEndpoint = supabaseUrl
   ? `${supabaseUrl}/functions/v1/agent-messages`
   : 'Supabase endpoint unavailable';
 
+function AuthStory() {
+  return <aside className="rm-auth-story">
+    <a className="rm-auth-story-brand" href="/">
+      <span className="rm-auth-story-mark"><Sparkles size={19}/></span>
+      <span><strong>Rub Minds</strong><small>Collective intelligence</small></span>
+    </a>
+    <span className="rm-auth-story-kicker">THINK BETTER, TOGETHER</span>
+    <h2>One room.<br/><em>More perspectives.</em></h2>
+    <p>Bring people and the AI conversations they already use into one shared space. Keep each mind's identity, context and permissions clear.</p>
+    <div className="rm-auth-story-visual" aria-hidden="true">
+      <div className="rm-auth-story-grid"/>
+      <svg viewBox="0 0 440 250" role="presentation">
+        <path d="M74 65 C145 65 146 124 220 124 S294 65 366 65"/>
+        <path d="M74 190 C145 190 146 124 220 124 S294 190 366 190"/>
+        <path d="M74 65 C96 115 96 153 74 190 M366 65 C344 115 344 153 366 190"/>
+        <circle cx="74" cy="65" r="8"/><circle cx="366" cy="65" r="8"/>
+        <circle cx="74" cy="190" r="8"/><circle cx="366" cy="190" r="8"/>
+      </svg>
+      <span className="rm-auth-story-core"><Sparkles size={30}/></span>
+      <span className="rm-auth-story-node rm-story-people"><Users size={15}/> People</span>
+      <span className="rm-auth-story-node rm-story-ai"><Bot size={15}/> AI sessions</span>
+      <span className="rm-auth-story-node rm-story-memory"><BrainCircuit size={15}/> Shared memory</span>
+      <span className="rm-auth-story-node rm-story-devices"><Monitor size={15}/> Devices</span>
+    </div>
+    <div className="rm-auth-story-promises">
+      <span><LockKeyhole size={14}/> Private context stays private</span>
+      <span><Layers3 size={14}/> One group across every surface</span>
+    </div>
+    <span className="rm-auth-story-foot">Your work, your people, your AI sessions — together.</span>
+  </aside>;
+}
+
 export default function CloudApp() {
   const [user, setUser] = useState<User | null>(null);
   const [ready, setReady] = useState(false);
@@ -368,7 +400,7 @@ export default function CloudApp() {
   }, [ready, user, inviteToken, inviteTokenValid, inviteRoute, autoJoinAttempted]);
 
   if (!ready) return <div className="empty"><h2>Loading Rub Minds…</h2></div>;
-  if (inviteToken && inviteTokenValid && inviteRoute === 'choose' && !agentSecret) return <main className="auth-page"><div className="auth-panel"><div className="rm-auth-top"><a className="rm-auth-brand" href="/"><span className="brand-icon"><Sparkles size={17}/></span><strong>Rub Minds</strong></a><ThemeToggle compact/></div>
+  if (inviteToken && inviteTokenValid && inviteRoute === 'choose' && !agentSecret) return <main className="auth-page"><AuthStory/><div className="auth-panel"><div className="rm-auth-top"><a className="rm-auth-brand" href="/"><span className="brand-icon"><Sparkles size={17}/></span><strong>Rub Minds</strong></a><ThemeToggle compact/></div>
     <div className="brand-icon"><Link2/></div>
     <h1>Join a Rub Minds group</h1>
     <div className="objective" role="status"><Link2 size={18}/><span>{getInviteStatusMessage(inviteToken)}</span></div>
@@ -381,7 +413,7 @@ export default function CloudApp() {
     <button className="primary" onClick={() => { setInviteRoute('guided'); setRelayCopied(false); setError(''); }}>Continue with my existing AI conversation</button>
     {error && <p className="error" role="alert">{error}</p>}
   </div></main>;
-  if (inviteToken && inviteTokenValid && inviteRoute === 'guided' && !agentSecret) return <main className="auth-page"><div className="auth-panel"><div className="rm-auth-top"><a className="rm-auth-brand" href="/"><span className="brand-icon"><Sparkles size={17}/></span><strong>Rub Minds</strong></a><ThemeToggle compact/></div>
+  if (inviteToken && inviteTokenValid && inviteRoute === 'guided' && !agentSecret) return <main className="auth-page"><AuthStory/><div className="auth-panel"><div className="rm-auth-top"><a className="rm-auth-brand" href="/"><span className="brand-icon"><Sparkles size={17}/></span><strong>Rub Minds</strong></a><ThemeToggle compact/></div>
     <div className="brand-icon"><Copy/></div>
     <h1>Bring your existing AI into this group</h1>
     <p>This creates a handoff from your current conversation without replacing it. Copy the instructions below into the same ChatGPT or Claude conversation you already use.</p>
@@ -392,7 +424,7 @@ export default function CloudApp() {
     <button onClick={() => { setInviteRoute('choose'); setRelayCopied(false); }}>Back to route selection</button>
     {error && <p className="error" role="alert">{error}</p>}
   </div></main>;
-  if (inviteToken && inviteTokenValid && inviteRoute === 'ai' && !agentSecret) return <main className="auth-page"><div className="auth-panel"><div className="rm-auth-top"><a className="rm-auth-brand" href="/"><span className="brand-icon"><Sparkles size={17}/></span><strong>Rub Minds</strong></a><ThemeToggle compact/></div>
+  if (inviteToken && inviteTokenValid && inviteRoute === 'ai' && !agentSecret) return <main className="auth-page"><AuthStory/><div className="auth-panel"><div className="rm-auth-top"><a className="rm-auth-brand" href="/"><span className="brand-icon"><Sparkles size={17}/></span><strong>Rub Minds</strong></a><ThemeToggle compact/></div>
     <div className="brand-icon"><Bot/></div>
     <h1>AI participant authorization</h1>
     <p>This route creates a separate AI participant. The invitation owner must have enabled AI access and reserved an available AI slot.</p>
@@ -404,7 +436,7 @@ export default function CloudApp() {
     {error && <p className="error" role="alert">{error}</p>}
     <button onClick={() => { setInviteRoute('choose'); setError(''); }}>Back to route selection</button>
   </div></main>;
-  if (!user && agentSecret) return <main className="auth-page"><div className="auth-panel"><div className="rm-auth-top"><a className="rm-auth-brand" href="/"><span className="brand-icon"><Sparkles size={17}/></span><strong>Rub Minds</strong></a><ThemeToggle compact/></div>
+  if (!user && agentSecret) return <main className="auth-page"><AuthStory/><div className="auth-panel"><div className="rm-auth-top"><a className="rm-auth-brand" href="/"><span className="brand-icon"><Sparkles size={17}/></span><strong>Rub Minds</strong></a><ThemeToggle compact/></div>
     <div className="brand-icon"><Bot/></div><h1>AI credential created</h1>
     <p>This one-time credential belongs to <strong>{agentName}</strong>. Save it privately now. It is scoped to the invited room and expires no later than the invitation expiry or seven days.</p>
     <label>Private AI credential<input readOnly aria-label="Private AI credential" value={agentSecret} onFocus={e => e.target.select()}/></label>
@@ -412,7 +444,7 @@ export default function CloudApp() {
     <p className="disclaimer">Use it as an Authorization: Bearer credential with the Rub Minds agent-messages endpoint. A runtime and model provider are still required for automatic replies.</p>
     {error && <p className="error" role="alert">{error}</p>}
   </div></main>;
-  if (!user || authMode === 'reset') return <main className="auth-page"><div className="auth-panel"><div className="rm-auth-top"><a className="rm-auth-brand" href="/"><span className="brand-icon"><Sparkles size={17}/></span><strong>Rub Minds</strong></a><ThemeToggle compact/></div>
+  if (!user || authMode === 'reset') return <main className="auth-page"><AuthStory/><div className="auth-panel"><div className="rm-auth-top"><a className="rm-auth-brand" href="/"><span className="brand-icon"><Sparkles size={17}/></span><strong>Rub Minds</strong></a><ThemeToggle compact/></div>
     <div className="brand-icon"><Sparkles/></div>
     <h1>{authMode === 'signup' ? 'Create your Rub Minds account' : authMode === 'forgot' ? 'Reset your password' : authMode === 'reset' ? 'Choose a new password' : inviteToken ? (inviteTokenValid ? 'You’re invited to Rub Minds' : 'Invitation link looks incomplete') : 'Welcome to Rub Minds'}</h1>
     <p>{authMode === 'signup' ? 'Sign up with your email and a secure password.' : authMode === 'forgot' ? 'Enter your account email to request a reset link.' : authMode === 'reset' ? 'Enter a new password to secure your account.' : inviteToken ? (inviteTokenValid ? 'Sign in or create an account to continue to your group invitation. You will be able to accept it after signing in.' : 'This invitation link appears incomplete. Ask the person who created it to generate a fresh invitation link before you continue.') : 'Sign in with your email and password to collaborate.'}</p>
