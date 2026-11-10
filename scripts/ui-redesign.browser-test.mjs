@@ -148,7 +148,17 @@ try {
       body: JSON.stringify(payload),
     });
   });
-  await workspace.route('https://ui-test.supabase.co/auth/v1/**', route => route.abort());
+  await workspace.route('https://ui-test.supabase.co/auth/v1/**', route => {
+    const authPath = new URL(route.request().url()).pathname;
+    if (authPath === '/auth/v1/user') {
+      return route.fulfill({
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(session.user),
+      });
+    }
+    return route.abort();
+  });
   await workspace.goto(baseURL, { waitUntil: 'networkidle' });
   await workspace.locator('.rm-app-shell').waitFor();
   check(await workspace.locator('.rm-home-hero').isVisible(),
