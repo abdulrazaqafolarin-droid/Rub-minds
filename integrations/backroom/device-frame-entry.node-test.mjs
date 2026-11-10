@@ -172,3 +172,21 @@ test("device-frame connector clears stale state and ignores responses from a pre
   assert.match(connector, /validNonce/);
   assert.match(connector, /expiresAtMs <= Date\.now\(\)/);
 });
+
+test("device-frame connector invalidates pending work on unmount and clipboard completion", async () => {
+  const connector = await read("src/BackroomFrameAIConnector.tsx");
+  assert.ok(connector.includes("return () => {\n      operationEpoch.current += 1;\n    };"),
+    "unmount cleanup must invalidate pending frame requests");
+
+  const copyStart = connector.indexOf("const copyToolCall = async () => {");
+  const revokeStart = connector.indexOf("const revoke = async () => {", copyStart);
+  assert.ok(copyStart >= 0 && revokeStart > copyStart, "clipboard handler must remain a bounded action");
+  const copyHandler = connector.slice(copyStart, revokeStart);
+  assert.ok(copyHandler.includes("const requestEpoch = operationEpoch.current;"));
+  assert.ok(copyHandler.includes("await navigator.clipboard.writeText(toolCall);"));
+  assert.equal(
+    copyHandler.split("if (requestEpoch !== operationEpoch.current) return;").length - 1,
+    2,
+    "both clipboard success and failure must ignore stale frame completions",
+  );
+});
