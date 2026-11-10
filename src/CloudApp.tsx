@@ -35,11 +35,11 @@ function AuthStory() {
     <div className="rm-auth-story-visual" aria-hidden="true">
       <div className="rm-auth-story-grid"/>
       <svg viewBox="0 0 440 250" role="presentation">
-        <path d="M74 65 C145 65 146 124 220 124 S294 65 366 65"/>
-        <path d="M74 190 C145 190 146 124 220 124 S294 190 366 190"/>
-        <path d="M74 65 C96 115 96 153 74 190 M366 65 C344 115 344 153 366 190"/>
-        <circle cx="74" cy="65" r="8"/><circle cx="366" cy="65" r="8"/>
-        <circle cx="74" cy="190" r="8"/><circle cx="366" cy="190" r="8"/>
+        <path d="M110 82 C158 82 164 124 220 124 S282 82 330 82"/>
+        <path d="M110 168 C158 168 164 124 220 124 S282 168 330 168"/>
+        <path d="M110 82 C124 109 124 141 110 168 M330 82 C316 109 316 141 330 168"/>
+        <circle cx="110" cy="82" r="7"/><circle cx="330" cy="82" r="7"/>
+        <circle cx="110" cy="168" r="7"/><circle cx="330" cy="168" r="7"/>
       </svg>
       <span className="rm-auth-story-core"><Sparkles size={30}/></span>
       <span className="rm-auth-story-node rm-story-people"><Users size={15}/> People</span>
