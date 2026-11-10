@@ -298,3 +298,142 @@ a{color:inherit}
   .room-link{font-size:9px}
   .rm-backroom-link{font-size:8px}
 }
+
+/* Shared Backroom tokens are inherited by the legacy browser-runtime and desktop controls. */
+.rm-backroom-shell,.rm-backroom-shell .br-cloud-shell,.rm-backroom-shell .br-shell{
+  --br-bg:var(--rm-bg);
+  --br-panel:var(--rm-panel);
+  --br-border:var(--rm-border);
+  --br-text:var(--rm-text);
+  --br-muted:var(--rm-muted);
+  --br-surface:var(--rm-surface);
+  --br-accent:var(--rm-primary);
+}
+.rm-backroom-shell .br-shell{background:var(--rm-bg);color:var(--rm-text)}
+.rm-backroom-shell .br-sidebar{background:var(--rm-panel);border-color:var(--rm-border)}
+.rm-backroom-shell .br-brand{color:var(--rm-text)}
+.rm-backroom-shell .br-brand-mark{background:var(--rm-primary);color:#fff;box-shadow:0 8px 22px rgba(36,100,235,.22)}
+.rm-backroom-shell .br-brand small,.rm-backroom-shell .br-side-heading,.rm-backroom-shell .br-room-label{color:var(--rm-muted)}
+.rm-backroom-shell .br-select-wrap select{background:var(--rm-bg);border-color:var(--rm-border);color:var(--rm-text)}
+.rm-backroom-shell .br-select-wrap svg{color:var(--rm-muted)}
+.rm-backroom-shell .br-space-item{color:var(--rm-text)}
+.rm-backroom-shell .br-space-item:hover{background:var(--rm-surface)}
+.rm-backroom-shell .br-space-item.active{background:var(--rm-primary-soft);border-color:var(--rm-primary-line);color:var(--rm-primary)}
+.rm-backroom-shell .br-space-icon{background:var(--rm-primary-soft);color:var(--rm-primary)}
+.rm-backroom-shell .br-space-name small,.rm-backroom-shell .br-side-footer,.rm-backroom-shell .br-side-footer small{color:var(--rm-muted)}
+.rm-backroom-shell .br-add-side{background:var(--rm-primary-soft);border-color:var(--rm-primary-line);color:var(--rm-primary)}
+.rm-backroom-shell .br-add-side:hover{background:var(--rm-primary-soft)}
+.rm-backroom-shell .br-topbar{background:var(--rm-panel);border-color:var(--rm-border)}
+.rm-backroom-shell .br-breadcrumb,.rm-backroom-shell .br-breadcrumb a,.rm-backroom-shell .br-top-right{color:var(--rm-muted)}
+.rm-backroom-shell .br-breadcrumb b{color:var(--rm-text)}
+.rm-backroom-shell .br-status-pill{border-color:var(--rm-border);color:var(--rm-muted)}
+.rm-backroom-shell .br-avatar{background:var(--rm-primary-soft);color:var(--rm-primary)}
+.rm-backroom-shell .br-content{color:var(--rm-text)}
+.rm-backroom-shell .br-eyebrow,.rm-backroom-shell .br-title-row h1 span,.rm-backroom-shell .br-bottom-note a{color:var(--rm-primary)}
+.rm-backroom-shell .br-title-row p,.rm-backroom-shell .br-bottom-note{color:var(--rm-muted)}
+.rm-backroom-shell .br-primary{background:var(--rm-primary);border-color:var(--rm-primary);color:#fff}
+.rm-backroom-shell .br-primary:hover:not(:disabled){background:var(--rm-primary-strong)}
+.rm-backroom-shell .br-metrics>div{background:var(--rm-panel);border-color:var(--rm-border)}
+.rm-backroom-shell .br-metrics span,.rm-backroom-shell .br-metrics small{color:var(--rm-muted)}
+.rm-backroom-shell .br-empty-card{border-color:var(--rm-border);background:radial-gradient(circle at 50% 10%,var(--rm-primary-soft),transparent 56%),var(--rm-panel)}
+.rm-backroom-shell .br-empty-symbol{border-color:var(--rm-primary-line);background:var(--rm-primary-soft);color:var(--rm-primary)}
+.rm-backroom-shell .br-empty-card p{color:var(--rm-muted)}
+.rm-backroom-shell .br-platforms{color:var(--rm-muted)}
+.rm-backroom-shell .br-panel{background:var(--rm-panel);border-color:var(--rm-border);color:var(--rm-text)}
+.rm-backroom-shell .br-panel h2,.rm-backroom-shell .br-inspector h2{color:var(--rm-text)}
+.rm-backroom-shell .br-panel-head p,.rm-backroom-shell .br-detail span,.rm-backroom-shell .br-detail .br-muted{color:var(--rm-muted)}
+.rm-backroom-shell .br-icon-button{background:var(--rm-surface);border-color:var(--rm-border);color:var(--rm-muted)}
+.rm-backroom-shell .br-icon-button:hover{background:var(--rm-primary-soft);color:var(--rm-primary)}
+.rm-backroom-shell .br-preview{background:var(--rm-bg);border-color:var(--rm-border)}
+.rm-backroom-shell .br-preview-bar{background:var(--rm-surface);border-color:var(--rm-border);color:var(--rm-muted)}
+.rm-backroom-shell .br-preview-demo,.rm-backroom-shell .br-preview-fake-composer svg{color:var(--rm-primary)}
+.rm-backroom-shell .br-preview-body p,.rm-backroom-shell .br-fake-composer{color:var(--rm-muted)}
+.rm-backroom-shell .br-preview-icon{background:var(--rm-primary-soft);color:var(--rm-primary)}
+.rm-backroom-shell .br-fake-composer{background:var(--rm-surface);border-color:var(--rm-border)}
+.rm-backroom-shell .br-detail{border-color:var(--rm-border);color:var(--rm-text)}
+.rm-backroom-shell .br-coords{background:var(--rm-surface)}
+.rm-backroom-shell .br-coords code,.rm-backroom-shell .br-coords button{color:var(--rm-primary)}
+.rm-backroom-shell .br-warning{background:color-mix(in srgb,var(--rm-warning) 9%,var(--rm-panel));border-color:color-mix(in srgb,var(--rm-warning) 35%,var(--rm-border))}
+.rm-backroom-shell .br-warning svg{color:var(--rm-warning)}
+.rm-backroom-shell .br-warning b{color:var(--rm-text)}
+.rm-backroom-shell .br-warning p{color:var(--rm-muted)}
+.rm-backroom-shell .br-disabled-action{background:var(--rm-surface);border-color:var(--rm-border);color:var(--rm-muted)}
+.rm-backroom-shell .br-disabled-action span{color:var(--rm-muted)}
+.rm-backroom-shell .br-notice{background:var(--rm-primary-soft);border-color:var(--rm-primary-line);color:var(--rm-text)}
+.rm-backroom-shell .br-notice button{color:var(--rm-muted)}
+.rm-backroom-shell .br-empty,.rm-backroom-shell .br-gate{color:var(--rm-text)}
+.rm-backroom-shell .br-empty p,.rm-backroom-shell .br-gate p{color:var(--rm-muted)}
+.rm-backroom-shell .br-gate a{color:var(--rm-primary)}
+.rm-backroom-shell .br-modal-backdrop{background:rgba(4,11,24,.58)}
+.rm-backroom-shell .br-modal{background:var(--rm-panel);border-color:var(--rm-border);color:var(--rm-text)}
+.rm-backroom-shell .br-modal-icon{background:var(--rm-primary-soft);color:var(--rm-primary)}
+.rm-backroom-shell .br-modal>p{color:var(--rm-muted)}
+.rm-backroom-shell .br-modal label,.rm-backroom-shell .br-modal-label{color:var(--rm-text)}
+.rm-backroom-shell .br-modal label span{color:var(--rm-muted)}
+.rm-backroom-shell .br-modal input{background:var(--rm-bg);border-color:var(--rm-border);color:var(--rm-text)}
+.rm-backroom-shell .br-surface-option{background:var(--rm-surface);border-color:var(--rm-border);color:var(--rm-text)}
+.rm-backroom-shell .br-surface-option.chosen{background:var(--rm-primary-soft);border-color:var(--rm-primary-line);color:var(--rm-primary)}
+.rm-backroom-shell .br-surface-option small{color:var(--rm-muted)}
+.rm-backroom-shell .br-secondary{background:var(--rm-panel);border-color:var(--rm-border);color:var(--rm-text)}
+.rm-backroom-shell .br-secondary:hover{border-color:var(--rm-primary-line);color:var(--rm-primary);background:var(--rm-primary-soft)}
+.rm-backroom-shell .br-workspace-runtime-status>div,.rm-backroom-shell .br-external-scope,.rm-backroom-shell .br-external-surface{background:var(--rm-surface);border-color:var(--rm-border)}
+.rm-backroom-shell .br-workspace-runtime-status b,.rm-backroom-shell .br-external-surface h3{color:var(--rm-text)}
+.rm-backroom-shell .br-workspace-runtime-status span,.rm-backroom-shell .br-external-scope p,.rm-backroom-shell .br-external-surface p{color:var(--rm-muted)}
+.rm-backroom-shell .br-external-scope>label,.rm-backroom-shell .br-external-surface>label{color:var(--rm-text)}
+.rm-backroom-shell .br-external-scope .br-browser-open-row select,.rm-backroom-shell .br-external-surface select,.rm-backroom-shell .br-external-surface input,.rm-backroom-shell .br-external-surface textarea{background:var(--rm-bg);border-color:var(--rm-border);color:var(--rm-text)}
+.rm-backroom-shell .br-subtle-status,.rm-backroom-shell .br-task-result{background:var(--rm-surface);border-color:var(--rm-border);color:var(--rm-muted)}
+.rm-backroom-shell .br-task-result>b{color:var(--rm-text)}
+.rm-backroom-shell .br-task-result>span{color:var(--rm-muted)}
+.rm-backroom-shell .br-runtime-output{background:var(--rm-bg);border-color:var(--rm-border);color:var(--rm-text)}
+.rm-backroom-shell .br-inspace-view{background:var(--rm-surface);color:var(--rm-text)}
+.rm-backroom-shell .br-inspace-toolbar,.rm-backroom-shell .br-inspace-apphead,.rm-backroom-shell .br-inspace-address,.rm-backroom-shell .br-inspace-terminal-top{background:var(--rm-panel);border-color:var(--rm-border);color:var(--rm-text)}
+.rm-backroom-shell .br-inspace-chip{border-color:var(--rm-primary-line);color:var(--rm-primary)}
+.rm-backroom-shell .br-inspace-window,.rm-backroom-shell .br-inspace-terminal{background:var(--rm-bg);border-color:var(--rm-border);color:var(--rm-text)}
+.rm-backroom-shell .br-inspace-appbody p,.rm-backroom-shell .br-inspace-phone-app small,.rm-backroom-shell .br-inspace-terminal-placeholder{color:var(--rm-muted)}
+.rm-backroom-shell .br-inspace-appicon{background:var(--rm-primary-soft);color:var(--rm-primary)}
+.rm-backroom-shell .br-inspace-fakefield{border-color:var(--rm-border);color:var(--rm-muted)}
+.rm-backroom-shell .br-onboard-steps{background:var(--rm-surface);border-color:var(--rm-border);color:var(--rm-muted)}
+.rm-backroom-shell .br-onboard-steps>b{color:var(--rm-text)}
+.rm-backroom-shell .br-onboard-steps>div span{background:var(--rm-primary);color:#fff}
+.rm-backroom-shell .br-live-view,.rm-backroom-shell .br-live-placeholder,.rm-backroom-shell .br-discovery-state{background:var(--rm-surface);border-color:var(--rm-border);color:var(--rm-text)}
+.rm-backroom-shell .br-live-view-head,.rm-backroom-shell .br-live-mode-control{background:var(--rm-panel);border-color:var(--rm-border);color:var(--rm-text)}
+.rm-backroom-shell .br-live-view-head b,.rm-backroom-shell .br-discovery-state b{color:var(--rm-text)}
+.rm-backroom-shell .br-live-view-head small,.rm-backroom-shell .br-live-caption,.rm-backroom-shell .br-live-placeholder p,.rm-backroom-shell .br-live-mode-control p,.rm-backroom-shell .br-live-mode-control>small{color:var(--rm-muted)}
+.rm-backroom-shell .br-live-local-chip{border-color:color-mix(in srgb,var(--rm-success) 40%,var(--rm-border));color:var(--rm-success)}
+.rm-backroom-shell .br-live-selection{border-color:var(--rm-primary);background:rgba(36,100,235,.16);box-shadow:0 0 0 1px var(--rm-primary-line)}
+.rm-backroom-shell .br-live-mode-control select{background:var(--rm-bg);border-color:var(--rm-border);color:var(--rm-text)}
+.rm-backroom-shell .br-live-mode-option{background:var(--rm-surface);border-color:var(--rm-border);color:var(--rm-text)}
+.rm-backroom-shell .br-live-mode-option.is-selected{background:var(--rm-primary-soft);border-color:var(--rm-primary-line);color:var(--rm-primary);box-shadow:inset 0 0 0 1px var(--rm-primary-line)}
+.rm-backroom-shell .br-live-mode-option small{color:var(--rm-muted)}
+.rm-backroom-shell .br-live-mode-option[data-mode="off"].is-selected{background:var(--rm-surface);border-color:var(--rm-border);color:var(--rm-text);box-shadow:inset 0 0 0 1px var(--rm-border)}
+/* Paired phone stream / keyboard / selection controls. */
+.rm-backroom-shell .br-android-stream{background:var(--rm-surface);border-color:var(--rm-border);color:var(--rm-text)}
+.rm-backroom-shell .br-android-stream-head small,.rm-backroom-shell .br-android-app-picker,.rm-backroom-shell .br-android-keyboard-actions,.rm-backroom-shell .br-android-keyboard small,.rm-backroom-shell .br-android-stream-disclaimer{color:var(--rm-muted)}
+.rm-backroom-shell .br-android-stream-head b,.rm-backroom-shell .br-android-keyboard>label,.rm-backroom-shell .br-android-composer-head{color:var(--rm-text)}
+.rm-backroom-shell .br-android-stream-head>span,.rm-backroom-shell .br-android-stream-status{background:var(--rm-panel);color:var(--rm-muted)}
+.rm-backroom-shell .br-android-app-picker select,.rm-backroom-shell .br-android-keyboard textarea,.rm-backroom-shell .br-android-native-binding select{background:var(--rm-bg);border-color:var(--rm-border);color:var(--rm-text)}
+.rm-backroom-shell .br-android-live-surface,.rm-backroom-shell .br-android-live-surface video{background:var(--rm-bg)}
+.rm-backroom-shell .br-android-live-placeholder{color:var(--rm-muted)}
+.rm-backroom-shell .br-android-live-placeholder b{color:var(--rm-text)}
+.rm-backroom-shell .br-android-touch-hint{background:var(--rm-panel);color:var(--rm-muted)}
+.rm-backroom-shell .br-android-keyboard,.rm-backroom-shell .br-android-native-binding{background:var(--rm-panel);border-color:var(--rm-border)}
+.rm-backroom-shell .br-android-keyboard-actions button,.rm-backroom-shell .br-android-stream-actions button,.rm-backroom-shell .br-android-composer-actions button,.rm-backroom-shell .br-android-native-binding button{background:var(--rm-primary-soft);border-color:var(--rm-primary-line);color:var(--rm-primary)}
+.rm-backroom-shell .br-android-keyboard p,.rm-backroom-shell .br-android-native-binding p{background:var(--rm-surface);color:var(--rm-muted)}
+.rm-backroom-shell .br-android-stream-actions button.stop{background:color-mix(in srgb,var(--rm-danger) 10%,var(--rm-panel));border-color:color-mix(in srgb,var(--rm-danger) 30%,var(--rm-border));color:var(--rm-danger)}
+.rm-backroom-shell .br-android-control-grant{color:var(--rm-success)}
+.rm-backroom-shell .br-android-stream-status.error{background:color-mix(in srgb,var(--rm-danger) 10%,var(--rm-panel));color:var(--rm-danger)}
+.rm-backroom-shell .br-android-composer-selection{border-color:var(--rm-primary);background:rgba(36,100,235,.18);box-shadow:0 0 0 9999px rgba(7,15,29,.44)}
+.rm-backroom-shell .br-android-native-binding label{color:var(--rm-text)}
+.rm-backroom-shell .br-android-native-binding small{color:var(--rm-muted)}
+.rm-backroom-shell .br-desktop-live,.rm-backroom-shell .br-desktop-empty{background:var(--rm-surface);border-color:var(--rm-border)}
+.rm-backroom-shell .br-desktop-refresh,.rm-backroom-shell .br-desktop-actions button,.rm-backroom-shell .br-desktop-live-title button,.rm-backroom-shell .br-desktop-toolbar button,.rm-backroom-shell .br-desktop-draft button,.rm-backroom-shell .br-terminal-input button,.rm-backroom-shell .br-terminal-remote>button{background:var(--rm-panel);border-color:var(--rm-border);color:var(--rm-text)}
+.rm-backroom-shell .br-desktop-app-launch button,.rm-backroom-shell .br-desktop-draft button{background:var(--rm-primary);border-color:var(--rm-primary);color:#fff}
+.rm-backroom-shell .br-desktop-control select,.rm-backroom-shell .br-desktop-draft textarea,.rm-backroom-shell .br-terminal-input input{background:var(--rm-bg);border-color:var(--rm-border);color:var(--rm-text)}
+.rm-backroom-shell .br-desktop-empty b,.rm-backroom-shell .br-desktop-head h2,.rm-backroom-shell .br-desktop-live-title{color:var(--rm-text)}
+.rm-backroom-shell .br-desktop-empty p,.rm-backroom-shell .br-desktop-head p,.rm-backroom-shell .br-desktop-label,.rm-backroom-shell .br-desktop-caption,.rm-backroom-shell .br-desktop-foot,.rm-backroom-shell .br-desktop-device-meta{color:var(--rm-muted)}
+.rm-backroom-shell .br-desktop-dot{background:var(--rm-success)}
+.rm-backroom-shell .br-desktop-video,.rm-backroom-shell .br-terminal-remote{background:var(--rm-bg);color:var(--rm-text)}
+.rm-backroom-shell .br-terminal-remote-head,.rm-backroom-shell .br-terminal-input{background:var(--rm-panel);color:var(--rm-text)}
+.rm-backroom-shell .br-desktop-selection{border-color:var(--rm-primary);background:rgba(36,100,235,.16)}
+.rm-backroom-shell .br-desktop-notice{background:color-mix(in srgb,var(--rm-success) 10%,var(--rm-panel));color:var(--rm-success)}
+.rm-backroom-shell .br-desktop-notice.error{background:color-mix(in srgb,var(--rm-danger) 10%,var(--rm-panel));color:var(--rm-danger)}
