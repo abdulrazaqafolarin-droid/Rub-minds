@@ -1,1 +1,10 @@
-<!doctype html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><meta name="theme-color" content="#0c1020"/><title>Rub Minds — Collective intelligence</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>
+<!doctype html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"/>
+<meta name="description" content="Bring people and existing AI conversations together in one secure collaboration space."/>
+<meta name="color-scheme" content="light dark"/>
+<script>
+try {
+  var saved = localStorage.getItem('rub-minds-theme');
+  var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  document.documentElement.dataset.rmTheme = saved === 'light' || saved === 'dark' ? saved : (dark ? 'dark' : 'light');
+} catch (_) { document.documentElement.dataset.rmTheme = 'light'; }
+</script><meta name="theme-color" content="#F9FAFB"/><title>Rub Minds — Collective intelligence</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>

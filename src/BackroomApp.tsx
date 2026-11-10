@@ -5,6 +5,7 @@ import BackroomDevicesApp from './BackroomDevicesApp';
 import BackroomSimulatorApp from './BackroomSimulatorApp';
 import './backroom-mode-nav.css';
 import { supabase } from './supabase';
+import { ThemeToggle } from './UiPreferences';
 
 function backroomViewHref(browser: boolean) {
   const params = new URLSearchParams(window.location.search);
@@ -51,7 +52,17 @@ export default function BackroomApp() {
   if (!authenticated) return <CloudApp />;
 
   const browserView = new URLSearchParams(window.location.search).get('browser') === '1';
-  return <div className="br-workspace-root">
+  return <div className="br-workspace-root rm-backroom-shell">
+    <header className="rm-backroom-topbar">
+      <a className="rm-backroom-brand" href="/" aria-label="Rub Minds collaboration workspace">
+        <span className="rm-backroom-mark"><span/></span>
+        <span><strong>Rub Minds</strong><small>Backroom workspace</small></span>
+      </a>
+      <div className="rm-backroom-top-actions">
+        <a href="/" className="rm-button-secondary">Collaboration</a>
+        <ThemeToggle compact/>
+      </div>
+    </header>
     <nav className="br-mode-nav" aria-label="Backroom workspaces">
       <a
         className={!browserView ? 'active' : ''}
