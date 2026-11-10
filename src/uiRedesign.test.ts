@@ -33,7 +33,7 @@ describe('Rub Minds visual design contract', () => {
     expect(css).toContain('--rm-bg:#0C1018');
     expect(css).toContain('--rm-panel:#121721');
   });
-  it('respects reduced-motion preferences', () => expect(css).toMatch(/prefers-reduced-motion:\\s*reduce/));
+  it('respects reduced-motion preferences', () => expect(css).toMatch(/prefers-reduced-motion:\s*reduce/));
 });
 describe('Rub Minds workspace journey', () => {
   it('keeps secondary sections mutually exclusive', () => {
