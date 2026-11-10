@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, Clipboard, Link2, RefreshCw, Shield, Unlink } from 'lucide-react';
 import {
   createBackroomFrameBindingChallenge,
@@ -32,6 +32,22 @@ export default function BackroomFrameAIConnector({
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [copied, setCopied] = useState(false);
+  const operationEpoch = useRef(0);
+
+  // A frame can change while an API request is in flight. Clear the old
+  // frame's UI before paint and invalidate every pending response so it can
+  // never overwrite the new frame's state.
+  useLayoutEffect(() => {
+    operationEpoch.current += 1;
+    setCandidates([]);
+    setParticipantId('');
+    setBinding(null);
+    setChallenge(null);
+    setBusy(false);
+    setError('');
+    setNotice('');
+    setCopied(false);
+  }, [deviceId, ready, roomId, runtimeSessionId, surface]);
 
   const selectedCandidate = useMemo(
     () => candidates.find(candidate => candidate.participantId === participantId) ?? null,
@@ -50,20 +66,24 @@ export default function BackroomFrameAIConnector({
 
   const refresh = useCallback(async () => {
     if (!roomId || !deviceId || !runtimeSessionId || !ready) return;
+    const requestEpoch = ++operationEpoch.current;
     setBusy(true); setError(''); setNotice('');
     try {
       const [people, activeBinding] = await Promise.all([
         listBackroomFrameAICandidates(roomId),
         getBackroomFrameBindingStatus({ deviceId, roomId, runtimeSessionId }),
       ]);
+      if (requestEpoch !== operationEpoch.current) return;
       setCandidates(people);
       setBinding(activeBinding);
       setParticipantId(current => activeBinding?.participant_id || (people.some(p => p.participantId === current) ? current : people[0]?.participantId || ''));
       if (activeBinding) setChallenge(null);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not refresh the group AI connection.');
+      if (requestEpoch === operationEpoch.current) {
+        setError(cause instanceof Error ? cause.message : 'Could not refresh the group AI connection.');
+      }
     } finally {
-      setBusy(false);
+      if (requestEpoch === operationEpoch.current) setBusy(false);
     }
   }, [deviceId, roomId, runtimeSessionId, ready]);
 
@@ -79,17 +99,29 @@ export default function BackroomFrameAIConnector({
 
   const createChallenge = async () => {
     if (!selectedCandidate || !ready || busy || binding) return;
+    const requestEpoch = ++operationEpoch.current;
     setBusy(true); setError(''); setNotice(''); setCopied(false);
     try {
       const result = await createBackroomFrameBindingChallenge({
         deviceId, roomId, runtimeSessionId, participantId: selectedCandidate.participantId, surface,
       });
+      if (requestEpoch !== operationEpoch.current) return;
+      const expiresAtMs = Date.parse(result.expiresAt);
+      const validUuid = typeof result.challengeId === 'string' &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(result.challengeId);
+      const validNonce = typeof result.nonce === 'string' && /^[a-f0-9]{64}$/i.test(result.nonce);
+      if (result.participantId !== selectedCandidate.participantId || result.surface !== surface ||
+          !validUuid || !validNonce || !Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
+        throw new Error('The server returned an invalid or expired frame challenge. Refresh the frame and try again.');
+      }
       setChallenge(result);
       setNotice('One-time challenge created. Give the tool call below to this exact AI conversation before it expires.');
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not create the one-time device-frame challenge.');
+      if (requestEpoch === operationEpoch.current) {
+        setError(cause instanceof Error ? cause.message : 'Could not create the one-time device-frame challenge.');
+      }
     } finally {
-      setBusy(false);
+      if (requestEpoch === operationEpoch.current) setBusy(false);
     }
   };
 
@@ -107,18 +139,22 @@ export default function BackroomFrameAIConnector({
 
   const revoke = async () => {
     if (!binding || busy) return;
+    const requestEpoch = ++operationEpoch.current;
     setBusy(true); setError(''); setNotice('');
     try {
       const result = await revokeBackroomFrameBinding({
         deviceId, roomId, runtimeSessionId, bindingId: binding.id,
       });
+      if (requestEpoch !== operationEpoch.current) return;
       if (!result.revoked) throw new Error('The device-frame association was already changed or revoked.');
       setBinding(null); setChallenge(null);
       setNotice('AI-to-frame association revoked. The AI remains a member of the group until it leaves separately.');
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not revoke the device-frame association.');
+      if (requestEpoch === operationEpoch.current) {
+        setError(cause instanceof Error ? cause.message : 'Could not revoke the device-frame association.');
+      }
     } finally {
-      setBusy(false);
+      if (requestEpoch === operationEpoch.current) setBusy(false);
     }
   };
 
