@@ -245,7 +245,8 @@ test("MCP exposes bounded task tools only after its existing participant-session
 
 test("the existing cloud group UI owns the task board and uses the current Realtime room channel", () => {
   assert.match(cloudApp, /import GroupTaskBoard from '\.\/GroupTaskBoard'/);
-  assert.match(cloudApp, /setShowTasks/);
+  assert.match(cloudApp, /activePanel === 'tasks'/);
+  assert.match(cloudApp, /openPanel\('tasks'\)/);
   assert.match(cloudApp, /<GroupTaskBoard[\s\S]*?key=\{room\.id\}[\s\S]*?roomId=\{room\.id\}/);
   assert.match(taskBoard, /onSaveDependencies/);
   assert.match(taskBoard, /Revise prerequisites/);
