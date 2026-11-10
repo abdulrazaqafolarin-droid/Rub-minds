@@ -34,6 +34,16 @@ describe('Rub Minds visual design contract', () => {
     expect(css).toContain('--rm-panel:#121721');
   });
   it('respects reduced-motion preferences', () => expect(css).toMatch(/prefers-reduced-motion:\s*reduce/));
+
+  it('keeps room switching, invitation entry and Backroom reachable on phones', () => {
+    expect(css).toContain('.rm-join-shortcut{grid-column:2;grid-row:2;display:flex');
+    expect(css).toContain('.room-list{grid-column:1/-1;grid-row:3;display:flex');
+    expect(css).toContain('.rm-backroom-link{grid-column:1/-1;grid-row:4;display:flex');
+  });
+  it('applies brand tokens to Backroom native and browser surfaces', () => {
+    expect(css).toContain('.rm-backroom-shell .br-android-stream{background:var(--rm-surface)');
+    expect(css).toContain('.rm-backroom-shell .br-desktop-live,.rm-backroom-shell .br-desktop-empty{background:var(--rm-surface)');
+  });
 });
 describe('Rub Minds workspace journey', () => {
   it('keeps secondary sections mutually exclusive', () => {
