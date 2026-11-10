@@ -19,6 +19,7 @@ describe('Rub Minds theme preference', () => {
 });
 describe('Rub Minds visual design contract', () => {
   const css = readFileSync(resolve(process.cwd(), 'src/rub-minds-redesign.css'), 'utf8');
+  const cloudApp = readFileSync(resolve(process.cwd(), 'src/CloudApp.tsx'), 'utf8');
   it('uses the same exact primary blue in light and dark modes', () => {
     const light = css.match(/:root\s*\{([\s\S]*?)\}/)?.[1] ?? '';
     const dark = css.match(/:root\[data-rm-theme="dark"\]\s*\{([\s\S]*?)\}/)?.[1] ?? '';
@@ -43,6 +44,22 @@ describe('Rub Minds visual design contract', () => {
   it('applies brand tokens to Backroom native and browser surfaces', () => {
     expect(css).toContain('.rm-backroom-shell .br-android-stream{background:var(--rm-surface)');
     expect(css).toContain('.rm-backroom-shell .br-desktop-live,.rm-backroom-shell .br-desktop-empty{background:var(--rm-surface)');
+  });
+  it('introduces Rub Minds before requesting account credentials', () => {
+    expect(cloudApp).toContain('function AuthStory()');
+    expect(cloudApp).toContain('One room.');
+    expect(cloudApp).toContain('More perspectives.');
+    expect(cloudApp).toContain('<AuthStory/>');
+    expect(css).toContain('.rm-auth-story{');
+  });
+  it('lets signed-out visitors paste an invitation before signing in', () => {
+    expect(cloudApp).toContain('Have an invitation? Join with link');
+    expect(cloudApp).toContain('function beginInviteFromLink()');
+    expect(cloudApp).toContain('setInviteToken(token)');
+  });
+  it('explains the difference between a native AI conversation and an external runtime', () => {
+    expect(cloudApp).toContain('This does not attach the current ChatGPT or Claude conversation by itself.');
+    expect(cloudApp).toContain('If direct tools are unavailable, use a guided copy-and-paste relay.');
   });
 });
 describe('Rub Minds workspace journey', () => {
