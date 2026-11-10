@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright';
 
@@ -239,7 +239,22 @@ try {
   await noHorizontalOverflow(backroom, 'Mobile Backroom access gate');
   await backroom.screenshot({ path: resolve(screenshotDir, 'mobile-backroom-access-gate.png'), fullPage: true });
 
+  const expectedScreenshots = [
+    'desktop-light-sign-in.png',
+    'invitation-route-selection.png',
+    'desktop-sign-up.png',
+    'desktop-signed-in-home.png',
+    'desktop-group-conversation.png',
+    'desktop-backroom-workspace.png',
+    'mobile-390-dark-sign-in.png',
+    'mobile-360-dark-sign-in.png',
+    'mobile-backroom-access-gate.png',
+  ];
+  const generatedScreenshots = readdirSync(screenshotDir).filter(file => file.endsWith('.png')).sort();
+  const missingScreenshots = expectedScreenshots.filter(file => !generatedScreenshots.includes(file));
+  check(missingScreenshots.length === 0, 'Missing visual-review screenshots: ' + missingScreenshots.join(', '));
   check(pageErrors.length === 0, 'Browser runtime errors: ' + pageErrors.join(' | '));
+  console.log('Visual-review screenshots: ' + generatedScreenshots.join(', '));
   console.log('PASS: desktop welcome, sign-in and sign-up');
   console.log('PASS: signed-in home, group conversation, People, Private context, Shared memory and Connections');
   console.log('PASS: create-group dialog, invitation dialog and Backroom return path');
