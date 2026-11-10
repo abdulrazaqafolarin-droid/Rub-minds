@@ -179,8 +179,9 @@ try {
   await workspace.getByLabel('Group name').fill('Browser acceptance group');
   await workspace.getByLabel('Objective').fill('Exercise the signed-in group creation flow without writing to Supabase.');
   await workspace.getByRole('button', { name: 'Cancel' }).click();
-  check(await workspace.locator('.rm-home-hero').isVisible(),
-    'Closing the group creation dialog lost the home dashboard.');
+  await workspace.locator('.modal').waitFor({ state: 'detached' });
+  check(await workspace.getByRole('button', { name: 'Create a group' }).first().isVisible(),
+    'Closing the group creation dialog did not return to the home controls.');
 
   await workspace.getByRole('button', { name: 'Join with invitation' }).first().click();
   await workspace.getByRole('heading', { name: 'Join a group' }).waitFor();
