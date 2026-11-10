@@ -175,7 +175,7 @@ test("device-frame connector clears stale state and ignores responses from a pre
 
 test("device-frame connector invalidates pending work on unmount and clipboard completion", async () => {
   const connector = await read("src/BackroomFrameAIConnector.tsx");
-  assert.ok(connector.includes("return () => {\n      operationEpoch.current += 1;\n    };"),
+  assert.match(connector.replace(/\r\n/g, "\n"), /return \(\) => \{\s*operationEpoch\.current \+= 1;\s*\};/,
     "unmount cleanup must invalidate pending frame requests");
 
   const copyStart = connector.indexOf("const copyToolCall = async () => {");
