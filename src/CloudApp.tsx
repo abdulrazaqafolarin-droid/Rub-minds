@@ -482,7 +482,7 @@ export default function CloudApp() {
 
   if (!ready) return <div className="empty"><h2>Loading Rub Minds…</h2></div>;
   if (inviteToken && inviteTokenValid && inviteRoute === 'choose' && !agentSecret) return <main className="auth-page"><AuthStory/><div className="auth-panel"><div className="rm-auth-top"><a className="rm-auth-brand" href="/"><span className="brand-icon"><Sparkles size={17}/></span><strong>Rub Minds</strong></a><ThemeToggle compact/></div>
-    <div className="brand-icon"><Link2/></div>
+    
     <h1>Join a Rub Minds group</h1>
     <div className="objective" role="status"><Link2 size={18}/><span>{getInviteStatusMessage(inviteToken)}</span></div>
     <p>This invitation supports two separate routes. Choose the identity you are joining with.</p>
@@ -495,7 +495,7 @@ export default function CloudApp() {
     {error && <p className="error" role="alert">{error}</p>}
   </div></main>;
   if (inviteToken && inviteTokenValid && inviteRoute === 'guided' && !agentSecret) return <main className="auth-page"><AuthStory/><div className="auth-panel"><div className="rm-auth-top"><a className="rm-auth-brand" href="/"><span className="brand-icon"><Sparkles size={17}/></span><strong>Rub Minds</strong></a><ThemeToggle compact/></div>
-    <div className="brand-icon"><Copy/></div>
+    
     <h1>Bring your existing AI into this group</h1>
     <p>This creates a handoff from your current conversation without replacing it. Copy the instructions below into the same ChatGPT or Claude conversation you already use.</p>
     <div className="objective"><Sparkles size={18}/><span><strong>What this does</strong><br/>It asks your AI to prepare a privacy-aware context packet and continue helping you. If that account cannot use a Rub Minds connector, you can relay group messages manually. This is not automatic two-way sync.</span></div>
@@ -506,7 +506,7 @@ export default function CloudApp() {
     {error && <p className="error" role="alert">{error}</p>}
   </div></main>;
   if (inviteToken && inviteTokenValid && inviteRoute === 'ai' && !agentSecret) return <main className="auth-page"><AuthStory/><div className="auth-panel"><div className="rm-auth-top"><a className="rm-auth-brand" href="/"><span className="brand-icon"><Sparkles size={17}/></span><strong>Rub Minds</strong></a><ThemeToggle compact/></div>
-    <div className="brand-icon"><Bot/></div>
+    
     <h1>AI participant authorization</h1>
     <p>This route creates a separate AI participant. The invitation owner must have enabled AI access and reserved an available AI slot.</p>
     <form onSubmit={e => { e.preventDefault(); void joinAsAI(); }}>
@@ -518,7 +518,7 @@ export default function CloudApp() {
     <button onClick={() => { setInviteRoute('choose'); setError(''); }}>Back to route selection</button>
   </div></main>;
   if (!user && agentSecret) return <main className="auth-page"><AuthStory/><div className="auth-panel"><div className="rm-auth-top"><a className="rm-auth-brand" href="/"><span className="brand-icon"><Sparkles size={17}/></span><strong>Rub Minds</strong></a><ThemeToggle compact/></div>
-    <div className="brand-icon"><Bot/></div><h1>AI credential created</h1>
+    <h1>AI credential created</h1>
     <p>This one-time credential belongs to <strong>{agentName}</strong>. Save it privately now. It is scoped to the invited room and expires no later than the invitation expiry or seven days.</p>
     <label>Private AI credential<input readOnly aria-label="Private AI credential" value={agentSecret} onFocus={e => e.target.select()}/></label>
     <button className="primary" onClick={() => { void copyToClipboard(agentSecret, 'Private AI credential', 'Save this credential somewhere secure. It is shown only once.'); }}>Copy credential</button>
@@ -526,7 +526,7 @@ export default function CloudApp() {
     {error && <p className="error" role="alert">{error}</p>}
   </div></main>;
   if (!user || authMode === 'reset') return <main className="auth-page"><AuthStory/><div className="auth-panel"><div className="rm-auth-top"><a className="rm-auth-brand" href="/"><span className="brand-icon"><Sparkles size={17}/></span><strong>Rub Minds</strong></a><ThemeToggle compact/></div>
-    <div className="brand-icon"><Sparkles/></div>
+    
     <h1>{authMode === 'signup' ? 'Create your Rub Minds account' : authMode === 'forgot' ? 'Reset your password' : authMode === 'reset' ? 'Choose a new password' : inviteToken ? (inviteTokenValid ? 'You’re invited to Rub Minds' : 'Invitation link looks incomplete') : 'Welcome to Rub Minds'}</h1>
     <p>{authMode === 'signup' ? 'Sign up with your email and a secure password.' : authMode === 'forgot' ? 'Enter your account email to request a reset link.' : authMode === 'reset' ? 'Enter a new password to secure your account.' : inviteToken ? (inviteTokenValid ? 'Sign in or create an account to continue to your group invitation. You will be able to accept it after signing in.' : 'This invitation link appears incomplete. Ask the person who created it to generate a fresh invitation link before you continue.') : 'Sign in with your email and password to collaborate.'}</p>
     {inviteToken && authMode !== 'forgot' && authMode !== 'reset' && <div className="objective" role="status"><Link2 size={18}/><span>{inviteTokenValid ? 'Group invitation detected. Your invite will be kept while you sign in.' : `This link contains ${inviteToken.length} characters; invitations need 64. Please request a new link.`}</span></div>}
