@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type PointerEvent } from 'react';
 import { Activity, ArrowLeft, ArrowRight, Bot, Check, ChevronDown, CircleHelp, Command, Cpu, ExternalLink, Laptop, Layers3, Monitor, MousePointer2, Plus, ShieldCheck, Smartphone, SquareTerminal, Trash2, WifiOff, X } from 'lucide-react';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
+import { ThemeToggle } from './UiPreferences';
 import { listCloudMessages, listCloudRooms, subscribeToCloudMessages, type CloudMessage, type CloudRoom } from './cloudRooms';
 import './backroom.css';
 import ExternalWorkspacePanel from './ExternalWorkspacePanel';
@@ -882,7 +883,7 @@ export default function BackroomApp() {
   }
   if (loading) return <div className="br-gate">Checking Backroom access…</div>;
   if (!user || error) return <div className="br-gate"><ShieldCheck size={36}/><h1>Backroom access</h1><p>{error || 'Please sign in.'}</p><a href="/">Return to Rub Minds</a></div>;
-  return <div className="br-shell">
+  return <div className="br-shell rm-backroom-shell">
     <aside className="br-sidebar">
       <a className="br-brand" href="/"><span className="br-brand-mark"><Layers3 size={22}/></span><span><b>rub minds</b><small>BACKROOM</small></span></a>
       <div className="br-side-heading">WORKSPACE</div>
@@ -894,7 +895,7 @@ export default function BackroomApp() {
       <div className="br-side-footer"><span>{hostInfo?.connected ? <Check size={15}/> : <WifiOff size={15}/>} {hostInfo?.connected ? "Local host connected" : hostInfo ? "Local host not reachable" : "No device host connected"}</span><small>{wakeGatewayMismatch(hostInfo) ? `Wake gateway mismatch · ${hostInfo?.wakeGatewayHost} is not this Preview's Supabase project.` : hostInfo?.capabilities.browserDraft ? "Browser draft only · native drivers unavailable" : hostInfo?.connected ? "Host online · browser driver not started" : "Workspace layouts remain local · no active device control"}</small></div>
     </aside>
     <main className="br-main">
-      <header className="br-topbar"><div className="br-breadcrumb"><a href="/"><ArrowLeft size={15}/> Groups</a><span>/</span><b>Backroom</b></div><div className="br-top-right"><button type="button" className={'br-status-pill' + (hostInfo ? ' paired' : '') + (hostStopped ? ' br-status-stopped' : '')} onClick={() => setHostModal(true)}><span/> {hostStopped ? 'Emergency stop · restart required' : hostInfo?.connected && wakeGatewayMismatch(hostInfo) ? 'Host paired · wake gateway mismatch' : hostInfo?.connected ? (hostInfo.capabilities.browserDraft ? 'Host paired · browser ready' : 'Host paired · browser idle') : hostInfo ? 'Host offline · session saved' : 'Host offline'}</button><span className="br-avatar">{user.email?.slice(0, 1).toUpperCase() || 'U'}</span></div></header>
+      <header className="br-topbar"><div className="br-breadcrumb"><a href="/"><ArrowLeft size={15}/> Groups</a><span>/</span><b>Backroom</b></div><div className="br-top-right"><a className="br-collaboration-link" href="/">Collaboration</a><ThemeToggle compact/><button type="button" className={'br-status-pill' + (hostInfo ? ' paired' : '') + (hostStopped ? ' br-status-stopped' : '')} onClick={() => setHostModal(true)}><span/> {hostStopped ? 'Emergency stop · restart required' : hostInfo?.connected && wakeGatewayMismatch(hostInfo) ? 'Host paired · wake gateway mismatch' : hostInfo?.connected ? (hostInfo.capabilities.browserDraft ? 'Host paired · browser ready' : 'Host paired · browser idle') : hostInfo ? 'Host offline · session saved' : 'Host offline'}</button><span className="br-avatar">{user.email?.slice(0, 1).toUpperCase() || 'U'}</span></div></header>
       {!room ? <div className="br-empty"><Layers3 size={42}/><h1>Choose a Rub Minds group</h1><p>Backroom spaces are scoped to your authenticated group. Select one from the sidebar to begin.</p></div> :
       <div className="br-content">
         <div className="br-title-row"><div><div className="br-eyebrow"><Activity size={14}/> MULTI-SPACE COORDINATION</div><h1>Backroom <span>workspace</span></h1><p>One group. Multiple AI interfaces. Start with an explicitly approved browser draft.</p></div><button className="br-primary" onClick={() => setAdding(true)} disabled={spaces.length >= 30}><Plus size={17}/> New space</button></div>
