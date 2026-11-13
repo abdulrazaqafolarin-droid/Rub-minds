@@ -99,14 +99,20 @@ export class BackroomDispatcher {
       return job.status;
     }
     job.status = { ...job.status, state: "running", attempts: job.status.attempts + 1 };
+    let effectAuthorized = false;
+    const guardedBeforeEffect = beforeEffect ? async () => {
+      const allowed = (await beforeEffect()) === true;
+      if (allowed) effectAuthorized = true;
+      return allowed;
+    } : undefined;
     try {
-      const outcome = await this.adapter.execute({ command: c, target, ...(beforeEffect ? { beforeEffect } : {}) });
+      const outcome = await this.adapter.execute({ command: c, target, ...(guardedBeforeEffect ? { beforeEffect: guardedBeforeEffect } : {}) });
       if (!outcome || !["completed", "needs_review", "failed"].includes(outcome.state)) {
         throw new Error("adapter did not return a verifiable outcome");
       }
       job.status = { ...job.status, state: outcome.state, result: outcome.result ?? null };
     } catch (error) {
-      if (error && error.code === "BACKROOM_PREFLIGHT") {
+      if (error && error.code === "BACKROOM_PREFLIGHT" && !effectAuthorized) {
         job.status = { ...job.status, state: "failed", reason: "device_preflight_denied" };
         return job.status;
       }
@@ -114,8 +120,8 @@ export class BackroomDispatcher {
         job.status = { ...job.status, state: "failed", reason: "execution_seal_denied" };
         return job.status;
       }
-      // Ambiguous UI effects are not automatically retried. The host must
-      // reconcile visually before creating a new user-authorized command.
+      // Once the seal/grant gate has passed, every adapter failure is
+      // ambiguous. Never turn it into a retryable preflight result.
       job.status = { ...job.status, state: "needs_review", reason: "effect_unconfirmed" };
     }
     return job.status;
