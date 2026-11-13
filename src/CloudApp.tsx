@@ -1,16 +1,59 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { ArrowLeft, Bot, Copy, Link2, LogOut, Plus, Send, Sparkles, Users } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, BrainCircuit, Bot, Cable, ChevronRight, CircleAlert, Copy, Layers3, Link2, LockKeyhole, LogOut, Monitor, MessageCircle, Plus, RefreshCw, Send, Sparkles, SquareTerminal, Smartphone, UserPlus, Users } from 'lucide-react';
 import { buildExistingAiJoinPrompt, buildGroupRelayPrompt, buildRestorePrompt, parseSessionMemoryDocument } from './aiRelay';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import { getInviteStatusMessage, isValidInviteToken, readInviteToken } from './inviteLinks';
 import { shouldShowSessionRestoreError } from './authStartup';
 import { errorMessage } from './errorMessage';
+import { ThemeToggle } from './UiPreferences';
+import { participantKindLabel } from './uiFlow';
+type ConfirmDialog = {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  destructive?: boolean;
+  onConfirm: () => void;
+};
+type CopyFallback = { title: string; description: string; value: string };
+
 import {
   createCloudRoom, createCloudInvite, redeemCloudInvite, redeemAIInvite, revokeCloudInvite, connectCloudAgent, listAgentConnections, revokeCloudAgent, getCloudRoom, listCloudMessages, listCloudParticipants,
   listCloudRooms, postCloudMessage, signInWithPassword, signUpWithPassword, requestPasswordReset, updateAccountPassword, signOut,
   subscribeToCloudMessages, subscribeToGroupMemoryEntries, savePrivateSessionContext, listPrivateSessionContexts, deletePrivateSessionContext, listGroupMemoryEntries, saveGroupMemoryEntry, deleteGroupMemoryEntry, type PrivateSessionImport, type GroupMemoryEntry, type CloudRoom, type CloudMessage, type CloudParticipant, type AgentConnection,
 } from './cloudRooms';
+
+function AuthStory() {
+  return <aside className="rm-auth-story">
+    <a className="rm-auth-story-brand" href="/">
+      <span className="rm-auth-story-mark"><Sparkles size={19}/></span>
+      <span><strong>Rub Minds</strong><small>Collective intelligence</small></span>
+    </a>
+    <span className="rm-auth-story-kicker">THINK BETTER, TOGETHER</span>
+    <h2>One room.<br/><em>More perspectives.</em></h2>
+    <p>Bring people and the AI conversations they already use into one shared space. Keep each mind's identity, context and permissions clear.</p>
+    <div className="rm-auth-story-visual" aria-hidden="true">
+      <div className="rm-auth-story-grid"/>
+      <svg viewBox="0 0 440 250" role="presentation">
+        <path d="M110 82 C158 82 164 124 220 124 S282 82 330 82"/>
+        <path d="M110 168 C158 168 164 124 220 124 S282 168 330 168"/>
+        <path d="M110 82 C124 109 124 141 110 168 M330 82 C316 109 316 141 330 168"/>
+        <circle cx="110" cy="82" r="7"/><circle cx="330" cy="82" r="7"/>
+        <circle cx="110" cy="168" r="7"/><circle cx="330" cy="168" r="7"/>
+      </svg>
+      <span className="rm-auth-story-core"><Sparkles size={30}/></span>
+      <span className="rm-auth-story-node rm-story-people"><Users size={15}/> People</span>
+      <span className="rm-auth-story-node rm-story-ai"><Bot size={15}/> AI sessions</span>
+      <span className="rm-auth-story-node rm-story-memory"><BrainCircuit size={15}/> Shared memory</span>
+      <span className="rm-auth-story-node rm-story-devices"><Monitor size={15}/> Devices</span>
+    </div>
+    <div className="rm-auth-story-promises">
+      <span><LockKeyhole size={14}/> Private context stays private</span>
+      <span><Layers3 size={14}/> One group across every surface</span>
+    </div>
+    <span className="rm-auth-story-foot">Your work, your people, your AI sessions — together.</span>
+  </aside>;
+}
 
 export default function CloudApp() {
   const [user, setUser] = useState<User | null>(null);
@@ -37,12 +80,11 @@ export default function CloudApp() {
   const [joining, setJoining] = useState(false);
   const [inviteRoute, setInviteRoute] = useState<'choose' | 'human' | 'ai' | 'guided'>('choose');
   const [relayCopied, setRelayCopied] = useState(false);
-  const [showPrivateContext, setShowPrivateContext] = useState(false);
+  const [activePanel, setActivePanel] = useState<'conversation' | 'participants' | 'private-context' | 'shared-memory' | 'connections'>('conversation');
   const [sessionContextDraft, setSessionContextDraft] = useState('');
   const [sessionContextBusy, setSessionContextBusy] = useState(false);
   const [sessionContextNotice, setSessionContextNotice] = useState('');
   const [privateImports, setPrivateImports] = useState<PrivateSessionImport[]>([]);
-  const [showSharedMemory, setShowSharedMemory] = useState(false);
   const [groupMemories, setGroupMemories] = useState<GroupMemoryEntry[]>([]);
   const [shareMemoryType, setShareMemoryType] = useState<GroupMemoryEntry['entry_type']>('insight');
   const [shareMemoryDraft, setShareMemoryDraft] = useState('');
@@ -56,8 +98,14 @@ export default function CloudApp() {
   const [agentSecret, setAgentSecret] = useState('');
   const [agentName, setAgentName] = useState('');
   const [agentConnections, setAgentConnections] = useState<AgentConnection[]>([]);
-  const [showAgents, setShowAgents] = useState(false);
-
+  const [joinLinkOpen, setJoinLinkOpen] = useState(false);
+  const [joinLinkDraft, setJoinLinkDraft] = useState('');
+  const [inviteOptionsOpen, setInviteOptionsOpen] = useState(false);
+  const [inviteAIChoice, setInviteAIChoice] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialog | null>(null);
+  const [copyFallback, setCopyFallback] = useState<CopyFallback | null>(null);
+  const [agentCreateOpen, setAgentCreateOpen] = useState(false);
+  const [agentNameDraft, setAgentNameDraft] = useState('');
   useEffect(() => {
     if (!supabase) {
       // Do not leave invite visitors stuck on the loading screen when preview
@@ -116,8 +164,9 @@ export default function CloudApp() {
     if (!room) return;
     setBusy(true); setError('');
     try {
-      const allowAI = window.confirm('Enable the AI authorization route for this invitation? If enabled, up to 3 AI participants can join with separate credentials. Choose Cancel for a human-only invitation.');
+      const allowAI = inviteAIChoice;
       const token = await createCloudInvite(room.id, allowAI, allowAI ? 3 : 0);
+      setInviteOptionsOpen(false);
       setInviteAIEnabled(allowAI);
       const link = new URL('/', window.location.origin);
       link.searchParams.set('invite', token);
@@ -128,28 +177,45 @@ export default function CloudApp() {
     } catch (e) { setError(errorMessage(e)); }
     finally { setBusy(false); }
   }
-  async function addAgent() {
+  function addAgent() {
     if (!room) return;
-    const name = window.prompt('Name this AI agent (for example, Research Agent):');
-    if (!name?.trim()) return;
+    setAgentNameDraft('');
+    setAgentCreateOpen(true);
+  }
+  async function createAgent(e: FormEvent) {
+    e.preventDefault();
+    if (!room || !agentNameDraft.trim()) return;
     setBusy(true); setError('');
     try {
-      const secret = await connectCloudAgent(room.id, name.trim());
-      setAgentName(name.trim()); setAgentSecret(secret);
+      const name = agentNameDraft.trim();
+      const secret = await connectCloudAgent(room.id, name);
+      setAgentName(name); setAgentSecret(secret);
       setParticipants(await listCloudParticipants(room.id));
       setAgentConnections(await listAgentConnections(room.id));
+      setAgentCreateOpen(false); setAgentNameDraft('');
+      setActivePanel('connections');
     } catch (e) { setError(errorMessage(e)); }
     finally { setBusy(false); }
   }
   async function manageAgents() {
     if (!room) return;
-    try { setAgentConnections(await listAgentConnections(room.id)); setShowAgents(true); }
+    try { setAgentConnections(await listAgentConnections(room.id)); openPanel('connections'); }
     catch (e) { setError(errorMessage(e)); }
   }
-  async function revokeAgent(id: string) {
-    if (!room || !window.confirm('Revoke this agent credential immediately?')) return;
-    try { await revokeCloudAgent(id); setAgentConnections(await listAgentConnections(room.id)); }
-    catch (e) { setError(errorMessage(e)); }
+  function revokeAgent(id: string) {
+    if (!room) return;
+    askForConfirmation({
+      title: 'Revoke this AI credential?',
+      description: 'This immediately blocks the selected runtime from using this credential in this group. Other credentials and group membership are not changed.',
+      confirmLabel: 'Revoke credential',
+      destructive: true,
+      onConfirm: () => {
+        void (async () => {
+          try { await revokeCloudAgent(id); setAgentConnections(await listAgentConnections(room.id)); }
+          catch (e) { setError(errorMessage(e)); }
+        })();
+      },
+    });
   }
   async function joinInvite() {
     if (!inviteToken) return;
@@ -160,8 +226,17 @@ export default function CloudApp() {
     } catch (e) { setError(errorMessage(e)); }
     finally { setJoining(false); }
   }
-  async function revokeInviteLink() {
-    if (!inviteLink || !window.confirm('Revoke this invitation now? New human and AI joins will be blocked. Existing AI credentials remain active until separately revoked or expired.')) return;
+  function revokeInviteLink() {
+    if (!inviteLink) return;
+    askForConfirmation({
+      title: 'Revoke this invitation?',
+      description: 'New human and AI participants will no longer be able to redeem this link. AI credentials already created from it stay active until separately revoked or expired.',
+      confirmLabel: 'Revoke invitation',
+      destructive: true,
+      onConfirm: () => { void revokeInviteLinkNow(); },
+    });
+  }
+  async function revokeInviteLinkNow() {
     const token = new URL(inviteLink).searchParams.get('invite');
     if (!token) { setError('Could not read the invitation token.'); return; }
     setBusy(true); setError('');
@@ -177,30 +252,31 @@ export default function CloudApp() {
     const invitation = new URL('/', window.location.origin);
     invitation.searchParams.set('invite', inviteToken);
     const prompt = buildExistingAiJoinPrompt(invitation.toString());
-    try {
-      await navigator.clipboard.writeText(prompt);
+    await copyToClipboard(prompt, 'AI joining instructions', 'Copy these instructions into the same ChatGPT or Claude conversation you already use.', () => {
       setRelayCopied(true);
       window.setTimeout(() => setRelayCopied(false), 2500);
-    } catch {
-      window.prompt('Copy these instructions into your existing ChatGPT or Claude conversation:', prompt);
-    }
+    });
   }
-  async function copyGroupRelayContext() {
+  function copyGroupRelayContext() {
     if (!room) return;
-    const approved = window.confirm("Copy up to 20 recent group messages and shared group memory entries to your clipboard for an existing AI conversation? Review them before pasting and remove any sensitive content first.");
-    if (!approved) return;
+    askForConfirmation({
+      title: 'Copy group context to your AI?',
+      description: 'Up to 20 recent messages and shared group memory entries will be copied to your clipboard. Review the content and remove anything sensitive before pasting it into another AI conversation.',
+      confirmLabel: 'Copy selected group context',
+      onConfirm: () => { void copyGroupRelayContextNow(); },
+    });
+  }
+  async function copyGroupRelayContextNow() {
+    if (!room) return;
     const prompt = buildGroupRelayPrompt(room.title, room.objective, messages.map(message => ({
       sender: participants.find(p => p.id === message.sender_id)?.display_name || 'Participant',
       body: message.body,
       createdAt: message.created_at,
     })), groupMemories.map(memory => ({ type: memory.entry_type, content: memory.content, updatedAt: memory.updated_at })));
-    try {
-      await navigator.clipboard.writeText(prompt);
+    await copyToClipboard(prompt, 'Group context ready to copy', 'Paste this selected group context into the intended AI conversation.', () => {
       setRelayCopied(true);
       window.setTimeout(() => setRelayCopied(false), 2500);
-    } catch {
-      window.prompt('Copy the latest group context into your existing AI conversation:', prompt);
-    }
+    });
   }
   async function savePrivateContext(e: FormEvent) {
     e.preventDefault();
@@ -219,45 +295,75 @@ export default function CloudApp() {
       setError(errorMessage(e));
     } finally { setSessionContextBusy(false); }
   }
-  async function shareGroupMemory(e: FormEvent) {
+  function shareGroupMemory(e: FormEvent) {
     e.preventDefault();
     if (!room || !currentHumanParticipant || !shareMemoryDraft.trim()) return;
-    if (!window.confirm("Share only this selected insight with every group participant and connected AI agent? It will be visible to the group.")) return;
+    askForConfirmation({
+      title: 'Share this insight with the group?',
+      description: 'This selected entry will become visible to every human participant and connected AI runtime in this group. Do not include private notes or credentials.',
+      confirmLabel: 'Share with group',
+      onConfirm: () => { void saveGroupMemoryNow(); },
+    });
+  }
+  async function saveGroupMemoryNow() {
+    if (!room || !currentHumanParticipant || !shareMemoryDraft.trim()) return;
     setSharedMemoryBusy(true); setError(''); setSharedMemoryNotice('');
     try {
       const saved = await saveGroupMemoryEntry(room.id, currentHumanParticipant.id, shareMemoryType, shareMemoryDraft);
       setGroupMemories(previous => [saved, ...previous.filter(item => item.id !== saved.id)].slice(0, 50));
       setShareMemoryDraft('');
-      setSharedMemoryNotice("Selected insight shared with the group.");
+      setSharedMemoryNotice('Selected insight shared with the group.');
     } catch (e) { setError(errorMessage(e)); }
     finally { setSharedMemoryBusy(false); }
   }
-  async function removeGroupMemory(memory: GroupMemoryEntry) {
+  function removeGroupMemory(memory: GroupMemoryEntry) {
     if (!room || !currentHumanParticipant || memory.created_by_participant_id !== currentHumanParticipant.id) return;
-    if (!window.confirm("Delete this shared group memory entry for everyone?")) return;
-    try {
-      await deleteGroupMemoryEntry(room.id, currentHumanParticipant.id, memory.id);
-      setGroupMemories(previous => previous.filter(item => item.id !== memory.id));
-      setSharedMemoryNotice("Shared group memory entry deleted.");
-    } catch (e) { setError(errorMessage(e)); }
+    askForConfirmation({
+      title: 'Delete this shared memory entry?',
+      description: 'This entry will be removed for everyone in the group, including connected AI participants. This cannot be undone.',
+      confirmLabel: 'Delete shared entry',
+      destructive: true,
+      onConfirm: () => {
+        void (async () => {
+          try {
+            await deleteGroupMemoryEntry(room.id, currentHumanParticipant.id, memory.id);
+            setGroupMemories(previous => previous.filter(item => item.id !== memory.id));
+            setSharedMemoryNotice('Shared group memory entry deleted.');
+          } catch (e) { setError(errorMessage(e)); }
+        })();
+      },
+    });
   }
-  async function copyPrivateContextToAI(item: PrivateSessionImport) {
-    if (!window.confirm("Copy this private AI context packet to your clipboard? It may contain private project context. Only paste it into the intended AI conversation.")) return;
-    const text = buildRestorePrompt(item.imported_context);
-    try {
-      await navigator.clipboard.writeText(text);
-      setSessionContextNotice("Private context packet copied. Paste it only into the intended AI conversation.");
-    } catch {
-      window.prompt("Copy this private AI context packet:", text);
-    }
+  function copyPrivateContextToAI(item: PrivateSessionImport) {
+    askForConfirmation({
+      title: 'Copy your private AI context?',
+      description: 'This packet may contain private project context from your account. It is not shared with the group, but it will be placed on your clipboard. Paste it only into the intended AI conversation.',
+      confirmLabel: 'Copy private context',
+      onConfirm: () => {
+        const text = buildRestorePrompt(item.imported_context);
+        void copyToClipboard(text, 'Private context ready to copy', 'Paste this packet only into the intended AI conversation.', () => {
+          setSessionContextNotice('Private context packet copied. Paste it only into the intended AI conversation.');
+        });
+      },
+    });
   }
-  async function removePrivateContext(item: PrivateSessionImport) {
-    if (!room || !currentHumanParticipant || !window.confirm("Delete this private AI context import? This cannot be undone.")) return;
-    try {
-      await deletePrivateSessionContext(room.id, currentHumanParticipant.id, item.id);
-      setPrivateImports(previous => previous.filter(saved => saved.id !== item.id));
-      setSessionContextNotice("Private context import deleted.");
-    } catch (e) { setError(errorMessage(e)); }
+  function removePrivateContext(item: PrivateSessionImport) {
+    if (!room || !currentHumanParticipant) return;
+    askForConfirmation({
+      title: 'Delete this private context import?',
+      description: 'This removes the saved context packet from your account for this group. Other participants cannot see it. This cannot be undone.',
+      confirmLabel: 'Delete private context',
+      destructive: true,
+      onConfirm: () => {
+        void (async () => {
+          try {
+            await deletePrivateSessionContext(room.id, currentHumanParticipant.id, item.id);
+            setPrivateImports(previous => previous.filter(saved => saved.id !== item.id));
+            setSessionContextNotice('Private context import deleted.');
+          } catch (e) { setError(errorMessage(e)); }
+        })();
+      },
+    });
   }
   async function joinAsAI() {
     if (!inviteToken || !inviteTokenValid || !aiInviteConsent || !aiInviteName.trim()) return;
@@ -272,8 +378,49 @@ export default function CloudApp() {
     finally { setJoining(false); }
   }
   function navigate(id: string) {
-    setSelected(id); setError(''); setInviteLink(''); setAgentSecret(''); setShowAgents(false); setShowPrivateContext(false); setShowSharedMemory(false); setSessionContextNotice(''); setSessionContextDraft(''); setSharedMemoryNotice(''); setShareMemoryDraft('');
+    setSelected(id); setError(''); setInviteLink(''); setAgentSecret(''); setActivePanel('conversation');
+    setSessionContextNotice(''); setSessionContextDraft(''); setSharedMemoryNotice(''); setShareMemoryDraft('');
     history.replaceState(null, '', id ? '/?room=' + encodeURIComponent(id) : '/');
+  }
+  function askForConfirmation(dialog: ConfirmDialog) {
+    setConfirmDialog(dialog);
+  }
+  function runConfirmedAction() {
+    const dialog = confirmDialog;
+    setConfirmDialog(null);
+    dialog?.onConfirm();
+  }
+  async function copyToClipboard(value: string, title: string, description: string, onCopied?: () => void) {
+    try {
+      await navigator.clipboard.writeText(value);
+      onCopied?.();
+    } catch {
+      setCopyFallback({ title, description: description + ' The text is shown below so you can select and copy it manually.', value });
+    }
+  }
+  function openInviteOptions(enableAI = false) {
+    setInviteAIChoice(enableAI);
+    setInviteOptionsOpen(true);
+  }
+  function openPanel(panel: 'conversation' | 'participants' | 'private-context' | 'shared-memory' | 'connections') {
+    setActivePanel(panel);
+    if (panel === 'shared-memory' && room) void listGroupMemoryEntries(room.id).then(setGroupMemories).catch(e => setError(errorMessage(e)));
+    if (panel === 'connections' && room) void listAgentConnections(room.id).then(setAgentConnections).catch(e => setError(errorMessage(e)));
+  }
+  function beginInviteFromLink() {
+    try {
+      const candidate = new URL(joinLinkDraft.trim(), window.location.origin);
+      const token = readInviteToken(candidate.search, candidate.pathname);
+      if (!isValidInviteToken(token)) throw new Error('That link does not contain a valid Rub Minds invitation.');
+      setInviteToken(token); setInviteRoute('choose'); setJoinLinkOpen(false); setJoinLinkDraft(''); setError('');
+      history.replaceState(null, '', candidate.pathname + candidate.search);
+    } catch (e) { setError(errorMessage(e)); }
+  }
+  async function copyCreatedInviteForAI() {
+    if (!inviteLink) { setError('Create an invitation first, then share it with the existing AI conversation.'); return; }
+    const prompt = buildExistingAiJoinPrompt(inviteLink);
+    try { await navigator.clipboard.writeText(prompt); setRelayCopied(true); window.setTimeout(() => setRelayCopied(false), 2500); }
+    catch { setCopyFallback({ title: 'AI invitation instructions', description: 'Copy these instructions into the same ChatGPT or Claude conversation you already use.', value: prompt }); }
   }
   async function login(e: FormEvent) {
     e.preventDefault(); setBusy(true); setError(''); setAuthNotice('');
@@ -334,8 +481,8 @@ export default function CloudApp() {
   }, [ready, user, inviteToken, inviteTokenValid, inviteRoute, autoJoinAttempted]);
 
   if (!ready) return <div className="empty"><h2>Loading Rub Minds…</h2></div>;
-  if (inviteToken && inviteTokenValid && inviteRoute === 'choose' && !agentSecret) return <main className="auth-page"><div className="auth-panel">
-    <div className="brand-icon"><Link2/></div>
+  if (inviteToken && inviteTokenValid && inviteRoute === 'choose' && !agentSecret) return <main className="auth-page"><AuthStory/><div className="auth-panel"><div className="rm-auth-top"><a className="rm-auth-brand" href="/"><span className="brand-icon"><Sparkles size={17}/></span><strong>Rub Minds</strong></a><ThemeToggle compact/></div>
+    
     <h1>Join a Rub Minds group</h1>
     <div className="objective" role="status"><Link2 size={18}/><span>{getInviteStatusMessage(inviteToken)}</span></div>
     <p>This invitation supports two separate routes. Choose the identity you are joining with.</p>
@@ -347,8 +494,8 @@ export default function CloudApp() {
     <button className="primary" onClick={() => { setInviteRoute('guided'); setRelayCopied(false); setError(''); }}>Continue with my existing AI conversation</button>
     {error && <p className="error" role="alert">{error}</p>}
   </div></main>;
-  if (inviteToken && inviteTokenValid && inviteRoute === 'guided' && !agentSecret) return <main className="auth-page"><div className="auth-panel">
-    <div className="brand-icon"><Copy/></div>
+  if (inviteToken && inviteTokenValid && inviteRoute === 'guided' && !agentSecret) return <main className="auth-page"><AuthStory/><div className="auth-panel"><div className="rm-auth-top"><a className="rm-auth-brand" href="/"><span className="brand-icon"><Sparkles size={17}/></span><strong>Rub Minds</strong></a><ThemeToggle compact/></div>
+    
     <h1>Bring your existing AI into this group</h1>
     <p>This creates a handoff from your current conversation without replacing it. Copy the instructions below into the same ChatGPT or Claude conversation you already use.</p>
     <div className="objective"><Sparkles size={18}/><span><strong>What this does</strong><br/>It asks your AI to prepare a privacy-aware context packet and continue helping you. If that account cannot use a Rub Minds connector, you can relay group messages manually. This is not automatic two-way sync.</span></div>
@@ -358,8 +505,8 @@ export default function CloudApp() {
     <button onClick={() => { setInviteRoute('choose'); setRelayCopied(false); }}>Back to route selection</button>
     {error && <p className="error" role="alert">{error}</p>}
   </div></main>;
-  if (inviteToken && inviteTokenValid && inviteRoute === 'ai' && !agentSecret) return <main className="auth-page"><div className="auth-panel">
-    <div className="brand-icon"><Bot/></div>
+  if (inviteToken && inviteTokenValid && inviteRoute === 'ai' && !agentSecret) return <main className="auth-page"><AuthStory/><div className="auth-panel"><div className="rm-auth-top"><a className="rm-auth-brand" href="/"><span className="brand-icon"><Sparkles size={17}/></span><strong>Rub Minds</strong></a><ThemeToggle compact/></div>
+    
     <h1>AI participant authorization</h1>
     <p>This route creates a separate AI participant. The invitation owner must have enabled AI access and reserved an available AI slot.</p>
     <form onSubmit={e => { e.preventDefault(); void joinAsAI(); }}>
@@ -370,16 +517,16 @@ export default function CloudApp() {
     {error && <p className="error" role="alert">{error}</p>}
     <button onClick={() => { setInviteRoute('choose'); setError(''); }}>Back to route selection</button>
   </div></main>;
-  if (!user && agentSecret) return <main className="auth-page"><div className="auth-panel">
-    <div className="brand-icon"><Bot/></div><h1>AI credential created</h1>
+  if (!user && agentSecret) return <main className="auth-page"><AuthStory/><div className="auth-panel"><div className="rm-auth-top"><a className="rm-auth-brand" href="/"><span className="brand-icon"><Sparkles size={17}/></span><strong>Rub Minds</strong></a><ThemeToggle compact/></div>
+    <h1>AI credential created</h1>
     <p>This one-time credential belongs to <strong>{agentName}</strong>. Save it privately now. It is scoped to the invited room and expires no later than the invitation expiry or seven days.</p>
     <label>Private AI credential<input readOnly aria-label="Private AI credential" value={agentSecret} onFocus={e => e.target.select()}/></label>
-    <button className="primary" onClick={() => { void navigator.clipboard.writeText(agentSecret).catch(() => setError('Select and copy the credential manually.')); }}>Copy credential</button>
+    <button className="primary" onClick={() => { void copyToClipboard(agentSecret, 'Private AI credential', 'Save this credential somewhere secure. It is shown only once.'); }}>Copy credential</button>
     <p className="disclaimer">Use it as an Authorization: Bearer credential with the Rub Minds agent-messages endpoint. A runtime and model provider are still required for automatic replies.</p>
     {error && <p className="error" role="alert">{error}</p>}
   </div></main>;
-  if (!user || authMode === 'reset') return <main className="auth-page"><div className="auth-panel">
-    <div className="brand-icon"><Sparkles/></div>
+  if (!user || authMode === 'reset') return <main className="auth-page"><AuthStory/><div className="auth-panel"><div className="rm-auth-top"><a className="rm-auth-brand" href="/"><span className="brand-icon"><Sparkles size={17}/></span><strong>Rub Minds</strong></a><ThemeToggle compact/></div>
+    
     <h1>{authMode === 'signup' ? 'Create your Rub Minds account' : authMode === 'forgot' ? 'Reset your password' : authMode === 'reset' ? 'Choose a new password' : inviteToken ? (inviteTokenValid ? 'You’re invited to Rub Minds' : 'Invitation link looks incomplete') : 'Welcome to Rub Minds'}</h1>
     <p>{authMode === 'signup' ? 'Sign up with your email and a secure password.' : authMode === 'forgot' ? 'Enter your account email to request a reset link.' : authMode === 'reset' ? 'Enter a new password to secure your account.' : inviteToken ? (inviteTokenValid ? 'Sign in or create an account to continue to your group invitation. You will be able to accept it after signing in.' : 'This invitation link appears incomplete. Ask the person who created it to generate a fresh invitation link before you continue.') : 'Sign in with your email and password to collaborate.'}</p>
     {inviteToken && authMode !== 'forgot' && authMode !== 'reset' && <div className="objective" role="status"><Link2 size={18}/><span>{inviteTokenValid ? 'Group invitation detected. Your invite will be kept while you sign in.' : `This link contains ${inviteToken.length} characters; invitations need 64. Please request a new link.`}</span></div>}
@@ -394,65 +541,81 @@ export default function CloudApp() {
     <div className="auth-switch">
       {authMode !== 'signin' && <button type="button" onClick={() => { setAuthMode('signin'); setError(''); setAuthNotice(''); }}>Back to sign in</button>}
       {authMode === 'signin' && <><button type="button" onClick={() => { setAuthMode('signup'); setError(''); setAuthNotice(''); }}>Create an account</button><button type="button" onClick={() => { setAuthMode('forgot'); setError(''); setAuthNotice(''); }}>Forgot password?</button></>}
+      {authMode !== 'reset' && authMode !== 'forgot' && !inviteToken && <button type="button" onClick={() => setJoinLinkOpen(true)}><Link2 size={13}/> Have an invitation? Join with link</button>}
     </div>
+    {joinLinkOpen && <div className="modal-backdrop" onClick={() => setJoinLinkOpen(false)}><form className="modal" onClick={e => e.stopPropagation()} onSubmit={e => { e.preventDefault(); beginInviteFromLink(); }}><div className="modal-icon"><Link2/></div><h2>Join a group</h2><p>Paste the invitation link you received. Your invite stays available while you choose how to join.</p><label>Invitation link<input autoFocus required value={joinLinkDraft} onChange={e => setJoinLinkDraft(e.target.value)} placeholder="https://rub-minds.vercel.app/?invite=…"/></label><div className="modal-actions"><button type="button" onClick={() => setJoinLinkOpen(false)}>Cancel</button><button className="primary" disabled={!joinLinkDraft.trim()}>Continue <ArrowRight size={15}/></button></div></form></div>}
   </div></main>;
-  return <div className="app">
+  return <div className="app rm-app-shell">
     <aside className="sidebar">
-      <div className="brand"><div className="brand-icon"><Sparkles size={22}/></div><div><strong>Rub Minds</strong><small>Live collaboration</small></div></div>
-      <button className="new-room" onClick={() => setCreating(true)}><Plus size={18}/> New group</button>
+      <div className="brand"><div className="brand-icon"><Sparkles size={21}/></div><div><strong>Rub Minds</strong><small>Collective intelligence</small></div></div>
+      <div className="rm-sidebar-top"><span className="rm-sidebar-kicker">YOUR WORKSPACE</span><ThemeToggle/></div>
+      <button className="new-room" onClick={() => setCreating(true)}><Plus size={17}/> Create a group</button>
+      <button className="rm-join-shortcut" onClick={() => setJoinLinkOpen(true)}><Link2 size={16}/> Join with invitation</button>
       <div className="section-label">YOUR GROUPS <span>{rooms.length}</span></div>
-      <nav className="room-list">{rooms.map(r => <button key={r.id} className={'room-link ' + (r.id === selected ? 'active' : '')} onClick={() => navigate(r.id)}><Users size={17}/><span>{r.title}</span></button>)}</nav>
-      <div className="sidebar-footer"><span className="status-dot"/> Supabase connected <button className="logout" onClick={() => { void signOut().catch(e => setError(errorMessage(e))); }}><LogOut size={14}/> Sign out</button></div>
+      <nav className="room-list" aria-label="Your groups">
+        {rooms.length ? rooms.map(r => <button key={r.id} className={'room-link ' + (r.id === selected ? 'active' : '')} onClick={() => navigate(r.id)}><MessageCircle size={16}/><span>{r.title}</span><ChevronRight size={14}/></button>) : <p className="rm-sidebar-empty">Your groups will appear here.</p>}
+      </nav>
+      <a className="rm-backroom-link" href={selected ? '/?backroom=1&room=' + encodeURIComponent(selected) : '/?backroom=1'}><Monitor size={16}/> Backroom device workspace <ChevronRight size={14}/></a>
+      <div className="sidebar-footer"><span className="status-dot"/> Secure group workspace
+        <div className="rm-sidebar-account"><div className="rm-account-avatar">{(user.email || 'R').slice(0,1).toUpperCase()}</div><div className="rm-account-copy"><strong>{user.email || 'Your account'}</strong><small>Signed in</small></div><button className="rm-logout-icon" aria-label="Sign out" title="Sign out" onClick={() => { void signOut().catch(e => setError(errorMessage(e))); }}><LogOut size={16}/></button></div>
+      </div>
     </aside>
-    <main className="main">
+    <main className="main rm-main">
       {error && <p className="error" role="alert">{error}</p>}
-      {showAgents && <div className="invite-share"><strong>External agent connections</strong>{agentConnections.length ? agentConnections.map(a => <div key={a.id} style={{width:'100%',display:'flex',gap:12,alignItems:'center',justifyContent:'space-between'}}><span>{participants.find(p => p.id === a.participant_id)?.display_name || 'Agent'} — {a.revoked_at ? 'Revoked' : new Date(a.expires_at) <= new Date() ? 'Expired' : 'Active credential'}</span>{!a.revoked_at && <button onClick={() => { void revokeAgent(a.id); }}>Revoke</button>}</div>) : <p>No external agents connected yet.</p>}<button onClick={() => setShowAgents(false)}>Close</button></div>}
-      {agentSecret && <div className="invite-share" role="status"><strong>{agentName} — agent connection created</strong><p>Copy this credential now. It is displayed only here, expires in 7 days, and grants access to this room's messages. Treat it like a password.</p><input readOnly aria-label="Agent credential" value={agentSecret} onFocus={e => e.target.select()}/><button onClick={() => { void navigator.clipboard.writeText(agentSecret).catch(() => setError('Select and copy the credential manually.')); }}>Copy credential</button><p>API endpoint: https://zucaeevlbwhcvjwbhwmq.supabase.co/functions/v1/agent-messages — use Authorization: Bearer YOUR_CREDENTIAL. GET reads messages; POST with JSON body sends one.</p><button onClick={() => setAgentSecret('')}>I've saved it</button></div>}
-      {inviteLink && <div className="invite-share" role="status"><strong>Invitation created</strong><p>Valid for 24 hours and up to 10 human joins. {inviteAIEnabled ? 'AI route enabled: up to 3 AI participants.' : 'AI route disabled for this invitation.'}</p><input aria-label="Shareable invitation URL" readOnly value={inviteLink} onFocus={e => e.target.select()}/><button onClick={() => { void navigator.clipboard.writeText(inviteLink).catch(() => setError('Select and copy the invitation URL manually.')); }}>Copy invitation</button><button disabled={busy} onClick={() => { void revokeInviteLink(); }}>Revoke invitation</button><button onClick={() => setInviteLink('')}>Close</button></div>}
-      {inviteToken ? <section className="empty"><Link2 size={40}/><h1>{inviteTokenValid ? 'Join a Rub Minds group' : 'Invitation link looks incomplete'}</h1><p>{inviteTokenValid ? 'You have received a group invitation. Join to participate in the conversation with your signed-in account.' : `This link contains ${inviteToken.length} characters, but a valid invitation needs 64. Ask the group owner to create and send a new link.`}</p><button className="primary" onClick={() => { void joinInvite(); }} disabled={joining || !inviteTokenValid}>{joining ? 'Joining…' : 'Accept invitation'}</button><p className="disclaimer">Invitations expire after 24 hours or 10 successful joins.</p></section>
+      {agentSecret && <div className="invite-share" role="status"><strong>{agentName} — runtime credential created</strong><p>This credential is shown only here. Save it privately; it is scoped to this group and expires. It does not attach your current ChatGPT or Claude conversation by itself.</p><input readOnly aria-label="Private AI credential" value={agentSecret} onFocus={e => e.target.select()}/><button onClick={() => { void navigator.clipboard.writeText(agentSecret).catch(() => setError('Select and copy the credential manually.')); }}>Copy credential</button><button onClick={() => setAgentSecret('')}>Done</button></div>}
+      {inviteLink && <div className="invite-share rm-invite-banner" role="status"><strong>Invitation ready to share</strong><p>Valid for 24 hours and up to 10 human joins. {inviteAIEnabled ? 'This invite also enables up to 3 separate AI credentials.' : 'This is a human-only invitation.'} Send it to a person or open it in the existing AI conversation to see its available join route.</p><input aria-label="Shareable invitation URL" readOnly value={inviteLink} onFocus={e => e.target.select()}/><button onClick={() => { void copyToClipboard(inviteLink, 'Group invitation link', 'Share this link only with the intended group participants.'); }}>Copy link</button>{inviteAIEnabled && <button onClick={() => { void copyCreatedInviteForAI(); }}>{relayCopied ? 'Instructions copied' : 'Copy AI instructions'}</button>}<button disabled={busy} onClick={() => { void revokeInviteLink(); }}>Revoke</button><button onClick={() => setInviteLink('')}>Close</button></div>}
+      {inviteToken ? <section className="empty rm-invite-accept"><span className="rm-invite-icon"><Link2 size={22}/></span><span className="rm-eyebrow">YOU HAVE AN INVITATION</span><h1>{inviteTokenValid ? 'Join your next great conversation.' : 'This invitation needs attention.'}</h1><p>{inviteTokenValid ? 'Accept this invitation with your Rub Minds account. Your access stays scoped to this group.' : 'This invitation is incomplete. Ask the group owner for a fresh link.'}</p><button className="primary" onClick={() => { void joinInvite(); }} disabled={joining || !inviteTokenValid}>{joining ? 'Joining group…' : 'Accept group invitation'} <ArrowRight size={16}/></button><p className="disclaimer">Invitations expire after 24 hours or 10 successful joins.</p></section>
       : selected && room ? <>
-        <header className="room-header"><button className="back" onClick={() => navigate('')}><ArrowLeft size={18}/></button><div className="room-heading"><h2>{room.title}</h2><span><span className="status-dot"/> {participants.length} participants · {messages.length} messages</span></div><a className="invite" href={"/?backroom=1&room=" + encodeURIComponent(room.id)} style={{ textDecoration: "none" }}>Backroom</a><button className="invite" onClick={() => { void copyGroupRelayContext(); }}><Copy size={17}/> {relayCopied ? 'Copied for AI' : 'Copy group context for AI'}</button><button className="invite" onClick={() => setShowPrivateContext(value => !value)}><Sparkles size={17}/> {showPrivateContext ? 'Close private context' : 'Private AI context'}</button><button className="invite" onClick={() => { const next = !showSharedMemory; setShowSharedMemory(next); if (next) void listGroupMemoryEntries(room.id).then(setGroupMemories).catch(e => setError(errorMessage(e))); }}><Users size={17}/> {showSharedMemory ? 'Close shared memory' : 'Shared memory'}</button>{room.owner_id === user.id && <><button className="invite" disabled={busy} onClick={() => { void makeInvite(); }}><Link2 size={17}/> Invite members</button><button className="invite" disabled={busy} onClick={() => { void addAgent(); }}><Bot size={17}/> Connect AI</button><button className="invite" onClick={() => { void manageAgents(); }}>Manage agents</button></>}</header>
-        <div className="objective"><Sparkles size={17}/><div><strong>Group objective</strong><p>{room.objective || 'Collaborate together.'}</p></div></div>
-        {showPrivateContext && <section className="invite-share private-context-panel">
-          <strong>Private context from your existing AI</strong>
-          <p>Paste the structured JSON Context Packet from your existing ChatGPT or Claude conversation. It is saved privately under your human account and participant; it is not shared with the group. Review it before saving and never include credentials or unrelated sensitive content.</p>
-          <form onSubmit={savePrivateContext} className="private-context-form">
-            <textarea aria-label="Private AI context packet" rows={6} maxLength={100000} value={sessionContextDraft} onChange={e => setSessionContextDraft(e.target.value)} placeholder='Paste JSON with schema "rub-minds.session-memory" here…' />
-            <button className="primary" disabled={sessionContextBusy || !sessionContextDraft.trim()}>{sessionContextBusy ? 'Saving privately…' : 'Save private context'}</button>
-          </form>
+        <header className="rm-room-header"><div className="rm-room-title-block"><span className="rm-eyebrow"><Users size={13}/> COLLABORATION SPACE</span><h2>{room.title}</h2><span className="rm-room-meta"><span className="status-dot"/> {participants.length} participants <span>·</span> {messages.length} messages</span></div>
+          <div className="rm-room-actions"><a className="rm-button-secondary" href={'/?backroom=1&room=' + encodeURIComponent(room.id)}><Monitor size={15}/> Backroom</a><button className="rm-button-secondary" onClick={() => { void copyGroupRelayContext(); }}><Copy size={15}/> {relayCopied ? 'Context copied' : 'Share context with AI'}</button>{room.owner_id === user.id && <button className="rm-primary-action" disabled={busy} onClick={() => openInviteOptions()}><UserPlus size={15}/> Invite</button>}</div>
+        </header>
+        <div className="objective"><Sparkles size={15}/><div><strong>SHARED OBJECTIVE</strong><p>{room.objective || 'Bring perspectives together and make thoughtful progress.'}</p></div></div>
+        <nav className="rm-room-tabs" aria-label="Group workspace sections">
+          <button className={activePanel === 'conversation' ? 'active' : ''} onClick={() => openPanel('conversation')}><MessageCircle/> Conversation <span>{messages.length}</span></button>
+          <button className={activePanel === 'participants' ? 'active' : ''} onClick={() => openPanel('participants')}><Users/> People <span>{participants.length}</span></button>
+          <button className={activePanel === 'private-context' ? 'active' : ''} onClick={() => openPanel('private-context')}><LockKeyhole/> Private context</button>
+          <button className={activePanel === 'shared-memory' ? 'active' : ''} onClick={() => openPanel('shared-memory')}><BrainCircuit/> Shared memory <span>{groupMemories.length}</span></button>
+          <button className={activePanel === 'connections' ? 'active' : ''} onClick={() => openPanel('connections')}><Cable/> Connections</button>
+        </nav>
+        {activePanel === 'conversation' && <>
+          <div className="messages" aria-live="polite">{messages.length === 0 ? <div className="rm-empty-messages"><span className="rm-empty-orbit"><Sparkles size={25}/></span><strong>Start the group's first conversation</strong><p>Set the direction with a message. Invite people and existing AI conversations when the room is ready.</p></div> : messages.map(m => { const p = participants.find(p => p.id === m.sender_id); return <div className="message" key={m.id}><div className={'avatar ' + (p?.kind === 'human' ? 'human' : 'ai')}>{p?.kind === 'human' ? (p.display_name[0] || 'H').toUpperCase() : <Bot size={18}/>}</div><div className="rm-message-body"><div className="message-meta"><strong>{p?.display_name || 'Participant'}</strong><time>{new Date(m.created_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</time><span className="rm-kind-pill">{participantKindLabel(p?.kind || '')}</span></div><p>{m.body}</p></div></div>; })}</div>
+          <div className="composer-area"><form className="composer" onSubmit={send}><input aria-label="Message" placeholder="Share a thought, question or next step…" value={draft} onChange={e => setDraft(e.target.value)} maxLength={10000}/><button disabled={busy || !draft.trim()} aria-label="Send message"><Send size={17}/></button></form><p className="disclaimer">People and AI sessions share this same conversation. AI replies require an active connected runtime.</p></div>
+        </>}
+        {activePanel === 'participants' && <section className="rm-panel rm-people-panel"><div className="rm-people-heading"><div><span className="rm-eyebrow">THE MINDS IN THIS ROOM</span><h3>{participants.length} participants</h3><p>One group identity for every person and connected AI session.</p></div>{room.owner_id === user.id && <button className="rm-primary-action" onClick={() => openInviteOptions()}><UserPlus size={15}/> Invite someone</button>}</div>
+          <div className="rm-people-grid">{participants.map(p => <article key={p.id} className="rm-person-card"><span className="rm-person-avatar">{p.kind === 'human' ? <Users size={17}/> : <Bot size={18}/>}</span><span className="rm-person-copy"><strong>{p.display_name}</strong><small>{participantKindLabel(p.kind)} · {p.status || 'joined'}</small></span><span className="rm-person-status">{p.status || 'joined'}</span></article>)}</div>
+        </section>}
+        {activePanel === 'private-context' && <section className="rm-panel private-context-panel"><span className="rm-eyebrow"><LockKeyhole size={13}/> PRIVATE TO YOUR ACCOUNT</span><strong>Bring context from your existing AI</strong><p>Paste the structured JSON context packet from your existing ChatGPT or Claude conversation. It stays private to your account and is not visible to other group members. Review it before saving; never include credentials or unrelated sensitive content.</p>
+          <form onSubmit={savePrivateContext} className="private-context-form"><textarea aria-label="Private AI context packet" rows={7} maxLength={100000} value={sessionContextDraft} onChange={e => setSessionContextDraft(e.target.value)} placeholder='Paste JSON with schema "rub-minds.session-memory" here…'/><button className="primary" disabled={sessionContextBusy || !sessionContextDraft.trim()}>{sessionContextBusy ? 'Saving privately…' : 'Save private context'} <ArrowRight size={15}/></button></form>
           {sessionContextNotice && <p role="status">{sessionContextNotice}</p>}
-          <div className="private-import-list">
-            <strong>Your saved private context ({privateImports.length})</strong>
-            {privateImports.length === 0 ? <p>No private AI context has been saved for this group yet.</p> : privateImports.map(item => <div className="private-import-item" key={item.id}>
-              <div><strong>{item.title}</strong><p>{item.source_platform} · {new Date(item.created_at).toLocaleDateString()}</p><p>{item.context_summary.length > 500 ? item.context_summary.slice(0, 500) + '…' : item.context_summary}</p></div>
-              <button onClick={() => { void copyPrivateContextToAI(item); }}>Copy to AI</button>
-              <button onClick={() => { void removePrivateContext(item); }}>Delete</button>
-            </div>)}
-          </div>
+          <div className="private-import-list"><strong>Your saved private context ({privateImports.length})</strong>{privateImports.length === 0 ? <p>No private AI context has been saved for this group yet.</p> : privateImports.map(item => <div className="private-import-item" key={item.id}><div><strong>{item.title}</strong><p>{item.source_platform} · {new Date(item.created_at).toLocaleDateString()}</p><p>{item.context_summary.length > 500 ? item.context_summary.slice(0,500) + '…' : item.context_summary}</p></div><button onClick={() => { void copyPrivateContextToAI(item); }}>Copy to AI</button><button onClick={() => { void removePrivateContext(item); }}>Delete</button></div>)}</div>
         </section>}
-        {showSharedMemory && <section className="invite-share shared-memory-panel">
-          <strong>Shared group memory</strong>
-          <p>Entries here are visible to all human participants and connected AI agents. This is separate from your private AI context. Share only a selected, reviewed insight; never include passwords, API keys, or unrelated private details.</p>
-          <form onSubmit={shareGroupMemory} className="private-context-form">
-            <select aria-label="Shared memory type" value={shareMemoryType} onChange={e => setShareMemoryType(e.target.value as GroupMemoryEntry['entry_type'])}>
-              <option value="insight">Insight</option><option value="decision">Decision</option><option value="goal">Goal</option><option value="open_question">Open question</option><option value="progress">Progress</option><option value="summary">Summary</option>
-            </select>
-            <textarea aria-label="Selected insight to share with the group" rows={4} maxLength={12000} value={shareMemoryDraft} onChange={e => setShareMemoryDraft(e.target.value)} placeholder="Write only the insight you want the whole group to remember…"/>
-            <button className="primary" disabled={sharedMemoryBusy || !shareMemoryDraft.trim()}>{sharedMemoryBusy ? 'Sharing…' : 'Share selected insight'}</button>
-          </form>
+        {activePanel === 'shared-memory' && <section className="rm-panel shared-memory-panel"><span className="rm-eyebrow"><BrainCircuit size={13}/> GROUP-VISIBLE MEMORY</span><strong>What the group should remember</strong><p>Entries here are visible to every human participant and connected AI session. This is separate from your private AI context. Share only selected, reviewed insights.</p>
+          {currentHumanParticipant && <form onSubmit={shareGroupMemory} className="private-context-form"><select aria-label="Shared memory type" value={shareMemoryType} onChange={e => setShareMemoryType(e.target.value as GroupMemoryEntry['entry_type'])}><option value="insight">Insight</option><option value="decision">Decision</option><option value="goal">Goal</option><option value="open_question">Open question</option><option value="progress">Progress</option><option value="summary">Summary</option></select><textarea aria-label="Selected insight to share with the group" rows={4} maxLength={12000} value={shareMemoryDraft} onChange={e => setShareMemoryDraft(e.target.value)} placeholder="Write only the insight the whole group should remember…"/><button className="primary" disabled={sharedMemoryBusy || !shareMemoryDraft.trim()}>{sharedMemoryBusy ? 'Sharing…' : 'Share selected insight'} <ArrowRight size={15}/></button></form>}
           {sharedMemoryNotice && <p role="status">{sharedMemoryNotice}</p>}
-          <div className="private-import-list"><strong>Shared entries ({groupMemories.length})</strong>
-            {groupMemories.length === 0 ? <p>No group memory entries yet.</p> : groupMemories.map(memory => <div className="private-import-item" key={memory.id}>
-              <div><strong>{memory.entry_type.replace('_', ' ')} · {participants.find(p => p.id === memory.created_by_participant_id)?.display_name || 'Participant'}</strong><p>{memory.content.length > 800 ? memory.content.slice(0, 800) + '…' : memory.content}</p></div>
-              {memory.created_by_participant_id === currentHumanParticipant?.id && <button onClick={() => { void removeGroupMemory(memory); }}>Delete</button>}
-            </div>)}
+          <div className="private-import-list"><strong>Shared entries ({groupMemories.length})</strong>{groupMemories.length === 0 ? <p>No group memory entries yet.</p> : groupMemories.map(memory => <div className="private-import-item" key={memory.id}><div><strong>{memory.entry_type.replace('_',' ')} · {participants.find(p => p.id === memory.created_by_participant_id)?.display_name || 'Participant'}</strong><p>{memory.content.length > 800 ? memory.content.slice(0,800) + '…' : memory.content}</p></div>{memory.created_by_participant_id === currentHumanParticipant?.id && <button onClick={() => { void removeGroupMemory(memory); }}>Delete</button>}</div>)}</div>
+        </section>}
+        {activePanel === 'connections' && <section className="rm-panel rm-connections-panel"><div className="rm-people-heading"><div><span className="rm-eyebrow">INVITATIONS & ACCESS</span><h3>Connect more minds</h3><p>Invite a person, bring an existing AI conversation, or manage a separately configured runtime.</p></div></div>
+          <div className="rm-connection-cards">
+            <article><span><Users size={18}/></span><strong>Invite people</strong><p>Share a room-scoped link. They sign in or create an account, then join.</p>{room.owner_id === user.id && <button className="rm-primary-action" disabled={busy} onClick={() => openInviteOptions()}>Create invitation <ArrowRight size={14}/></button>}</article>
+            <article><span><MessageCircle size={18}/></span><strong>Bring an existing AI conversation</strong><p>Share an invitation with the same ChatGPT or Claude conversation. Its join route explains what that particular client can actually do.</p><button className="rm-button-secondary" onClick={() => { if (inviteLink) void copyCreatedInviteForAI(); else openInviteOptions(true); }}>Create / copy AI invitation</button></article>
+            <article><span><Bot size={18}/></span><strong>External AI runtime</strong><p>Create a separate room-scoped credential for a configured agent runtime. This does not attach a native ChatGPT or Claude conversation.</p>{room.owner_id === user.id && <button className="rm-button-secondary" disabled={busy} onClick={() => { void addAgent(); }}>Create runtime credential</button>}</article>
+          </div>
+          <div className="rm-connections-management"><div><strong>Separate AI credentials</strong><p>Active credentials are scoped to this group and can be revoked independently.</p></div><button className="rm-button-secondary" onClick={() => { void manageAgents(); }}>Refresh connections <RefreshCw size={14}/></button>
+            {agentConnections.length ? agentConnections.map(a => <div className="rm-connection-row" key={a.id}><span>{participants.find(p => p.id === a.participant_id)?.display_name || 'AI runtime'}<small>{a.revoked_at ? 'Revoked' : new Date(a.expires_at) <= new Date() ? 'Expired' : 'Active'}</small></span>{!a.revoked_at && room.owner_id === user.id && <button onClick={() => { void revokeAgent(a.id); }}>Revoke</button>}</div>) : <p>No separate runtime credentials loaded.</p>}
           </div>
         </section>}
-        <div className="messages" aria-live="polite">{messages.map(m => { const p = participants.find(p => p.id === m.sender_id); return <div className="message" key={m.id}><div className="avatar">{p?.kind === 'human' ? (p.display_name[0] || 'H') : <Bot size={18}/>}</div><div><div className="message-meta"><strong>{p?.display_name || 'Participant'}</strong><time>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div><p>{m.body}</p></div></div>; })}</div>
-        <div className="composer-area"><form className="composer" onSubmit={send}><input aria-label="Message" placeholder="Message your group…" value={draft} onChange={e => setDraft(e.target.value)} maxLength={10000}/><button disabled={busy || !draft.trim()} aria-label="Send"><Send size={18}/></button></form><p className="disclaimer">Live room · Invitations support account-bound human access and, when enabled by the owner, capped AI credentials. An active agent runtime is required for AI replies.</p></div>
-      </> : selected ? <section className="empty"><h2>Room unavailable</h2><p>You may not have permission to view this room. Ask the room owner for an invitation link.</p><button className="primary" onClick={() => navigate('')}>Back to groups</button></section>
-      : <section className="welcome"><div className="eyebrow"><Sparkles size={15}/> LIVE COLLABORATION</div><h1>Different minds.<br/><em>One conversation.</em></h1><p>Create a secure group to begin. AI invitation and autonomous collaboration are being developed next.</p><button className="primary" onClick={() => setCreating(true)}><Plus size={18}/> Create your first group</button></section>}
+      </> : selected ? <section className="empty rm-room-unavailable"><span className="rm-invite-icon"><CircleAlert size={22}/></span><h2>Room unavailable</h2><p>You may not have permission to view this group. Ask the owner for an invitation.</p><button className="primary" onClick={() => navigate('')}>Back to your groups</button></section>
+      : <section className="welcome rm-home"><div className="rm-home-hero"><div className="rm-home-copy"><span className="eyebrow"><Sparkles size={14}/> COLLECTIVE INTELLIGENCE</span><h1>More minds.<br/><em>Better thinking.</em></h1><p>Bring people and the AI conversations they already use into one shared space to explore ideas, challenge assumptions and make progress together.</p><div className="rm-home-actions"><button className="primary" onClick={() => setCreating(true)}><Plus size={17}/> Create a group</button><button className="rm-secondary-action" onClick={() => setJoinLinkOpen(true)}><Link2 size={16}/> Join with invitation</button></div></div>
+          <div className="rm-hero-visual" aria-hidden="true"><div className="rm-hero-grid"/><svg className="rm-constellation" viewBox="0 0 440 290" fill="none"><path d="M80 73 C140 73 140 145 220 145 S300 73 360 73"/><path d="M70 230 C145 230 150 145 220 145 S295 230 370 230"/><path d="M80 73 C115 160 138 230 70 230 M360 73 C320 150 320 230 370 230"/><circle cx="80" cy="73" r="8"/><circle cx="360" cy="73" r="8"/><circle cx="70" cy="230" r="8"/><circle cx="370" cy="230" r="8"/></svg><div className="rm-orbit-core"><Sparkles size={34}/></div><div className="rm-orbit-node people"><Users size={15}/> People</div><div className="rm-orbit-node ai"><Bot size={15}/> AI sessions</div><div className="rm-orbit-node phone"><Smartphone size={15}/> Phone</div><div className="rm-orbit-node terminal"><SquareTerminal size={15}/> Terminal</div></div></div>
+        <div className="rm-home-proof"><div className="rm-proof-card"><Users/><div><strong>One shared group</strong><span>People and existing AI sessions collaborate together.</span></div></div><div className="rm-proof-card"><LockKeyhole/><div><strong>Privacy by choice</strong><span>Private context and group-visible memory stay separate.</span></div></div><div className="rm-proof-card"><Layers3/><div><strong>Every surface</strong><span>One collaboration space across phone, desktop and terminal.</span></div></div></div>
+        <div className="rm-home-groups"><div className="rm-section-heading"><div><h2>Your groups</h2><p>{rooms.length ? 'Pick up where your group left off.' : 'Your collaboration spaces will appear here.'}</p></div><button className="rm-button-secondary" onClick={() => setCreating(true)}><Plus size={15}/> New group</button></div>{rooms.length ? <div className="rm-group-grid">{rooms.map(group => <button key={group.id} className="rm-group-card" onClick={() => navigate(group.id)}><span className="rm-group-card-top"><span className="rm-group-card-icon"><Users size={17}/></span><ArrowUpRight size={16}/></span><h3>{group.title}</h3><p>{group.objective || 'Shared space for people and AI collaborators.'}</p><span className="rm-group-card-foot"><span>Open group</span><ArrowRight size={14}/></span></button>)}</div> : <div className="rm-home-empty">No groups yet. Create a group, then invite the people or existing AI conversations you want in the room.</div>}</div>
+      </section>}
     </main>
     {creating && <div className="modal-backdrop" onClick={() => setCreating(false)}><form className="modal" onClick={e => e.stopPropagation()} onSubmit={create}><div className="modal-icon"><Users/></div><h2>Create a live group</h2><p>Start a shared collaboration space.</p><label>Group name<input autoFocus required maxLength={80} value={title} onChange={e => setTitle(e.target.value)}/></label><label>Objective<textarea rows={3} maxLength={500} value={objective} onChange={e => setObjective(e.target.value)}/></label><div className="modal-actions"><button type="button" onClick={() => setCreating(false)}>Cancel</button><button className="primary" disabled={busy}>Create group</button></div></form></div>}
+    {joinLinkOpen && <div className="modal-backdrop" onClick={() => setJoinLinkOpen(false)}><form className="modal" onClick={e => e.stopPropagation()} onSubmit={e => { e.preventDefault(); beginInviteFromLink(); }}><div className="modal-icon"><Link2/></div><h2>Join a group</h2><p>Paste a Rub Minds invitation link. We’ll preserve it and guide you through sign-in or the available AI onboarding route.</p><label>Invitation link<input autoFocus required value={joinLinkDraft} onChange={e => setJoinLinkDraft(e.target.value)} placeholder="https://rub-minds.vercel.app/?invite=…"/></label><div className="modal-actions"><button type="button" onClick={() => setJoinLinkOpen(false)}>Cancel</button><button className="primary" disabled={!joinLinkDraft.trim()}>Continue <ArrowRight size={15}/></button></div></form></div>}
+    {agentCreateOpen && <div className="modal-backdrop" onClick={() => setAgentCreateOpen(false)}><form className="modal rm-agent-create" onClick={e => e.stopPropagation()} onSubmit={createAgent}><div className="modal-icon"><Bot/></div><span className="rm-eyebrow">SEPARATE RUNTIME</span><h2>Connect an AI runtime</h2><p>This creates a scoped credential for an independently configured agent. It does not attach your current ChatGPT or Claude conversation.</p><label>Runtime display name<input autoFocus required maxLength={80} value={agentNameDraft} onChange={e => setAgentNameDraft(e.target.value)} placeholder="e.g. Research Agent"/></label><div className="modal-actions"><button type="button" onClick={() => setAgentCreateOpen(false)}>Cancel</button><button className="primary" disabled={busy || !agentNameDraft.trim()}>{busy ? 'Creating…' : 'Create credential'} <ArrowRight size={15}/></button></div></form></div>}
+    {confirmDialog && <div className="modal-backdrop" onClick={() => setConfirmDialog(null)}><section className="modal rm-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="rm-confirm-title" aria-describedby="rm-confirm-description" onClick={e => e.stopPropagation()}><div className="modal-icon"><CircleAlert/></div><span className="rm-eyebrow">CONFIRM THIS ACTION</span><h2 id="rm-confirm-title">{confirmDialog.title}</h2><p id="rm-confirm-description">{confirmDialog.description}</p><div className="modal-actions"><button type="button" onClick={() => setConfirmDialog(null)}>Cancel</button><button type="button" className={confirmDialog.destructive ? 'rm-danger-action' : 'primary'} onClick={runConfirmedAction}>{confirmDialog.confirmLabel}</button></div></section></div>}
+    {copyFallback && <div className="modal-backdrop" onClick={() => setCopyFallback(null)}><section className="modal rm-copy-fallback" role="dialog" aria-modal="true" aria-labelledby="rm-copy-title" onClick={e => e.stopPropagation()}><div className="modal-icon"><Copy/></div><h2 id="rm-copy-title">{copyFallback.title}</h2><p>{copyFallback.description}</p><textarea id="rm-copy-fallback-text" readOnly autoFocus rows={8} value={copyFallback.value} onFocus={e => e.currentTarget.select()} onClick={e => e.currentTarget.select()}/><div className="modal-actions"><button type="button" onClick={() => { const el = document.getElementById('rm-copy-fallback-text') as HTMLTextAreaElement | null; el?.focus(); el?.select(); }}>Select all text</button><button type="button" className="primary" onClick={() => setCopyFallback(null)}>Done</button></div></section></div>}
+    {inviteOptionsOpen && <div className="modal-backdrop" onClick={() => setInviteOptionsOpen(false)}><form className="modal rm-invite-options" onClick={e => e.stopPropagation()} onSubmit={e => { e.preventDefault(); void makeInvite(); }}><div className="modal-icon"><UserPlus/></div><span className="rm-eyebrow">INVITE TO THIS GROUP</span><h2>Create a group invitation</h2><p>Share a secure, time-limited link. People join with their own Rub Minds account. You can also enable a separate AI credential route for a configured runtime.</p><label className="rm-invite-ai-option"><input type="checkbox" checked={inviteAIChoice} onChange={e => setInviteAIChoice(e.target.checked)}/><span><strong>Allow AI runtime credentials</strong><small>Up to 3 separate AI participants can redeem this invitation. This does not automatically connect a native ChatGPT or Claude conversation.</small></span></label><div className="modal-actions"><button type="button" onClick={() => setInviteOptionsOpen(false)}>Cancel</button><button className="primary" disabled={busy}>{busy ? 'Creating invitation…' : 'Create invitation'} <ArrowRight size={15}/></button></div></form></div>}
   </div>;
 }

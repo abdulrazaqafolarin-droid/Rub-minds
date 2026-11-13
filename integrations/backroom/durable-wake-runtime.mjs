@@ -1,6 +1,7 @@
 /** Consume one durable wake lease through the existing local dispatcher. Trigger-only.
- * verifyApproval is a non-consuming preflight; the dispatched host must atomically consume
- * the exact grant before the adapter effect. Never pass a verifier that consumes here. */
+ * verifyApproval is a non-consuming preflight. The durable execution seal and one-shot
+ * grant consumption run inside the host's beforeEffect hook, after local focus/permission
+ * preflight and immediately before the adapter effect. Never auto-replay after that point. */
 import {createHash} from 'node:crypto';
 import {isCanonicalWakePrompt,mayDispatchWake} from './coordination-core.mjs';
 import {approvalContext} from './coordination-dispatch-bridge.mjs';
@@ -95,18 +96,32 @@ export async function dispatchClaimedWake(input){
   }
   return queueAck(store,lease,'ignored',gate.reason);
  }
+ if(typeof input.executionSeal!=='function'||typeof input.consumeApproval!=='function') {
+  return queueAck(store,lease,'ignored','execution-seal-required');
+ }
  let status;
  try {status=dispatcher.enqueue(mapped.command);} catch {
   return queueRetry(store,lease,'transport_error','dispatcher-enqueue-failed');
  }
  if(!status||typeof status.state!=='string')return queueRetry(store,lease,'transport_error','invalid-dispatcher-status');
  if(['queued','awaiting_approval'].includes(status.state)) {
-  try {status=await dispatcher.step(mapped.command.id,{approved:true});}
+  const beforeEffect=async()=>{
+   let sealed=false;
+   try {sealed=(await input.executionSeal({lease,command:mapped.command,target:mapped.target}))===true;} catch {sealed=false;}
+   if(!sealed)return false;
+   let consumed=false;
+   try {consumed=(await input.consumeApproval(input.approval,approvalContext(mapped.command)))===true;} catch {consumed=false;}
+   return consumed;
+  };
+  try {status=await dispatcher.step(mapped.command.id,{approved:true,beforeEffect});}
   catch {return queueAck(store,lease,'ignored','dispatcher-outcome-unknown');}
  }
  if(status?.state==='completed')return queueAck(store,lease,'acknowledged',null);
  if(status?.state==='failed'&&status.reason==='device_preflight_denied') {
   return queueRetry(store,lease,'target_unavailable','host-preflight-denied');
+ }
+ if(status?.state==='failed'&&status.reason==='execution_seal_denied') {
+  return queueAck(store,lease,'ignored','execution_seal_denied');
  }
  // Ambiguous/failed effects must not be blindly replayed. Mark the wake ignored;
  // a human may rebind and explicitly initiate a fresh wake.
