@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { LocalExecutionGuard, validateHostCapabilities } from "./host-runtime.mjs";
+import { buildCanonicalWakePrompt } from "./coordination-core.mjs";
 const host = { hostId: "h", deviceLabel: "Local host", surfaces: ["android_app"], operations: ["draft"] };
 const target = { id: "t", hostId: "h", roomId: "r", spaceId: "s", sessionId: "session", appId: "ai.app", surface: "android_app", locatorKind: "accessibility", identityFingerprint: "fingerprint", revision: 1 };
 const command = { hostId: "h", targetId: "t", roomId: "r", spaceId: "s", sessionId: "session", identityFingerprint: "fingerprint", targetRevision: 1, operation: "draft", text: "test" };
@@ -68,7 +69,7 @@ test("wake execution seal runs after permission and exact composer preflight but
     ...command,
     operation: "wake",
     eventId: "event-1",
-    text: "@RMconnects\\nEvent: event-1\\nRetrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.",
+    text: buildCanonicalWakePrompt("event-1"),
   };
   const guard = new LocalExecutionGuard({
     host: wakeHost,
@@ -96,7 +97,7 @@ test("wake execution seal is not acquired when local app preflight fails", async
     ...command,
     operation: "wake",
     eventId: "event-1",
-    text: "@RMconnects\\nEvent: event-1\\nRetrieve authorized pending events through Rub Minds MCP. Observe, reply, or defer according to your group policy. Acknowledge via MCP.",
+    text: buildCanonicalWakePrompt("event-1"),
   };
   const guard = new LocalExecutionGuard({
     host: wakeHost,
