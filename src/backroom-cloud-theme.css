@@ -1,0 +1,203 @@
+/* Stage B theme bridge for the existing Stage A Backroom device workspace. */
+.br-cloud-shell {
+  background: var(--rm-bg, #F9FAFB);
+  color: var(--rm-text, #151B28);
+}
+.br-cloud-header,
+.br-cloud-intro,
+.br-cloud-layout,
+.br-cloud-activity,
+.br-cloud-footer {
+  color: var(--rm-text, #151B28);
+}
+.br-cloud-header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.br-cloud-collaboration {
+  text-decoration: none;
+}
+.br-cloud-brand b,
+.br-cloud-intro h1,
+.br-cloud-panel-head h2,
+.br-cloud-capabilities > div:first-child b,
+.br-cloud-empty h2 {
+  color: var(--rm-text, #151B28);
+}
+.br-cloud-brand small,
+.br-cloud-room label,
+.br-cloud-intro p,
+.br-cloud-capabilities > div:first-child span,
+.br-cloud-empty p,
+.br-cloud-footer {
+  color: var(--rm-muted, #656C7B);
+}
+.br-cloud-mark {
+  background: var(--rm-primary-soft, rgba(36,100,235,.095));
+  color: var(--rm-primary, #2464EB);
+}
+.br-cloud-room select,
+.br-cloud-device-picker select {
+  color: var(--rm-text, #151B28);
+  background: var(--rm-panel, #FFFFFF);
+  border-color: var(--rm-border, #DFE2E7);
+}
+.br-cloud-quiet,
+.br-cloud-link {
+  color: var(--rm-text, #151B28);
+  border-color: var(--rm-border, #DFE2E7);
+  background: var(--rm-panel, #FFFFFF);
+}
+.br-cloud-quiet:hover,
+.br-cloud-link:hover {
+  color: var(--rm-primary, #2464EB);
+  border-color: var(--rm-primary-line, rgba(36,100,235,.24));
+  background: var(--rm-primary-soft, rgba(36,100,235,.095));
+}
+.br-cloud-sidebar,
+.br-cloud-stage-panel,
+.br-cloud-activity {
+  background: var(--rm-panel, #FFFFFF);
+  border-color: var(--rm-border, #DFE2E7);
+  box-shadow: var(--rm-shadow-soft, 0 8px 24px rgba(20,33,57,.05));
+}
+.br-cloud-count {
+  color: var(--rm-muted, #656C7B);
+  background: var(--rm-surface, #F2F4F7);
+}
+.br-cloud-primary {
+  color: #fff;
+  background: var(--rm-primary, #2464EB);
+}
+.br-cloud-primary:hover {
+  background: var(--rm-primary-strong, #1D56D0);
+}
+.br-cloud-pair-card {
+  border-color: var(--rm-primary-line, rgba(36,100,235,.24));
+  background: var(--rm-primary-soft, rgba(36,100,235,.095));
+}
+.br-cloud-pair-card code {
+  color: var(--rm-text, #151B28);
+  background: var(--rm-panel, #FFFFFF);
+}
+.br-cloud-pair-card button,
+.br-cloud-device-actions button {
+  color: var(--rm-text, #151B28);
+  background: var(--rm-panel, #FFFFFF);
+  border-color: var(--rm-border, #DFE2E7);
+}
+.br-cloud-device {
+  border-color: var(--rm-border, #DFE2E7);
+}
+.br-cloud-device-icon,
+.br-cloud-app-icon {
+  color: var(--rm-primary, #2464EB);
+  background: var(--rm-primary-soft, rgba(36,100,235,.095));
+}
+.br-cloud-device-copy b {
+  color: var(--rm-text, #151B28);
+}
+.br-cloud-device-copy small,
+.br-cloud-device-copy {
+  color: var(--rm-muted, #656C7B);
+}
+.br-cloud-status {
+  background: var(--rm-surface, #F2F4F7);
+  color: var(--rm-muted, #656C7B);
+}
+.br-cloud-status.active {
+  color: var(--rm-success, #16845A);
+  background: color-mix(in srgb, var(--rm-success, #16845A) 12%, var(--rm-panel, #fff));
+}
+.br-cloud-status.pending {
+  color: var(--rm-warning, #966000);
+  background: color-mix(in srgb, var(--rm-warning, #966000) 13%, var(--rm-panel, #fff));
+}
+.br-cloud-status.revoked {
+  color: var(--rm-danger, #C33E4B);
+  background: color-mix(in srgb, var(--rm-danger, #C33E4B) 12%, var(--rm-panel, #fff));
+}
+.br-cloud-empty-mini {
+  color: var(--rm-muted, #656C7B);
+}
+.br-cloud-empty-mini b {
+  color: var(--rm-text, #151B28);
+}
+.br-cloud-help {
+  color: var(--rm-muted, #656C7B);
+  background: var(--rm-surface, #F2F4F7);
+}
+.br-cloud-surface-tabs button {
+  color: var(--rm-muted, #656C7B);
+  background: var(--rm-panel, #FFFFFF);
+  border-color: var(--rm-border, #DFE2E7);
+}
+.br-cloud-surface-tabs button.active {
+  color: #fff;
+  background: var(--rm-primary, #2464EB);
+  border-color: var(--rm-primary, #2464EB);
+}
+.br-cloud-device-frame {
+  border-color: var(--rm-border, #DFE2E7);
+  background: var(--rm-surface, #F2F4F7);
+}
+.br-cloud-capabilities {
+  background: var(--rm-surface, #F2F4F7);
+  border-color: var(--rm-border, #DFE2E7);
+}
+.br-cloud-capability-row {
+  color: var(--rm-muted, #656C7B);
+  border-color: var(--rm-border, #DFE2E7);
+}
+.br-cloud-capability-row b {
+  color: var(--rm-warning, #966000);
+}
+.br-cloud-capability-row b.ready {
+  color: var(--rm-success, #16845A);
+}
+.br-cloud-event {
+  border-color: var(--rm-border, #DFE2E7);
+}
+.br-cloud-event b {
+  color: var(--rm-text, #151B28);
+}
+.br-cloud-event span,
+.br-cloud-event time,
+.br-cloud-no-events {
+  color: var(--rm-muted, #656C7B);
+}
+.br-cloud-actor-id {
+  color: var(--rm-muted, #656C7B);
+}
+.br-cloud-notice {
+  border: 1px solid var(--rm-border, #DFE2E7);
+  background: var(--rm-surface, #F2F4F7);
+  color: var(--rm-text, #151B28);
+}
+.br-cloud-notice.success {
+  color: var(--rm-success, #16845A);
+  background: color-mix(in srgb, var(--rm-success, #16845A) 9%, var(--rm-panel, #fff));
+}
+.br-cloud-notice.error {
+  color: var(--rm-danger, #C33E4B);
+  background: color-mix(in srgb, var(--rm-danger, #C33E4B) 9%, var(--rm-panel, #fff));
+}
+.br-cloud-phone-runtime-note {
+  color: var(--rm-warning, #966000);
+  border-color: var(--rm-warning, #966000);
+  background: color-mix(in srgb, var(--rm-warning, #966000) 10%, var(--rm-panel, #fff));
+}
+@media (max-width: 700px) {
+  .br-cloud-header-actions {
+    width: 100%;
+    justify-content: flex-start;
+    margin-left: 0;
+  }
+  .br-cloud-header {
+    flex-wrap: wrap;
+  }
+}
