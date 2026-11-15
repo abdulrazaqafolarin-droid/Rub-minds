@@ -131,6 +131,58 @@ test("rejects redirects, oversized calls and mismatched upstream response ids", 
   assert.match(large.error.message, /message size/);
 });
 
+test("oversized upstream response streams are cancelled before full buffering", async () => {
+  let cancelled = false;
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array(800_000));
+      controller.enqueue(new Uint8Array(500_000));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  const proxy = createMcpStdioProxy({
+    endpoint: ENDPOINT,
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      body,
+    }),
+  });
+  const result = await proxy.handle({ jsonrpc: "2.0", id: "oversized", method: "tools/list" });
+  assert.equal(result.error.code, -32000);
+  assert.match(result.error.message, /response exceeds the supported message size/);
+  assert.equal(cancelled, true);
+});
+
+test("declared oversized upstream responses are rejected before body reads", async () => {
+  let bodyRead = false;
+  const proxy = createMcpStdioProxy({
+    endpoint: ENDPOINT,
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-length": "1200001" }),
+      body: {
+        cancel: async () => {},
+        getReader: () => {
+          bodyRead = true;
+          throw new Error("body must not be read");
+        },
+      },
+      text: async () => {
+        bodyRead = true;
+        return "too large";
+      },
+    }),
+  });
+  const result = await proxy.handle({ jsonrpc: "2.0", id: "declared-oversized", method: "tools/list" });
+  assert.match(result.error.message, /response exceeds the supported message size/);
+  assert.equal(bodyRead, false);
+});
+
 test("upstream HTTP and JSON-RPC failures never leak credentials into the response", async () => {
   const apiKey = "DO_NOT_LEAK_THIS_KEY";
   const credential = "DO_NOT_LEAK_INVITE_TOKEN";
