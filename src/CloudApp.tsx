@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { ArrowRight, ArrowUpRight, BrainCircuit, Bot, Cable, ChevronRight, CircleAlert, Copy, House, Layers3, Link2, LockKeyhole, LogOut, Monitor, MessageCircle, Plus, RefreshCw, Send, Sparkles, SquareTerminal, Smartphone, UserPlus, Users } from 'lucide-react';
+import { ArrowRight, BrainCircuit, Bot, Cable, ChevronRight, CircleAlert, Copy, House, Layers3, Link2, LockKeyhole, LogOut, Monitor, MessageCircle, Plus, RefreshCw, Send, Sparkles, UserPlus, Users } from 'lucide-react';
 import { buildExistingAiJoinPrompt, buildGroupRelayPrompt, buildRestorePrompt, parseSessionMemoryDocument } from './aiRelay';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
