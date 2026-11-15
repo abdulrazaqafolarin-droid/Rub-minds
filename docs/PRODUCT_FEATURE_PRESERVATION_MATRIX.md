@@ -180,3 +180,43 @@ This proves clean-run source/build/database protocol checks on the branch. It do
 - No existing feature may be deleted, silently downgraded or relabelled as complete during visual redesign.
 - If an existing capability must change, record the current behavior, reason, migration path, affected tests and replacement before coding.
 - Do not merge a new PR or deploy to production without explicit authorization.
+
+
+## 8. PR #70 reconciliation — design and safety changes
+
+PR #70 merged into `main` after the Stage A stack was created. Its contents are not all present in the Stage A baseline and must be reconciled deliberately.
+
+### Design-system and UI files to bring forward
+
+- `src/UiPreferences.tsx`, `src/themePreference.ts`, `src/themePreference.test.ts`, `src/uiFlow.ts`, `src/uiRedesign.test.ts`
+- `src/rub-minds-redesign.css`
+- the PR #70 versions of `src/main.tsx`, `src/App.tsx`, `index.html`, and `tsconfig.json`
+- `docs/UI_UX_REDESIGN.md` and `scripts/ui-redesign.browser-test.mjs`
+
+The theme uses the same primary blue (#2464EB) in light and dark modes, with the `--rm-*` design tokens. Preserve the preference provider, reduced-motion behavior, accessible dialogs, responsive layouts and browser acceptance. Do not replace the Stage A `BackroomApp.tsx` wrapper with the older, group-scoped legacy browser simulator from main.
+
+### CloudApp reconciliation
+
+Use the PR #70 CloudApp presentation and authenticated invite flows as the visual baseline, then add the Stage A group-task behavior as an additional group workspace tab. Keep the Stage A `cloudRooms.ts` API and task migration/tool contracts. The task board must continue to use `GroupTaskBoard` and its existing backend operations; no new task implementation or table is needed.
+
+Do not copy the entire Stage A CloudApp over the PR #70 design, or copy the PR #70 CloudApp without restoring the task board. Both approaches would discard part of the product.
+
+### Backroom safety reconciliation
+
+PR #70 also changed:
+- `integrations/backroom/dispatcher.mjs`
+- `integrations/backroom/durable-wake-runtime.mjs`
+- their regression tests
+
+Those changes ensure the durable execution seal and one-shot grant are required at the final `beforeEffect` boundary; after that boundary, an ambiguous UI effect becomes `needs_review`, not a retryable preflight failure. This is a safety requirement, not cosmetic UI work. It must be reconciled with the later Stage A device/native/provider changes by applying the specific guard behavior without replacing later Stage A code wholesale.
+
+PR #70's Backroom styling additions were written for the legacy browser workspace. Apply the theme to the Stage A `BackroomDevicesApp` separately. Its current `backroom-cloud.css` contains fixed dark colors; do not assume the global theme automatically covers this screen.
+
+### Known interface/domain boundaries
+
+- The Stage A `BackroomDevicesApp` is still selected-group scoped. It is not yet a global owner-owned virtual device library or provisioned cloud VM.
+- Phone, desktop and terminal surfaces have real companion/runtime code in source. Their CI artifacts are not physical device acceptance.
+- Android provider-conversation resolver is empty and Windows native canonical Send is not implemented. Native autonomous Send and native Off/On/Auto must remain unavailable.
+- Projects, global People & Minds, and unified Activity are not backed by dedicated current domain APIs. Design the future contracts before surfacing these as functioning features.
+
+These additions supersede any assumption that Stage B only needs to port colors and layout.
