@@ -134,19 +134,19 @@ Do not weaken the legacy host-scoped wake queue to make the hostless group-bindi
 ### Active implementation stack
 
 - The dependent development sequence is **#52 → #53 → #54 → #55 → #56 → #58 → #59 → #61 → #60 → #62 → #63 → #64 → #65 → #66 → #68 → #69**. These are draft PRs; preserve their base relationships and do not merge out of order.
-- PR #69's implementation head before the latest documentation-only corrections was `e062c943eb1503ccc4d29f11121496c8295c9c34`; its base is the PR #68 terminal-MCP branch. The latest PR #69 head now contains documentation-only follow-up commits.
+- PR #69's current head is `69d5741e567cd5d5670ad879888374ac9205bfb4`; its base is the PR #68 terminal-MCP branch. It contains the host-independent Device Frame ↔ existing AI-session binding, CI-only setup corrections, and documentation-only acceptance/status corrections. It remains an unmerged draft.
 - PR #72, "workspace and Backroom UX", was created from `main` before the full Stage A stack was reconciled. It is explicitly parked as future Stage B exploration. Do not merge it, stack core work on it, or treat it as the active product baseline. After Stage A is accepted, reconcile its useful ideas against the integrated tree and repeat the feature-preservation review.
 
 ### Exact-head CI evidence
 
-The implementation commit `e062c943eb1503ccc4d29f11121496c8295c9c34` passed all four current repository workflows:
+The exact current PR #69 head `69d5741e567cd5d5670ad879888374ac9205bfb4` passed all current repository CI workflows:
 
-- [Validate Rub Minds #43717681451](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43717681451): production build, Vitest, registered Node/runtime/Backroom tests, Deno Edge Function checks, controlled browser tests, clean local Supabase migration rebuild, signup/invitation flows, MCP discovery/SDK tests, and device pairing/revocation.
-- [Backroom durable wake queue SQL #43717681460](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43717681460): wake queue, provider identity, Android settlement/forwarder, task lifecycle/dependencies, criterion review evidence and least-privilege SQL tests.
-- [Backroom Android companion #43717681482](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43717681482): Android unit/protocol tests, manifest gate, compile-verification APK and fingerprint checks.
-- [Backroom Windows desktop companion #43717681533](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43717681533): bundled WebView, Rust tests, authorization tests, Windows release link, fingerprint and artifact upload.
+- [Validate Rub Minds #43720549519](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43720549519): production build, dependency audit, Vitest, registered Node/runtime/Backroom tests, Deno Edge Function checks, controlled browser tests, clean local Supabase migration rebuild, signup/invitation flows, Vault and private bridge-state permissions, MCP discovery/SDK tests, and device pairing/revocation.
+- [Backroom durable wake queue SQL #43720549477](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43720549477): wake queue, provider identity, Android settlement/forwarder/attestation, task lifecycle/dependencies, criterion review evidence and least-privilege SQL tests.
+- [Backroom Android companion #43720549525](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43720549525): provider-identity probe, Android/device protocol and unit tests, merged-manifest gate, compile-verification APK, signature/fingerprint checks and artifact provenance.
+- [Backroom Windows desktop companion #43720549479](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43720549479): bundled WebView, Rust tests, authorization tests, Windows release link, fingerprint and artifact upload.
 
-These runs validate the commit's code and disposable/local integration paths. They do **not** establish physical-device acceptance, a real Claude/ChatGPT consumer conversation round trip, or unattended provider-session wake. The later commits on PR #69 update documentation only; their own CI checks must still pass before claiming the latest PR head is green.
+These runs validate the exact head's code and disposable/local integration paths. They do **not** establish physical-device acceptance, a real Claude/ChatGPT consumer conversation round trip, live Staging deployment of `bind_device_frame`, or unattended provider-session wake. The four workflows above are all green on the exact current head.
 
 ### Live MCP deployment distinction
 

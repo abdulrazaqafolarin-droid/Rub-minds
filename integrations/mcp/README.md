@@ -15,14 +15,14 @@ There are separate Production and Staging endpoints. Do not use Production for p
 
 The Production and Staging functions are both configured with Supabase Edge `verify_jwt=false`; the MCP handler performs its own invitation/session checks. A read-only audit also confirmed Staging is ACTIVE_HEALTHY on PostgreSQL 17.11. No deployment or database mutation was made during this audit.
 
-The active development stack remains draft and unmerged: **PR #66 → #68 → #69**. PR #69's head is `e062c943eb1503ccc4d29f11121496c8295c9c34`. That branch contains the host-independent Device Frame ↔ existing AI-session binding and the `bind_device_frame` MCP tool, but that tool is not present in the currently deployed Staging v3 catalogue. Do not describe frame binding as live until its migration and Edge Function are deliberately promoted to Staging and tested.
+The active development stack remains draft and unmerged: **PR #66 → #68 → #69**. PR #69's current head is `69d5741e567cd5d5670ad879888374ac9205bfb4`. That branch contains the host-independent Device Frame ↔ existing AI-session binding and the `bind_device_frame` MCP tool, but that tool is not present in the currently deployed Staging v3 catalogue. Do not describe frame binding as live until its migration and Edge Function are deliberately promoted to Staging and tested.
 
-### Validation evidence on the current PR #69 head
+### Validation evidence on the exact PR #69 head `69d5741e567cd5d5670ad879888374ac9205bfb4`
 
-- [Validate Rub Minds #43717681451](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43717681451) — PASS: production build, Vitest, registered Node/runtime/Backroom tests, Deno Edge Function checks, controlled browser tests, clean local Supabase migration rebuild, human signup/invitation flow, MCP SDK interoperability, device pairing and revocation.
-- [Backroom durable wake queue SQL #43717681460](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43717681460) — PASS: wake/provider-identity/native-settlement and group-task/criterion-review SQL tests.
-- [Backroom Android companion #43717681482](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43717681482) — PASS: Android tests, manifest gate and compile-verification APK checks.
-- [Backroom Windows desktop companion #43717681533](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43717681533) — PASS: WebView build, Rust tests, authorization tests, Windows release link, fingerprint and artifact upload.
+- [Validate Rub Minds #43720549519](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43720549519) — PASS: dependency audit, production build, Vitest, registered Node/runtime/Backroom tests, Deno Edge Function checks, controlled browser tests, clean local Supabase migration rebuild, human signup/invitation flow, Vault/private bridge-state permissions, MCP SDK interoperability, and Backroom device pairing/revocation.
+- [Backroom durable wake queue SQL #43720549477](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43720549477) — PASS: wake/provider-identity/native-settlement and group-task/criterion-review SQL tests.
+- [Backroom Android companion #43720549525](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43720549525) — PASS: Android/device tests, manifest gate and compile-verification APK/signature/fingerprint checks.
+- [Backroom Windows desktop companion #43720549479](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43720549479) — PASS: WebView build, Rust tests, authorization tests, Windows release link, fingerprint and artifact upload.
 
 These are clean-run and build/integration results. They are **not** physical-device acceptance or proof of an authenticated Claude/ChatGPT consumer-session round trip. No Production migration, Edge Function deployment, secret change, merge or production Vercel deployment is included.
 
