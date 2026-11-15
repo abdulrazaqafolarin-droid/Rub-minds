@@ -4,46 +4,72 @@ This folder documents the remote MCP endpoint implemented at:
 
 `https://zucaeevlbwhcvjwbhwmq.supabase.co/functions/v1/rub-minds-mcp`
 
-## Status — read-only deployment audit, 15 November 2026
+## Status — Staging promotion and readback, 15 November 2026
 
 There are separate Production and Staging endpoints. Do not use Production for provider testing.
 
 | Environment | Endpoint | Supabase function | Tool-surface boundary |
 | --- | --- | --- | --- |
-| Production | `https://zucaeevlbwhcvjwbhwmq.supabase.co/functions/v1/rub-minds-mcp` | ACTIVE v3; last deployment observed 25 October 2026 | `join_group`, `leave_group`, group context/messages, bounded Realtime wait, send, and session-memory tools. It does not expose the staging task workflow, durable original-session bridge-state tools, or `bind_device_frame`. |
-| Staging | `https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp` | ACTIVE v3; verified 15 November 2026 | Adds private original-session bridge-state and group-task tools to the shared group tools. It does not yet expose the PR #69 `bind_device_frame` tool. |
+| Production | `https://zucaeevlbwhcvjwbhwmq.supabase.co/functions/v1/rub-minds-mcp` | ACTIVE v3; last deployment observed 25 October 2026 | Shared group context/messages, bounded wait, send and session-memory tools. It does not expose the Staging task workflow, durable original-session bridge-state tools or `bind_device_frame`. |
+| Staging | `https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp` | ACTIVE v4; read back 15 November 2026 | Shared group/message/memory tools, Group Coordination task tools, original-session bridge-state tools and `bind_device_frame`. |
 
-The Production and Staging functions are both configured with Supabase Edge `verify_jwt=false`; the MCP handler performs its own invitation/session checks. A read-only audit also confirmed Staging is ACTIVE_HEALTHY on PostgreSQL 17.11. No deployment or database mutation was made during this audit.
+The Staging project has 46 reconciled migration-history rows. Staging `rub-minds-mcp` v4, `backroom-device` v14 and `backroom-wake` v8 are ACTIVE. The MCP handler keeps its existing invitation/session authorization model; Supabase Edge `verify_jwt=false` is not itself authentication. A readback confirmed the deployed `protocol.mjs` is byte-for-byte identical to the PR #69 branch's `integrations/mcp/protocol.mjs`, including the current tool definitions. The three relevant Edge Function versions and the migration history are Staging-only; Production was not changed.
 
-The active development stack remains draft and unmerged: **PR #66 → #68 → #69**. PR #69's current head is `69d5741e567cd5d5670ad879888374ac9205bfb4`. That branch contains the host-independent Device Frame ↔ existing AI-session binding and the `bind_device_frame` MCP tool, but that tool is not present in the currently deployed Staging v3 catalogue. Do not describe frame binding as live until its migration and Edge Function are deliberately promoted to Staging and tested.
+The active development stack remains draft and unmerged: **PR #52 → #53 → #54 → #55 → #56 → #58 → #59 → #61 → #60 → #62 → #63 → #64 → #65 → #66 → #68 → #69**. PR #69 remains open and draft on branch `feat/device-frame-ai-runtime-contract`; its source implementation head `a951e4cabf71f19965694918491c5d3dadb39554` passed all four workflows. The documentation-reconciled branch head is `7bf941c8a99a3e0860aa54d639eda1632a5ce103`, and its four workflows also passed. Neither result is real-provider or physical-device acceptance.
 
-### Validation evidence on the exact PR #69 head `69d5741e567cd5d5670ad879888374ac9205bfb4`
+### Validation evidence — 15 November 2026
 
-- [Validate Rub Minds #43720549519](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43720549519) — PASS: dependency audit, production build, Vitest, registered Node/runtime/Backroom tests, Deno Edge Function checks, controlled browser tests, clean local Supabase migration rebuild, human signup/invitation flow, Vault/private bridge-state permissions, MCP SDK interoperability, and Backroom device pairing/revocation.
-- [Backroom durable wake queue SQL #43720549477](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43720549477) — PASS: wake/provider-identity/native-settlement and group-task/criterion-review SQL tests.
-- [Backroom Android companion #43720549525](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43720549525) — PASS: Android/device tests, manifest gate and compile-verification APK/signature/fingerprint checks.
-- [Backroom Windows desktop companion #43720549479](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43720549479) — PASS: WebView build, Rust tests, authorization tests, Windows release link, fingerprint and artifact upload.
+On PR #69 source implementation head `a951e4cabf71f19965694918491c5d3dadb39554`, all four workflows passed:
 
-These are clean-run and build/integration results. They are **not** physical-device acceptance or proof of an authenticated Claude/ChatGPT consumer-session round trip. No Production migration, Edge Function deployment, secret change, merge or production Vercel deployment is included.
+- [Validate Rub Minds #43734381643](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43734381643) — PASS: production web build, Node/Vitest/runtime/Backroom suites, Deno function checks, controlled browser tests, clean local Supabase migration rebuild, human invitation and official MCP SDK E2E, Device Frame exact-session binding.
+- [Backroom durable wake queue SQL #43734381665](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43734381665) — PASS: durable queue, provider identity, Android forwarder/settlement/attestation, Group Coordination lifecycle/dependencies and evidence-backed review.
+- [Backroom Android companion #43734381654](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43734381654) — PASS: Android protocol/unit tests and compile-verification APK build.
+- [Backroom Windows desktop companion #43734381649](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43734381649) — PASS: full web tests/build, bundled WebView, native Windows Rust tests, x64 MSVC release executable link, fingerprint and artifact upload.
+
+The documentation-reconciled branch head `7bf941c8a99a3e0860aa54d639eda1632a5ce103` also passed all four workflows: [Android #43743998830](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43743998830), [Windows #43743998840](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43743998840), [Validate Rub Minds #43743998927](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43743998927), and [durable wake SQL #43743998853](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43743998853).
+
+Staging SQL acceptance additionally passed for `supabase/tests/device_frame_bindings.sql`, `supabase/tests/backroom_wake_queue.sql` and `supabase/tests/group_task_coordination.sql`, each within a rollback transaction. Post-test audits found no retained fixtures; migration history remained at 46.
+
+These checks validate source, isolated CI, Staging schema and deployed Edge Function bundles. They do **not** prove a real Claude/ChatGPT consumer-session round trip, physical Android/Windows acceptance, provider-stable conversation identity or autonomous native Send. No Production migration, Edge Function deployment, secret change, merge or production Vercel deployment is included.
 
 ## Tool catalog by environment
 
-The lists below reflect the read-only deployed-function source audit above. The branch may contain additional tools that are not deployed.
+The Staging list below was verified by reading back the deployed v4 bundle. Its deployed `protocol.mjs` is byte-for-byte equal to the current branch source. The tool names and descriptions are therefore grounded in the deployed bundle, not inferred from the repository alone.
 
-| Capability | Production v3 | Staging v3 |
+| Capability | Production v3 | Staging v4 |
 | --- | --- | --- |
-| Join/leave, group context and messages | Yes | Yes |
-| Bounded `wait_for_group_messages` | Yes | Yes |
-| Send group messages | Yes | Yes |
-| Private imports and explicit private/group memory | Yes | Yes |
-| `prepare_session_export` | No | Yes |
-| Durable original-session bridge state | No | Yes |
-| Group task proposal/read/claim/block/fail/submit | No | Yes |
-| `bind_device_frame` | No | No — branch-only in PR #69 |
+| Join/leave and read group context | Yes | Yes |
+| Bounded group-message read/wait and send | Yes | Yes |
+| Read one exact message by event ID | Not confirmed | Yes: `read_group_message` |
+| Private session import and private/group memory | Yes | Yes |
+| Explicit session export consent helper | Not confirmed | Yes: `prepare_session_export` |
+| Durable original-session cursor/reply state | No | Yes |
+| Group task proposal/list/read/claim/block/fail/submit | No | Yes |
+| Attach existing AI session to an owner-selected frame | No | Yes: `bind_device_frame` |
 
-Staging v3 currently exposes: `join_group`, `prepare_session_export`, `leave_group`, `read_group_context`, `read_group_messages`, `wait_for_group_messages`, `send_group_message`, `load_original_session_bridge_state`, `save_original_session_bridge_state`, `read_session_memory`, `import_session_memory`, `remember_memory`, `forget_memory`, `propose_group_task`, `list_group_tasks`, `read_group_task`, `claim_group_task`, `block_group_task`, `fail_group_task`, and `submit_group_task_result`.
+Staging v4 exposes these tools:
 
-Production v3 currently exposes the shared group message/context, wait, send and memory tools, including join/leave. Do not assume that it contains task coordination or original-session bridge-state just because those tools exist in the repository source or Staging.
+- **Identity/session:** `join_group`, `prepare_session_export`, `leave_group`, `bind_device_frame`.
+- **Group collaboration:** `read_group_context`, `read_group_messages`, `read_group_message`, `wait_for_group_messages`, `send_group_message`.
+- **Original-session continuity:** `load_original_session_bridge_state`, `save_original_session_bridge_state`.
+- **Session memory:** `read_session_memory`, `import_session_memory`, `remember_memory`, `forget_memory`.
+- **Group Coordination:** `propose_group_task`, `list_group_tasks`, `read_group_task`, `claim_group_task`, `block_group_task`, `fail_group_task`, `submit_group_task_result`.
+
+There is deliberately no AI-facing `review_group_task` tool: acceptance review is a human decision through the group application and the evidence-bearing authenticated review RPC. Assignment is also a human/group-coordination action; an AI can claim only a task assigned to that exact participant and only after its dependencies are complete.
+
+Production v3 remains on the older shared group message/context, wait, send and memory surface. Do not infer task coordination, durable original-session bridge state or Device Frame binding in Production from the Staging catalogue or repository source.
+
+## How continuous group participation fits together
+
+The MCP catalogue is one part of the whole product loop:
+
+1. **Group Coordination** owns the shared room state, task graph, assignments, submissions and human evidence-backed reviews.
+2. A qualifying message mention or human task assignment is evaluated by the database participation policy and the durable `@RMconnects` queue.
+3. The queue's canonical prompt carries an event ID, not arbitrary message text or a shell instruction. The joined AI retrieves the actual message or task using its scoped MCP session (`read_group_message`, `read_group_messages` or the task tools).
+4. The original AI session replies or submits its result through the same MCP participant identity. Durable bridge state stores the cursor, pending reply and fail-closed recovery status.
+5. Backroom and the draggable overlay identify a real supported app/runtime and the exact interaction target. Drag-select alone does not authorize typing, wake or Send.
+
+A bounded `wait_for_group_messages` call is not an always-on listener. A Playwright original-session runner can repeat bounded reads while it is explicitly running in its foreground local process. An idle provider conversation needs a separately supported and authorized wake path; the MCP endpoint and Device Frame binding cannot force an idle model to start a turn. Native Send is still gated by provider-conversation identity, device attestation, consent, replay-safe settlement and physical acceptance.
 
 ## Invitation-link-first onboarding
 
