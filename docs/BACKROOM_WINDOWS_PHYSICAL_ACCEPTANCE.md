@@ -1,6 +1,6 @@
 # Backroom Windows companion — physical acceptance
 
-Status: **The earlier PR #62 Windows test lane passed; this branch adds a linked release artifact and Emergency Stop race protections. Exact-head CI has not executed its steps (failed jobs returned no runner logs); physical host acceptance remains pending.**
+Status (15 November 2026; PR #69 head `56579c03562568fccb082ddffd0652e5acefffc1`): **The exact-head Windows CI lane passed.** Run [43719611559](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43719611559) passed the web build, bundled companion WebView, native Rust tests, authorization/protocol regressions, Windows x64 release executable link and SHA-256 fingerprint, and uploaded the artifact for hardware acceptance. This is CI/build evidence only—not physical workstation acceptance. The actual Windows host matrix and live Staging device registration/collaboration test remain pending.
 
 This matrix verifies the native Tauri companion on a real Windows 10/11 x64 computer. A successful GitHub-hosted Windows job is not physical-device acceptance.
 
