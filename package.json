@@ -31,7 +31,8 @@
     "original-session:bridge": "node scripts/original-session-bridge.mjs",
     "test:original-session-runner": "node --test integrations/playwright/original-session-cli.node-test.mjs",
     "rub-minds:mcp": "node scripts/rub-minds-mcp.mjs --stdio",
-    "test:mcp:stdio-proxy": "node --test integrations/mcp/stdio-proxy.node-test.mjs scripts/rub-minds-mcp.node-test.mjs"
+    "test:mcp:stdio-proxy": "node --test integrations/mcp/stdio-proxy.node-test.mjs scripts/rub-minds-mcp.node-test.mjs",
+    "test:ui-redesign": "node scripts/ui-redesign.browser-test.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",
