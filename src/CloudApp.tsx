@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { ArrowRight, ArrowUpRight, BrainCircuit, Bot, Cable, ChevronRight, CircleAlert, Copy, Layers3, Link2, LockKeyhole, LogOut, Monitor, MessageCircle, Plus, RefreshCw, Send, Sparkles, SquareTerminal, Smartphone, UserPlus, Users } from 'lucide-react';
+import { ArrowRight, BrainCircuit, Bot, Cable, ChevronRight, CircleAlert, Copy, House, Layers3, Link2, LockKeyhole, LogOut, Monitor, MessageCircle, Plus, RefreshCw, Send, Sparkles, UserPlus, Users } from 'lucide-react';
 import { buildExistingAiJoinPrompt, buildGroupRelayPrompt, buildRestorePrompt, parseSessionMemoryDocument } from './aiRelay';
 import type { User } from '@supabase/supabase-js';
 import { supabase } from './supabase';
@@ -8,6 +8,7 @@ import { shouldShowSessionRestoreError } from './authStartup';
 import { errorMessage } from './errorMessage';
 import { ThemeToggle } from './UiPreferences';
 import { participantKindLabel } from './uiFlow';
+import WorkspaceHome from './WorkspaceHome';
 type ConfirmDialog = {
   title: string;
   description: string;
@@ -549,9 +550,10 @@ export default function CloudApp() {
     <aside className="sidebar">
       <div className="brand"><div className="brand-icon"><Sparkles size={21}/></div><div><strong>Rub Minds</strong><small>Collective intelligence</small></div></div>
       <div className="rm-sidebar-top"><span className="rm-sidebar-kicker">YOUR WORKSPACE</span><ThemeToggle/></div>
+      <button className={'rm-home-shortcut' + (!selected && !inviteToken ? ' active' : '')} onClick={() => navigate('')}><House size={16}/> Home</button>
       <button className="new-room" onClick={() => setCreating(true)}><Plus size={17}/> Create a group</button>
       <button className="rm-join-shortcut" onClick={() => setJoinLinkOpen(true)}><Link2 size={16}/> Join with invitation</button>
-      <div className="section-label">YOUR GROUPS <span>{rooms.length}</span></div>
+      <div className="section-label">GROUPS <span>{rooms.length}</span></div>
       <nav className="room-list" aria-label="Your groups">
         {rooms.length ? rooms.map(r => <button key={r.id} className={'room-link ' + (r.id === selected ? 'active' : '')} onClick={() => navigate(r.id)}><MessageCircle size={16}/><span>{r.title}</span><ChevronRight size={14}/></button>) : <p className="rm-sidebar-empty">Your groups will appear here.</p>}
       </nav>
@@ -605,11 +607,13 @@ export default function CloudApp() {
           </div>
         </section>}
       </> : selected ? <section className="empty rm-room-unavailable"><span className="rm-invite-icon"><CircleAlert size={22}/></span><h2>Room unavailable</h2><p>You may not have permission to view this group. Ask the owner for an invitation.</p><button className="primary" onClick={() => navigate('')}>Back to your groups</button></section>
-      : <section className="welcome rm-home"><div className="rm-home-hero"><div className="rm-home-copy"><span className="eyebrow"><Sparkles size={14}/> COLLECTIVE INTELLIGENCE</span><h1>More minds.<br/><em>Better thinking.</em></h1><p>Bring people and the AI conversations they already use into one shared space to explore ideas, challenge assumptions and make progress together.</p><div className="rm-home-actions"><button className="primary" onClick={() => setCreating(true)}><Plus size={17}/> Create a group</button><button className="rm-secondary-action" onClick={() => setJoinLinkOpen(true)}><Link2 size={16}/> Join with invitation</button></div></div>
-          <div className="rm-hero-visual" aria-hidden="true"><div className="rm-hero-grid"/><svg className="rm-constellation" viewBox="0 0 440 290" fill="none"><path d="M80 73 C140 73 140 145 220 145 S300 73 360 73"/><path d="M70 230 C145 230 150 145 220 145 S295 230 370 230"/><path d="M80 73 C115 160 138 230 70 230 M360 73 C320 150 320 230 370 230"/><circle cx="80" cy="73" r="8"/><circle cx="360" cy="73" r="8"/><circle cx="70" cy="230" r="8"/><circle cx="370" cy="230" r="8"/></svg><div className="rm-orbit-core"><Sparkles size={34}/></div><div className="rm-orbit-node people"><Users size={15}/> People</div><div className="rm-orbit-node ai"><Bot size={15}/> AI sessions</div><div className="rm-orbit-node phone"><Smartphone size={15}/> Phone</div><div className="rm-orbit-node terminal"><SquareTerminal size={15}/> Terminal</div></div></div>
-        <div className="rm-home-proof"><div className="rm-proof-card"><Users/><div><strong>One shared group</strong><span>People and existing AI sessions collaborate together.</span></div></div><div className="rm-proof-card"><LockKeyhole/><div><strong>Privacy by choice</strong><span>Private context and group-visible memory stay separate.</span></div></div><div className="rm-proof-card"><Layers3/><div><strong>Every surface</strong><span>One collaboration space across phone, desktop and terminal.</span></div></div></div>
-        <div className="rm-home-groups"><div className="rm-section-heading"><div><h2>Your groups</h2><p>{rooms.length ? 'Pick up where your group left off.' : 'Your collaboration spaces will appear here.'}</p></div><button className="rm-button-secondary" onClick={() => setCreating(true)}><Plus size={15}/> New group</button></div>{rooms.length ? <div className="rm-group-grid">{rooms.map(group => <button key={group.id} className="rm-group-card" onClick={() => navigate(group.id)}><span className="rm-group-card-top"><span className="rm-group-card-icon"><Users size={17}/></span><ArrowUpRight size={16}/></span><h3>{group.title}</h3><p>{group.objective || 'Shared space for people and AI collaborators.'}</p><span className="rm-group-card-foot"><span>Open group</span><ArrowRight size={14}/></span></button>)}</div> : <div className="rm-home-empty">No groups yet. Create a group, then invite the people or existing AI conversations you want in the room.</div>}</div>
-      </section>}
+       : <WorkspaceHome
+        rooms={rooms}
+        onOpenGroup={navigate}
+        onCreateGroup={() => setCreating(true)}
+        onJoinGroup={() => setJoinLinkOpen(true)}
+        backroomHref={'/?backroom=1' + (rooms[0] ? '&room=' + encodeURIComponent(rooms[0].id) : '')}
+      />}
     </main>
     {creating && <div className="modal-backdrop" onClick={() => setCreating(false)}><form className="modal" onClick={e => e.stopPropagation()} onSubmit={create}><div className="modal-icon"><Users/></div><h2>Create a live group</h2><p>Start a shared collaboration space.</p><label>Group name<input autoFocus required maxLength={80} value={title} onChange={e => setTitle(e.target.value)}/></label><label>Objective<textarea rows={3} maxLength={500} value={objective} onChange={e => setObjective(e.target.value)}/></label><div className="modal-actions"><button type="button" onClick={() => setCreating(false)}>Cancel</button><button className="primary" disabled={busy}>Create group</button></div></form></div>}
     {joinLinkOpen && <div className="modal-backdrop" onClick={() => setJoinLinkOpen(false)}><form className="modal" onClick={e => e.stopPropagation()} onSubmit={e => { e.preventDefault(); beginInviteFromLink(); }}><div className="modal-icon"><Link2/></div><h2>Join a group</h2><p>Paste a Rub Minds invitation link. We’ll preserve it and guide you through sign-in or the available AI onboarding route.</p><label>Invitation link<input autoFocus required value={joinLinkDraft} onChange={e => setJoinLinkDraft(e.target.value)} placeholder="https://rub-minds.vercel.app/?invite=…"/></label><div className="modal-actions"><button type="button" onClick={() => setJoinLinkOpen(false)}>Cancel</button><button className="primary" disabled={!joinLinkDraft.trim()}>Continue <ArrowRight size={15}/></button></div></form></div>}
