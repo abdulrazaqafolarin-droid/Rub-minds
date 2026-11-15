@@ -2,13 +2,14 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { ArrowRight, ArrowUpRight, BrainCircuit, Bot, Cable, ChevronRight, CircleAlert, Copy, Layers3, Link2, ListChecks, LockKeyhole, LogOut, Monitor, MessageCircle, Plus, RefreshCw, Send, Sparkles, SquareTerminal, Smartphone, UserPlus, Users } from 'lucide-react';
 import { buildExistingAiJoinPrompt, buildGroupRelayPrompt, buildRestorePrompt, parseSessionMemoryDocument } from './aiRelay';
 import type { User } from '@supabase/supabase-js';
-import { supabase } from './supabase';
+import { supabase, supabaseUrl } from './supabase';
 import { getInviteStatusMessage, isValidInviteToken, readInviteToken } from './inviteLinks';
 import { shouldShowSessionRestoreError } from './authStartup';
 import { errorMessage } from './errorMessage';
 import GroupTaskBoard from './GroupTaskBoard';
 import { ThemeToggle } from './UiPreferences';
 import { participantKindLabel } from './uiFlow';
+const agentMessagesEndpoint = supabaseUrl ? `${supabaseUrl}/functions/v1/agent-messages` : '';
 type ConfirmDialog = {
   title: string;
   description: string;
@@ -563,7 +564,7 @@ export default function CloudApp() {
     </aside>
     <main className="main rm-main">
       {error && <p className="error" role="alert">{error}</p>}
-      {agentSecret && <div className="invite-share" role="status"><strong>{agentName} — runtime credential created</strong><p>This credential is shown only here. Save it privately; it is scoped to this group and expires. It does not attach your current ChatGPT or Claude conversation by itself.</p><input readOnly aria-label="Private AI credential" value={agentSecret} onFocus={e => e.target.select()}/><button onClick={() => { void navigator.clipboard.writeText(agentSecret).catch(() => setError('Select and copy the credential manually.')); }}>Copy credential</button><button onClick={() => setAgentSecret('')}>Done</button></div>}
+      {agentSecret && <div className="invite-share" role="status"><strong>{agentName} — runtime credential created</strong><p>This credential is shown only here. Save it privately; it is scoped to this group and expires. It does not attach your current ChatGPT or Claude conversation by itself.</p><input readOnly aria-label="Private AI credential" value={agentSecret} onFocus={e => e.target.select()}/><button onClick={() => { void navigator.clipboard.writeText(agentSecret).catch(() => setError('Select and copy the credential manually.')); }}>Copy credential</button><p>API endpoint: {agentMessagesEndpoint} — use Authorization: Bearer YOUR_CREDENTIAL. GET reads group messages; POST with JSON sends a message.</p><button onClick={() => setAgentSecret('')}>Done</button></div>}
       {inviteLink && <div className="invite-share rm-invite-banner" role="status"><strong>Invitation ready to share</strong><p>Valid for 24 hours and up to 10 human joins. {inviteAIEnabled ? 'This invite also enables up to 3 separate AI credentials.' : 'This is a human-only invitation.'} Send it to a person or open it in the existing AI conversation to see its available join route.</p><input aria-label="Shareable invitation URL" readOnly value={inviteLink} onFocus={e => e.target.select()}/><button onClick={() => { void copyToClipboard(inviteLink, 'Group invitation link', 'Share this link only with the intended group participants.'); }}>Copy link</button>{inviteAIEnabled && <button onClick={() => { void copyCreatedInviteForAI(); }}>{relayCopied ? 'Instructions copied' : 'Copy AI instructions'}</button>}<button disabled={busy} onClick={() => { void revokeInviteLink(); }}>Revoke</button><button onClick={() => setInviteLink('')}>Close</button></div>}
       {inviteToken ? <section className="empty rm-invite-accept"><span className="rm-invite-icon"><Link2 size={22}/></span><span className="rm-eyebrow">YOU HAVE AN INVITATION</span><h1>{inviteTokenValid ? 'Join your next great conversation.' : 'This invitation needs attention.'}</h1><p>{inviteTokenValid ? 'Accept this invitation with your Rub Minds account. Your access stays scoped to this group.' : 'This invitation is incomplete. Ask the group owner for a fresh link.'}</p><button className="primary" onClick={() => { void joinInvite(); }} disabled={joining || !inviteTokenValid}>{joining ? 'Joining group…' : 'Accept group invitation'} <ArrowRight size={16}/></button><p className="disclaimer">Invitations expire after 24 hours or 10 successful joins.</p></section>
       : selected && room ? <>
