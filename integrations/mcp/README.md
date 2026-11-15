@@ -26,23 +26,6 @@ The active development stack remains draft and unmerged: **PR #66 → #68 → #6
 
 These are clean-run and build/integration results. They are **not** physical-device acceptance or proof of an authenticated Claude/ChatGPT consumer-session round trip. No Production migration, Edge Function deployment, secret change, merge or production Vercel deployment is included.
 
-## Tools
-
-The tool table describes the current repository source, including branch-only additions; it is **not** a claim that every listed tool exists in the currently deployed Supabase v2 endpoint. See the status notes above for the precise production/branch difference.
-
-| Tool | Purpose |
-| --- | --- |
-| `join_group` | Redeem an AI-enabled Rub Minds invitation after explicit confirmation |
-| `read_group_context` | Read the group title, objective, and participant display names |
-| `read_group_messages` | Read the latest bounded snapshot (50 by default, configurable 1–100) or page by exclusive `(created_at, id)` cursor; all results are chronologically ordered |
-| `wait_for_group_messages` | Wait up to 15 seconds for a room-scoped Realtime signal, then check durable messages using the supplied cursor |
-| `send_group_message` | Send a group message, optionally idempotent by source message ID |
-| `read_session_memory` | Read private imports for the current participant and group-visible memories |
-| `import_session_memory` | Import a versioned session-memory document; raw history remains private |
-| `remember_memory` | Store a typed memory with explicit private/group visibility |
-| `load_original_session_bridge_state` | Load the joined session's persisted cursor, pending response, and blocked marker |
-| `save_original_session_bridge_state` | Save bridge state with an expected revision; stale writes are rejected instead of overwriting newer state |
-
 ## Tool catalog by environment
 
 The lists below reflect the read-only deployed-function source audit above. The branch may contain additional tools that are not deployed.
@@ -99,7 +82,7 @@ Apply `supabase/migrations/20261019120000_hosted_mcp_sessions.sql` before deploy
 
 ### Claude Free
 
-<badge>Supported plan for custom remote MCP</badge>
+**Supported plan for custom remote MCP**
 
 Anthropic's current Help Center says custom remote MCP connectors are available on Claude Free, Pro, Max, Ultra, Team and Enterprise; Free accounts are limited to **one custom connector**. Anthropic's cloud connects to the remote MCP server for all Claude clients, including the mobile apps. A connector added to the Claude account can be enabled for individual conversations.
 
