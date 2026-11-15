@@ -302,7 +302,11 @@ jobs:
           node -e 'const fs=require("node:fs"); const a=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+"/npm-audit.json","utf8")); console.log(JSON.stringify({metadata:a.metadata?.vulnerabilities, vulnerabilities:Object.entries(a.vulnerabilities??{}).map(([name,v])=>({name,severity:v.severity,isDirect:v.isDirect,range:v.range,fixAvailable:v.fixAvailable,via:v.via.map(x=>typeof x==="string"?x:x.name)}))},null,2))'
       - name: Enforce dependency audit gate
         run: npm audit --audit-level=moderate
-      - run: npm run build
+      - name: Build web app with isolated browser-test backend settings
+        env:
+          VITE_SUPABASE_URL: https://ui-test.supabase.co
+          VITE_SUPABASE_ANON_KEY: ui-test-anon-key
+        run: npm run build
       - run: npm run test
       - run: npm run test:runtime
       - name: Test Backroom target registry, dispatcher and local host
@@ -327,6 +331,24 @@ jobs:
         run: npm run test:browser
       - name: Run Backroom managed-browser end-to-end tests
         run: npm run test:backroom:browser
+      - name: Start redesigned UI preview
+        run: npm run preview -- --host 127.0.0.1 --port 4173 > "$RUNNER_TEMP/ui-preview.log" 2>&1 &
+      - name: Wait for redesigned UI preview
+        run: |
+          node --input-type=module <<'NODE'
+          for (let attempt = 0; attempt < 40; attempt++) {
+            try {
+              const response = await fetch("http://127.0.0.1:4173/");
+              if (response.ok) process.exit(0);
+            } catch {}
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+          throw new Error("Vite preview did not become ready");
+          NODE
+      - name: Test redesigned workspace, tasks and Backroom screens
+        env:
+          RM_BASE_URL: http://127.0.0.1:4173
+        run: npm run test:ui-redesign
 
 
   android-companion:
