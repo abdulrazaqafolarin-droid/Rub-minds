@@ -1,6 +1,6 @@
 # Device-frame AI runtime connection contract
 
-**Status:** source implementation on unmerged PR #69. The branch contains a host-independent frame-binding migration, owner challenge/status/revoke APIs, the MCP `bind_device_frame` tool, and focused SQL/protocol/MCP tests. Nothing has been deployed to staging or production; real device/client acceptance remains pending.
+**Status (15 November 2026):** source implementation on open, unmerged draft PR #69 (`a951e4cabf71f19965694918491c5d3dadb39554`). The host-independent frame-binding migration and its `backroom-device` v14 / `rub-minds-mcp` v4 routes are deployed to Rub Minds Staging; the shared `backroom-wake` v8 gateway is also deployed there with the provider-identity and private Android-forwarder checks. The Device Frame SQL acceptance test passed inside a rollback transaction and the exact-head GitHub Actions workflows passed. Production is unchanged. Real provider-account and physical-device acceptance remain pending.
 
 ## Product rule
 
@@ -11,6 +11,19 @@ The **AI session is the group participant**. A phone, desktop or terminal login 
 3. Rub Minds binds that existing AI participant/MCP session to that exact device, runtime session, app/process identity and group.
 4. The AI uses its joined MCP session to read messages, memory and tasks and to send group responses.
 5. Native app wake is a separate capability. It requires verified provider-conversation identity and separate, time-limited consent. A composer or Send-button match alone is never enough.
+
+## Place in the continuous group-collaboration loop
+
+Device Frame binding is one link in the overall Rub Minds participation system; it is not the collaboration brain or the wake mechanism.
+
+1. **Group Coordination** owns the authoritative room state: group messages, durable tasks, prerequisites, assignments, submissions, evidence and human reviews. Realtime updates are signals to refresh that same shared state, not a second store.
+2. **`@RMconnects`** routes eligible group events through the existing durable wake queue. The On policy is mention-based; Auto admits qualifying human-authored messages and excludes AI-authored Auto events to prevent relay loops. Task assignment is a separate event source. The canonical wake prompt identifies the event; the AI retrieves the relevant group content through its joined MCP session rather than receiving an unbounded copy of the room message as a device command.
+3. **Overlay drag-select** identifies one possible editable target in the exact current frame. Its coordinates and opaque target identity must be tied to the displayed frame, app/runtime and relevant conversation identity. Selection is not permission to type, wake or press Send.
+4. **Backroom** supplies the actual supported browser, phone, desktop or terminal runtime. The local platform adapter verifies the selected target and enforces its separate view, draft, control and wake permissions.
+5. **The original joined AI session** remains the participant. It reads the admitted event/context using the same MCP session and posts its reply or task result back through the existing group tools. The device frame never creates a second AI participant.
+6. **Durable cursors, leases, idempotency and settlement** prevent stale or duplicate work. An ambiguous provider submission is blocked for review rather than automatically replayed.
+
+“Continuous” is capability-dependent: an active MCP client can poll or receive supported signals while it is running; a provider conversation that is idle can only be started by a supported, separately authorized provider/device wake path. Binding a frame alone does not wake an idle model. The Playwright original-session runner is a local foreground runner, not a cloud always-on worker.
 
 ## Surface-specific behavior
 
@@ -52,7 +65,11 @@ Required server checks: same room, active AI participant, active joined MCP sess
 
 ## Validation in this slice
 
-`node --test integrations/backroom/frame-ai-runtime.node-test.mjs` covers joined-vs-unjoined identity, inventory-vs-participation, all four frame surfaces, exact scope mismatch, expiry/revocation, app conversation identity, terminal process identity, and separate native wake consent. On PR #69's exact current head `69d5741e567cd5d5670ad879888374ac9205bfb4`, the clean GitHub Actions runs passed the app/runtime suites, the `supabase/tests/device_frame_bindings.sql` lifecycle checks, and `scripts/local-mcp-sdk-e2e.mjs` exact-session bind/replay/Leave tests against disposable local Supabase. These validate the source and local test environment; they do not prove the `bind_device_frame` tool is deployed to Staging, that Claude/ChatGPT consumer clients can use the endpoint, or that a physical Android/desktop device is accepted.
+`node --test integrations/backroom/frame-ai-runtime.node-test.mjs` covers joined-vs-unjoined identity, inventory-vs-participation, all four frame surfaces, exact scope mismatch, expiry/revocation, app conversation identity, terminal process identity, and separate native wake consent. On PR #69 exact head `a951e4cabf71f19965694918491c5d3dadb39554`, all four GitHub Actions workflows passed: [Validate Rub Minds #43734381643](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43734381643), [Windows companion #43734381649](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43734381649), [Android companion #43734381654](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43734381654), and [durable wake SQL #43734381665](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43734381665). The local-Supabase MCP SDK E2E includes exact-session bind, wrong-session denial, retry, owner status/revoke and Leave invalidation.
+
+On 15 November 2026, Staging project `tzcuuynmviiuactafpld` was reconciled to 46 migrations. `supabase/tests/device_frame_bindings.sql` passed against Staging inside a transaction followed by rollback; post-test checks found zero fixture rooms, challenges, bindings and users. The new Device Frame tables have RLS enabled without `anon`/`authenticated` table grants, and the completion RPC is restricted to `service_role`. Staging readback confirms `backroom-device` v14, `rub-minds-mcp` v4 and `backroom-wake` v8 are ACTIVE with the expected routes/tools and identity-forwarding code.
+
+These checks validate source, isolated CI, Staging schema and deployment. They do **not** prove a real Claude/ChatGPT client round trip, an actual owner-issued challenge redeemed by a user-connected AI session, a physical Android/Windows device, provider-stable conversation identity, or native autonomous Send. The provider resolver remains empty; no native provider is currently eligible for autonomous wake. Production has not been changed.
 
 
 The project-wide sequencing, surface scope and release discipline are locked in [Rub Minds — Product Execution Plan](RUB_MINDS_PRODUCT_EXECUTION_PLAN.md). This execution plan governs the order: core phone/desktop/terminal capabilities first, full UI/UX redesign second, complete product testing third, then controlled release.
