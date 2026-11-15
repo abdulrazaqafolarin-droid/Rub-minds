@@ -92,6 +92,8 @@ Do not split shared collaboration into a separate side project or build duplicat
 
 **Ongoing engineering checks:** run focused unit, protocol, authorization and migration regressions with each vertical slice. These are continuous guardrails, not the final product acceptance phase.
 
+The current MCP catalogue provides message/context tools, durable original-session bridge-state, and Group Coordination task tools. A bounded `wait_for_group_messages` call and the existing Playwright foreground runner process **message events only**: the Realtime source subscribes to `public.messages`, and the bridge reads messages. It does not poll or consume `room_tasks` assignments. Task assignment is a separate event source admitted to the durable `@RMconnects` wake queue for eligible host-scoped Backroom bindings; a directly joined MCP client can call the task tools while active, but task assignments do not arrive through `wait_for_group_messages` by themselves. Stage A must either extend the original-session runner with a durable task-event consumer and idempotent task execution/recovery, or explicitly retain and validate the separate host-backed task-wake path on each supported surface. Do not claim the current message runner gives autonomous task participation.
+
 ### Stage B — Redesign the whole Rub Minds UI/UX
 
 Start this after the core phone, desktop and terminal capabilities have a coherent and verified implementation contract. This is a full product interface redesign, not a cosmetic pass over the current screens.
