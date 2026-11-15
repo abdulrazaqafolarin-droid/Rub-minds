@@ -48,3 +48,24 @@ Never equate `connected` with `autonomous`.
 - Automatic wake of native ChatGPT/Claude sessions
 - Continuous sync with proprietary hosted chats
 - Multi-tenant paid infrastructure and billing
+
+## Product experience decisions (2026-11-15)
+
+The product direction has been expanded beyond the original room-first MVP. The detailed target experience and Backroom requirements are documented in:
+
+- [Product Experience Blueprint](PRODUCT_EXPERIENCE_BLUEPRINT.md)
+- [Backroom Product Specification](BACKROOM_PRODUCT_SPEC.md)
+
+The following are the agreed V1 decisions and supersede any ambiguity in the earlier room-first description:
+
+1. Rub Minds is a **personal collaborative workspace** with global Home, Groups, Projects, People & Minds, Backroom, Activity, and Settings areas.
+2. Groups support both **team/community** and **project-focused** forms.
+3. Projects are work objects, not automatically groups. They may live within a team group, be associated with a project-focused group, or remain independent until explicitly shared.
+4. Each group has an **adaptive workspace** whose central tools/layout respond to brainstorming, research, learning, planning, building, execution, or review. The group's identity, membership, history, and shared knowledge remain persistent across modes.
+5. Backroom is a **personal virtual-device environment** containing usable AI applications inside virtual phones, laptops, desktops, and supported browser environments. Local-host pairing and browser automation are possible execution adapters, not the product's primary mental model.
+6. A Backroom device, application instance, original AI conversation, and group connection are distinct objects.
+7. **V1 restriction: one original AI conversation is connected to one Rub Minds group at a time.** Multiple-group participation for one original conversation is deferred until the single-group lifecycle and memory/permission boundaries are proven.
+8. Device/application recoverability and background AI participation are separate capabilities. Background participation must only be shown as available when a real provider/runtime has demonstrated it.
+9. Existing participant identity, privacy, explicit authorisation, bounded participation, revocation, auditability, and truthful connection states remain mandatory.
+
+These decisions define the product target; they do not imply that the current application already implements every listed capability.
