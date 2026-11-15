@@ -150,7 +150,7 @@ Do not weaken the legacy host-scoped wake queue to make the hostless group-bindi
 ### Active implementation stack
 
 - The dependent development sequence is **#52 → #53 → #54 → #55 → #56 → #58 → #59 → #61 → #60 → #62 → #63 → #64 → #65 → #66 → #68 → #69**. These are draft PRs; preserve their base relationships and do not merge out of order.
-- PR #69 remains an open, unmerged draft stacked on PR #68. Its source implementation head is `a951e4cabf71f19965694918491c5d3dadb39554`; it includes the host-independent Device Frame AI-session binding plus the MCP response-size streaming guard. Four workflows passed on that exact source head (see below). Documentation-only reconciliation commits have since been added to the same feature branch to align the product, Device Frame and group-wake contracts with the Staging promotion; the CI status for the newest documentation-only branch head must be checked separately. Do not merge out of order.
+- PR #69 remains an open, unmerged draft stacked on PR #68. Its source implementation head is `a951e4cabf71f19965694918491c5d3dadb39554`; it includes the host-independent Device Frame AI-session binding plus the MCP response-size streaming guard. Four workflows passed on that exact source head (see below). Documentation/runbook and task-event-boundary updates have subsequently been added to the same branch; latest docs branch head at this checkpoint is `5dd934cce3cec7560493bb17ed34e53869b2e3f6`. Its latest four exact-head workflows are running and must finish before reporting the newest branch head green. Do not merge out of order.
 - PR #72, "workspace and Backroom UX", was created from `main` before the full Stage A stack was reconciled. It is explicitly parked as future Stage B exploration. Do not merge it, stack core work on it, or treat it as the active product baseline. After Stage A is accepted, reconcile its useful ideas against the integrated tree and repeat the feature-preservation review.
 
 ### Exact-head CI evidence
@@ -162,7 +162,17 @@ The PR #69 source implementation head `a951e4cabf71f19965694918491c5d3dadb39554`
 - [Backroom Android companion #43734381654](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43734381654): Android protocol/unit tests, merged-manifest checks and compile-verification APK build.
 - [Backroom durable wake queue SQL #43734381665](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43734381665): durable queue, provider identity, Android forwarding/settlement/attestation, group-task lifecycle/dependencies, criterion evidence and least-privilege SQL tests.
 
-These runs validate source and isolated/local integration paths on `a951e4c`. They do **not** establish a live ChatGPT/Claude round trip, a physical phone or workstation acceptance, provider-stable conversation identity, or a completed native wake. The follow-up docs-only commits on the PR branch do not change executable source; their newest-head CI status must still be checked before claiming the branch head fully green.
+These runs validate source and isolated/local integration paths on `a951e4c`. They do **not** establish a live ChatGPT/Claude round trip, a physical phone or workstation acceptance, provider-stable conversation identity, or a completed native wake. The later commits are documentation-only and do not change executable source. The current newest-head run set is [Validate Rub Minds #43746399001](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43746399001), [Windows #43746398882](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43746398882), [Android #43746398883](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43746398883), and [durable wake SQL #43746398842](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43746398842); all were still in progress at the time this note was written.
+
+### Parent-stack merge gate — revalidation 15 November 2026
+
+Fresh reruns exposed source-level and workflow-ordering failures on older parent PR heads:
+
+- PR #64 head `3510120c...`: the web/runtime test job failed 9 tests. Three host-server close tests report `browser.stop is not a function`; four native wake adapter integration tests reject fixtures missing required target identity; two native journal tests reject fixtures missing required scope. Its durable wake SQL workflow fails applying `20261101221132_mcp_bridge_state.sql` because `public.rub_minds_mcp_join_requests` has not been created by the workflow's migration sequence.
+- PR #65 head `66b18159...`: its web/runtime test job failed 6 tests, including the same host-close and journal-fixture failures. Its durable wake SQL workflow has the same missing `rub_minds_mcp_join_requests` prerequisite.
+- PR #66 head `b476c769...` and PR #68 head `e827aba...`: their web/runtime reruns show the same five host-close/native-journal fixture failures. Their SQL/companion rerun jobs still failed before exposing steps/log archives and remain unclassified.
+
+The combined descendant PR #69 source tree contains later fixture and workflow updates and passed all four exact-head workflows on `a951e4c`; this does not make the earlier PR heads individually green. Preserve the stack order and **do not merge #64–#68 until their parent branch content/checks are reconciled**, or until the owner explicitly approves a documented alternative integration strategy. No parent branch was force-updated or merged during this revalidation.
 
 ### Live MCP deployment distinction
 
