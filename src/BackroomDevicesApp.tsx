@@ -39,6 +39,7 @@ function eventLabel(event: BackroomDeviceEvent, devices: BackroomDevice[]) {
 
 export default function BackroomApp() {
   const [rooms, setRooms] = useState<CloudRoom[]>([]);
+  const [authChecked, setAuthChecked] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [roomId, setRoomId] = useState(() => new URLSearchParams(location.search).get('room') ?? '');
   const [devices, setDevices] = useState<BackroomDevice[]>([]);
@@ -71,7 +72,7 @@ export default function BackroomApp() {
     setEvents(nextEvents);
   }, [roomId]);
 
-  useEffect(() => { void loadRooms().catch(e => setError(e.message)); }, [loadRooms]);
+  useEffect(() => { void loadRooms().catch(e => setError(e.message)).finally(() => setAuthChecked(true)); }, [loadRooms]);
   useEffect(() => {
     if (!roomId) return;
     setPairCode('');
@@ -131,6 +132,10 @@ export default function BackroomApp() {
     catch (e) { setError(e instanceof Error ? e.message : 'Device revocation failed.'); }
     finally { setBusy(false); }
   }
+
+  if (!authChecked) return <main className="br-cloud-shell"><section className="br-cloud-empty"><RefreshCw size={28}/><h2>Checking Backroom access</h2></section></main>;
+  if (!supabase) return <main className="br-cloud-shell"><section className="br-cloud-empty"><CircleAlert size={30}/><h2>Backroom unavailable</h2><p>Rub Minds cloud is not configured for this deployment.</p><a className="br-cloud-primary" href="/">Return to Collaboration</a></section></main>;
+  if (!userId) return <main className="br-cloud-shell"><section className="br-cloud-empty"><ShieldCheck size={30}/><h2>Backroom access</h2><p>Sign in to Rub Minds before opening Backroom.</p><a className="br-cloud-primary" href="/">Return to Collaboration</a></section></main>;
 
   return <main className="br-cloud-shell">
     <header className="br-cloud-header">
