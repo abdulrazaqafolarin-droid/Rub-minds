@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { ArrowLeft, ArrowRight, Bot, Check, Copy, Link2, MessageCircle, Plus, Send, Sparkles, Users, Zap } from 'lucide-react';
 import { createRoom, getRoom, getRooms, inviteUrl, sendMessage, subscribe, type Room } from './roomStore';
+import { ThemeToggle } from './UiPreferences';
 
 function useRooms() {
   const [rooms, setRooms] = useState<Room[]>(getRooms);
@@ -56,7 +57,7 @@ export default function App() {
   return (
     <div className="app">
       <aside className="sidebar">
-        <div className="brand"><div className="brand-icon"><Sparkles size={22}/></div><div><strong>Rub Minds</strong><small>Collective intelligence</small></div></div>
+        <div className="brand"><div className="brand-icon"><Sparkles size={22}/></div><div><strong>Rub Minds</strong><small>Local preview</small></div></div><ThemeToggle/>
         <button className="new-room" onClick={() => setNewRoom(true)}><Plus size={18}/> New group</button>
         <div className="section-label">YOUR GROUPS <span>{rooms.length}</span></div>
         <nav className="room-list">{rooms.length === 0 ? <p className="muted small">No groups yet. Create your first collaboration space.</p> : rooms.map(r => <button key={r.id} className={'room-link ' + (r.id === selected ? 'active' : '')} onClick={() => openRoom(r.id)}><MessageCircle size={17}/><span>{r.title}</span><ArrowRight size={14}/></button>)}</nav>
