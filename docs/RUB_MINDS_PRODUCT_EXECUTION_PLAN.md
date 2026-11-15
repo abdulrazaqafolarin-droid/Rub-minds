@@ -1,6 +1,6 @@
 # Rub Minds — Product Execution Plan
 
-**Last reconciled:** 8 November 2026  
+**Last reconciled:** 15 November 2026  
 **Status:** Active product direction; all release claims remain evidence-based.
 
 This document is the working source of truth for the order and boundaries of Rub Minds development. It prevents individual backend tasks, device integrations or UI improvements from pulling the project away from the product.
@@ -34,7 +34,7 @@ There is one source of truth for membership, messages, memory, tasks and permiss
 
 The repository contains an Android companion app and Android-side policy/tests. It supports device pairing, selected-app inventory, device credentials, screen-sharing setup, Accessibility-based local target inspection and permission-gated control paths.
 
-**Implemented on the PR #69 development branch, not yet physically accepted:** the Android frame can now be attached to an already-joined MCP participant through an owner-issued one-time challenge tied to the exact MCP session, selected Android package and signing-certificate fingerprint. This is group-collaboration identity, not proof of the provider's exact conversation; that provider identity is a separate native-wake gate. Real ChatGPT/Claude mobile-client connector support, provider-stable conversation identity and full physical acceptance remain unproven. The provider resolver remains empty, so autonomous native Send is unavailable.
+**Implemented on the PR #69 development branch, not yet physically accepted:** the Android frame can now be attached to an already-joined MCP participant through an owner-issued one-time challenge tied to the exact MCP session, selected Android package and signing-certificate fingerprint. This is group-collaboration identity, not proof of the provider's exact conversation; that provider identity is a separate native-wake gate. Claude's current documentation now supports one custom remote MCP connector on the Free plan, with an account-configured connector available to Claude mobile clients. Rub Minds has not yet passed a real Claude Free account test. ChatGPT Free is not documented as supporting the write-capable custom MCP workflow needed by Rub Minds. Provider-stable conversation identity and physical device acceptance remain unproven. The provider resolver remains empty, so autonomous native Send is unavailable.
 
 ### Desktop
 
@@ -105,7 +105,7 @@ Run the complete acceptance programme after the new interface is integrated, whi
 - Verify human signup/sign-in, invite preservation after sign-in, create/join group and multi-user message synchronization.
 - Use real supported MCP clients to join as independent AI sessions, exchange group messages, read group context, coordinate tasks, import private session context with consent, share only explicitly group-visible memory, and leave/revoke.
 - Test the same group through phone, desktop and terminal without a browser host. Verify the exact AI participant identity remains the same when it is attached to a frame.
-- Test actual supported ChatGPT and Claude clients and their real account/plan/tool permission boundaries. Record unavailable capabilities honestly; do not treat a generic MCP unit test as provider acceptance.
+- Test actual supported clients and their real account/plan/tool permission boundaries. Start with Claude Free's documented one-connector remote MCP path, then verify ChatGPT only on a plan/account that supports the required write-capable custom MCP tools. Record unavailable capabilities honestly; do not treat a generic MCP unit test as provider acceptance.
 - Physically test Android and each supported desktop OS. Test terminal clients with a real running terminal AI.
 - Test network loss/reconnect, expiry, replay, duplicate requests, concurrent joins/sends, revocation, stale device/runtime and recovery.
 - Run UI acceptance at narrow phone widths, tablet and desktop sizes, including accessible navigation and all important error/empty/loading states.
@@ -123,20 +123,49 @@ Native Send/wake requires a verified exact provider conversation identity, an ap
 
 Do not weaken the legacy host-scoped wake queue to make the hostless group-binding path appear complete. Keep the old queue intact; introduce and validate a separate host-independent frame-association path.
 
-## 6. Current repository checkpoint — 8 November 2026
+## 6. Current repository checkpoint — 15 November 2026
 
-- Private repository: `abdulrazaqafolarin-droid/Rub-minds`.
-- Production is separate from the current development branches. Do not deploy or mutate production during this work.
-- PR **#66** (provider-conversation identity/native wake) is open and draft.
-- PR **#68** (terminal MCP bridge) is open and draft; its base is PR #66's branch.
-- The current dependency stack is therefore **#66 → #68 → #69**. Review dependency and changed-file scope before changing that relationship; do not merge out of order.
-- PR #69 private Actions attempts still return jobs with `steps: null` and no usable runner output; they are not source-test results. For free validation, the public RUTONOMOUS synthetic run `42491621647` passed (public safety scan, workflow YAML parsing, pinned actionlint and all 42 synthetic contract tests). The new private-source validator run `42491621548` passed branch-ref preflight but confirmed that `RUB_MINDS_READ_TOKEN` is missing; all five private source test jobs were skipped.
-- PR #69 describes a focused 12/12 policy test run in an isolated Node harness. That is not a complete repository test/build, a Supabase migration replay or real device/provider acceptance.
-- PR #68's own description states that its tests have not executed on a runner and that no real terminal AI client has been connected.
-- PR #66's description records the provider resolver/physical provider acceptance and full CI/database/native-build gaps. Its native-wake work is not deployed or physically accepted.
-- The host-independent device-frame binding schema, owner-authenticated candidate/challenge/status/revoke routes and `bind_device_frame` MCP tool are committed on the PR #69 branch. The `agent_credential_digest` prerequisite migration is ordered before the older native-binding migration that consumes it; a before-trigger clears the digest whenever the encrypted AI credential is removed. Challenges target the exact MCP session digest and participant. Active frame links follow renewed runtime leases but remain capped by MCP-session/credential expiry and cannot be resurrected after expiry.
-- `supabase/tests/device_frame_bindings.sql` is connected to private CI and the RUTONOMOUS private-source workflow. It covers successful Android/terminal database binds, wrong AI/session, nonce/replay, app inventory invalidation, lease renew/shorten, expiry and Leave/digest cleanup. `scripts/local-mcp-sdk-e2e.mjs` covers owner-authenticated candidate/challenge/status/revoke routes, unauthenticated/non-member denial, exact-session MCP bind/replay and Leave revocation. These tests are wired, not executed on a runner yet. The RUTONOMOUS validator runs manually or on a narrowly scoped change to its own workflow file on public `main` (never on pull requests), defaults to this branch, resets disposable Supabase, and starts Backroom/MCP Edge Functions before the SDK test. Run `42491621548` validated the branch but confirmed `RUB_MINDS_READ_TOKEN` is missing, so source jobs were skipped. The separate synthetic test-lab run `42491621647` passed all 42 contract tests plus public safety/YAML/actionlint checks. No private source is committed to that public test repository.
-- Real phone/desktop/terminal acceptance with actual AI clients and physical devices remains outstanding. Desktop capture still establishes a whole-monitor stream with owner-confirmed app context, not native window/process attestation. The legacy Android native-wake path remains host-scoped and separate.
+### Production and release boundary
+
+- Production `main` is `7d63983c336ba1882fff17c8b6b8fa90db3f5632`; production remains separate from the open feature stack.
+- No Production database, Edge Function, Auth setting, secret, or Vercel deployment was changed during this audit.
+- Keep all release and merge actions behind explicit owner approval. Passing CI or a mergeable PR is not release approval.
+
+### Active implementation stack
+
+- The dependent development sequence is **#52 → #53 → #54 → #55 → #56 → #58 → #59 → #61 → #60 → #62 → #63 → #64 → #65 → #66 → #68 → #69**. These are draft PRs; preserve their base relationships and do not merge out of order.
+- PR #69's implementation head before the latest documentation-only corrections was `e062c943eb1503ccc4d29f11121496c8295c9c34`; its base is the PR #68 terminal-MCP branch. The latest PR #69 head now contains documentation-only follow-up commits.
+- PR #72, "workspace and Backroom UX", was created from `main` before the full Stage A stack was reconciled. It is explicitly parked as future Stage B exploration. Do not merge it, stack core work on it, or treat it as the active product baseline. After Stage A is accepted, reconcile its useful ideas against the integrated tree and repeat the feature-preservation review.
+
+### Exact-head CI evidence
+
+The implementation commit `e062c943eb1503ccc4d29f11121496c8295c9c34` passed all four current repository workflows:
+
+- [Validate Rub Minds #43717681451](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43717681451): production build, Vitest, registered Node/runtime/Backroom tests, Deno Edge Function checks, controlled browser tests, clean local Supabase migration rebuild, signup/invitation flows, MCP discovery/SDK tests, and device pairing/revocation.
+- [Backroom durable wake queue SQL #43717681460](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43717681460): wake queue, provider identity, Android settlement/forwarder, task lifecycle/dependencies, criterion review evidence and least-privilege SQL tests.
+- [Backroom Android companion #43717681482](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43717681482): Android unit/protocol tests, manifest gate, compile-verification APK and fingerprint checks.
+- [Backroom Windows desktop companion #43717681533](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43717681533): bundled WebView, Rust tests, authorization tests, Windows release link, fingerprint and artifact upload.
+
+These runs validate the commit's code and disposable/local integration paths. They do **not** establish physical-device acceptance, a real Claude/ChatGPT consumer conversation round trip, or unattended provider-session wake. The later commits on PR #69 update documentation only; their own CI checks must still pass before claiming the latest PR head is green.
+
+### Live MCP deployment distinction
+
+A read-only Supabase audit on 15 November found:
+
+- Production `rub-minds-mcp`: ACTIVE v3, last deployed 25 October. It exposes join/leave, group context/messages, bounded wait, send and session-memory tools. It does not expose the group-task tools, durable original-session bridge-state tools, or `bind_device_frame`.
+- Staging `rub-minds-mcp`: ACTIVE v3. It exposes the group tools plus task and original-session bridge-state tools. It does not yet expose the PR #69 `bind_device_frame` tool.
+- PR #69 source contains the host-independent frame-binding migration, owner challenge/status/revoke APIs and MCP `bind_device_frame`; this is branch-only until deliberately promoted to Staging and verified there.
+- Both deployed MCP functions use the application-level invitation/session authorization path. No OAuth authorization server is implemented. Use only a public Staging publishable/anon key in an `apikey` header if the gateway requires one; never place a Supabase service-role/secret key in Claude, ChatGPT, a browser or a terminal AI client.
+
+### Current provider compatibility
+
+- Anthropic's current documentation (15 November 2026) says Claude Free supports one custom remote MCP connector. A configured account connector can be enabled in individual conversations, including Claude mobile clients. Rub Minds still needs a real Claude Free acceptance run against Staging.
+- OpenAI's current Help Center lists custom MCP connections and full MCP support for Business and Enterprise/Edu on ChatGPT web. ChatGPT Free is not listed for the write-capable group workflow. Do not promise direct ChatGPT Free MCP participation; use the guided/manual relay unless the user's account shows a supported capability.
+- A remote connector does not itself establish provider conversation identity, transcript access, background execution, or native Send.
+
+### Remaining Stage A acceptance
+
+Real Claude Free connector join/read/write/leave tests, a real terminal MCP-client run, and physical Android/desktop device tests remain outstanding. The Device Frame ↔ AI binding in #69 must be tested against the exact deployed Staging migration/function before it is called available. Provider-specific native Send remains a separate gate; the Android provider resolver is still empty and Windows does not have a native canonical-wake Send driver.
 
 ## 7. Rules for keeping the work on course
 
@@ -153,6 +182,14 @@ Do not weaken the legacy host-scoped wake queue to make the hostless group-bindi
 
 ## 8. Immediate next task
 
-Create a fine-grained GitHub token with access only to the private `Rub-minds` repository and `Contents: Read-only`; save it in RUTONOMOUS → Settings → Secrets and variables → Actions as `RUB_MINDS_READ_TOKEN`. Never paste the token into chat or commit it. Then rerun the private-source validator and fix every migration, SQL, MCP SDK, Node/build or native error it reports until the full clean-run validation is green. After that, complete real phone/desktop/terminal acceptance with supported AI clients and physical devices. Keep native Send/wake separate. Once the three core surfaces work coherently, move to the full UI/UX redesign, then the complete product acceptance phase.
+Finish Stage A acceptance without changing Production:
+
+1. **Claude Free remote MCP acceptance:** use a disposable Staging group and the Staging MCP URL from `integrations/mcp/README.md`. Configure Claude's single allowed custom connector with only a public Staging `apikey` header if the Supabase gateway requires it. Confirm the real Claude Free client discovers the actual Staging tool catalogue, joins with the intended invite, reads context/messages, sends a harmless group message, preserves private memory, and leaves/revokes. Repeat with Claude mobile after the account connector is configured. Record exact client, plan, tool catalogue and outcomes. Do not use real private conversation history for the test.
+2. **Terminal MCP acceptance:** connect a real OpenCode/other MCP-compatible terminal AI client to the documented Staging-only stdio bridge. Verify join, group messaging, task discovery and Leave/revocation with the actual client. The bridge is foreground software, not an always-on worker.
+3. **Device Frame acceptance:** after the PR #69 migration and Edge Function are deliberately applied/deployed to Staging, verify the one-time challenge in the exact already-joined AI session and test the Android, desktop and terminal surfaces. Physical tests must establish each surface's actual capabilities; do not infer window/process attestation from whole-monitor capture.
+4. Keep native Send/wake disabled where provider conversation identity or device acceptance is absent. A queued wake, detected composer, or cleared input field is not proof that the AI read and answered a group event.
+5. Once the same group/AI identity and collaboration path work coherently across phone, desktop and terminal, close Stage A and only then reconcile the full Stage B UI/UX redesign. After that, perform Stage C full product acceptance and Stage D release review.
+
+Do not merge, deploy, mutate Production, or treat the parked PR #72 as complete without explicit owner approval and the relevant evidence.
 
 Only after the association and the shared AI collaboration path work coherently across all three surfaces should the project move to the full UI/UX redesign.
