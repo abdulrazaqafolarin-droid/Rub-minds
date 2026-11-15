@@ -28,6 +28,20 @@ The intended result is that an existing AI conversation can join a Rub Minds gro
 
 There is one source of truth for membership, messages, memory, tasks and permissions. Do not introduce a second group/message/task backend for devices or terminal clients.
 
+## 2.1 Continuous group-participation loop
+
+The core product loop must remain connected across the Group Coordination layer, `@RMconnects`, the draggable overlay, original AI sessions and Backroom device runtimes:
+
+1. **Group Coordination is authoritative.** Human and AI group messages, durable tasks, prerequisites, assignments, submissions, criterion evidence and reviews all use the same room, participant and message/task backend. Realtime is a refresh signal; it is not a second source of truth.
+2. **Events enter the existing participation policy.** A qualifying group message, explicit mention or task assignment is admitted by its database-side event rule. The On mode is mention-based; Auto admits qualifying human-authored messages and excludes AI-authored Auto events to prevent automatic AI-to-AI loops. Task assignment is a separate wake event.
+3. **`@RMconnects` uses the durable wake path.** It targets the exact existing joined AI session/binding. The canonical trigger is a fixed event reference, not a copy of arbitrary group text or a command to the device. The AI retrieves the actual message/task through its authenticated MCP session.
+4. **The overlay resolves the real interaction target.** Drag-select must map the rectangle to one exact visible editable field in the current frame, app and runtime. Stale frame IDs, changed tabs/apps, ambiguous targets and changed conversation identity fail closed. Selection does not authorize typing, wake or Send.
+5. **Backroom supplies the actual execution surface.** A managed browser, Android app, desktop app or terminal uses its own local/device adapter and separate view, draft, control and wake permissions. A simulated frame is not a connected app.
+6. **The original AI session remains the participant.** The same joined MCP identity reads group context and events, then contributes a group reply, task result or blocker. The device/frame is only the runtime attached to that participant; never create a duplicate AI participant for a device.
+7. **Delivery is durable and recoverable.** Cursors, revision checks, idempotency keys, queue leases, result acknowledgements and blocked ambiguous outcomes protect against lost/duplicate turns. Leave, Off, expiry, device revoke and conversation changes invalidate the relevant path.
+
+“Continuous participation” is bounded by the client actually being able to participate. An active MCP client can poll or receive supported signals while it is running. An idle external provider conversation requires a provider-supported, separately authorized wake driver; a server-side MCP message or Device Frame binding cannot force an idle model to start a new turn. The Playwright original-session runner is a local foreground process, not a cloud-hosted always-on worker. Provider-specific native Send remains gated by exact conversation identity, consent, settlement and physical acceptance.
+
 ## 3. Product surfaces and the verified starting point
 
 ### Phone
@@ -134,28 +148,33 @@ Do not weaken the legacy host-scoped wake queue to make the hostless group-bindi
 ### Active implementation stack
 
 - The dependent development sequence is **#52 → #53 → #54 → #55 → #56 → #58 → #59 → #61 → #60 → #62 → #63 → #64 → #65 → #66 → #68 → #69**. These are draft PRs; preserve their base relationships and do not merge out of order.
-- PR #69 is stacked on the PR #68 terminal-MCP branch and remains an unmerged draft. Its latest implementation commit is `daa7299011643e36f525b815e0af402fc77bc941`; it adds streaming enforcement of the 1.2 MB MCP response limit and early cancellation regressions. The branch's follow-up documentation checkpoint is `f86fe7ccf6b893c2f320c96e72a4be3124cb7aa3`. The last fully green CI checkpoint is `9d962987902cccb63062b95f399a4cd3586c2a92`; the later streaming-hardening and documentation commits have no attached GitHub Actions runs and must not be reported as green.
+- PR #69 remains an open, unmerged draft stacked on PR #68. Its source implementation head is `a951e4cabf71f19965694918491c5d3dadb39554`; it includes the host-independent Device Frame AI-session binding plus the MCP response-size streaming guard. Four workflows passed on that exact source head (see below). Documentation-only reconciliation commits have since been added to the same feature branch to align the product, Device Frame and group-wake contracts with the Staging promotion; the CI status for the newest documentation-only branch head must be checked separately. Do not merge out of order.
 - PR #72, "workspace and Backroom UX", was created from `main` before the full Stage A stack was reconciled. It is explicitly parked as future Stage B exploration. Do not merge it, stack core work on it, or treat it as the active product baseline. After Stage A is accepted, reconcile its useful ideas against the integrated tree and repeat the feature-preservation review.
 
 ### Exact-head CI evidence
 
-The last fully validated PR #69 checkpoint `9d962987902cccb63062b95f399a4cd3586c2a92` passed all current repository CI workflows. The subsequent stream-size hardening commits are newer and remain pending validation:
+The PR #69 source implementation head `a951e4cabf71f19965694918491c5d3dadb39554` passed all four exact-head workflows:
 
-- [Validate Rub Minds #43721633611](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43721633611): production build, dependency audit, Vitest, registered Node/runtime/Backroom tests, Deno Edge Function checks, controlled browser tests, clean local Supabase migration rebuild, signup/invitation flows, Vault and private bridge-state permissions, MCP discovery/SDK tests, and device pairing/revocation.
-- [Backroom durable wake queue SQL #43721633664](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43721633664): wake queue, provider identity, Android settlement/forwarder/attestation, task lifecycle/dependencies, criterion review evidence and least-privilege SQL tests.
-- [Backroom Android companion #43721633626](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43721633626): provider-identity probe, Android/device protocol and unit tests, merged-manifest gate, compile-verification APK, signature/fingerprint checks and artifact provenance.
-- [Backroom Windows desktop companion #43721633617](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43721633617): bundled WebView, Rust tests, authorization tests, Windows release link, fingerprint and artifact upload.
+- [Validate Rub Minds #43734381643](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43734381643): production web build, dependency audit, Node/Vitest/runtime/Backroom suites, Deno function checks, controlled browser tests, clean local Supabase migration rebuild, invitation and MCP SDK E2E, Device Frame exact-session bind/replay/revocation.
+- [Backroom Windows desktop companion #43734381649](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43734381649): web tests/build, bundled WebView, native Windows Rust tests and x64 MSVC Release executable link/fingerprint/artifact upload.
+- [Backroom Android companion #43734381654](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43734381654): Android protocol/unit tests, merged-manifest checks and compile-verification APK build.
+- [Backroom durable wake queue SQL #43734381665](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43734381665): durable queue, provider identity, Android forwarding/settlement/attestation, group-task lifecycle/dependencies, criterion evidence and least-privilege SQL tests.
 
-These runs validate commit `9d962987...` and its disposable/local integration paths. They do **not** establish physical-device acceptance, a real Claude/ChatGPT consumer conversation round trip, live Staging deployment of `bind_device_frame`, or unattended provider-session wake. The two later response-stream hardening commits `a884779f...` and `daa72990...` have not yet received GitHub Actions results; do not report the latest head as green until fresh exact-head checks complete.
+These runs validate source and isolated/local integration paths on `a951e4c`. They do **not** establish a live ChatGPT/Claude round trip, a physical phone or workstation acceptance, provider-stable conversation identity, or a completed native wake. The follow-up docs-only commits on the PR branch do not change executable source; their newest-head CI status must still be checked before claiming the branch head fully green.
 
 ### Live MCP deployment distinction
 
-A read-only Supabase audit on 15 November found:
+A Staging readback after the 15 November promotion confirms:
 
-- Production `rub-minds-mcp`: ACTIVE v3, last deployed 25 October. It exposes join/leave, group context/messages, bounded wait, send and session-memory tools. It does not expose the group-task tools, durable original-session bridge-state tools, or `bind_device_frame`.
-- Staging `rub-minds-mcp`: ACTIVE v3. It exposes the group tools plus task and original-session bridge-state tools. It does not yet expose the PR #69 `bind_device_frame` tool.
-- PR #69 source contains the host-independent frame-binding migration, owner challenge/status/revoke APIs and MCP `bind_device_frame`; this is branch-only until deliberately promoted to Staging and verified there.
-- Both deployed MCP functions use the application-level invitation/session authorization path. No OAuth authorization server is implemented. Use only a public Staging publishable/anon key in an `apikey` header if the gateway requires one; never place a Supabase service-role/secret key in Claude, ChatGPT, a browser or a terminal AI client.
+- Staging database `tzcuuynmviiuactafpld`: 46 migration history entries, including provider-identity queue, Android native settlement/attestation/forwarder, MCP credential digest and Device Frame binding.
+- Staging `rub-minds-mcp`: ACTIVE v4. It exposes the group/task/original-session bridge-state tools and the PR #69 `bind_device_frame` tool.
+- Staging `backroom-device`: ACTIVE v14. It exposes the owner-authenticated Device Frame candidate/challenge/status/revoke routes and the Android native binding/ACK routes.
+- Staging `backroom-wake`: ACTIVE v8. It checks provider-conversation identity, verifies Android native-binding attestation and forwards Android-native leases through the private service-role command-queue RPC. Imports were flattened into the deployed function bundle; no new Edge secret or environment variable was required.
+- Staging Device Frame SQL acceptance passed inside a transaction followed by rollback; post-test checks found zero test rooms, users, challenges or bindings. The Device Frame tables have RLS enabled with no direct `anon`/`authenticated` grants, and the completion RPC is service-role-only.
+- At the post-deployment readback, Staging had zero `backroom_input_bindings` and zero `backroom_wake_jobs`; no real wake lease or phone command was present or exercised. This was a backend deployment, not a provider/device acceptance run.
+- Production remains separate and unchanged. Production `rub-minds-mcp` remains on its pre-stack deployment and does not expose this feature stack.
+
+The Staging MCP and Backroom endpoints use the application-level invitation/session authorization path. No OAuth authorization server is implemented. Use only a public Staging publishable/anon key in an `apikey` header if the gateway requires one; never place a Supabase service-role/secret key in Claude, ChatGPT, a browser or a terminal AI client.
 
 ### Current provider compatibility
 
@@ -165,7 +184,7 @@ A read-only Supabase audit on 15 November found:
 
 ### Remaining Stage A acceptance
 
-Real Claude Free connector join/read/write/leave tests, a real terminal MCP-client run, and physical Android/desktop device tests remain outstanding. The Device Frame ↔ AI binding in #69 must be tested against the exact deployed Staging migration/function before it is called available. Provider-specific native Send remains a separate gate; the Android provider resolver is still empty and Windows does not have a native canonical-wake Send driver.
+Real Claude Free connector join/read/write/leave tests, a real terminal MCP-client run, an owner-authenticated Device Frame challenge redeemed by the exact joined AI session, and physical Android/desktop device tests remain outstanding. The backend schema and Edge routes are now deployed to Staging, but the owner/client/device path has not yet been accepted end to end. The Android provider resolver is still empty and Windows does not have a native canonical-wake Send driver, so native autonomous Send remains unavailable. The Group Coordination → `@RMconnects` → durable event/queue → exact original AI session → group reply loop still needs a real supported-client acceptance run.
 
 ## 7. Rules for keeping the work on course
 
@@ -186,7 +205,7 @@ Finish Stage A acceptance without changing Production:
 
 1. **Claude Free remote MCP acceptance:** use a disposable Staging group and the Staging MCP URL from `integrations/mcp/README.md`. Configure Claude's single allowed custom connector with only a public Staging `apikey` header if the Supabase gateway requires it. Confirm the real Claude Free client discovers the actual Staging tool catalogue, joins with the intended invite, reads context/messages, sends a harmless group message, preserves private memory, and leaves/revokes. Repeat with Claude mobile after the account connector is configured. Record exact client, plan, tool catalogue and outcomes. Do not use real private conversation history for the test.
 2. **Terminal MCP acceptance:** connect a real OpenCode/other MCP-compatible terminal AI client to the documented Staging-only stdio bridge. Verify join, group messaging, task discovery and Leave/revocation with the actual client. The bridge is foreground software, not an always-on worker.
-3. **Device Frame acceptance:** after the PR #69 migration and Edge Function are deliberately applied/deployed to Staging, verify the one-time challenge in the exact already-joined AI session and test the Android, desktop and terminal surfaces. Physical tests must establish each surface's actual capabilities; do not infer window/process attestation from whole-monitor capture.
+3. **Device Frame and participation acceptance:** the PR #69 migrations and `rub-minds-mcp` v4 / `backroom-device` v14 / `backroom-wake` v8 are already deployed to Staging. Now verify the owner-issued challenge is redeemed by the exact already-joined AI session, then validate the same group on supported phone, desktop and terminal surfaces. Exercise a real group message/task assignment through `@RMconnects`, the actual overlay target and the original AI reply. Physical tests must establish each surface's real capabilities; do not infer window/process attestation from whole-monitor capture.
 4. Keep native Send/wake disabled where provider conversation identity or device acceptance is absent. A queued wake, detected composer, or cleared input field is not proof that the AI read and answered a group event.
 5. Once the same group/AI identity and collaboration path work coherently across phone, desktop and terminal, close Stage A and only then reconcile the full Stage B UI/UX redesign. After that, perform Stage C full product acceptance and Stage D release review.
 
