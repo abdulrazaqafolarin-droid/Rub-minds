@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Activity, ArrowDownToLine, Check, ChevronDown, CircleAlert, Copy,
+  Activity, ArrowDownToLine, ArrowLeft, Check, ChevronDown, CircleAlert, Copy,
   LockKeyhole, Monitor, RefreshCw, ShieldCheck, Smartphone, SquareTerminal, X,
 } from 'lucide-react';
 import { listCloudRooms, type CloudRoom } from './cloudRooms';
 import { supabase } from './supabase';
+import { ThemeToggle } from './UiPreferences';
 import {
   approveBackroomDevice, createBackroomDevicePairing, listBackroomDeviceEvents,
   listBackroomDevices, revokeBackroomDevice, type BackroomDevice, type BackroomDeviceEvent,
@@ -12,6 +13,7 @@ import {
 import BackroomAndroidControl from './BackroomAndroidControl';
 import BackroomDesktopControl from './BackroomDesktopControl';
 import './backroom-cloud.css';
+import './backroom-cloud-theme.css';
 
 type Surface = 'phone' | 'desktop' | 'terminal';
 const surfaceLabels: Record<Surface, string> = {
@@ -132,14 +134,14 @@ export default function BackroomApp() {
 
   return <main className="br-cloud-shell">
     <header className="br-cloud-header">
-      <div className="br-cloud-brand"><div className="br-cloud-mark"><Smartphone size={21}/></div><div><b>Backroom</b><small>Unified device frame</small></div></div>
+      <div className="br-cloud-brand"><div className="br-cloud-mark"><Smartphone size={21}/></div><div><b>Backroom</b><small>Connected devices & apps</small></div></div>
       <div className="br-cloud-room">
         <label htmlFor="br-cloud-room-select">Group</label>
         <select id="br-cloud-room-select" value={roomId} onChange={event => setRoomId(event.target.value)}>
           {rooms.length ? rooms.map(room => <option key={room.id} value={room.id}>{room.title}</option>) : <option value="">No groups yet</option>}
         </select>
       </div>
-      <button className="br-cloud-quiet" onClick={() => void refresh().catch(e => setError(e.message))} disabled={!roomId || busy}><RefreshCw size={16}/> Refresh</button>
+      <div className="br-cloud-header-actions"><a className="br-cloud-quiet br-cloud-collaboration" href="/"><ArrowLeft size={15}/> Collaboration</a><ThemeToggle compact/><button className="br-cloud-quiet" onClick={() => void refresh().catch(e => setError(e.message))} disabled={!roomId || busy}><RefreshCw size={16}/> Refresh</button></div>
     </header>
 
     {!supabase ? <section className="br-cloud-notice"><CircleAlert/> Supabase cloud is not configured for this deployment.</section> : null}
@@ -147,7 +149,7 @@ export default function BackroomApp() {
     {error ? <section className="br-cloud-notice error"><CircleAlert size={17}/>{error}<button onClick={() => setError('')} aria-label="Dismiss error"><X size={15}/></button></section> : null}
 
     <section className="br-cloud-intro">
-      <div><span className="br-cloud-eyebrow">RUB MINDS · DEVICE RUNTIMES</span><h1>One space. Every surface.</h1><p>Connect native runtimes directly to Rub Minds over outbound HTTPS. No localhost server or phone port bridge.</p></div>
+      <div><span className="br-cloud-eyebrow">BACKROOM · GROUP DEVICE WORKSPACE</span><h1>Your connected devices</h1><p>Manage the phone, desktop and terminal companions authorised for this group. A paired device or listed app is not automatically a connected AI conversation; connect an existing group AI session to a supported frame explicitly.</p></div>
       <div className="br-cloud-security"><ShieldCheck size={19}/><span>Owner approval required<br/><small>Pairing codes are one-use and expire in 5 minutes.</small></span></div>
     </section>
 
