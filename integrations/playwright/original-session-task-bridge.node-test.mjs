@@ -190,7 +190,7 @@ test("a process restart resumes result_ready state by replaying submission, not 
   assert.equal(fixture.calls.submit[0].result, stored.result);
 });
 
-test("a process restart in working state re-reads the claimed task before asking again", async () => {
+test("a process restart in working state fails closed without re-sending the task prompt", async () => {
   const stored = {
     schema: 1,
     phase: "working",
@@ -204,11 +204,12 @@ test("a process restart in working state re-reads the claimed task before asking
     stored,
   });
   const result = await fixture.bridge.step({ approved: true });
-  assert.equal(result.status, "submitted");
+  assert.equal(result.status, "blocked");
   assert.equal(fixture.calls.list, 0);
+  assert.equal(fixture.calls.read.length, 0, "ambiguous provider turn is not re-executed");
   assert.deepEqual(fixture.calls.claim, []);
-  assert.equal(fixture.calls.ask.length, 1);
-  assert.equal(fixture.calls.submit[0].submissionKey, stored.submissionKey);
+  assert.equal(fixture.calls.ask.length, 0);
+  assert.equal(fixture.calls.submit.length, 0);
 });
 
 test("fails closed on malformed or cross-participant recovery state", async () => {
