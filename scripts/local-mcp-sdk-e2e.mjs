@@ -4,7 +4,7 @@
  * against the disposable local Supabase Edge Function.
  */
 import assert from "node:assert/strict";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { joinRubMindsInvite, McpSessionMessageTransport } from "../integrations/playwright/mcp-session-message-transport.mjs";
 
@@ -1726,7 +1726,7 @@ const runnerRoomRows = await request("/rest/v1/rooms", {
 });
 assert.equal(runnerRoomRows.length, 1);
 const runnerRoom = runnerRoomRows[0];
-const runnerInviteToken = randomUUID().replace(/-/g, "").padEnd(64, "0").slice(0, 64);
+const runnerInviteToken = randomBytes(32).toString("hex");
 const runnerInviteRows = await request("/rest/v1/room_invites", {
   method: "POST",
   headers: { Prefer: "return=representation" },
@@ -1749,6 +1749,7 @@ try {
   runnerJoin = await joinRubMindsInvite({
     endpoint,
     inviteToken: runnerInviteToken,
+    joinRequestKey: randomBytes(32).toString("hex"),
     agentLabel: "Local Playwright original session",
     allowLocalTestEndpoint: true,
   });
