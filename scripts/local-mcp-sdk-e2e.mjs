@@ -1711,9 +1711,17 @@ try {
   await Promise.allSettled([first.close(), second.close()]);
 }
 
+// This local script has already exercised multiple negative, concurrent,
+// independent and rebind joins. Reset only the disposable CI join-limit bucket
+// before the separate Playwright helper acceptance; Production is not touched.
+await request("/rest/v1/public_request_rate_limits?bucket=eq.rub-minds-mcp-join", {
+  method: "DELETE",
+  headers: { Prefer: "return=minimal" },
+});
+
 // Exercise the exact local Playwright runner join helper against the real Edge
-// Function. It performs the legacy initialize handshake, redeems the AI invite
-// on that same MCP session, verifies the modern joined identity, reads tasks,
+// Function. It redeems through modern MCP with a durable join_request_key,
+// verifies the returned joined identity, reads tasks, retries idempotently,
 // and revokes the session. Loopback is explicitly enabled only in this test.
 const runnerRoomRows = await request("/rest/v1/rooms", {
   method: "POST",
