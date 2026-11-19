@@ -196,6 +196,13 @@ export default function BackroomApp() {
                 </div>
               : <BackroomDesktopControl roomId={roomId}/>}
           </div>
+          <section className="br-cloud-frame-note" aria-label="Native AI action availability">
+            <div>
+              <b>AI-directed sending / native Off · On · Auto</b>
+              <p>Not available · provider identity + deployment/device acceptance pending</p>
+            </div>
+            <small>Live viewing, touch and draft insertion are separate from permission to send. The exact provider conversation must be verified on the device before any autonomous Send action can be enabled.</small>
+          </section>
         </div>
       </section>
 
