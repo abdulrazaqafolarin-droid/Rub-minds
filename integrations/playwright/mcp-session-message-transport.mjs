@@ -75,6 +75,7 @@ function extractStructuredContent(payload, requestId, toolName) {
 export async function joinRubMindsInvite({
   endpoint,
   inviteToken,
+  joinRequestKey,
   agentLabel,
   allowLocalTestEndpoint = false,
   fetchImpl = globalThis.fetch,
@@ -98,6 +99,9 @@ export async function joinRubMindsInvite({
   if (typeof inviteToken !== "string" || !/^[0-9a-f]{64}$/i.test(inviteToken)) {
     throw new TypeError("inviteToken must be a 64-character hexadecimal Staging invitation");
   }
+  if (typeof joinRequestKey !== "string" || !/^[0-9a-f]{64}$/i.test(joinRequestKey)) {
+    throw new TypeError("joinRequestKey must be a 64-character hexadecimal idempotency key");
+  }
   if (typeof agentLabel !== "string" || !agentLabel.trim() || agentLabel.trim().length > 80) {
     throw new TypeError("agentLabel must contain 1-80 characters");
   }
@@ -107,9 +111,28 @@ export async function joinRubMindsInvite({
   }
   if (signal?.aborted) throw new Error("Rub Minds invitation join was cancelled");
 
-  const protocolVersion = "2025-06-18";
-  let nextRequestId = 1;
-  const request = async (body, headers, attempt, retryTransient = false) => {
+  const protocolVersion = DEFAULT_PROTOCOL_VERSION;
+  const requestId = 1;
+  const body = {
+    jsonrpc: "2.0",
+    id: requestId,
+    method: "tools/call",
+    params: {
+      _meta: {
+        "io.modelcontextprotocol/protocolVersion": protocolVersion,
+        "io.modelcontextprotocol/clientCapabilities": {},
+      },
+      name: "join_group",
+      arguments: {
+        invite_token: inviteToken.toLowerCase(),
+        agent_label: agentLabel.trim(),
+        confirm_join: true,
+        join_request_key: joinRequestKey.toLowerCase(),
+      },
+    },
+  };
+
+  const request = async (attempt) => {
     const controller = new AbortController();
     const forwardAbort = () => controller.abort();
     signal?.addEventListener("abort", forwardAbort, { once: true });
@@ -120,16 +143,17 @@ export async function joinRubMindsInvite({
         headers: {
           "Content-Type": "application/json",
           "Accept": "application/json, text/event-stream",
-          ...headers,
+          "MCP-Protocol-Version": protocolVersion,
+          "Mcp-Method": "tools/call",
+          "Mcp-Name": "join_group",
         },
         body: JSON.stringify(body),
         signal: controller.signal,
       });
       if (!response || typeof response.ok !== "boolean" ||
-          typeof response.json !== "function" ||
-          !response.headers || typeof response.headers.get !== "function") {
+          typeof response.json !== "function") {
         const error = new Error("Rub Minds MCP returned an invalid HTTP response");
-        error.retryable = retryTransient && attempt === 0;
+        error.retryable = attempt === 0;
         throw error;
       }
       if (!response.ok) {
@@ -142,19 +166,17 @@ export async function joinRubMindsInvite({
         payload = await response.json();
       } catch {
         const error = new Error("Rub Minds MCP returned invalid JSON");
-        error.retryable = retryTransient && attempt === 0;
+        error.retryable = attempt === 0;
         throw error;
       }
       if (!payload || typeof payload !== "object" || Array.isArray(payload) ||
-          payload.jsonrpc !== "2.0" || payload.id !== body.id) {
+          payload.jsonrpc !== "2.0" || payload.id !== requestId) {
         const error = new Error("Rub Minds MCP returned an invalid JSON-RPC response");
-        error.retryable = retryTransient && attempt === 0;
+        error.retryable = attempt === 0;
         throw error;
       }
-      if (payload.error) {
-        throw new Error("Rub Minds MCP invitation request was rejected");
-      }
-      return { payload, response };
+      if (payload.error) throw new Error("Rub Minds MCP invitation request was rejected");
+      return payload;
     } catch (error) {
       if (signal?.aborted) throw new Error("Rub Minds invitation join was cancelled");
       if (controller.signal.aborted && attempt === 0) {
@@ -163,7 +185,7 @@ export async function joinRubMindsInvite({
         throw timeout;
       }
       if (error?.retryable === true) throw error;
-      if (retryTransient && attempt === 0 && (error instanceof TypeError || error?.name === "TypeError")) {
+      if (error instanceof TypeError && attempt === 0) {
         const retry = new Error("Rub Minds Staging invitation request failed");
         retry.retryable = true;
         throw retry;
@@ -176,48 +198,11 @@ export async function joinRubMindsInvite({
     }
   };
 
-  const initializeBody = {
-    jsonrpc: "2.0",
-    id: nextRequestId++,
-    method: "initialize",
-    params: {
-      protocolVersion,
-      capabilities: {},
-      clientInfo: { name: "rub-minds-original-session-runner", version: "0.1.0" },
-    },
-  };
-  const { payload: initialized, response: initializeResponse } =
-    await request(initializeBody, {}, 0);
-  if (!initialized.result || initialized.result.protocolVersion !== protocolVersion) {
-    throw new Error("Rub Minds MCP did not negotiate the supported invitation protocol");
-  }
-  const sessionHandle = initializeResponse.headers.get("Mcp-Session-Id");
-  if (typeof sessionHandle !== "string" || !SESSION_HANDLE_RE.test(sessionHandle)) {
-    throw new Error("Rub Minds MCP did not return a valid invitation session; no group was joined");
-  }
-
-  const joinBody = {
-    jsonrpc: "2.0",
-    id: nextRequestId++,
-    method: "tools/call",
-    params: {
-      name: "join_group",
-      arguments: {
-        invite_token: inviteToken.toLowerCase(),
-        agent_label: agentLabel.trim(),
-        confirm_join: true,
-      },
-    },
-  };
-  let joinedPayload;
+  let response;
   let lastError;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const result = await request(joinBody, {
-        "MCP-Protocol-Version": protocolVersion,
-        "Mcp-Session-Id": sessionHandle,
-      }, attempt, true);
-      joinedPayload = result.payload;
+      response = await request(attempt);
       break;
     } catch (error) {
       if (attempt === 0 && error?.retryable === true) {
@@ -227,10 +212,10 @@ export async function joinRubMindsInvite({
       throw error;
     }
   }
-  if (!joinedPayload) {
-    throw lastError || new Error("Rub Minds invitation join outcome is unknown");
+  if (!response) {
+    throw lastError || new Error("Rub Minds Staging invitation outcome is unknown; retry with the same joinRequestKey");
   }
-  const toolResult = joinedPayload.result;
+  const toolResult = response.result;
   if (!toolResult || typeof toolResult !== "object" || Array.isArray(toolResult) ||
       toolResult.isError === true) {
     throw new Error("Rub Minds Staging invitation redemption failed");
@@ -238,15 +223,16 @@ export async function joinRubMindsInvite({
   const joined = toolResult.structuredContent;
   if (!joined || typeof joined !== "object" || Array.isArray(joined) ||
       joined.joined !== true ||
+      typeof joined.session_handle !== "string" || !SESSION_HANDLE_RE.test(joined.session_handle) ||
       typeof joined.room_id !== "string" || !UUID_RE.test(joined.room_id) ||
       typeof joined.participant_id !== "string" || !UUID_RE.test(joined.participant_id) ||
       typeof joined.expires_at !== "string" || !Number.isFinite(Date.parse(joined.expires_at)) ||
       Date.parse(joined.expires_at) <= Date.now()) {
-    throw new Error("Rub Minds returned an incomplete invitation join; no session was started");
+    throw new Error("Rub Minds returned an incomplete invitation join; no provider browser session was started");
   }
   return Object.freeze({
     joined: true,
-    sessionHandle,
+    sessionHandle: joined.session_handle.toLowerCase(),
     roomId: joined.room_id,
     participantId: joined.participant_id,
     expiresAt: joined.expires_at,
