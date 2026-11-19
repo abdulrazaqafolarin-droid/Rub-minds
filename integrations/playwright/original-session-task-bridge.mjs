@@ -286,9 +286,7 @@ export class OriginalSessionTaskBridge {
       const reason = signal?.aborted
         ? "The local original-session runner stopped before this task could be safely completed. Human reassignment or review is required."
         : "The original provider browser was closed before this task could be safely completed. Human reassignment or review is required.";
-      await this.#bestEffortBlock(task.id, reason);
-      this.activeWorkingState = null;
-      try { await this.stateStore.save(null); } catch { /* stale local state still fails closed */ }
+      await this.#persistBlockState(state, reason, "block_pending");
       return {
         status: "blocked",
         submitted: 0,
