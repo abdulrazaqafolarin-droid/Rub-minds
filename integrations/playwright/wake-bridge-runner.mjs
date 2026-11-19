@@ -147,13 +147,18 @@ export class OriginalSessionWakeRunner {
               throw new Error("taskBridge.step returned an invalid result");
             }
             const validTaskStatuses = new Set([
-              "idle", "busy", "disabled", "stale", "submitted", "limit_reached",
-              "browser_closed", "cancelled",
+              "idle", "busy", "disabled", "stale", "deferred", "submitted", "limit_reached",
+              "blocked", "browser_closed", "cancelled",
             ]);
             if (!validTaskStatuses.has(taskResult.status)) {
               throw new Error("taskBridge.step returned an unknown status");
             }
             this.emit({ status: "running", replies: this.replies, lastTaskResult: taskResult });
+            if (taskResult.status === "blocked") {
+              finalStatus = "blocked";
+              this.emit({ status: "blocked", replies: this.replies, lastTaskResult: taskResult });
+              break;
+            }
             if (taskResult.status === "browser_closed") {
               finalStatus = "browser_closed";
               break;
