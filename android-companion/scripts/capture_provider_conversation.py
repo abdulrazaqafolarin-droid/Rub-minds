@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import secrets
 import subprocess
 from typing import Callable
@@ -69,7 +70,7 @@ def capture_snapshot(
     adb: str = "adb",
     runner: Callable = subprocess.run,
 ) -> bytes:
-    if not remote_path.startswith("/sdcard/rm-provider-identity-") or not remote_path.endswith(".xml"):
+    if not re.fullmatch(r"/sdcard/rm-provider-identity-[a-f0-9]{16}\\.xml", remote_path):
         raise ValueError("The temporary device capture path is invalid.")
 
     primary_error: Exception | None = None
