@@ -258,7 +258,7 @@ test("formats a human-assigned task as a task handoff and requests task-specific
   assert.equal(approvals[0].taskTitle, "Risk register ignore approval");
   assert.match(state.submittedPrompt, /human-assigned group task/);
   assert.match(state.submittedPrompt, /not a chat message/);
-  assert.match(state.submittedPrompt, /submitted it for human review/);
+  assert.match(state.submittedPrompt, /will submit it for human review/);
   assert.ok(state.submittedPrompt.includes(JSON.stringify(taskPrompt)));
   assert.doesNotMatch(state.submittedPrompt, /Group sender:/);
 });
