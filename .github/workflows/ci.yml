@@ -32,7 +32,16 @@ jobs:
         with:
           persist-credentials: false
       - name: Install PostgreSQL client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+        run: |
+          for attempt in 1 2 3; do
+            if sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update &&
+               sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y postgresql-client; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then sleep "$((attempt * 10))"; fi
+          done
+          echo "Could not install postgresql-client after bounded mirror retries." >&2
+          exit 1
       - name: Apply and smoke-test hosted MCP migration on isolated PostgreSQL
         env:
           PGPASSWORD: postgres
@@ -382,7 +391,16 @@ jobs:
       - name: Install Chromium and browser dependencies
         run: npx playwright install --with-deps chromium
       - name: Install PostgreSQL client for Vault acceptance
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+        run: |
+          for attempt in 1 2 3; do
+            if sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update &&
+               sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y postgresql-client; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then sleep "$((attempt * 10))"; fi
+          done
+          echo "Could not install postgresql-client after bounded mirror retries." >&2
+          exit 1
       - name: Install pinned Supabase CLI
         uses: supabase/setup-cli@v1
         with:
