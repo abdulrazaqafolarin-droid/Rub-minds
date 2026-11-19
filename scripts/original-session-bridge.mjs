@@ -413,6 +413,10 @@ export async function runOriginalSessionBridge({
   readInput = readText,
   joinInvite = joinRubMindsInvite,
   prepareProfile = preparePrivateBrowserProfile,
+  createJoinedSessionStore = createPrivateJoinedSessionStore,
+  createTaskStateStore = createPrivateTaskStateStore,
+  createSessionTransport = (endpoint, sessionHandle) =>
+    new McpSessionMessageTransport({ endpoint, sessionHandle }),
   createAdapter = createOriginalSessionAdapter,
   createRuntime = createOriginalSessionWakeRuntime,
 } = {}) {
@@ -476,37 +480,84 @@ export async function runOriginalSessionBridge({
 
     let sessionHandle = config.sessionHandle;
     let participantId = config.participantId;
+    let expectedRoomId = null;
+    let joinedSessionStore = null;
     if (config.joinRequired) {
       output.write("\nThis runner uses a local foreground Playwright browser; it does not install a provider MCP connector.\n");
       output.write("Use an invitation created in Rub Minds Staging. Production invitations are not valid on this Staging endpoint.\n");
-      const inviteUrl = await readInput(
-        rl,
-        "Paste the Rub Minds Staging invitation URL (it will not be printed): ",
-        controller.signal,
-      );
-      const inviteToken = parseStagingInviteToken(inviteUrl);
-      const agentLabel = options.provider === "chatgpt"
-        ? "ChatGPT original session"
-        : "Claude original session";
-      if (!(await prompt(rl, "Redeem this invitation on Rub Minds Staging and add this conversation as an AI participant? Type JOIN to approve: ", "JOIN", controller.signal))) {
-        output.write("Invitation not redeemed. No group messages were accessed.\n");
-        return { status: "not_started", replies: 0 };
-      }
-      const joined = await joinInvite({
-        endpoint: config.endpoint,
-        inviteToken,
-        agentLabel,
-        signal: controller.signal,
+      joinedSessionStore = createJoinedSessionStore({
+        provider: options.provider,
+        conversationUrl: options.conversationUrl,
       });
-      if (!joined || joined.joined !== true ||
-          !SESSION_HANDLE_RE.test(joined.sessionHandle || "") ||
-          !UUID_RE.test(joined.participantId || "")) {
-        fail("Rub Minds Staging did not confirm a valid AI participant join; the browser bridge was not started.");
+      await joinedSessionStore.prepare?.();
+      const savedBinding = await joinedSessionStore.load();
+      if (savedBinding) {
+        sessionHandle = savedBinding.sessionHandle;
+        participantId = savedBinding.participantId;
+        expectedRoomId = savedBinding.roomId;
+        output.write("Found a saved Rub Minds Staging join for this exact provider conversation. Verifying it before reuse.\n");
+      } else {
+        const inviteUrl = await readInput(
+          rl,
+          "Paste the Rub Minds Staging invitation URL (it will not be printed): ",
+          controller.signal,
+        );
+        const inviteToken = parseStagingInviteToken(inviteUrl);
+        const agentLabel = options.provider === "chatgpt"
+          ? "ChatGPT original session"
+          : "Claude original session";
+        if (!(await prompt(rl, "Redeem this invitation on Rub Minds Staging and add this conversation as an AI participant? Type JOIN to approve: ", "JOIN", controller.signal))) {
+          output.write("Invitation not redeemed. No group messages were accessed.\n");
+          return { status: "not_started", replies: 0 };
+        }
+        const joined = await joinInvite({
+          endpoint: config.endpoint,
+          inviteToken,
+          agentLabel,
+          signal: controller.signal,
+        });
+        if (!joined || joined.joined !== true ||
+            !SESSION_HANDLE_RE.test(joined.sessionHandle || "") ||
+            !UUID_RE.test(joined.participantId || "") ||
+            !UUID_RE.test(joined.roomId || "") ||
+            typeof joined.expiresAt !== "string" ||
+            !Number.isFinite(Date.parse(joined.expiresAt)) ||
+            Date.parse(joined.expiresAt) <= Date.now()) {
+          fail("Rub Minds Staging did not confirm a complete, live AI participant join; the browser bridge was not started.");
+        }
+        sessionHandle = joined.sessionHandle;
+        participantId = joined.participantId;
+        expectedRoomId = joined.roomId;
+        const transport = createSessionTransport(config.endpoint, sessionHandle);
+        const identity = await transport.readGroupContext({ signal: controller.signal });
+        if (identity.room.id !== expectedRoomId || identity.self.participant_id !== participantId) {
+          try { await transport.leaveGroup(); } catch { /* owner can revoke the unmatched join */ }
+          fail("The returned Rub Minds join did not match the active session identity; the new participant was revoked or must be revoked by the group owner.");
+        }
+        try {
+          await joinedSessionStore.save({ sessionHandle, participantId, roomId: expectedRoomId, expiresAt: joined.expiresAt });
+        } catch {
+          try { await transport.leaveGroup(); } catch { /* don't hide a cleanup failure */ }
+          fail("The Rub Minds join could not be saved in the private local profile. The session was closed where possible; verify the group's AI participant list before retrying.");
+        }
+        output.write("Joined the Staging group as " + agentLabel + ". This join is now saved privately for this exact provider conversation; credentials are not shown or passed to the provider browser.\n");
       }
-      sessionHandle = joined.sessionHandle;
-      participantId = joined.participantId;
-      output.write("Joined the Staging group as " + agentLabel + ". Session credentials remain in memory and are not shown or passed to the provider browser.\n");
     }
+
+    if (!sessionHandle || !participantId) fail("A joined Rub Minds session is required before the original-session bridge can start.");
+    const sessionTransport = createSessionTransport(config.endpoint, sessionHandle);
+    let verifiedIdentity;
+    try {
+      verifiedIdentity = await sessionTransport.readGroupContext({ signal: controller.signal });
+    } catch {
+      fail("The saved Rub Minds Staging session could not be verified. It was not replaced automatically, so this run cannot create a duplicate AI participant. Ask the group owner to check or revoke the existing AI participant before starting a fresh join.");
+    }
+    if (verifiedIdentity.self.participant_id !== participantId ||
+        (expectedRoomId && verifiedIdentity.room.id !== expectedRoomId)) {
+      fail("The saved Rub Minds session identity does not match this provider conversation. Stop and ask the group owner to revoke or repair the existing participant; no replacement participant was created.");
+    }
+    const taskStateStore = createTaskStateStore({ provider: options.provider, participantId });
+    await taskStateStore.prepare?.();
     const providerAdapter = createAdapter(options.provider, {
       approval: async ({ kind, messageId, taskId, taskVersion, taskTitle, senderName, senderKind, prompt: groupPrompt, signal }) => {
         if (signal?.aborted || controller.signal.aborted) return false;
@@ -535,6 +586,8 @@ export async function runOriginalSessionBridge({
       participantId,
       page,
       adapter,
+      taskStateStore,
+      maxTasks: 5,
       maxReplies: options.maxReplies,
       processExistingMessages: false,
       onStatus: event => {
