@@ -13,7 +13,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout, stderr } from "node:process";
 import { createOriginalSessionAdapter } from "../integrations/playwright/original-session-adapters.mjs";
 import { createOriginalSessionWakeRuntime } from "../integrations/playwright/original-session-wake-runtime.mjs";
-import { joinRubMindsInvite } from "../integrations/playwright/mcp-session-message-transport.mjs";
+import { joinRubMindsInvite, McpSessionMessageTransport } from "../integrations/playwright/mcp-session-message-transport.mjs";
 
 const SESSION_HANDLE_RE = /^[a-f0-9]{64}$/i;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -121,6 +121,71 @@ export function createPrivateTaskStateStore({
   return privateJsonStateStore({
     directory: join(resolve(baseDirectory), "original-session-task-state"),
     filename: provider + "-" + participantId.toLowerCase() + ".json",
+  });
+}
+
+/** Private join binding keyed to one exact provider conversation; contains no invitation token. */
+export function createPrivateJoinedSessionStore({
+  provider,
+  conversationUrl,
+  baseDirectory = join(homedir(), ".rub-minds"),
+} = {}) {
+  if (!Object.hasOwn(PROVIDERS, provider || "")) {
+    throw new TypeError("provider is required for private joined-session storage");
+  }
+  const pinnedConversation = conversationKey(provider, conversationUrl);
+  const digest = createHash("sha256").update(pinnedConversation, "utf8").digest("hex").slice(0, 32);
+  const store = privateJsonStateStore({
+    directory: join(resolve(baseDirectory), "original-session-joins"),
+    filename: provider + "-" + digest + ".json",
+    maxBytes: 4096,
+  });
+  return Object.freeze({
+    path: store.path,
+    prepare: store.prepare,
+    async load() {
+      const saved = await store.load();
+      if (saved === null) return null;
+      if (!saved || saved.schema !== 1 ||
+          saved.provider !== provider ||
+          saved.conversation !== pinnedConversation ||
+          !SESSION_HANDLE_RE.test(saved.sessionHandle || "") ||
+          !UUID_RE.test(saved.participantId || "") ||
+          !UUID_RE.test(saved.roomId || "") ||
+          typeof saved.expiresAt !== "string" ||
+          !Number.isFinite(Date.parse(saved.expiresAt))) {
+        throw new Error("Saved Rub Minds join state is invalid; refusing to create another AI participant.");
+      }
+      if (Date.parse(saved.expiresAt) <= Date.now()) {
+        throw new Error("Saved Rub Minds AI session has expired. Ask the group owner to revoke or refresh it before joining again.");
+      }
+      return Object.freeze({
+        sessionHandle: saved.sessionHandle,
+        participantId: saved.participantId,
+        roomId: saved.roomId,
+        expiresAt: saved.expiresAt,
+      });
+    },
+    async save(binding) {
+      if (!binding || !SESSION_HANDLE_RE.test(binding.sessionHandle || "") ||
+          !UUID_RE.test(binding.participantId || "") ||
+          !UUID_RE.test(binding.roomId || "") ||
+          typeof binding.expiresAt !== "string" ||
+          !Number.isFinite(Date.parse(binding.expiresAt)) ||
+          Date.parse(binding.expiresAt) <= Date.now()) {
+        throw new TypeError("A live, verified Rub Minds joined-session binding is required.");
+      }
+      await store.save({
+        schema: 1,
+        provider,
+        conversation: pinnedConversation,
+        sessionHandle: binding.sessionHandle,
+        participantId: binding.participantId,
+        roomId: binding.roomId,
+        expiresAt: binding.expiresAt,
+      });
+    },
+    clear: async () => store.save(null),
   });
 }
 
