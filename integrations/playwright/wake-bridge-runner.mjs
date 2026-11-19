@@ -13,6 +13,7 @@ export class OriginalSessionWakeRunner {
   constructor({
     bridge,
     wakeSource,
+    taskBridge = null,
     heartbeatMs = 15000,
     maxReplies = 20,
     maxConsecutiveErrors = 3,
@@ -20,6 +21,9 @@ export class OriginalSessionWakeRunner {
   }) {
     if (!bridge || typeof bridge.step !== "function") {
       throw new TypeError("bridge.step is required");
+    }
+    if (taskBridge !== null && (!taskBridge || typeof taskBridge.step !== "function")) {
+      throw new TypeError("taskBridge.step must be a function when configured");
     }
     if (!wakeSource || typeof wakeSource.waitForWake !== "function") {
       throw new TypeError("wakeSource.waitForWake is required");
@@ -35,7 +39,7 @@ export class OriginalSessionWakeRunner {
     }
     if (typeof onStatus !== "function") throw new TypeError("onStatus must be a function");
 
-    Object.assign(this, { bridge, wakeSource, heartbeatMs, maxReplies, maxConsecutiveErrors, onStatus });
+    Object.assign(this, { bridge, wakeSource, taskBridge, heartbeatMs, maxReplies, maxConsecutiveErrors, onStatus });
     this.running = false;
     this.hasRun = false;
     this.replies = 0;
@@ -131,8 +135,34 @@ export class OriginalSessionWakeRunner {
             throw new Error("Wake source returned an invalid status");
           }
 
+          // Task assignments are polled through their own task API and state
+          // record. They never advance or reuse the message bridge cursor.
+          if (this.taskBridge) {
+            const taskResult = await this.taskBridge.step({
+              approved: true,
+              signal: this.controller.signal,
+              wakeReason: wake.status,
+            });
+            if (!taskResult || typeof taskResult !== "object" || typeof taskResult.status !== "string") {
+              throw new Error("taskBridge.step returned an invalid result");
+            }
+            const validTaskStatuses = new Set([
+              "idle", "busy", "disabled", "stale", "submitted", "limit_reached",
+              "browser_closed", "cancelled",
+            ]);
+            if (!validTaskStatuses.has(taskResult.status)) {
+              throw new Error("taskBridge.step returned an unknown status");
+            }
+            this.emit({ status: "running", replies: this.replies, lastTaskResult: taskResult });
+            if (taskResult.status === "browser_closed") {
+              finalStatus = "browser_closed";
+              break;
+            }
+            if (taskResult.status === "cancelled") break;
+          }
+
           // A timeout is a recovery heartbeat, never permission to send an
-          // empty prompt. The adapter must check and claim a durable eligible task.
+          // empty prompt. Message paging still uses only the composite message cursor.
           const remainingReplies = this.maxReplies - this.replies;
           const result = await this.bridge.step({
             approved: true,
