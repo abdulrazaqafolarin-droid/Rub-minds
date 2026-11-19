@@ -6,6 +6,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { joinRubMindsInvite, McpSessionMessageTransport } from "../integrations/playwright/mcp-session-message-transport.mjs";
 
 const endpoint = process.env.LOCAL_MCP_ENDPOINT;
 const apiUrl = process.env.LOCAL_SUPABASE_URL;
@@ -1708,4 +1709,79 @@ try {
   console.log("SAFE_MCP_E2E_STAGE: full official MCP SDK collaboration and leave/rejoin lifecycle passed");
 } finally {
   await Promise.allSettled([first.close(), second.close()]);
+}
+
+// Exercise the exact local Playwright runner join helper against the real Edge
+// Function. It performs the legacy initialize handshake, redeems the AI invite
+// on that same MCP session, verifies the modern joined identity, reads tasks,
+// and revokes the session. Loopback is explicitly enabled only in this test.
+const runnerRoomRows = await request("/rest/v1/rooms", {
+  method: "POST",
+  headers: { Prefer: "return=representation" },
+  body: JSON.stringify({
+    owner_id: owner.id,
+    title: "Local Playwright join handshake",
+    objective: "Verify the local original-session runner invite handshake",
+  }),
+});
+assert.equal(runnerRoomRows.length, 1);
+const runnerRoom = runnerRoomRows[0];
+const runnerInviteToken = randomUUID().replace(/-/g, "").padEnd(64, "0").slice(0, 64);
+const runnerInviteRows = await request("/rest/v1/room_invites", {
+  method: "POST",
+  headers: { Prefer: "return=representation" },
+  body: JSON.stringify({
+    room_id: runnerRoom.id,
+    created_by: owner.id,
+    token_hash: createHash("sha256").update(runnerInviteToken, "utf8").digest("hex"),
+    expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    max_uses: 1,
+    uses: 0,
+    allow_ai: true,
+    max_ai_uses: 1,
+    ai_uses: 0,
+  }),
+});
+assert.equal(runnerInviteRows.length, 1);
+let runnerJoin;
+let runnerTransport;
+try {
+  runnerJoin = await joinRubMindsInvite({
+    endpoint,
+    inviteToken: runnerInviteToken,
+    agentLabel: "Local Playwright original session",
+    allowLocalTestEndpoint: true,
+  });
+  assert.equal(runnerJoin.joined, true);
+  assert.equal(runnerJoin.roomId, runnerRoom.id);
+  assert.match(runnerJoin.sessionHandle, /^[a-f0-9]{64}$/i);
+  assert.match(runnerJoin.participantId, /^[0-9a-f-]{36}$/i);
+  assert.ok(Date.parse(runnerJoin.expiresAt) > Date.now());
+  runnerTransport = new McpSessionMessageTransport({
+    endpoint,
+    sessionHandle: runnerJoin.sessionHandle,
+  });
+  const context = await runnerTransport.readGroupContext();
+  assert.equal(context.room.id, runnerRoom.id);
+  assert.equal(context.self.participant_id, runnerJoin.participantId);
+  const tasks = await runnerTransport.listTasks();
+  assert.deepEqual(tasks.tasks, [], "newly joined runner must only see tasks in its own group");
+  await runnerTransport.leaveGroup();
+  const sessionDigest = createHash("sha256").update(runnerJoin.sessionHandle, "utf8").digest("hex");
+  const tombstone = await request(
+    "/rest/v1/rub_minds_mcp_sessions?select=participant_id,terminated_at&session_digest=eq." + sessionDigest,
+  );
+  assert.equal(tombstone.length, 1, "the original-session runner join must leave a retained session tombstone");
+  assert.equal(tombstone[0].participant_id, null);
+  assert.ok(tombstone[0].terminated_at);
+  const inviteUsage = await request(
+    "/rest/v1/room_invites?select=ai_uses&id=eq." + runnerInviteRows[0].id,
+  );
+  assert.equal(inviteUsage[0]?.ai_uses, 1, "one original-session runner join should consume exactly one AI invite slot");
+  console.log("SAFE_MCP_E2E_STAGE: local Playwright runner initialize/join/identity/task-read/leave handshake passed");
+} catch (error) {
+  if (runnerTransport) {
+    await runnerTransport.leaveGroup().catch(() => {});
+  }
+  throw error;
 }
