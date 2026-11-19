@@ -38,6 +38,8 @@ function taskBridgeFixture({
   prerequisites = [],
   stored = null,
   claimResult = { claimed: true, status: "in_progress" },
+  claimErrorAfterCommit = false,
+  readErrorAt = null,
   adapterResult = "Final risk register with mitigation owners.",
   adapterError = null,
   blockError = false,
@@ -63,12 +65,14 @@ function taskBridgeFixture({
     },
     readTask: async taskId => {
       calls.read.push(taskId);
+      if (readErrorAt === calls.read.length) throw new Error("read after claim timed out");
       return { task: structuredClone(currentTask), prerequisites: structuredClone(prerequisites), submissions: [], reviews: [] };
     },
     claimTask: async taskId => {
       calls.claim.push(taskId);
       if (claimResult.claimed) {
         currentTask = { ...currentTask, status: "in_progress", version: currentTask.version + 1 };
+        if (claimErrorAfterCommit) throw new Error("claim response timed out after commit");
       }
       return claimResult;
     },
@@ -124,6 +128,38 @@ test("claims only its exact human-assigned participant task, rechecks the post-c
   assert.deepEqual(fixture.stateStore.current(), null, "confirmed submission clears the local pending result");
 });
 
+test("recovers a claim whose post-claim read timed out using persisted claim_pending state", async () => {
+  const fixture = taskBridgeFixture({ readErrorAt: 2 });
+  await assert.rejects(() => fixture.bridge.step({ approved: true }), /read after claim timed out/);
+
+  const pending = fixture.stateStore.current();
+  assert.equal(pending.phase, "claim_pending");
+  assert.equal(pending.taskId, TASK_ID);
+  assert.equal(fixture.currentTask().status, "in_progress");
+
+  const recovered = await fixture.bridge.step({ approved: true });
+  assert.deepEqual(recovered, { status: "submitted", submitted: 1, taskId: TASK_ID, replayed: false });
+  assert.equal(fixture.calls.claim.length, 1, "recovery must not issue a second claim");
+  assert.equal(fixture.calls.ask.length, 1, "the provider is prompted only after claim reconciliation");
+  assert.equal(fixture.calls.submit.length, 1);
+  assert.deepEqual(fixture.stateStore.current(), null);
+});
+
+test("recovers a claim whose acknowledgement timed out after commit without claiming or prompting twice", async () => {
+  const fixture = taskBridgeFixture({ claimErrorAfterCommit: true });
+  await assert.rejects(() => fixture.bridge.step({ approved: true }), /claim response timed out after commit/);
+
+  assert.equal(fixture.stateStore.current()?.phase, "claim_pending");
+  assert.equal(fixture.currentTask().status, "in_progress");
+
+  const recovered = await fixture.bridge.step({ approved: true });
+  assert.deepEqual(recovered, { status: "submitted", submitted: 1, taskId: TASK_ID, replayed: false });
+  assert.equal(fixture.calls.claim.length, 1, "the committed claim must be recovered by read, not repeated");
+  assert.equal(fixture.calls.ask.length, 1);
+  assert.equal(fixture.calls.submit.length, 1);
+  assert.deepEqual(fixture.stateStore.current(), null);
+});
+
 test("ignores tasks assigned to another participant and tasks already claimed elsewhere", async () => {
   const other = taskFixture({ assigned_to_participant_id: "950e8400-e29b-41d4-a716-446655440000" });
   const fixture = taskBridgeFixture({ task: other });
@@ -142,16 +178,22 @@ test("does not claim tasks until every prerequisite is completed", async () => {
   const fixture = taskBridgeFixture({
     prerequisites: [{ id: "850e8400-e29b-41d4-a716-446655440000", title: "Research", status: "backlog" }],
   });
-  assert.deepEqual(await fixture.bridge.step({ approved: true }), { status: "idle", submitted: 0 });
+  assert.deepEqual(await fixture.bridge.step({ approved: true }), {
+    status: "deferred", submitted: 0, taskId: TASK_ID,
+  });
   assert.equal(fixture.calls.claim.length, 0);
   assert.equal(fixture.calls.ask.length, 0);
+  assert.deepEqual(fixture.stateStore.current(), null);
 });
 
 test("a concurrent or stale task claim that returns false never opens the provider composer", async () => {
   const fixture = taskBridgeFixture({ claimResult: { claimed: false, reason: "dependencies_incomplete" } });
-  assert.deepEqual(await fixture.bridge.step({ approved: true }), { status: "idle", submitted: 0 });
+  assert.deepEqual(await fixture.bridge.step({ approved: true }), {
+    status: "deferred", submitted: 0, taskId: TASK_ID,
+  });
   assert.equal(fixture.calls.ask.length, 0);
-  assert.deepEqual(fixture.stateStore.current(), null);
+  assert.equal(fixture.stateStore.current()?.phase, "claim_pending",
+    "an unconfirmed claim must keep its recovery marker until a later read reconciles it");
 });
 
 test("a result submission timeout is retried with the exact same result and key without prompting the provider again", async () => {
