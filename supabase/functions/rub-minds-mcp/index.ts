@@ -533,6 +533,36 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     return data;
   }
 
+  if (name === "load_original_session_task_bridge_state" || name === "save_original_session_task_bridge_state") {
+    if (!/^[a-f0-9]{64}$/.test(sessionDigest) ||
+        session.room_id !== connection.room_id || session.participant_id !== connection.participant_id) {
+      throw new Error("Original-session task bridge state requires this session's current joined group binding.");
+    }
+
+    if (name === "load_original_session_task_bridge_state") {
+      const { data, error } = await db.rpc("load_rub_minds_mcp_task_bridge_state", {
+        p_session_digest: sessionDigest,
+        p_room_id: connection.room_id,
+        p_participant_id: connection.participant_id,
+      });
+      if (error || !isRecord(data)) throw new Error("Could not load original-session task bridge state.");
+      return data;
+    }
+
+    const { data, error } = await db.rpc("save_rub_minds_mcp_task_bridge_state", {
+      p_session_digest: sessionDigest,
+      p_room_id: connection.room_id,
+      p_participant_id: connection.participant_id,
+      p_expected_revision: args.expected_revision,
+      p_active_task_id: args.active_task_id,
+      p_pending_result: args.pending_result,
+      p_pending_submission_key: args.pending_submission_key,
+      p_blocked_reason: args.blocked_reason,
+    });
+    if (error || !isRecord(data)) throw new Error("Could not save original-session task bridge state.");
+    return data;
+  }
+
   await invokeAgent(credential, "read");
 
   if (name === "read_group_message") {
@@ -780,6 +810,40 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
     const enriched = await enrichGroupTasks(tasks || []);
     return {
       room_id: connection.room_id,
+      tasks: enriched.map((task: Record<string, unknown>) => ({
+        ...task,
+        prerequisite_task_ids: grouped.get(task.id as string) || [],
+      })),
+    };
+  }
+
+  if (name === "list_assigned_group_tasks") {
+    const { data: tasks, error } = await db.from("room_tasks")
+      .select("id,room_id,created_by_participant_id,assigned_to_participant_id,title,description,expected_output,acceptance_criteria,priority,status,due_at,blocked_reason,created_at,updated_at,version")
+      .eq("room_id", connection.room_id)
+      .eq("assigned_to_participant_id", connection.participant_id)
+      .in("status", ["assigned", "in_progress"])
+      .order("priority", { ascending: true })
+      .order("created_at", { ascending: true })
+      .limit(50);
+    if (error) throw new Error("Could not load tasks assigned to this AI participant.");
+    const ids = (tasks || []).map((task: { id: string }) => task.id);
+    let dependencies: unknown[] = [];
+    if (ids.length) {
+      const { data, error: dependencyError } = await db.from("room_task_dependencies")
+        .select("task_id,depends_on_task_id")
+        .eq("room_id", connection.room_id).in("task_id", ids);
+      if (dependencyError) throw new Error("Could not load assigned-task prerequisites.");
+      dependencies = data || [];
+    }
+    const grouped = new Map<string, string[]>();
+    for (const dependency of dependencies as Array<{task_id: string; depends_on_task_id: string}>) {
+      grouped.set(dependency.task_id, [...(grouped.get(dependency.task_id) || []), dependency.depends_on_task_id]);
+    }
+    const enriched = await enrichGroupTasks(tasks || []);
+    return {
+      room_id: connection.room_id,
+      participant_id: connection.participant_id,
       tasks: enriched.map((task: Record<string, unknown>) => ({
         ...task,
         prerequisite_task_ids: grouped.get(task.id as string) || [],
