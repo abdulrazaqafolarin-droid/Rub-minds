@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from provider_conversation_probe import analyse
+from provider_conversation_probe import analyse, analyse_snapshots
 
 
 def make_xml(title: str, package: str = "com.openai.chatgpt") -> str:
@@ -59,6 +59,30 @@ class ProviderConversationProbeTests(unittest.TestCase):
         self.assertTrue(report["send_control_reused_a_to_b"])
         self.assertFalse(report["native_send_enabled"])
         self.assertFalse(report["stable_provider_conversation_id_exposed"])
+
+    def test_in_memory_analysis_matches_file_analysis_without_exposing_raw_titles(self) -> None:
+        report = analyse_snapshots(
+            "com.openai.chatgpt",
+            [
+                self.a1.read_bytes(),
+                self.b.read_bytes(),
+                self.a2.read_bytes(),
+            ],
+        )
+        self.assertTrue(report["repeatable_distinct_header_signal"])
+        self.assertFalse(report["stable_provider_conversation_id_exposed"])
+        self.assertFalse(report["native_send_enabled"])
+        self.assertFalse(report["raw_text_printed_or_uploaded"])
+        self.assertNotIn("Research chat A", str(report))
+        self.assertNotIn("Business chat B", str(report))
+
+    def test_in_memory_analysis_requires_exactly_three_snapshots(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Exactly three"):
+            analyse_snapshots("com.openai.chatgpt", [self.a1.read_bytes()])
+
+    def test_in_memory_analysis_rejects_unsupported_provider(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Only the official"):
+            analyse_snapshots("com.example.fake", [b"<hierarchy/>"] * 3)
 
     def test_identical_conversation_snapshots_do_not_claim_distinction(self) -> None:
         self.b.write_text(make_xml("Research chat A"), encoding="utf-8")
