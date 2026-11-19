@@ -15,6 +15,7 @@ The Backroom route has one authenticated workspace. It opens the device frames d
 - The primary stage switches between **Android phone** and **Computer**. Each stage contains a real runtime controller.
 - The phone frame streams the original selected Android app from the paired phone. App selection, connection state and stream controls sit beside the stream rather than inside a decorative nested phone.
 - The computer frame shows the actual paired computer's approved screen session. Its terminal is a mode within that computer frame, not a separate simulated device.
+- Desktop input is available only when the selected app was launched by Backroom, its unique native foreground HWND/process identity is verified by Windows UI Automation, and that exact window fills the shared monitor bounds. Browser-selected single-window capture remains view-only because the browser picker does not disclose the native HWND. If the identity or geometry cannot be proven, the real screen may remain visible but input is disabled.
 - Empty states explain how to pair the missing runtime and give the group owner a direct pairing action.
 - A quiet refresh timestamp and a 20-second visible-tab refresh keep presence and activity current. Responses from an old room or older refresh cannot replace the current room's state.
 - On small screens, the live frame appears before device management details; controls stack below the live screen rather than shrinking it into a mock device.
@@ -33,7 +34,7 @@ Native Off / On / Auto is unavailable until the exact provider conversation can 
 2. The group owner can pair, approve or revoke a device; non-owners cannot perform owner actions.
 3. Selecting an Android phone shows its actual app stream after the phone's operating-system permission flow. A disconnected or hidden app is shown as unavailable, not fabricated.
 4. Touch requires a separate temporary device-local permission. Draft insertion requires a separate approval and never submits the draft.
-5. Selecting a computer shows the actual approved computer screen; its terminal controls stay inside that computer frame.
+5. Selecting a computer shows the actual approved computer screen; its terminal controls stay inside that computer frame. Computer input requires an exact Backroom-launched app HWND/process identity and matching full-monitor bounds; otherwise the frame is view-only.
 6. Switching groups or devices clears stale frame/selection state. A late response from an old group cannot replace the newly selected group's data.
 7. Revocation, expiry, disconnect and uncertain outcomes have explicit status and recovery messages.
 8. A missing provider-conversation resolver never enables native Send or autonomous Off / On / Auto.
