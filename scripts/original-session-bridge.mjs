@@ -6,12 +6,14 @@
  */
 import { chmod, lstat, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
+import { randomBytes } from "node:crypto";
 import { resolve, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout, stderr } from "node:process";
 import { createOriginalSessionAdapter } from "../integrations/playwright/original-session-adapters.mjs";
 import { createOriginalSessionWakeRuntime } from "../integrations/playwright/original-session-wake-runtime.mjs";
+import { joinRubMindsInvite } from "../integrations/playwright/mcp-session-message-transport.mjs";
 
 const SESSION_HANDLE_RE = /^[a-f0-9]{64}$/i;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -73,13 +75,16 @@ export function validateRunnerEnvironment(env = {}, provider = "chatgpt") {
       endpoint.pathname.replace(/\/$/, "") !== "/functions/v1/rub-minds-mcp") {
     fail("RUB_MINDS_MCP_ENDPOINT must point to the Rub Minds Staging MCP function (not production).");
   }
-  const sessionHandle = env.RUB_MINDS_MCP_SESSION_HANDLE;
-  if (typeof sessionHandle !== "string" || !SESSION_HANDLE_RE.test(sessionHandle)) {
-    fail("Set RUB_MINDS_MCP_SESSION_HANDLE to the 64-character session handle from the authorized AI join.");
+  const sessionHandle = env.RUB_MINDS_MCP_SESSION_HANDLE || null;
+  const participantId = env.RUB_MINDS_PARTICIPANT_ID || null;
+  if ((sessionHandle === null) !== (participantId === null)) {
+    fail("Set both RUB_MINDS_MCP_SESSION_HANDLE and RUB_MINDS_PARTICIPANT_ID, or leave both unset to join interactively.");
   }
-  const participantId = env.RUB_MINDS_PARTICIPANT_ID;
-  if (typeof participantId !== "string" || !UUID_RE.test(participantId)) {
-    fail("Set RUB_MINDS_PARTICIPANT_ID to the AI participant UUID returned by the authorized join.");
+  if (sessionHandle !== null && !SESSION_HANDLE_RE.test(sessionHandle)) {
+    fail("RUB_MINDS_MCP_SESSION_HANDLE must be a 64-character hexadecimal value.");
+  }
+  if (participantId !== null && !UUID_RE.test(participantId)) {
+    fail("RUB_MINDS_PARTICIPANT_ID must be the UUID returned by the authorized AI join.");
   }
   if (!Object.hasOwn(PROVIDERS, provider)) fail("Unsupported provider.");
   const profileDirectory = resolve(
@@ -89,10 +94,36 @@ export function validateRunnerEnvironment(env = {}, provider = "chatgpt") {
     endpoint: endpoint.toString(),
     sessionHandle,
     participantId,
+    joinRequired: sessionHandle === null,
     profileDirectory,
   });
 }
 
+export function parseStagingInviteToken(value) {
+  if (typeof value !== "string" || !value.trim() || value.length > 4096) {
+    fail("Paste a valid Rub Minds Staging invitation URL.");
+  }
+  let url;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    fail("The Rub Minds invitation URL is invalid.");
+  }
+  if (url.protocol !== "https:" || url.username || url.password || url.hash) {
+    fail("The Rub Minds invitation URL must be HTTPS and must not contain credentials or a fragment.");
+  }
+  const queryToken = new URLSearchParams(url.search).get("invite");
+  const pathToken = url.pathname.match(/^\/invite=([^/]+)\/?$/i)?.[1];
+  const token = queryToken || pathToken || "";
+  if (!/^[0-9a-f]{64}$/i.test(token)) {
+    fail("The invitation URL must contain a 64-character hexadecimal invite token.");
+  }
+  return token.toLowerCase();
+}
+
+async function readText(rl, message, signal) {
+  return (await rl.question(message, { signal })).trim();
+}
 export function conversationKey(provider, value) {
   const providerConfig = PROVIDERS[provider];
   if (!providerConfig) fail("Unsupported provider.");
@@ -223,6 +254,8 @@ export async function runOriginalSessionBridge({
   errorOutput = stderr,
   playwright = null,
   prompt = askExact,
+  readInput = readText,
+  joinInvite = joinRubMindsInvite,
   prepareProfile = preparePrivateBrowserProfile,
   createAdapter = createOriginalSessionAdapter,
   createRuntime = createOriginalSessionWakeRuntime,
@@ -285,6 +318,40 @@ export async function runOriginalSessionBridge({
       }
     }
 
+    let sessionHandle = config.sessionHandle;
+    let participantId = config.participantId;
+    if (config.joinRequired) {
+      output.write("\nThis runner connects ChatGPT Free through your local foreground browser; it does not install a provider MCP connector.\n");
+      output.write("Use an invitation created in Rub Minds Staging. Production invitations are not valid on this Staging endpoint.\n");
+      const inviteUrl = await readInput(
+        rl,
+        "Paste the Rub Minds Staging invitation URL (it will not be printed): ",
+        controller.signal,
+      );
+      const inviteToken = parseStagingInviteToken(inviteUrl);
+      const agentLabel = options.provider === "chatgpt"
+        ? "ChatGPT original session"
+        : "Claude original session";
+      if (!(await prompt(rl, "Redeem this invitation on Rub Minds Staging and add this conversation as an AI participant? Type JOIN to approve: ", "JOIN", controller.signal))) {
+        output.write("Invitation not redeemed. No group messages were accessed.\n");
+        return { status: "not_started", replies: 0 };
+      }
+      const joined = await joinInvite({
+        endpoint: config.endpoint,
+        inviteToken,
+        agentLabel,
+        joinRequestKey: randomBytes(32).toString("hex"),
+        signal: controller.signal,
+      });
+      if (!joined || joined.joined !== true ||
+          !SESSION_HANDLE_RE.test(joined.sessionHandle || "") ||
+          !UUID_RE.test(joined.participantId || "")) {
+        fail("Rub Minds Staging did not confirm a valid AI participant join; the browser bridge was not started.");
+      }
+      sessionHandle = joined.sessionHandle;
+      participantId = joined.participantId;
+      output.write("Joined the Staging group as " + agentLabel + ". Session credentials remain in memory and are not shown or passed to the provider browser.\n");
+    }
     const providerAdapter = createAdapter(options.provider, {
       approval: async ({ messageId, senderName, senderKind, prompt: groupPrompt, signal }) => {
         if (signal?.aborted || controller.signal.aborted) return false;
@@ -300,8 +367,8 @@ export async function runOriginalSessionBridge({
 
     runtime = createRuntime({
       endpoint: config.endpoint,
-      sessionHandle: config.sessionHandle,
-      participantId: config.participantId,
+      sessionHandle,
+      participantId,
       page,
       adapter,
       maxReplies: options.maxReplies,
