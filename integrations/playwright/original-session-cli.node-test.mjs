@@ -37,15 +37,21 @@ function makeMemoryStateStore() {
   };
 }
 
-function makeRunnerStateDependencies({ participantId = ENV.RUB_MINDS_PARTICIPANT_ID, roomId = "550e8400-e29b-41d4-a716-446655440000" } = {}) {
+function makeRunnerStateDependencies({
+  participantId = ENV.RUB_MINDS_PARTICIPANT_ID,
+  roomId = "550e8400-e29b-41d4-a716-446655440000",
+  savedBinding = null,
+} = {}) {
+  let saved = structuredClone(savedBinding);
   return {
     createTaskStateStore: () => makeMemoryStateStore(),
     createJoinedSessionStore: () => ({
       async prepare() {},
-      async load() { return null; },
-      async save() {},
-      async clear() {},
+      async load() { return structuredClone(saved); },
+      async save(value) { saved = structuredClone(value); },
+      async clear() { saved = null; },
     }),
+    readSavedBinding: () => structuredClone(saved),
     createSessionTransport: () => ({
       async readGroupContext() {
         return {
@@ -468,6 +474,7 @@ test("local runner explicitly redeems a Staging invite and binds the returned AI
   const page = { isClosed: () => false, url: () => CHATGPT_URL };
   const context = makeRunnerContext(page, stats);
   const approvals = [];
+  const stateDependencies = makeRunnerStateDependencies({ participantId, roomId });
   let joinedInput;
   let runtimeOptions;
 
@@ -478,7 +485,7 @@ test("local runner explicitly redeems a Staging invite and binds the returned AI
       input,
       output,
       errorOutput: output,
-      ...makeRunnerStateDependencies({ participantId, roomId }),
+      ...stateDependencies,
       playwright: {
         chromium: {
           async launchPersistentContext(_profileDirectory, options) {
@@ -536,10 +543,68 @@ test("local runner explicitly redeems a Staging invite and binds the returned AI
     assert.equal(joinedInput.signal instanceof AbortSignal, true);
     assert.equal(runtimeOptions.sessionHandle, sessionHandle);
     assert.equal(runtimeOptions.participantId, participantId);
+    assert.deepEqual(stateDependencies.readSavedBinding(), { sessionHandle, participantId, roomId, expiresAt: "2026-11-20T00:00:00.000Z" });
     assert.equal(stats.providerInteractions, 1);
     assert.equal(stats.contextClosed, 1);
     assert.ok(!writes.join("").includes(inviteToken), "invite token must not be printed");
     assert.ok(!writes.join("").includes(sessionHandle), "session handle must not be printed");
+  } finally {
+    input.destroy();
+    output.destroy();
+  }
+});
+
+test("local runner reuses a verified saved join for the exact provider conversation without redeeming another invite", async () => {
+  const input = makeTtyStream();
+  const output = makeTtyStream();
+  const writes = [];
+  output.write = value => { writes.push(String(value)); return true; };
+  const participantId = "650e8400-e29b-41d4-a716-446655440000";
+  const roomId = "550e8400-e29b-41d4-a716-446655440000";
+  const sessionHandle = "c".repeat(64);
+  const savedBinding = {
+    sessionHandle,
+    participantId,
+    roomId,
+    expiresAt: "2026-11-20T00:00:00.000Z",
+  };
+  const stateDependencies = makeRunnerStateDependencies({ participantId, roomId, savedBinding });
+  const stats = { contextClosed: 0, runtimeStopped: 0, providerInteractions: 0 };
+  const context = makeRunnerContext({ isClosed: () => false, url: () => CHATGPT_URL }, stats);
+  let joinCalls = 0;
+  let inputCalls = 0;
+  const approvals = [];
+
+  try {
+    const result = await runOriginalSessionBridge({
+      argv: ["--provider", "chatgpt", "--conversation-url", CHATGPT_URL],
+      env: { RUB_MINDS_MCP_ENDPOINT: ENV.RUB_MINDS_MCP_ENDPOINT },
+      input,
+      output,
+      errorOutput: output,
+      ...stateDependencies,
+      playwright: { chromium: { async launchPersistentContext() { return context; } } },
+      prepareProfile: async value => value,
+      readInput: async () => { inputCalls++; throw new Error("saved join must not ask for another invite"); },
+      prompt: async (_rl, _message, expected) => { approvals.push(expected); return true; },
+      joinInvite: async () => { joinCalls++; throw new Error("saved join must not redeem another invite"); },
+      createRuntime: () => ({
+        async run({ approved }) {
+          assert.equal(approved, true);
+          return { status: "source_closed", replies: 0 };
+        },
+        stop() { stats.runtimeStopped++; },
+      }),
+    });
+
+    assert.deepEqual(result, { status: "source_closed", replies: 0 });
+    assert.deepEqual(approvals, ["START"]);
+    assert.equal(joinCalls, 0);
+    assert.equal(inputCalls, 0);
+    assert.deepEqual(stateDependencies.readSavedBinding(), savedBinding);
+    assert.ok(writes.join("").includes("Verifying it before reuse"));
+    assert.ok(!writes.join("").includes(sessionHandle), "saved session capability must not be printed");
+    assert.equal(stats.contextClosed, 1);
   } finally {
     input.destroy();
     output.destroy();
