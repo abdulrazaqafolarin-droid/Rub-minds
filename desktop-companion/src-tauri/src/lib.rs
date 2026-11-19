@@ -2023,22 +2023,27 @@ mod native_input_tests {
     }
 
     #[test]
-    fn normalized_pointer_maps_to_visible_monitor_pixels() {
-        let state = AppState::default();
-        let g = geometry();
-        assert_eq!(screen_point(&state, &g, 0.0, 0.0).unwrap(), (0, 0));
-        assert_eq!(screen_point(&state, &g, 0.5, 0.5).unwrap(), (960, 540));
-        assert_eq!(screen_point(&state, &g, 1.0, 1.0).unwrap(), (1919, 1079));
+    fn normalized_pointer_maps_to_pixels_inside_a_verified_native_window() {
+        let bounds = (0, 0, 1920, 1080);
+        assert_eq!(map_normalized_point(bounds, 0.0, 0.0).unwrap(), (0, 0));
+        assert_eq!(map_normalized_point(bounds, 0.5, 0.5).unwrap(), (960, 540));
+        assert_eq!(map_normalized_point(bounds, 1.0, 1.0).unwrap(), (1919, 1079));
     }
 
     #[test]
     fn pointer_coordinates_outside_frame_are_rejected() {
+        let bounds = (0, 0, 1920, 1080);
+        assert!(map_normalized_point(bounds, -0.001, 0.5).is_err());
+        assert!(map_normalized_point(bounds, 1.001, 0.5).is_err());
+        assert!(map_normalized_point(bounds, f64::NAN, 0.5).is_err());
+        assert!(map_normalized_point(bounds, 0.5, f64::INFINITY).is_err());
+    }
+
+    #[test]
+    fn monitor_geometry_without_a_native_window_binding_is_view_only() {
         let state = AppState::default();
         let g = geometry();
-        assert!(screen_point(&state, &g, -0.001, 0.5).is_err());
-        assert!(screen_point(&state, &g, 1.001, 0.5).is_err());
-        assert!(screen_point(&state, &g, f64::NAN, 0.5).is_err());
-        assert!(screen_point(&state, &g, 0.5, f64::INFINITY).is_err());
+        assert!(capture_bounds(&state, &g).is_err());
     }
 
     #[test]
