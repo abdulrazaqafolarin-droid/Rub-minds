@@ -10,7 +10,17 @@ The current resolver registry is intentionally empty. Both official Android pack
 
 Requirements: a USB-connected Android phone with ChatGPT and Claude installed, Android Platform Tools (adb) on the computer, and Python 3.
 
-For each provider separately:
+### Recommended: one-command, in-memory capture
+
+Run one provider at a time:
+
+`python android-companion/scripts/capture_provider_conversation.py --package com.openai.chatgpt`
+
+`python android-companion/scripts/capture_provider_conversation.py --package com.anthropic.claude`
+
+The script detects one authorized adb device automatically. When multiple devices are connected, pass `--serial DEVICE_SERIAL`. It prompts you to open disposable conversation A, switch to B, and return to A. It captures each accessibility tree into memory, caps each read at 8 MB, deletes its temporary XML from the phone after every capture, and prints only aggregate metrics. If remote cleanup cannot be confirmed, it stops and prints the exact adb cleanup command. It does not save raw XML on the computer, print provider text, invoke any provider action, or enable native Send.
+
+### Manual alternative
 
 1. Open a disposable conversation called **RM identity test A**.
 2. Capture the accessibility hierarchy:
@@ -23,7 +33,7 @@ For each provider separately:
    Claude:
    `python android-companion/scripts/provider-conversation-probe.py --package com.anthropic.claude --delete-inputs chat-a1.xml chat-b.xml chat-a2.xml`
 
-The --delete-inputs option removes all three local XML captures even when analysis fails. The probe accepts UTF-8 UIAutomator XML only, rejects NUL-bearing UTF-16/UTF-32 payloads, DTD/entity declarations and files over 8 MB, and prints no raw text or accessibility labels. The probe also uses a fresh random HMAC key in memory for each run, prints no raw text or accessibility labels, and does not upload data. Keep the XML captures local and use only disposable test chats.
+The manual --delete-inputs option removes all three local XML captures even when analysis fails. Both paths accept UTF-8 UIAutomator XML only, reject NUL-bearing UTF-16/UTF-32 payloads, DTD/entity declarations and files over 8 MB, and use a fresh random HMAC key in memory for each run. The probe prints no raw text or accessibility labels and does not upload data. Keep any manual XML captures local and use only disposable test chats.
 
 ## What the report means
 
