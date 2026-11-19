@@ -214,6 +214,7 @@ export function createPrivateJoinedSessionStore({
   return Object.freeze({
     path: store.path,
     prepare: store.prepare,
+    acquireLock: () => acquirePrivateProcessLock(store.path + ".runner.lock"),
     async load() {
       const saved = await store.load();
       if (saved === null) return null;
@@ -544,6 +545,8 @@ export async function runOriginalSessionBridge({
   let context;
   let runtime;
   let runtimeStopRequested = false;
+  let joinedSessionStore = null;
+  let releaseJoinedSessionLock = null;
   const controller = new AbortController();
   const stopRuntime = () => {
     if (!runtime || runtimeStopRequested) return;
@@ -575,6 +578,18 @@ export async function runOriginalSessionBridge({
     }
     if (controller.signal.aborted) return { status: "stopped", replies: 0 };
 
+    if (config.joinRequired) {
+      joinedSessionStore = createJoinedSessionStore({
+        provider: options.provider,
+        conversationUrl: options.conversationUrl,
+      });
+      await joinedSessionStore.prepare?.();
+      releaseJoinedSessionLock = await joinedSessionStore.acquireLock?.();
+      if (typeof releaseJoinedSessionLock !== "function") {
+        fail("Another original-session runner is already active for this exact provider conversation. Stop that runner before starting another.");
+      }
+    }
+
     const browserApi = playwright || await import("playwright");
     const profileDirectory = await prepareProfile(config.profileDirectory);
     context = await browserApi.chromium.launchPersistentContext(profileDirectory, {
@@ -598,15 +613,9 @@ export async function runOriginalSessionBridge({
     let sessionHandle = config.sessionHandle;
     let participantId = config.participantId;
     let expectedRoomId = null;
-    let joinedSessionStore = null;
     if (config.joinRequired) {
       output.write("\nThis runner uses a local foreground Playwright browser; it does not install a provider MCP connector.\n");
       output.write("Use an invitation created in Rub Minds Staging. Production invitations are not valid on this Staging endpoint.\n");
-      joinedSessionStore = createJoinedSessionStore({
-        provider: options.provider,
-        conversationUrl: options.conversationUrl,
-      });
-      await joinedSessionStore.prepare?.();
       const savedBinding = await joinedSessionStore.load();
       if (savedBinding) {
         sessionHandle = savedBinding.sessionHandle;
@@ -760,6 +769,7 @@ export async function runOriginalSessionBridge({
     // This context was launched by this runner, so closing it cannot close the
     // user's normal Chrome/Edge profile. Its dedicated profile data is retained.
     try { await context?.close(); } catch { /* preserve the runner's primary result */ }
+    try { await releaseJoinedSessionLock?.(); } catch { /* do not mask the runner's primary result */ }
   }
 }
 
