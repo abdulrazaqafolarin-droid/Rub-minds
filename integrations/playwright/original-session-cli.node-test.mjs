@@ -41,18 +41,25 @@ function makeRunnerStateDependencies({
   participantId = ENV.RUB_MINDS_PARTICIPANT_ID,
   roomId = "550e8400-e29b-41d4-a716-446655440000",
   savedBinding = null,
+  joinLockBusy = false,
 } = {}) {
   let saved = structuredClone(savedBinding);
+  let joinLockReleaseCount = 0;
   return {
     createTaskStateStore: () => makeMemoryStateStore(),
     createJoinedSessionStore: () => ({
       async prepare() {},
+      async acquireLock() {
+        if (joinLockBusy) return null;
+        return async () => { joinLockReleaseCount++; };
+      },
       async load() { return saved && saved.sessionHandle ? structuredClone(saved) : null; },
       async loadPendingJoin() { return saved && saved.pendingJoin ? structuredClone(saved.pendingJoin) : null; },
       async savePendingJoin(value) { saved = { pendingJoin: structuredClone(value) }; },
       async save(value) { saved = structuredClone(value); },
       async clear() { saved = null; },
     }),
+    readJoinLockReleaseCount: () => joinLockReleaseCount,
     readSavedBinding: () => structuredClone(saved?.sessionHandle ? saved : null),
     readSavedPendingJoin: () => structuredClone(saved?.pendingJoin || null),
     createSessionTransport: () => ({
@@ -524,6 +531,38 @@ test("local runner starts with consent, approves one new group message, and clos
   }
 });
 
+test("refuses a second local runner for the same provider conversation before opening another browser", async () => {
+  const input = makeTtyStream();
+  const output = makeTtyStream();
+  output.write = () => true;
+  const stateDependencies = makeRunnerStateDependencies({ joinLockBusy: true });
+  let browserLaunches = 0;
+  let inviteReads = 0;
+  const context = makeRunnerContext({ isClosed: () => false, url: () => CHATGPT_URL }, {
+    contextClosed: 0, runtimeStopped: 0, providerInteractions: 0,
+  });
+  try {
+    await assert.rejects(() => runOriginalSessionBridge({
+      argv: ["--provider", "chatgpt", "--conversation-url", CHATGPT_URL],
+      env: { RUB_MINDS_MCP_ENDPOINT: ENV.RUB_MINDS_MCP_ENDPOINT },
+      input,
+      output,
+      errorOutput: output,
+      ...stateDependencies,
+      prompt: async () => true,
+      readInput: async () => { inviteReads++; return "https://rub-minds.vercel.app/?invite=" + "b".repeat(64); },
+      playwright: { chromium: { async launchPersistentContext() { browserLaunches++; return context; } } },
+      prepareProfile: async value => value,
+    }), /Another original-session runner is already active/);
+    assert.equal(browserLaunches, 0, "the second runner must not open another provider browser");
+    assert.equal(inviteReads, 0, "the second runner must not redeem another invitation");
+    assert.equal(stateDependencies.readJoinLockReleaseCount(), 0, "a process that did not own the lock must not release it");
+  } finally {
+    input.destroy();
+    output.destroy();
+  }
+});
+
 test("local runner explicitly redeems a Staging invite and binds the returned AI session to the exact browser conversation", async () => {
   const input = makeTtyStream();
   const output = makeTtyStream();
@@ -611,6 +650,7 @@ test("local runner explicitly redeems a Staging invite and binds the returned AI
     assert.match(joinedInput.joinRequestKey, /^[a-f0-9]{64}$/i);
     assert.equal(stateDependencies.readSavedPendingJoin(), null);
     assert.deepEqual(stateDependencies.readSavedBinding(), { sessionHandle, participantId, roomId, expiresAt: "2026-11-20T00:00:00.000Z" });
+    assert.equal(stateDependencies.readJoinLockReleaseCount(), 1, "conversation lock is released after the runner exits");
     assert.equal(stats.providerInteractions, 1);
     assert.equal(stats.contextClosed, 1);
     assert.ok(!writes.join("").includes(inviteToken), "invite token must not be printed");
@@ -669,6 +709,7 @@ test("local runner reuses a verified saved join for the exact provider conversat
     assert.equal(joinCalls, 0);
     assert.equal(inputCalls, 0);
     assert.deepEqual(stateDependencies.readSavedBinding(), savedBinding);
+    assert.equal(stateDependencies.readJoinLockReleaseCount(), 1, "conversation lock is released after a reused join exits");
     assert.ok(writes.join("").includes("Verifying it before reuse"));
     assert.ok(!writes.join("").includes(sessionHandle), "saved session capability must not be printed");
     assert.equal(stats.contextClosed, 1);
