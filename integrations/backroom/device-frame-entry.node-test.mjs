@@ -23,6 +23,27 @@ test("Backroom exposes only authenticated real device frames", async () => {
   assert.doesNotMatch(devices, /'phone'\s*\|\s*'desktop'\s*\|\s*'terminal'/);
   assert.doesNotMatch(devices, /Browser runtime|BackroomSimulatorApp/);
 });
+test("Device Frame refreshes visible device state without stale room overwrites", async () => {
+  const devices = await read("src/BackroomDevicesApp.tsx");
+  assert.match(devices, /setInterval\(poll, 20_000\)/);
+  assert.match(devices, /document\.visibilityState !== 'visible'/);
+  assert.match(devices, /requestId !== refreshRequestRef\.current/);
+  assert.match(devices, /targetRoom !== roomId/);
+  assert.match(devices, /lastUpdatedAt/);
+});
+
+test("Backroom frame layout contract excludes simulated screens and separates permissions", async () => {
+  const ux = await read("docs/BACKROOM_DEVICE_FRAME_UX.md");
+  const devices = await read("src/BackroomDevicesApp.tsx");
+  const android = await read("src/BackroomAndroidControl.tsx");
+  assert.match(ux, /not a simulator/i);
+  assert.match(ux, /screen share, touch, draft insertion and native Send remain separately authorized/i);
+  assert.match(ux, /never enables native Send/);
+  assert.match(devices, /AI-directed sending \/ native Off · On · Auto/);
+  assert.match(android, /Insert draft/);
+  assert.match(android, /Request touch control/);
+});
+
 test("Device Frame shows one selected Android phone at a time", async () => {
   const devices = await read("src/BackroomDevicesApp.tsx");
   assert.match(devices, /selectedDeviceId/);
