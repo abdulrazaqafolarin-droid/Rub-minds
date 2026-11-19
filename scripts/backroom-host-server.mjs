@@ -496,7 +496,6 @@ export function createBackroomHostServer({
             return;
           }
           if(url.pathname==="/v1/browser/wake/bindings/revoke"){
-            const input=await readJson(request);
             if(typeof input.bindingId!=="string"||!/^[a-f0-9-]{36}$/i.test(input.bindingId)||
               Object.keys(input).some(key=>key!=="bindingId")){
               writeJson(response,400,{error:"invalid_wake_binding_scope"},cors);return;
