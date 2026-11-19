@@ -219,6 +219,69 @@ test("empty startup snapshots return a valid epoch cursor and only permit messag
   await assert.rejects(() => transport.callTool("read_session_memory", {}), /only supports/);
 });
 
+test("task transport lists, reads, claims and submits under the same exact MCP participant session", async () => {
+  const taskId = "550e8400-e29b-41d4-a716-446655440000";
+  const submissionKey = "650e8400-e29b-41d4-a716-446655440000";
+  const resultText = "A reviewed-ready deliverable.";
+  const fake = fakeFetch(({ request }) => {
+    const name = request.params.name;
+    const args = request.params.arguments;
+    let structuredContent;
+    if (name === "list_group_tasks") {
+      assert.equal(Object.keys(args).length, 1);
+      structuredContent = { tasks: [{ id: taskId, status: "assigned" }] };
+    } else if (name === "read_group_task") {
+      structuredContent = {
+        task: { id: taskId, status: "assigned" },
+        prerequisites: [],
+        submissions: [],
+        reviews: [],
+      };
+    } else if (name === "claim_group_task") {
+      structuredContent = { claimed: true, status: "in_progress" };
+    } else if (name === "submit_group_task_result") {
+      structuredContent = { submitted: true, replayed: false, status: "review" };
+    } else {
+      throw new Error("Unexpected task tool " + name);
+    }
+    return fakeResponse({ jsonrpc: "2.0", id: request.id, result: { structuredContent } });
+  });
+  const transport = new McpSessionMessageTransport({ endpoint: ENDPOINT, sessionHandle: SESSION, fetchImpl: fake.fetch });
+  const tasks = transport.createTaskAdapters();
+  assert.equal((await tasks.listTasks()).tasks.length, 1);
+  assert.equal((await tasks.readTask(taskId)).task.id, taskId);
+  assert.equal((await tasks.claimTask(taskId)).claimed, true);
+  assert.equal((await tasks.submitTaskResult({
+    taskId, result: resultText, submissionKey, sourceMessageIds: [],
+  })).submitted, true);
+  assert.deepEqual(fake.requests.map(item => item.request.params.name), [
+    "list_group_tasks", "read_group_task", "claim_group_task", "submit_group_task_result",
+  ]);
+  assert.ok(fake.requests.every(item => item.request.params.arguments.session_handle === SESSION));
+  assert.equal(fake.requests[3].request.params.arguments.submission_key, submissionKey);
+  assert.equal(fake.requests[3].request.params.arguments.result, resultText);
+});
+
+test("task transport rejects malformed identifiers and result payloads before network access", async () => {
+  let calls = 0;
+  const fetchImpl = async () => { calls++; throw new Error("must not call network"); };
+  const transport = new McpSessionMessageTransport({ endpoint: ENDPOINT, sessionHandle: SESSION, fetchImpl });
+  const tasks = transport.createTaskAdapters();
+  await assert.rejects(() => tasks.readTask("not-a-uuid"), /UUID/);
+  await assert.rejects(() => tasks.claimTask("not-a-uuid"), /UUID/);
+  await assert.rejects(() => tasks.submitTaskResult({
+    taskId: "550e8400-e29b-41d4-a716-446655440000",
+    result: "",
+    submissionKey: "650e8400-e29b-41d4-a716-446655440000",
+  }), /1-20000/);
+  await assert.rejects(() => tasks.submitTaskResult({
+    taskId: "550e8400-e29b-41d4-a716-446655440000",
+    result: "answer",
+    submissionKey: "bad",
+  }), /submissionKey/);
+  assert.equal(calls, 0);
+});
+
 test("cursor reads use immediate composite paging with a bounded page limit", async () => {
   const cursor = {
     after_created_at: "2026-10-24T17:00:00.123456+00:00",
