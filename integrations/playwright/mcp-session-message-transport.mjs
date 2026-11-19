@@ -76,15 +76,24 @@ export async function joinRubMindsInvite({
   endpoint,
   inviteToken,
   agentLabel,
+  allowLocalTestEndpoint = false,
   fetchImpl = globalThis.fetch,
   requestTimeoutMs = 20000,
   signal,
 } = {}) {
   const target = validateEndpoint(endpoint);
   const targetUrl = new URL(target);
-  if (targetUrl.hostname !== "tzcuuynmviiuactafpld.supabase.co" ||
-      targetUrl.pathname.replace(/\/$/, "") !== "/functions/v1/rub-minds-mcp") {
-    throw new TypeError("invite redemption is restricted to the Rub Minds Staging MCP endpoint");
+  const functionPath = targetUrl.pathname.replace(/\/$/, "");
+  const stagingTarget = targetUrl.protocol === "https:" &&
+    targetUrl.hostname === "tzcuuynmviiuactafpld.supabase.co" &&
+    functionPath === "/functions/v1/rub-minds-mcp";
+  const localTestTarget = allowLocalTestEndpoint === true &&
+    targetUrl.protocol === "http:" &&
+    targetUrl.hostname === "127.0.0.1" &&
+    targetUrl.port === "54321" &&
+    functionPath === "/functions/v1/rub-minds-mcp";
+  if (!stagingTarget && !localTestTarget) {
+    throw new TypeError("invite redemption is restricted to the Rub Minds Staging MCP endpoint; loopback is allowed only in explicit local tests");
   }
   if (typeof inviteToken !== "string" || !/^[0-9a-f]{64}$/i.test(inviteToken)) {
     throw new TypeError("inviteToken must be a 64-character hexadecimal Staging invitation");
