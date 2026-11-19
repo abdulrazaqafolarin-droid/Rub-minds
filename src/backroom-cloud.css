@@ -107,3 +107,6 @@
 .br-cloud-frame-note p{margin:5px 0 0;color:#f1cf98;font-size:10px;font-weight:700}
 .br-cloud-frame-note small{color:#96a6c8;font-size:10px;line-height:1.5}
 @media(max-width:650px){.br-cloud-frame-note{grid-template-columns:1fr}}
+
+.br-cloud-refresh-wrap{display:flex;align-items:center;gap:9px;margin-left:8px}.br-cloud-refresh-wrap>small{color:#8292b4;font-size:10px;white-space:nowrap}
+@media(max-width:540px){.br-cloud-refresh-wrap{margin-left:0}.br-cloud-refresh-wrap>small{display:none}}
