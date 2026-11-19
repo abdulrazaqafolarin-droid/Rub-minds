@@ -139,6 +139,14 @@ test("private task state store survives restart but keeps results separate from 
   try {
     const store = createPrivateTaskStateStore({ provider: "chatgpt", participantId, baseDirectory: root });
     await store.prepare();
+    const releaseJoinLock = await store.acquireLock();
+    assert.equal(typeof releaseJoinLock, "function");
+    assert.equal(await sameConversationStore.acquireLock(), null,
+      "a second process must not start another join for the same exact provider conversation");
+    await releaseJoinLock();
+    const releaseAgain = await sameConversationStore.acquireLock();
+    assert.equal(typeof releaseAgain, "function", "the join lock must release cleanly");
+    await releaseAgain();
     assert.equal(await store.load(), null);
     const pending = {
       schema: 1,
@@ -236,6 +244,11 @@ test("private joined-session store keys by provider and exact conversation and s
     const second = createPrivateJoinedSessionStore({
       provider: "chatgpt",
       conversationUrl: "https://chatgpt.com/c/a-different-conversation",
+      baseDirectory: root,
+    });
+    const sameConversationStore = createPrivateJoinedSessionStore({
+      provider: "chatgpt",
+      conversationUrl: CHATGPT_URL,
       baseDirectory: root,
     });
     const inviteToken = "b".repeat(64);
