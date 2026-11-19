@@ -96,6 +96,7 @@ test("retries an ambiguous invite redemption with the same initialized MCP sessi
         joined: true,
         room_id: "550e8400-e29b-41d4-a716-446655440000",
         participant_id: "650e8400-e29b-41d4-a716-446655440000",
+        expires_at: "2026-11-20T00:00:00.000Z",
       } },
     }, 200, { "Mcp-Session-Id": sessionHandle });
   };
