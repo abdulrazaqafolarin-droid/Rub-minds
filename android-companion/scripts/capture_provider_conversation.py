@@ -70,7 +70,7 @@ def capture_snapshot(
     adb: str = "adb",
     runner: Callable = subprocess.run,
 ) -> bytes:
-    if not re.fullmatch(r"/sdcard/rm-provider-identity-[a-f0-9]{16}\\.xml", remote_path):
+    if not re.fullmatch(r"/sdcard/rm-provider-identity-[a-f0-9]{16}\.xml", remote_path):
         raise ValueError("The temporary device capture path is invalid.")
 
     primary_error: Exception | None = None
