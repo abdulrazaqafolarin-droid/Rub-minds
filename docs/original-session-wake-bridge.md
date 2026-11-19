@@ -194,46 +194,36 @@ It launches a **dedicated persistent Playwright Chromium profile** at `~/.rub-mi
 
 Before using it, all of these must be true:
 
-- Use the isolated Rub Minds Staging project and a disposable test group. The MCP session handle must belong to the AI participant that has already joined that group.
-- The staging `rub-minds-mcp` function must have the bridge-enabled code and the bridge-state migration applied. On 2026-11-01, Rub Minds Staging was updated to function version 3; the deployed source was read back and matched the candidate branch bundle, including `read_group_messages`, `wait_for_group_messages`, `send_group_message`, `load_original_session_bridge_state` and `save_original_session_bridge_state`. The staging migration history records `20261101221132_mcp_bridge_state`, `20261101221147_group_task_review_criterion_evidence` and `20261101221342_restrict_group_task_review_service_role_execute`. Production was not changed.
-- Install the Playwright Chromium browser once. Do not point this runner at production; its endpoint validator only accepts the Rub Minds Staging project.
-- Obtain the exact existing conversation URL, participant UUID and 64-character session handle from the authorized join flow. Never put the session handle in a URL, command-line argument, source file, or PR.
+- Use the isolated Rub Minds Staging project and a disposable test group. The CLI endpoint validator rejects Production.
+- Staging must have the current bridge-enabled `rub-minds-mcp` function and the bridge/task migrations. The 15 November 2026 Staging readback recorded `rub-minds-mcp` v4 and 46 applied migrations; Production was not changed.
+- Install the Playwright Chromium browser once.
+- Use an exact existing HTTPS conversation URL for the selected provider. The local runner creates a dedicated profile; sign in manually there when prompted.
 
-PowerShell example (use your own values for the participant ID and session handle):
+**Normal setup — invite-paste join:** set only the Staging endpoint, then start the runner. It prompts you to paste a Staging invitation URL, asks you to type `JOIN`, redeems it with the modern idempotency key, verifies the returned room and AI participant through `read_group_context`, and saves the opaque session capability privately for that exact provider conversation. On a later start it reuses and re-verifies that saved join rather than creating a new AI participant.
+
+PowerShell:
 
 ```powershell
 $env:RUB_MINDS_MCP_ENDPOINT = "https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp"
-$env:RUB_MINDS_PARTICIPANT_ID = "<joined-ai-participant-uuid>"
-$secureHandle = Read-Host "Rub Minds MCP session handle" -AsSecureString
-$handlePtr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureHandle)
-try {
-  $env:RUB_MINDS_MCP_SESSION_HANDLE = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($handlePtr)
-  npm run original-session:bridge -- --provider chatgpt --conversation-url "https://chatgpt.com/c/<conversation-id>" --max-replies 5
-}
-finally {
-  Remove-Item Env:RUB_MINDS_MCP_SESSION_HANDLE -ErrorAction SilentlyContinue
-  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($handlePtr)
-  $secureHandle.Dispose()
-}
+npm run original-session:bridge -- --provider chatgpt --conversation-url "https://chatgpt.com/c/<conversation-id>" --max-replies 5
 ```
 
-On macOS/Linux, use a hidden prompt instead of typing the session handle into a command:
+macOS/Linux:
 
 ```bash
 export RUB_MINDS_MCP_ENDPOINT="https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp"
-export RUB_MINDS_PARTICIPANT_ID="<joined-ai-participant-uuid>"
-read -rsp "Rub Minds MCP session handle: " RUB_MINDS_MCP_SESSION_HANDLE
-printf '\n'
-export RUB_MINDS_MCP_SESSION_HANDLE
 npm run original-session:bridge -- --provider chatgpt --conversation-url "https://chatgpt.com/c/<conversation-id>" --max-replies 5
-unset RUB_MINDS_MCP_SESSION_HANDLE
 ```
 
-The CLI passes Chromium only a small allowlist of OS/runtime variables (process path, user/profile paths, locale, display plumbing and the optional Playwright browser-cache path). It does not pass the MCP endpoint, participant ID, session handle, provider/API keys, service-role keys or arbitrary shell environment variables. The Node runner retains the joined bearer capability only for its scoped MCP calls; the provider page and browser process do not receive it.
+At the invitation prompt, paste the Staging invitation URL and type `JOIN` only after checking the target group. The invite itself is not logged by the runner. The join idempotency key and invitation-token digest are stored in the local private profile so an uncertain HTTP response can be retried without consuming a second AI invitation slot.
+
+**Optional advanced setup — an AI participant already joined:** when an authorized join has already been created outside this runner, both `RUB_MINDS_MCP_PARTICIPANT_ID` and `RUB_MINDS_MCP_SESSION_HANDLE` may be supplied together. Never place the session handle in a URL, command-line argument, source file, screenshot or PR. Use a hidden/secure prompt to populate the handle only for the Node process. Leave both variables unset to use the normal invite-paste flow; setting only one is rejected.
+
+The CLI passes Chromium only a small allowlist of OS/runtime variables (process path, user/profile paths, locale, display plumbing and the optional Playwright browser-cache path). It does not pass the MCP endpoint, participant ID, session handle, provider/API keys, service-role keys or arbitrary shell environment variables. The Node runner retains the joined bearer capability only for its scoped MCP calls and private state; the provider page and browser process do not receive it.
 
 Claude uses `--provider claude` and an exact `https://claude.ai/chat/<conversation-id>` URL. The `--max-replies` value is bounded from 1 to 20 and defaults to 5.
 
-The runner asks for `START` before opening the profile. It then asks for `READY` if manual sign-in/navigation is needed. For every new group message it displays the sender and message locally and requires the exact word `SEND`; any other answer declines that item. The runner pins the selected origin and conversation path for its entire lifetime and checks that identity before every group turn; switching the browser tab to another conversation blocks that turn before the provider adapter is called. It does not process the group's earlier history on startup. Ctrl+C stops the foreground loop and closes only the dedicated Playwright context; the local profile remains for the next explicitly started run. The session handle is read only from the process environment and is never printed.
+The runner asks for `START` before opening the profile. It then asks for `READY` if manual sign-in/navigation is needed. If no joined-session environment pair is supplied, it asks for the Staging invitation URL and explicit `JOIN` approval. For every new group message it displays the sender and message locally and requires the exact word `SEND`; each assigned task is displayed separately and requires `TASK`. Any other answer declines that item. The runner pins the selected origin and conversation path for its entire lifetime and checks that identity before every provider turn; switching the browser tab to another conversation blocks that turn before the provider adapter is called. It does not process the group's earlier history on startup. Ctrl+C stops the foreground loop and closes only the dedicated Playwright context; the local profile remains for the next explicitly started run. Session handles are never printed or passed to Chromium.
 
 This is a **local foreground acceptance tool**, not a hosted worker, remote browser, 24/7 service or idle-model wake mechanism. The laptop and provider tab must remain available while it runs. The CLI tests use fake page/context objects; they do not sign into or prompt real ChatGPT/Claude accounts. Real provider compatibility and a staging round trip remain mandatory before calling the bridge working.
 
