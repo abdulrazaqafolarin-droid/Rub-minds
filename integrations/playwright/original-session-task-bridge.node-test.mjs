@@ -40,11 +40,13 @@ function taskBridgeFixture({
   claimResult = { claimed: true, status: "in_progress" },
   adapterResult = "Final risk register with mitigation owners.",
   adapterError = null,
+  blockError = false,
   submit = async () => ({ submitted: true, replayed: false }),
 } = {}) {
   const calls = { list: 0, read: [], claim: [], block: [], ask: [], submit: [] };
   const stateStore = memoryStore(stored);
   let currentTask = structuredClone(task);
+  let blockFails = blockError;
   const bridge = new OriginalSessionTaskBridge({
     page: { isClosed: () => false },
     adapter: {
@@ -72,6 +74,7 @@ function taskBridgeFixture({
     },
     blockTask: async (taskId, reason) => {
       calls.block.push({ taskId, reason });
+      if (blockFails) throw new Error("block transport unavailable");
       currentTask = { ...currentTask, status: "blocked", blocked_reason: reason, version: currentTask.version + 1 };
       return { blocked: true, status: "blocked" };
     },
@@ -81,7 +84,7 @@ function taskBridgeFixture({
     },
     stateStore,
   });
-  return { bridge, calls, stateStore, currentTask: () => structuredClone(currentTask) };
+  return { bridge, calls, stateStore, currentTask: () => structuredClone(currentTask), setBlockError: value => { blockFails = value; } };
 }
 
 test("requires explicit approval and durable task state before consuming assignments", async () => {
@@ -213,7 +216,10 @@ test("a process restart in working state fails closed without re-sending the tas
   const result = await fixture.bridge.step({ approved: true });
   assert.equal(result.status, "blocked");
   assert.equal(fixture.calls.list, 0);
-  assert.equal(fixture.calls.read.length, 0, "ambiguous provider turn is not re-executed");
+  assert.equal(fixture.calls.read.length, 1, "restart checks and blocks the exact claimed task without reading provider history");
+  assert.equal(fixture.calls.block.length, 1);
+  assert.equal(fixture.stateStore.current(), null);
+  assert.equal(fixture.currentTask().status, "blocked");
   assert.deepEqual(fixture.calls.claim, []);
   assert.equal(fixture.calls.ask.length, 0);
   assert.equal(fixture.calls.submit.length, 0);
@@ -225,11 +231,28 @@ test("an ambiguous provider Send outcome is blocked for human recovery and never
   const fixture = taskBridgeFixture({ adapterError: error });
   const first = await fixture.bridge.step({ approved: true });
   assert.equal(first.status, "blocked");
-  assert.equal(fixture.stateStore.current().phase, "provider_ambiguous");
+  assert.equal(fixture.stateStore.current(), null);
   assert.equal(fixture.calls.block.length, 1);
   assert.equal(fixture.currentTask().status, "blocked");
   const second = await fixture.bridge.step({ approved: true });
+  assert.equal(second.status, "idle", "a task already blocked on the server must not trap future group participation");
+  assert.equal(fixture.calls.ask.length, 1);
+  assert.equal(fixture.calls.submit.length, 0);
+});
+
+test("a failed server-side block retains a local marker and retries blocking without replaying the provider prompt", async () => {
+  const error = new Error("Playwright Send click timed out");
+  error.submissionState = "unknown";
+  const fixture = taskBridgeFixture({ adapterError: error, blockError: true });
+  const first = await fixture.bridge.step({ approved: true });
+  assert.equal(first.status, "blocked");
+  assert.equal(fixture.stateStore.current().phase, "provider_ambiguous");
+  assert.equal(fixture.currentTask().status, "in_progress");
+  fixture.setBlockError(false);
+  const second = await fixture.bridge.step({ approved: true });
   assert.equal(second.status, "blocked");
+  assert.equal(fixture.stateStore.current(), null);
+  assert.equal(fixture.currentTask().status, "blocked");
   assert.equal(fixture.calls.ask.length, 1);
   assert.equal(fixture.calls.submit.length, 0);
 });
