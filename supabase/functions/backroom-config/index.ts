@@ -98,7 +98,7 @@ Deno.serve(async req=>{
   }
   if(parsed.pathname.endsWith('/binding-status')){
    let input;
-   try{input=validateBindingStatusQuery(value);}catch{return json(400,{ok:false,reason:'invalid_binding_status_query'},origin);}
+   try{input=validateBindingStatusQuery(value) as ReturnType<typeof validateBindingStatusQuery> & {participantId?:string;sessionDigest?:string};}catch{return json(400,{ok:false,reason:'invalid_binding_status_query'},origin);}
    const {data:ownedRoom,error:roomError}=await db.from('rooms').select('id')
     .eq('id',input.roomId).eq('owner_id',ownerId).maybeSingle();
    if(roomError)return json(503,{ok:false,reason:'service_unavailable'},origin);
@@ -180,7 +180,7 @@ Deno.serve(async req=>{
    return json(201,{ok:true,hostId:input.hostId,wakeEnabled:false,renewed:false},origin);
   }
   let input;
-  try{input=validatePendingWakeBinding(value);}catch{return json(400,{ok:false,reason:'invalid_binding'},origin);}
+  try{input=validatePendingWakeBinding(value) as ReturnType<typeof validatePendingWakeBinding> & {providerConversationIdentityDigest?:string};}catch{return json(400,{ok:false,reason:'invalid_binding'},origin);}
   const now=new Date().toISOString();
   const [host,room,participant,connection,session]=await Promise.all([
    db.from('backroom_hosts').select('host_id').eq('host_id',input.hostId).eq('owner_id',ownerId)
