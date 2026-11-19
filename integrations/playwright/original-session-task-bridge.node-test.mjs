@@ -39,6 +39,7 @@ function taskBridgeFixture({
   stored = null,
   claimResult = { claimed: true, status: "in_progress" },
   adapterResult = "Final risk register with mitigation owners.",
+  adapterError = null,
   submit = async () => ({ submitted: true, replayed: false }),
 } = {}) {
   const calls = { list: 0, read: [], claim: [], ask: [], submit: [] };
@@ -49,6 +50,7 @@ function taskBridgeFixture({
     adapter: {
       ask: async (_page, prompt, metadata) => {
         calls.ask.push({ prompt, metadata });
+        if (adapterError) throw adapterError;
         return adapterResult;
       },
     },
@@ -209,6 +211,31 @@ test("a process restart in working state fails closed without re-sending the tas
   assert.equal(fixture.calls.read.length, 0, "ambiguous provider turn is not re-executed");
   assert.deepEqual(fixture.calls.claim, []);
   assert.equal(fixture.calls.ask.length, 0);
+  assert.equal(fixture.calls.submit.length, 0);
+});
+
+test("an ambiguous provider Send outcome is persisted and never automatically replayed", async () => {
+  const error = new Error("Playwright Send click timed out");
+  error.submissionState = "unknown";
+  const fixture = taskBridgeFixture({ adapterError: error });
+  const first = await fixture.bridge.step({ approved: true });
+  assert.equal(first.status, "blocked");
+  assert.equal(fixture.stateStore.current().phase, "provider_ambiguous");
+  const second = await fixture.bridge.step({ approved: true });
+  assert.equal(second.status, "blocked");
+  assert.equal(fixture.calls.ask.length, 1);
+  assert.equal(fixture.calls.submit.length, 0);
+});
+
+test("a definitely-not-submitted task is deferred in this run and never duplicated", async () => {
+  const error = new Error("Operator declined TASK approval");
+  error.submissionState = "not_submitted";
+  const fixture = taskBridgeFixture({ adapterError: error });
+  const first = await fixture.bridge.step({ approved: true });
+  assert.equal(first.status, "deferred");
+  const second = await fixture.bridge.step({ approved: true });
+  assert.equal(second.status, "deferred");
+  assert.equal(fixture.calls.ask.length, 1);
   assert.equal(fixture.calls.submit.length, 0);
 });
 
