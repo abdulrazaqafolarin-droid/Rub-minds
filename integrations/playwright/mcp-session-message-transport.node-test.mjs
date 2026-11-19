@@ -126,6 +126,7 @@ test("rejects invalid Staging invitation inputs before network access", async ()
   };
   for (const input of [
     { ...valid, endpoint: "https://zucaeevlbwhcvjwbhwmq.supabase.co/functions/v1/rub-minds-mcp" },
+    { ...valid, endpoint: "http://127.0.0.1:54321/functions/v1/rub-minds-mcp" },
     { ...valid, inviteToken: "short" },
     { ...valid, agentLabel: " " },
     { ...valid, agentLabel: "x".repeat(81) },
@@ -133,6 +134,44 @@ test("rejects invalid Staging invitation inputs before network access", async ()
     await assert.rejects(() => joinRubMindsInvite(input));
   }
   assert.equal(calls, 0);
+});
+
+test("explicit local loopback testing is opt-in and cannot redirect invite redemption to Production", async () => {
+  const fake = fakeFetch(({ request }) => request.method === "initialize"
+    ? fakeResponse({
+        jsonrpc: "2.0", id: request.id,
+        result: { protocolVersion: "2025-06-18", capabilities: {}, serverInfo: { name: "rub-minds", version: "0.1.0" } },
+      }, 200, { "Mcp-Session-Id": "d".repeat(64) })
+    : fakeResponse({
+        jsonrpc: "2.0", id: request.id,
+        result: { structuredContent: {
+          joined: true,
+          room_id: "550e8400-e29b-41d4-a716-446655440000",
+          participant_id: "650e8400-e29b-41d4-a716-446655440000",
+          expires_at: "2026-11-20T00:00:00.000Z",
+        } },
+      }));
+  await assert.rejects(() => joinRubMindsInvite({
+    endpoint: "http://127.0.0.1:54321/functions/v1/rub-minds-mcp",
+    inviteToken: "a".repeat(64),
+    agentLabel: "CI local test",
+    fetchImpl: fake.fetch,
+  }), /Staging MCP endpoint/);
+  const joined = await joinRubMindsInvite({
+    endpoint: "http://127.0.0.1:54321/functions/v1/rub-minds-mcp",
+    inviteToken: "a".repeat(64),
+    agentLabel: "CI local test",
+    allowLocalTestEndpoint: true,
+    fetchImpl: fake.fetch,
+  });
+  assert.equal(joined.joined, true);
+  await assert.rejects(() => joinRubMindsInvite({
+    endpoint: "https://zucaeevlbwhcvjwbhwmq.supabase.co/functions/v1/rub-minds-mcp",
+    inviteToken: "a".repeat(64),
+    agentLabel: "CI must reject Production",
+    allowLocalTestEndpoint: true,
+    fetchImpl: fake.fetch,
+  }), /Staging MCP endpoint/);
 });
 
 test("rejects malformed join identity without returning the MCP session capability in errors", async () => {
