@@ -26,6 +26,37 @@ const ENV = {
   RUB_MINDS_PARTICIPANT_ID: "33333333-3333-4333-8333-333333333333",
 };
 
+function makeMemoryStateStore() {
+  let value = null;
+  return {
+    async prepare() {},
+    async load() { return structuredClone(value); },
+    async save(next) { value = structuredClone(next); },
+  };
+}
+
+function makeRunnerStateDependencies() {
+  return {
+    createTaskStateStore: () => makeMemoryStateStore(),
+    createJoinedSessionStore: () => ({
+      async prepare() {},
+      async load() { return null; },
+      async save() {},
+      async clear() {},
+    }),
+    createSessionTransport: () => ({
+      async readGroupContext() {
+        return {
+          room: { id: "550e8400-e29b-41d4-a716-446655440000" },
+          self: { participant_id: ENV.RUB_MINDS_PARTICIPANT_ID },
+        };
+      },
+      async leaveGroup() { return { left: true }; },
+    }),
+  };
+}
+
+
 test("parses only bounded provider, conversation and reply options", () => {
   assert.deepEqual(parseRunnerArgs([
     "--provider", "chatgpt", "--conversation-url", CHATGPT_URL, "--max-replies", "3",
@@ -82,6 +113,71 @@ test("permits an explicit Staging invitation join when no prejoined session is c
     RUB_MINDS_MCP_ENDPOINT: ENV.RUB_MINDS_MCP_ENDPOINT,
     RUB_MINDS_MCP_SESSION_HANDLE: "a".repeat(64),
   }, "chatgpt"), /Set both/);
+});
+
+test("private task state store survives restart but keeps results separate from joined-session capabilities", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rub-minds-task-state-"));
+  const participantId = ENV.RUB_MINDS_PARTICIPANT_ID;
+  try {
+    const store = createPrivateTaskStateStore({ provider: "chatgpt", participantId, baseDirectory: root });
+    await store.prepare();
+    assert.equal(await store.load(), null);
+    const pending = {
+      schema: 1,
+      phase: "result_ready",
+      participantId,
+      taskId: "550e8400-e29b-41d4-a716-446655440000",
+      taskVersion: 5,
+      submissionKey: "650e8400-e29b-41d4-a716-446655440000",
+      result: "Private pending result",
+    };
+    await store.save(pending);
+    assert.deepEqual(await store.load(), pending);
+    const fileStats = await stat(store.path);
+    assert.equal(fileStats.isFile(), true);
+    if (process.platform !== "win32") {
+      assert.equal(fileStats.mode & 0o777, 0o600);
+    }
+    await store.save(null);
+    assert.equal(await store.load(), null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("private joined-session store keys by provider and exact conversation and stores no invite token", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rub-minds-join-state-"));
+  try {
+    const store = createPrivateJoinedSessionStore({
+      provider: "chatgpt",
+      conversationUrl: CHATGPT_URL,
+      baseDirectory: root,
+    });
+    const second = createPrivateJoinedSessionStore({
+      provider: "chatgpt",
+      conversationUrl: "https://chatgpt.com/c/a-different-conversation",
+      baseDirectory: root,
+    });
+    const inviteToken = "b".repeat(64);
+    const binding = {
+      sessionHandle: "c".repeat(64),
+      participantId: ENV.RUB_MINDS_PARTICIPANT_ID,
+      roomId: "550e8400-e29b-41d4-a716-446655440000",
+      expiresAt: "2026-11-20T00:00:00.000Z",
+    };
+    await store.prepare();
+    assert.equal(await store.load(), null);
+    await store.save(binding);
+    assert.deepEqual(await store.load(), binding);
+    assert.notEqual(store.path, second.path);
+    const diskText = await (await import("node:fs/promises")).readFile(store.path, "utf8");
+    assert.equal(diskText.includes(inviteToken), false);
+    assert.equal(diskText.includes("invite_token"), false);
+    const fileStats = await stat(store.path);
+    if (process.platform !== "win32") assert.equal(fileStats.mode & 0o777, 0o600);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("provider conversation URLs are exact HTTPS thread URLs without credentials or query secrets", () => {
@@ -200,6 +296,7 @@ test("declining startup consent never launches a browser or exposes the session 
       input,
       output,
       errorOutput: output,
+      ...makeRunnerStateDependencies(),
       prompt: async () => false,
       playwright: {
         chromium: {
@@ -297,6 +394,7 @@ test("local runner starts with consent, approves one new group message, and clos
       input,
       output,
       errorOutput: output,
+      ...makeRunnerStateDependencies(),
       playwright: {
         chromium: {
           async launchPersistentContext(profileDirectory, options) {
@@ -378,6 +476,7 @@ test("local runner explicitly redeems a Staging invite and binds the returned AI
       input,
       output,
       errorOutput: output,
+      ...makeRunnerStateDependencies(),
       playwright: {
         chromium: {
           async launchPersistentContext(_profileDirectory, options) {
@@ -460,6 +559,7 @@ test("declining explicit Staging invitation redemption stops before MCP join or 
       input,
       output,
       errorOutput: output,
+      ...makeRunnerStateDependencies(),
       playwright: { chromium: { async launchPersistentContext() { return context; } } },
       prepareProfile: async value => value,
       readInput: async () => "https://rub-minds.vercel.app/?invite=" + "d".repeat(64),
@@ -493,6 +593,7 @@ test("declining a per-message SEND approval prevents provider interaction and st
         input,
         output,
         errorOutput: output,
+      ...makeRunnerStateDependencies(),
         playwright: {
           chromium: {
             async launchPersistentContext() { return context; },
@@ -547,6 +648,7 @@ test("Ctrl+C while awaiting START returns stopped without opening a browser", as
       input,
       output,
       errorOutput: output,
+      ...makeRunnerStateDependencies(),
       prompt: async () => {
         process.emit("SIGINT");
         const error = new Error("interactive prompt aborted");
@@ -585,6 +687,7 @@ test("Ctrl+C while awaiting SEND stops without provider interaction and closes t
       input,
       output,
       errorOutput: output,
+      ...makeRunnerStateDependencies(),
       playwright: {
         chromium: {
           async launchPersistentContext() { return context; },
