@@ -42,6 +42,51 @@ test("heartbeat timeout still checks durable messages to recover missed notifica
   assert.equal(stepCount, 1);
 });
 
+test("task assignments are polled independently before message paging on each heartbeat", async () => {
+  const order = [];
+  let waits = 0;
+  const runner = new OriginalSessionWakeRunner({
+    bridge: {
+      step: async ({ wakeReason, signal }) => {
+        order.push("messages");
+        assert.equal(wakeReason, "timeout");
+        assert.ok(signal instanceof AbortSignal);
+        return { status: "ok", sent: 0 };
+      },
+    },
+    taskBridge: {
+      step: async ({ approved, signal, wakeReason }) => {
+        order.push("tasks");
+        assert.equal(approved, true);
+        assert.equal(wakeReason, "timeout");
+        assert.ok(signal instanceof AbortSignal);
+        return { status: "idle", submitted: 0 };
+      },
+    },
+    wakeSource: {
+      waitForWake: async () => (++waits === 1 ? { status: "timeout" } : { status: "closed" }),
+      close: async () => {},
+    },
+    heartbeatMs: 1000,
+  });
+  assert.deepEqual(await runner.run({ approved: true }), { status: "source_closed", replies: 0 });
+  assert.deepEqual(order, ["tasks", "messages"]);
+});
+
+test("task bridge errors share the bounded runner failure policy without advancing the message cursor", async () => {
+  let taskCalls = 0;
+  let messageCalls = 0;
+  const runner = new OriginalSessionWakeRunner({
+    bridge: { step: async () => { messageCalls++; return { status: "ok", sent: 0 }; } },
+    taskBridge: { step: async () => { taskCalls++; throw new Error("task result transport unavailable"); } },
+    wakeSource: { waitForWake: async () => ({ status: "timeout" }), close: async () => {} },
+    maxConsecutiveErrors: 2,
+  });
+  await assert.rejects(() => runner.run({ approved: true }), /task result transport unavailable/);
+  assert.equal(taskCalls, 2);
+  assert.equal(messageCalls, 0);
+});
+
 test("aborting stops a pending wake wait", async () => {
   let entered;
   const enteredWait = new Promise(resolve => { entered = resolve; });
