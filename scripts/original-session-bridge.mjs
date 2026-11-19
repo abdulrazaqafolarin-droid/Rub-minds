@@ -529,7 +529,13 @@ export async function runOriginalSessionBridge({
         participantId = joined.participantId;
         expectedRoomId = joined.roomId;
         const transport = createSessionTransport(config.endpoint, sessionHandle);
-        const identity = await transport.readGroupContext({ signal: controller.signal });
+        let identity;
+        try {
+          identity = await transport.readGroupContext({ signal: controller.signal });
+        } catch {
+          try { await transport.leaveGroup(); } catch { /* owner may need to revoke an unverified participant */ }
+          fail("The new Rub Minds join could not be independently verified. The runner did not start; check the group participant list and revoke the unverified participant before retrying.");
+        }
         if (identity.room.id !== expectedRoomId || identity.self.participant_id !== participantId) {
           try { await transport.leaveGroup(); } catch { /* owner can revoke the unmatched join */ }
           fail("The returned Rub Minds join did not match the active session identity; the new participant was revoked or must be revoked by the group owner.");
@@ -593,6 +599,12 @@ export async function runOriginalSessionBridge({
       onStatus: event => {
         if (event?.status === "error") {
           errorOutput.write("Bridge error; automatic retries remain bounded. Check the provider tab and staging MCP availability.\n");
+        } else if (event?.lastTaskResult?.status === "blocked" && event?.status === "blocked") {
+          errorOutput.write("Task blocked for human recovery: " + preview(event.lastTaskResult.taskId || "unknown task", 80) +
+            " · " + preview(event.lastTaskResult.reason || "inspect and reassign this task", 260) + "\n");
+        } else if (event?.lastTaskResult?.status === "submitted") {
+          output.write("Task submitted for human review: " + preview(event.lastTaskResult.taskId || "unknown task", 80) +
+            (event.lastTaskResult.replayed ? " (confirmed idempotent retry)" : "") + "\n");
         } else {
           output.write("Bridge: " + preview(event?.status || "status", 80) +
             (Number.isInteger(event?.replies) ? " · replies " + event.replies : "") + "\n");
