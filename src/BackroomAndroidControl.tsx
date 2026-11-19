@@ -979,7 +979,8 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
     return mapVideoSelectionToFrame(videoRect, surfaceRect, selectionPreview);
   })();
 
-  return <section className="br-android-stream" aria-label="Android live app stream">
+  return <section className="br-android-stream" aria-label="Android live app frame">
+    <div className="br-android-stage">
     <div className="br-android-stream-head">
       <div><b><Smartphone size={14}/> Live Android app</b><small>{device.device_label} · user-consented screen sharing</small></div>
       <span className={viewReady ? 'live' : sessionId ? 'waiting' : 'waiting'}>{viewReady ? 'Live' : sessionId ? 'Connecting' : 'Ready'}</span>
@@ -1010,6 +1011,21 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
       }} aria-hidden="true"/> : null}
       {viewReady && selectionMode ? <div className="br-android-touch-hint"><Hand size={13}/> Drag around one composer</div> : viewReady && controlGranted ? <div className="br-android-touch-hint"><Hand size={13}/> Tap · swipe · long press</div> : null}
     </div>
+    <div className="br-android-stream-actions">
+      {!sessionId
+        ? <button type="button" disabled={!channelReady || !device.apps.length || busy} onClick={() => void startView()}><MonitorPlay size={14}/> Start app view</button>
+        : <>
+          {!controlGranted
+            ? <button type="button" disabled={!viewReady || !sourceVisible || !dataReady || busy} onClick={() => void sendDeviceCommand('request_control')}><Hand size={14}/> Request touch control</button>
+            : <>
+              <span className="br-android-control-grant"><ShieldCheck size={14}/> Touch enabled temporarily</span>
+              <button type="button" disabled={!sourceVisible || !dataReady || busy} onClick={() => sendNavigationAction('back')}><ArrowLeft size={14}/> Back</button>
+            </>}
+          <button type="button" className="stop" disabled={busy} onClick={() => void sendDeviceCommand('stop_session')}><Power size={14}/> Stop session</button>
+        </>}
+    </div>
+    </div>
+    <aside className="br-android-console" aria-label="Phone interaction controls">
     {sessionId ? <div className="br-android-keyboard">
       <div className="br-android-composer-head">
         <b>Original app composer</b>
@@ -1084,22 +1100,10 @@ export default function BackroomAndroidControl({ device, roomId }: { device: Bac
         : 'Selection resolves to one editable, visible, non-password field in the selected foreground app. The phone checks nearby accessibility metadata locally for one Send control; ambiguous or missing controls stay draft-only. Labels and editor/message contents are never transmitted to Rub Minds.'}</small>
       <p className="br-android-stream-disclaimer">{sendControlStatus}</p>
     </div> : null}
-    <div className="br-android-stream-actions">
-      {!sessionId
-        ? <button type="button" disabled={!channelReady || !device.apps.length || busy} onClick={() => void startView()}><MonitorPlay size={14}/> Start app view</button>
-        : <>
-          {!controlGranted
-            ? <button type="button" disabled={!viewReady || !sourceVisible || !dataReady || busy} onClick={() => void sendDeviceCommand('request_control')}><Hand size={14}/> Request touch control</button>
-            : <>
-              <span className="br-android-control-grant"><ShieldCheck size={14}/> Touch enabled temporarily</span>
-              <button type="button" disabled={!sourceVisible || !dataReady || busy} onClick={() => sendNavigationAction('back')}><ArrowLeft size={14}/> Back</button>
-            </>}
-          <button type="button" className="stop" disabled={busy} onClick={() => void sendDeviceCommand('stop_session')}><Power size={14}/> Stop session</button>
-        </>}
-    </div>
     <div className={'br-android-stream-status' + (messageError ? ' error' : '')} role="status">{message}</div>
     <p className="br-android-stream-disclaimer">
       Open this Backroom control page on a second device, such as your Windows laptop. The selected app must stay visible on the phone; showing Backroom on that same phone hides the shared app and pauses its picture. Choose the app window, not the whole display. Touch is a separate local 15-minute permission. This mirrors the real app; it is not an isolated virtual copy.
     </p>
+    </aside>
   </section>;
 }
