@@ -11,12 +11,18 @@ const EMPTY_ROOM_CURSOR = Object.freeze({
   after_created_at: "1970-01-01T00:00:00.000Z",
   after_message_id: "00000000-0000-1000-8000-000000000000",
 });
-const MESSAGE_TOOL_NAMES = new Set([
+const SESSION_BRIDGE_TOOL_NAMES = new Set([
   "read_group_messages",
   "wait_for_group_messages",
   "send_group_message",
   "load_original_session_bridge_state",
   "save_original_session_bridge_state",
+  "load_original_session_task_bridge_state",
+  "save_original_session_task_bridge_state",
+  "list_assigned_group_tasks",
+  "read_group_task",
+  "claim_group_task",
+  "submit_group_task_result",
 ]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
@@ -91,8 +97,8 @@ export class McpSessionMessageTransport {
   }
 
   async callTool(name, args = {}, { signal } = {}) {
-    if (typeof name !== "string" || !MESSAGE_TOOL_NAMES.has(name)) {
-      throw new TypeError("this transport only supports Rub Minds group-message and bridge-state tools");
+    if (typeof name !== "string" || !SESSION_BRIDGE_TOOL_NAMES.has(name)) {
+      throw new TypeError("this transport only supports authorized group, task, and bridge-state tools");
     }
     if (!args || typeof args !== "object" || Array.isArray(args)) throw new TypeError("tool arguments must be an object");
     if (signal?.aborted) throw new Error("Rub Minds MCP call aborted");
@@ -183,6 +189,102 @@ export class McpSessionMessageTransport {
     if (!Array.isArray(result.messages)) throw new Error("Rub Minds MCP baseline read returned no message list");
     if (result.messages.length === 0 && !result.next_cursor) {
       return { ...result, next_cursor: { ...EMPTY_ROOM_CURSOR } };
+    }
+    return result;
+  }
+
+  async readAssignedTasks({ signal } = {}) {
+    const result = await this.callTool("list_assigned_group_tasks", {}, { signal });
+    if (!Array.isArray(result.tasks)) throw new Error("Rub Minds assigned-task read returned no task list");
+    return result;
+  }
+
+  async readTask(taskId, { signal } = {}) {
+    if (typeof taskId !== "string" || !UUID_RE.test(taskId)) throw new TypeError("taskId must be a UUID");
+    const result = await this.callTool("read_group_task", { task_id: taskId }, { signal });
+    if (!result.task || result.task.id !== taskId) throw new Error("Rub Minds returned a different task than requested");
+    return result;
+  }
+
+  async claimTask(taskId, { signal } = {}) {
+    if (typeof taskId !== "string" || !UUID_RE.test(taskId)) throw new TypeError("taskId must be a UUID");
+    return await this.callTool("claim_group_task", { task_id: taskId }, { signal });
+  }
+
+  async submitTaskResult(taskId, result, submissionKey, { signal, sourceMessageIds = [] } = {}) {
+    if (typeof taskId !== "string" || !UUID_RE.test(taskId)) throw new TypeError("taskId must be a UUID");
+    if (typeof result !== "string" || !result.trim() || result.length > 20000) {
+      throw new TypeError("task result must contain 1-20000 characters");
+    }
+    if (typeof submissionKey !== "string" || !UUID_RE.test(submissionKey)) {
+      throw new TypeError("submissionKey must be a UUID");
+    }
+    if (!Array.isArray(sourceMessageIds) || sourceMessageIds.length > 50 ||
+        sourceMessageIds.some(id => typeof id !== "string" || !UUID_RE.test(id)) ||
+        new Set(sourceMessageIds).size !== sourceMessageIds.length) {
+      throw new TypeError("sourceMessageIds must contain at most 50 unique UUIDs");
+    }
+    const submitted = await this.callTool("submit_group_task_result", {
+      task_id: taskId,
+      result: result.trim(),
+      submission_key: submissionKey,
+      source_message_ids: sourceMessageIds,
+    }, { signal });
+    if (submitted.submitted !== true || submitted.task_id !== taskId || submitted.status !== "review") {
+      throw new Error("Rub Minds did not confirm task-result submission for review");
+    }
+    return submitted;
+  }
+
+  async loadTaskBridgeState({ signal } = {}) {
+    const state = await this.callTool("load_original_session_task_bridge_state", {}, { signal });
+    if (!Number.isSafeInteger(state.revision) || state.revision < 0 ||
+        (state.active_task_id !== null && !UUID_RE.test(state.active_task_id)) ||
+        (state.pending_result !== null && (typeof state.pending_result !== "string" ||
+          !state.pending_result.trim() || state.pending_result.length > 20000)) ||
+        (state.pending_submission_key !== null && !UUID_RE.test(state.pending_submission_key)) ||
+        (state.blocked_reason !== null && (typeof state.blocked_reason !== "string" ||
+          !state.blocked_reason.trim() || state.blocked_reason.length > 200))) {
+      throw new Error("Rub Minds task bridge state is invalid");
+    }
+    const empty = state.active_task_id === null && state.pending_result === null &&
+      state.pending_submission_key === null && state.blocked_reason === null;
+    const blocked = typeof state.active_task_id === "string" && state.pending_result === null &&
+      state.pending_submission_key === null && typeof state.blocked_reason === "string";
+    const pending = typeof state.active_task_id === "string" && typeof state.pending_result === "string" &&
+      typeof state.pending_submission_key === "string" && state.blocked_reason === null;
+    if (!(empty || blocked || pending)) throw new Error("Rub Minds task bridge state has conflicting recovery fields");
+    return state;
+  }
+
+  async saveTaskBridgeState(snapshot, { signal } = {}) {
+    if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot) ||
+        !Number.isSafeInteger(snapshot.expected_revision) || snapshot.expected_revision < 0) {
+      throw new TypeError("task bridge state snapshot and expected revision are required");
+    }
+    const activeTaskId = snapshot.active_task_id ?? null;
+    const pendingResult = snapshot.pending_result ?? null;
+    const pendingSubmissionKey = snapshot.pending_submission_key ?? null;
+    const blockedReason = snapshot.blocked_reason ?? null;
+    const empty = activeTaskId === null && pendingResult === null && pendingSubmissionKey === null && blockedReason === null;
+    const blocked = typeof activeTaskId === "string" && UUID_RE.test(activeTaskId) &&
+      pendingResult === null && pendingSubmissionKey === null &&
+      typeof blockedReason === "string" && blockedReason.trim().length > 0 && blockedReason.length <= 200;
+    const pending = typeof activeTaskId === "string" && UUID_RE.test(activeTaskId) &&
+      typeof pendingResult === "string" && pendingResult.trim().length > 0 && pendingResult.length <= 20000 &&
+      typeof pendingSubmissionKey === "string" && UUID_RE.test(pendingSubmissionKey) && blockedReason === null;
+    if (!(empty || blocked || pending)) throw new TypeError("task bridge recovery state is invalid");
+    const result = await this.callTool("save_original_session_task_bridge_state", {
+      expected_revision: snapshot.expected_revision,
+      active_task_id: activeTaskId,
+      pending_result: pendingResult,
+      pending_submission_key: pendingSubmissionKey,
+      blocked_reason: blockedReason,
+    }, { signal });
+    if (result.saved === false && result.conflict === true) return result;
+    if (result.saved !== true || result.conflict !== false ||
+        !Number.isSafeInteger(result.revision) || result.revision < 0) {
+      throw new Error("Rub Minds task bridge-state save returned an invalid acknowledgement");
     }
     return result;
   }
