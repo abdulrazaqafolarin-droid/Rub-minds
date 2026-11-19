@@ -8,6 +8,8 @@ import {
   bindAdapterToExactConversation,
   browserProcessEnvironment,
   conversationKey,
+  createPrivateJoinedSessionStore,
+  createPrivateTaskStateStore,
   isExactConversationPage,
   openExistingConversationPage,
   parseRunnerArgs,
@@ -35,7 +37,7 @@ function makeMemoryStateStore() {
   };
 }
 
-function makeRunnerStateDependencies() {
+function makeRunnerStateDependencies({ participantId = ENV.RUB_MINDS_PARTICIPANT_ID, roomId = "550e8400-e29b-41d4-a716-446655440000" } = {}) {
   return {
     createTaskStateStore: () => makeMemoryStateStore(),
     createJoinedSessionStore: () => ({
