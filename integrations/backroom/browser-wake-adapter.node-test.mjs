@@ -17,3 +17,13 @@ test('composer timeout after click is reported uncertain and never re-sends',asy
  assert.equal(result.result.reason,'composer-clear-unconfirmed');
  assert.equal(f.submitted(),1);
 });
+test('versioned task-assignment event reaches only the bound composer as its exact canonical wake',async()=>{
+ const taskEventId='task_550e8400-e29b-41d4-a716-446655440000_v7';
+ const taskPrompt=buildCanonicalWakePrompt(taskEventId);
+ const f=fixture();
+ const result=await f.adapter.execute({command:{operation:'wake',eventId:taskEventId,text:taskPrompt},target:f.target});
+ assert.equal(result.state,'completed');
+ assert.equal(result.result.triggerSubmitted,true);
+ assert.equal(result.result.eventId,taskEventId);
+ assert.equal(f.submitted(),1);
+});

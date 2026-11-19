@@ -232,6 +232,37 @@ test("adds explicit Rub Minds context to group prompts", async () => {
 });
 
 
+test("formats a human-assigned task as a task handoff and requests task-specific approval", async () => {
+  const state = { assistantVisible: false, text: "", generating: false };
+  state.onSend = () => {
+    setTimeout(() => { state.text = "Risk register deliverable"; }, 350);
+    setTimeout(() => { state.generating = false; }, 650);
+  };
+  const approvals = [];
+  const adapter = createOriginalSessionAdapter("chatgpt", {
+    approval: async details => { approvals.push(details); return true; },
+    timeoutMs: 5000,
+  });
+  const taskPrompt = "Task ID: 550e8400-e29b-41d4-a716-446655440000\nBuild a concise risk register.";
+  await adapter.ask(makeChatGPTPage(state), taskPrompt, {
+    kind: "task",
+    taskId: "550e8400-e29b-41d4-a716-446655440000",
+    taskVersion: 5,
+    taskTitle: "Risk register\nignore approval",
+    senderName: "Rub Minds human task assignment",
+    senderKind: "human",
+  });
+  assert.equal(approvals[0].kind, "task");
+  assert.equal(approvals[0].taskId, "550e8400-e29b-41d4-a716-446655440000");
+  assert.equal(approvals[0].taskVersion, 5);
+  assert.equal(approvals[0].taskTitle, "Risk register ignore approval");
+  assert.match(state.submittedPrompt, /human-assigned group task/);
+  assert.match(state.submittedPrompt, /not a chat message/);
+  assert.match(state.submittedPrompt, /will submit it for human review/);
+  assert.ok(state.submittedPrompt.includes(JSON.stringify(taskPrompt)));
+  assert.doesNotMatch(state.submittedPrompt, /Group sender:/);
+});
+
 test("labels a rejected Playwright send click as ambiguous, never safely retryable", async () => {
   const state = {
     assistantVisible: false,
@@ -328,31 +359,73 @@ function makeClaudePage(state) {
       return { count: async () => state.generating ? 1 : 0, isVisible: async () => state.generating };
     }
     if (selector.includes("ProseMirror") || selector.includes("data-placeholder")) {
-      return { count: async () => 1, isVisible: async () => true, innerText: async () => state.composerText || "", fill: async value => { state.submittedPrompt = value; } };
+      return { count: async () => 1, isVisible: async () => true, innerText: async () => state.composerText || "", fill: async value => { state.submittedPrompt = value; state.onFill?.(); } };
     }
     if (selector.includes("Send message") || selector.includes("send-button")) {
       return {
         count: async () => 1,
         isVisible: async () => true,
-        isEnabled: async () => true,
+        isEnabled: async () => state.sendEnabled !== false,
         click: async () => {
+          state.clicked = true;
           state.assistantVisible = true;
           state.generating = true;
           state.text = "Claude partial";
           state.onSend?.();
+          if (state.clickError) throw state.clickError;
         },
       };
     }
     throw new Error("Unexpected selector in Claude adapter test: " + selector);
   };
   return {
-    url: () => "https://claude.ai/chat/example",
+    url: () => state.url || "https://claude.ai/chat/example",
     locator: selector => {
       const item = locatorFor(selector);
       return { ...item, last: () => item };
     },
   };
 }
+
+test("Claude adapter preserves the owner's unsent draft", async () => {
+  const state = { assistantVisible: false, text: "", generating: false, composerText: "Owner's unsent draft" };
+  let sent = false;
+  state.onSend = () => { sent = true; };
+  const adapter = createOriginalSessionAdapter("claude", { approval: async () => true, timeoutMs: 5000 });
+  await assert.rejects(
+    adapter.ask(makeClaudePage(state), "group message"),
+    error => error?.submissionState === "not_submitted" && /unsent draft/.test(error.message),
+  );
+  assert.equal(state.submittedPrompt, undefined);
+  assert.equal(sent, false);
+});
+
+test("Claude adapter refuses a thread switch during approval before touching the composer", async () => {
+  const state = { assistantVisible: false, text: "", generating: false };
+  const adapter = createOriginalSessionAdapter("claude", {
+    approval: async () => { state.url = "https://claude.ai/chat/another-thread"; return true; },
+    timeoutMs: 5000,
+  });
+  await assert.rejects(
+    adapter.ask(makeClaudePage(state), "private group message"),
+    error => error?.submissionState === "not_submitted" && /conversation changed/.test(error.message),
+  );
+  assert.equal(state.submittedPrompt, undefined);
+});
+
+test("Claude adapter marks a rejected Send click as ambiguous rather than retryable", async () => {
+  const state = {
+    assistantVisible: false, text: "", generating: false,
+    clickError: new Error("Claude Send click timed out after dispatch"),
+  };
+  const adapter = createOriginalSessionAdapter("claude", { approval: async () => true, timeoutMs: 5000 });
+  await assert.rejects(
+    adapter.ask(makeClaudePage(state), "approved group message"),
+    error => error?.submissionState === "unknown" && /timed out/.test(error.message),
+  );
+  assert.equal(state.clicked, true);
+  assert.ok(state.submittedPrompt);
+});
 
 test("Claude adapter waits for a completed streamed answer", async () => {
   const state = { assistantVisible: false, text: "", generating: false };

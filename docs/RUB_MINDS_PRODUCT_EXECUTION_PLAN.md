@@ -153,6 +153,20 @@ Do not weaken the legacy host-scoped wake queue to make the hostless group-bindi
 - PR #69 remains an open, unmerged draft stacked on PR #68. Its source implementation head is `a951e4cabf71f19965694918491c5d3dadb39554`; it includes the host-independent Device Frame AI-session binding plus the MCP response-size streaming guard. Four workflows passed on that exact source head (see below). Documentation/runbook and task-event-boundary updates have subsequently been added to the same branch; latest docs branch head at this checkpoint is `5dd934cce3cec7560493bb17ed34e53869b2e3f6`. Its latest four exact-head workflows are running and must finish before reporting the newest branch head green. Do not merge out of order.
 - PR #72, "workspace and Backroom UX", was created from `main` before the full Stage A stack was reconciled. It is explicitly parked as future Stage B exploration. Do not merge it, stack core work on it, or treat it as the active product baseline. After Stage A is accepted, reconcile its useful ideas against the integrated tree and repeat the feature-preservation review.
 
+### PR #73 — original-session task-event continuity and idempotent invite join
+
+PR #73 is an open draft stacked directly on PR #69. Its scope is the standalone local Playwright path, not the host-backed queue path:
+
+- Adds `OriginalSessionTaskBridge` with a separate task API cursor/state from the message bridge. On each live-runner heartbeat it lists only tasks assigned to the exact joined AI participant, checks prerequisites, claims atomically, confirms the post-claim version/assignee/status, and submits the result for human review.
+- Uses a distinct `TASK` approval before each provider task prompt. A task is not represented as a group chat message, and no task prompt is sent before approval.
+- Persists the exact task result plus one stable UUID submission key before submission. An ambiguous MCP response replays the same result/key; it does not re-prompt the provider. Uncertain provider Send/result outcomes block the task for human recovery and stop the combined runner.
+- Blocks declined or interrupted tasks through the existing `block_group_task` operation. It does not leave an abandoned claim silently in progress when the server can be reached.
+- Adds private per-participant recovery storage and an exclusive local process lock to prevent two foreground runner processes for the same AI participant from processing tasks concurrently. Stale locks fail closed and require an operator to verify no process is active before removal.
+- Replaces the runner's earlier legacy invitation handshake with modern MCP `join_request_key` idempotency. It persists the key and invitation-token digest privately before network redemption, retries with the same key, validates the returned opaque session handle/expiry, checks `read_group_context.self.participant_id` and room identity, and reuses a saved join for the exact provider conversation.
+- Adds official-MCP-SDK local Supabase E2E coverage for task list/read/claim, assignment and dependency guards, post-claim version, idempotent result submission/replay/conflict, cross-participant denial, task blocking, and the local Playwright modern join/retry/identity/Leave path. These tests run only against the isolated CI Supabase stack.
+
+This does **not** mean background provider wake, true provider-side task tool execution, or a live ChatGPT/Claude task turn is complete. ChatGPT Free still uses a foreground Playwright browser route. Claude's direct MCP connector route must be tested against a real Free account separately. Provider page tests remain fake-page tests, and the local Edge E2E proves the Rub Minds server/transport contract, not the provider's authenticated composer or response behaviour. PR #73 has not been merged or deployed; no Staging/Production function or database was changed by this branch work.
+
 ### Exact-head CI evidence
 
 The PR #69 source implementation head `a951e4cabf71f19965694918491c5d3dadb39554` passed all four exact-head workflows:
