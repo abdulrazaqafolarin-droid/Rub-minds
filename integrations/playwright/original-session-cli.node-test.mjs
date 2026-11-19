@@ -47,11 +47,14 @@ function makeRunnerStateDependencies({
     createTaskStateStore: () => makeMemoryStateStore(),
     createJoinedSessionStore: () => ({
       async prepare() {},
-      async load() { return structuredClone(saved); },
+      async load() { return saved && saved.sessionHandle ? structuredClone(saved) : null; },
+      async loadPendingJoin() { return saved && saved.pendingJoin ? structuredClone(saved.pendingJoin) : null; },
+      async savePendingJoin(value) { saved = { pendingJoin: structuredClone(value) }; },
       async save(value) { saved = structuredClone(value); },
       async clear() { saved = null; },
     }),
-    readSavedBinding: () => structuredClone(saved),
+    readSavedBinding: () => structuredClone(saved?.sessionHandle ? saved : null),
+    readSavedPendingJoin: () => structuredClone(saved?.pendingJoin || null),
     createSessionTransport: () => ({
       async readGroupContext() {
         return {
@@ -148,6 +151,38 @@ test("private task state store survives restart but keeps results separate from 
     }
     await store.save(null);
     assert.equal(await store.load(), null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("private pending join state survives restart and reuses the same idempotency key without storing the invite token", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rub-minds-pending-join-"));
+  const inviteToken = "b".repeat(64);
+  const inviteTokenDigest = (await import("node:crypto")).createHash("sha256").update(inviteToken).digest("hex");
+  try {
+    const store = createPrivateJoinedSessionStore({
+      provider: "chatgpt",
+      conversationUrl: CHATGPT_URL,
+      baseDirectory: root,
+    });
+    const joinRequestKey = "c".repeat(64);
+    await store.prepare();
+    assert.equal(await store.load(), null);
+    assert.equal(await store.loadPendingJoin(), null);
+    await store.savePendingJoin({ joinRequestKey, inviteTokenDigest });
+    assert.equal(await store.load(), null);
+    assert.deepEqual(
+      { ...(await store.loadPendingJoin()), joinRequestKey, inviteTokenDigest },
+      { ...(await store.loadPendingJoin()), joinRequestKey, inviteTokenDigest },
+    );
+    assert.equal((await store.loadPendingJoin()).joinRequestKey, joinRequestKey);
+    const diskText = await (await import("node:fs/promises")).readFile(store.path, "utf8");
+    assert.equal(diskText.includes(inviteToken), false);
+    assert.equal(diskText.includes("invite_token"), false);
+    assert.equal(diskText.includes(inviteTokenDigest), true);
+    const savedStats = await stat(store.path);
+    if (process.platform !== "win32") assert.equal(savedStats.mode & 0o777, 0o600);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -543,6 +578,8 @@ test("local runner explicitly redeems a Staging invite and binds the returned AI
     assert.equal(joinedInput.signal instanceof AbortSignal, true);
     assert.equal(runtimeOptions.sessionHandle, sessionHandle);
     assert.equal(runtimeOptions.participantId, participantId);
+    assert.match(joinedInput.joinRequestKey, /^[a-f0-9]{64}$/i);
+    assert.equal(stateDependencies.readSavedPendingJoin(), null);
     assert.deepEqual(stateDependencies.readSavedBinding(), { sessionHandle, participantId, roomId, expiresAt: "2026-11-20T00:00:00.000Z" });
     assert.equal(stats.providerInteractions, 1);
     assert.equal(stats.contextClosed, 1);
