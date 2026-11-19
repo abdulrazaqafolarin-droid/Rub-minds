@@ -138,7 +138,7 @@ export const RUB_MINDS_MCP_TOOLS = [
     source_message_id: { type: "string", minLength: 1, maxLength: 200 },
   }, ["body"]) },
   { name: "load_original_session_bridge_state", description: "Internal original-session bridge helper. Load the durable cursor and pending-delivery state for this joined MCP session. Use only when an explicitly authorized original-session bridge runtime is running.", inputSchema: objectSchema({}) },
-  { name: "save_original_session_bridge_state", description: "Internal original-session bridge helper. Atomically save this session's cursor, pending reply, and fail-closed status using the revision returned by load_original_session_bridge_state. A revision conflict means another writer changed state; stop and reload instead of overwriting it.", inputSchema: objectSchema({
+  { name: "save_original_session_bridge_state", description: "Internal original-session bridge helper. Atomically save this session's message cursor, pending reply, and fail-closed status using the message revision returned by load_original_session_bridge_state.", inputSchema: objectSchema({
     expected_revision: { type: "integer", minimum: 0 },
     cursor_created_at: { type: ["string", "null"] },
     cursor_message_id: { type: ["string", "null"], format: "uuid" },
@@ -148,6 +148,14 @@ export const RUB_MINDS_MCP_TOOLS = [
     blocked_message_id: { type: ["string", "null"], format: "uuid" },
     blocked_reason: { type: ["string", "null"], maxLength: 200 },
   }, ["expected_revision", "cursor_created_at", "cursor_message_id", "pending_message_id", "pending_message_created_at", "pending_response", "blocked_message_id", "blocked_reason"]) },
+  { name: "load_original_session_task_bridge_state", description: "Internal original-session task bridge helper. Load the separate durable task cursor-free recovery record for this exact joined MCP session.", inputSchema: objectSchema({}) },
+  { name: "save_original_session_task_bridge_state", description: "Internal original-session task bridge helper. Save the active task, durable result awaiting submission, or fail-closed ambiguous provider marker using the independent task revision returned by load_original_session_task_bridge_state.", inputSchema: objectSchema({
+    expected_revision: { type: "integer", minimum: 0 },
+    active_task_id: { type: ["string", "null"], format: "uuid" },
+    pending_result: { type: ["string", "null"], maxLength: 20000 },
+    pending_submission_key: { type: ["string", "null"], format: "uuid" },
+    blocked_reason: { type: ["string", "null"], maxLength: 200 },
+  }, ["expected_revision", "active_task_id", "pending_result", "pending_submission_key", "blocked_reason"]) },
   { name: "read_session_memory", description: "Read this participant's private imported session summaries and memory entries explicitly shared with the group.", inputSchema: objectSchema({}) },
   { name: "import_session_memory", description: "Import a structured session-memory document, optionally including transcript_text and transcript_complete. Imported raw context is private to this AI participant; it is not automatically shared with the group.", inputSchema: objectSchema({ document: { type: "object" } }, ["document"]) },
   { name: "remember_memory", description: "Store a concise memory entry. Choose visibility explicitly: private or group. Group-visible entries can be read by other participants.", inputSchema: objectSchema({
@@ -173,6 +181,7 @@ export const RUB_MINDS_MCP_TOOLS = [
     idempotency_key: { type: "string", format: "uuid" },
   }, ["title", "idempotency_key"]) },
   { name: "list_group_tasks", description: "List up to 100 durable tasks in the group joined by this MCP session, including assignment, dependencies' readiness, and task status.", inputSchema: objectSchema({}) },
+  { name: "list_assigned_group_tasks", description: "List up to 50 actionable tasks assigned to this exact AI participant in the joined group. Includes assigned tasks and already-claimed in-progress tasks for safe restart recovery; excludes tasks assigned to other participants.", inputSchema: objectSchema({}) },
   { name: "read_group_task", description: "Read one task and its prerequisite IDs, submitted results, and review history. The task must belong to the group joined by this session.", inputSchema: objectSchema({
     task_id: { type: "string", format: "uuid" },
   }, ["task_id"]) },
@@ -293,7 +302,21 @@ export function validateToolArguments(name, args) {
       return null;
     }
     case "load_original_session_bridge_state":
+    case "load_original_session_task_bridge_state":
       return Object.keys(args).length ? "This tool takes no arguments." : null;
+    case "save_original_session_task_bridge_state": {
+      if (!Number.isSafeInteger(args.expected_revision) || args.expected_revision < 0) return "expected_revision must be a non-negative safe integer.";
+      const uuid = value => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+      const empty = args.active_task_id === null && args.pending_result === null && args.pending_submission_key === null && args.blocked_reason === null;
+      const blocked = uuid(args.active_task_id) && args.pending_result === null && args.pending_submission_key === null &&
+        typeof args.blocked_reason === "string" && args.blocked_reason.trim().length > 0 && args.blocked_reason.length <= 200;
+      const pending = uuid(args.active_task_id) && typeof args.pending_result === "string" &&
+        args.pending_result.trim().length > 0 && args.pending_result.length <= 20000 &&
+        uuid(args.pending_submission_key) && args.blocked_reason === null;
+      if (!(empty || blocked || pending)) return "Task bridge state must be empty, blocked with an active task, or have a pending result and submission key.";
+      if (Object.keys(args).some(key => !["expected_revision","active_task_id","pending_result","pending_submission_key","blocked_reason"].includes(key))) return "Unknown save_original_session_task_bridge_state argument.";
+      return null;
+    }
     case "save_original_session_bridge_state": {
       if (!Number.isSafeInteger(args.expected_revision) || args.expected_revision < 0) return "expected_revision must be a non-negative safe integer.";
       const uuid = value => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -318,6 +341,7 @@ export function validateToolArguments(name, args) {
     case "read_group_context":
     case "read_session_memory":
     case "list_group_tasks":
+    case "list_assigned_group_tasks":
       return Object.keys(args).length ? "This tool takes no arguments." : null;
     case "read_group_message": {
       const uuid = value => typeof value === "string" &&
