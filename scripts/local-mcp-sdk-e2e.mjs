@@ -190,6 +190,11 @@ try {
   assert.ok(names.includes("forget_memory"), "official client did not discover forget_memory");
   assert.ok(names.includes("load_original_session_bridge_state"), "official client did not discover bridge-state load");
   assert.ok(names.includes("save_original_session_bridge_state"), "official client did not discover bridge-state save");
+  assert.ok(names.includes("list_group_tasks"), "official client did not discover group task listing");
+  assert.ok(names.includes("read_group_task"), "official client did not discover group task reads");
+  assert.ok(names.includes("claim_group_task"), "official client did not discover group task claim");
+  assert.ok(names.includes("block_group_task"), "official client did not discover group task block");
+  assert.ok(names.includes("submit_group_task_result"), "official client did not discover group task submission");
   console.log("SAFE_MCP_E2E_STAGE: MCP tool catalog discovery passed");
 
   for (const entry of rejectedInvites) {
@@ -264,6 +269,184 @@ try {
   assert.notEqual(one.participant_id, two.participant_id, "independent clients must have distinct participants");
   assert.notEqual(one.session_handle, two.session_handle, "independent clients must have distinct session handles");
   console.log("SAFE_MCP_E2E_STAGE: two independent AI participants joined the same group");
+
+  // Exercise human-assigned task discovery, AI claim, result submission,
+  // same-key idempotent replay, cross-participant denial and visible blocking
+  // through the actual official MCP SDK and local Edge Function.
+  const ownerParticipants = await request(
+    "/rest/v1/participants?select=id,kind,user_id&room_id=eq." + room.id + "&user_id=eq." + owner.id,
+  );
+  const ownerHuman = ownerParticipants.find(row => row.kind === "human");
+  assert.ok(ownerHuman?.id, "the room owner must have an existing human participant identity");
+
+  async function createAssignedTask({ title, assigneeId, description = "Disposable local MCP task", priority = 2 }) {
+    const rows = await request("/rest/v1/room_tasks", {
+      method: "POST",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({
+        room_id: room.id,
+        created_by_participant_id: ownerHuman.id,
+        assigned_to_participant_id: assigneeId,
+        title,
+        description,
+        expected_output: "A concise deliverable",
+        acceptance_criteria: ["Return a useful result"],
+        priority,
+        status: "assigned",
+      }),
+    });
+    assert.equal(rows.length, 1, "could not create assigned task " + title);
+    return rows[0];
+  }
+
+  const taskForOne = await createAssignedTask({
+    title: "Official MCP task for AI one",
+    assigneeId: one.participant_id,
+  });
+  const taskForTwo = await createAssignedTask({
+    title: "Official MCP task for AI two",
+    assigneeId: two.participant_id,
+  });
+  const dependencyTask = await createAssignedTask({
+    title: "Official MCP prerequisite",
+    assigneeId: two.participant_id,
+    priority: 3,
+  });
+  const dependentTask = await createAssignedTask({
+    title: "Official MCP dependent task",
+    assigneeId: one.participant_id,
+    priority: 4,
+  });
+  await request("/rest/v1/room_task_dependencies", {
+    method: "POST",
+    body: JSON.stringify({
+      room_id: room.id,
+      task_id: dependentTask.id,
+      depends_on_task_id: dependencyTask.id,
+      created_by_participant_id: ownerHuman.id,
+    }),
+  });
+
+  const taskList = await first.callTool({ name: "list_group_tasks", arguments: { session_handle: one.session_handle } });
+  assert.notEqual(taskList.isError, true, "AI one could not list group tasks: " + JSON.stringify(taskList));
+  assert.ok(taskList.structuredContent?.tasks?.some(task => task.id === taskForOne.id),
+    "AI one did not see its assigned task");
+  assert.ok(taskList.structuredContent?.tasks?.some(task => task.id === dependentTask.id),
+    "AI one did not see its dependent task");
+  const taskDetail = await first.callTool({
+    name: "read_group_task",
+    arguments: { session_handle: one.session_handle, task_id: taskForOne.id },
+  });
+  assert.notEqual(taskDetail.isError, true, "AI one could not read its task: " + JSON.stringify(taskDetail));
+  assert.equal(taskDetail.structuredContent?.task?.version, 1);
+  assert.deepEqual(taskDetail.structuredContent?.prerequisites, []);
+
+  const wrongAssigneeClaim = await second.callTool({
+    name: "claim_group_task",
+    arguments: { session_handle: two.session_handle, task_id: taskForOne.id },
+  });
+  assert.equal(wrongAssigneeClaim.isError, true,
+    "an AI participant must not claim another participant's assigned task");
+
+  const blockedDependencyClaim = await first.callTool({
+    name: "claim_group_task",
+    arguments: { session_handle: one.session_handle, task_id: dependentTask.id },
+  });
+  assert.notEqual(blockedDependencyClaim.isError, true,
+    "an incomplete prerequisite should return a non-error blocked claim result");
+  assert.equal(blockedDependencyClaim.structuredContent?.claimed, false);
+  assert.equal(blockedDependencyClaim.structuredContent?.reason, "dependencies_incomplete");
+
+  const claim = await first.callTool({
+    name: "claim_group_task",
+    arguments: { session_handle: one.session_handle, task_id: taskForOne.id },
+  });
+  assert.notEqual(claim.isError, true, "assigned AI could not claim its task: " + JSON.stringify(claim));
+  assert.equal(claim.structuredContent?.claimed, true);
+  assert.equal(claim.structuredContent?.status, "in_progress");
+  const claimedDetail = await first.callTool({
+    name: "read_group_task",
+    arguments: { session_handle: one.session_handle, task_id: taskForOne.id },
+  });
+  assert.equal(claimedDetail.structuredContent?.task?.status, "in_progress");
+  assert.equal(claimedDetail.structuredContent?.task?.version, 2,
+    "claim should advance task version exactly once");
+
+  const taskSubmissionKey = randomUUID();
+  const taskResult = "Official MCP SDK task result with a stable idempotency key.";
+  const submission = await first.callTool({
+    name: "submit_group_task_result",
+    arguments: {
+      session_handle: one.session_handle,
+      task_id: taskForOne.id,
+      result: taskResult,
+      submission_key: taskSubmissionKey,
+      source_message_ids: [],
+    },
+  });
+  assert.notEqual(submission.isError, true, "assigned AI could not submit its result: " + JSON.stringify(submission));
+  assert.equal(submission.structuredContent?.submitted, true);
+  assert.equal(submission.structuredContent?.status, "review");
+  const submissionRetry = await first.callTool({
+    name: "submit_group_task_result",
+    arguments: {
+      session_handle: one.session_handle,
+      task_id: taskForOne.id,
+      result: taskResult,
+      submission_key: taskSubmissionKey,
+      source_message_ids: [],
+    },
+  });
+  assert.notEqual(submissionRetry.isError, true, "same-key task result replay was rejected");
+  assert.equal(submissionRetry.structuredContent?.submitted, true);
+  assert.equal(submissionRetry.structuredContent?.replayed, true);
+  const conflictingRetry = await first.callTool({
+    name: "submit_group_task_result",
+    arguments: {
+      session_handle: one.session_handle,
+      task_id: taskForOne.id,
+      result: taskResult + " changed",
+      submission_key: taskSubmissionKey,
+      source_message_ids: [],
+    },
+  });
+  assert.equal(conflictingRetry.isError, true, "the same idempotency key must not accept different task content");
+
+  const wrongAssigneeBlock = await first.callTool({
+    name: "block_group_task",
+    arguments: {
+      session_handle: one.session_handle,
+      task_id: taskForTwo.id,
+      reason: "This participant must not block another AI's task.",
+    },
+  });
+  assert.equal(wrongAssigneeBlock.isError, true,
+    "an AI participant must not block another participant's task");
+  const blocked = await second.callTool({
+    name: "block_group_task",
+    arguments: {
+      session_handle: two.session_handle,
+      task_id: taskForTwo.id,
+      reason: "The original provider turn requires human inspection.",
+    },
+  });
+  assert.notEqual(blocked.isError, true, "assigned AI could not block its own task: " + JSON.stringify(blocked));
+  assert.equal(blocked.structuredContent?.blocked, true);
+  assert.equal(blocked.structuredContent?.status, "blocked");
+
+  const finalTasks = await first.callTool({
+    name: "list_group_tasks",
+    arguments: { session_handle: one.session_handle },
+  });
+  const finalOne = finalTasks.structuredContent.tasks.find(task => task.id === taskForOne.id);
+  const finalTwo = finalTasks.structuredContent.tasks.find(task => task.id === taskForTwo.id);
+  assert.equal(finalOne.status, "review");
+  assert.equal(finalTwo.status, "blocked");
+  const submissionRows = await request(
+    "/rest/v1/room_task_submissions?select=id,idempotency_key&task_id=eq." + taskForOne.id,
+  );
+  assert.equal(submissionRows.length, 1, "same-key retries must create exactly one task submission");
+  console.log("SAFE_MCP_E2E_STAGE: official MCP task discovery, dependency guard, claim, submit/replay and block passed");
 
   // Create a disposable desktop frame using the existing privileged registration RPC.
   // The challenge is scoped to one exact AI participant AND its MCP session digest.
