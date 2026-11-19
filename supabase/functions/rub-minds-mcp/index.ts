@@ -475,8 +475,14 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
   }
 
   if (name === "read_group_context") {
-    // Validate the credential (including revocation/expiry) before exposing room metadata.
-    await invokeAgent(credential, "read");
+    // Validate the credential and the exact MCP-session-to-participant identity
+    // before exposing room metadata. The client uses self.participant_id to
+    // verify that a saved local browser profile has not crossed session identities.
+    const identity = await invokeAgent(credential, "read");
+    if (!isRecord(identity) || identity.room_id !== session.room_id ||
+        identity.participant_id !== session.participant_id) {
+      throw new Error("This MCP session no longer matches the AI participant it joined.");
+    }
     const { data: room, error: roomError } = await db.from("rooms")
       .select("id, title, objective, created_at")
       .eq("id", session.room_id as string).maybeSingle();
@@ -486,7 +492,11 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       .eq("room_id", session.room_id as string)
       .order("created_at", { ascending: true }).limit(100);
     if (participantError) throw new Error("Could not load group participants.");
-    return { room, participants: participants || [] };
+    return {
+      room,
+      self: { participant_id: session.participant_id },
+      participants: participants || [],
+    };
   }
 
   if (name === "send_group_message") {
