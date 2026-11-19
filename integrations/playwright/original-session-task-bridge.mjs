@@ -149,12 +149,10 @@ export class OriginalSessionTaskBridge {
           (!this.activeWorkingState ||
            this.activeWorkingState.taskId !== state.taskId ||
            this.activeWorkingState.submissionKey !== state.submissionKey)) {
-        return {
-          status: "blocked",
-          submitted: 0,
-          taskId: state.taskId,
-          reason: "The runner restarted while a provider task turn was in progress. It will not resend the prompt automatically; inspect the original conversation first.",
-        };
+        const reason = "The runner restarted while a provider task turn was in progress. It will not resend the prompt automatically; inspect the original conversation before reassignment.";
+        await this.#bestEffortBlock(state.taskId, reason);
+        try { await this.stateStore.save({ ...state, phase: "provider_ambiguous", reason }); } catch { /* the existing working marker still fails closed */ }
+        return { status: "blocked", submitted: 0, taskId: state.taskId, reason };
       }
       if (state.phase === "result_ready") {
         // The database checks the idempotency record before task status/assignee.
