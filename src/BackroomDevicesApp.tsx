@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity, Check, ChevronDown, CircleAlert, Copy,
   LockKeyhole, Monitor, RefreshCw, ShieldCheck, Smartphone, X,
@@ -49,6 +49,8 @@ export default function BackroomApp() {
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [showHelp, setShowHelp] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
+  const refreshRequestRef = useRef(0);
 
   const loadRooms = useCallback(async () => {
     if (!supabase) return;
@@ -61,17 +63,43 @@ export default function BackroomApp() {
   }, []);
 
   const refresh = useCallback(async (targetRoom = roomId) => {
-    if (!targetRoom) { setDevices([]); setEvents([]); return; }
+    const requestId = ++refreshRequestRef.current;
+    if (!targetRoom) {
+      setDevices([]); setEvents([]); setLastUpdatedAt(Date.now());
+      return;
+    }
     const [nextDevices, nextEvents] = await Promise.all([
       listBackroomDevices(targetRoom), listBackroomDeviceEvents(targetRoom),
     ]);
+    // A slow response for the previous group or an older overlapping refresh
+    // must never overwrite the active group's device frame state.
+    if (requestId !== refreshRequestRef.current || targetRoom !== roomId) return;
     setDevices(nextDevices);
     setEvents(nextEvents);
+    setLastUpdatedAt(Date.now());
   }, [roomId]);
 
   useEffect(() => { void loadRooms().catch(e => setError(e.message)); }, [loadRooms]);
   useEffect(() => {
-    if (!roomId) return;
+    // Keep connection status and device history current while Backroom is open,
+    // but avoid background polling when the tab is hidden.
+    const poll = () => {
+      if (document.visibilityState !== 'visible') return;
+      void refresh().catch(e => setError(e instanceof Error ? e.message : 'Device status refresh failed.'));
+    };
+    const timer = window.setInterval(poll, 20_000);
+    document.addEventListener('visibilitychange', poll);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', poll);
+    };
+  }, [refresh]);
+  useEffect(() => {
+    if (!roomId) {
+      refreshRequestRef.current++;
+      setDevices([]); setEvents([]); setLastUpdatedAt(null);
+      return;
+    }
     setPairCode('');
     void refresh(roomId).catch(e => setError(e.message));
     const params = new URLSearchParams(location.search);
@@ -136,7 +164,10 @@ export default function BackroomApp() {
           {rooms.length ? rooms.map(room => <option key={room.id} value={room.id}>{room.title}</option>) : <option value="">No groups yet</option>}
         </select>
       </div>
-      <button className="br-cloud-quiet" onClick={() => void refresh().catch(e => setError(e.message))} disabled={!roomId || busy}><RefreshCw size={16}/> Refresh</button>
+      <div className="br-cloud-refresh-wrap">
+        {lastUpdatedAt !== null ? <small aria-live="polite">Updated {new Date(lastUpdatedAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</small> : null}
+        <button className="br-cloud-quiet" onClick={() => void refresh().catch(e => setError(e.message))} disabled={!roomId || busy}><RefreshCw size={16}/> Refresh</button>
+      </div>
     </header>
 
     {!supabase ? <section className="br-cloud-notice"><CircleAlert/> Supabase cloud is not configured for this deployment.</section> : null}
