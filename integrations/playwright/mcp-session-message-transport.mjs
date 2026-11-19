@@ -229,7 +229,9 @@ export async function joinRubMindsInvite({
   if (!joined || typeof joined !== "object" || Array.isArray(joined) ||
       joined.joined !== true ||
       typeof joined.room_id !== "string" || !UUID_RE.test(joined.room_id) ||
-      typeof joined.participant_id !== "string" || !UUID_RE.test(joined.participant_id)) {
+      typeof joined.participant_id !== "string" || !UUID_RE.test(joined.participant_id) ||
+      typeof joined.expires_at !== "string" || !Number.isFinite(Date.parse(joined.expires_at)) ||
+      Date.parse(joined.expires_at) <= Date.now()) {
     throw new Error("Rub Minds returned an incomplete invitation join; no session was started");
   }
   return Object.freeze({
@@ -237,6 +239,7 @@ export async function joinRubMindsInvite({
     sessionHandle,
     roomId: joined.room_id,
     participantId: joined.participant_id,
+    expiresAt: joined.expires_at,
   });
 }
 
