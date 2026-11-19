@@ -5,3 +5,13 @@ dist/
 !.env.example
 coverage/
 .DS_Store
+
+# Android / Gradle local build outputs
+.gradle/
+**/build/
+local.properties
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
