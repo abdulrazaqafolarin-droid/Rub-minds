@@ -297,7 +297,7 @@ try {
   }
   assert.ok(taskOwnerHuman?.id, "the local task fixture must have a human creator identity");
 
-  async function createAssignedTask({ title, assigneeId, description = "Disposable local MCP task", priority = 2 }) {
+  async function createTaskAssignedFixture({ title, assigneeId, description = "Disposable local MCP task", priority = 2 }) {
     const rows = await request("/rest/v1/room_tasks", {
       method: "POST",
       headers: { Prefer: "return=representation" },
@@ -317,20 +317,20 @@ try {
     return rows[0];
   }
 
-  const taskForOne = await createAssignedTask({
+  const lifecycleTaskForOne = await createTaskAssignedFixture({
     title: "Official MCP task for AI one",
     assigneeId: one.participant_id,
   });
-  const taskForTwo = await createAssignedTask({
+  const lifecycleTaskForTwo = await createTaskAssignedFixture({
     title: "Official MCP task for AI two",
     assigneeId: two.participant_id,
   });
-  const dependencyTask = await createAssignedTask({
+  const lifecycleDependencyTask = await createTaskAssignedFixture({
     title: "Official MCP prerequisite",
     assigneeId: two.participant_id,
     priority: 3,
   });
-  const dependentTask = await createAssignedTask({
+  const lifecycleDependentTask = await createTaskAssignedFixture({
     title: "Official MCP dependent task",
     assigneeId: one.participant_id,
     priority: 4,
@@ -339,131 +339,131 @@ try {
     method: "POST",
     body: JSON.stringify({
       room_id: room.id,
-      task_id: dependentTask.id,
-      depends_on_task_id: dependencyTask.id,
+      task_id: lifecycleDependentTask.id,
+      depends_on_task_id: lifecycleDependencyTask.id,
       created_by_participant_id: taskOwnerHuman.id,
     }),
   });
 
-  const taskList = await first.callTool({ name: "list_group_tasks", arguments: { session_handle: one.session_handle } });
-  assert.notEqual(taskList.isError, true, "AI one could not list group tasks: " + JSON.stringify(taskList));
-  assert.ok(taskList.structuredContent?.tasks?.some(task => task.id === taskForOne.id),
+  const lifecycleTaskList = await first.callTool({ name: "list_group_tasks", arguments: { session_handle: one.session_handle } });
+  assert.notEqual(lifecycleTaskList.isError, true, "AI one could not list group tasks: " + JSON.stringify(lifecycleTaskList));
+  assert.ok(lifecycleTaskList.structuredContent?.tasks?.some(task => task.id === lifecycleTaskForOne.id),
     "AI one did not see its assigned task");
-  assert.ok(taskList.structuredContent?.tasks?.some(task => task.id === dependentTask.id),
+  assert.ok(lifecycleTaskList.structuredContent?.tasks?.some(task => task.id === lifecycleDependentTask.id),
     "AI one did not see its dependent task");
-  const taskDetail = await first.callTool({
+  const lifecycleTaskDetail = await first.callTool({
     name: "read_group_task",
-    arguments: { session_handle: one.session_handle, task_id: taskForOne.id },
+    arguments: { session_handle: one.session_handle, task_id: lifecycleTaskForOne.id },
   });
-  assert.notEqual(taskDetail.isError, true, "AI one could not read its task: " + JSON.stringify(taskDetail));
-  assert.equal(taskDetail.structuredContent?.task?.version, 1);
-  assert.deepEqual(taskDetail.structuredContent?.prerequisites, []);
+  assert.notEqual(lifecycleTaskDetail.isError, true, "AI one could not read its task: " + JSON.stringify(lifecycleTaskDetail));
+  assert.equal(lifecycleTaskDetail.structuredContent?.task?.version, 1);
+  assert.deepEqual(lifecycleTaskDetail.structuredContent?.prerequisites, []);
 
-  const wrongAssigneeClaim = await second.callTool({
+  const lifecycleWrongAssigneeClaim = await second.callTool({
     name: "claim_group_task",
-    arguments: { session_handle: two.session_handle, task_id: taskForOne.id },
+    arguments: { session_handle: two.session_handle, task_id: lifecycleTaskForOne.id },
   });
-  assert.equal(wrongAssigneeClaim.isError, true,
+  assert.equal(lifecycleWrongAssigneeClaim.isError, true,
     "an AI participant must not claim another participant's assigned task");
 
-  const blockedDependencyClaim = await first.callTool({
+  const lifecycleBlockedDependencyClaim = await first.callTool({
     name: "claim_group_task",
-    arguments: { session_handle: one.session_handle, task_id: dependentTask.id },
+    arguments: { session_handle: one.session_handle, task_id: lifecycleDependentTask.id },
   });
-  assert.notEqual(blockedDependencyClaim.isError, true,
+  assert.notEqual(lifecycleBlockedDependencyClaim.isError, true,
     "an incomplete prerequisite should return a non-error blocked claim result");
-  assert.equal(blockedDependencyClaim.structuredContent?.claimed, false);
-  assert.equal(blockedDependencyClaim.structuredContent?.reason, "dependencies_incomplete");
+  assert.equal(lifecycleBlockedDependencyClaim.structuredContent?.claimed, false);
+  assert.equal(lifecycleBlockedDependencyClaim.structuredContent?.reason, "dependencies_incomplete");
 
-  const claim = await first.callTool({
+  const lifecycleClaim = await first.callTool({
     name: "claim_group_task",
-    arguments: { session_handle: one.session_handle, task_id: taskForOne.id },
+    arguments: { session_handle: one.session_handle, task_id: lifecycleTaskForOne.id },
   });
-  assert.notEqual(claim.isError, true, "assigned AI could not claim its task: " + JSON.stringify(claim));
-  assert.equal(claim.structuredContent?.claimed, true);
-  assert.equal(claim.structuredContent?.status, "in_progress");
-  const claimedDetail = await first.callTool({
+  assert.notEqual(lifecycleClaim.isError, true, "assigned AI could not claim its task: " + JSON.stringify(lifecycleClaim));
+  assert.equal(lifecycleClaim.structuredContent?.claimed, true);
+  assert.equal(lifecycleClaim.structuredContent?.status, "in_progress");
+  const lifecycleClaimedDetail = await first.callTool({
     name: "read_group_task",
-    arguments: { session_handle: one.session_handle, task_id: taskForOne.id },
+    arguments: { session_handle: one.session_handle, task_id: lifecycleTaskForOne.id },
   });
-  assert.equal(claimedDetail.structuredContent?.task?.status, "in_progress");
-  assert.equal(claimedDetail.structuredContent?.task?.version, 2,
+  assert.equal(lifecycleClaimedDetail.structuredContent?.task?.status, "in_progress");
+  assert.equal(lifecycleClaimedDetail.structuredContent?.task?.version, 2,
     "claim should advance task version exactly once");
 
-  const taskSubmissionKey = randomUUID();
-  const taskResult = "Official MCP SDK task result with a stable idempotency key.";
-  const submission = await first.callTool({
+  const lifecycleSubmissionKey = randomUUID();
+  const lifecycleTaskResult = "Official MCP SDK task result with a stable idempotency key.";
+  const lifecycleSubmission = await first.callTool({
     name: "submit_group_task_result",
     arguments: {
       session_handle: one.session_handle,
-      task_id: taskForOne.id,
-      result: taskResult,
-      submission_key: taskSubmissionKey,
+      task_id: lifecycleTaskForOne.id,
+      result: lifecycleTaskResult,
+      submission_key: lifecycleSubmissionKey,
       source_message_ids: [],
     },
   });
-  assert.notEqual(submission.isError, true, "assigned AI could not submit its result: " + JSON.stringify(submission));
-  assert.equal(submission.structuredContent?.submitted, true);
-  assert.equal(submission.structuredContent?.status, "review");
-  const submissionRetry = await first.callTool({
+  assert.notEqual(lifecycleSubmission.isError, true, "assigned AI could not submit its result: " + JSON.stringify(lifecycleSubmission));
+  assert.equal(lifecycleSubmission.structuredContent?.submitted, true);
+  assert.equal(lifecycleSubmission.structuredContent?.status, "review");
+  const lifecycleSubmissionRetry = await first.callTool({
     name: "submit_group_task_result",
     arguments: {
       session_handle: one.session_handle,
-      task_id: taskForOne.id,
-      result: taskResult,
-      submission_key: taskSubmissionKey,
+      task_id: lifecycleTaskForOne.id,
+      result: lifecycleTaskResult,
+      submission_key: lifecycleSubmissionKey,
       source_message_ids: [],
     },
   });
-  assert.notEqual(submissionRetry.isError, true, "same-key task result replay was rejected");
-  assert.equal(submissionRetry.structuredContent?.submitted, true);
-  assert.equal(submissionRetry.structuredContent?.replayed, true);
-  const conflictingRetry = await first.callTool({
+  assert.notEqual(lifecycleSubmissionRetry.isError, true, "same-key task result replay was rejected");
+  assert.equal(lifecycleSubmissionRetry.structuredContent?.submitted, true);
+  assert.equal(lifecycleSubmissionRetry.structuredContent?.replayed, true);
+  const lifecycleConflictingRetry = await first.callTool({
     name: "submit_group_task_result",
     arguments: {
       session_handle: one.session_handle,
-      task_id: taskForOne.id,
-      result: taskResult + " changed",
-      submission_key: taskSubmissionKey,
+      task_id: lifecycleTaskForOne.id,
+      result: lifecycleTaskResult + " changed",
+      submission_key: lifecycleSubmissionKey,
       source_message_ids: [],
     },
   });
-  assert.equal(conflictingRetry.isError, true, "the same idempotency key must not accept different task content");
+  assert.equal(lifecycleConflictingRetry.isError, true, "the same idempotency key must not accept different task content");
 
-  const wrongAssigneeBlock = await first.callTool({
+  const lifecycleWrongAssigneeBlock = await first.callTool({
     name: "block_group_task",
     arguments: {
       session_handle: one.session_handle,
-      task_id: taskForTwo.id,
+      task_id: lifecycleTaskForTwo.id,
       reason: "This participant must not block another AI's task.",
     },
   });
-  assert.equal(wrongAssigneeBlock.isError, true,
+  assert.equal(lifecycleWrongAssigneeBlock.isError, true,
     "an AI participant must not block another participant's task");
-  const blocked = await second.callTool({
+  const lifecycleBlockedResult = await second.callTool({
     name: "block_group_task",
     arguments: {
       session_handle: two.session_handle,
-      task_id: taskForTwo.id,
+      task_id: lifecycleTaskForTwo.id,
       reason: "The original provider turn requires human inspection.",
     },
   });
-  assert.notEqual(blocked.isError, true, "assigned AI could not block its own task: " + JSON.stringify(blocked));
-  assert.equal(blocked.structuredContent?.blocked, true);
-  assert.equal(blocked.structuredContent?.status, "blocked");
+  assert.notEqual(lifecycleBlockedResult.isError, true, "assigned AI could not block its own task: " + JSON.stringify(lifecycleBlockedResult));
+  assert.equal(lifecycleBlockedResult.structuredContent?.lifecycleBlockedResult, true);
+  assert.equal(lifecycleBlockedResult.structuredContent?.status, "blocked");
 
-  const finalTasks = await first.callTool({
+  const lifecycleFinalTasks = await first.callTool({
     name: "list_group_tasks",
     arguments: { session_handle: one.session_handle },
   });
-  const finalOne = finalTasks.structuredContent.tasks.find(task => task.id === taskForOne.id);
-  const finalTwo = finalTasks.structuredContent.tasks.find(task => task.id === taskForTwo.id);
-  assert.equal(finalOne.status, "review");
-  assert.equal(finalTwo.status, "blocked");
-  const submissionRows = await request(
-    "/rest/v1/room_task_submissions?select=id,idempotency_key&task_id=eq." + taskForOne.id,
+  const lifecycleFinalOne = lifecycleFinalTasks.structuredContent.tasks.find(task => task.id === lifecycleTaskForOne.id);
+  const lifecycleFinalTwo = lifecycleFinalTasks.structuredContent.tasks.find(task => task.id === lifecycleTaskForTwo.id);
+  assert.equal(lifecycleFinalOne.status, "review");
+  assert.equal(lifecycleFinalTwo.status, "blocked");
+  const lifecycleSubmissionRows = await request(
+    "/rest/v1/room_task_submissions?select=id,idempotency_key&task_id=eq." + lifecycleTaskForOne.id,
   );
-  assert.equal(submissionRows.length, 1, "same-key retries must create exactly one task submission");
+  assert.equal(lifecycleSubmissionRows.length, 1, "same-key retries must create exactly one task submission");
   console.log("SAFE_MCP_E2E_STAGE: official MCP task discovery, dependency guard, claim, submit/replay and block passed");
 
   // Create a disposable desktop frame using the existing privileged registration RPC.
