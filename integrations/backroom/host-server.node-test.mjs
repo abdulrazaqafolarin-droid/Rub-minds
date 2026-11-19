@@ -911,7 +911,7 @@ test("binding revoke confirms local stop only for the exact poller it stopped",a
   const response=await fetch(base+"/v1/browser/wake/bindings/revoke",{method:"POST",headers,body:JSON.stringify({bindingId})});
   assert.equal(response.status,200);
   assert.deepEqual(await response.json(),{
-   revoked:true,localPollingStopped:true,grantRevoked:false,
+   revoked:true,localPollingStopped:true,grantRevoked:false,noLocalWorker:false,
    remoteDeactivationConfirmed:true,remoteDeactivationPending:false
   });
  },{browserRuntime,wakeService});
