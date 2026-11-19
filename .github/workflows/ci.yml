@@ -676,4 +676,8 @@ jobs:
           if [ -f "$RUNNER_TEMP/mcp-edge.pid" ]; then
             kill "$(cat "$RUNNER_TEMP/mcp-edge.pid")" 2>/dev/null || true
           fi
-          supabase stop --no-backup
+          if command -v supabase >/dev/null 2>&1; then
+            supabase stop --no-backup
+          else
+            echo "Supabase CLI was not installed; no local Supabase services were started."
+          fi
