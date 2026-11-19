@@ -1778,8 +1778,8 @@ try {
     "same join_request_key must return the original opaque handle");
   assert.equal(replayedRunnerJoin.participantId, runnerJoin.participantId,
     "same join_request_key must return the same AI participant");
-  assert.equal(replayedRunnerJoin.expiresAt, runnerJoin.expiresAt,
-    "idempotent replay must return the existing participant expiry");
+  assert.equal(Date.parse(replayedRunnerJoin.expiresAt), Date.parse(runnerJoin.expiresAt),
+    "idempotent replay must preserve the existing participant expiry instant");
   runnerTransport = new McpSessionMessageTransport({
     endpoint,
     sessionHandle: runnerJoin.sessionHandle,
