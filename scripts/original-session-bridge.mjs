@@ -4,7 +4,7 @@
  * It launches a dedicated persistent Playwright browser profile; it does not
  * attach to or shut down the user's normal browser profile.
  */
-import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { resolve, join } from "node:path";
@@ -45,6 +45,70 @@ async function ensurePrivateDirectory(directory) {
     if (process.platform !== "win32") throw error;
   }
   return directory;
+}
+
+async function acquirePrivateProcessLock(lockPath) {
+  const token = randomUUID();
+  let handle;
+  try {
+    handle = await open(lockPath, "wx", 0o600);
+    await handle.writeFile(JSON.stringify({
+      pid: process.pid,
+      token,
+      acquiredAt: new Date().toISOString(),
+    }), "utf8");
+    await handle.sync();
+  } catch (error) {
+    try { await handle?.close(); } catch { /* best-effort cleanup */ }
+    if (error?.code !== "EEXIST") throw error;
+    let saved;
+    try {
+      saved = JSON.parse(await readFile(lockPath, "utf8"));
+    } catch {
+      throw new Error("Rub Minds task lock is unreadable or corrupt; refusing concurrent task execution. Inspect " + lockPath);
+    }
+    if (!saved || !Number.isInteger(saved.pid) || saved.pid < 1 ||
+        typeof saved.token !== "string" || !/^[0-9a-f-]{36}$/i.test(saved.token)) {
+      throw new Error("Rub Minds task lock is invalid; refusing concurrent task execution. Inspect " + lockPath);
+    }
+    try {
+      process.kill(saved.pid, 0);
+      return null;
+    } catch (processError) {
+      if (processError?.code === "EPERM") return null;
+      if (processError?.code === "ESRCH") {
+        throw new Error("A stale Rub Minds task lock remains at " + lockPath +
+          ". Confirm no original-session runner is active, then remove this lock file before restarting.");
+      }
+      throw processError;
+    }
+  }
+
+  try {
+    await chmod(lockPath, 0o600);
+  } catch (error) {
+    if (process.platform !== "win32") {
+      try { await handle.close(); } catch { /* best-effort cleanup */ }
+      try { await unlink(lockPath); } catch { /* best-effort cleanup */ }
+      throw error;
+    }
+  }
+  let released = false;
+  return async () => {
+    if (released) return;
+    released = true;
+    try { await handle.close(); } catch { /* best-effort cleanup */ }
+    try {
+      const current = JSON.parse(await readFile(lockPath, "utf8"));
+      if (current?.pid === process.pid && current?.token === token) {
+        await unlink(lockPath);
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        // Never delete a lock that may now belong to another process.
+      }
+    }
+  };
 }
 
 function privateJsonStateStore({ directory, filename, maxBytes = 30000 }) {
@@ -118,9 +182,16 @@ export function createPrivateTaskStateStore({
   if (!Object.hasOwn(PROVIDERS, provider || "") || !UUID_RE.test(participantId || "")) {
     throw new TypeError("provider and participantId are required for private task state");
   }
-  return privateJsonStateStore({
+  const store = privateJsonStateStore({
     directory: join(resolve(baseDirectory), "original-session-task-state"),
     filename: provider + "-" + participantId.toLowerCase() + ".json",
+  });
+  return Object.freeze({
+    path: store.path,
+    prepare: store.prepare,
+    load: store.load,
+    save: store.save,
+    acquireLock: () => acquirePrivateProcessLock(store.path + ".lock"),
   });
 }
 
