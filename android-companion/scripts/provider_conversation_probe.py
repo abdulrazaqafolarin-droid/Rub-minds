@@ -61,11 +61,8 @@ def _same_primary(left: frozenset[str], right: frozenset[str]) -> bool:
     return bool(left and right and _overlap(left, right) >= 0.8)
 
 
-def read_snapshot(path: Path, package: str, key: bytes) -> Snapshot:
+def read_snapshot_bytes(raw_xml: bytes, package: str, key: bytes) -> Snapshot:
     try:
-        if path.stat().st_size > 8_000_000:
-            raise ValueError("Accessibility snapshot exceeds the 8 MB local safety limit.")
-        raw_xml = path.read_bytes()
         if len(raw_xml) > 8_000_000:
             raise ValueError("Accessibility snapshot exceeds the 8 MB local safety limit.")
         try:
@@ -151,43 +148,66 @@ def read_snapshot(path: Path, package: str, key: bytes) -> Snapshot:
     )
 
 
+def read_snapshot(path: Path, package: str, key: bytes) -> Snapshot:
+    try:
+        if path.stat().st_size > 8_000_000:
+            raise ValueError("Accessibility snapshot exceeds the 8 MB local safety limit.")
+        raw_xml = path.read_bytes()
+    except ValueError:
+        raise
+    except OSError as exc:
+        raise ValueError("Could not read one accessibility snapshot as XML.") from exc
+    return read_snapshot_bytes(raw_xml, package, key)
+
+
+def _build_report(package: str, snapshots: list[Snapshot]) -> dict[str, object]:
+    first, other, repeat = snapshots
+    repeat_overlap = _overlap(first.header_signals, repeat.header_signals)
+    different_overlap = _overlap(first.header_signals, other.header_signals)
+    candidate_signal = (
+        len(first.header_signals) >= 2
+        and len(repeat.header_signals) >= 2
+        and repeat_overlap >= 0.70
+        and different_overlap <= 0.40
+    )
+    return {
+        "provider": "ChatGPT" if package == "com.openai.chatgpt" else "Claude",
+        "snapshots": "A1, B, A2",
+        "node_counts": [item.node_count for item in snapshots],
+        "header_candidate_counts": [len(item.header_signals) for item in snapshots],
+        "a1_a2_header_similarity": round(repeat_overlap, 3),
+        "a1_b_header_similarity": round(different_overlap, 3),
+        "composer_control_reused_a_to_b": _same_primary(first.composer_signals, other.composer_signals),
+        "send_control_reused_a_to_b": _same_primary(first.send_signals, other.send_signals),
+        "repeatable_distinct_header_signal": candidate_signal,
+        "stable_provider_conversation_id_exposed": False,
+        "interpretation": (
+            "candidate_signal_only_manual_adapter_review_required"
+            if candidate_signal else "no_reliable_accessibility_candidate_found"
+        ),
+        "native_send_enabled": False,
+        "raw_text_printed_or_uploaded": False,
+    }
+
+
+def analyse_snapshots(package: str, raw_snapshots: list[bytes] | tuple[bytes, ...]) -> dict[str, object]:
+    """Analyse A1/B/A2 bytes in memory without creating local XML files."""
+    if package not in {"com.openai.chatgpt", "com.anthropic.claude"}:
+        raise ValueError("Only the official ChatGPT and Claude Android packages are supported.")
+    if len(raw_snapshots) != 3:
+        raise ValueError("Exactly three A1, B, A2 accessibility snapshots are required.")
+    key = secrets.token_bytes(32)
+    snapshots = [read_snapshot_bytes(raw, package, key) for raw in raw_snapshots]
+    return _build_report(package, snapshots)
+
+
 def analyse(package: str, a1: Path, b: Path, a2: Path, delete_inputs: bool = False) -> dict[str, object]:
     try:
         if package not in {"com.openai.chatgpt", "com.anthropic.claude"}:
             raise ValueError("Only the official ChatGPT and Claude Android packages are supported.")
         key = secrets.token_bytes(32)
         snapshots = [read_snapshot(path, package, key) for path in (a1, b, a2)]
-        first, other, repeat = snapshots
-
-        repeat_overlap = _overlap(first.header_signals, repeat.header_signals)
-        different_overlap = _overlap(first.header_signals, other.header_signals)
-        candidate_signal = (
-            len(first.header_signals) >= 2
-            and len(repeat.header_signals) >= 2
-            and repeat_overlap >= 0.70
-            and different_overlap <= 0.40
-        )
-
-        report: dict[str, object] = {
-            "provider": "ChatGPT" if package == "com.openai.chatgpt" else "Claude",
-            "snapshots": "A1, B, A2",
-            "node_counts": [item.node_count for item in snapshots],
-            "header_candidate_counts": [len(item.header_signals) for item in snapshots],
-            "a1_a2_header_similarity": round(repeat_overlap, 3),
-            "a1_b_header_similarity": round(different_overlap, 3),
-            "composer_control_reused_a_to_b": _same_primary(first.composer_signals, other.composer_signals),
-            "send_control_reused_a_to_b": _same_primary(first.send_signals, other.send_signals),
-            "repeatable_distinct_header_signal": candidate_signal,
-            "stable_provider_conversation_id_exposed": False,
-            "interpretation": (
-                "candidate_signal_only_manual_adapter_review_required"
-                if candidate_signal else "no_reliable_accessibility_candidate_found"
-            ),
-            "native_send_enabled": False,
-            "raw_text_printed_or_uploaded": False,
-        }
-
-        return report
+        return _build_report(package, snapshots)
     finally:
         if delete_inputs:
             cleanup_failed = False
@@ -201,7 +221,6 @@ def analyse(package: str, a1: Path, b: Path, a2: Path, delete_inputs: bool = Fal
                     "Could not delete one or more local XML captures. "
                     "Remove all three capture files manually before sharing or continuing."
                 )
-
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
