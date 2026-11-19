@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { PassThrough } from "node:stream";
 import { join } from "node:path";
@@ -151,6 +151,36 @@ test("private task state store survives restart but keeps results separate from 
     }
     await store.save(null);
     assert.equal(await store.load(), null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("private task state admits only one local runner and fails closed on a stale process lock", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rub-minds-task-lock-"));
+  try {
+    const store = createPrivateTaskStateStore({
+      provider: "chatgpt",
+      participantId: ENV.RUB_MINDS_PARTICIPANT_ID,
+      baseDirectory: root,
+    });
+    await store.prepare();
+    const releaseFirst = await store.acquireLock();
+    assert.equal(typeof releaseFirst, "function");
+    assert.equal(await store.acquireLock(), null, "a second process must not enter the same participant task loop");
+    await releaseFirst();
+    const releaseSecond = await store.acquireLock();
+    assert.equal(typeof releaseSecond, "function", "the lock must be available after a clean release");
+    await releaseSecond();
+
+    const lockPath = store.path + ".lock";
+    await writeFile(lockPath, JSON.stringify({
+      pid: 2147483647,
+      token: "123e4567-e89b-42d3-a456-426614174000",
+      acquiredAt: "2026-11-19T00:00:00.000Z",
+    }), { mode: 0o600 });
+    await assert.rejects(() => store.acquireLock(), /stale Rub Minds task lock/);
+    assert.equal((await stat(lockPath)).isFile(), true, "stale lock must not be silently deleted");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
