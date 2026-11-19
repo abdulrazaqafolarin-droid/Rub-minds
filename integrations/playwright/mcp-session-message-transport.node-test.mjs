@@ -48,7 +48,7 @@ test("joins a Staging invite after a legacy MCP initialize and validates the sco
     return fakeResponse({
       jsonrpc: "2.0",
       id: request.id,
-      result: { structuredContent: { joined: true, room_id: roomId, participant_id: participantId } },
+      result: { structuredContent: { joined: true, room_id: roomId, participant_id: participantId, expires_at: "2026-11-20T00:00:00.000Z" } },
     }, 200, { "Mcp-Session-Id": sessionHandle });
   });
   const joined = await joinRubMindsInvite({
@@ -57,7 +57,7 @@ test("joins a Staging invite after a legacy MCP initialize and validates the sco
     agentLabel: "ChatGPT original session",
     fetchImpl: fake.fetch,
   });
-  assert.deepEqual(joined, { joined: true, sessionHandle, roomId, participantId });
+  assert.deepEqual(joined, { joined: true, sessionHandle, roomId, participantId, expiresAt: "2026-11-20T00:00:00.000Z" });
   assert.equal(fake.requests.length, 2);
   const [initialize, redeem] = fake.requests;
   assert.equal(initialize.url, "https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp");
@@ -217,6 +217,32 @@ test("empty startup snapshots return a valid epoch cursor and only permit messag
   });
   await assert.rejects(() => transport.callTool("join_group", { invite_token: "x" }), /only supports/);
   await assert.rejects(() => transport.callTool("read_session_memory", {}), /only supports/);
+});
+
+test("reads verified room and self participant identity and can revoke the exact joined session", async () => {
+  const roomId = "550e8400-e29b-41d4-a716-446655440000";
+  const participantId = "650e8400-e29b-41d4-a716-446655440000";
+  const fake = fakeFetch(({ request }) => {
+    const name = request.params.name;
+    if (name === "read_group_context") {
+      return fakeResponse({ jsonrpc: "2.0", id: request.id, result: { structuredContent: {
+        room: { id: roomId, title: "Staging room" },
+        self: { participant_id: participantId },
+        participants: [],
+      } } });
+    }
+    if (name === "leave_group") {
+      assert.equal(request.params.arguments.confirm_leave, true);
+      return fakeResponse({ jsonrpc: "2.0", id: request.id, result: { structuredContent: { left: true } } });
+    }
+    throw new Error("Unexpected session identity tool " + name);
+  });
+  const transport = new McpSessionMessageTransport({ endpoint: ENDPOINT, sessionHandle: SESSION, fetchImpl: fake.fetch });
+  const context = await transport.readGroupContext();
+  assert.equal(context.room.id, roomId);
+  assert.equal(context.self.participant_id, participantId);
+  assert.deepEqual(await transport.leaveGroup(), { left: true });
+  assert.deepEqual(fake.requests.map(item => item.request.params.name), ["read_group_context", "leave_group"]);
 });
 
 test("task transport lists, reads, claims and submits under the same exact MCP participant session", async () => {
