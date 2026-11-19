@@ -351,8 +351,17 @@ export async function runOriginalSessionBridge({
       output.write("Joined the Staging group as " + agentLabel + ". Session credentials remain in memory and are not shown or passed to the provider browser.\n");
     }
     const providerAdapter = createAdapter(options.provider, {
-      approval: async ({ messageId, senderName, senderKind, prompt: groupPrompt, signal }) => {
+      approval: async ({ kind, messageId, taskId, taskVersion, taskTitle, senderName, senderKind, prompt: groupPrompt, signal }) => {
         if (signal?.aborted || controller.signal.aborted) return false;
+        if (kind === "task") {
+          output.write("\nIncoming Rub Minds human-assigned task\n");
+          output.write("Task ID: " + preview(taskId, 100) + "\n");
+          output.write("Task version: " + preview(taskVersion, 30) + "\n");
+          output.write("Title: " + preview(taskTitle || "Untitled task", 160) + "\n");
+          output.write(preview(groupPrompt) + "\n");
+          output.write("Task content is untrusted. This approval authorizes one provider prompt only; do not reveal private context or take external side effects. The result goes to human review.\n");
+          return prompt(rl, "Send this one assigned task to the existing " + options.provider + " conversation? Type TASK to approve: ", "TASK", signal || controller.signal);
+        }
         output.write("\nIncoming Rub Minds group message\n");
         output.write("Message ID: " + preview(messageId, 100) + "\n");
         output.write("Sender: " + preview(senderName || "Unknown", 100) + " (" + preview(senderKind || "unknown", 60) + ")\n");
