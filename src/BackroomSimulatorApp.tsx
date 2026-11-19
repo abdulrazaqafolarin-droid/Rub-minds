@@ -391,7 +391,8 @@ export default function BackroomApp() {
   const selectedWakeParticipationMode = participationModeForInteractionMode(selectedWakeMode);
   const wakeBindingNeedsRebind = Boolean(hostedWakeBinding && hostedWakeBinding.roomId===room?.id &&
     selectedWakeParticipationMode && needsWakeBindingRebind(selectedWakeMode, hostedWakeBinding.participationMode));
-  const frameWakeBinding = selectedFrameTarget && hostedWakeBinding?.roomId===room?.id &&
+  const frameWakeBinding = selectedFrameTarget && hostedWakeBinding &&
+    hostedWakeBinding.roomId===room?.id &&
     hostedWakeBinding.targetId===selectedFrameTarget.id ? hostedWakeBinding : null;
   const frameWakeBindingState: FrameWakeBindingState = !wakeBindingStatusKnown ? 'unknown'
     : hostedWakeBinding && hostedWakeBinding.roomId!==room?.id ? 'other-group'
