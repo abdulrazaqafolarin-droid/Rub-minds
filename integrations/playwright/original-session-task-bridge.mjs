@@ -119,10 +119,19 @@ export class OriginalSessionTaskBridge {
     if (!approved) throw new Error("Explicit approval required before processing an assigned group task");
     if (this.stepInProgress) return { status: "busy", submitted: 0 };
     this.stepInProgress = true;
+    let releaseLock = null;
     try {
+      if (typeof this.stateStore?.acquireLock === "function") {
+        releaseLock = await this.stateStore.acquireLock();
+        if (!releaseLock) return { status: "busy", submitted: 0 };
+      }
       return await this.#step({ signal });
     } finally {
-      this.stepInProgress = false;
+      try {
+        await releaseLock?.();
+      } finally {
+        this.stepInProgress = false;
+      }
     }
   }
 
