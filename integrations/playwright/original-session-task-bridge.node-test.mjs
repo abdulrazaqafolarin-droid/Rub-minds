@@ -42,7 +42,7 @@ function taskBridgeFixture({
   adapterError = null,
   submit = async () => ({ submitted: true, replayed: false }),
 } = {}) {
-  const calls = { list: 0, read: [], claim: [], ask: [], submit: [] };
+  const calls = { list: 0, read: [], claim: [], block: [], ask: [], submit: [] };
   const stateStore = memoryStore(stored);
   let currentTask = structuredClone(task);
   const bridge = new OriginalSessionTaskBridge({
@@ -69,6 +69,11 @@ function taskBridgeFixture({
         currentTask = { ...currentTask, status: "in_progress", version: currentTask.version + 1 };
       }
       return claimResult;
+    },
+    blockTask: async (taskId, reason) => {
+      calls.block.push({ taskId, reason });
+      currentTask = { ...currentTask, status: "blocked", blocked_reason: reason, version: currentTask.version + 1 };
+      return { blocked: true, status: "blocked" };
     },
     submitTaskResult: async input => {
       calls.submit.push(structuredClone(input));
@@ -214,27 +219,32 @@ test("a process restart in working state fails closed without re-sending the tas
   assert.equal(fixture.calls.submit.length, 0);
 });
 
-test("an ambiguous provider Send outcome is persisted and never automatically replayed", async () => {
+test("an ambiguous provider Send outcome is blocked for human recovery and never automatically replayed", async () => {
   const error = new Error("Playwright Send click timed out");
   error.submissionState = "unknown";
   const fixture = taskBridgeFixture({ adapterError: error });
   const first = await fixture.bridge.step({ approved: true });
   assert.equal(first.status, "blocked");
   assert.equal(fixture.stateStore.current().phase, "provider_ambiguous");
+  assert.equal(fixture.calls.block.length, 1);
+  assert.equal(fixture.currentTask().status, "blocked");
   const second = await fixture.bridge.step({ approved: true });
   assert.equal(second.status, "blocked");
   assert.equal(fixture.calls.ask.length, 1);
   assert.equal(fixture.calls.submit.length, 0);
 });
 
-test("a definitely-not-submitted task is deferred in this run and never duplicated", async () => {
+test("declining TASK approval blocks the claimed task and records no provider submission", async () => {
   const error = new Error("Operator declined TASK approval");
   error.submissionState = "not_submitted";
   const fixture = taskBridgeFixture({ adapterError: error });
   const first = await fixture.bridge.step({ approved: true });
-  assert.equal(first.status, "deferred");
+  assert.equal(first.status, "blocked");
+  assert.equal(fixture.stateStore.current(), null);
+  assert.equal(fixture.calls.block.length, 1);
+  assert.equal(fixture.currentTask().status, "blocked");
   const second = await fixture.bridge.step({ approved: true });
-  assert.equal(second.status, "deferred");
+  assert.equal(second.status, "idle");
   assert.equal(fixture.calls.ask.length, 1);
   assert.equal(fixture.calls.submit.length, 0);
 });
