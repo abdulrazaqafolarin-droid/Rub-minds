@@ -134,14 +134,10 @@ export class OriginalSessionTaskBridge {
       throw new Error("Stored task recovery state is invalid or belongs to another AI participant");
     }
     if (state) {
-      const current = await this.#readTask(state.taskId, signal);
-      if (!current || current.id !== state.taskId || current.version !== state.taskVersion) {
-        await this.stateStore.save(null, { signal });
-        return { status: "stale", submitted: 0 };
-      }
       if (state.phase === "result_ready") {
-        // The server checks the idempotency record before task status/assignee.
-        // This safely replays a result whose first HTTP acknowledgement was lost.
+        // The database checks the idempotency record before task status/assignee.
+        // Do not compare the task version here: the first submit may already
+        // have advanced it into review (or a human may already have reviewed it).
         const submitted = await this.submitTaskResult({
           taskId: state.taskId,
           result: state.result,
@@ -154,6 +150,11 @@ export class OriginalSessionTaskBridge {
         await this.stateStore.save(null, { signal: signal?.aborted ? undefined : signal });
         this.submissions += 1;
         return { status: "submitted", submitted: 1, taskId: state.taskId, replayed: submitted.replayed === true };
+      }
+      const current = await this.#readTask(state.taskId, signal);
+      if (!current || current.id !== state.taskId || current.version !== state.taskVersion) {
+        await this.stateStore.save(null, { signal });
+        return { status: "stale", submitted: 0 };
       }
       if (current.status !== "in_progress" ||
           current.assigned_to_participant_id !== this.participantId) {
@@ -190,7 +191,9 @@ export class OriginalSessionTaskBridge {
       const claim = await this.claimTask(candidate.id, { signal });
       if (!isRecord(claim) || claim.claimed !== true) continue;
       const current = await this.#readTask(candidate.id, signal);
-      if (!current || current.id !== candidate.id || current.version !== candidate.version ||
+      // claim_room_task changes status once; the task touch trigger therefore
+      // increments version by exactly one after the assignment-event version.
+      if (!current || current.id !== candidate.id || current.version !== candidate.version + 1 ||
           current.status !== "in_progress" ||
           current.assigned_to_participant_id !== this.participantId ||
           !taskPrerequisitesComplete(current.detail)) continue;
