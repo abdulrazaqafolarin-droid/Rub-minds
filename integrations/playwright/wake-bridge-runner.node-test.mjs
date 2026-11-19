@@ -73,6 +73,25 @@ test("task assignments are polled independently before message paging on each he
   assert.deepEqual(order, ["tasks", "messages"]);
 });
 
+test("an ambiguous task provider outcome stops the whole runner before message processing", async () => {
+  let taskCalls = 0;
+  let messageCalls = 0;
+  const statuses = [];
+  const runner = new OriginalSessionWakeRunner({
+    bridge: { step: async () => { messageCalls++; return { status: "ok", sent: 0 }; } },
+    taskBridge: { step: async () => {
+      taskCalls++;
+      return { status: "blocked", submitted: 0, taskId: "550e8400-e29b-41d4-a716-446655440000", reason: "inspect provider turn" };
+    } },
+    wakeSource: { waitForWake: async () => ({ status: "timeout" }), close: async () => {} },
+    onStatus: event => statuses.push(event.status),
+  });
+  assert.deepEqual(await runner.run({ approved: true }), { status: "blocked", replies: 0 });
+  assert.equal(taskCalls, 1);
+  assert.equal(messageCalls, 0);
+  assert.ok(statuses.includes("blocked"));
+});
+
 test("task bridge errors share the bounded runner failure policy without advancing the message cursor", async () => {
   let taskCalls = 0;
   let messageCalls = 0;
