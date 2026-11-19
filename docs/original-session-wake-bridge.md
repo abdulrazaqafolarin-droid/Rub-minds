@@ -122,7 +122,7 @@ The consumer contract now distinguishes both event forms in `MCP_DISCOVERY_INSTR
 
 The database acceptance in `supabase/tests/group_task_coordination.sql` already covers the assignment trigger, exact versioned event ID, canonical prompt, dependency release, reassignment/cancellation, claim, failure and downstream dependency handling. This branch adds JavaScript regressions proving that a versioned task event remains unchanged through the durable host dispatcher and the selected browser composer. The queue acknowledgement still means only that the trigger was submitted to the composer and cleared. It is not proof that the AI called the MCP tools, claimed the task, produced a result or received human approval.
 
-**Provider boundary:** the host-backed task route requires the selected conversation to have an active, write-capable Rub Minds MCP connection. The wake cannot bypass provider-side tool permissions. If those tools are absent or denied, the task remains unclaimed and the AI must report that limitation. The local standalone Playwright runner described below remains message-driven; it does not consume task events or poll `room_tasks`. It must not be described as a task worker.
+**Provider boundary:** the host-backed task route requires the selected conversation to have an active, write-capable Rub Minds MCP connection. The wake cannot bypass provider-side tool permissions. If those tools are absent or denied, the task remains unclaimed and the AI must report that limitation. The standalone local runner now has a separate task-polling path described below. It does not receive task events through the message Realtime subscription, and task polling never advances or reuses the message cursor.
 
 The factory has a dedicated fake-adapter integration test for this complete composition. Local disposable CI also exercises the concrete HTTP transport against the actual hosted-MCP Edge Function endpoint, verifying a read/send/read roundtrip with a stable `source_message_id`. This verifies the Rub Minds transport wiring, not ChatGPT/Claude page selectors or idle-thread activation.
 
@@ -162,6 +162,22 @@ These adapters are experimental integration scaffolding, not evidence of working
 
 The adapter safety tests run under both `npm run test:runtime` and `npm run test:original-wake`, including group-context wrapping, sender-label sanitization, explicit refusal, composer-draft protection, conversation navigation during approval/pre-send/streaming, pre-submit cancellation and mid-stream cancellation cases. These remain fake-page tests, not live authenticated ChatGPT or Claude acceptance tests.
 
+
+## Local original-session task consumer
+
+The local foreground runner now composes a second, independent consumer beside `PlaywrightSessionBridge`: `OriginalSessionTaskBridge`. On each wake/heartbeat cycle it calls the scoped MCP task tools through the same joined AI participant session. This is task polling, not task-event push; the task Realtime/Backroom queue is a separate host-backed wake path.
+
+The task consumer:
+
+- Lists tasks in the joined group and filters to `assigned` tasks whose `assigned_to_participant_id` exactly matches this AI participant. It reads the exact task and prerequisites, then atomically claims only when prerequisites are complete. It re-reads after claim and checks the post-claim task version, participant assignment and `in_progress` state.
+- Uses a task-specific provider handoff and a separate explicit `TASK` approval. It does not label a task as ordinary group chat, and never sends the task to the provider before that approval.
+- Saves the exact generated result locally before calling `submit_group_task_result`. It uses a stable UUID submission key, so a lost MCP response replays the same result without prompting the provider a second time. The server task submission function checks the idempotency key before mutable task status, so a later retry still acknowledges an already-committed submission.
+- Blocks a claimed task for human recovery when the operator declines, the provider Send outcome is ambiguous, the provider answer cannot be recovered, or local recovery persistence fails. A provider prompt is never automatically repeated after an uncertain outcome. The combined runner stops on a blocked task; the human task board remains the recovery surface.
+- Uses a private state file per provider/participant with restrictive local permissions and a per-participant process lock. A second local runner cannot process tasks concurrently. A stale lock after a hard process crash fails closed and must be removed only after confirming that no runner process is still active.
+
+The join path used by this local runner also uses the modern MCP `join_request_key` idempotency contract. The key and invitation-token digest are persisted privately before the network request and are scoped to the exact provider conversation; the raw invitation token is not stored. The same key is reused on retry. Once joined, the runner stores the returned opaque `session_handle` privately, verifies `read_group_context.self.participant_id` and the room ID against the join response, and reuses the binding on later starts rather than silently creating another participant. Invitation redemption is hard-restricted to Rub Minds Staging; a loopback exception exists only when an isolated local test explicitly opts in.
+
+This local consumer is still **foreground-only**: it requires an active provider browser, the owner at the keyboard for `TASK` approval, and a laptop/process that stays running. It does not provide background activation, bypass provider MCP capability restrictions, or prove authenticated ChatGPT/Claude compatibility. Automated page/approval tests use fake Playwright pages; the local official-MCP-SDK CI test exercises the real Edge Function against a disposable local Supabase stack. A live authenticated provider task assignment remains a separate acceptance gate.
 
 ## Local foreground runner
 
