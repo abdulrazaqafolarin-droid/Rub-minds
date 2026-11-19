@@ -20,6 +20,7 @@ const MESSAGE_TOOL_NAMES = new Set([
   "list_group_tasks",
   "read_group_task",
   "claim_group_task",
+  "block_group_task",
   "submit_group_task_result",
   "read_group_context",
   "leave_group",
@@ -537,6 +538,19 @@ export class McpSessionMessageTransport {
     return await this.callTool("claim_group_task", { task_id: taskId }, { signal });
   }
 
+  async blockTask(taskId, reason, { signal } = {}) {
+    if (typeof taskId !== "string" || !UUID_RE.test(taskId)) {
+      throw new TypeError("taskId must be a UUID");
+    }
+    if (typeof reason !== "string" || !reason.trim() || reason.trim().length > 2000) {
+      throw new TypeError("block reason must contain 1-2000 characters");
+    }
+    return await this.callTool("block_group_task", {
+      task_id: taskId,
+      reason: reason.trim(),
+    }, { signal });
+  }
+
   async submitTaskResult({
     taskId,
     result,
@@ -577,6 +591,7 @@ export class McpSessionMessageTransport {
       listTasks: this.listTasks.bind(this),
       readTask: this.readTask.bind(this),
       claimTask: this.claimTask.bind(this),
+      blockTask: this.blockTask.bind(this),
       submitTaskResult: this.submitTaskResult.bind(this),
     };
   }
