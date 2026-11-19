@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Activity, ArrowDownToLine, Check, ChevronDown, CircleAlert, Copy,
-  LockKeyhole, Monitor, RefreshCw, ShieldCheck, Smartphone, SquareTerminal, X,
+  Activity, Check, ChevronDown, CircleAlert, Copy,
+  LockKeyhole, Monitor, RefreshCw, ShieldCheck, Smartphone, X,
 } from 'lucide-react';
 import { listCloudRooms, type CloudRoom } from './cloudRooms';
 import { supabase } from './supabase';
@@ -13,9 +13,9 @@ import BackroomAndroidControl from './BackroomAndroidControl';
 import BackroomDesktopControl from './BackroomDesktopControl';
 import './backroom-cloud.css';
 
-type Surface = 'phone' | 'desktop' | 'terminal';
+type Surface = 'phone' | 'desktop';
 const surfaceLabels: Record<Surface, string> = {
-  phone: 'Phone apps', desktop: 'Desktop apps', terminal: 'Terminal',
+  phone: 'Android phone', desktop: 'Computer',
 };
 
 function formatTime(value: string) {
@@ -82,18 +82,15 @@ export default function BackroomApp() {
 
   const selectedRoom = rooms.find(room => room.id === roomId);
   const activeDevices = useMemo(() => devices.filter(device => device.status === 'active'), [devices]);
-  const activeDevice = activeDevices.find(device => device.device_id === selectedDeviceId) ?? activeDevices[0];
-  const addedApps = useMemo(() => activeDevice
-    ? activeDevice.apps.map(app => ({ ...app, deviceId: activeDevice.device_id, deviceLabel: activeDevice.device_label, status: activeDevice.status }))
-    : [], [activeDevice]);
-  const phoneReady = Boolean(activeDevice);
+  const activePhones = useMemo(() => activeDevices.filter(device => device.platform === 'android'), [activeDevices]);
+  const activeDevice = activePhones.find(device => device.device_id === selectedDeviceId) ?? activePhones[0];
   const canManageDevices = Boolean(selectedRoom && userId && selectedRoom.owner_id === userId);
 
   useEffect(() => {
-    if (!activeDevices.some(device => device.device_id === selectedDeviceId)) {
-      setSelectedDeviceId(activeDevices[0]?.device_id ?? '');
+    if (!activePhones.some(device => device.device_id === selectedDeviceId)) {
+      setSelectedDeviceId(activePhones[0]?.device_id ?? '');
     }
-  }, [activeDevices, selectedDeviceId]);
+  }, [activePhones, selectedDeviceId]);
 
   async function createPairing() {
     if (!roomId || !canManageDevices || busy) return;
@@ -123,7 +120,7 @@ export default function BackroomApp() {
 
   async function revoke(deviceId: string) {
     if (!canManageDevices) return;
-    if (!window.confirm('Revoke this phone? It will lose access to this Rub Minds group.')) return;
+    if (!window.confirm('Revoke this device? It will lose access to this Rub Minds group.')) return;
     setBusy(true); setError(''); setNotice('');
     try { await revokeBackroomDevice(deviceId, roomId); await refresh(); setNotice('Device revoked.'); }
     catch (e) { setError(e instanceof Error ? e.message : 'Device revocation failed.'); }
@@ -132,7 +129,7 @@ export default function BackroomApp() {
 
   return <main className="br-cloud-shell">
     <header className="br-cloud-header">
-      <div className="br-cloud-brand"><div className="br-cloud-mark"><Smartphone size={21}/></div><div><b>Backroom</b><small>Unified device frame</small></div></div>
+      <div className="br-cloud-brand"><div className="br-cloud-mark"><Smartphone size={21}/></div><div><b>Backroom</b><small>Device frames</small></div></div>
       <div className="br-cloud-room">
         <label htmlFor="br-cloud-room-select">Group</label>
         <select id="br-cloud-room-select" value={roomId} onChange={event => setRoomId(event.target.value)}>
@@ -147,17 +144,17 @@ export default function BackroomApp() {
     {error ? <section className="br-cloud-notice error"><CircleAlert size={17}/>{error}<button onClick={() => setError('')} aria-label="Dismiss error"><X size={15}/></button></section> : null}
 
     <section className="br-cloud-intro">
-      <div><span className="br-cloud-eyebrow">RUB MINDS · DEVICE RUNTIMES</span><h1>One space. Every surface.</h1><p>Connect native runtimes directly to Rub Minds over outbound HTTPS. No localhost server or phone port bridge.</p></div>
+      <div><span className="br-cloud-eyebrow">RUB MINDS · LIVE DEVICES</span><h1>Your devices, live.</h1><p>Open the real screen of a paired phone or computer. Choose an app, request the control you need, and keep every action tied to this group.</p></div>
       <div className="br-cloud-security"><ShieldCheck size={19}/><span>Owner approval required<br/><small>Pairing codes are one-use and expire in 5 minutes.</small></span></div>
     </section>
 
     {!selectedRoom ? <section className="br-cloud-empty"><Smartphone size={32}/><h2>Create or join a group first</h2><p>Backroom devices are scoped to a Rub Minds group.</p><a className="br-cloud-primary" href="/">Open Rub Minds groups</a></section> : <>
       <section className="br-cloud-layout">
         <div className="br-cloud-sidebar">
-          <div className="br-cloud-panel-head"><div><span className="br-cloud-eyebrow">DEVICES</span><h2>Connected runtimes</h2></div><span className="br-cloud-count">{devices.length}</span></div>
+          <div className="br-cloud-panel-head"><div><span className="br-cloud-eyebrow">YOUR DEVICES</span><h2>Device connections</h2></div><span className="br-cloud-count">{devices.length}</span></div>
           {canManageDevices
             ? <button className="br-cloud-primary" disabled={busy} onClick={() => void createPairing()}><Smartphone size={17}/> Pair Android phone</button>
-            : <p className="br-cloud-help">Only the group owner can pair, approve or revoke devices. All group members can view selected app inventory and the activity history.</p>}
+            : <p className="br-cloud-help">Only the group owner can pair, approve or revoke devices. Group members can view the device frames and activity history.</p>}
           {pairCode ? <div className="br-cloud-pair-card">
             <b>One-use pairing code</b>
             <code>{pairCode}</code>
@@ -165,60 +162,40 @@ export default function BackroomApp() {
             <small>Enter this code in Rub Minds Companion on the phone. Expires {formatTime(pairExpires)}.</small>
           </div> : null}
           {devices.length ? devices.map(device => <article className="br-cloud-device" key={device.device_id}>
-            <div className="br-cloud-device-icon"><Smartphone size={19}/></div>
-            <div className="br-cloud-device-copy"><b>{device.device_label}</b><small>{device.platform} · Android {device.os_version || 'version unknown'}</small><span className={'br-cloud-status ' + device.status}>{device.status}</span></div>
+            <div className="br-cloud-device-icon">{device.platform === 'android' ? <Smartphone size={19}/> : <Monitor size={19}/>}</div>
+            <div className="br-cloud-device-copy"><b>{device.device_label}</b><small>{device.platform === 'android' ? 'Android phone' : device.platform + ' computer'} · {device.os_version || 'version unknown'}</small><span className={'br-cloud-status ' + device.status}>{device.status}</span></div>
             <div className="br-cloud-device-actions">
               {canManageDevices && device.status === 'pending' ? <button disabled={busy} onClick={() => void approve(device.device_id)}>Approve</button> : null}
               {canManageDevices && device.status !== 'revoked' ? <button className="danger" disabled={busy} onClick={() => void revoke(device.device_id)}>Revoke</button> : null}
             </div>
-          </article>) : <div className="br-cloud-empty-mini"><Smartphone size={24}/><b>No devices paired</b><span>Ask the group owner to pair an Android companion and approve its selected app inventory.</span></div>}
+          </article>) : <div className="br-cloud-empty-mini"><Smartphone size={24}/><b>No devices paired</b><span>Ask the group owner to pair a device and approve its connection.</span></div>}
           <button className="br-cloud-link" onClick={() => setShowHelp(value => !value)}><LockKeyhole size={15}/> {showHelp ? 'Hide connection details' : 'How device pairing works'} <ChevronDown size={14}/></button>
           {showHelp ? <p className="br-cloud-help">The phone creates a private device credential locally and sends only its digest to the cloud. The pairing code is single-use. A device remains pending until you approve it here. Revoke stops future device API access.</p> : null}
         </div>
 
         <div className="br-cloud-stage-panel">
           <div className="br-cloud-surface-tabs">
-            {(['phone','desktop','terminal'] as Surface[]).map(id => <button key={id} className={surface === id ? 'active' : ''} onClick={() => setSurface(id)}>
-              {id === 'phone' ? <Smartphone size={16}/> : id === 'desktop' ? <Monitor size={16}/> : <SquareTerminal size={16}/>} {surfaceLabels[id]}
+            {(['phone','desktop'] as Surface[]).map(id => <button key={id} className={surface === id ? 'active' : ''} aria-pressed={surface === id} onClick={() => setSurface(id)}>
+              {id === 'phone' ? <Smartphone size={16}/> : <Monitor size={16}/>} {surfaceLabels[id]}
             </button>)}
-            {surface === 'phone' && activeDevices.length > 1 ? <label className="br-cloud-device-picker">
+            {surface === 'phone' && activePhones.length > 1 ? <label className="br-cloud-device-picker">
               <span>Phone</span>
               <select aria-label="Select Android phone" value={activeDevice?.device_id ?? ''} onChange={event => setSelectedDeviceId(event.target.value)}>
-                {activeDevices.map(device => <option key={device.device_id} value={device.device_id}>{device.device_label}</option>)}
+                {activePhones.map(device => <option key={device.device_id} value={device.device_id}>{device.device_label}</option>)}
               </select>
             </label> : null}
+            <span className="br-cloud-stage-hint">{surface === 'phone' ? 'Original Android app screen' : 'Original computer screen and terminal'}</span>
           </div>
           <div className={'br-cloud-device-frame ' + surface}>
-            {surface === 'phone' ? <div className="br-cloud-phone">
-              <div className="br-cloud-phone-notch"/>
-              {phoneReady ? <div className="br-cloud-phone-screen">
-                <div className="br-cloud-phone-bar"><span>Selected apps</span><small>{addedApps.length} added</small></div>
-                {addedApps.length ? addedApps.map(app => <div className="br-cloud-app-row" key={app.deviceId + app.package_name}>
-                  <div className="br-cloud-app-icon"><Smartphone size={18}/></div><div><b>{app.app_label}</b><small>{app.package_name}</small></div><span className={app.status}>{app.status}</span>
-                </div>) : <div className="br-cloud-phone-empty"><ArrowDownToLine size={27}/><b>No apps added yet</b><span>Choose apps in the Android companion. Only selected app metadata is synced.</span></div>}
-                <div className="br-cloud-frame-foot"><Check size={14}/> App inventory synced from {activeDevice?.device_label ?? 'Android device'}</div>
-                {activeDevice?.platform === 'android'
-                  ? <BackroomAndroidControl device={activeDevice} roomId={roomId}/>
-                  : <div className="br-cloud-phone-runtime-note">This connected device has no Android app-stream driver. Its app entries remain inventory only.</div>}
-              </div> : <div className="br-cloud-phone-screen disconnected">
-                <div className="br-cloud-phone-bar"><span>Backroom</span><small>Not connected</small></div>
-                <Smartphone size={32}/><b>Connect your Android runtime</b><p>Pair the phone, approve it, then select apps inside Rub Minds Companion.</p>
-              </div>}
-              <div className="br-cloud-phone-home"/>
-            </div> : <BackroomDesktopControl roomId={roomId}/>}
+            {surface === 'phone' ? activeDevice
+              ? <BackroomAndroidControl device={activeDevice} roomId={roomId}/>
+              : <div className="br-cloud-frame-empty">
+                  <Smartphone size={34}/><b>No approved Android phone</b>
+                  <p>Pair an Android phone, approve it, then open the selected app from the phone frame.</p>
+                  {canManageDevices ? <button className="br-cloud-primary" disabled={busy} onClick={() => void createPairing()}>Pair Android phone</button> : null}
+                </div>
+              : <BackroomDesktopControl roomId={roomId}/>}
           </div>
-
-          {surface === 'phone' && <div className="br-cloud-capabilities">
-            <div><b>Android app capabilities</b><span>Reported separately from desktop and terminal runtime status</span></div>
-            <div className="br-cloud-capability-row"><span>Launcher-visible app discovery</span><b className="ready">Available</b></div>
-            <div className="br-cloud-capability-row"><span>Virtualized app running inside phone frame</span><b>Not available</b></div>
-            <div className="br-cloud-capability-row"><span>Separate app data / virtualization</span><b>Not available</b></div>
-            <div className="br-cloud-capability-row"><span>Live original app stream and touch</span><b>Implementation ready · device verification pending</b></div>
-            <div className="br-cloud-capability-row"><span>Accessibility-backed composer identification</span><b>Implemented · Android CI pending</b></div>
-            <div className="br-cloud-capability-row"><span>Drag-select exact composer</span><b>Implemented · device verification pending</b></div>
-            <div className="br-cloud-capability-row"><span>Send-control discovery and recheck</span><b>Implemented · device verification pending</b></div>
-            <div className="br-cloud-capability-row"><span>AI-directed sending / native Off · On · Auto</span><b>Not available · provider identity + deployment/device acceptance pending</b></div>
-          </div>}
         </div>
       </section>
 
@@ -230,6 +207,6 @@ export default function BackroomApp() {
         }) : <p className="br-cloud-no-events">Pairing, approval and selected-app activity will appear here. Remote AI actions are not yet enabled.</p>}
       </section>
     </>}
-    <footer className="br-cloud-footer"><LockKeyhole size={14}/> Private device credentials · Outbound HTTPS only · No local port listener · No automatic access to private app data</footer>
+    <footer className="br-cloud-footer"><LockKeyhole size={14}/> Device-scoped access · Separate control approval · Drafts stay unsent until explicitly submitted</footer>
   </main>;
 }
