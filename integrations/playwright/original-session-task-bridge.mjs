@@ -18,7 +18,7 @@ function isValidStoredState(value, participantId) {
       !UUID_RE.test(value.taskId || "") ||
       !Number.isInteger(value.taskVersion) || value.taskVersion < 1 ||
       !UUID_RE.test(value.submissionKey || "")) return false;
-  if (value.phase === "working" || value.phase === "provider_ambiguous" || value.phase === "block_pending") return true;
+  if (value.phase === "claim_pending" || value.phase === "working" || value.phase === "provider_ambiguous" || value.phase === "block_pending") return true;
   return value.phase === "result_ready" &&
     typeof value.result === "string" &&
     value.result.trim().length > 0 &&
@@ -146,6 +146,9 @@ export class OriginalSessionTaskBridge {
       throw new Error("Stored task recovery state is invalid or belongs to another AI participant");
     }
     if (state) {
+      if (state.phase === "claim_pending") {
+        return await this.#resumeClaimPending(state, signal);
+      }
       if (state.phase === "provider_ambiguous" || state.phase === "block_pending") {
         const reason = safeText(state.reason, 2000) ||
           "This task was paused for human recovery. The original provider conversation must not be prompted again automatically.";
@@ -215,46 +218,99 @@ export class OriginalSessionTaskBridge {
 
     for (const candidate of candidates) {
       if (signal?.aborted) return { status: "cancelled", submitted: 0 };
-      const detail = await this.#readTask(candidate.id, signal);
-      if (!detail || detail.id !== candidate.id || detail.version !== candidate.version ||
-          detail.status !== "assigned" ||
-          detail.assigned_to_participant_id !== this.participantId ||
-          !taskPrerequisitesComplete(detail.detail)) continue;
-
-      const claim = await this.claimTask(candidate.id, { signal });
-      if (!isRecord(claim) || claim.claimed !== true) continue;
-      const current = await this.#readTask(candidate.id, signal);
-      // claim_room_task changes status once; the task touch trigger therefore
-      // increments version by exactly one after the assignment-event version.
-      if (!current || current.id !== candidate.id || current.version !== candidate.version + 1 ||
-          current.status !== "in_progress" ||
-          current.assigned_to_participant_id !== this.participantId ||
-          !taskPrerequisitesComplete(current.detail)) continue;
-
+      // Persist claim intent BEFORE the remote mutation. If the claim response
+      // or the post-claim read is lost, the next heartbeat can reconcile the
+      // exact task without leaving an invisible in_progress assignment behind.
       state = {
         schema: 1,
-        phase: "working",
+        phase: "claim_pending",
         participantId: this.participantId,
-        taskId: current.id,
-        taskVersion: current.version,
+        taskId: candidate.id,
+        taskVersion: candidate.version,
         submissionKey: randomUUID(),
       };
-      try {
-        await this.stateStore.save(state, { signal });
-      } catch {
-        const reason = "The original-session runner could not persist its task recovery state after claiming this task. Human reassignment or review is required.";
-        await this.#persistBlockState(state, reason, "block_pending");
-        return {
-          status: "blocked",
-          submitted: 0,
-          taskId: current.id,
-          reason: "The task was claimed, but the local recovery record could not be saved. It was blocked for human review where possible.",
-        };
-      }
-      this.activeWorkingState = state;
-      return await this.#askAndSubmit(current, state, signal);
+      await this.stateStore.save(state, { signal });
+      return await this.#resumeClaimPending(state, signal);
     }
     return { status: "idle", submitted: 0 };
+  }
+
+  async #resumeClaimPending(state, signal) {
+    if (signal?.aborted) return { status: "cancelled", submitted: 0 };
+    if (this.page.isClosed()) return { status: "browser_closed", submitted: 0 };
+
+    let current = await this.#readTask(state.taskId, signal);
+    // A transport/read error leaves claim_pending intact. The next heartbeat
+    // retries the exact lookup; it never assumes the claim failed.
+    if (!current) return { status: "deferred", submitted: 0, taskId: state.taskId };
+    if (current.id !== state.taskId ||
+        current.assigned_to_participant_id !== this.participantId) {
+      await this.stateStore.save(null, { signal });
+      return { status: "stale", submitted: 0 };
+    }
+
+    if (current.status === "assigned") {
+      if (!taskPrerequisitesComplete(current.detail)) {
+        await this.stateStore.save(null, { signal });
+        return { status: "deferred", submitted: 0, taskId: state.taskId };
+      }
+      if (current.version < state.taskVersion) {
+        await this.stateStore.save(null, { signal });
+        return { status: "stale", submitted: 0 };
+      }
+      if (current.version !== state.taskVersion) {
+        // The assignment may have been edited before the claim. Pin the latest
+        // version durably before attempting the atomic claim.
+        state = { ...state, taskVersion: current.version };
+        await this.stateStore.save(state, { signal });
+      }
+
+      const claim = await this.claimTask(state.taskId, { signal });
+      if (!isRecord(claim) || claim.claimed !== true) {
+        // Keep the marker: the response may be stale/ambiguous, and a later
+        // read will distinguish an unclaimed task from a committed claim.
+        return { status: "deferred", submitted: 0, taskId: state.taskId };
+      }
+      current = await this.#readTask(state.taskId, signal);
+      if (!current) return { status: "deferred", submitted: 0, taskId: state.taskId };
+      if (current.id !== state.taskId ||
+          current.assigned_to_participant_id !== this.participantId) {
+        await this.stateStore.save(null, { signal });
+        return { status: "stale", submitted: 0 };
+      }
+      if (current.status === "assigned") {
+        return { status: "deferred", submitted: 0, taskId: state.taskId };
+      }
+    }
+
+    if (current.status !== "in_progress") {
+      await this.stateStore.save(null, { signal });
+      return { status: "stale", submitted: 0 };
+    }
+    // A persisted claim_pending record plus a strictly newer in_progress
+    // version proves the claim committed, including after a lost ACK/restart.
+    if (current.version <= state.taskVersion) {
+      const reason = "The task is in progress, but its version does not prove that this pending claim completed. Human recovery is required.";
+      await this.#persistBlockState(state, reason, "block_pending");
+      return { status: "blocked", submitted: 0, taskId: state.taskId, reason };
+    }
+    if (!taskPrerequisitesComplete(current.detail)) {
+      const reason = "A claimed task no longer has completed prerequisites. Human review is required before provider work can continue.";
+      await this.#persistBlockState(state, reason, "block_pending");
+      return { status: "blocked", submitted: 0, taskId: state.taskId, reason };
+    }
+
+    const working = { ...state, phase: "working", taskVersion: current.version };
+    try {
+      // No provider prompt is sent until this exact working state is durable.
+      await this.stateStore.save(working, { signal });
+    } catch {
+      const reason = "The task claim was confirmed, but the local working-state record could not be saved. Human recovery is required before provider work.";
+      await this.#persistBlockState(working, reason, "block_pending");
+      return { status: "blocked", submitted: 0, taskId: state.taskId, reason };
+    }
+    this.activeWorkingState = working;
+    return await this.#askAndSubmit(current, working, signal);
   }
 
   async #readTask(taskId, signal) {
