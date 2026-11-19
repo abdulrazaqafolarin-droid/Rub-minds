@@ -261,7 +261,7 @@ test('native Send is serialized against session and composer-target invalidation
   assert.match(select, /nativeBindingGeneration != selectionGeneration/);
   assert.match(select, /sendTraversal\[1\] != 0[\s\S]*boundComposerTargetId = selected\.targetId[\s\S]*boundSendTargetId = null/);
 
-  const clear = method(service, '    fun clearSelectedComposer()', '    /**\n     * Device-local native submit path');
+  const clear = method(service, '    fun clearSelectedComposer()', '    private fun currentProviderConversationIdentityDigest(');
   assert.match(clear, /synchronized\(this\)/);
   assert.match(clear, /nativeBindingGeneration\+\+/);
 
