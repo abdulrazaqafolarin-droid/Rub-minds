@@ -22,7 +22,7 @@ class AdbCaptureTests(unittest.TestCase):
             stdout="List of devices attached\nphone-1 device\nphone-2 device\n",
             stderr="",
         ))
-        with self.assertRaisesRegex(RuntimeError, "select one explicitly"):
+        with self.assertRaisesRegex(RuntimeError, "(?i)select one explicitly"):
             resolve_device_serial(runner=runner)
 
     def test_explicit_serial_must_be_connected_and_authorized(self) -> None:
