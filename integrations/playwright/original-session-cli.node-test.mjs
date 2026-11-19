@@ -478,7 +478,7 @@ test("local runner explicitly redeems a Staging invite and binds the returned AI
       input,
       output,
       errorOutput: output,
-      ...makeRunnerStateDependencies(),
+      ...makeRunnerStateDependencies({ participantId, roomId }),
       playwright: {
         chromium: {
           async launchPersistentContext(_profileDirectory, options) {
@@ -500,7 +500,7 @@ test("local runner explicitly redeems a Staging invite and binds the returned AI
       },
       joinInvite: async options => {
         joinedInput = options;
-        return { joined: true, sessionHandle, roomId, participantId };
+        return { joined: true, sessionHandle, roomId, participantId, expiresAt: "2026-11-20T00:00:00.000Z" };
       },
       createAdapter: (_provider, { approval }) => ({
         async ask(_page, body, metadata) {
