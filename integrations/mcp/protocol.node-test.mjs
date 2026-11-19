@@ -474,6 +474,10 @@ test("MCP discovery defines the safe Backroom wake response and recovery protoco
   assert.match(MCP_DISCOVERY_INSTRUCTIONS,/submit_group_task_result/);
   assert.match(MCP_DISCOVERY_INSTRUCTIONS,/same result with the same key/);
   assert.match(MCP_DISCOVERY_INSTRUCTIONS,/active, write-capable Rub Minds MCP connection/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/For message events only/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/For a new message event only/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/Never run this message-page workflow for a task event/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/Task-event processing uses the task record and its submission_key/);
 });
 
 test("exact group-message lookup is UUID-scoped and rejects unknown inputs",()=>{
