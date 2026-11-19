@@ -1,9 +1,8 @@
 /**
- * HTTP transport adapter for the hosted Rub Minds MCP message and task tools.
- *
- * Message and task cursors remain separate. It sends only the scoped Rub Minds
- * session handle in JSON-RPC tool arguments. It never
- * reads provider cookies, browser storage, or model-provider credentials.
+ * HTTP transport adapter for the hosted Rub Minds MCP message, task and
+ * joined-session identity tools. Message and task cursors remain separate.
+ * It sends only the scoped Rub Minds session handle in JSON-RPC arguments.
+ * It never reads provider cookies, browser storage or provider credentials.
  */
 const SESSION_HANDLE_RE = /^[0-9a-f]{64}$/i;
 const DEFAULT_PROTOCOL_VERSION = "2026-07-28";
@@ -272,7 +271,7 @@ export class McpSessionMessageTransport {
 
   async callTool(name, args = {}, { signal } = {}) {
     if (typeof name !== "string" || !MESSAGE_TOOL_NAMES.has(name)) {
-      throw new TypeError("this transport only supports Rub Minds group-message and bridge-state tools");
+      throw new TypeError("this transport only supports scoped Rub Minds group, task, session and bridge-state tools");
     }
     if (!args || typeof args !== "object" || Array.isArray(args)) throw new TypeError("tool arguments must be an object");
     if (signal?.aborted) throw new Error("Rub Minds MCP call aborted");
