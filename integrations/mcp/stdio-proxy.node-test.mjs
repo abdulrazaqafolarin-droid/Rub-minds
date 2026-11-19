@@ -131,6 +131,58 @@ test("rejects redirects, oversized calls and mismatched upstream response ids", 
   assert.match(large.error.message, /message size/);
 });
 
+test("oversized upstream response streams are cancelled before full buffering", async () => {
+  let cancelled = false;
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array(800_000));
+      controller.enqueue(new Uint8Array(500_000));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+  const proxy = createMcpStdioProxy({
+    endpoint: ENDPOINT,
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      body,
+    }),
+  });
+  const result = await proxy.handle({ jsonrpc: "2.0", id: "oversized", method: "tools/list" });
+  assert.equal(result.error.code, -32000);
+  assert.match(result.error.message, /response exceeds the supported message size/);
+  assert.equal(cancelled, true);
+});
+
+test("declared oversized upstream responses are rejected before body reads", async () => {
+  let bodyRead = false;
+  const proxy = createMcpStdioProxy({
+    endpoint: ENDPOINT,
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-length": "1200001" }),
+      body: {
+        cancel: async () => {},
+        getReader: () => {
+          bodyRead = true;
+          throw new Error("body must not be read");
+        },
+      },
+      text: async () => {
+        bodyRead = true;
+        return "too large";
+      },
+    }),
+  });
+  const result = await proxy.handle({ jsonrpc: "2.0", id: "declared-oversized", method: "tools/list" });
+  assert.match(result.error.message, /response exceeds the supported message size/);
+  assert.equal(bodyRead, false);
+});
+
 test("upstream HTTP and JSON-RPC failures never leak credentials into the response", async () => {
   const apiKey = "DO_NOT_LEAK_THIS_KEY";
   const credential = "DO_NOT_LEAK_INVITE_TOKEN";
@@ -176,10 +228,23 @@ test("request timeout remains active while the upstream response body is being r
       };
     },
   });
-  const result = await proxy.handle({ jsonrpc: "2.0", id: 99, method: "tools/list" });
-  assert.equal(aborted, true);
-  assert.equal(result.error.code, -32000);
-  assert.match(result.error.message, /Could not reach or read/);
+  // The production timeout is intentionally unref'ed so an idle CLI can exit.
+  // Keep this test process alive while waiting for that timeout to fire.
+  const keepAlive = setInterval(() => {}, 250);
+  try {
+    const result = await proxy.handle({ jsonrpc: "2.0", id: 99, method: "tools/list" });
+    console.log("SAFE_MCP_STDIO_TIMEOUT_DIAG", JSON.stringify({
+      aborted,
+      hasError: !!result?.error,
+      errorCode: result?.error?.code ?? null,
+      readFailureMessage: /Could not reach or read/.test(result?.error?.message ?? "")
+    }));
+    assert.equal(aborted, true);
+    assert.equal(result.error.code, -32000);
+    assert.match(result.error.message, /Could not reach or read/);
+  } finally {
+    clearInterval(keepAlive);
+  }
 });
 
 test("the proxy caps concurrent upstream calls and releases capacity after completion", async () => {
@@ -201,7 +266,17 @@ test("the proxy caps concurrent upstream calls and releases capacity after compl
   assert.match(overflow.error.message, /busy/);
   release();
   const results = await Promise.all(pending);
-  assert.equal(results.every(result => Array.isArray(result.result.tools)), true);
+  const allPendingValid = results.every(result => Array.isArray(result.result?.tools));
   const after = await proxy.handle({ jsonrpc: "2.0", id: "after", method: "tools/list" });
+  console.log("SAFE_MCP_STDIO_CAPACITY_DIAG", JSON.stringify({
+    pendingCount: pending.length,
+    completedCount: results.length,
+    overflowCode: overflow?.error?.code ?? null,
+    overflowBusy: /busy/.test(overflow?.error?.message ?? ""),
+    allPendingValid,
+    afterHasError: !!after?.error,
+    afterToolsArray: Array.isArray(after?.result?.tools)
+  }));
+  assert.equal(allPendingValid, true);
   assert.deepEqual(after.result.tools, []);
 });

@@ -446,6 +446,34 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
   }
   const credential = await decryptWithKeyRing(encryptedCredential, credentialEncryptionKey, previousEncryptionKeys, session.session_digest as string);
 
+  if (name === "bind_device_frame") {
+    const identity = await invokeAgent(credential, "read");
+    if (!isRecord(identity) || identity.room_id !== session.room_id || identity.participant_id !== session.participant_id) {
+      throw new Error("This MCP session no longer matches the AI participant it joined.");
+    }
+    const { data, error } = await db.rpc("complete_backroom_device_frame_binding", {
+      p_challenge_id: args.challenge_id,
+      p_nonce_digest: await sha256(args.nonce as string),
+      p_session_digest: session.session_digest as string,
+    });
+    if (error || !isRecord(data)) throw new Error("The device-frame association could not be verified. Ask the owner for a fresh one-time challenge and retry.");
+    if (data.ok !== true) {
+      const messages: Record<string,string> = {
+        challenge_not_found_or_invalid: "The one-time frame challenge is invalid.",
+        challenge_expired_or_revoked: "The one-time frame challenge expired or was revoked. Ask the owner for a fresh one.",
+        challenge_already_consumed: "This one-time frame challenge has already been used by another session.",
+        selected_ai_session_mismatch: "This challenge was issued for a different AI participant. Use it only in the selected conversation.",
+        participant_or_frame_already_bound: "This participant or frame is already linked. Ask the owner to revoke the existing link first.",
+      };
+      throw new Error(messages[String(data.reason)] || "The server rejected this device-frame association.");
+    }
+    return { bound:true,binding_id:data.binding_id,room_id:data.room_id,participant_id:data.participant_id,
+      device_id:data.device_id,runtime_session_id:data.runtime_session_id,surface:data.surface,
+      target_app_id:data.target_app_id,expires_at:data.expires_at,replayed:data.replayed===true,
+      capabilities:{group_collaboration:true,app_control:false,native_send:false,automatic_wake:false},
+      note:"The existing AI participant is now associated with this selected live device frame. Group tools remain available; app control, native Send and automatic wake are separate capabilities." };
+  }
+
   if (name === "read_group_context") {
     // Validate the credential (including revocation/expiry) before exposing room metadata.
     await invokeAgent(credential, "read");

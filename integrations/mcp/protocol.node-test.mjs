@@ -55,11 +55,20 @@ test("current stateless protocol validates request metadata and mirrored headers
 test("advertises invitation, messaging, and memory tools", () => {
   assert.equal(MCP_PROTOCOL_VERSION, "2025-06-18");
   assert.deepEqual(RUB_MINDS_MCP_TOOLS.map((tool) => tool.name), [
-    "join_group", "prepare_session_export", "leave_group", "read_group_context", "read_group_messages", "read_group_message", "wait_for_group_messages", "send_group_message",
+    "join_group", "prepare_session_export", "leave_group", "bind_device_frame", "read_group_context", "read_group_messages", "read_group_message", "wait_for_group_messages", "send_group_message",
     "load_original_session_bridge_state", "save_original_session_bridge_state",
     "read_session_memory", "import_session_memory", "remember_memory", "forget_memory",
     "propose_group_task", "list_group_tasks", "read_group_task", "claim_group_task", "block_group_task", "fail_group_task", "submit_group_task_result",
   ]);
+});
+
+test("device-frame binding requires a one-time owner challenge and explicit confirmation", () => {
+  const valid={challenge_id:"123e4567-e89b-42d3-a456-426614174000",nonce:"a".repeat(64),confirm_bind:true};
+  assert.equal(validateToolArguments("bind_device_frame",valid),null);
+  assert.match(validateToolArguments("bind_device_frame",{...valid,challenge_id:"bad"}),/UUID/);
+  assert.match(validateToolArguments("bind_device_frame",{...valid,nonce:"bad"}),/64-character hexadecimal/);
+  assert.match(validateToolArguments("bind_device_frame",{...valid,confirm_bind:false}),/Explicit confirmation/);
+  assert.match(validateToolArguments("bind_device_frame",{...valid,extra:true}),/Unknown bind_device_frame argument/);
 });
 
 test("transport validates negotiated protocol version and supplied origins", () => {
