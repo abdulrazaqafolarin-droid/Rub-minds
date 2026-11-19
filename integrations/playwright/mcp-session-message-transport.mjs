@@ -74,6 +74,11 @@ export async function joinRubMindsInvite({
   signal,
 } = {}) {
   const target = validateEndpoint(endpoint);
+  const targetUrl = new URL(target);
+  if (targetUrl.hostname !== "tzcuuynmviiuactafpld.supabase.co" ||
+      targetUrl.pathname.replace(/\/$/, "") !== "/functions/v1/rub-minds-mcp") {
+    throw new TypeError("invite redemption is restricted to the Rub Minds Staging MCP endpoint");
+  }
   if (typeof inviteToken !== "string" || !/^[0-9a-f]{64}$/i.test(inviteToken)) {
     throw new TypeError("inviteToken must be a 64-character hexadecimal Staging invitation");
   }
