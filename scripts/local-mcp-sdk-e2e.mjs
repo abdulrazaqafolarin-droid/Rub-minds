@@ -1745,11 +1745,12 @@ const runnerInviteRows = await request("/rest/v1/room_invites", {
 assert.equal(runnerInviteRows.length, 1);
 let runnerJoin;
 let runnerTransport;
+const runnerJoinRequestKey = randomBytes(32).toString("hex");
 try {
   runnerJoin = await joinRubMindsInvite({
     endpoint,
     inviteToken: runnerInviteToken,
-    joinRequestKey: randomBytes(32).toString("hex"),
+    joinRequestKey: runnerJoinRequestKey,
     agentLabel: "Local Playwright original session",
     allowLocalTestEndpoint: true,
   });
@@ -1758,6 +1759,19 @@ try {
   assert.match(runnerJoin.sessionHandle, /^[a-f0-9]{64}$/i);
   assert.match(runnerJoin.participantId, /^[0-9a-f-]{36}$/i);
   assert.ok(Date.parse(runnerJoin.expiresAt) > Date.now());
+  const replayedRunnerJoin = await joinRubMindsInvite({
+    endpoint,
+    inviteToken: runnerInviteToken,
+    joinRequestKey: runnerJoinRequestKey,
+    agentLabel: "Local Playwright original session",
+    allowLocalTestEndpoint: true,
+  });
+  assert.equal(replayedRunnerJoin.sessionHandle, runnerJoin.sessionHandle,
+    "same join_request_key must return the original opaque handle");
+  assert.equal(replayedRunnerJoin.participantId, runnerJoin.participantId,
+    "same join_request_key must return the same AI participant");
+  assert.equal(replayedRunnerJoin.expiresAt, runnerJoin.expiresAt,
+    "idempotent replay must return the existing participant expiry");
   runnerTransport = new McpSessionMessageTransport({
     endpoint,
     sessionHandle: runnerJoin.sessionHandle,
@@ -1778,7 +1792,7 @@ try {
   const inviteUsage = await request(
     "/rest/v1/room_invites?select=ai_uses&id=eq." + runnerInviteRows[0].id,
   );
-  assert.equal(inviteUsage[0]?.ai_uses, 1, "one original-session runner join should consume exactly one AI invite slot");
+  assert.equal(inviteUsage[0]?.ai_uses, 1, "an original-session runner retry with the same join_request_key must consume exactly one AI invite slot");
   console.log("SAFE_MCP_E2E_STAGE: local Playwright runner initialize/join/identity/task-read/leave handshake passed");
 } catch (error) {
   if (runnerTransport) {
