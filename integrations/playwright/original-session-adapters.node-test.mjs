@@ -234,6 +234,10 @@ test("adds explicit Rub Minds context to group prompts", async () => {
 
 test("formats a human-assigned task as a task handoff and requests task-specific approval", async () => {
   const state = { assistantVisible: false, text: "", generating: false };
+  state.onSend = () => {
+    setTimeout(() => { state.text = "Risk register deliverable"; }, 350);
+    setTimeout(() => { state.generating = false; }, 650);
+  };
   const approvals = [];
   const adapter = createOriginalSessionAdapter("chatgpt", {
     approval: async details => { approvals.push(details); return true; },
