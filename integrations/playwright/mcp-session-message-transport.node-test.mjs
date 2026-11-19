@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { McpSessionMessageTransport } from "./mcp-session-message-transport.mjs";
+import { McpSessionMessageTransport, joinRubMindsInvite } from "./mcp-session-message-transport.mjs";
 
 const SESSION = "a".repeat(64);
 const ENDPOINT = "https://rub-minds.example/functions/v1/rub-minds-mcp";
@@ -31,6 +31,113 @@ test("validates secure endpoint, session handle, timeout bounds, and adapter inp
   assert.throws(() => new McpSessionMessageTransport({ endpoint: ENDPOINT, sessionHandle: SESSION, waitTimeoutMs: 999 }), /waitTimeoutMs/);
   assert.throws(() => new McpSessionMessageTransport({ endpoint: ENDPOINT, sessionHandle: SESSION, waitTimeoutMs: 15000, requestTimeoutMs: 15000 }), /requestTimeoutMs/);
   assert.throws(() => new McpSessionMessageTransport({ endpoint: ENDPOINT, sessionHandle: SESSION, fetchImpl: null }), /fetchImpl/);
+});
+
+test("joins a Staging invite with explicit confirmation and validates the returned scoped identity", async () => {
+  const inviteToken = "b".repeat(64);
+  const joinRequestKey = "c".repeat(64);
+  const sessionHandle = "d".repeat(64);
+  const roomId = "550e8400-e29b-41d4-a716-446655440000";
+  const participantId = "650e8400-e29b-41d4-a716-446655440000";
+  const fake = fakeFetch(({ request }) => fakeResponse({
+    jsonrpc: "2.0",
+    id: request.id,
+    result: { structuredContent: {
+      joined: true, session_handle: sessionHandle, room_id: roomId, participant_id: participantId,
+    } },
+  }));
+  const joined = await joinRubMindsInvite({
+    endpoint: "https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp",
+    inviteToken,
+    agentLabel: "ChatGPT original session",
+    joinRequestKey,
+    fetchImpl: fake.fetch,
+  });
+  assert.deepEqual(joined, { joined: true, sessionHandle, roomId, participantId });
+  const request = fake.requests[0];
+  assert.equal(request.url, "https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp");
+  assert.equal(request.options.headers["MCP-Protocol-Version"], "2026-07-28");
+  assert.equal(request.options.headers["Mcp-Method"], "tools/call");
+  assert.equal(request.options.headers["Mcp-Name"], "join_group");
+  assert.equal(request.request.params.name, "join_group");
+  assert.equal(request.request.params.arguments.confirm_join, true);
+  assert.equal(request.request.params.arguments.invite_token, inviteToken);
+  assert.equal(request.request.params.arguments.agent_label, "ChatGPT original session");
+  assert.equal(request.request.params.arguments.join_request_key, joinRequestKey);
+  assert.equal("session_handle" in request.request.params.arguments, false);
+  assert.equal(request.url.includes(inviteToken), false);
+});
+
+test("retries an ambiguous transient Staging response once with the same join idempotency key", async () => {
+  const requests = [];
+  const inviteToken = "e".repeat(64);
+  const joinRequestKey = "f".repeat(64);
+  const fetchImpl = async (url, options) => {
+    const request = JSON.parse(options.body);
+    requests.push({ url, options, request });
+    if (requests.length === 1) return fakeResponse({ error: "temporary" }, 503);
+    return fakeResponse({
+      jsonrpc: "2.0",
+      id: request.id,
+      result: { structuredContent: {
+        joined: true,
+        session_handle: "1".repeat(64),
+        room_id: "550e8400-e29b-41d4-a716-446655440000",
+        participant_id: "650e8400-e29b-41d4-a716-446655440000",
+      } },
+    });
+  };
+  const joined = await joinRubMindsInvite({
+    endpoint: ENDPOINT, inviteToken, agentLabel: "Claude original session", joinRequestKey, fetchImpl,
+  });
+  assert.equal(joined.joined, true);
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[0].request, requests[1].request);
+  assert.equal(requests[0].request.params.arguments.join_request_key, joinRequestKey);
+});
+
+test("rejects invalid Staging invitation inputs before network access", async () => {
+  let calls = 0;
+  const fetchImpl = async () => { calls++; throw new Error("must not call fetch"); };
+  const valid = {
+    endpoint: "https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp",
+    inviteToken: "a".repeat(64),
+    agentLabel: "ChatGPT",
+    joinRequestKey: "b".repeat(64),
+    fetchImpl,
+  };
+  for (const input of [
+    { ...valid, endpoint: "https://zucaeevlbwhcvjwbhwmq.supabase.co/functions/v1/rub-minds-mcp" },
+    { ...valid, inviteToken: "short" },
+    { ...valid, agentLabel: " " },
+    { ...valid, agentLabel: "x".repeat(81) },
+    { ...valid, joinRequestKey: "short" },
+  ]) {
+    await assert.rejects(() => joinRubMindsInvite(input));
+  }
+  assert.equal(calls, 0);
+});
+
+test("rejects malformed join identity without returning the capability in errors", async () => {
+  const secret = "9".repeat(64);
+  const fake = fakeFetch(({ request }) => fakeResponse({
+    jsonrpc: "2.0",
+    id: request.id,
+    result: { structuredContent: {
+      joined: true, session_handle: secret, room_id: "not-a-uuid", participant_id: "650e8400-e29b-41d4-a716-446655440000",
+    } },
+  }));
+  await assert.rejects(
+    () => joinRubMindsInvite({
+      endpoint: ENDPOINT, inviteToken: "a".repeat(64), agentLabel: "ChatGPT",
+      joinRequestKey: "b".repeat(64), fetchImpl: fake.fetch,
+    }),
+    error => {
+      assert.match(error.message, /incomplete invitation join/);
+      assert.equal(error.message.includes(secret), false);
+      return true;
+    },
+  );
 });
 
 test("uses session-scoped JSON-RPC headers and keeps the session handle out of the URL", async () => {
