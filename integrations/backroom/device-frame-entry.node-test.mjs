@@ -78,7 +78,7 @@ test("Windows computer-frame input requires exact Backroom-launched HWND and ful
   assert.match(native, /fn capture_bounds[\s\S]*This screen session has no verified native application window binding; desktop input is view-only/);
   assert.match(native, /fn dispatch_input[\s\S]*capture_bounds\(&state, &geometry\)/);
   assert.match(targeting, /exactly one visible top-level window/);
-  assert.match(targeting, /foreground_handle/);
+  assert.match(targeting, /focused_handle/);
   assert.match(bridge, /appId/);
   assert.match(bridge, /foreground HWND, process identity and full-monitor window bounds match/);
   assert.match(frame, /foreground HWND \+ process \+ full-monitor bounds verified/);
