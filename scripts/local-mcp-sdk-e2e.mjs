@@ -273,11 +273,28 @@ try {
   // Exercise human-assigned task discovery, AI claim, result submission,
   // same-key idempotent replay, cross-participant denial and visible blocking
   // through the actual official MCP SDK and local Edge Function.
-  const ownerParticipants = await request(
+  let ownerParticipants = await request(
     "/rest/v1/participants?select=id,kind,user_id&room_id=eq." + room.id + "&user_id=eq." + owner.id,
   );
-  const ownerHuman = ownerParticipants.find(row => row.kind === "human");
-  assert.ok(ownerHuman?.id, "the room owner must have an existing human participant identity");
+  let ownerHuman = ownerParticipants.find(row => row.kind === "human");
+  if (!ownerHuman) {
+    // This is a disposable service-role-only fixture. Production human
+    // membership remains created by the authenticated onboarding flow.
+    const seededOwnerParticipants = await request("/rest/v1/participants", {
+      method: "POST",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({
+        room_id: room.id,
+        user_id: owner.id,
+        display_name: "Official MCP E2E owner",
+        kind: "human",
+        status: "connected",
+      }),
+    });
+    assert.equal(seededOwnerParticipants.length, 1, "could not seed local human task assigner");
+    ownerHuman = seededOwnerParticipants[0];
+  }
+  assert.ok(ownerHuman?.id, "the local task fixture must have a human creator identity");
 
   async function createAssignedTask({ title, assigneeId, description = "Disposable local MCP task", priority = 2 }) {
     const rows = await request("/rest/v1/room_tasks", {
