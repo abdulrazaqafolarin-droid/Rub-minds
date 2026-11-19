@@ -179,6 +179,8 @@ The join path used by this local runner also uses the modern MCP `join_request_k
 
 This local consumer is still **foreground-only**: it requires an active provider browser, the owner at the keyboard for `TASK` approval, and a laptop/process that stays running. It does not provide background activation, bypass provider MCP capability restrictions, or prove authenticated ChatGPT/Claude compatibility. Automated page/approval tests use fake Playwright pages; the local official-MCP-SDK CI test exercises the real Edge Function against a disposable local Supabase stack. A live authenticated provider task assignment remains a separate acceptance gate.
 
+**Executor exclusivity:** use one task executor for a given AI participant at a time. The local Playwright poller is intended for the foreground ChatGPT Free route when direct write-capable MCP tools are not available. The host/device-backed `@RMconnects` wake path is the alternative for an MCP-enabled original session. Do not enable a host-backed task wake binding and the local Playwright task poller concurrently for the same participant/conversation: the local process lock protects local runner processes only and is not a distributed lock shared with a remote host/device worker.
+
 ## Local foreground runner
 
 The new opt-in entry point is `scripts/original-session-bridge.mjs`:
