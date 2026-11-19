@@ -18,7 +18,7 @@ function isValidStoredState(value, participantId) {
       !UUID_RE.test(value.taskId || "") ||
       !Number.isInteger(value.taskVersion) || value.taskVersion < 1 ||
       !UUID_RE.test(value.submissionKey || "")) return false;
-  if (value.phase === "working" || value.phase === "provider_ambiguous") return true;
+  if (value.phase === "working" || value.phase === "provider_ambiguous" || value.phase === "block_pending") return true;
   return value.phase === "result_ready" &&
     typeof value.result === "string" &&
     value.result.trim().length > 0 &&
@@ -137,12 +137,17 @@ export class OriginalSessionTaskBridge {
       throw new Error("Stored task recovery state is invalid or belongs to another AI participant");
     }
     if (state) {
-      if (state.phase === "provider_ambiguous") {
+      if (state.phase === "provider_ambiguous" || state.phase === "block_pending") {
+        const reason = safeText(state.reason, 2000) ||
+          "This task was paused for human recovery. The original provider conversation must not be prompted again automatically.";
+        const blocked = await this.#persistBlockState(state, reason, state.phase);
         return {
           status: "blocked",
           submitted: 0,
           taskId: state.taskId,
-          reason: "The provider may have accepted the task prompt, but its final answer was not durably recovered. Inspect this exact conversation before taking any further action.",
+          reason: blocked
+            ? "The task is already blocked or no longer assigned to this AI participant. Inspect the original conversation before any human reassignment."
+            : "The task could not be marked blocked on the server. This local recovery marker is retained; inspect the original conversation before retrying.",
         };
       }
       if (state.phase === "working" &&
@@ -150,8 +155,7 @@ export class OriginalSessionTaskBridge {
            this.activeWorkingState.taskId !== state.taskId ||
            this.activeWorkingState.submissionKey !== state.submissionKey)) {
         const reason = "The runner restarted while a provider task turn was in progress. It will not resend the prompt automatically; inspect the original conversation before reassignment.";
-        await this.#bestEffortBlock(state.taskId, reason);
-        try { await this.stateStore.save({ ...state, phase: "provider_ambiguous", reason }); } catch { /* the existing working marker still fails closed */ }
+        await this.#persistBlockState(state, reason, "provider_ambiguous");
         return { status: "blocked", submitted: 0, taskId: state.taskId, reason };
       }
       if (state.phase === "result_ready") {
@@ -229,15 +233,13 @@ export class OriginalSessionTaskBridge {
       try {
         await this.stateStore.save(state, { signal });
       } catch {
-        await this.#bestEffortBlock(
-          current.id,
-          "The original-session runner could not persist its task recovery state after claiming this task. Human reassignment or review is required.",
-        );
+        const reason = "The original-session runner could not persist its task recovery state after claiming this task. Human reassignment or review is required.";
+        await this.#persistBlockState(state, reason, "block_pending");
         return {
           status: "blocked",
           submitted: 0,
           taskId: current.id,
-          reason: "The task was claimed, but the local recovery record could not be saved. It was blocked for human review.",
+          reason: "The task was claimed, but the local recovery record could not be saved. It was blocked for human review where possible.",
         };
       }
       this.activeWorkingState = state;
@@ -253,13 +255,30 @@ export class OriginalSessionTaskBridge {
   }
 
   async #bestEffortBlock(taskId, reason) {
-    if (!this.blockTask) return false;
     try {
+      const current = await this.#readTask(taskId);
+      if (!current) return false;
+      if (current.assigned_to_participant_id !== this.participantId ||
+          ["blocked", "review", "completed", "failed", "cancelled"].includes(current.status)) {
+        return true;
+      }
+      if (!this.blockTask) return false;
       const result = await this.blockTask(taskId, reason);
       return isRecord(result) && result.blocked === true;
     } catch {
       return false;
     }
+  }
+
+  async #persistBlockState(state, reason, phase = "block_pending") {
+    const blocked = await this.#bestEffortBlock(state.taskId, reason);
+    try {
+      await this.stateStore.save(blocked ? null : { ...state, phase, reason });
+    } catch {
+      // The previous working/ambiguous marker still fails closed on restart.
+    }
+    this.activeWorkingState = null;
+    return blocked;
   }
 
   async #askAndSubmit(task, state, signal) {
@@ -292,9 +311,7 @@ export class OriginalSessionTaskBridge {
     } catch (error) {
       if (error?.submissionState === "not_submitted") {
         const reason = "The local operator declined or the provider safely rejected this task prompt before Send. Human reassignment or review is required before another attempt.";
-        await this.#bestEffortBlock(task.id, reason);
-        this.activeWorkingState = null;
-        try { await this.stateStore.save(null); } catch { /* existing working marker will fail closed after restart */ }
+        await this.#persistBlockState(state, reason, "block_pending");
         return { status: "blocked", submitted: 0, taskId: task.id, reason };
       }
       const ambiguous = {
@@ -303,9 +320,7 @@ export class OriginalSessionTaskBridge {
         reason: "provider_submission_outcome_unknown",
       };
       const reason = "The provider may have accepted this task prompt, but its final answer was not durably recovered. Inspect the original conversation before taking further action.";
-      await this.#bestEffortBlock(task.id, reason);
-      this.activeWorkingState = null;
-      try { await this.stateStore.save({ ...ambiguous, reason }); } catch { /* persisted working state also fails closed after restart */ }
+      await this.#persistBlockState({ ...ambiguous, reason }, reason, "provider_ambiguous");
       return {
         status: "blocked",
         submitted: 0,
@@ -315,17 +330,13 @@ export class OriginalSessionTaskBridge {
     }
     if (signal?.aborted) {
       const reason = "The run stopped during a provider task turn; the provider may have accepted the prompt. Inspect the conversation before resuming.";
-      await this.#bestEffortBlock(task.id, reason);
-      this.activeWorkingState = null;
-      try { await this.stateStore.save({ ...state, phase: "provider_ambiguous", reason }); } catch { /* persisted working marker also fails closed */ }
+      await this.#persistBlockState({ ...state, phase: "provider_ambiguous", reason }, reason, "provider_ambiguous");
       return { status: "blocked", submitted: 0, taskId: task.id, reason };
     }
     if (typeof result !== "string" || !result.trim() || result.length > MAX_RESULT_LENGTH) {
       const ambiguous = { ...state, phase: "provider_ambiguous", reason: "invalid_or_missing_provider_result" };
       const reason = "The provider task response could not be safely recovered. Inspect the conversation before resuming.";
-      await this.#bestEffortBlock(task.id, reason);
-      this.activeWorkingState = null;
-      try { await this.stateStore.save({ ...ambiguous, reason }); } catch { /* persisted working state also fails closed after restart */ }
+      await this.#persistBlockState({ ...ambiguous, reason }, reason, "provider_ambiguous");
       return { status: "blocked", submitted: 0, taskId: task.id, reason };
     }
     const pending = {
@@ -337,9 +348,7 @@ export class OriginalSessionTaskBridge {
       await this.stateStore.save(pending, { signal });
     } catch {
       const reason = "The provider answer was received but could not be saved for idempotent submission. Inspect the original conversation before retrying.";
-      await this.#bestEffortBlock(task.id, reason);
-      this.activeWorkingState = null;
-      try { await this.stateStore.save({ ...state, phase: "provider_ambiguous", reason }); } catch { /* persisted working marker also fails closed */ }
+      await this.#persistBlockState({ ...state, phase: "provider_ambiguous", reason }, reason, "provider_ambiguous");
       return { status: "blocked", submitted: 0, taskId: task.id, reason };
     }
     this.activeWorkingState = null;
