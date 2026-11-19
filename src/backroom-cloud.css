@@ -101,3 +101,9 @@
   .br-android-stream-actions{display:grid;grid-template-columns:1fr 1fr}
   .br-android-stream-actions button{min-height:40px}
 }
+
+.br-cloud-frame-note{display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,1fr);align-items:center;gap:12px;margin-top:12px;padding:13px 15px;border:1px solid #384563;border-radius:11px;background:#10182d}
+.br-cloud-frame-note b{display:block;color:#e5ecff;font-size:11px}
+.br-cloud-frame-note p{margin:5px 0 0;color:#f1cf98;font-size:10px;font-weight:700}
+.br-cloud-frame-note small{color:#96a6c8;font-size:10px;line-height:1.5}
+@media(max-width:650px){.br-cloud-frame-note{grid-template-columns:1fr}}
