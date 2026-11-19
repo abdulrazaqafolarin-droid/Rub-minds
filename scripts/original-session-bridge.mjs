@@ -578,16 +578,16 @@ export async function runOriginalSessionBridge({
     }
     if (controller.signal.aborted) return { status: "stopped", replies: 0 };
 
-    if (config.joinRequired) {
-      joinedSessionStore = createJoinedSessionStore({
-        provider: options.provider,
-        conversationUrl: options.conversationUrl,
-      });
-      await joinedSessionStore.prepare?.();
-      releaseJoinedSessionLock = await joinedSessionStore.acquireLock?.();
-      if (typeof releaseJoinedSessionLock !== "function") {
-        fail("Another original-session runner is already active for this exact provider conversation. Stop that runner before starting another.");
-      }
+    // Lock the exact provider conversation in both join modes. An explicit
+    // pre-joined session handle must not bypass duplicate-runner protection.
+    joinedSessionStore = createJoinedSessionStore({
+      provider: options.provider,
+      conversationUrl: options.conversationUrl,
+    });
+    await joinedSessionStore.prepare?.();
+    releaseJoinedSessionLock = await joinedSessionStore.acquireLock?.();
+    if (typeof releaseJoinedSessionLock !== "function") {
+      fail("Another original-session runner is already active for this exact provider conversation. Stop that runner before starting another.");
     }
 
     const browserApi = playwright || await import("playwright");
