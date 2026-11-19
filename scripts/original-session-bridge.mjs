@@ -4,8 +4,9 @@
  * It launches a dedicated persistent Playwright browser profile; it does not
  * attach to or shut down the user's normal browser profile.
  */
-import { chmod, lstat, mkdir } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
+import { createHash, randomUUID } from "node:crypto";
 import { resolve, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline/promises";
@@ -30,6 +31,97 @@ const PROVIDERS = Object.freeze({
 
 function fail(message) {
   throw new Error(message);
+}
+
+async function ensurePrivateDirectory(directory) {
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const details = await lstat(directory);
+  if (details.isSymbolicLink() || !details.isDirectory()) {
+    fail("Rub Minds private state path must be a real directory, not a symlink or file.");
+  }
+  try {
+    await chmod(directory, 0o700);
+  } catch (error) {
+    if (process.platform !== "win32") throw error;
+  }
+  return directory;
+}
+
+function privateJsonStateStore({ directory, filename, maxBytes = 30000 }) {
+  const path = join(directory, filename);
+  async function prepare() {
+    await ensurePrivateDirectory(directory);
+    return path;
+  }
+  return Object.freeze({
+    path,
+    prepare,
+    async load() {
+      await prepare();
+      let details;
+      try {
+        details = await lstat(path);
+      } catch (error) {
+        if (error?.code === "ENOENT") return null;
+        throw error;
+      }
+      if (details.isSymbolicLink() || !details.isFile() || details.size > maxBytes) {
+        throw new Error("Rub Minds private state file is invalid or oversized.");
+      }
+      try {
+        await chmod(path, 0o600);
+      } catch (error) {
+        if (process.platform !== "win32") throw error;
+      }
+      const raw = await readFile(path, "utf8");
+      try {
+        return JSON.parse(raw);
+      } catch {
+        throw new Error("Rub Minds private state file contains invalid JSON.");
+      }
+    },
+    async save(value) {
+      await prepare();
+      if (value === null) {
+        try { await unlink(path); } catch (error) {
+          if (error?.code !== "ENOENT") throw error;
+        }
+        return;
+      }
+      const encoded = JSON.stringify(value);
+      if (Buffer.byteLength(encoded, "utf8") > maxBytes) {
+        throw new Error("Rub Minds private state exceeds its local storage limit.");
+      }
+      const temporary = path + "." + process.pid + "." + randomUUID() + ".tmp";
+      try {
+        await writeFile(temporary, encoded, { encoding: "utf8", flag: "wx", mode: 0o600 });
+        await rename(temporary, path);
+        try {
+          await chmod(path, 0o600);
+        } catch (error) {
+          if (process.platform !== "win32") throw error;
+        }
+      } catch (error) {
+        try { await unlink(temporary); } catch { /* best-effort cleanup */ }
+        throw error;
+      }
+    },
+  });
+}
+
+/** Private, restart-safe task-result storage. No provider credentials are persisted. */
+export function createPrivateTaskStateStore({
+  provider,
+  participantId,
+  baseDirectory = join(homedir(), ".rub-minds"),
+} = {}) {
+  if (!Object.hasOwn(PROVIDERS, provider || "") || !UUID_RE.test(participantId || "")) {
+    throw new TypeError("provider and participantId are required for private task state");
+  }
+  return privateJsonStateStore({
+    directory: join(resolve(baseDirectory), "original-session-task-state"),
+    filename: provider + "-" + participantId.toLowerCase() + ".json",
+  });
 }
 
 export function parseRunnerArgs(argv = []) {
