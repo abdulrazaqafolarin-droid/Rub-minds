@@ -10,17 +10,18 @@ const ownerId='40000000-0000-4000-8000-000000000033';
 const jobId='40000000-0000-4000-8000-000000000044';
 const leaseToken='40000000-0000-4000-8000-000000000055';
 const sessionDigest='a'.repeat(64),hostToken='b'.repeat(64);
+const providerConversationIdentityDigest='c'.repeat(64);
 const scope={hostId,bindingId,sessionDigest};
 function setup(token=hostToken) {
  const calls=[];
  const db={
-  claim:async x=>{calls.push(['claim',x]);return [{...x,jobId,leaseToken}];},
+  claim:async x=>{calls.push(['claim',x]);return [{...x,jobId,leaseToken,providerConversationIdentityDigest}];},
   acknowledge:async x=>{calls.push(['ack',x]);return true;},
   retry:async x=>{calls.push(['retry',x]);return 'pending';}
  };
  const gateway=createAuthenticatedWakeGateway({
   lookupHost:async()=>({hostId,ownerId,credentialDigest:createHash('sha256').update(hostToken).digest('hex'),expiresAt:'2030-01-01T00:00:00Z',revokedAt:null}),
-  lookupBinding:async()=>({bindingId,hostId,ownerId,sessionDigest,revokedAt:null,wakeEnabled:true,confirmedAt:'2026-10-29T00:00:00Z',wakeExpiresAt:'2030-01-01T00:00:00Z'}),
+  lookupBinding:async()=>({bindingId,hostId,ownerId,sessionDigest,surface:'android_app',providerConversationIdentityDigest,nativeBindingAttested:true,revokedAt:null,wakeEnabled:true,confirmedAt:'2026-10-29T00:00:00Z',wakeExpiresAt:'2030-01-01T00:00:00Z'}),
   store:db,now:()=>Date.parse('2026-10-29T12:00:00Z')
  });
  const handler=createWakeGatewayHttpHandler({gateway});
@@ -32,7 +33,8 @@ test('host HTTPS claim -> authenticated gateway -> private store and back',async
  const leases=await store.claim({...scope,limit:2});
  assert.equal(leases.length,1);
  assert.equal(leases[0].jobId,jobId);
- assert.deepEqual(calls[0],['claim',{...scope,limit:2}]);
+ assert.equal(leases[0].providerConversationIdentityDigest,providerConversationIdentityDigest);
+ assert.deepEqual(calls[0],['claim',{...scope,surface:'android_app',limit:2,providerConversationIdentityDigest}]);
  assert.equal(await store.acknowledge({...scope,jobId,leaseToken}),true);
  assert.equal(await store.retry({...scope,jobId,leaseToken,errorCode:'provider_busy'}),'pending');
  assert.deepEqual(calls.map(x=>x[0]),['claim','ack','retry']);
@@ -53,6 +55,14 @@ test('client blocks insecure URLs, malformed scopes and spoofed response leases'
  await assert.rejects(()=>forged.claim(scope),/Cross-scope/);
 });
 
+test('malformed provider-conversation digest in a remote lease is rejected',async()=>{
+ const forged=createRemoteWakeStore({baseUrl:'https://wake.example.test/',hostToken,
+  fetchImpl:async()=>new Response(JSON.stringify({ok:true,leases:[{
+   ...scope,jobId,leaseToken,providerConversationIdentityDigest:'not-a-sha256-digest'
+  }]}),{status:200})});
+ await assert.rejects(()=>forged.claim(scope),/provider-conversation identity digest/);
+});
+
 test('official Supabase Edge Function URL retains bearer and exact scoped route',async()=>{
  const {store,calls}=setup();
  const actual=[];
@@ -63,7 +73,7 @@ test('official Supabase Edge Function URL retains bearer and exact scoped route'
    actual.push(url);
    const gateway=createAuthenticatedWakeGateway({
     lookupHost:async()=>({hostId,ownerId,credentialDigest:createHash('sha256').update(hostToken).digest('hex'),expiresAt:'2030-01-01T00:00:00Z',revokedAt:null}),
-    lookupBinding:async()=>({bindingId,hostId,ownerId,sessionDigest,revokedAt:null,wakeEnabled:true,confirmedAt:'2026-10-29T00:00:00Z',wakeExpiresAt:'2030-01-01T00:00:00Z'}),
+    lookupBinding:async()=>({bindingId,hostId,ownerId,sessionDigest,surface:'android_app',providerConversationIdentityDigest,nativeBindingAttested:true,revokedAt:null,wakeEnabled:true,confirmedAt:'2026-10-29T00:00:00Z',wakeExpiresAt:'2030-01-01T00:00:00Z'}),
     store:{claim:async x=>[{...x,jobId,leaseToken}],acknowledge:async()=>true,retry:async()=> 'pending'},
     now:()=>Date.parse('2026-10-29T12:00:00Z')
    });
@@ -93,7 +103,7 @@ test('remote activation requires a locally verified grant before contacting host
  const gateway=createAuthenticatedWakeGateway({
   lookupHost:async()=>({hostId,ownerId,credentialDigest:createHash('sha256').update(hostToken).digest('hex'),
    expiresAt:'2030-01-01T00:00:00Z',revokedAt:null}),
-  lookupBinding:async()=>({bindingId,hostId,ownerId,sessionDigest,wakeEnabled:false,confirmedAt:null,
+  lookupBinding:async()=>({bindingId,hostId,ownerId,sessionDigest,surface:'browser_tab',wakeEnabled:false,confirmedAt:null,
    wakeExpiresAt:null,revokedAt:null}),
   store:{claim:async()=>[],acknowledge:async()=>false,retry:async()=>null},
   activateBinding:async info=>{records.push(info);return true;},

@@ -447,14 +447,14 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       await waitForIceGatheringComplete(pc);
       await sendCommand('view_offer',{sessionId,...(selectedApp?{appId:selectedApp}:{}),offer:{sdp:pc.localDescription?.sdp}});
       flash(selectedApp
-        ?'View request sent. Approve it on the computer, then choose a monitor for interactive control (or a single app window for viewing only).'
-        :'View request sent. Approve it on the computer, then choose a monitor for desktop-wide control. A window without a Backroom-launched app identity remains view-only.');
+        ?'View request sent. Approve it on the computer. For control, launch the selected app from Backroom, bring its exact window to the foreground, make it fill the shared monitor, then share that monitor. App-window capture remains view-only.'
+        :'View request sent. Approve it on the computer. Control is available only when the shared monitor geometry matches the exact foreground window of this Backroom-launched app. Otherwise the frame remains view-only.');
     }catch(error){await closePeer();flash(error instanceof Error?error.message:'Could not create the screen-share request.',true);}
   };
 
   const requestControl=async()=>{
     if(!screenSession)return flash('Start a live view first.',true);
-    if(!coordinateControl)return flash('The selected capture could not be securely bound to the expected app window or monitor. Choose the entire monitor for interactive control. Single-window capture is view-only.',true);
+    if(!coordinateControl)return flash('This screen is view-only. Launch the selected app from Backroom, bring its exact window to the foreground, make it fill the shared monitor, and share that monitor. A browser-selected window alone does not prove native window identity.',true);
     try{await sendCommand('request_control',{sessionId:screenSession});flash('Control request sent. Approve it locally on the computer.');}
     catch(error){flash(error instanceof Error?error.message:'Could not request control.',true);}
   };
@@ -683,7 +683,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
               {selection&&<div className="br-desktop-selection" style={selectionOverlayStyle()}/>}
             </div>
             <div className="br-desktop-toolbar">
-              <span>{videoReady?'Live computer display':'View request pending'}{coordinateControl?' · monitor geometry verified':' · view-only until capture geometry is verified'}</span>
+              <span>{videoReady?'Live computer display':'View request pending'}{coordinateControl?' · foreground HWND + process + full-monitor bounds verified':' · view-only until native app window identity is verified'}</span>
               <button type="button" onClick={()=>void requestControl()} disabled={!videoReady||!coordinateControl||controlGranted}>Request control</button>
               <button type="button" onClick={()=>{setTargetStatus('');setSelection(null);dragRef.current=null;targetAttemptRef.current='';draftAttemptRef.current='';clearSendControlState();try{sendData({kind:'clear_target'});}catch(error){flash('Could not clear the previous typing target. Stopping this remote session for safety.',true);void stopActivePeer();}setSelectMode(v=>!v);}} disabled={!controlGranted||!draftGranted||!selectedIsWindows||!videoReady}>{selectMode?'Cancel area selection':selectedIsWindows?'Drag-select typing area':'Typing-area targeting unavailable on this OS'}</button>
               <button type="button" onClick={()=>void requestDraftPermission()} disabled={!controlGranted||draftGranted||!selectedIsWindows}><TextCursorInput size={13}/> Request typing permission</button>
@@ -698,7 +698,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
               <textarea value={draft} onChange={e=>setDraft(e.target.value)} rows={2} maxLength={4000} placeholder="Write the text to insert in the selected area. It will never press Enter or Send."/>
               <button type="button" onClick={requestDraft} disabled={!selectedIsWindows||!selection||!targetStatus.startsWith('Verified editable field ·')||!draft.trim()}>Request draft insertion</button>
             </div>}
-            {controlGranted&&<div className="br-desktop-caption">The drag overlay is mapped to the visible video content and Windows UI Automation resolves it to one exact editable field inside the selected app window. A unique nearby Send control may be discovered and rechecked locally; this is read-only and never invokes it. Draft typing has a separate local approval and never sends or presses Enter. Native Windows app Auto wake is not enabled yet; Off / On / Auto currently applies to managed browser composers only.</div>}
+            {controlGranted&&<div className="br-desktop-caption">The frame is interactive only while the foreground HWND, process identity and full-monitor bounds still match the selected Backroom-launched app. The drag overlay then resolves to one exact editable field inside that window. A unique nearby Send control may be discovered and rechecked locally; this is read-only and never invokes it. Draft typing has a separate local approval and never sends or presses Enter. Native Windows app Auto wake is not enabled yet; Off / On / Auto currently applies to managed browser composers only.</div>}
           </div>}
           {(terminalSession||terminalPeerId)&&<div className="br-terminal-remote">
             <div className="br-terminal-remote-head"><SquareTerminal size={15}/> Native terminal · actual computer</div>

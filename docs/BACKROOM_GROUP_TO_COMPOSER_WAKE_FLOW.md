@@ -1,6 +1,6 @@
 # Backroom group-to-composer wake flow
 
-Status snapshot: 2026-11-03, PR #64 branch `feat/backroom-off-on-auto-modes`. This document describes the source-level architecture at the branch head; it is not a claim of production deployment, connected-device acceptance, or a completed ChatGPT/Claude round trip.
+Status snapshot: 2026-11-07, PR #66. The Android service-role group-to-device forwarder and durable ACK-recovery path now exist in source. Focused Node contract runs are documented as 49/49 plus 12/12, and focused binding-policy tests passed 13/13; the complete PostgreSQL migration/regression suite and full application/Android/Windows CI still need fresh successful runner evidence. This remains a source-branch status, not a claim of production deployment, physical-device acceptance, or a completed ChatGPT/Claude round trip.
 
 ## The invariant
 
@@ -30,19 +30,19 @@ flowchart TD
     E --> F["Resolve current binding, target and active session"]
     F --> G{"Surface with an integrated wake runner?"}
     G -->|Managed browser| H["Local host guard + scoped grant + execution journal"]
-    G -->|Android native| I["Trusted host-to-device forwarder is still missing"]
+    G -->|Android native| I["Service-role Edge forwarder queues exact phone command"]
     G -->|Windows native| J["Native canonical Send driver is still missing"]
     H --> K["Recheck exact empty composer and unique Send identity"]
     K --> L["Insert fixed event prompt, read back, invoke once"]
     L --> M["Verify same composer clears; acknowledge durable lease"]
-    I -.-> N["Android device queue / native driver exist separately"]
-    N -.-> O["Structured device ACK exists; group-lease producer/reconciliation gap remains"]
+    I --> N["Paired phone rechecks attestation, consent and one-shot seal"]
+    N --> O["Phone stores exact ACK; Edge settles or records late/revoked outcome"]
     M --> P["Original AI reads event through its joined MCP session"]
     P --> Q["AI replies to group through MCP; event/response ACK is separate"]
     O -.-> P
 ```
 
-The dashed Android path is deliberately shown as incomplete. A device command receiver and a phone-side native driver do not mean that the group wake queue can currently reach them.
+The Android path is connected in source through the authenticated Edge claim gateway and private service-role forwarding RPC. It is still not deployed or physically accepted. The provider-conversation resolver registry is empty, so ChatGPT and Claude are not currently eligible for autonomous native sending.
 
 ## Layer 1 — group event and participation policy
 
@@ -108,6 +108,17 @@ The UI converts pointer coordinates against the actual displayed video content:
 5. The phone companion resolves that region against its live Accessibility tree. It must find exactly one visible, editable, non-password composer in the approved foreground app. A broad region, multiple fields, unavailable accessibility data or an app/session mismatch fails closed.
 6. The phone returns a selection acknowledgement tied to the request ID and opaque target identity. If it also found one unique nearby Send control, it returns a separate opaque Send-target identity and availability/reason. It also returns a boolean indicating whether a provider-specific stable conversation identity was available locally; the conversation digest itself never leaves the phone. The frame now distinguishes a nearby Send control from provider-conversation readiness and labels native wake as blocked when that identity is missing. The accessible label, raw node identity, conversation digest and editor content do not become UI authorization.
 
+**The provider digest remains phone-local to the browser, but the device-attested registration path now sends it directly to Rub Minds.** `BackroomAndroidControl` lists eligible owner-authorized group AI bindings, lets the owner choose one, requests a one-time challenge and relays only the challenge ID and nonce to the phone. The phone verifies the current app signer, composer, Send control and provider conversation locally, then posts the opaque digests directly to the device-bearer `backroom-device` completion route. The existing owner-authenticated `backroom-config/binding` route remains the separate paired-host/input-binding enrollment path; the new challenge/RPC binds an already-existing group input binding to the active phone screen and app. The browser never receives the digests or raw provider IDs, and the server stores only opaque digests, never raw conversation identifiers or content.
+
+The registration contract must keep four identifiers distinct:
+
+- **Group target ID + revision:** the server/host `target_id` and `target_revision` used by the durable queue and target registry.
+- **Composer identity:** the phone-local Accessibility node identity returned by the drag-select flow (exposed to the frame as the composer target ID).
+- **Send-control identity:** the separate phone-local identity for the unique nearby Send control.
+- **Provider-conversation digest:** the phone-derived SHA-256 digest for the active provider thread.
+
+The current Android frame keeps composer and Send target identities local and exposes only bounded readiness state. The device-attested mapping stores the exact existing group `binding_id`, `device_id`, active `screen_session_id`, app package/signer and opaque composer, Send and provider-conversation digests. The group target ID/revision, local composer identity, local Send identity and provider digest remain distinct; none may be substituted for another. The mapping and pending challenge are bounded by the active MCP, agent-connection, host and screen leases and are revoked/capped when those authorities or the app identity change.
+
 The frame stores the composer and Send target identifiers only for the active session. It offers a separate **Recheck Send control** action. The phone must prove the same unique Send target remains available beside the selected composer. A changed target invalidates the earlier check and requires a fresh selection.
 
 The owner must still focus the exact field in the phone app before inserting a manual draft. The UI makes this explicit. A selection acknowledgement is not a guarantee that the provider conversation is correctly identified, that the model will respond, or that a Send action is allowed.
@@ -166,7 +177,7 @@ Android has a separate device-bearer-authenticated command poll/ACK channel:
 
 The handoff expires no later than its queue lease and is bounded to 20 seconds. Only the digest of the durable lease token crosses into the handoff; the raw lease token remains with the trusted worker. The phone rechecks expiry immediately before the sensitive execution stages.
 
-**The missing connection is upstream of this phone receiver:** there is not yet a trusted host-side forwarder that takes a claimed group wake lease, maps it to the paired Android device's active room/screen session, creates the exact handoff and enqueues the `native_wake_trigger` command. Result reconciliation from the device ACK back to the original durable group wake lease is also not completed. The receiver and ACK validator are therefore not proof that group events can already wake the phone.
+The Android group-to-phone path is now connected in source. The owner-authenticated challenge and device-bearer registration bind an existing AI/MCP input binding to one paired Android device, active screen session, app signer, composer, Send control and phone-local provider digest. After an authenticated `backroom-wake` claim, the service-role Edge function resolves the exact attested mapping and calls the private SQL forwarder to create the 20-second `native_wake_trigger`; the raw group lease is not returned to the generic host dispatcher. The phone validates the command, uses its local grant and one-shot seal, and persists its exact ACK receipt before network delivery. This is still source-only: the provider resolver registry is empty, migrations/Edge changes are undeployed, and no physical phone acceptance has run.
 
 ### Windows native path
 
@@ -187,7 +198,7 @@ Before a native effect, the trusted path must establish all of the following:
 - the handoff/job is fresh and has not been replayed;
 - the persistent one-shot execution journal can reserve this event before any insertion or Send effect.
 
-A safe preflight failure before the execution seal may be retried through the bounded queue policy. Once the persistent seal has been reserved, or once insertion/Send may have happened, the operation cannot be blindly replayed. Uncertain outcomes become `needs_review`; the owner must inspect the original app and initiate a fresh event after reconciliation.
+A safe preflight failure before the execution seal may be retried through the bounded queue policy. Once the persistent seal has been reserved, or once insertion/Send may have happened, the operation cannot be blindly replayed. Android reserves a bounded local ACK receipt before scheduling the effect, promotes it to the exact final evidence after the driver returns, and replays that receipt across network/process failures until the server confirms the device-command ACK. If the process dies after reservation, the placeholder becomes `needs_review`, never a second Send. A late or revoked result is retained but is not marked as a late successful group ACK.
 
 Off, revocation, invitation expiry, host/device revocation, MCP Leave, target changes and session closure must stop new admission and invalidate the corresponding scope. An expired or revoked authorization must never silently retarget a newly focused field.
 
@@ -207,7 +218,7 @@ After waking, the original AI conversation should use its already joined Rub Min
 | Surface | Drag-select composer targeting | Manual draft insertion | Send-control check | Group wake delivery | Native Off / On / Auto |
 | --- | --- | --- | --- | --- | --- |
 | Managed browser | Yes, on the managed frame | Yes | Runtime recheck | Managed-browser canonical wake path; acceptance must be evaluated separately from provider response | First intended supported surface |
-| Android Phone Frame | Source-level accessibility-backed selection | Yes, separate IME/WebRTC draft path | Yes, local discovery and recheck | Device receiver/driver/ACK exist, but group-lease forwarding and lease-result reconciliation are missing; provider resolver registry is empty | Not available |
+| Android Phone Frame | Source-level accessibility-backed selection | Yes, separate IME/WebRTC draft path | Yes, local discovery and recheck | Device attestation, service-role group-lease forwarding, phone ACK outbox and source-level group settlement exist; deployment, provider resolver and physical acceptance remain outstanding | Not available |
 | Windows Desktop Frame | Source-level UIA selection | Yes, separate approved draft path | Yes, local UIA discovery and recheck | No native canonical-wake driver | Not available |
 | Terminal | Separate terminal target/session | Yes, under its own local approval | Not applicable to a chat composer | No native group-wake integration | Not available |
 
@@ -222,8 +233,8 @@ This means ChatGPT, Claude and other providers are not currently eligible for na
 The remaining order is intentional; do not wire the UI switch to native Send before the trust chain is complete.
 
 1. **Provider conversation adapters:** implement and test stable active-conversation identity for each provider/app. Prove that switching between adjacent conversations changes the digest, that refresh/navigation invalidates stale identity, and that missing/ambiguous identity denies native wake.
-2. **Trusted Android host forwarder:** add a host-side component that consumes a claimed durable group lease, resolves the paired device and its active screen session, constructs the strict 20-second handoff, and enqueues the device command without exposing the raw lease token.
-3. **Device-result reconciliation:** validate the device ACK receipt against the exact original durable lease, then acknowledge/retry/ignore that lease according to the outcome. A preflight denial may be safely retryable only when the one-shot seal was not reserved; post-seal ambiguity must become review, never replay.
+2. **Deploy and accept the Android forwarder:** the `backroom-wake` Edge claim path and service-role SQL RPC now perform forwarding in source. Deploy the migration/Edge changes to staging and verify that a claimed lease creates exactly one command for the attested phone without exposing the raw token to the generic host dispatcher.
+3. **Physical acceptance and deployed settlement:** apply the settlement migration in staging, verify submitted/preflight-denied/needs-review behavior against the original durable lease, and then repeat those cases on an approved Android device. The source settlement routine is already wired into the device ACK endpoint; a preflight denial may be retried only when the one-shot seal was not reserved, while post-seal ambiguity must become terminal review, never replay.
 4. **Windows native driver:** implement a platform driver behind the existing native adapter/guard contract, with stable composer, Send-control and provider-conversation identity. Keep Windows Send read-only until this exists.
 5. **Native mode lifecycle:** only after the full path exists, connect Off/On/Auto to per-binding host poller, device consent, expiry, revocation and emergency-stop state. Do not reuse ordinary draft/touch grants.
 6. **End-to-end proof:** exercise human message → SQL admission → durable lease → trusted host → paired native device → exact prompt Send → provider receives trigger → original MCP session reads event → group reply → MCP acknowledgement. Repeat for On mention, Auto human message, self-message suppression, AI-authored Auto suppression, Leave/revoke/expiry, offline device, changed composer, changed Send control, switched provider conversation and ambiguous post-Send outcomes.
@@ -233,7 +244,7 @@ The remaining order is intentional; do not wire the UI switch to native Send bef
 
 - This is a documentation-only architecture map for PR #64; no runtime code or production configuration is changed by adding it.
 - The SQL queue/message trigger, Android command receiver, strict native handoff validator, structured ACK validator and Android native driver are present in the feature-branch source.
-- Their presence is not an end-to-end test. The Android provider adapter registry is empty, the group-lease-to-device forwarder and durable-lease result reconciliation are missing, and Windows has no native Send driver.
+- Their presence is not an end-to-end test. The device-attested Android group binding and group-lease-to-device forwarder exist in source, but the provider adapter registry is empty. The settlement/attestation migrations and Edge changes are not deployed or physically accepted, and Windows has no native Send driver.
 - The feature branch remains a draft PR. Do not apply the SQL migrations or deploy Edge Functions to production as part of this documentation slice.
 - Do not describe Off/On/Auto as native Android/Windows functionality until the above integration and device acceptance gates pass.
 
@@ -257,3 +268,24 @@ The remaining order is intentional; do not wire the UI switch to native Send bef
 | Android device command and receipt validation | `supabase/functions/backroom-device/android-streaming-protocol.mjs`, `supabase/functions/backroom-device/index.ts` |
 | Native host/driver contract | `docs/BACKROOM_NATIVE_WAKE_DRIVER_CONTRACT.md` |
 | User-facing mode and capability boundary | `docs/BACKROOM_INTERACTION_MODES.md` |
+
+
+## Android device-attested group binding — source update, 2026-11-06
+
+The earlier note above that no device-attested registration route existed is superseded by the current #66 source branch. A narrow challenge/completion handshake is now implemented in source:
+
+1. The owner-authenticated phone-frame route lists only existing, active, owner-authorized Android-surface group input bindings. It does not return provider, composer or Send digests.
+2. The owner requests a one-time challenge tied to one existing group binding, paired Android device, room, active screen session and selected app. The browser receives a random nonce with a 90-second expiry; only its SHA-256 digest is stored in the challenge row.
+3. The browser relays only the challenge ID and nonce to the phone over the existing WebRTC data channel.
+4. The phone revalidates the same focused composer, unique nearby Send control, app signer and provider conversation locally through Accessibility. It sends the four opaque identities directly to backroom-device with its device bearer; none of those digests traverse the browser channel.
+5. The service-role RPC checks the one-time nonce, live MCP session and credential, exact group binding, room membership, paired device-room grant, active screen session, app signer inventory and immutable provider identity before inserting the native mapping.
+6. Screen stop/expiry, device revocation, room unpair, app identity/signer change/removal, host revocation/expiry and group-binding revocation invalidate the mapping and pending challenges. Shortening a screen or host lease caps existing proofs immediately; extending a lease does not renew them. A phone screen can map to only one group binding at a time; an expired or revoked mapping must be retired before rebind.
+
+The database permits the first NULL-to-provider-digest transition only after the matching live phone attestation exists, while wake remains off and no durable wake job exists. Thereafter provider identity remains immutable and requires revoke/re-register to change. Registration locks the exact MCP session and related live authorization rows; mapping expiry is capped by screen, MCP, agent-connection, host and a fifteen-minute maximum.
+
+**Limits remain important.** The handset provider resolver registry is still empty, so ChatGPT, Claude and other providers do not yet yield a verified stable conversation digest. The phone frame requires an existing owner-authorized group input binding on an active Backroom host; this phone flow does not create that upstream host/target binding. The trusted group-lease-to-device forwarder is implemented in source through the `backroom-wake` Edge claim path and private idempotent SQL RPC. Native Android Off / On / Auto and physical-device acceptance remain unavailable. The migrations and Edge changes are source-only and have not been applied or deployed.
+
+
+### Challenge cancellation and revoke/registration concurrency
+
+The browser revokes the exact owner/device/room/binding/screen scope when the composer is cleared, a binding request times out or fails, a late challenge response arrives, or the Backroom view is disposed. The server revocation endpoint updates the attested mapping, revokes any unconsumed challenge, then performs a second mapping sweep. The challenge-row update is the serialization barrier against the device-bearer registration routine, which locks and consumes the challenge before inserting its attested mapping. If registration commits first, the final sweep revokes its mapping; if revocation updates the challenge first, registration rejects it. This prevents an untracked late mapping from surviving UI cancellation.

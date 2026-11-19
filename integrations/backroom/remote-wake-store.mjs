@@ -67,6 +67,10 @@ export function createRemoteWakeStore({baseUrl,hostToken,apiKey,fetchImpl=fetch,
    return result.leases.map(lease=>{
     if(!lease||lease.hostId!==hostId||lease.sessionDigest!==sessionDigest||lease.bindingId!==bindingId)
      throw new Error('Cross-scope remote lease rejected');
+    const providerDigest=lease.providerConversationIdentityDigest;
+    if(providerDigest!==undefined&&providerDigest!==null&&
+      (typeof providerDigest!=='string'||! /^[a-f0-9]{64}$/.test(providerDigest)))
+     throw new Error('Invalid remote provider-conversation identity digest');
     return Object.freeze(lease);
    });
   },

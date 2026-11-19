@@ -43,3 +43,70 @@
 .br-android-composer-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
 .br-android-composer-actions button{border:1px solid #c4cfe4;border-radius:8px;padding:8px 10px;background:#dce6ff;color:#25365f;font-size:10px;font-weight:750}
 .br-android-composer-actions button:disabled{opacity:.45;cursor:not-allowed}
+
+.br-android-native-binding{display:grid;gap:7px;padding:9px;border:1px solid #cbd4e6;border-radius:9px;background:#fff}
+.br-android-native-binding label{font-size:10px;font-weight:750;color:#36476a}
+.br-android-native-binding select{width:100%;min-width:0;border:1px solid #c4cfe4;border-radius:8px;padding:8px;background:#fff;color:#17233d;font:inherit;font-size:11px}
+.br-android-native-binding button{justify-self:start;border:1px solid #b5c5e5;border-radius:8px;padding:8px 10px;background:#e4ecff;color:#25365f;font-size:10px;font-weight:750}
+.br-android-native-binding button:disabled{opacity:.45;cursor:not-allowed}
+.br-android-native-binding p{margin:0;padding:6px 7px;border-radius:6px;background:#e8eef9;color:#465675;font-size:10px;line-height:1.4}
+.br-android-native-binding small{color:#71809d;font-size:9px;line-height:1.45}
+
+
+/* Backroom's main surfaces are real device frames, not a decorative phone mockup. */
+.br-cloud-stage-hint{margin-left:auto;color:#8292b4;font-size:10px}
+.br-cloud-device-frame.phone,.br-cloud-device-frame.desktop{
+  display:block;min-height:0;padding:0;border:0;border-radius:14px;background:#0b1224;overflow:hidden;
+}
+.br-cloud-frame-empty{min-height:420px;display:grid;align-content:center;justify-items:center;gap:12px;padding:28px;text-align:center;color:#9eadd0}
+.br-cloud-frame-empty>b{color:#eef3ff;font-size:16px}
+.br-cloud-frame-empty>p{max-width:390px;margin:0;color:#9aa9ca;font-size:12px;line-height:1.6}
+.br-cloud-frame-empty .br-cloud-primary{width:auto;min-width:180px;padding-inline:18px}
+.br-cloud-device-frame.desktop{background:transparent;overflow:visible}
+
+/* The streamed phone display is the frame; controls sit beside it on desktop. */
+.br-android-stream{
+  display:grid;grid-template-columns:minmax(280px,.95fr) minmax(300px,1.05fr);
+  align-items:start;gap:14px;margin:0;padding:15px;border:1px solid #293654;
+  border-radius:14px;background:#10182d;color:#ecf1ff;
+}
+.br-android-stage,.br-android-console{display:grid;align-content:start;gap:11px;min-width:0}
+.br-android-console{position:sticky;top:12px}
+.br-android-live-surface{
+  width:auto;height:min(72vh,720px);max-height:720px;max-width:100%;
+  aspect-ratio:9/16;margin:0 auto;border-radius:14px;
+}
+.br-android-stream-actions{padding-top:2px}
+.br-android-stream-status{overflow-wrap:anywhere}
+.br-android-stream-disclaimer{font-size:10px;line-height:1.55}
+.br-android-stream-head{color:#eef3ff}
+.br-android-stream-head>div>small{color:#97a6c7}
+.br-android-app-picker{color:#aebcda}
+.br-android-app-picker select{min-height:38px}
+@media(max-width:1120px){
+  .br-android-stream{grid-template-columns:minmax(0,1fr)}
+  .br-android-console{position:static}
+  .br-android-live-surface{height:min(70vh,700px)}
+}
+@media(max-width:900px){
+  .br-cloud-stage-hint{width:100%;margin-left:0}
+  .br-cloud-device-frame.phone,.br-cloud-device-frame.desktop{border-radius:12px}
+  .br-android-stream{padding:12px}
+  .br-android-live-surface{height:min(66vh,640px)}
+}
+@media(max-width:540px){
+  .br-cloud-frame-empty{min-height:340px;padding:20px}
+  .br-android-live-surface{height:min(62vh,560px)}
+  .br-android-stream{padding:9px;gap:10px}
+  .br-android-stream-actions{display:grid;grid-template-columns:1fr 1fr}
+  .br-android-stream-actions button{min-height:40px}
+}
+
+.br-cloud-frame-note{display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,1fr);align-items:center;gap:12px;margin-top:12px;padding:13px 15px;border:1px solid #384563;border-radius:11px;background:#10182d}
+.br-cloud-frame-note b{display:block;color:#e5ecff;font-size:11px}
+.br-cloud-frame-note p{margin:5px 0 0;color:#f1cf98;font-size:10px;font-weight:700}
+.br-cloud-frame-note small{color:#96a6c8;font-size:10px;line-height:1.5}
+@media(max-width:650px){.br-cloud-frame-note{grid-template-columns:1fr}}
+
+.br-cloud-refresh-wrap{display:flex;align-items:center;gap:9px;margin-left:8px}.br-cloud-refresh-wrap>small{color:#8292b4;font-size:10px;white-space:nowrap}
+@media(max-width:540px){.br-cloud-refresh-wrap{margin-left:0}.br-cloud-refresh-wrap>small{display:none}}

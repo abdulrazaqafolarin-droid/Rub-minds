@@ -67,3 +67,44 @@ export function approveBackroomDevice(deviceId: string, roomId: string) {
 export function revokeBackroomDevice(deviceId: string, roomId: string) {
   return invoke<{ deviceId: string; status: string }>('owner/revoke', { deviceId, roomId });
 }
+
+export type AndroidNativeBindingCandidate = {
+  bindingId: string;
+  participantId: string;
+  displayName: string;
+};
+export type AndroidNativeBindingChallenge = {
+  challengeId: string;
+  nonce: string;
+  expiresAt: string;
+};
+
+export async function listAndroidNativeBindingCandidates(roomId: string) {
+  const data = await invoke<{ candidates: AndroidNativeBindingCandidate[] }>(
+    'android/native-binding-candidates', { roomId }
+  );
+  return data.candidates;
+}
+
+export function createAndroidNativeBindingChallenge(args: {
+  deviceId: string;
+  roomId: string;
+  sessionId: string;
+  appPackageName: string;
+  bindingId: string;
+}) {
+  return invoke<AndroidNativeBindingChallenge>('android/native-binding-challenge', {
+    ...args,
+    requestId: crypto.randomUUID(),
+    issuedAt: Date.now(),
+  });
+}
+
+export function revokeAndroidNativeBinding(args: {
+  deviceId: string;
+  roomId: string;
+  sessionId: string;
+  bindingId: string;
+}) {
+  return invoke<{ revoked: boolean }>('android/native-binding-revoke', args);
+}

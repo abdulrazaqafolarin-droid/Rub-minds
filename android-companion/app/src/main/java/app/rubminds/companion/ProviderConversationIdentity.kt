@@ -54,3 +54,11 @@ internal object ProviderConversationIdentityResolver {
         return ProviderConversationIdentityPolicy.digest(packageName, stableId)
     }
 }
+
+
+/** Opaque, phone-local evidence captured only after a fresh composer/Send/conversation recheck. */
+internal data class NativeBindingEvidence(
+    val composerIdentityDigest: String,
+    val sendControlIdentityDigest: String,
+    val providerConversationIdentityDigest: String,
+)

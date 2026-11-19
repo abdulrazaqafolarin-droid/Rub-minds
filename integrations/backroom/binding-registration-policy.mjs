@@ -13,6 +13,7 @@ const FIELDS=Object.freeze([
  ['target_identity_fingerprint','targetIdentityFingerprint'],
  ['target_revision','targetRevision'],['surface','surface'],
  ['locator_kind','locatorKind'],['locator_value','locatorValue'],
+ ['provider_conversation_identity_digest','providerConversationIdentityDigest'],
  ['participation_mode','participationMode'],['max_wakes_per_minute','maxWakesPerMinute']
 ]);
 /**
@@ -28,8 +29,12 @@ export function classifyExistingBinding({ownerId,input,existingSession=null,exis
    requiresHostRevoke:true,bindingId:null});
  const existing=existingSession??existingTarget;
  if(!existing)return Object.freeze({action:'insert'});
- const matches=FIELDS.every(([column,key])=>
-   existing[column] === (key==='ownerId'?ownerId:input[key]));
+ const matches=FIELDS.every(([column,key])=>{
+   const expected=key==='ownerId'?ownerId:input[key];
+   if(column==='provider_conversation_identity_digest')
+    return (existing[column]??null)===(expected??null);
+   return existing[column]===expected;
+ });
  if(matches&&existing.wake_enabled===false)
   return Object.freeze({action:'reuse',bindingId:existing.id,wakeEnabled:false,
    existing:true,requiresLocalConsent:true});
