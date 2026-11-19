@@ -1,8 +1,8 @@
 /**
- * HTTP transport adapter for the hosted Rub Minds MCP message tools.
+ * HTTP transport adapter for the hosted Rub Minds MCP message and task tools.
  *
- * Pass createBridgeAdapters() into PlaywrightSessionBridge. It sends only the
- * scoped Rub Minds session handle in the JSON-RPC tool arguments. It never
+ * Message and task cursors remain separate. It sends only the scoped Rub Minds
+ * session handle in JSON-RPC tool arguments. It never
  * reads provider cookies, browser storage, or model-provider credentials.
  */
 const SESSION_HANDLE_RE = /^[0-9a-f]{64}$/i;
@@ -17,6 +17,10 @@ const MESSAGE_TOOL_NAMES = new Set([
   "send_group_message",
   "load_original_session_bridge_state",
   "save_original_session_bridge_state",
+  "list_group_tasks",
+  "read_group_task",
+  "claim_group_task",
+  "submit_group_task_result",
 ]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
@@ -489,10 +493,71 @@ export class McpSessionMessageTransport {
     }, { signal });
   }
 
+  async listTasks({ signal } = {}) {
+    const result = await this.callTool("list_group_tasks", {}, { signal });
+    if (!Array.isArray(result.tasks)) throw new Error("Rub Minds MCP task list returned no task list");
+    return result;
+  }
+
+  async readTask(taskId, { signal } = {}) {
+    if (typeof taskId !== "string" || !UUID_RE.test(taskId)) {
+      throw new TypeError("taskId must be a UUID");
+    }
+    const result = await this.callTool("read_group_task", { task_id: taskId }, { signal });
+    if (!result.task || result.task.id !== taskId) {
+      throw new Error("Rub Minds MCP returned the wrong task identity");
+    }
+    return result;
+  }
+
+  async claimTask(taskId, { signal } = {}) {
+    if (typeof taskId !== "string" || !UUID_RE.test(taskId)) {
+      throw new TypeError("taskId must be a UUID");
+    }
+    return await this.callTool("claim_group_task", { task_id: taskId }, { signal });
+  }
+
+  async submitTaskResult({
+    taskId,
+    result,
+    submissionKey,
+    sourceMessageIds = [],
+  } = {}, { signal } = {}) {
+    if (typeof taskId !== "string" || !UUID_RE.test(taskId)) {
+      throw new TypeError("taskId must be a UUID");
+    }
+    if (typeof result !== "string" || !result.trim() || result.length > 20000) {
+      throw new TypeError("task result must contain 1-20000 characters");
+    }
+    if (typeof submissionKey !== "string" || !UUID_RE.test(submissionKey)) {
+      throw new TypeError("submissionKey must be a UUID");
+    }
+    if (!Array.isArray(sourceMessageIds) || sourceMessageIds.length > 50 ||
+        sourceMessageIds.some(id => typeof id !== "string" || !UUID_RE.test(id)) ||
+        new Set(sourceMessageIds).size !== sourceMessageIds.length) {
+      throw new TypeError("sourceMessageIds must contain at most 50 unique UUIDs");
+    }
+    return await this.callTool("submit_group_task_result", {
+      task_id: taskId,
+      result,
+      submission_key: submissionKey,
+      source_message_ids: sourceMessageIds,
+    }, { signal });
+  }
+
   createBridgeAdapters() {
     return {
       readMessages: this.readMessages.bind(this),
       sendMessage: this.sendMessage.bind(this),
+    };
+  }
+
+  createTaskAdapters() {
+    return {
+      listTasks: this.listTasks.bind(this),
+      readTask: this.readTask.bind(this),
+      claimTask: this.claimTask.bind(this),
+      submitTaskResult: this.submitTaskResult.bind(this),
     };
   }
 }
