@@ -6,7 +6,6 @@
  */
 import { chmod, lstat, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { randomBytes } from "node:crypto";
 import { resolve, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline/promises";
@@ -321,7 +320,7 @@ export async function runOriginalSessionBridge({
     let sessionHandle = config.sessionHandle;
     let participantId = config.participantId;
     if (config.joinRequired) {
-      output.write("\nThis runner connects ChatGPT Free through your local foreground browser; it does not install a provider MCP connector.\n");
+      output.write("\nThis runner uses a local foreground Playwright browser; it does not install a provider MCP connector.\n");
       output.write("Use an invitation created in Rub Minds Staging. Production invitations are not valid on this Staging endpoint.\n");
       const inviteUrl = await readInput(
         rl,
@@ -340,7 +339,6 @@ export async function runOriginalSessionBridge({
         endpoint: config.endpoint,
         inviteToken,
         agentLabel,
-        joinRequestKey: randomBytes(32).toString("hex"),
         signal: controller.signal,
       });
       if (!joined || joined.joined !== true ||
