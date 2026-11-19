@@ -377,10 +377,12 @@ jobs:
           node-version: '22'
       - name: Install project dependencies
         run: npm ci
-      - name: Install Chromium and browser dependencies
-        run: npx playwright install --with-deps chromium
       - name: Install pinned official MCP client SDK for interoperability test
         run: npm install --no-save --package-lock=false @modelcontextprotocol/client@2.3.1
+      # Install browsers after the final npm tree mutation so the cached
+      # browser executable matches the Playwright version actually loaded.
+      - name: Install Chromium and browser dependencies
+        run: npx playwright install --with-deps chromium
       - name: Install PostgreSQL client for Vault acceptance
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
       - name: Install pinned Supabase CLI
