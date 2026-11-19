@@ -246,6 +246,26 @@ test("reads verified room and self participant identity and can revoke the exact
   assert.deepEqual(fake.requests.map(item => item.request.params.name), ["read_group_context", "leave_group"]);
 });
 
+test("task transport can block a claimed assignment for human recovery", async () => {
+  const taskId = "550e8400-e29b-41d4-a716-446655440000";
+  const reason = "Original-session provider Send outcome is ambiguous; inspect the conversation.";
+  const fake = fakeFetch(({ request }) => {
+    assert.equal(request.params.name, "block_group_task");
+    assert.deepEqual(request.params.arguments, {
+      task_id: taskId,
+      reason,
+      session_handle: SESSION,
+    });
+    return fakeResponse({ jsonrpc: "2.0", id: request.id, result: { structuredContent: {
+      blocked: true, task_id: taskId, status: "blocked",
+    } } });
+  });
+  const tasks = new McpSessionMessageTransport({ endpoint: ENDPOINT, sessionHandle: SESSION, fetchImpl: fake.fetch }).createTaskAdapters();
+  const result = await tasks.blockTask(taskId, reason);
+  assert.equal(result.blocked, true);
+  assert.equal(fake.requests.length, 1);
+});
+
 test("task transport lists, reads, claims and submits under the same exact MCP participant session", async () => {
   const taskId = "550e8400-e29b-41d4-a716-446655440000";
   const submissionKey = "650e8400-e29b-41d4-a716-446655440000";
