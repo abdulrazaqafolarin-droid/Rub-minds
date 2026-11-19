@@ -556,9 +556,22 @@ export async function runOriginalSessionBridge({
           output.write("Invitation not redeemed. No group messages were accessed.\n");
           return { status: "not_started", replies: 0 };
         }
+        const inviteTokenDigest = createHash("sha256").update(inviteToken, "utf8").digest("hex");
+        const pendingJoin = await joinedSessionStore.loadPendingJoin?.();
+        let joinRequestKey;
+        if (pendingJoin) {
+          if (pendingJoin.inviteTokenDigest !== inviteTokenDigest) {
+            fail("A previous join attempt for this exact provider conversation is unresolved. Re-enter the same Staging invitation to retry it safely; do not switch invitations until the group owner has checked the AI participant list.");
+          }
+          joinRequestKey = pendingJoin.joinRequestKey;
+        } else {
+          joinRequestKey = randomBytes(32).toString("hex");
+          await joinedSessionStore.savePendingJoin?.({ joinRequestKey, inviteTokenDigest });
+        }
         const joined = await joinInvite({
           endpoint: config.endpoint,
           inviteToken,
+          joinRequestKey,
           agentLabel,
           signal: controller.signal,
         });
