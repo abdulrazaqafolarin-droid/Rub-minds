@@ -274,14 +274,14 @@ try {
   // Exercise human-assigned task discovery, AI claim, result submission,
   // same-key idempotent replay, cross-participant denial and visible blocking
   // through the actual official MCP SDK and local Edge Function.
-  let ownerParticipants = await request(
+  let taskOwnerParticipants = await request(
     "/rest/v1/participants?select=id,kind,user_id&room_id=eq." + room.id + "&user_id=eq." + owner.id,
   );
-  let ownerHuman = ownerParticipants.find(row => row.kind === "human");
-  if (!ownerHuman) {
+  let taskOwnerHuman = taskOwnerParticipants.find(row => row.kind === "human");
+  if (!taskOwnerHuman) {
     // This is a disposable service-role-only fixture. Production human
     // membership remains created by the authenticated onboarding flow.
-    const seededOwnerParticipants = await request("/rest/v1/participants", {
+    const seededTaskOwnerParticipants = await request("/rest/v1/participants", {
       method: "POST",
       headers: { Prefer: "return=representation" },
       body: JSON.stringify({
@@ -292,10 +292,10 @@ try {
         status: "connected",
       }),
     });
-    assert.equal(seededOwnerParticipants.length, 1, "could not seed local human task assigner");
-    ownerHuman = seededOwnerParticipants[0];
+    assert.equal(seededTaskOwnerParticipants.length, 1, "could not seed local human task assigner");
+    taskOwnerHuman = seededTaskOwnerParticipants[0];
   }
-  assert.ok(ownerHuman?.id, "the local task fixture must have a human creator identity");
+  assert.ok(taskOwnerHuman?.id, "the local task fixture must have a human creator identity");
 
   async function createAssignedTask({ title, assigneeId, description = "Disposable local MCP task", priority = 2 }) {
     const rows = await request("/rest/v1/room_tasks", {
@@ -303,7 +303,7 @@ try {
       headers: { Prefer: "return=representation" },
       body: JSON.stringify({
         room_id: room.id,
-        created_by_participant_id: ownerHuman.id,
+        created_by_participant_id: taskOwnerHuman.id,
         assigned_to_participant_id: assigneeId,
         title,
         description,
@@ -341,7 +341,7 @@ try {
       room_id: room.id,
       task_id: dependentTask.id,
       depends_on_task_id: dependencyTask.id,
-      created_by_participant_id: ownerHuman.id,
+      created_by_participant_id: taskOwnerHuman.id,
     }),
   });
 
