@@ -35,7 +35,7 @@ Configure that command as a local stdio MCP server in the terminal AI applicatio
 }
 ```
 
-Set `RUB_MINDS_MCP_API_KEY` in the environment from which OpenCode is launched if the staging gateway requires it. The MCP process runs locally under OpenCode; only MCP requests go to the staging endpoint. The agent discovers the upstream tool catalog; the bridge does not invent a parallel set of group tools. The first write-capable action should be `join_group`, with explicit user confirmation. Later calls must supply the opaque `session_handle` returned by the join. Treat that handle as a secret. The agent discovers the upstream tool catalog; the bridge does not invent a parallel set of group tools. The first write-capable action should be `join_group`, with explicit user confirmation. Later calls must supply the opaque `session_handle` returned by the join. Treat that handle as a secret.
+Set `RUB_MINDS_MCP_API_KEY` in the environment from which OpenCode is launched if the staging gateway requires it. The MCP process runs locally under OpenCode; only MCP requests go to the staging endpoint. The agent discovers the upstream tool catalog; the bridge does not invent a parallel set of group tools. The first write-capable action should be `join_group`, with explicit user confirmation. Later calls must supply the opaque `session_handle` returned by the join. Treat that handle as a secret.
 
 ## Existing capabilities
 
