@@ -23,12 +23,13 @@ test("Backroom exposes only authenticated real device frames", async () => {
   assert.doesNotMatch(devices, /'phone'\s*\|\s*'desktop'\s*\|\s*'terminal'/);
   assert.doesNotMatch(devices, /Browser runtime|BackroomSimulatorApp/);
 });
-test("Device Frame shows one selected phone at a time", async () => {
+test("Device Frame shows one selected Android phone at a time", async () => {
   const devices = await read("src/BackroomDevicesApp.tsx");
   assert.match(devices, /selectedDeviceId/);
-  assert.match(devices, /activeDevices\.length > 1/);
-  assert.match(devices, /activeDevice\.apps\.map/);
-  assert.doesNotMatch(devices, /devices\.filter\(device => device\.status === 'active'\)\.flatMap/);
+  assert.match(devices, /activePhones\.length > 1/);
+  assert.match(devices, /activePhones\.map/);
+  assert.match(devices, /activePhones\.find/);
+  assert.doesNotMatch(devices, /activeDevices\.flatMap/);
 });
 
 test("Device Frame renders the real live app surface without a decorative phone simulator", async () => {
