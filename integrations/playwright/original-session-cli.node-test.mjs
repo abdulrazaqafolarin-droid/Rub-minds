@@ -44,12 +44,14 @@ function makeRunnerStateDependencies({
   joinLockBusy = false,
 } = {}) {
   let saved = structuredClone(savedBinding);
+  let joinLockAcquireCount = 0;
   let joinLockReleaseCount = 0;
   return {
     createTaskStateStore: () => makeMemoryStateStore(),
     createJoinedSessionStore: () => ({
       async prepare() {},
       async acquireLock() {
+        joinLockAcquireCount++;
         if (joinLockBusy) return null;
         return async () => { joinLockReleaseCount++; };
       },
@@ -59,6 +61,7 @@ function makeRunnerStateDependencies({
       async save(value) { saved = structuredClone(value); },
       async clear() { saved = null; },
     }),
+    readJoinLockAcquireCount: () => joinLockAcquireCount,
     readJoinLockReleaseCount: () => joinLockReleaseCount,
     readSavedBinding: () => structuredClone(saved?.sessionHandle ? saved : null),
     readSavedPendingJoin: () => structuredClone(saved?.pendingJoin || null),
@@ -557,7 +560,7 @@ test("refuses a second local runner for the same provider conversation before op
   try {
     await assert.rejects(() => runOriginalSessionBridge({
       argv: ["--provider", "chatgpt", "--conversation-url", CHATGPT_URL],
-      env: { RUB_MINDS_MCP_ENDPOINT: ENV.RUB_MINDS_MCP_ENDPOINT },
+      env: ENV,
       input,
       output,
       errorOutput: output,
@@ -567,8 +570,10 @@ test("refuses a second local runner for the same provider conversation before op
       playwright: { chromium: { async launchPersistentContext() { browserLaunches++; return context; } } },
       prepareProfile: async value => value,
     }), /Another original-session runner is already active/);
-    assert.equal(browserLaunches, 0, "the second runner must not open another provider browser");
-    assert.equal(inviteReads, 0, "the second runner must not redeem another invitation");
+    assert.equal(browserLaunches, 0, "the second pre-joined runner must not open another provider browser");
+    assert.equal(inviteReads, 0, "a busy pre-joined runner must not prompt for an invitation");
+    assert.equal(stateDependencies.readJoinLockAcquireCount(), 1,
+      "pre-joined sessions must acquire the same exact-conversation lock before launching Chromium");
     assert.equal(stateDependencies.readJoinLockReleaseCount(), 0, "a process that did not own the lock must not release it");
   } finally {
     input.destroy();
