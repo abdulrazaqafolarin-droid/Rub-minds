@@ -300,7 +300,15 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
             throw new Error("Could not safely backfill this MCP session's invitation credential identity. Refresh the session and retry.");
           }
         }
-        return { joined: true, room_id: session.room_id, participant_id: session.participant_id, note: "This MCP session is already joined to an active group.", post_join_next_step: "The exact invitation credential identity has been verified for Backroom's owner-authorized session features. Ask the session owner for consent unless already explicitly authorized. If consent is given, call prepare_session_export with confirm_export=true; otherwise do not capture. Never post raw session history to the group." };
+        return {
+          joined: true,
+          room_id: session.room_id,
+          participant_id: session.participant_id,
+          expires_at: session.expires_at,
+          replayed: true,
+          note: "This MCP session is already joined to an active group.",
+          post_join_next_step: "The exact invitation credential identity has been verified for Backroom's owner-authorized session features. Ask the session owner for consent unless already explicitly authorized. If consent is given, call prepare_session_export with confirm_export=true; otherwise do not capture. Never post raw session history to the group.",
+        };
       }
       // The previous provider credential is no longer live. Remove its private
       // cursor/pending reply before allowing this same MCP handle to join again,
