@@ -598,7 +598,7 @@ Deno.serve(async req => {
       const [app, host, mcp, participant] = await Promise.all([
         db.from('backroom_device_apps').select('package_name')
           .eq('device_id', challenge.deviceId).eq('package_name', challenge.appPackageName).maybeSingle(),
-        db.from('backroom_hosts').select('host_id')
+        db.from('backroom_hosts').select('host_id,expires_at')
           .eq('host_id', binding.host_id).eq('owner_id', userId)
           .is('revoked_at', null).gt('expires_at', new Date().toISOString()).maybeSingle(),
         db.from('rub_minds_mcp_sessions')
@@ -620,7 +620,7 @@ Deno.serve(async req => {
         return json(403, fail('group_binding_authorization_expired'), origin);
       }
       const { data: connection, error: connectionError } = await db.from('agent_connections')
-        .select('credential_digest').eq('credential_digest', mcp.data.agent_credential_digest)
+        .select('credential_digest,expires_at').eq('credential_digest', mcp.data.agent_credential_digest)
         .eq('owner_id', userId).eq('room_id', challenge.roomId)
         .eq('participant_id', binding.participant_id).is('revoked_at', null)
         .gt('expires_at', new Date().toISOString()).maybeSingle();
@@ -935,7 +935,7 @@ Deno.serve(async req => {
         .eq('device_id', current.device_id).lt('expires_at', now).in('status', ['pending','leased']);
       const leased = [];
       const { data: pending, error: pendingError } = await db.from('backroom_android_commands')
-        .select('id,request_id,session_id,room_id,command,status')
+        .select('id,device_id,request_id,session_id,room_id,command,status')
         .eq('device_id', current.device_id).eq('status', 'pending')
         .gt('expires_at', now).order('created_at', { ascending: true }).limit(8);
       if (pendingError) return json(503, fail('android_command_poll_failed'), origin);
@@ -983,7 +983,7 @@ Deno.serve(async req => {
         }
       }
       const { data: expiredLeases, error: leaseError } = await db.from('backroom_android_commands')
-        .select('id,request_id,session_id,room_id,command,lease_until')
+        .select('id,device_id,request_id,session_id,room_id,command,lease_until')
         .eq('device_id', current.device_id).eq('status', 'leased')
         .lt('lease_until', now).gt('expires_at', now).order('created_at', { ascending: true }).limit(8 - leased.length);
       if (leaseError) return json(503, fail('android_command_poll_failed'), origin);
@@ -1328,7 +1328,7 @@ Deno.serve(async req => {
         // If this response is lost, an identical device ACK replays the same evidence safely.
         await settleNativeWakeGroupJob();
         await broadcastControlResult();
-        await broadcastNativeWakeResult();
+        await broadcastNativeWakeResult(null);
       } catch (error) {
         const mismatch = error instanceof Error && error.message === 'native_wake_group_lease_mismatch';
         return json(mismatch ? 409 : 503, fail(error instanceof Error ? error.message :
