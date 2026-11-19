@@ -108,8 +108,11 @@ export function createMcpStdioProxy({
     }
 
     const controller = new AbortController();
+    // Keep the process alive until this bounded request either settles or
+    // times out. Unref'ing this timer lets a pending response-body read leave
+    // the event loop with unresolved work and can terminate the stdio bridge
+    // before it returns the promised timeout error.
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    timer.unref?.();
     let response;
     let raw;
     try {
