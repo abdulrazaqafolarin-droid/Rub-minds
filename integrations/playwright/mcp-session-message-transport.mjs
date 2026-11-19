@@ -21,6 +21,8 @@ const MESSAGE_TOOL_NAMES = new Set([
   "read_group_task",
   "claim_group_task",
   "submit_group_task_result",
+  "read_group_context",
+  "leave_group",
 ]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
@@ -491,6 +493,21 @@ export class McpSessionMessageTransport {
       body,
       source_message_id: sourceMessageId,
     }, { signal });
+  }
+
+  async readGroupContext({ signal } = {}) {
+    const result = await this.callTool("read_group_context", {}, { signal });
+    if (!result.room || !UUID_RE.test(result.room.id || "") ||
+        !result.self || !UUID_RE.test(result.self.participant_id || "")) {
+      throw new Error("Rub Minds MCP returned an incomplete joined-session identity");
+    }
+    return result;
+  }
+
+  async leaveGroup({ signal } = {}) {
+    const result = await this.callTool("leave_group", { confirm_leave: true }, { signal });
+    if (result.left !== true) throw new Error("Rub Minds did not confirm this AI session was revoked");
+    return result;
   }
 
   async listTasks({ signal } = {}) {
