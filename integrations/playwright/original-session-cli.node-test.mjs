@@ -49,8 +49,8 @@ function makeRunnerStateDependencies({ participantId = ENV.RUB_MINDS_PARTICIPANT
     createSessionTransport: () => ({
       async readGroupContext() {
         return {
-          room: { id: "550e8400-e29b-41d4-a716-446655440000" },
-          self: { participant_id: ENV.RUB_MINDS_PARTICIPANT_ID },
+          room: { id: roomId },
+          self: { participant_id: participantId },
         };
       },
       async leaveGroup() { return { left: true }; },
