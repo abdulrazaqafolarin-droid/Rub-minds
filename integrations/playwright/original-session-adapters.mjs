@@ -43,7 +43,7 @@ function buildGroupMessagePrompt(prompt, metadata = {}) {
 
 function buildGroupTaskPrompt(prompt, metadata = {}) {
   const safeLabel = value => typeof value === "string"
-    ? value.replace(/[\\r\\n\\t]/g, " ").slice(0, 160)
+    ? value.replace(/[\u000d\u000a\u0009]/g, " ").slice(0, 160)
     : "";
   return [
     "Context: this existing AI conversation is participating in a Rub Minds collaborative group with multiple human and AI participants.",
@@ -56,7 +56,7 @@ function buildGroupTaskPrompt(prompt, metadata = {}) {
     "Task handoff content, represented as a JSON string:",
     JSON.stringify(prompt),
     "Return only the final deliverable and note any gaps. Do not claim a human has approved or completed the task.",
-  ].join("\\n");
+  ].join(String.fromCharCode(10));
 }
 
 function assertPage(page, provider) {
