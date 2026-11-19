@@ -88,7 +88,7 @@ export async function joinRubMindsInvite({
 
   const protocolVersion = "2025-06-18";
   let nextRequestId = 1;
-  const request = async (body, headers, attempt) => {
+  const request = async (body, headers, attempt, retryTransient = false) => {
     const controller = new AbortController();
     const forwardAbort = () => controller.abort();
     signal?.addEventListener("abort", forwardAbort, { once: true });
@@ -107,7 +107,9 @@ export async function joinRubMindsInvite({
       if (!response || typeof response.ok !== "boolean" ||
           typeof response.json !== "function" ||
           !response.headers || typeof response.headers.get !== "function") {
-        throw new Error("Rub Minds MCP returned an invalid HTTP response");
+        const error = new Error("Rub Minds MCP returned an invalid HTTP response");
+        error.retryable = retryTransient && attempt === 0;
+        throw error;
       }
       if (!response.ok) {
         const error = new Error("Rub Minds Staging invitation request failed (HTTP " + response.status + ")");
@@ -118,11 +120,15 @@ export async function joinRubMindsInvite({
       try {
         payload = await response.json();
       } catch {
-        throw new Error("Rub Minds MCP returned invalid JSON");
+        const error = new Error("Rub Minds MCP returned invalid JSON");
+        error.retryable = retryTransient && attempt === 0;
+        throw error;
       }
       if (!payload || typeof payload !== "object" || Array.isArray(payload) ||
           payload.jsonrpc !== "2.0" || payload.id !== body.id) {
-        throw new Error("Rub Minds MCP returned an invalid JSON-RPC response");
+        const error = new Error("Rub Minds MCP returned an invalid JSON-RPC response");
+        error.retryable = retryTransient && attempt === 0;
+        throw error;
       }
       if (payload.error) {
         throw new Error("Rub Minds MCP invitation request was rejected");
@@ -136,7 +142,7 @@ export async function joinRubMindsInvite({
         throw timeout;
       }
       if (error?.retryable === true) throw error;
-      if (attempt === 0 && (error instanceof TypeError || error?.name === "TypeError")) {
+      if (retryTransient && attempt === 0 && (error instanceof TypeError || error?.name === "TypeError")) {
         const retry = new Error("Rub Minds Staging invitation request failed");
         retry.retryable = true;
         throw retry;
@@ -189,7 +195,7 @@ export async function joinRubMindsInvite({
       const result = await request(joinBody, {
         "MCP-Protocol-Version": protocolVersion,
         "Mcp-Session-Id": sessionHandle,
-      }, attempt);
+      }, attempt, true);
       joinedPayload = result.payload;
       break;
     } catch (error) {
