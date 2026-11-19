@@ -327,8 +327,10 @@ test("native wake ACK is bound to the stored Android device, room, session, requ
   assert.match(handler, /db\.rpc\('settle_backroom_android_native_wake_result_attested'/);
   assert.match(handler, /p_session_digest: nativeWakeHandoff\.sessionDigest/);
   assert.match(handler, /p_lease_token_digest: nativeWakeHandoff\.leaseTokenDigest/);
-  assert.ok(handler.indexOf('await settleNativeWakeGroupJob()') < handler.indexOf('await broadcastNativeWakeResult()'),
-    'group lease settlement must precede Android command ACK/broadcast');
+  const settlementIndex = handler.indexOf('const settlement = await settleNativeWakeGroupJob();');
+  const nativeBroadcastIndex = handler.indexOf('await broadcastNativeWakeResult(settlement);', settlementIndex);
+  assert.ok(settlementIndex >= 0 && nativeBroadcastIndex > settlementIndex,
+    'persisted native group settlement must precede its device result broadcast');
 });
 
 test("native wake ACK stores bounded evidence privately and broadcasts no target identity digests", async () => {
