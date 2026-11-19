@@ -6,7 +6,7 @@
  */
 import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { resolve, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline/promises";
@@ -148,8 +148,20 @@ export function createPrivateJoinedSessionStore({
       if (saved === null) return null;
       if (!saved || saved.schema !== 1 ||
           saved.provider !== provider ||
-          saved.conversation !== pinnedConversation ||
-          !SESSION_HANDLE_RE.test(saved.sessionHandle || "") ||
+          saved.conversation !== pinnedConversation) {
+        throw new Error("Saved Rub Minds join state is invalid; refusing to create another AI participant.");
+      }
+      if (saved.pendingJoin !== undefined) {
+        if (!saved.pendingJoin ||
+            !/^[a-f0-9]{64}$/i.test(saved.pendingJoin.joinRequestKey || "") ||
+            !/^[a-f0-9]{64}$/i.test(saved.pendingJoin.inviteTokenDigest || "") ||
+            typeof saved.pendingJoin.createdAt !== "string" ||
+            !Number.isFinite(Date.parse(saved.pendingJoin.createdAt))) {
+          throw new Error("Saved Rub Minds pending join state is invalid; refusing to create another AI participant.");
+        }
+        return null;
+      }
+      if (!SESSION_HANDLE_RE.test(saved.sessionHandle || "") ||
           !UUID_RE.test(saved.participantId || "") ||
           !UUID_RE.test(saved.roomId || "") ||
           typeof saved.expiresAt !== "string" ||
@@ -164,6 +176,40 @@ export function createPrivateJoinedSessionStore({
         participantId: saved.participantId,
         roomId: saved.roomId,
         expiresAt: saved.expiresAt,
+      });
+    },
+    async loadPendingJoin() {
+      const saved = await store.load();
+      if (saved === null) return null;
+      if (!saved || saved.schema !== 1 ||
+          saved.provider !== provider ||
+          saved.conversation !== pinnedConversation) {
+        throw new Error("Saved Rub Minds join state belongs to another provider conversation.");
+      }
+      if (saved.pendingJoin === undefined) return null;
+      if (!saved.pendingJoin ||
+          !/^[a-f0-9]{64}$/i.test(saved.pendingJoin.joinRequestKey || "") ||
+          !/^[a-f0-9]{64}$/i.test(saved.pendingJoin.inviteTokenDigest || "") ||
+          typeof saved.pendingJoin.createdAt !== "string" ||
+          !Number.isFinite(Date.parse(saved.pendingJoin.createdAt))) {
+        throw new Error("Saved Rub Minds pending join state is invalid.");
+      }
+      return Object.freeze({ ...saved.pendingJoin });
+    },
+    async savePendingJoin({ joinRequestKey, inviteTokenDigest } = {}) {
+      if (!/^[a-f0-9]{64}$/i.test(joinRequestKey || "") ||
+          !/^[a-f0-9]{64}$/i.test(inviteTokenDigest || "")) {
+        throw new TypeError("A valid join idempotency key and invitation digest are required.");
+      }
+      await store.save({
+        schema: 1,
+        provider,
+        conversation: pinnedConversation,
+        pendingJoin: {
+          joinRequestKey: joinRequestKey.toLowerCase(),
+          inviteTokenDigest: inviteTokenDigest.toLowerCase(),
+          createdAt: new Date().toISOString(),
+        },
       });
     },
     async save(binding) {
