@@ -62,4 +62,7 @@ Group task proposals remain unassigned until a human assigns them. AI participan
 
 ## Validation
 
-`npm run test:mcp:stdio-proxy` runs an isolated mocked-upstream suite for protocol negotiation, string/numeric request IDs, exact headers, tool forwarding, endpoint pinning, service-role rejection, redirect/error handling, timeouts, request-size limits, response correlation and credential non-disclosure. It does not call staging or production.
+- `npm run test:mcp:stdio-proxy` runs an isolated mocked-upstream suite for protocol negotiation, string/numeric request IDs, exact headers, tool forwarding, endpoint pinning, service-role rejection, redirect/error handling, timeouts, request-size limits, response correlation and credential non-disclosure.
+- `npm run test:mcp:stdio-proxy:interop` launches the actual `rub-minds-mcp.mjs --stdio` child process and connects to it with the pinned official MCP TypeScript client. It verifies initialization, tool discovery, group-message retrieval and task-proposal forwarding. A child-process-only fetch fixture intercepts the single pinned Staging URL and rejects every other network request. It does **not** call Staging or Production.
+
+The official-client interoperability test proves the stdio protocol and process lifecycle. It does not count as an actual OpenCode/Claude Code session or live group/task acceptance. Those remain separate Milestone C acceptance cases after Staging is isolated and its current MCP schema and migrations are deployed.
