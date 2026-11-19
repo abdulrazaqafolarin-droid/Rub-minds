@@ -64,6 +64,27 @@ test("Device Frame renders the real live app surface without a decorative phone 
   assert.match(devices, /No approved Android phone/);
 });
 
+test("Windows computer-frame input requires exact Backroom-launched HWND and full-monitor identity", async () => {
+  const native = await read("desktop-companion/src-tauri/src/lib.rs");
+  const targeting = await read("desktop-companion/src-tauri/src/input_targeting.rs");
+  const bridge = await read("desktop-companion/src/main.js");
+  const frame = await read("src/BackroomDesktopControl.tsx");
+  assert.match(native, /state\.launched_app_ids[\s\S]*get\(&app_id\)/);
+  assert.match(native, /state\.desktop_processes[\s\S]*get_mut\(&process_id\)/);
+  assert.match(native, /foreground_window_snapshot_for_process\(process_id\)/);
+  assert.match(native, /window_binding: Some\(window_binding\)/);
+  assert.match(native, /current\.process_id == binding\.process_id[\s\S]*current\.handle == binding\.handle[\s\S]*current\.class_name == binding\.class_name[\s\S]*current\.bounds == binding\.bounds/);
+  assert.match(native, /fn validate_full_monitor_window_bounds/);
+  assert.match(native, /fn capture_bounds[\s\S]*This screen session has no verified native application window binding; desktop input is view-only/);
+  assert.match(native, /fn dispatch_input[\s\S]*capture_bounds\(&state, &geometry\)/);
+  assert.match(targeting, /exactly one visible top-level window/);
+  assert.match(targeting, /foreground_handle/);
+  assert.match(bridge, /appId/);
+  assert.match(bridge, /foreground HWND, process identity and full-monitor window bounds match/);
+  assert.match(frame, /foreground HWND \+ process \+ full-monitor bounds verified/);
+  assert.match(frame, /launch the selected app from Backroom[\s\S]*make it fill the shared monitor/);
+});
+
 test("Android Phone Frame wires a consented WebRTC stream and a separate touch grant", async () => {
   const control = await read("src/BackroomAndroidControl.tsx");
   const phone = await read("src/BackroomDevicesApp.tsx");
