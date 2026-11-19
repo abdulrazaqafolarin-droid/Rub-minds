@@ -42,8 +42,8 @@ function buildGroupMessagePrompt(prompt, metadata = {}) {
 }
 
 function buildGroupTaskPrompt(prompt, metadata = {}) {
-  const safeLabel = value => typeof value === "string"
-    ? value.replace(/[\u000d\u000a\u0009]/g, " ").slice(0, 160)
+  const safeLabel = value => typeof value === "string" || typeof value === "number"
+    ? String(value).replace(/[\u000d\u000a\u0009]/g, " ").slice(0, 160)
     : "";
   return [
     "Context: this existing AI conversation is participating in a Rub Minds collaborative group with multiple human and AI participants.",
@@ -264,7 +264,7 @@ export function createOriginalSessionAdapter(provider, {
             kind: metadata.kind === "task" ? "task" : "message",
             messageId: metadata.messageId ?? null,
             taskId: metadata.taskId ?? null,
-            taskVersion: metadata.taskVersion ?? null,
+            taskVersion: Number.isInteger(metadata.taskVersion) ? metadata.taskVersion : null,
             taskTitle: safeLabel(metadata.taskTitle),
             senderName: safeLabel(metadata.senderName),
             senderKind: safeLabel(metadata.senderKind),
