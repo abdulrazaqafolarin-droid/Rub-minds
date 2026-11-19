@@ -858,6 +858,7 @@ test("binding revoke confirms no local worker after restart only from a complete
  const bindingId="52345678-1234-4234-9234-123456789012";
  const browserRuntime={
   status:()=>({running:true,pages:1,capabilities:{browserCanonicalWake:true}}),
+  stop:async()=>({stopped:true}),
   revokeWakeBinding:()=>false
  };
  const wakeService={
@@ -880,6 +881,7 @@ test("binding revoke remains unconfirmed if local poller inventory is missing",a
  const bindingId="52345678-1234-4234-9234-123456789015";
  const browserRuntime={
   status:()=>({running:true,pages:1,capabilities:{browserCanonicalWake:true}}),
+  stop:async()=>({stopped:true}),
   revokeWakeBinding:()=>false
  };
  const wakeService={status:{configured:false,count:0},stop:async()=>({stopped:true,bindings:[],remotelyDeactivated:null})};
@@ -899,6 +901,7 @@ test("binding revoke confirms local stop only for the exact poller it stopped",a
  const otherBindingId="52345678-1234-4234-9234-123456789014";
  const browserRuntime={
   status:()=>({running:true,pages:1,capabilities:{browserCanonicalWake:true}}),
+  stop:async()=>({stopped:true}),
   revokeWakeBinding:()=>false
  };
  const wakeService={stop:async id=>({stopped:true,bindings:[{bindingId:otherBindingId,stopped:true},{bindingId:id,stopped:true}],remotelyDeactivated:true})};
