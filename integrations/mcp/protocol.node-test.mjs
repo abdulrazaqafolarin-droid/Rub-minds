@@ -468,6 +468,12 @@ test("MCP discovery defines the safe Backroom wake response and recovery protoco
   assert.match(MCP_DISCOVERY_INSTRUCTIONS,/revision conflict/);
   assert.match(MCP_DISCOVERY_INSTRUCTIONS,/does not confirm group delivery/);
   assert.match(MCP_DISCOVERY_INSTRUCTIONS,/provider-side tool permission prompts cannot be bypassed/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/task_<task UUID>_v<positive version>/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/never pass this value to read_group_message/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/assigned_to_participant_id is this joined participant/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/submit_group_task_result/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/same result with the same key/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/active, write-capable Rub Minds MCP connection/);
 });
 
 test("exact group-message lookup is UUID-scoped and rejects unknown inputs",()=>{
