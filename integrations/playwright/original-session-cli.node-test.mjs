@@ -11,6 +11,7 @@ import {
   isExactConversationPage,
   openExistingConversationPage,
   parseRunnerArgs,
+  parseStagingInviteToken,
   preparePrivateBrowserProfile,
   preview,
   runOriginalSessionBridge,
@@ -58,6 +59,29 @@ test("requires a clean HTTPS MCP endpoint and scoped session identity", () => {
   ]) {
     assert.throws(() => validateRunnerEnvironment(invalid, "chatgpt"));
   }
+});
+
+test("parses only opaque HTTPS Staging invite tokens without logging or fetching the pasted URL", () => {
+  const token = "b".repeat(64);
+  assert.equal(parseStagingInviteToken("https://rub-minds.vercel.app/?invite=" + token), token);
+  assert.equal(parseStagingInviteToken("https://rub-minds.vercel.app/invite=" + token), token);
+  assert.throws(() => parseStagingInviteToken("http://rub-minds.vercel.app/?invite=" + token), /HTTPS/);
+  assert.throws(() => parseStagingInviteToken("https://user:pass@rub-minds.vercel.app/?invite=" + token), /credentials/);
+  assert.throws(() => parseStagingInviteToken("https://rub-minds.vercel.app/?invite=" + token + "#secret"), /fragment/);
+  assert.throws(() => parseStagingInviteToken("https://rub-minds.vercel.app/?invite=short"), /64-character/);
+});
+
+test("permits an explicit Staging invitation join when no prejoined session is configured", () => {
+  const config = validateRunnerEnvironment({
+    RUB_MINDS_MCP_ENDPOINT: ENV.RUB_MINDS_MCP_ENDPOINT,
+  }, "chatgpt");
+  assert.equal(config.joinRequired, true);
+  assert.equal(config.sessionHandle, null);
+  assert.equal(config.participantId, null);
+  assert.throws(() => validateRunnerEnvironment({
+    RUB_MINDS_MCP_ENDPOINT: ENV.RUB_MINDS_MCP_ENDPOINT,
+    RUB_MINDS_MCP_SESSION_HANDLE: "a".repeat(64),
+  }, "chatgpt"), /Set both/);
 });
 
 test("provider conversation URLs are exact HTTPS thread URLs without credentials or query secrets", () => {
@@ -323,6 +347,130 @@ test("local runner starts with consent, approves one new group message, and clos
     assert.equal(stats.runtimeStopped, 1);
     assert.equal(stats.contextClosed, 1);
     assert.ok(!writes.join("").includes(ENV.RUB_MINDS_MCP_SESSION_HANDLE));
+  } finally {
+    input.destroy();
+    output.destroy();
+  }
+});
+
+test("local runner explicitly redeems a Staging invite and binds the returned AI session to the exact browser conversation", async () => {
+  const input = makeTtyStream();
+  const output = makeTtyStream();
+  const writes = [];
+  output.write = value => { writes.push(String(value)); return true; };
+  const inviteToken = "b".repeat(64);
+  const sessionHandle = "c".repeat(64);
+  const participantId = "650e8400-e29b-41d4-a716-446655440000";
+  const roomId = "550e8400-e29b-41d4-a716-446655440000";
+  const inviteUrl = "https://rub-minds.vercel.app/?invite=" + inviteToken;
+  const env = { RUB_MINDS_MCP_ENDPOINT: ENV.RUB_MINDS_MCP_ENDPOINT };
+  const stats = { contextClosed: 0, runtimeStopped: 0, providerInteractions: 0 };
+  const page = { isClosed: () => false, url: () => CHATGPT_URL };
+  const context = makeRunnerContext(page, stats);
+  const approvals = [];
+  let joinedInput;
+  let runtimeOptions;
+
+  try {
+    const result = await runOriginalSessionBridge({
+      argv: ["--provider", "chatgpt", "--conversation-url", CHATGPT_URL],
+      env,
+      input,
+      output,
+      errorOutput: output,
+      playwright: {
+        chromium: {
+          async launchPersistentContext(_profileDirectory, options) {
+            assert.equal(options.headless, false);
+            assert.equal(Object.hasOwn(options.env, "RUB_MINDS_MCP_SESSION_HANDLE"), false);
+            assert.equal(Object.hasOwn(options.env, "RUB_MINDS_MCP_ENDPOINT"), false);
+            return context;
+          },
+        },
+      },
+      prepareProfile: async value => value,
+      readInput: async (_rl, message) => {
+        assert.match(message, /invitation URL/);
+        return inviteUrl;
+      },
+      prompt: async (_rl, message, expected) => {
+        approvals.push({ message, expected });
+        return true;
+      },
+      joinInvite: async options => {
+        joinedInput = options;
+        return { joined: true, sessionHandle, roomId, participantId };
+      },
+      createAdapter: (_provider, { approval }) => ({
+        async ask(_page, body, metadata) {
+          const approved = await approval({ ...metadata, prompt: body });
+          assert.equal(approved, true);
+          stats.providerInteractions += 1;
+          return "provider answer";
+        },
+      }),
+      createRuntime: options => {
+        runtimeOptions = options;
+        return {
+          async run({ approved }) {
+            assert.equal(approved, true);
+            const answer = await options.adapter.ask(options.page, "Staging group message", {
+              messageId: "message-join-1",
+              senderName: "Human collaborator",
+              senderKind: "human",
+            });
+            assert.equal(answer, "provider answer");
+            return { status: "limit_reached", replies: 1 };
+          },
+          stop() { stats.runtimeStopped += 1; },
+        };
+      },
+    });
+
+    assert.deepEqual(result, { status: "limit_reached", replies: 1 });
+    assert.deepEqual(approvals.map(item => item.expected), ["START", "JOIN", "SEND"]);
+    assert.equal(joinedInput.endpoint, ENV.RUB_MINDS_MCP_ENDPOINT);
+    assert.equal(joinedInput.inviteToken, inviteToken);
+    assert.equal(joinedInput.agentLabel, "ChatGPT original session");
+    assert.equal(joinedInput.signal instanceof AbortSignal, true);
+    assert.equal(runtimeOptions.sessionHandle, sessionHandle);
+    assert.equal(runtimeOptions.participantId, participantId);
+    assert.equal(stats.providerInteractions, 1);
+    assert.equal(stats.contextClosed, 1);
+    assert.ok(!writes.join("").includes(inviteToken), "invite token must not be printed");
+    assert.ok(!writes.join("").includes(sessionHandle), "session handle must not be printed");
+  } finally {
+    input.destroy();
+    output.destroy();
+  }
+});
+
+test("declining explicit Staging invitation redemption stops before MCP join or runtime creation", async () => {
+  const input = makeTtyStream();
+  const output = makeTtyStream();
+  output.write = () => true;
+  const stats = { contextClosed: 0, runtimeStopped: 0, providerInteractions: 0 };
+  const context = makeRunnerContext({ isClosed: () => false, url: () => CHATGPT_URL }, stats);
+  let joinCalls = 0;
+  let runtimeCalls = 0;
+  try {
+    const result = await runOriginalSessionBridge({
+      argv: ["--provider", "chatgpt", "--conversation-url", CHATGPT_URL],
+      env: { RUB_MINDS_MCP_ENDPOINT: ENV.RUB_MINDS_MCP_ENDPOINT },
+      input,
+      output,
+      errorOutput: output,
+      playwright: { chromium: { async launchPersistentContext() { return context; } } },
+      prepareProfile: async value => value,
+      readInput: async () => "https://rub-minds.vercel.app/?invite=" + "d".repeat(64),
+      prompt: async (_rl, _message, expected) => expected !== "JOIN",
+      joinInvite: async () => { joinCalls++; throw new Error("join must not execute"); },
+      createRuntime: () => { runtimeCalls++; throw new Error("runtime must not start"); },
+    });
+    assert.deepEqual(result, { status: "not_started", replies: 0 });
+    assert.equal(joinCalls, 0);
+    assert.equal(runtimeCalls, 0);
+    assert.equal(stats.contextClosed, 1);
   } finally {
     input.destroy();
     output.destroy();
