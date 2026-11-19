@@ -449,7 +449,7 @@ try {
     },
   });
   assert.notEqual(lifecycleBlockedResult.isError, true, "assigned AI could not block its own task: " + JSON.stringify(lifecycleBlockedResult));
-  assert.equal(lifecycleBlockedResult.structuredContent?.lifecycleBlockedResult, true);
+  assert.equal(lifecycleBlockedResult.structuredContent?.blocked, true);
   assert.equal(lifecycleBlockedResult.structuredContent?.status, "blocked");
 
   const lifecycleFinalTasks = await first.callTool({
