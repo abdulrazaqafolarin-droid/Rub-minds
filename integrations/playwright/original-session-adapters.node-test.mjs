@@ -15,6 +15,32 @@ test("rejects wrong origin without interacting with DOM", async () => {
   );
 });
 
+test("rejects provider routes that only contain a conversation marker in a nested path", async () => {
+  const cases = [
+    ["chatgpt", "https://chatgpt.com/workspace/c/thread-123", /existing ChatGPT conversation/],
+    ["claude", "https://claude.ai/projects/project-123/chat/thread-123", /existing Claude conversation/],
+    ["chatgpt", "https://chatgpt.com/c/", /existing ChatGPT conversation/],
+    ["claude", "https://claude.ai/chat/", /existing Claude conversation/],
+    ["chatgpt", "https://chatgpt.com/c/%2Fother-thread", /existing ChatGPT conversation/],
+    ["chatgpt", "https://chatgpt.com/c/%252Fother-thread", /existing ChatGPT conversation/],
+    ["claude", "https://claude.ai/chat/%5Cother-thread", /existing Claude conversation/],
+  ];
+
+  for (const [provider, url, expected] of cases) {
+    let domTouched = false;
+    const adapter = createOriginalSessionAdapter(provider, { approval: async () => true });
+    const page = {
+      url: () => url,
+      locator: () => {
+        domTouched = true;
+        throw new Error("Provider DOM must not be touched for a non-canonical conversation route");
+      },
+    };
+    await assert.rejects(adapter.ask(page, "hello"), expected);
+    assert.equal(domTouched, false, url);
+  }
+});
+
 test("rejects non-conversation landing pages", async () => {
   const adapter = createOriginalSessionAdapter("chatgpt", { approval: () => true });
   await assert.rejects(adapter.ask({ url: () => "https://chatgpt.com/", locator() {} }, "hello"), /existing ChatGPT conversation/);

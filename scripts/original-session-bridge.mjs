@@ -11,7 +11,10 @@ import { resolve, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout, stderr } from "node:process";
-import { createOriginalSessionAdapter } from "../integrations/playwright/original-session-adapters.mjs";
+import {
+  createOriginalSessionAdapter,
+  isValidProviderConversationPath,
+} from "../integrations/playwright/original-session-adapters.mjs";
 import { createOriginalSessionWakeRuntime } from "../integrations/playwright/original-session-wake-runtime.mjs";
 import { joinRubMindsInvite, McpSessionMessageTransport } from "../integrations/playwright/mcp-session-message-transport.mjs";
 
@@ -21,11 +24,9 @@ const STAGING_MCP_HOST = "tzcuuynmviiuactafpld.supabase.co";
 const PROVIDERS = Object.freeze({
   chatgpt: Object.freeze({
     hosts: new Set(["chatgpt.com", "chat.openai.com"]),
-    path: /^\/c\/[^/]+(?:\/.*)?$/,
   }),
   claude: Object.freeze({
     hosts: new Set(["claude.ai"]),
-    path: /^\/chat\/[^/]+(?:\/.*)?$/,
   }),
 });
 
@@ -408,7 +409,7 @@ export function conversationKey(provider, value) {
     fail("The conversation URL is invalid.");
   }
   if (url.protocol !== "https:" || !providerConfig.hosts.has(url.hostname) ||
-      !providerConfig.path.test(url.pathname) || url.username || url.password || url.search || url.hash) {
+      !isValidProviderConversationPath(url.pathname, provider) || url.username || url.password || url.search || url.hash) {
     fail("The conversation URL must point to an existing " + provider + " conversation.");
   }
   return url.origin + url.pathname;
