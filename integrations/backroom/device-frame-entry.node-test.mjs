@@ -1,10 +1,30 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { createRoomActionLocks } from "./room-action-lock.mjs";
 
 const read = path => readFile(new URL("../../" + path, import.meta.url), "utf8");
 
-test("Backroom uses the cloud Device Frame and gates direct links with Rub Minds sign-in", async () => {
+test("device mutation locks are isolated by group and reject duplicate actions within one group", () => {
+  const locks = createRoomActionLocks();
+
+  assert.equal(locks.isBusy("group-a"), false);
+  assert.equal(locks.begin("group-a"), true);
+  assert.equal(locks.begin("group-a"), false, "a second mutation in the same group must be blocked");
+  assert.equal(locks.isBusy("group-a"), true);
+
+  assert.equal(locks.begin("group-b"), true, "another group must remain independently usable");
+  assert.deepEqual([...locks.snapshot()].sort(), ["group-a", "group-b"]);
+
+  assert.equal(locks.end("group-a"), true);
+  assert.equal(locks.isBusy("group-a"), false);
+  assert.equal(locks.isBusy("group-b"), true, "finishing group A must not clear group B's lock");
+  assert.equal(locks.end("group-b"), true);
+  assert.equal(locks.snapshot().size, 0);
+  assert.throws(() => locks.begin(""), /non-empty/);
+});
+
+test("Backroom exposes only authenticated real device frames", async () => {
   const wrapper = await read("src/BackroomApp.tsx");
   const entry = await read("src/main.tsx");
   const devices = await read("src/BackroomDevicesApp.tsx");
@@ -12,64 +32,178 @@ test("Backroom uses the cloud Device Frame and gates direct links with Rub Minds
   assert.match(wrapper, /CloudApp/);
   assert.match(wrapper, /supabase\.auth\.getSession/);
   assert.match(wrapper, /onAuthStateChange/);
-  assert.match(wrapper, /BackroomSimulatorApp/);
-  assert.match(wrapper, /browserView/);
-  assert.match(wrapper, /backroomViewHref/);
-  assert.match(wrapper, /Browser runtime/);
-  assert.doesNotMatch(wrapper, /localhost|127\.0\.0\.1|host-server/);
+  assert.match(wrapper, /return <BackroomDevicesApp \/>/);
+  assert.doesNotMatch(wrapper, /BackroomSimulatorApp|Browser runtime|browserView|br-mode-nav/);
   assert.match(entry, /isBackroom \? <BackroomApp \/>/);
-  assert.match(devices, /Connected runtimes/);
-  const browser = await read("src/BackroomSimulatorApp.tsx");
-  assert.match(devices, /Phone apps/);
-  assert.match(devices, /Desktop apps/);
-  assert.match(devices, /Terminal/);
-  assert.match(devices, /outbound HTTPS/);
-  assert.match(browser, /LiveBrowserPreview/);
-  assert.ok(!browser.includes('function Preview('));
-  for (const demoOnlyCopy of ['DEMO · NOT LIVE', 'Select demo region', 'Simulated ', 'workspace placeholder']) assert.ok(!browser.includes(demoOnlyCopy), 'legacy demo content remains: ' + demoOnlyCopy);
-  assert.ok(browser.includes("surface === 'browser_tab' && typeof s.pageId === 'string'"));
-  assert.match(browser, /verified app connection/);
-
-  assert.match(browser, /refreshBrowserInventory/);
-  assert.match(browser, /select-region/);
-  assert.match(browser, /browser_tab/);
-  assert.match(devices, /No localhost server or phone port bridge/);
+  assert.doesNotMatch(entry, /BackroomSimulatorApp|Browser runtime/);
+  assert.match(devices, /Device connections/);
+  assert.match(devices, /roomsLoading/);
+  assert.match(devices, /roomsLoadRequestRef = useRef\(0\)/);
+  assert.match(devices, /requestId !== roomsLoadRequestRef\.current/);
+  assert.match(devices, /if \(requestId === roomsLoadRequestRef\.current\) setRoomsLoading\(false\)/);
+  assert.match(devices, /Loading groups…/);
+  assert.match(devices, /Loading your groups/);
+  assert.match(devices, /Backroom cloud is not configured/);
+  assert.match(devices, /does not have an authenticated Supabase connection/);
+  assert.match(devices, /roomsLoadError/);
+  assert.match(devices, /Could not load your groups/);
+  assert.match(devices, /Retry group loading/);
+  assert.match(devices, /Android phone/);
+  assert.match(devices, /Computer/);
+  assert.match(devices, /<BackroomAndroidControl/);
+  assert.match(devices, /<BackroomDesktopControl/);
+  assert.doesNotMatch(devices, /'phone'\s*\|\s*'desktop'\s*\|\s*'terminal'/);
+  assert.doesNotMatch(devices, /Browser runtime|BackroomSimulatorApp/);
+});
+test("Switching groups clears prior device state and remounts active runtime controllers", async () => {
+  const devices = await read("src/BackroomDevicesApp.tsx");
+  assert.match(devices, /function changeRoom\(nextRoomId: string\)/);
+  assert.match(devices, /roomIdRef\.current = nextRoomId/);
+  assert.match(devices, /const \[busyRoomIds, setBusyRoomIds\] = useState<Set<string>>/);
+  assert.match(devices, /const busy = busyRoomIds\.has\(roomId\)/);
+  assert.match(devices, /roomActionLocksRef\.current\.isBusy\(targetRoom\)/);
+  assert.match(devices, /beginRoomAction\(targetRoom\)/);
+  assert.match(devices, /endRoomAction\(targetRoom\)/);
+  assert.doesNotMatch(devices, /const \[busy, setBusy\]|setBusy\(/);
+  assert.match(devices, /setDevicesLoading\(Boolean\(nextRoomId\)\)/);
+  assert.match(devices, /Loading device connections/);
+  assert.match(devices, /devicesLoadError/);
+  assert.match(devices, /catch \(error\) \{[\s\S]*?requestId !== refreshRequestRef\.current \|\| targetRoom !== roomIdRef\.current\) return/);
+  assert.match(devices, /Could not load devices/);
+  assert.match(devices, /Phone availability could not be checked/);
+  assert.match(devices, /Retry device loading/);
+  assert.match(devices, /Loading phone availability/);
+  assert.match(devices, /finally \{[\s\S]*?requestId === refreshRequestRef\.current[\s\S]*?setDevicesLoading\(false\)/);
+  assert.match(devices, /setDevices\(\[\]\)/);
+  assert.match(devices, /setEvents\(\[\]\)/);
+  assert.match(devices, /setSelectedDeviceId\(\x27\x27\)/);
+  assert.match(devices, /setPairCode\(\x27\x27\)/);
+  assert.match(devices, /setPairExpires\(\x27\x27\)/);
+  assert.match(devices, /if \(roomIdRef\.current !== targetRoom\) return/);
+  assert.match(devices, /BackroomAndroidControl key=\{roomId \+ ':' \+ activeDevice\.device_id\}/);
+  assert.match(devices, /BackroomDesktopControl key=\{roomId\}/);
 });
 
-test("switching browser rooms preserves the authenticated Backroom browser route", async () => {
-  const browser = await read("src/BackroomSimulatorApp.tsx");
-  assert.match(browser, /new URLSearchParams\(location\.search\)/);
-  assert.match(browser, /params\.set\('backroom', '1'\)/);
-  assert.match(browser, /params\.set\('room', e\.target\.value\)/);
-  assert.match(browser, /location\.pathname \+ '\?' \+ params\.toString\(\)/);
+test("Device Frame refreshes visible device state without stale room overwrites", async () => {
+  const devices = await read("src/BackroomDevicesApp.tsx");
+  assert.match(devices, /setInterval\(poll, 20_000\)/);
+  assert.match(devices, /document\.visibilityState !== 'visible'/);
+  assert.match(devices, /requestId !== refreshRequestRef\.current/);
+  assert.match(devices, /targetRoom !== roomIdRef\.current/);
+  assert.match(devices, /function changeRoom\(nextRoomId: string\)/);
+  assert.match(devices, /setDevices\(\[\]\)[\s\S]*?setEvents\(\[\]\)[\s\S]*?setSelectedDeviceId\(''\)[\s\S]*?setLastUpdatedAt\(null\)/);
+  assert.match(devices, /roomIdRef\.current !== targetRoom/);
+  assert.match(devices, /onChange=\{event => changeRoom\(event\.target\.value\)\}/);
+  assert.match(devices, /if \(roomIdRef\.current === targetRoom\) setError/);
+  assert.match(devices, /const targetRoom = roomIdRef\.current;[\s\S]*?refresh\(targetRoom\)\.catch/);
+  assert.match(devices, /if \(roomIdRef\.current !== targetRoom\) return;[\s\S]*?window\.prompt/);
+  assert.match(devices, /Device refresh failed\./);
+  assert.match(devices, /const targetRoom = roomIdRef\.current;[\s\S]*?refresh\(targetRoom\)\.catch/);
+  assert.match(devices, /if \(roomIdRef\.current !== targetRoom\) return/);
+  assert.match(devices, /if \(roomIdRef\.current === targetRoom\) setNotice/);
+  assert.match(devices, /lastUpdatedAt/);
+  assert.match(devices, /Last seen ' \+ formatTime\(device\.last_seen_at\)/);
+  assert.match(devices, /No device heartbeat yet/);
+  assert.match(devices, /device\.status === 'active' \? 'Approved'/);
+  assert.doesNotMatch(devices, /'Online'|>online</i);
 });
 
-test("Device Frame shows one selected phone at a time", async () => {
+test("Backroom frame layout contract excludes simulated screens and separates permissions", async () => {
+  const ux = await read("docs/BACKROOM_DEVICE_FRAME_UX.md");
+  const devices = await read("src/BackroomDevicesApp.tsx");
+  const styles = await read("src/backroom-cloud.css");
+  const android = await read("src/BackroomAndroidControl.tsx");
+  assert.match(ux, /not a simulator/i);
+  assert.match(ux, /Approved \/ Pending approval \/ Revoked/);
+  assert.match(ux, /"Approved" is not presented as "Online"/);
+  assert.match(devices, /Last seen ' \+ formatTime\(device\.last_seen_at\)/);
+  assert.match(devices, /No device heartbeat yet/);
+  assert.match(ux, /screen share, touch, draft insertion and native Send remain separately authorized/i);
+  assert.match(ux, /never enables native Send/);
+  assert.match(devices, /AI-directed sending \/ native Off · On · Auto/);
+  assert.match(android, /Insert draft/);
+  assert.match(android, /Request touch control/);
+});
+
+test("Device Frame shows one selected Android phone at a time", async () => {
   const devices = await read("src/BackroomDevicesApp.tsx");
   assert.match(devices, /selectedDeviceId/);
-  assert.match(devices, /activeDevices\.length > 1/);
-  assert.match(devices, /activeDevice\.apps\.map/);
-  assert.doesNotMatch(devices, /devices\.filter\(device => device\.status === 'active'\)\.flatMap/);
+  assert.match(devices, /activePhones\.length > 1/);
+  assert.match(devices, /activePhones\.map/);
+  assert.match(devices, /activePhones\.find/);
+  assert.doesNotMatch(devices, /activeDevices\.flatMap/);
 });
 
-test("Device Frame never claims inventory is a running virtual app", async () => {
+test("Device Frame renders the real live app surface without a decorative phone simulator", async () => {
   const devices = await read("src/BackroomDevicesApp.tsx");
-  assert.match(devices, /Separate app data \/ virtualization/);
-  assert.ok(devices.includes("Live original app stream and touch"));
-  assert.match(devices, /<BackroomAndroidControl/);
-  assert.match(devices, /import BackroomDesktopControl from '.\/BackroomDesktopControl'/);
-  assert.ok(devices.includes('<BackroomDesktopControl roomId={roomId}/>'));
-  assert.doesNotMatch(devices, /Desktop runtime not connected|Terminal runtime not connected/);
-  assert.match(devices, /surface === 'phone' && <div className="br-cloud-capabilities">/);
+  const styles = await read("src/backroom-cloud.css");
+  assert.match(devices, /<BackroomAndroidControl key=\{roomId \+ ':' \+ activeDevice\.device_id\} device=\{activeDevice\} roomId=\{roomId\}\/>/);
+  assert.match(devices, /<BackroomDesktopControl key=\{roomId\} roomId=\{roomId\}\s*\/>/);
+  assert.match(devices, /Original Android app screen/);
+  assert.match(devices, /Original computer screen and terminal/);
+  assert.doesNotMatch(devices, /br-cloud-phone|br-cloud-phone-notch|Selected apps/);
+  assert.doesNotMatch(styles, /\.br-cloud-phone(?:[\s.#:{,]|$)|\.br-cloud-app-row|\.br-cloud-app-icon|\.br-cloud-capabilities|\.br-cloud-unavailable/);
+  assert.doesNotMatch(devices, /'phone'\s*\|\s*'desktop'\s*\|\s*'terminal'/);
+  assert.match(devices, /No approved Android phone/);
+});
 
-  assert.match(devices, /selected app metadata is synced/);
+test("Windows computer-frame input requires exact Backroom-launched HWND and full-monitor identity", async () => {
+  const native = await read("desktop-companion/src-tauri/src/lib.rs");
+  const targeting = await read("desktop-companion/src-tauri/src/input_targeting.rs");
+  const bridge = await read("desktop-companion/src/main.js");
+  const frame = await read("src/BackroomDesktopControl.tsx");
+  assert.match(native, /state\.launched_app_ids[\s\S]*get\(&app_id\)/);
+  assert.match(native, /state\.desktop_processes[\s\S]*get_mut\(&process_id\)/);
+  assert.match(native, /foreground_window_snapshot_for_process\(process_id\)/);
+  assert.match(native, /window_binding: Some\(window_binding\)/);
+  assert.match(native, /current\.process_id == binding\.process_id[\s\S]*current\.handle == binding\.handle[\s\S]*current\.class_name == binding\.class_name[\s\S]*current\.bounds == binding\.bounds/);
+  assert.match(native, /fn validate_full_monitor_window_bounds/);
+  assert.match(native, /fn capture_bounds[\s\S]*This screen session has no verified native application window binding; desktop input is view-only/);
+  assert.match(native, /fn dispatch_input[\s\S]*capture_bounds\(&state, &geometry\)/);
+  assert.match(targeting, /exactly one visible top-level window/);
+  assert.match(targeting, /focused_handle/);
+  assert.match(bridge, /appId/);
+  assert.match(bridge, /foreground HWND, process identity and full-monitor window bounds match/);
+  assert.match(frame, /foreground HWND \+ process \+ full-monitor bounds verified/);
+  assert.match(frame, /launch the selected app from Backroom[\s\S]*make it fill the shared monitor/);
+});
+
+test("Computer inventory refreshes while visible and rejects stale responses", async () => {
+  const control = await read("src/BackroomDesktopControl.tsx");
+  assert.match(control, /const refreshRequestRef=useRef\(0\)/);
+  assert.match(control, /const requestId=\+\+refreshRequestRef\.current/);
+  assert.match(control, /if\(requestId!==refreshRequestRef\.current\)return/);
+  assert.match(control, /if\(requestId===refreshRequestRef\.current\)setLoading\(false\)/);
+  assert.match(control, /setLastUpdatedAt\(Date\.now\(\)\)/);
+  assert.match(control, /window\.setInterval\(poll,20_000\)/);
+  assert.match(control, /document\.visibilityState!=='visible'/);
+  assert.match(control, /document\.addEventListener\('visibilitychange',poll\)/);
+  assert.match(control, /window\.clearInterval\(timer\)/);
+  assert.match(control, /br-desktop-refresh-wrap/);
+  assert.match(control, /br-desktop-refresh-time/);
+});
+
+test("Desktop screen and terminal sessions allow bounded WebRTC reconnect", async () => {
+  const control = await read("src/BackroomDesktopControl.tsx");
+  assert.match(control, /const disconnectTimerRef=useRef<number\|null>\(null\)/);
+  assert.match(control, /const watchPeerConnection=useCallback/);
+  assert.match(control, /pc\.connectionState==='connected'[\s\S]*?clearDisconnectTimer\(\)/);
+  assert.match(control, /pc\.connectionState==='disconnected'[\s\S]*?Trying to reconnect for 20 seconds/);
+  assert.match(control, /},20_000\)/);
+  assert.match(control, /if\(stillThisSession&&pc\.connectionState!=='connected'\)/);
+  assert.match(control, /pc\.connectionState==='connected'[\s\S]*?clearDisconnectTimer\(\)/);
+  assert.match(control, /pc\.connectionState==='failed'\|\|pc\.connectionState==='closed'/);
+  assert.match(control, /watchPeerConnection\(pc,peerId,'Terminal'\)/);
+  assert.match(control, /watchPeerConnection\(pc,sessionId,'Screen'\)/);
+  assert.match(control, /if\(disconnectTimerRef\.current!==null\)[\s\S]*?clearTimeout\(disconnectTimerRef\.current\)/);
+  assert.match(control, /if\(current\)\{peerRef\.current=null;current\.close\(\);\}/);
 });
 
 test("Android Phone Frame wires a consented WebRTC stream and a separate touch grant", async () => {
   const control = await read("src/BackroomAndroidControl.tsx");
   const phone = await read("src/BackroomDevicesApp.tsx");
   assert.match(phone, /import BackroomAndroidControl/);
-  assert.ok(phone.includes("BackroomAndroidControl device={activeDevice}") && phone.includes("roomId={roomId}"));
+  assert.ok(phone.includes("BackroomAndroidControl key={roomId + ':' + activeDevice.device_id} device={activeDevice}") && phone.includes("roomId={roomId}"));
   assert.match(control, /RTCPeerConnection/);
   assert.ok(control.includes("addTransceiver('video', { direction: 'recvonly' })"));
   assert.match(control, /android\/session-start/);
@@ -104,6 +238,28 @@ test("Android composer selection binds one real non-password accessibility node 
   assert.match(keyboard, /isSelectedComposerFocused\(sessionId, packageName, targetId\)/);
   assert.match(policy, /multiple_editable_fields_in_selection/);
   assert.match(policy, /MIN_NODE_COVERAGE/);
+});
+
+
+test("Android composer selection and Send recheck expose only a stable digest and detect conversation switches", async () => {
+  const control = await read("src/BackroomAndroidControl.tsx");
+  const screen = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidScreenShareService.kt");
+  const service = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidTouchAccessibilityService.kt");
+  const policy = await read("android-companion/app/src/main/java/app/rubminds/companion/AndroidComposerTargetPolicy.kt");
+  const provider = await read("android-companion/app/src/main/java/app/rubminds/companion/ProviderConversationIdentity.kt");
+  assert.match(policy, /providerConversationIdentityDigest: String\? = null/);
+  assert.match(service, /ProviderConversationIdentityResolver\.resolve\(packageName, root\)/);
+  assert.match(service, /sameBoundConversation/);
+  assert.match(screen, /providerConversationIdentityDigest/);
+  // The provider digest is deliberately kept inside Android. WebRTC exposes only
+  // boolean availability/match signals; the browser must never receive the digest.
+  assert.match(control, /providerConversationIdentityAvailable/);
+  assert.match(control, /providerConversationIdentityMatchesSelection/);
+  assert.match(control, /Only a boolean capability result crosses WebRTC/);
+  assert.doesNotMatch(control, /providerConversationIdentityDigestRef|recheckedProviderDigest/);
+  assert.match(control, /Native wake is blocked; draft insertion remains available/);
+  assert.match(provider, /private val adapters: Map<String, ProviderConversationIdentityAdapter> = emptyMap\(\)/);
+  assert.doesNotMatch(screen, /stableConversationId|activeConversationStableId/);
 });
 
 test("Android touch-control requests have a bounded pending state and exact request correlation", async () => {

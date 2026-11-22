@@ -104,37 +104,15 @@ Record physical results only after running the matrix on a real Windows 10/11 co
 No production migration, merge to `main`, or deployment is part of this acceptance checklist.
 
 
-## Single-application window capture — 2026-10-31
+## Single-application window capture — superseded, view-only
 
-A Windows window capture may be interactive only when all of these conditions hold:
+Browser-selected single-window capture remains view-only. The browser capture API does not disclose the native HWND, so the companion cannot prove that the video frame corresponds to the UI Automation window it inspected. This section's earlier proposed interactive-window cases are retained only as historical context; they are not an acceptance path.
 
-- The OS capture picker reports `displaySurface=window`; an unknown/missing surface type remains view-only rather than being guessed as a window.
-- The selected window must belong to the exact process ID returned when Backroom launched the chosen executable. The native companion finds exactly one visible top-level UIA window for that PID, rejects the companion process, and confirms the focused HWND is that unique window.
-- The captured frame dimensions match that window's native bounds within the strict geometry tolerance.
-- Before each remote input action, the companion re-resolves the foreground window and requires the same HWND, process and class, with compatible bounds. A focus change, window replacement or incompatible resize rejects input.
-- Drag-select and draft insertion additionally require the selected UIA text field to belong to the captured window's process and pass the existing empty-field, non-password, exact-identity and exact-readback checks.
-
-### Manual window-capture acceptance (not yet executed)
-
-| Scenario | Required result |
-|---|---|
-| Notepad / Chromium / Electron selected in OS window picker | Correct live window frame; native identity and dimensions must match before enabling control |
-| The companion window is selected accidentally | Reject control |
-| Two top-level windows from the same launched process are visible | Reject interactive app-window binding as ambiguous; offer monitor view or view-only instead |
-| Captured window loses foreground focus | Control action rejected; restore target and re-establish capture |
-| Captured window moves, resizes or is replaced | Control action rejected until capture geometry is revalidated |
-| A drag rectangle lands on another process | Reject target; no draft staged |
-| Capture surface type is missing or unknown | Keep stream view-only |
-| User selects whole monitor | Existing full-monitor geometry path remains available |
-
-The native source tests cover the pure geometry and window-identity checks. They do not replace Windows compilation or this physical acceptance matrix. No claim that single-window interaction is physically verified is made.
-
-### Native app identity revalidation (2026-10-31)
-The companion now records the app ID and child process ID in Rust when the approved executable starts. The browser-supplied PID is checked against that native record; it is not sufficient by itself. On every interactive action and draft targeting check, the native companion verifies that the app ID still maps to the original process, the child process is still live, and its unique window identity/focus remain valid. A browser request cannot register an arbitrary PID through the window-capture API. Native compilation and physical Windows interaction remain unverified.
+For interactive Windows input, use the Backroom-launched application path described in the native monitor-binding update below. The OS picker must provide a monitor stream, the exact launched process must own one unique visible foreground HWND, and that HWND must fill the shared monitor bounds. If any requirement is missing or ambiguous, the frame remains view-only.
 
 ## Capture source identity safety correction — 2026-10-31
 
-The browser's `getDisplayMedia` API exposes a captured `displaySurface` category and dimensions, but not the native HWND selected in the OS picker. Matching an app's PID, focused window and dimensions does **not** prove the video stream comes from that HWND. Consequently, **single-window streams are now view-only**; the native `set_capture_geometry` command rejects interactive window input. Previously proposed single-window control scenarios above are superseded. Whole-monitor sharing remains the supported separate-approval control path. Interactive single-window support requires native capture and input bound to one verifiable HWND.
+The browser's `getDisplayMedia` API exposes a captured `displaySurface` category and dimensions, but not the native HWND selected in the OS picker. A browser-selected single-window stream is therefore always view-only. Whole-monitor sharing alone is also **not** sufficient proof of the target application and no longer enables input by itself.
 
 ## Verification checkpoint — 2026-10-31 (PTY safety and latest CI)
 
@@ -250,3 +228,18 @@ The multi-surface cases explicitly exercise `desktop_app`, `windows_app`, `andro
 - The two GitHub Actions jobs previously returned failure before allocating a runner (empty runner name, zero steps, and unavailable logs). The Vercel test results provide a successful independent Node regression result; they do not turn those GitHub checks green or remove the Windows-native release gate.
 
 **Release gate remains closed:** keep PR #56 as draft and do not merge or deploy until native Windows compilation, Rust tests, and physical Windows/Android acceptance are completed.
+
+
+## Native foreground application binding for monitor frames — 2026-11-19
+
+Interactive Windows input is now bound to the exact application launched and tracked by the Backroom native companion:
+
+- The caller supplies only the already selected registered `appId`; the native process resolves it through its own `launched_app_ids` and tracked child-process registry. A caller-supplied PID is never accepted.
+- The Windows UIA driver requires exactly one visible top-level window for that PID and verifies that the same HWND is the current foreground window.
+- That HWND's complete identity is recorded locally: process ID, native handle, class name and exact bounds.
+- The browser capture must be a monitor. Its frame dimensions, the current Backroom display geometry and the native HWND bounds must match within the explicit geometry tolerances. The selected app must fill the shared monitor; a normal maximized window that leaves taskbar/title-bar gaps remains view-only.
+- The exact HWND, PID, class and bounds are revalidated before each native input action. A focus switch, process exit/replacement, new window, resize or movement invalidates the binding and rejects input.
+- A screen stream may still be shown as view-only if the app identity cannot be proved. It does not create an input grant. Touch/control and draft typing still need their separate local approvals.
+- Browser-selected app-window capture remains view-only even when its size happens to match the native app window.
+
+The source includes unit tests for exact monitor/window dimensions, origin mismatch, HWND/PID/class/bounds replacement, and the absence of a verified binding. The Windows CI build and physical two-monitor/window-switch acceptance must pass before this is treated as accepted on a real computer.

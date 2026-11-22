@@ -682,6 +682,7 @@ struct WindowCaptureBinding {
     process_id: u32,
     handle: String,
     class_name: String,
+    bounds: [i32; 4],
 }
 
 #[derive(Clone)]
@@ -965,14 +966,13 @@ fn set_capture_geometry(
         return Err("Invalid screen capture session or dimensions".into());
     }
 
-    // The web capture picker reports a surface type, not the selected HWND.
-    // A matching process, foreground window and resolution do not prove that
-    // the browser actually captured that same window. Never route OS input to
-    // an unproven capture source. Native HWND-bound capture is required.
+    // The browser picker reports "monitor" or "window", but it does not
+    // disclose the captured HWND. A browser-selected window therefore remains
+    // view-only. For interactive use, bind the *target* independently through
+    // UI Automation to the one Backroom-launched process/window selected here.
     if display_surface == "window" {
-        return Err("Single-window capture is view-only because its native HWND cannot be verified. Share an entire monitor for interactive input.".into());
+        return Err("This app-window stream is view-only because the browser does not disclose its native HWND. For control, launch the app from Backroom and share its full-screen monitor only when its exact app window fills that monitor.".into());
     }
-
     if display_surface != "monitor"
         || !(320..=8_192).contains(&screen_width_css)
         || !(200..=8_192).contains(&screen_height_css)
@@ -983,19 +983,68 @@ fn set_capture_geometry(
     {
         return Err("Unsupported or invalid capture geometry".into());
     }
+    let app_id = app_id.filter(|value| Uuid::parse_str(value).is_ok())
+        .ok_or("Monitor video is view-only. Select an application launched by Backroom before requesting desktop control.")?;
+    let process_id = state.launched_app_ids.lock().map_err(|_| "App identity registry unavailable")?
+        .get(&app_id).copied()
+        .ok_or("The selected application was not launched by this Backroom session. Launch it from Backroom, then share its screen again.")?;
+    {
+        let mut processes = state.desktop_processes.lock().map_err(|_| "Desktop process registry unavailable")?;
+        let child = processes.get_mut(&process_id).ok_or("The selected Backroom-launched application is no longer tracked")?;
+        if child.try_wait().map_err(|_| "Could not inspect the selected application process")?.is_some() {
+            return Err("The selected application exited. Launch it again from Backroom before requesting control.".into());
+        }
+    }
+
     let screen_width = (screen_width_css as f64 * device_scale_factor).round() as u32;
     let screen_height = (screen_height_css as f64 * device_scale_factor).round() as u32;
     let tolerance_x = (screen_width as f64 * 0.02).max(16.0) as u32;
     let tolerance_y = (screen_height as f64 * 0.02).max(16.0) as u32;
     if frame_width.abs_diff(screen_width) > tolerance_x || frame_height.abs_diff(screen_height) > tolerance_y {
-        return Err("Captured monitor does not match this companion display. Move Backroom to the shared monitor and share it again.".into());
+        return Err("Captured monitor does not match this companion display. Move Backroom to the intended monitor and share it again.".into());
     }
+
+    // UIA resolves the unique visible foreground HWND for the exact process
+    // that Backroom launched. Its bounds must match the full monitor capture;
+    // a maximized-but-not-full-screen window, another process, multiple app
+    // windows, a moved window or a stale process is view-only.
+    let window = input_targeting::foreground_window_snapshot_for_process(process_id)?;
+    validate_full_monitor_window_bounds(
+        frame_width, frame_height, screen_width, screen_height,
+        (origin_x_css as f64 * device_scale_factor).round() as i32,
+        (origin_y_css as f64 * device_scale_factor).round() as i32,
+        window.bounds,
+    ).map_err(|_| "The selected Backroom-launched app window does not exactly fill the shared monitor. Use the app's full-screen mode and share that monitor; otherwise the frame remains view-only.".to_string())?;
+    let window_binding = WindowCaptureBinding {
+        app_id, process_id, handle: window.handle,
+        class_name: window.class_name, bounds: window.bounds,
+    };
     state.capture_geometry.lock().map_err(|_| "Capture state unavailable")?.insert(session_id, CaptureGeometry {
         frame_width, frame_height, screen_width, screen_height,
         origin_x: (origin_x_css as f64 * device_scale_factor).round() as i32,
         origin_y: (origin_y_css as f64 * device_scale_factor).round() as i32,
-        window_binding: None,
+        window_binding: Some(window_binding),
     });
+    Ok(())
+}
+
+fn validate_full_monitor_window_bounds(
+    frame_width: u32,
+    frame_height: u32,
+    screen_width: u32,
+    screen_height: u32,
+    origin_x: i32,
+    origin_y: i32,
+    bounds: [i32; 4],
+) -> Result<(), &'static str> {
+    input_targeting::validate_window_capture_dimensions(frame_width, frame_height, bounds)?;
+    input_targeting::validate_window_capture_dimensions(screen_width, screen_height, bounds)?;
+    let tolerance = 8_i32;
+    if bounds[0].abs_diff(origin_x) > tolerance as u32
+        || bounds[1].abs_diff(origin_y) > tolerance as u32
+    {
+        return Err("captured_window_origin_mismatch");
+    }
     Ok(())
 }
 
@@ -1006,6 +1055,7 @@ fn window_binding_matches(
     current.process_id == binding.process_id
         && current.handle == binding.handle
         && current.class_name == binding.class_name
+        && current.bounds == binding.bounds
 }
 
 fn capture_bounds(state: &AppState, geometry: &CaptureGeometry) -> Result<(i32, i32, u32, u32), String> {
@@ -1031,7 +1081,7 @@ fn capture_bounds(state: &AppState, geometry: &CaptureGeometry) -> Result<(i32, 
         let [left, top, right, bottom] = current.bounds;
         return Ok((left, top, right.saturating_sub(left) as u32, bottom.saturating_sub(top) as u32));
     }
-    Ok((geometry.origin_x, geometry.origin_y, geometry.screen_width, geometry.screen_height))
+    Err("This screen session has no verified native application window binding; desktop input is view-only".into())
 }
 
 fn map_normalized_point(
@@ -1866,8 +1916,24 @@ mod native_input_tests {
     }
 
     #[test]
+    fn interactive_monitor_requires_the_exact_foreground_window_to_fill_the_monitor() {
+        assert!(validate_full_monitor_window_bounds(
+            1920,1080,1920,1080,0,0,[0,0,1920,1080]
+        ).is_ok());
+        assert!(validate_full_monitor_window_bounds(
+            1920,1080,1920,1080,0,0,[0,0,1920,1040]
+        ).is_err());
+        assert!(validate_full_monitor_window_bounds(
+            1920,1080,1920,1080,0,0,[40,0,1960,1080]
+        ).is_err());
+        assert!(validate_full_monitor_window_bounds(
+            1920,1080,1920,1080,0,0,[0,0,1920,1080]
+        ).is_ok());
+    }
+
+    #[test]
     fn window_binding_requires_same_process_handle_and_class() {
-        let binding = WindowCaptureBinding { app_id: "123e4567-e89b-42d3-a456-426614174003".into(), process_id: 42, handle: "0x1234".into(), class_name: "Chrome_WidgetWin_1".into() };
+        let binding = WindowCaptureBinding { app_id: "123e4567-e89b-42d3-a456-426614174003".into(), process_id: 42, handle: "0x1234".into(), class_name: "Chrome_WidgetWin_1".into(), bounds: [10, 20, 810, 620] };
         let same = input_targeting::ForegroundWindowSnapshot {
             process_id: 42, handle: "0x1234".into(), class_name: "Chrome_WidgetWin_1".into(), bounds: [10, 20, 810, 620],
         };
@@ -1877,6 +1943,8 @@ mod native_input_tests {
         let mut changed = same.clone(); changed.process_id += 1;
         assert!(!window_binding_matches(&binding, &changed));
         let mut changed = same.clone(); changed.class_name = "OtherWindow".into();
+        assert!(!window_binding_matches(&binding, &changed));
+        let mut changed = same.clone(); changed.bounds[0] += 1;
         assert!(!window_binding_matches(&binding, &changed));
     }
 
@@ -1955,22 +2023,27 @@ mod native_input_tests {
     }
 
     #[test]
-    fn normalized_pointer_maps_to_visible_monitor_pixels() {
-        let state = AppState::default();
-        let g = geometry();
-        assert_eq!(screen_point(&state, &g, 0.0, 0.0).unwrap(), (0, 0));
-        assert_eq!(screen_point(&state, &g, 0.5, 0.5).unwrap(), (960, 540));
-        assert_eq!(screen_point(&state, &g, 1.0, 1.0).unwrap(), (1919, 1079));
+    fn normalized_pointer_maps_to_pixels_inside_a_verified_native_window() {
+        let bounds = (0, 0, 1920, 1080);
+        assert_eq!(map_normalized_point(bounds, 0.0, 0.0).unwrap(), (0, 0));
+        assert_eq!(map_normalized_point(bounds, 0.5, 0.5).unwrap(), (960, 540));
+        assert_eq!(map_normalized_point(bounds, 1.0, 1.0).unwrap(), (1919, 1079));
     }
 
     #[test]
     fn pointer_coordinates_outside_frame_are_rejected() {
+        let bounds = (0, 0, 1920, 1080);
+        assert!(map_normalized_point(bounds, -0.001, 0.5).is_err());
+        assert!(map_normalized_point(bounds, 1.001, 0.5).is_err());
+        assert!(map_normalized_point(bounds, f64::NAN, 0.5).is_err());
+        assert!(map_normalized_point(bounds, 0.5, f64::INFINITY).is_err());
+    }
+
+    #[test]
+    fn monitor_geometry_without_a_native_window_binding_is_view_only() {
         let state = AppState::default();
         let g = geometry();
-        assert!(screen_point(&state, &g, -0.001, 0.5).is_err());
-        assert!(screen_point(&state, &g, 1.001, 0.5).is_err());
-        assert!(screen_point(&state, &g, f64::NAN, 0.5).is_err());
-        assert!(screen_point(&state, &g, 0.5, f64::INFINITY).is_err());
+        assert!(capture_bounds(&state, &g).is_err());
     }
 
     #[test]

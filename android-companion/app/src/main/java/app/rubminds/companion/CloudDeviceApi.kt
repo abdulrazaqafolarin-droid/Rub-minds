@@ -80,4 +80,8 @@ class CloudDeviceApi {
 
     fun status(deviceToken: String): JSONObject =
         post("device/status", deviceToken)
+
+    /** Device-bearer-only completion; callers must source identity digests locally on-device. */
+    fun completeNativeBinding(deviceToken: String, fields: JSONObject): JSONObject =
+        post("android/native-binding-complete", deviceToken, fields)
 }

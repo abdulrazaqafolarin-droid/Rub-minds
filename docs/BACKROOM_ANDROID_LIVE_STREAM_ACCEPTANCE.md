@@ -174,3 +174,33 @@ Android guest virtualization remains a separate gate: this implementation mirror
 | App exposes no stable conversation identity | App remains draft-only for autonomous native participation, even if composer/Send discovery succeeds | **Fail-closed behavior implemented** |
 
 The Android handoff, native execution request, one-shot journal, binding policy and submitted ACK now carry the same SHA-256 provider-conversation digest. The resolver registry is deliberately empty; no ChatGPT or Claude adapter is being claimed. A Rub Minds MCP/AI session ID and an Android screen-share session ID are not provider conversation IDs. A provider adapter must resolve the original conversation locally without uploading its title, transcript or message content, and must prove that conversation A and B remain distinguishable when the UI reuses the same composer/Send nodes.
+
+
+## Collect physical provider-conversation identity evidence (A → B → A)
+
+The provider resolver registry is currently empty. Do not register a ChatGPT or Claude native-send adapter from source inspection, the app package, the visible conversation title, a reused composer/Send node, or an ordinary similarity score. The phone must demonstrate that the provider exposes a stable identifier for the exact current conversation.
+
+Use the disposable A → B → A probe on the actual Android handset. Run it separately for ChatGPT and Claude:
+
+1. Connect and unlock the handset, enable USB debugging, approve this computer's ADB key on the handset, and verify that `adb devices -l` shows exactly the intended device as `device`. Do not continue if the phone is unauthorized or more than one device is ambiguous.
+2. Install Python 3 and Android Platform Tools on the Windows test computer. From the repository root, run one of these commands:
+
+   ```powershell
+   python .\android-companion\scripts\capture_provider_conversation.py --package com.openai.chatgpt --serial <DEVICE_SERIAL>
+   python .\android-companion\scripts\capture_provider_conversation.py --package com.anthropic.claude --serial <DEVICE_SERIAL>
+   ```
+
+3. In the provider app, use only two disposable test conversations with distinct non-sensitive content. At the A1 prompt, open conversation A and wait for it to finish loading. At B, switch to conversation B and wait. At A2, return to the original A and wait again. The script asks for Enter before each capture.
+4. The script creates one randomly named temporary UIAutomator XML on the phone, reads a bounded copy into local memory, and attempts to delete the device file before proceeding to the next capture. It uses an ephemeral HMAC key and prints aggregate similarity metrics only; it does not print or upload conversation titles, accessibility labels, message text or XML. If deletion cannot be confirmed, stop and run the exact `adb shell rm -f` cleanup command printed by the script before doing anything else.
+5. Repeat the sequence for the other provider. Do not send raw XML, screenshots, titles or conversation contents to an issue or chat.
+
+### Interpret the probe conservatively
+
+- `repeatable_distinct_header_signal=true` means only that some non-editable upper-screen accessibility labels repeat for A1/A2 and differ from B. It is a candidate for manual adapter research, **not** proof of a stable provider thread identifier.
+- `composer_control_reused_a_to_b=true` or `send_control_reused_a_to_b=true` demonstrates why those node identities cannot identify the provider conversation.
+- `stable_provider_conversation_id_exposed=false` and `native_send_enabled=false` are expected with the current probe. The tool intentionally does not claim that a thread ID was found.
+- A provider adapter may be implemented only when provider-specific evidence identifies an actual stable thread identifier from a local accessibility node or another approved on-device source, distinguishes A from B, returns the same identifier for A1 and A2, and remains correct when composer and Send nodes are reused. The adapter must retain the raw identifier only locally and expose only its digest to the native wake boundary.
+- A title, a list of header labels, a composer hash, a Send hash, app package, signer, WebView session, group ID or Rub Minds AI session ID is not a substitute for a provider conversation ID.
+- If the app does not expose an exact stable identifier through an approved local interface, record the result as **not supported**. Keep native Send and autonomous Off / On / Auto disabled; draft insertion remains a separate feature.
+
+The ADB capture and parser suites are automated in the Android companion workflow. Only a report produced from the actual handset can establish provider-specific observations. Unit tests with synthetic XML are test-harness checks, not physical acceptance.

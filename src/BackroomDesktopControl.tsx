@@ -18,6 +18,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const [deviceId,setDeviceId] = useState('');
   const [selectedApp,setSelectedApp] = useState('');
   const [loading,setLoading] = useState(false);
+  const [lastUpdatedAt,setLastUpdatedAt] = useState<number|null>(null);
   const [channelReady,setChannelReady] = useState(false);
   const [notice,setNotice] = useState('');
   const [noticeError,setNoticeError] = useState(false);
@@ -60,7 +61,9 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const terminalActionRef=useRef<{requestId:string;action:'draft'|'submit';text?:string}|null>(null);
   const draftGrantTimerRef=useRef<number|null>(null);
   const terminalActionTimerRef=useRef<number|null>(null);
+  const disconnectTimerRef=useRef<number|null>(null);
   const devicesRef=useRef<BackroomDevice[]>([]);
+  const refreshRequestRef=useRef(0);
   const pendingCandidatesRef=useRef(new Map<string,RTCIceCandidateInit[]>());
   const selectedDevice=devices.find(d=>d.device_id===deviceId);
   const apps=(selectedDevice?.desktopApps||[]) as DesktopApp[];
@@ -68,18 +71,42 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
 
   const flash=useCallback((message:string,isError=false)=>{setNotice(message);setNoticeError(isError);},[]);
   const refresh=useCallback(async()=>{
-    if(!roomId)return;
+    const requestId=++refreshRequestRef.current;
+    if(!roomId){
+      devicesRef.current=[];setDevices([]);setLastUpdatedAt(null);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try{
       const list=await listBackroomDevices(roomId);
-      devicesRef.current=list;setDevices(list);
+      // An older response must never replace a newer computer inventory.
+      if(requestId!==refreshRequestRef.current)return;
+      devicesRef.current=list;setDevices(list);setLastUpdatedAt(Date.now());
       const active=list.filter(d=>d.status==='active'&&['windows','macos','linux'].includes(d.platform));
       if(!deviceId&&active[0])setDeviceId(active[0].device_id);
       if(deviceId&&!active.some(d=>d.device_id===deviceId))setDeviceId(active[0]?.device_id||'');
-    }catch(error){flash(error instanceof Error?error.message:'Could not load connected computers.',true);}
-    finally{setLoading(false);}
+    }catch(error){
+      if(requestId===refreshRequestRef.current)
+        flash(error instanceof Error?error.message:'Could not load connected computers.',true);
+    }finally{
+      if(requestId===refreshRequestRef.current)setLoading(false);
+    }
   },[roomId,deviceId,flash]);
   useEffect(()=>{void refresh();},[refresh]);
+  useEffect(()=>{
+    const poll=()=>{
+      if(document.visibilityState!=='visible')return;
+      void refresh();
+    };
+    const timer=window.setInterval(poll,20_000);
+    document.addEventListener('visibilitychange',poll);
+    return ()=>{
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange',poll);
+    };
+  },[refresh]);
+  useEffect(()=>()=>{refreshRequestRef.current++;},[]);
 
   const publish=useCallback(async(event:'command'|'signal',payload:Record<string,unknown>)=>{
     if(!supabase||!deviceId)throw new Error('The authenticated private device channel is not connected.');
@@ -169,6 +196,10 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   };
 
   const closePeer=useCallback(async()=>{
+    if(disconnectTimerRef.current!==null){
+      window.clearTimeout(disconnectTimerRef.current);
+      disconnectTimerRef.current=null;
+    }
     if(terminalActionTimerRef.current!==null){
       window.clearTimeout(terminalActionTimerRef.current);
       terminalActionTimerRef.current=null;
@@ -178,7 +209,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       draftGrantTimerRef.current=null;
     }
     const current=peerRef.current;
-    if(current){current.close();peerRef.current=null;}
+    if(current){peerRef.current=null;current.close();}
     dataRef.current=null;
     pendingCandidatesRef.current.clear();
     incomingStreamRef.current=null;
@@ -295,6 +326,41 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     terminalActionRef.current=null;setTerminalDraftReady(false);setTerminalDraftSending(false);setTerminalInput('');
   },[sendCommand,abandonSession,clearSessionStartTimers,closePeer]);
 
+  const watchPeerConnection=useCallback((pc:RTCPeerConnection,sessionId:string,label:'Screen'|'Terminal')=>{
+    const clearDisconnectTimer=()=>{
+      if(disconnectTimerRef.current!==null){
+        window.clearTimeout(disconnectTimerRef.current);
+        disconnectTimerRef.current=null;
+      }
+    };
+    pc.onconnectionstatechange=()=>{
+      if(peerRef.current!==pc)return;
+      if(pc.connectionState==='connected'){
+        clearDisconnectTimer();
+        return;
+      }
+      if(pc.connectionState==='disconnected'){
+        if(disconnectTimerRef.current!==null)return;
+        flash(label+' connection interrupted. Trying to reconnect for 20 seconds…',true);
+        disconnectTimerRef.current=window.setTimeout(()=>{
+          disconnectTimerRef.current=null;
+          const stillThisSession=peerRef.current===pc&&
+            (screenSessionRef.current===sessionId||terminalPeerRef.current===sessionId);
+          if(stillThisSession&&pc.connectionState!=='connected'){
+            flash(label+' connection did not recover within 20 seconds. The session was stopped.',true);
+            void stopActivePeer();
+          }
+        },20_000);
+        return;
+      }
+      if(pc.connectionState==='failed'||pc.connectionState==='closed'){
+        clearDisconnectTimer();
+        flash(label+' connection '+pc.connectionState+'. The session will stop.',true);
+        void stopActivePeer();
+      }
+    };
+  },[flash,stopActivePeer]);
+
   const launchApp=async()=>{
     if(!selectedApp)return flash('Select an installed application first.',true);
     try{await sendCommand('launch_app',{appId:selectedApp});flash('Launch request sent. Approve it on the computer to continue.');}
@@ -352,12 +418,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
           }
         }
       };
-      pc.onconnectionstatechange=()=>{
-        if(pc.connectionState==='failed'||pc.connectionState==='disconnected'){
-          flash('Terminal data connection interrupted. The local terminal will be stopped.',true);
-          void stopActivePeer();
-        }
-      };
+      watchPeerConnection(pc,peerId,'Terminal');
       const offer=await pc.createOffer();await pc.setLocalDescription(offer);
       await waitForIceGatheringComplete(pc);
       await sendCommand('terminal_start',{sessionId:peerId,offer:{sdp:pc.localDescription?.sdp}});
@@ -383,12 +444,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       const video=videoRef.current;
       if(video&&video.srcObject!==stream)video.srcObject=stream;
     };
-    pc.onconnectionstatechange=()=>{
-      if(pc.connectionState==='failed'||pc.connectionState==='disconnected'){
-        flash('Screen connection interrupted. The local stream will be stopped.',true);
-        void stopActivePeer();
-      }
-    };
+    watchPeerConnection(pc,sessionId,'Screen');
     data.onmessage=event=>{
       let message:any;try{message=JSON.parse(event.data);}catch{return;}
       if(message.kind==='terminal_output'){
@@ -447,14 +503,14 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       await waitForIceGatheringComplete(pc);
       await sendCommand('view_offer',{sessionId,...(selectedApp?{appId:selectedApp}:{}),offer:{sdp:pc.localDescription?.sdp}});
       flash(selectedApp
-        ?'View request sent. Approve it on the computer, then choose a monitor for interactive control (or a single app window for viewing only).'
-        :'View request sent. Approve it on the computer, then choose a monitor for desktop-wide control. A window without a Backroom-launched app identity remains view-only.');
+        ?'View request sent. Approve it on the computer. For control, launch the selected app from Backroom, bring its exact window to the foreground, make it fill the shared monitor, then share that monitor. App-window capture remains view-only.'
+        :'View request sent. Approve it on the computer. Control is available only when the shared monitor geometry matches the exact foreground window of this Backroom-launched app. Otherwise the frame remains view-only.');
     }catch(error){await closePeer();flash(error instanceof Error?error.message:'Could not create the screen-share request.',true);}
   };
 
   const requestControl=async()=>{
     if(!screenSession)return flash('Start a live view first.',true);
-    if(!coordinateControl)return flash('The selected capture could not be securely bound to the expected app window or monitor. Choose the entire monitor for interactive control. Single-window capture is view-only.',true);
+    if(!coordinateControl)return flash('This screen is view-only. Launch the selected app from Backroom, bring its exact window to the foreground, make it fill the shared monitor, and share that monitor. A browser-selected window alone does not prove native window identity.',true);
     try{await sendCommand('request_control',{sessionId:screenSession});flash('Control request sent. Approve it locally on the computer.');}
     catch(error){flash(error instanceof Error?error.message:'Could not request control.',true);}
   };
@@ -653,7 +709,10 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   return <section className="br-panel br-desktop-control">
     <div className="br-desktop-head">
       <div><span className="br-eyebrow"><Monitor size={13}/> ACTUAL COMPUTER</span><h2>Desktop & terminal execution</h2><p>Run installed apps on the registered computer. Requests always require approval on that computer.</p></div>
-      <button type="button" className="br-desktop-refresh" onClick={()=>void refresh()} disabled={loading}><RefreshCw size={14}/>{loading?'Checking…':'Refresh'}</button>
+      <div className="br-desktop-refresh-wrap">
+        {lastUpdatedAt!==null&&<small className="br-desktop-refresh-time" aria-live="polite">Updated {new Date(lastUpdatedAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</small>}
+        <button type="button" className="br-desktop-refresh" onClick={()=>void refresh()} disabled={loading}><RefreshCw size={14}/>{loading?'Checking…':'Refresh'}</button>
+      </div>
     </div>
     {!activeDevices.length?<div className="br-desktop-empty"><Monitor size={27}/><b>No connected desktop companion</b><p>Install and open Rub Minds Backroom Companion on the actual Windows computer. Sign in using the same account and select the group. You do not need a localhost address or pairing code.</p></div>:
       <>
@@ -683,7 +742,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
               {selection&&<div className="br-desktop-selection" style={selectionOverlayStyle()}/>}
             </div>
             <div className="br-desktop-toolbar">
-              <span>{videoReady?'Live computer display':'View request pending'}{coordinateControl?' · monitor geometry verified':' · view-only until capture geometry is verified'}</span>
+              <span>{videoReady?'Live computer display':'View request pending'}{coordinateControl?' · foreground HWND + process + full-monitor bounds verified':' · view-only until native app window identity is verified'}</span>
               <button type="button" onClick={()=>void requestControl()} disabled={!videoReady||!coordinateControl||controlGranted}>Request control</button>
               <button type="button" onClick={()=>{setTargetStatus('');setSelection(null);dragRef.current=null;targetAttemptRef.current='';draftAttemptRef.current='';clearSendControlState();try{sendData({kind:'clear_target'});}catch(error){flash('Could not clear the previous typing target. Stopping this remote session for safety.',true);void stopActivePeer();}setSelectMode(v=>!v);}} disabled={!controlGranted||!draftGranted||!selectedIsWindows||!videoReady}>{selectMode?'Cancel area selection':selectedIsWindows?'Drag-select typing area':'Typing-area targeting unavailable on this OS'}</button>
               <button type="button" onClick={()=>void requestDraftPermission()} disabled={!controlGranted||draftGranted||!selectedIsWindows}><TextCursorInput size={13}/> Request typing permission</button>
@@ -698,7 +757,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
               <textarea value={draft} onChange={e=>setDraft(e.target.value)} rows={2} maxLength={4000} placeholder="Write the text to insert in the selected area. It will never press Enter or Send."/>
               <button type="button" onClick={requestDraft} disabled={!selectedIsWindows||!selection||!targetStatus.startsWith('Verified editable field ·')||!draft.trim()}>Request draft insertion</button>
             </div>}
-            {controlGranted&&<div className="br-desktop-caption">The drag overlay is mapped to the visible video content and Windows UI Automation resolves it to one exact editable field inside the selected app window. A unique nearby Send control may be discovered and rechecked locally; this is read-only and never invokes it. Draft typing has a separate local approval and never sends or presses Enter. Native Windows app Auto wake is not enabled yet; Off / On / Auto currently applies to managed browser composers only.</div>}
+            {controlGranted&&<div className="br-desktop-caption">The frame is interactive only while the foreground HWND, process identity and full-monitor bounds still match the selected Backroom-launched app. The drag overlay then resolves to one exact editable field inside that window. A unique nearby Send control may be discovered and rechecked locally; this is read-only and never invokes it. Draft typing has a separate local approval and never sends or presses Enter. Native Windows app Auto wake is not enabled yet; Off / On / Auto currently applies to managed browser composers only.</div>}
           </div>}
           {(terminalSession||terminalPeerId)&&<div className="br-terminal-remote">
             <div className="br-terminal-remote-head"><SquareTerminal size={15}/> Native terminal · actual computer</div>

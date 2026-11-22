@@ -449,7 +449,10 @@ async function startViewSession(payload){
     await invoke('set_capture_geometry',{
       sessionId,expectedGeneration,frameWidth:settings.width,frameHeight:settings.height,
       screenWidthCss:screen.width,screenHeightCss:screen.height,
-      deviceScaleFactor:devicePixelRatio,originXCss:screen.availLeft||0,originYCss:screen.availTop||0,
+      deviceScaleFactor:devicePixelRatio,
+      // Use the monitor's actual virtual-screen origin, not the work-area
+      // origin: a left/top taskbar changes availLeft/availTop but not screen.left/top.
+      originXCss:screen.left||0,originYCss:screen.top||0,
       displaySurface:settings.displaySurface||'unknown',
       appId
     });
@@ -490,7 +493,9 @@ async function startViewSession(payload){
   await publishSignal(sessionId,{answer:pc.localDescription.toJSON(),canControl});
   await publish('response',{requestId:payload.requestId,ok:true,sessionId,capability:'view'});
   state.streams.set(sessionId,stream);
-  notify('Screen share active. '+(canControl?'Monitor coordinates matched; control can be approved separately.':'View-only: choose the full monitor for coordinate-safe control.'),'success');
+  notify('Screen share active. '+(canControl
+    ? 'The foreground HWND, process identity and full-monitor window bounds match the selected Backroom-launched app. Input still requires separate local approval.'
+    : 'View-only. For control, select an app launched by Backroom, bring its exact window to the foreground, make it fill the shared monitor, and share that monitor. No input is enabled for an unbound screen.'),'success');
 }
 async function publishSignal(sessionId,signal){await state.channel.send({type:'broadcast',event:'signal',payload:{deviceId:state.deviceId,roomId:state.roomId,sessionId,issuedAt:Date.now(),...signal}});}
 async function handleSignal(payload){
