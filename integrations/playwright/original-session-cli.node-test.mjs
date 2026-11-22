@@ -286,6 +286,7 @@ test("provider conversation URLs are exact HTTPS thread URLs without credentials
   assert.throws(() => conversationKey("chatgpt", "https://chatgpt.com/workspace/c/123"), /existing chatgpt conversation/);
   assert.throws(() => conversationKey("claude", "https://claude.ai/projects/abc/chat/123"), /existing claude conversation/);
   assert.throws(() => conversationKey("chatgpt", "https://chatgpt.com/c/%2F123"), /existing chatgpt conversation/);
+  assert.throws(() => conversationKey("chatgpt", "https://chatgpt.com/c/%252F123"), /existing chatgpt conversation/);
   assert.throws(() => conversationKey("claude", "https://claude.ai/chat/%5C123"), /existing claude conversation/);
   assert.throws(() => conversationKey("chatgpt", "https://chatgpt.com/c/"), /existing chatgpt conversation/);
   assert.throws(() => conversationKey("chatgpt", "https://user:pass@chatgpt.com/c/123"), /existing chatgpt conversation/);
