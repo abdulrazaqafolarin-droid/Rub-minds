@@ -110,6 +110,11 @@ export class BrowserCanonicalWakeAdapter {
   try{
    const field=await this.#field();
    if(await this.#read(field)!=='')return {connected:false,focused:false,reason:'composer_occupied'};
+   // Verify the provider-specific response observers before the host consumes
+   // the one-shot wake grant. A syntactically unsupported selector must fail
+   // during preflight, not after a provider action has already been sealed.
+   await this.page.locator(this.assistantSelector).count();
+   await this.page.locator(this.generatingSelector).count();
    const ready=await (this.nodeHandle??field).evaluate(node=>{
     if(!(node instanceof HTMLElement)||!node.isConnected)return false;
     const form=node instanceof HTMLInputElement||node instanceof HTMLTextAreaElement?node.form:node.closest('form');
@@ -124,7 +129,7 @@ export class BrowserCanonicalWakeAdapter {
     return candidates.length===1;
    });
    return ready?{connected:true,focused:true,appId:this.appId,sessionId:this.sessionId,identityFingerprint:this.identityFingerprint,surface:'browser_tab',locatorKinds:['dom']}:{connected:false,focused:false,reason:'unique_send_control_unavailable'};
-  }catch{return {connected:false,focused:false};}
+  }catch{return {connected:false,focused:false,reason:'assistant-response-observer-unavailable'};}
  }
  async execute({command,target}={}){
   if(command?.operation!=='wake'||target?.surface!=='browser_tab'||target.locatorKind!=='dom'||

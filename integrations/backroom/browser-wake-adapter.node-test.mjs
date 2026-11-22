@@ -36,6 +36,9 @@ function fixture(options={}){
  };
  const generatingControls={count:async()=>generating?1:0,nth:()=>({isVisible:async()=>generating})};
  const page={url:()=>currentUrl,isClosed:()=>false,locator:selector=>{
+  if(options.responseObserverUnavailable && (selector===assistantSelector||selector===generatingSelector)) {
+   return {count:async()=>{throw new Error('provider response observer unavailable');}};
+  }
   if(selector===assistantSelector)return assistant;
   if(selector===generatingSelector)return generatingControls;
   return field;
@@ -82,6 +85,14 @@ test('versioned task-assignment event reaches only the bound composer as its exa
  assert.equal(f.submitted(),1);
 });
 
+test('response observers are preflighted before any one-shot wake effect',async()=>{
+ const f=fixture({responseObserverUnavailable:true});
+ const result=await f.adapter.probe({target:f.target,operation:'wake'});
+ assert.equal(result.connected,false);
+ assert.equal(result.focused,false);
+ assert.equal(result.reason,'assistant-response-observer-unavailable');
+ assert.equal(f.submitted(),0);
+});
 test('completion waits for a new stable assistant response, not only composer clearing',async()=>{
  const f=fixture({responseText:'The requested work is complete.'});
  const result=await f.adapter.execute({command:{operation:'wake',eventId,text:prompt},target:f.target});
