@@ -50,6 +50,7 @@ export default function BackroomApp() {
   const [busyRoomIds, setBusyRoomIds] = useState<Set<string>>(() => new Set());
   const busyRoomIdsRef = useRef(new Set<string>());
   const [devicesLoading, setDevicesLoading] = useState(false);
+  const [devicesLoadError, setDevicesLoadError] = useState('');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [showHelp, setShowHelp] = useState(false);
@@ -77,6 +78,7 @@ export default function BackroomApp() {
     refreshRequestRef.current++;
     setDevices([]);
     setEvents([]);
+    setDevicesLoadError('');
     setDevicesLoading(Boolean(nextRoomId));
     setSelectedDeviceId('');
     setPairCode('');
@@ -125,6 +127,7 @@ export default function BackroomApp() {
       return;
     }
     setDevicesLoading(true);
+    setDevicesLoadError('');
     try {
       const [nextDevices, nextEvents] = await Promise.all([
         listBackroomDevices(targetRoom), listBackroomDeviceEvents(targetRoom),
@@ -135,6 +138,11 @@ export default function BackroomApp() {
       setDevices(nextDevices);
       setEvents(nextEvents);
       setLastUpdatedAt(Date.now());
+    } catch (error) {
+      if (requestId === refreshRequestRef.current && targetRoom === roomIdRef.current) {
+        setDevicesLoadError(error instanceof Error ? error.message : 'Could not load this group’s devices.');
+      }
+      throw error;
     } finally {
       if (requestId === refreshRequestRef.current && targetRoom === roomIdRef.current) {
         setDevicesLoading(false);
@@ -166,6 +174,7 @@ export default function BackroomApp() {
     refreshRequestRef.current++;
     setDevices([]);
     setEvents([]);
+    setDevicesLoadError('');
     setDevicesLoading(Boolean(roomId));
     setSelectedDeviceId('');
     setPairCode('');
@@ -301,7 +310,9 @@ export default function BackroomApp() {
           </div> : null}
           {devicesLoading && devices.length === 0
             ? <div className="br-cloud-empty-mini" role="status"><RefreshCw size={21}/><b>Loading device connections</b><span>Checking this group's paired phones and computers.</span></div>
-            : devices.length ? devices.map(device => <article className="br-cloud-device" key={device.device_id}>
+            : devicesLoadError && devices.length === 0
+              ? <div className="br-cloud-empty-mini" role="alert"><CircleAlert size={21}/><b>Could not load devices</b><span>{devicesLoadError}</span><button onClick={() => void refresh(roomId).catch(e => setError(e instanceof Error ? e.message : 'Device refresh failed.'))}>Retry device loading</button></div>
+              : devices.length ? devices.map(device => <article className="br-cloud-device" key={device.device_id}>
             <div className="br-cloud-device-icon">{device.platform === 'android' ? <Smartphone size={19}/> : <Monitor size={19}/>}</div>
             <div className="br-cloud-device-copy">
               <b>{device.device_label}</b>
@@ -338,7 +349,9 @@ export default function BackroomApp() {
               ? <BackroomAndroidControl key={roomId + ':' + activeDevice.device_id} device={activeDevice} roomId={roomId}/>
               : devicesLoading
                 ? <div className="br-cloud-frame-empty" role="status"><RefreshCw size={30}/><b>Loading phone availability</b><p>Checking approved Android devices in this group.</p></div>
-                : <div className="br-cloud-frame-empty">
+                : devicesLoadError
+                  ? <div className="br-cloud-frame-empty" role="alert"><CircleAlert size={30}/><b>Phone availability could not be checked</b><p>{devicesLoadError}</p><button className="br-cloud-primary" onClick={() => void refresh(roomId).catch(e => setError(e instanceof Error ? e.message : 'Device refresh failed.'))}>Retry device loading</button></div>
+                  : <div className="br-cloud-frame-empty">
                   <Smartphone size={34}/><b>No approved Android phone</b>
                   <p>Pair an Android phone, approve it, then open the selected app from the phone frame.</p>
                   {canManageDevices ? <button className="br-cloud-primary" disabled={busy} onClick={() => void createPairing()}>Pair Android phone</button> : null}
