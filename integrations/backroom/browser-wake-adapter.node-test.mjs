@@ -9,6 +9,15 @@ test('only exact canonical @RMconnects prompt can submit via one selected provid
 test('arbitrary text and another event payload are refused before UI execution',async()=>{const f=fixture();await assert.rejects(()=>f.adapter.execute({command:{operation:'wake',eventId,text:prompt+' extra'},target:f.target}),/canonical/);assert.equal(f.submitted(),0);});
 test('stale URL, occupied composer and ambiguous send fail closed',async()=>{const stale=fixture({url:'https://example.test/conversation/2'});await assert.rejects(()=>stale.adapter.execute({command:{operation:'wake',eventId,text:prompt},target:stale.target}),/conversation changed/);const occupied=fixture({occupied:true});await assert.rejects(()=>occupied.adapter.execute({command:{operation:'wake',eventId,text:prompt},target:occupied.target}),/refused before send/);const ambiguous=fixture({ambiguous:true});const result=await ambiguous.adapter.execute({command:{operation:'wake',eventId,text:prompt},target:ambiguous.target});assert.equal(result.state,'needs_review');assert.equal(ambiguous.submitted(),1);});
 test('provider origins must be explicitly supported in the runtime config',()=>{assert.throws(()=>new BrowserCanonicalWakeAdapter({page:{url:()=>'',locator:()=>({})},origin:'https://evil.example',path:'/x',selector:'textarea',appId:'evil',sessionId:'s',identityFingerprint:'x'}),/not approved/);});
+test('Claude marketing origin is not treated as a conversation-capable wake surface',()=>{
+ assert.throws(()=>new BrowserCanonicalWakeAdapter({
+  page:{url:()=> 'https://claude.com/chat/123',locator:()=>({})},
+  origin:'https://claude.com',path:'/chat/123',selector:'textarea',
+  appId:'https://claude.com',sessionId:'s',identityFingerprint:'x',
+  allowedOrigins:['https://claude.com']
+ }),/provider response evidence is unavailable/);
+});
+
 
 test('composer timeout after click is reported uncertain and never re-sends',async()=>{
  const f=fixture({confirmation:false});

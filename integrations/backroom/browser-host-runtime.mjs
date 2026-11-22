@@ -11,7 +11,7 @@ import { WakeAuthorizationAuthority } from "./wake-authorization.mjs";
 import { approvalContext } from "./coordination-dispatch-bridge.mjs";
 import { buildCanonicalWakePrompt, validId } from "./coordination-core.mjs";
 
-const WAKE_PROVIDER_ORIGINS = new Set(["https://claude.ai","https://claude.com","https://chatgpt.com","https://chat.openai.com"]);
+const WAKE_PROVIDER_ORIGINS = new Set(["https://claude.ai","https://chatgpt.com","https://chat.openai.com"]);
 
 const safeSiteUrl = value => {
   try {

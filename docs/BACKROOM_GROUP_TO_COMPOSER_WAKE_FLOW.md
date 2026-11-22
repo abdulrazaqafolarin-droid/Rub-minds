@@ -34,7 +34,7 @@ flowchart TD
     G -->|Windows native| J["Native canonical Send driver is still missing"]
     H --> K["Recheck exact empty composer and unique Send identity"]
     K --> L["Insert fixed event prompt, read back, invoke once"]
-    L --> M["Verify same composer clears; acknowledge durable lease"]
+    L --> M["Verify composer clears and a new stable assistant response appears; then acknowledge lease"]
     I --> N["Paired phone rechecks attestation, consent and one-shot seal"]
     N --> O["Phone stores exact ACK; Edge settles or records late/revoked outcome"]
     M --> P["Original AI reads event through its joined MCP session"]
@@ -159,7 +159,7 @@ Therefore, neither the WebRTC `remote_text` message nor a normal `draft` command
 
 The current host service `createHostWakeService` is explicitly constructed with a trusted `browserRuntime`. It configures a remote queue client and a poller per binding, validates local consent against the exact group/participant/session binding, activates the server-side grant, then starts the local poller. The host stays local and holds the host token; the browser may provide only the public project key and binding/session identifiers.
 
-The browser wake adapter is a distinct canonical trigger operation. It must resolve the exact managed page and composer, recheck the unique Send control and operate only inside the supported managed provider origins. It uses the fixed event prompt rather than user-supplied body text. A composer-clear signal proves a UI transition only; it does not prove that the model produced a response.
+The browser wake adapter is a distinct canonical trigger operation. It resolves the exact managed page and composer, rechecks a unique provider Send control, and operates only on the supported app origins (chatgpt.com, chat.openai.com, and claude.ai). It uses the fixed event prompt rather than user-supplied body text. Before submission it records the assistant-message high-water count. After the composer clears, it requires a new non-empty assistant message in that same URL-bound conversation, no visible provider generation/Stop control, and unchanged response text for a settling window. Only a SHA-256 response fingerprint and confirmation metadata are returned; response text remains local in the provider page. If no new response appears, generation remains active, the conversation changes, or the bounded wait expires, the adapter returns needs_review; it does not resend the trigger. The Claude marketing origin (claude.com) is not a wake target because it has no configured conversation-response contract.
 
 This is the first surface intended for Off / On / Auto. Its source path does not make the feature available to arbitrary browser tabs, native apps, terminals or every provider.
 
@@ -208,16 +208,17 @@ There are two separate acknowledgements:
 
 | Acknowledgement | What it proves | What it does not prove |
 | --- | --- | --- |
-| Durable wake / device ACK | The canonical event trigger reached the selected UI path and the relevant submission evidence was returned. | It does not prove the provider model completed a response or posted anything to Rub Minds. |
+| Managed-browser wake completion | The fixed event trigger was submitted to the exact bound conversation and a new assistant response appeared, stopped streaming, and remained stable locally. | It does not prove that the response was posted to Rub Minds; response text remains inside the provider page. |
+| Android/device ACK | The phone stored its exact device-side command/submission receipt for the selected app/session. | It does not prove that the provider model completed a response or posted anything to Rub Minds. |
 | MCP event/response acknowledgement | The joined AI session read the authorized event and its group response was delivered/recorded through MCP. | It does not by itself prove a particular device UI action was safe. |
 
-After waking, the original AI conversation should use its already joined Rub Minds MCP session to retrieve the exact event ID, load authorized group context, decide whether to respond/defer, call the group-message tool for the response, and acknowledge/update its event cursor idempotently. Backroom must not infer successful participation from the composer clearing.
+For managed-browser wakes, Backroom now separately observes a new stable assistant response in the bound provider conversation; that response is still local provider evidence, not a group post. The original AI conversation must use its already joined Rub Minds MCP session to retrieve the exact event ID, load authorized group context, decide whether to respond/defer, call the group-message tool for the response, and acknowledge/update its event cursor idempotently. Android device ACK remains a device-side submission receipt until its provider resolver and physical acceptance are complete. Backroom must never infer successful participation from composer clearing alone.
 
 ## Current capability matrix
 
 | Surface | Drag-select composer targeting | Manual draft insertion | Send-control check | Group wake delivery | Native Off / On / Auto |
 | --- | --- | --- | --- | --- | --- |
-| Managed browser | Yes, on the managed frame | Yes | Runtime recheck | Managed-browser canonical wake path; acceptance must be evaluated separately from provider response | First intended supported surface |
+| Managed browser | Yes, on the managed frame | Yes | Runtime recheck | Canonical wake plus same-conversation stable assistant-response detection; MCP group post is separate | First intended supported surface |
 | Android Phone Frame | Source-level accessibility-backed selection | Yes, separate IME/WebRTC draft path | Yes, local discovery and recheck | Device attestation, service-role group-lease forwarding, phone ACK outbox and source-level group settlement exist; deployment, provider resolver and physical acceptance remain outstanding | Not available |
 | Windows Desktop Frame | Source-level UIA selection | Yes, separate approved draft path | Yes, local UIA discovery and recheck | No native canonical-wake driver | Not available |
 | Terminal | Separate terminal target/session | Yes, under its own local approval | Not applicable to a chat composer | No native group-wake integration | Not available |
