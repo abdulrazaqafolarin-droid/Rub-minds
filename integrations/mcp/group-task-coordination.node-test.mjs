@@ -207,7 +207,7 @@ test("AI task claim replay is bound to one private per-run UUID and isolated fro
 });
 
 test("AI task claiming requires an explicit human assignment before work begins", () => {
-  assert.match(mcpProtocol, /Claim a task that a human group member has assigned to this participant/);
+  assert.match(mcpProtocol, /Claim a human-assigned task for this exact execution attempt/);
   assert.match(migration, /A human group member must assign this task before an AI can claim it/);
   assert.match(migration, /v_task\.assigned_to_participant_id <> p_participant_id/);
   assert.match(taskAcceptance, /An AI task claim must not cancel its still-leased canonical wake/);

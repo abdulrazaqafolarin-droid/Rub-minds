@@ -382,6 +382,20 @@ try {
   assert.notEqual(lifecycleClaim.isError, true, "assigned AI could not claim its task: " + JSON.stringify(lifecycleClaim));
   assert.equal(lifecycleClaim.structuredContent?.claimed, true);
   assert.equal(lifecycleClaim.structuredContent?.status, "in_progress");
+  const lifecycleClaimReplay = await first.callTool({
+    name: "claim_group_task",
+    arguments: { session_handle: one.session_handle, task_id: lifecycleTaskForOne.id, claim_key: lifecycleClaimKey },
+  });
+  assert.notEqual(lifecycleClaimReplay.isError, true, "the owning runner must recover its exact claim after a lost acknowledgement");
+  assert.equal(lifecycleClaimReplay.structuredContent?.claimed, true);
+  assert.equal(lifecycleClaimReplay.structuredContent?.replayed, true);
+  const lifecycleForeignClaim = await first.callTool({
+    name: "claim_group_task",
+    arguments: { session_handle: one.session_handle, task_id: lifecycleTaskForOne.id, claim_key: randomUUID() },
+  });
+  assert.notEqual(lifecycleForeignClaim.isError, true, "a different runner should receive a structured claim conflict");
+  assert.equal(lifecycleForeignClaim.structuredContent?.claimed, false);
+  assert.equal(lifecycleForeignClaim.structuredContent?.reason, "claim_owned_by_another_runner");
   const lifecycleClaimedDetail = await first.callTool({
     name: "read_group_task",
     arguments: { session_handle: one.session_handle, task_id: lifecycleTaskForOne.id },

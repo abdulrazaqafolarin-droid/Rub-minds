@@ -238,6 +238,10 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261101221342_restrict_group_task_review_service_role_execute.sql
+      - name: Add private per-execution task claim ownership
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261122100000_room_task_execution_claim_keys.sql
       - name: Exercise task lifecycle, dependencies, MCP-scoped AI actions and existing Backroom wake queue
         env:
           PGPASSWORD: postgres

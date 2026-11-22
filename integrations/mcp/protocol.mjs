@@ -365,12 +365,12 @@ export function validateToolArguments(name, args) {
       return null;
     }
     case "read_group_task":
-      if (typeof args.task_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(args.task_id)) return "task_id must be a UUID.";
+      if (typeof args.task_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(args.task_id)) return "task_id must be a UUID.";
       if (Object.keys(args).some(key => key !== "task_id")) return "Unknown task argument.";
       return null;
     case "claim_group_task":
-      if (typeof args.task_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(args.task_id)) return "task_id must be a UUID.";
-      if (typeof args.claim_key !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(args.claim_key)) return "claim_key must be a UUID.";
+      if (typeof args.task_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(args.task_id)) return "task_id must be a UUID.";
+      if (typeof args.claim_key !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(args.claim_key)) return "claim_key must be a UUID.";
       if (Object.keys(args).some(key => !["task_id", "claim_key"].includes(key))) return "Unknown claim_group_task argument.";
       return null;
     case "block_group_task":
