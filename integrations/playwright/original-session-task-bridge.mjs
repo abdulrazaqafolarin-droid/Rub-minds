@@ -264,23 +264,43 @@ export class OriginalSessionTaskBridge {
         state = { ...state, taskVersion: current.version };
         await this.stateStore.save(state, { signal });
       }
+    } else if (current.status !== "in_progress") {
+      await this.stateStore.save(null, { signal });
+      return { status: "stale", submitted: 0 };
+    }
 
-      const claim = await this.claimTask(state.taskId, { signal });
-      if (!isRecord(claim) || claim.claimed !== true) {
-        // Keep the marker: the response may be stale/ambiguous, and a later
-        // read will distinguish an unclaimed task from a committed claim.
+    // A claim key is persisted in claim_pending before the first RPC. The
+    // server binds that key to this exact attempt. Replaying it after a lost
+    // acknowledgement proves ownership; a different runner is not adopted.
+    const claim = await this.claimTask(state.taskId, {
+      claimKey: state.submissionKey,
+      signal,
+    });
+    if (!isRecord(claim) || typeof claim.claimed !== "boolean") {
+      throw new Error("Rub Minds returned an invalid task claim acknowledgement");
+    }
+    if (claim.claimed !== true) {
+      if (claim.reason === "dependencies_incomplete") {
         return { status: "deferred", submitted: 0, taskId: state.taskId };
       }
-      current = await this.#readTask(state.taskId, signal);
-      if (!current) return { status: "deferred", submitted: 0, taskId: state.taskId };
-      if (current.id !== state.taskId ||
-          current.assigned_to_participant_id !== this.participantId) {
-        await this.stateStore.save(null, { signal });
-        return { status: "stale", submitted: 0 };
+      if (claim.reason === "claim_recovery_required") {
+        const reason = "This task was already in progress before run-specific claim ownership was recorded. Human recovery is required before the original provider conversation can be prompted again.";
+        await this.#persistBlockState(state, reason, "block_pending");
+        return { status: "blocked", submitted: 0, taskId: state.taskId, reason };
       }
-      if (current.status === "assigned") {
-        return { status: "deferred", submitted: 0, taskId: state.taskId };
-      }
+      await this.stateStore.save(null, { signal });
+      return { status: "busy", submitted: 0, taskId: state.taskId };
+    }
+
+    current = await this.#readTask(state.taskId, signal);
+    if (!current) return { status: "deferred", submitted: 0, taskId: state.taskId };
+    if (current.id !== state.taskId ||
+        current.assigned_to_participant_id !== this.participantId) {
+      await this.stateStore.save(null, { signal });
+      return { status: "stale", submitted: 0 };
+    }
+    if (current.status === "assigned") {
+      return { status: "deferred", submitted: 0, taskId: state.taskId };
     }
 
     if (current.status !== "in_progress") {

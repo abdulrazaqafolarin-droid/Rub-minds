@@ -525,11 +525,17 @@ export class McpSessionMessageTransport {
     return result;
   }
 
-  async claimTask(taskId, { signal } = {}) {
+  async claimTask(taskId, { claimKey, signal } = {}) {
     if (typeof taskId !== "string" || !UUID_RE.test(taskId)) {
       throw new TypeError("taskId must be a UUID");
     }
-    return await this.callTool("claim_group_task", { task_id: taskId }, { signal });
+    if (typeof claimKey !== "string" || !UUID_RE.test(claimKey)) {
+      throw new TypeError("claimKey must be a UUID");
+    }
+    return await this.callTool("claim_group_task", {
+      task_id: taskId,
+      claim_key: claimKey,
+    }, { signal });
   }
 
   async blockTask(taskId, reason, { signal } = {}) {

@@ -840,6 +840,7 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       p_room_id: connection.room_id,
       p_task_id: args.task_id,
       p_participant_id: connection.participant_id,
+      p_claim_key: args.claim_key,
     });
     if (error || !data) throw new Error("Could not claim this task. It may be assigned elsewhere, blocked by prerequisites, or no longer available.");
     return data;

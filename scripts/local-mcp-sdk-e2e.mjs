@@ -1394,7 +1394,7 @@ try {
 
   const unassignedClaim = await second.callTool({
     name: "claim_group_task",
-    arguments: { session_handle: two.session_handle, task_id: taskId },
+    arguments: { session_handle: two.session_handle, task_id: taskId, claim_key: randomUUID() },
   });
   assert.equal(unassignedClaim.isError, true, "AI participants must not claim an unassigned proposal");
 
@@ -1411,13 +1411,14 @@ try {
 
   const wrongAssigneeClaim = await second.callTool({
     name: "claim_group_task",
-    arguments: { session_handle: two.session_handle, task_id: taskId },
+    arguments: { session_handle: two.session_handle, task_id: taskId, claim_key: randomUUID() },
   });
   assert.equal(wrongAssigneeClaim.isError, true, "a different AI must not claim work assigned to AI one");
 
+  const proposalClaimKey = randomUUID();
   const claimed = await first.callTool({
     name: "claim_group_task",
-    arguments: { session_handle: one.session_handle, task_id: taskId },
+    arguments: { session_handle: one.session_handle, task_id: taskId, claim_key: proposalClaimKey },
   });
   assert.notEqual(claimed.isError, true, "the assigned AI could not claim its task: " + JSON.stringify(claimed));
   assert.equal(claimed.structuredContent?.claimed, true);

@@ -301,6 +301,7 @@ test("task transport can block a claimed assignment for human recovery", async (
 
 test("task transport lists, reads, claims and submits under the same exact MCP participant session", async () => {
   const taskId = "550e8400-e29b-41d4-a716-446655440000";
+  const claimKey = "650e8400-e29b-41d4-a716-446655440001";
   const submissionKey = "650e8400-e29b-41d4-a716-446655440000";
   const resultText = "A reviewed-ready deliverable.";
   const fake = fakeFetch(({ request }) => {
@@ -318,7 +319,9 @@ test("task transport lists, reads, claims and submits under the same exact MCP p
         reviews: [],
       };
     } else if (name === "claim_group_task") {
-      structuredContent = { claimed: true, status: "in_progress" };
+      assert.equal(args.task_id, taskId);
+      assert.equal(args.claim_key, claimKey);
+      structuredContent = { claimed: true, replayed: false, status: "in_progress" };
     } else if (name === "submit_group_task_result") {
       structuredContent = { submitted: true, replayed: false, status: "review" };
     } else {
@@ -330,7 +333,7 @@ test("task transport lists, reads, claims and submits under the same exact MCP p
   const tasks = transport.createTaskAdapters();
   assert.equal((await tasks.listTasks()).tasks.length, 1);
   assert.equal((await tasks.readTask(taskId)).task.id, taskId);
-  assert.equal((await tasks.claimTask(taskId)).claimed, true);
+  assert.equal((await tasks.claimTask(taskId, { claimKey })).claimed, true);
   assert.equal((await tasks.submitTaskResult({
     taskId, result: resultText, submissionKey, sourceMessageIds: [],
   })).submitted, true);
@@ -338,6 +341,7 @@ test("task transport lists, reads, claims and submits under the same exact MCP p
     "list_group_tasks", "read_group_task", "claim_group_task", "submit_group_task_result",
   ]);
   assert.ok(fake.requests.every(item => item.request.params.arguments.session_handle === SESSION));
+  assert.equal(fake.requests[2].request.params.arguments.claim_key, claimKey);
   assert.equal(fake.requests[3].request.params.arguments.submission_key, submissionKey);
   assert.equal(fake.requests[3].request.params.arguments.result, resultText);
 });
@@ -348,7 +352,8 @@ test("task transport rejects malformed identifiers and result payloads before ne
   const transport = new McpSessionMessageTransport({ endpoint: ENDPOINT, sessionHandle: SESSION, fetchImpl });
   const tasks = transport.createTaskAdapters();
   await assert.rejects(() => tasks.readTask("not-a-uuid"), /UUID/);
-  await assert.rejects(() => tasks.claimTask("not-a-uuid"), /UUID/);
+  await assert.rejects(() => tasks.claimTask("not-a-uuid", { claimKey: "650e8400-e29b-41d4-a716-446655440001" }), /UUID/);
+  await assert.rejects(() => tasks.claimTask("550e8400-e29b-41d4-a716-446655440000"), /claimKey must be a UUID/);
   await assert.rejects(() => tasks.submitTaskResult({
     taskId: "550e8400-e29b-41d4-a716-446655440000",
     result: "",

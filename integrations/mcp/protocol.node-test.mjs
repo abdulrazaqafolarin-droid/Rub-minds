@@ -282,7 +282,10 @@ test("group task MCP tools require scoped identities, bounded content, and expli
   assert.match(validateToolArguments("list_group_tasks", { room_id: taskId }), /arguments/);
   assert.equal(validateToolArguments("read_group_task", { task_id: taskId }), null);
   assert.match(validateToolArguments("read_group_task", { task_id: "bad" }), /UUID/);
-  assert.equal(validateToolArguments("claim_group_task", { task_id: taskId }), null);
+  assert.equal(validateToolArguments("claim_group_task", { task_id: taskId, claim_key: submissionKey }), null);
+  assert.match(validateToolArguments("claim_group_task", { task_id: taskId }), /claim_key/);
+  assert.match(validateToolArguments("claim_group_task", { task_id: taskId, claim_key: "bad" }), /claim_key/);
+  assert.match(validateToolArguments("claim_group_task", { task_id: taskId, claim_key: submissionKey, room_id: taskId }), /Unknown/);
   assert.equal(validateToolArguments("block_group_task", { task_id: taskId, reason: "Waiting for the API key owner." }), null);
   assert.match(validateToolArguments("block_group_task", { task_id: taskId, reason: " " }), /reason/);
   assert.equal(validateToolArguments("fail_group_task", { task_id: taskId, reason: "The provider no longer exposes this capability." }), null);

@@ -176,9 +176,10 @@ export const RUB_MINDS_MCP_TOOLS = [
   { name: "read_group_task", description: "Read one task and its prerequisite IDs, submitted results, and review history. The task must belong to the group joined by this session.", inputSchema: objectSchema({
     task_id: { type: "string", format: "uuid" },
   }, ["task_id"]) },
-  { name: "claim_group_task", description: "Claim a task that a human group member has assigned to this participant. The claim is atomic and idempotent, and succeeds only after all prerequisites are complete. AI participants cannot claim unassigned tasks or tasks assigned to another participant.", inputSchema: objectSchema({
+  { name: "claim_group_task", description: "Claim a human-assigned task for this exact execution attempt. Supply a stable claim_key and reuse it only to recover that same attempt after a lost acknowledgement; another runner's claim is not replayed. Prerequisites must be complete, and AI participants cannot claim unassigned tasks or tasks assigned to another participant.", inputSchema: objectSchema({
     task_id: { type: "string", format: "uuid" },
-  }, ["task_id"]) },
+    claim_key: { type: "string", format: "uuid" },
+  }, ["task_id", "claim_key"]) },
   { name: "block_group_task", description: "Mark a task assigned to this participant as blocked and explain what is preventing progress. This does not mark the task complete.", inputSchema: objectSchema({
     task_id: { type: "string", format: "uuid" },
     reason: { type: "string", minLength: 1, maxLength: 2000 },
@@ -364,9 +365,13 @@ export function validateToolArguments(name, args) {
       return null;
     }
     case "read_group_task":
-    case "claim_group_task":
-      if (typeof args.task_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(args.task_id)) return "task_id must be a UUID.";
+      if (typeof args.task_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(args.task_id)) return "task_id must be a UUID.";
       if (Object.keys(args).some(key => key !== "task_id")) return "Unknown task argument.";
+      return null;
+    case "claim_group_task":
+      if (typeof args.task_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(args.task_id)) return "task_id must be a UUID.";
+      if (typeof args.claim_key !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(args.claim_key)) return "claim_key must be a UUID.";
+      if (Object.keys(args).some(key => !["task_id", "claim_key"].includes(key))) return "Unknown claim_group_task argument.";
       return null;
     case "block_group_task":
       if (typeof args.task_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(args.task_id)) return "task_id must be a UUID.";

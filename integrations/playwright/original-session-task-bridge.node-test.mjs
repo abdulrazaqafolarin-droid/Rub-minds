@@ -43,11 +43,14 @@ function taskBridgeFixture({
   adapterResult = "Final risk register with mitigation owners.",
   adapterError = null,
   blockError = false,
+  existingClaimKey = null,
+  claimRecoveryRequired = false,
   submit = async () => ({ submitted: true, replayed: false }),
 } = {}) {
   const calls = { list: 0, read: [], claim: [], block: [], ask: [], submit: [] };
   const stateStore = memoryStore(stored);
   let currentTask = structuredClone(task);
+  let currentClaimKey = existingClaimKey;
   let blockFails = blockError;
   const bridge = new OriginalSessionTaskBridge({
     page: { isClosed: () => false },
@@ -68,9 +71,18 @@ function taskBridgeFixture({
       if (readErrorAt === calls.read.length) throw new Error("read after claim timed out");
       return { task: structuredClone(currentTask), prerequisites: structuredClone(prerequisites), submissions: [], reviews: [] };
     },
-    claimTask: async taskId => {
-      calls.claim.push(taskId);
+    claimTask: async (taskId, { claimKey } = {}) => {
+      calls.claim.push({ taskId, claimKey });
+      if (currentTask.status === "in_progress") {
+        if (claimRecoveryRequired) {
+          return { claimed: false, reason: "claim_recovery_required", status: "in_progress" };
+        }
+        return currentClaimKey === claimKey
+          ? { claimed: true, replayed: true, status: "in_progress" }
+          : { claimed: false, reason: "claim_owned_by_another_runner", status: "in_progress" };
+      }
       if (claimResult.claimed) {
+        currentClaimKey = claimKey;
         currentTask = { ...currentTask, status: "in_progress", version: currentTask.version + 1 };
         if (claimErrorAfterCommit) throw new Error("claim response timed out after commit");
       }
@@ -113,7 +125,9 @@ test("claims only its exact human-assigned participant task, rechecks the post-c
   const result = await fixture.bridge.step({ approved: true });
   assert.deepEqual(result, { status: "submitted", submitted: 1, taskId: TASK_ID, replayed: false });
   assert.equal(fixture.calls.list, 1);
-  assert.deepEqual(fixture.calls.claim, [TASK_ID]);
+  assert.deepEqual(fixture.calls.claim.map(call => call.taskId), [TASK_ID]);
+  assert.match(fixture.calls.claim[0].claimKey, /^[0-9a-f-]{36}$/i);
+  assert.equal(fixture.calls.claim[0].claimKey, fixture.calls.submit[0].submissionKey);
   assert.equal(fixture.calls.read.length, 2);
   assert.equal(fixture.calls.ask.length, 1);
   assert.equal(fixture.calls.ask[0].metadata.kind, "task");
@@ -139,7 +153,7 @@ test("recovers a claim whose post-claim read timed out using persisted claim_pen
 
   const recovered = await fixture.bridge.step({ approved: true });
   assert.deepEqual(recovered, { status: "submitted", submitted: 1, taskId: TASK_ID, replayed: false });
-  assert.equal(fixture.calls.claim.length, 1, "recovery must not issue a second claim");
+  assert.equal(fixture.calls.claim.length, 2, "recovery must replay the exact claim key to prove ownership");
   assert.equal(fixture.calls.ask.length, 1, "the provider is prompted only after claim reconciliation");
   assert.equal(fixture.calls.submit.length, 1);
   assert.deepEqual(fixture.stateStore.current(), null);
@@ -154,7 +168,7 @@ test("recovers a claim whose acknowledgement timed out after commit without clai
 
   const recovered = await fixture.bridge.step({ approved: true });
   assert.deepEqual(recovered, { status: "submitted", submitted: 1, taskId: TASK_ID, replayed: false });
-  assert.equal(fixture.calls.claim.length, 1, "the committed claim must be recovered by read, not repeated");
+  assert.equal(fixture.calls.claim.length, 2, "a retry after a lost ACK must confirm the same server claim key");
   assert.equal(fixture.calls.ask.length, 1);
   assert.equal(fixture.calls.submit.length, 1);
   assert.deepEqual(fixture.stateStore.current(), null);
@@ -194,6 +208,59 @@ test("a concurrent or stale task claim that returns false never opens the provid
   assert.equal(fixture.calls.ask.length, 0);
   assert.equal(fixture.stateStore.current()?.phase, "claim_pending",
     "an unconfirmed claim must keep its recovery marker until a later read reconciles it");
+});
+
+test("a runner with a different claim key cannot resume another runner's in-progress task", async () => {
+  const stored = {
+    schema: 1, phase: "claim_pending", participantId: PARTICIPANT, taskId: TASK_ID,
+    taskVersion: 4, submissionKey: "a50e8400-e29b-41d4-a716-446655440000",
+  };
+  const fixture = taskBridgeFixture({
+    task: taskFixture({ status: "in_progress", version: 5 }),
+    stored,
+    existingClaimKey: "b50e8400-e29b-41d4-a716-446655440000",
+  });
+  const result = await fixture.bridge.step({ approved: true });
+  assert.deepEqual(result, { status: "busy", submitted: 0, taskId: TASK_ID });
+  assert.equal(fixture.calls.claim[0].claimKey, stored.submissionKey);
+  assert.equal(fixture.calls.ask.length, 0);
+  assert.equal(fixture.calls.submit.length, 0);
+  assert.deepEqual(fixture.stateStore.current(), null);
+});
+
+test("a runner with its own persisted claim key can recover the same in-progress task", async () => {
+  const stored = {
+    schema: 1, phase: "claim_pending", participantId: PARTICIPANT, taskId: TASK_ID,
+    taskVersion: 4, submissionKey: "a50e8400-e29b-41d4-a716-446655440000",
+  };
+  const fixture = taskBridgeFixture({
+    task: taskFixture({ status: "in_progress", version: 5 }),
+    stored,
+    existingClaimKey: stored.submissionKey,
+  });
+  const result = await fixture.bridge.step({ approved: true });
+  assert.deepEqual(result, { status: "submitted", submitted: 1, taskId: TASK_ID, replayed: false });
+  assert.equal(fixture.calls.claim[0].claimKey, stored.submissionKey);
+  assert.equal(fixture.calls.ask.length, 1);
+  assert.equal(fixture.calls.submit.length, 1);
+});
+
+test("legacy in-progress tasks without an execution claim ledger are blocked for human recovery", async () => {
+  const stored = {
+    schema: 1, phase: "claim_pending", participantId: PARTICIPANT, taskId: TASK_ID,
+    taskVersion: 4, submissionKey: "a50e8400-e29b-41d4-a716-446655440000",
+  };
+  const fixture = taskBridgeFixture({
+    task: taskFixture({ status: "in_progress", version: 5 }),
+    stored,
+    claimRecoveryRequired: true,
+  });
+  const result = await fixture.bridge.step({ approved: true });
+  assert.equal(result.status, "blocked");
+  assert.equal(fixture.calls.block.length, 1);
+  assert.equal(fixture.currentTask().status, "blocked");
+  assert.equal(fixture.calls.ask.length, 0);
+  assert.equal(fixture.calls.submit.length, 0);
 });
 
 test("a result submission timeout is retried with the exact same result and key without prompting the provider again", async () => {
