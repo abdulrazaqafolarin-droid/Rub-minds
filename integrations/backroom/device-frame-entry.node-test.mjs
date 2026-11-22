@@ -29,7 +29,11 @@ test("Device Frame refreshes visible device state without stale room overwrites"
   assert.match(devices, /setInterval\(poll, 20_000\)/);
   assert.match(devices, /document\.visibilityState !== 'visible'/);
   assert.match(devices, /requestId !== refreshRequestRef\.current/);
-  assert.match(devices, /targetRoom !== roomId/);
+  assert.match(devices, /targetRoom !== roomIdRef\.current/);
+  assert.match(devices, /function changeRoom\(nextRoomId: string\)/);
+  assert.match(devices, /setDevices\(\[\]\)[\s\S]*?setEvents\(\[\]\)[\s\S]*?setSelectedDeviceId\(''\)[\s\S]*?setLastUpdatedAt\(null\)/);
+  assert.match(devices, /roomIdRef\.current !== targetRoom/);
+  assert.match(devices, /onChange=\{event => changeRoom\(event\.target\.value\)\}/);
   assert.match(devices, /lastUpdatedAt/);
 });
 
