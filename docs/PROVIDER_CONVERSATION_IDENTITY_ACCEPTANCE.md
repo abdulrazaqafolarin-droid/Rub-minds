@@ -30,9 +30,9 @@ The script detects one authorized adb device automatically. When multiple device
 3. Switch to a different disposable conversation called **RM identity test B**. Do not send anything. Run the same three commands, changing the local destination to `chat-b.xml`.
 4. Return to conversation A without sending anything. Run the same three commands again, changing the local destination to `chat-a2.xml`.
 5. Analyse the three captures. ChatGPT:
-   `python android-companion/scripts/provider-conversation-probe.py --package com.openai.chatgpt --delete-inputs chat-a1.xml chat-b.xml chat-a2.xml`
+   `python android-companion/scripts/provider_conversation_probe.py --package com.openai.chatgpt --delete-inputs chat-a1.xml chat-b.xml chat-a2.xml`
    Claude:
-   `python android-companion/scripts/provider-conversation-probe.py --package com.anthropic.claude --delete-inputs chat-a1.xml chat-b.xml chat-a2.xml`
+   `python android-companion/scripts/provider_conversation_probe.py --package com.anthropic.claude --delete-inputs chat-a1.xml chat-b.xml chat-a2.xml`
 
 The manual --delete-inputs option removes all three local XML captures even when analysis fails. Both paths accept UTF-8 UIAutomator XML only, reject NUL-bearing UTF-16/UTF-32 payloads, DTD/entity declarations and files over 8 MB, and use a fresh random HMAC key in memory for each run. The probe prints no raw text or accessibility labels and does not upload data. Keep any manual XML captures local and use only disposable test chats.
 
