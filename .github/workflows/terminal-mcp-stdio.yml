@@ -96,3 +96,42 @@ jobs:
           done
           echo "OpenCode did not report the Rub Minds stdio bridge connected after five checks." >&2
           exit 1
+
+  claude-code-client:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Install official Claude Code CLI
+        run: npm install --global @anthropic-ai/claude-code
+      - name: Register and connect the Rub Minds local stdio MCP server
+        env:
+          CLAUDE_CONFIG_DIR: ${{ runner.temp }}/rub-minds-claude-config
+        run: |
+          set -euo pipefail
+          mkdir -p "$CLAUDE_CONFIG_DIR" "$RUNNER_TEMP/rub-minds-claude-workspace"
+          cd "$RUNNER_TEMP/rub-minds-claude-workspace"
+          git init -q
+          claude --version
+          claude mcp add --scope user --transport stdio \
+            --env "RUB_MINDS_MCP_ENDPOINT=https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp" \
+            --env "RUB_MINDS_MCP_API_KEY=rub-minds-public-test-key" \
+            --env "RUB_MINDS_STDIO_E2E_FIXTURE=1" \
+            --env "NODE_OPTIONS=--import=$GITHUB_WORKSPACE/integrations/mcp/stdio-proxy-test-upstream.mjs" \
+            rub_minds -- node "$GITHUB_WORKSPACE/scripts/rub-minds-mcp.mjs" --stdio
+          output=""
+          for attempt in 1 2 3 4 5; do
+            output="$(claude mcp get rub_minds 2>&1 || true)"
+            printf 'Claude Code MCP check %s:\\n%s\\n' "$attempt" "$output"
+            if grep -Fq "rub_minds" <<<"$output" && grep -Eqi "Connected|connected" <<<"$output"; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Claude Code did not report the Rub Minds stdio bridge connected after five checks." >&2
+          exit 1
