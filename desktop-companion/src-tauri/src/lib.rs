@@ -5,9 +5,10 @@ use std::{
     path::{Path, PathBuf},
     process::{Child as NativeChild, Command},
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use ed25519_dalek::SigningKey;
 use enigo::{Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings};
 use keyring::Entry;
@@ -152,7 +153,80 @@ fn device_identity() -> Result<DeviceIdentity, String> {
     Ok(DeviceIdentity { device_id, device_public_key, platform: current_platform() })
 }
 
-fn validate_supabase_config(url: &str, publishable_key: &str, access_token: &str) -> Result<String, String> {
+fn decode_jwt_claims(token: &str) -> Option<Value> {
+    let parts = token.split('.').collect::<Vec<_>>();
+    if parts.len() != 3 || parts.iter().any(|part| part.is_empty()) {
+        return None;
+    }
+    let decoded = URL_SAFE_NO_PAD.decode(parts[1]).ok()?;
+    serde_json::from_slice(&decoded).ok()
+}
+
+fn supabase_project_ref(host: &str) -> Option<&str> {
+    let (reference, suffix) = host.split_once(".supabase.")?;
+    if reference.is_empty() || reference.contains('.') || !matches!(suffix, "co" | "in") {
+        return None;
+    }
+    Some(reference)
+}
+
+fn validate_public_supabase_key(
+    url: &reqwest::Url,
+    local_dev: bool,
+    value: &str,
+) -> Result<(), String> {
+    let invalid = || "Only a Supabase public publishable key or legacy anon API key is allowed. Secret, service-role and authenticated-user JWTs are forbidden.".to_string();
+    if value.len() > 4096 || value.trim() != value || value.chars().any(char::is_whitespace) {
+        return Err(invalid());
+    }
+
+    if let Some(suffix) = value.strip_prefix("sb_publishable_") {
+        if suffix.len() >= 20 && suffix.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-') {
+            return Ok(());
+        }
+        return Err(invalid());
+    }
+
+    let claims = decode_jwt_claims(value).ok_or_else(invalid)?;
+    if claims.get("iss").and_then(Value::as_str) != Some("supabase")
+        || claims.get("role").and_then(Value::as_str) != Some("anon")
+    {
+        return Err(invalid());
+    }
+
+    let expected_ref = url.host_str().and_then(supabase_project_ref);
+    if let Some(expected_ref) = expected_ref {
+        if claims.get("ref").and_then(Value::as_str) != Some(expected_ref) {
+            return Err(invalid());
+        }
+    } else if !local_dev {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+fn validate_user_access_token(value: &str) -> Result<(), String> {
+    let invalid = || "A valid signed-in Rub Minds user session is required.".to_string();
+    if value.len() < 80 || value.len() > 8192 || value.trim() != value || value.chars().any(char::is_whitespace) {
+        return Err(invalid());
+    }
+    let claims = decode_jwt_claims(value).ok_or_else(invalid)?;
+    if claims.get("iss").and_then(Value::as_str) != Some("supabase")
+        || claims.get("role").and_then(Value::as_str) != Some("authenticated")
+        || claims.get("sub").and_then(Value::as_str).and_then(|subject| Uuid::parse_str(subject).ok()).is_none()
+    {
+        return Err(invalid());
+    }
+    let expires_at = claims.get("exp").and_then(Value::as_i64).ok_or_else(invalid)?;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)
+        .map_err(|_| invalid())?.as_secs() as i64;
+    if expires_at <= now {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+fn validate_supabase_config(url: &str, publishable_key: &str) -> Result<String, String> {
     let parsed = reqwest::Url::parse(url.trim())
         .map_err(|_| "Invalid Supabase project URL".to_string())?;
     let host = parsed.host_str().unwrap_or_default().to_ascii_lowercase();
@@ -163,15 +237,12 @@ fn validate_supabase_config(url: &str, publishable_key: &str, access_token: &str
         && matches!(host.as_str(), "localhost" | "127.0.0.1" | "[::1]")
         && parsed.port().is_some();
     let supabase_project = parsed.scheme() == "https"
-        && (host.ends_with(".supabase.co") || host.ends_with(".supabase.in"))
+        && supabase_project_ref(&host).is_some()
         && parsed.port().map(|port| port == 443).unwrap_or(true);
     if has_credentials || has_extra_url_parts || (!local_dev && !supabase_project) {
         return Err("Only a valid HTTPS Supabase project URL is allowed (localhost is debug-only)".into());
     }
-    if publishable_key.trim().len() < 20 || publishable_key.contains(char::is_whitespace) ||
-       access_token.len() < 80 || access_token.contains(char::is_whitespace) {
-        return Err("A valid signed-in Rub Minds session is required".into());
-    }
+    validate_public_supabase_key(&parsed, local_dev, publishable_key)?;
     Ok(parsed.origin().ascii_serialization().trim_end_matches('/').to_string())
 }
 
@@ -201,7 +272,8 @@ async fn register_desktop_device(app: AppHandle, args: RegisterDeviceArgs) -> Re
     require_native_confirmation(&app, "Connect this computer to Rub Minds?", &format!(
         "Register this computer as a Backroom device for group {}. The selected application inventory will share labels and executable fingerprints, not file contents or application sessions.", args.room_id
     )).await?;
-    let base = validate_supabase_config(&args.supabase_url, &args.publishable_key, &args.access_token)?;
+    let base = validate_supabase_config(&args.supabase_url, &args.publishable_key)?;
+    validate_user_access_token(&args.access_token)?;
     if Uuid::parse_str(&args.room_id).is_err() || args.device_label.trim().is_empty() ||
        args.device_label.len() > 80 || args.os_version.len() > 40 ||
        args.app_version.trim().is_empty() || args.app_version.len() > 40 {
@@ -301,7 +373,8 @@ async fn revoke_desktop_device(
     if vault_get("device-token")?.is_none() {
         return Err("This computer is not registered".into());
     }
-    let base = validate_supabase_config(&supabase_url, &publishable_key, &access_token)?;
+    let base = validate_supabase_config(&supabase_url, &publishable_key)?;
+    validate_user_access_token(&access_token)?;
     if Uuid::parse_str(&room_id).is_err() || Uuid::parse_str(&device_id).is_err() {
         return Err("Invalid group or device identity".into());
     }
@@ -345,7 +418,7 @@ async fn sync_desktop_app_inventory(
         }
     }
     let token = vault_get("device-token")?.ok_or("This computer is not registered")?;
-    let base = validate_supabase_config(&supabase_url, &publishable_key, &"x".repeat(100))?;
+    let base = validate_supabase_config(&supabase_url, &publishable_key)?;
     let payload = apps.iter().map(|app| json!({
         "appId":app.id,"label":app.label,"sha256":app.sha256.to_ascii_lowercase()
     })).collect::<Vec<_>>();
@@ -386,7 +459,7 @@ async fn desktop_device_status(
     let token = vault_get("device-token")?.ok_or("This computer is not registered")?;
     let device_id = vault_get("device-id")?.ok_or("This computer has no saved identity")?;
     let room_id = vault_get("device-room-id")?.unwrap_or_default();
-    let base = validate_supabase_config(&supabase_url, &publishable_key, &"x".repeat(100))?;
+    let base = validate_supabase_config(&supabase_url, &publishable_key)?;
     let client = Client::builder().timeout(Duration::from_secs(10)).build()
         .map_err(|_| "Could not initialize secure network transport".to_string())?;
     let response = client
@@ -459,7 +532,7 @@ async fn close_desktop_session(
     if Uuid::parse_str(&device_id).is_err() || Uuid::parse_str(&room_id).is_err() {
         return Err("Stored device identity is invalid".into());
     }
-    let base = validate_supabase_config(&supabase_url, &publishable_key, &"x".repeat(100))?;
+    let base = validate_supabase_config(&supabase_url, &publishable_key)?;
     let response = Client::builder().timeout(Duration::from_secs(10)).build()
         .map_err(|_| "Could not initialize secure network transport".to_string())?
         .post(format!("{base}/functions/v1/backroom-device"))
@@ -1880,10 +1953,32 @@ mod native_input_tests {
         assert!(!window_binding_matches(&binding, &changed));
     }
 
+    fn test_jwt(claims: Value) -> String {
+        let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
+        format!("e30.{payload}.test-signature")
+    }
+
+    fn test_access_token() -> String {
+        let expires_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64 + 3600;
+        test_jwt(json!({
+            "iss": "supabase",
+            "role": "authenticated",
+            "sub": Uuid::new_v4().to_string(),
+            "exp": expires_at
+        }))
+    }
+
+    fn test_anon_key(project_ref: &str) -> String {
+        test_jwt(json!({
+            "iss": "supabase",
+            "role": "anon",
+            "ref": project_ref
+        }))
+    }
+
     #[test]
     fn supabase_endpoint_validation_rejects_token_exfiltration_hosts() {
         let key = "sb_publishable_abcdefghijklmnopqrstuvwxyz";
-        let token = "a".repeat(100);
         for attacker in [
             "https://evil.example",
             "https://project.supabase.co.attacker.example",
@@ -1891,50 +1986,64 @@ mod native_input_tests {
             "https://project.supabase.co/path",
             "https://project.supabase.co?redirect=https://evil.example",
             "https://project.supabase.co#fragment",
+            "https://nested.project.supabase.co",
             "http://project.supabase.co",
         ] {
-            assert!(validate_supabase_config(attacker, key, &token).is_err(), "accepted {attacker}");
+            assert!(validate_supabase_config(attacker, key).is_err(), "accepted {attacker}");
         }
     }
 
     #[test]
-    fn supabase_endpoint_validation_accepts_project_hosts_and_debug_loopback() {
-        let key = "sb_publishable_abcdefghijklmnopqrstuvwxyz";
-        let token = "a".repeat(100);
+    fn supabase_endpoint_validation_accepts_publishable_and_project_bound_anon_keys() {
+        let publishable = "sb_publishable_abcdefghijklmnopqrstuvwxyz";
         assert_eq!(
-            validate_supabase_config("https://project-ref.supabase.co/", key, &token).unwrap(),
+            validate_supabase_config("https://project-ref.supabase.co/", publishable).unwrap(),
             "https://project-ref.supabase.co"
         );
         assert_eq!(
-            validate_supabase_config("https://project-ref.supabase.in", key, &token).unwrap(),
+            validate_supabase_config("https://project-ref.supabase.in", publishable).unwrap(),
             "https://project-ref.supabase.in"
         );
+        let anon_key = test_anon_key("project-ref");
+        assert_eq!(
+            validate_supabase_config("https://project-ref.supabase.co", &anon_key).unwrap(),
+            "https://project-ref.supabase.co"
+        );
         if cfg!(debug_assertions) {
-            assert_eq!(
-                validate_supabase_config("http://127.0.0.1:54321", key, &token).unwrap(),
-                "http://127.0.0.1:54321"
-            );
-            assert_eq!(
-                validate_supabase_config("http://localhost:54321", key, &token).unwrap(),
-                "http://localhost:54321"
-            );
+            assert!(validate_supabase_config("http://127.0.0.1:54321", &test_anon_key("local-dev")).is_ok());
+            assert!(validate_supabase_config("http://localhost:54321", &test_anon_key("local-dev")).is_ok());
         } else {
-            assert!(validate_supabase_config("http://127.0.0.1:54321", key, &token).is_err());
+            assert!(validate_supabase_config("http://127.0.0.1:54321", &test_anon_key("local-dev")).is_err());
         }
     }
 
     #[test]
-    fn supabase_endpoint_validation_requires_publishable_key_and_user_session() {
-        assert!(validate_supabase_config(
-            "https://project-ref.supabase.co",
-            "short",
-            &"a".repeat(100)
-        ).is_err());
-        assert!(validate_supabase_config(
-            "https://project-ref.supabase.co",
-            "sb_publishable_abcdefghijklmnopqrstuvwxyz",
-            "short"
-        ).is_err());
+    fn supabase_api_key_validation_rejects_secret_service_role_user_and_wrong_project_keys() {
+        let wrong_roles = [
+            test_jwt(json!({"iss":"supabase","role":"service_role"})),
+            test_jwt(json!({"iss":"supabase","role":"authenticated","sub":Uuid::new_v4().to_string()})),
+            test_jwt(json!({"iss":"supabase","role":"anon","ref":"another-project"})),
+            "sb_secret_do_not_embed".to_string(),
+            "not-a-supabase-api-key".to_string(),
+            "sb_publishable_".to_string(),
+        ];
+        for key in wrong_roles {
+            assert!(
+                validate_supabase_config("https://project-ref.supabase.co", &key).is_err(),
+                "accepted unsafe API key format"
+            );
+        }
+    }
+
+    #[test]
+    fn native_supabase_access_token_requires_an_unexpired_authenticated_user_jwt() {
+        assert!(validate_user_access_token(&test_access_token()).is_ok());
+        assert!(validate_user_access_token(&test_anon_key("project-ref")).is_err());
+        assert!(validate_user_access_token(&test_jwt(json!({"iss":"supabase","role":"service_role"}))).is_err());
+        assert!(validate_user_access_token(&test_jwt(json!({
+            "iss":"supabase","role":"authenticated","sub":Uuid::new_v4().to_string(),"exp":1
+        }))).is_err());
+        assert!(validate_user_access_token("not-a-jwt").is_err());
     }
 
     #[test]
