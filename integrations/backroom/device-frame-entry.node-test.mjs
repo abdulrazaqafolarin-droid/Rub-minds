@@ -18,6 +18,9 @@ test("Backroom exposes only authenticated real device frames", async () => {
   assert.doesNotMatch(entry, /BackroomSimulatorApp|Browser runtime/);
   assert.match(devices, /Device connections/);
   assert.match(devices, /roomsLoading/);
+  assert.match(devices, /roomsLoadRequestRef = useRef\(0\)/);
+  assert.match(devices, /requestId !== roomsLoadRequestRef\.current/);
+  assert.match(devices, /if \(requestId === roomsLoadRequestRef\.current\) setRoomsLoading\(false\)/);
   assert.match(devices, /Loading groups…/);
   assert.match(devices, /Loading your groups/);
   assert.match(devices, /Android phone/);
