@@ -65,7 +65,7 @@ jobs:
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP/rub-minds-opencode-workspace"
-          output="$(opencode --standalone mcp list --print-logs 2>&1)"
+          output="$(opencode mcp list --print-logs 2>&1)"
           printf '%s\n' "$output"
           grep -Fq "rub_minds" <<<"$output"
           grep -Eqi "connected|ready" <<<"$output"
