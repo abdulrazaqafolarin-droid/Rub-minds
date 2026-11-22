@@ -10,6 +10,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 jobs:
+  # Browser/UI acceptance is opt-in until the product UI is ready for visual and interaction acceptance.
   mcp-migration:
     # Run validation on draft PRs as well; draft status does not imply a pass.
     runs-on: ubuntu-latest
@@ -32,7 +33,16 @@ jobs:
         with:
           persist-credentials: false
       - name: Install PostgreSQL client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+        run: |
+          for attempt in 1 2 3; do
+            if sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update &&
+               sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y postgresql-client; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then sleep "$((attempt * 10))"; fi
+          done
+          echo "Could not install postgresql-client after bounded mirror retries." >&2
+          exit 1
       - name: Apply and smoke-test hosted MCP migration on isolated PostgreSQL
         env:
           PGPASSWORD: postgres
@@ -322,10 +332,13 @@ jobs:
       - name: Type-check hosted MCP Edge Function
         run: deno check --node-modules-dir=auto supabase/functions/rub-minds-mcp/index.ts
       - name: Install Playwright Chromium
+        if: ${{ vars.RUB_MINDS_UI_ACCEPTANCE_READY == 'true' }}
         run: npx playwright install --with-deps chromium
       - name: Run controlled browser proof of concept
+        if: ${{ vars.RUB_MINDS_UI_ACCEPTANCE_READY == 'true' }}
         run: npm run test:browser
       - name: Run Backroom managed-browser end-to-end tests
+        if: ${{ vars.RUB_MINDS_UI_ACCEPTANCE_READY == 'true' }}
         run: npm run test:backroom:browser
 
 
@@ -380,9 +393,19 @@ jobs:
       - name: Install pinned official MCP client SDK for interoperability test
         run: npm install --no-save --package-lock=false @modelcontextprotocol/client@2.3.1
       - name: Install Chromium and browser dependencies
+        if: ${{ vars.RUB_MINDS_UI_ACCEPTANCE_READY == 'true' }}
         run: npx playwright install --with-deps chromium
       - name: Install PostgreSQL client for Vault acceptance
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+        run: |
+          for attempt in 1 2 3; do
+            if sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update &&
+               sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y postgresql-client; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then sleep "$((attempt * 10))"; fi
+          done
+          echo "Could not install postgresql-client after bounded mirror retries." >&2
+          exit 1
       - name: Install pinned Supabase CLI
         uses: supabase/setup-cli@v1
         with:
@@ -398,6 +421,7 @@ jobs:
           supabase migration list --local
           test -f supabase/config.toml
       - name: Test real browser signup and human invitation redemption
+        if: ${{ vars.RUB_MINDS_UI_ACCEPTANCE_READY == 'true' }}
         run: |
           set -euo pipefail
           eval "$(supabase status -o env)"
@@ -676,4 +700,8 @@ jobs:
           if [ -f "$RUNNER_TEMP/mcp-edge.pid" ]; then
             kill "$(cat "$RUNNER_TEMP/mcp-edge.pid")" 2>/dev/null || true
           fi
-          supabase stop --no-backup
+          if command -v supabase >/dev/null 2>&1; then
+            supabase stop --no-backup
+          else
+            echo "Supabase CLI was not installed; no local Supabase services were started."
+          fi

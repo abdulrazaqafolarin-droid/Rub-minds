@@ -282,7 +282,10 @@ test("group task MCP tools require scoped identities, bounded content, and expli
   assert.match(validateToolArguments("list_group_tasks", { room_id: taskId }), /arguments/);
   assert.equal(validateToolArguments("read_group_task", { task_id: taskId }), null);
   assert.match(validateToolArguments("read_group_task", { task_id: "bad" }), /UUID/);
-  assert.equal(validateToolArguments("claim_group_task", { task_id: taskId }), null);
+  assert.equal(validateToolArguments("claim_group_task", { task_id: taskId, claim_key: submissionKey }), null);
+  assert.match(validateToolArguments("claim_group_task", { task_id: taskId }), /claim_key/);
+  assert.match(validateToolArguments("claim_group_task", { task_id: taskId, claim_key: "bad" }), /claim_key/);
+  assert.match(validateToolArguments("claim_group_task", { task_id: taskId, claim_key: submissionKey, room_id: taskId }), /Unknown/);
   assert.equal(validateToolArguments("block_group_task", { task_id: taskId, reason: "Waiting for the API key owner." }), null);
   assert.match(validateToolArguments("block_group_task", { task_id: taskId, reason: " " }), /reason/);
   assert.equal(validateToolArguments("fail_group_task", { task_id: taskId, reason: "The provider no longer exposes this capability." }), null);
@@ -461,13 +464,23 @@ test("read_group_messages validates composite pagination and bounded page sizes"
 
 test("MCP discovery defines the safe Backroom wake response and recovery protocol",()=>{
   assert.match(MCP_DISCOVERY_INSTRUCTIONS,/read_group_message/);
-  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/Event UUID/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/Event value/);
   assert.match(MCP_DISCOVERY_INSTRUCTIONS,/load_original_session_bridge_state/);
   assert.match(MCP_DISCOVERY_INSTRUCTIONS,/pending_response/);
   assert.match(MCP_DISCOVERY_INSTRUCTIONS,/source_message_id/);
   assert.match(MCP_DISCOVERY_INSTRUCTIONS,/revision conflict/);
   assert.match(MCP_DISCOVERY_INSTRUCTIONS,/does not confirm group delivery/);
   assert.match(MCP_DISCOVERY_INSTRUCTIONS,/provider-side tool permission prompts cannot be bypassed/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/task_<task UUID>_v<positive version>/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/never pass this value to read_group_message/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/assigned_to_participant_id is this joined participant/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/submit_group_task_result/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/same result with the same key/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/active, write-capable Rub Minds MCP connection/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/For message events only/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/For a new message event only/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/Never run this message-page workflow for a task event/);
+  assert.match(MCP_DISCOVERY_INSTRUCTIONS,/Task-event processing uses the task record and its submission_key/);
 });
 
 test("exact group-message lookup is UUID-scoped and rejects unknown inputs",()=>{

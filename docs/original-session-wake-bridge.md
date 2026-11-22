@@ -105,23 +105,24 @@ The startup baseline read is deliberately independent of `maxMessagesPerStep`. T
 
 The transport requires HTTPS except for explicit loopback development, rejects endpoints containing URL credentials/query tokens, validates the session-handle shape, uses bounded request timeouts and propagates cancellation, and does not log or expose the session handle. Its tests use a fake fetch implementation; they verify protocol framing and fail-closed behavior without making provider or production requests.
 
-## Task-assignment event boundary — current integration gap
+## Task-assignment event routing — host-backed path
 
-The current original-session Playwright bridge is **message-driven, not yet a general group-event consumer**:
+The task-assignment path is separate from message paging and uses the existing durable Backroom queue; it does not create a second queue or reuse the message cursor.
 
-- `SupabaseRealtimeWakeSource` subscribes only to `INSERT` events on `public.messages` for its room.
-- `McpSessionMessageTransport.waitForWake()` calls `wait_for_group_messages`; `readMessages()` calls `read_group_messages`.
-- `PlaywrightSessionBridge.step()` reads ordered messages, prompts the existing provider conversation for eligible new messages, and returns the answer to the group. It does not call `list_group_tasks`, `read_group_task`, or a task-event wait tool.
-- A heartbeat timeout causes another message read. It does **not** poll `room_tasks`.
+- `room_tasks` assignment/release triggers create an event ID with the exact shape `task_<task UUID>_v<version>`. The fixed `@RMconnects` prompt carries only that event ID; it does not copy the task description or group message into the composer.
+- The task trigger selects only an active, joined AI participant with an enabled, owner-consented `participation_mode='task'` binding, valid MCP credential and non-expired wake grant. The active binding is unique per room/participant/session digest, preventing multiple active host bindings for the same participant session.
+- The durable queue provides a bounded lease, retry, acknowledgement, expiry and cancellation path. Reassignment, content/version changes, cancellation, failure and prerequisite changes cancel stale pending/leased events; task claim does not cancel the wake currently being delivered.
+- The host verifies the exact host, session digest, binding, target revision and provider-conversation identity, then the selected adapter can submit only the fixed canonical prompt. It does not send arbitrary task text or grant general app control.
 
-Group task assignment is a separate server-side event source. The database task-assignment trigger admits a durable `backroom_wake_jobs` event for an eligible task-mode input binding. The host-backed Backroom worker can then route its canonical `@RMconnects` trigger through the authorized, selected surface, subject to the host/device grant, exact target and platform capability. This is a separate path from the standalone original-session Playwright runner.
+The consumer contract now distinguishes both event forms in `MCP_DISCOVERY_INSTRUCTIONS`:
 
-The MCP server does expose `list_group_tasks`, `read_group_task`, `claim_group_task`, `block_group_task`, `fail_group_task`, and `submit_group_task_result`. A directly connected MCP client can use those tools while it is active, but the current Playwright bridge does not automatically discover a new task assignment without a separate message or host-backed wake. It must not be described as doing so.
+1. A normal UUID is a message event and may be fetched with `read_group_message`.
+2. `task_<UUID>_v<positive version>` is a task event and must **never** be passed to `read_group_message`. The AI calls `read_group_task` for the UUID, verifies the exact event version, assignee, `assigned` status and completed prerequisites, then calls `claim_group_task`. After claiming, it re-reads and confirms the task is still assigned to itself and `in_progress` before working.
+3. Results are submitted with `submit_group_task_result` and a stable UUID idempotency key. A network-ambiguous retry must use the same result and key. `block_group_task` and `fail_group_task` are reserved for recoverable and terminal inability respectively. Human review remains the only completion authority.
 
-**Current continuity contract:** message-driven participation is implemented in the foreground runner; task-assignment wake is implemented in the separate durable Backroom queue path when an eligible host-scoped input binding and wake grant exist; direct MCP clients can explicitly poll task tools while active. A task assignment does not arrive through `wait_for_group_messages` by itself.
+The database acceptance in `supabase/tests/group_task_coordination.sql` already covers the assignment trigger, exact versioned event ID, canonical prompt, dependency release, reassignment/cancellation, claim, failure and downstream dependency handling. This branch adds JavaScript regressions proving that a versioned task event remains unchanged through the durable host dispatcher and the selected browser composer. The queue acknowledgement still means only that the trigger was submitted to the composer and cleared. It is not proof that the AI called the MCP tools, claimed the task, produced a result or received human approval.
 
-**Required Stage A follow-up:** add a durable task-event consumer to the original-session runner (including assigned-task identity, idempotent claim, pending provider result, submit/retry/review handling and recovery), or deliberately keep task wake dependent on the separate authorized Backroom worker and validate that path for every supported surface. Do not make the runner's existing message cursor double as a task cursor, and do not claim task continuity from a message-only heartbeat.
-
+**Provider boundary:** the host-backed task route requires the selected conversation to have an active, write-capable Rub Minds MCP connection. The wake cannot bypass provider-side tool permissions. If those tools are absent or denied, the task remains unclaimed and the AI must report that limitation. The standalone local runner now has a separate task-polling path described below. It does not receive task events through the message Realtime subscription, and task polling never advances or reuses the message cursor.
 
 The factory has a dedicated fake-adapter integration test for this complete composition. Local disposable CI also exercises the concrete HTTP transport against the actual hosted-MCP Edge Function endpoint, verifying a read/send/read roundtrip with a stable `source_message_id`. This verifies the Rub Minds transport wiring, not ChatGPT/Claude page selectors or idle-thread activation.
 
@@ -157,8 +158,28 @@ Failures known to occur before submission are tagged `submissionState: "not_subm
 
 These adapters are experimental integration scaffolding, not evidence of working live ChatGPT/Claude control. Their tests use fake page objects; **no real provider conversation was opened or prompted by CI**. Real authenticated-browser verification, UI compatibility, stop/regenerate/error handling and exact answer extraction remain acceptance-test blockers. Do not export cookies or credentials or try to bypass a provider's authentication or client restrictions.
 
+**Provider integration boundary:** Claude supports user-configured remote custom MCP connectors, including on Free accounts, but the Rub Minds connector has not yet been exercised in a real Claude account. ChatGPT Free is not documented as supporting custom remote MCP connectors with write-capable tools. The local Playwright runner is the separate foreground browser route for ChatGPT Free: it reads/writes group messages through its scoped Rub Minds transport and polls assigned tasks through the separate task API, with explicit `SEND` and `TASK` approval. It does not grant the provider arbitrary MCP tools, does not receive task-event push, and does not provide automatic/background wake while the laptop or provider tab is unavailable. Do not claim ChatGPT Free can directly call the task tools through a custom MCP connector. A real authenticated Staging round trip for each provider remains mandatory.
+
 The adapter safety tests run under both `npm run test:runtime` and `npm run test:original-wake`, including group-context wrapping, sender-label sanitization, explicit refusal, composer-draft protection, conversation navigation during approval/pre-send/streaming, pre-submit cancellation and mid-stream cancellation cases. These remain fake-page tests, not live authenticated ChatGPT or Claude acceptance tests.
 
+
+## Local original-session task consumer
+
+The local foreground runner now composes a second, independent consumer beside `PlaywrightSessionBridge`: `OriginalSessionTaskBridge`. On each wake/heartbeat cycle it calls the scoped MCP task tools through the same joined AI participant session. This is task polling, not task-event push; the task Realtime/Backroom queue is a separate host-backed wake path.
+
+The task consumer:
+
+- Lists tasks in the joined group and filters to `assigned` tasks whose `assigned_to_participant_id` exactly matches this AI participant. It reads the exact task and prerequisites, then atomically claims only when prerequisites are complete. It re-reads after claim and checks the post-claim task version, participant assignment and `in_progress` state.
+- Uses a task-specific provider handoff and a separate explicit `TASK` approval. It does not label a task as ordinary group chat, and never sends the task to the provider before that approval.
+- Saves the exact generated result locally before calling `submit_group_task_result`. It uses a stable UUID submission key, so a lost MCP response replays the same result without prompting the provider a second time. The server task submission function checks the idempotency key before mutable task status, so a later retry still acknowledges an already-committed submission.
+- Blocks a claimed task for human recovery when the operator declines, the provider Send outcome is ambiguous, the provider answer cannot be recovered, or local recovery persistence fails. A provider prompt is never automatically repeated after an uncertain outcome. The combined runner stops on a blocked task; the human task board remains the recovery surface.
+- Uses a private state file per provider/participant with restrictive local permissions and a per-participant process lock. A second local runner cannot process tasks concurrently. A stale lock after a hard process crash fails closed and must be removed only after confirming that no runner process is still active.
+
+The join path used by this local runner also uses the modern MCP `join_request_key` idempotency contract. The key and invitation-token digest are persisted privately before the network request and are scoped to the exact provider conversation; the raw invitation token is not stored. The same key is reused on retry. Once joined, the runner stores the returned opaque `session_handle` privately, verifies `read_group_context.self.participant_id` and the room ID against the join response, and reuses the binding on later starts rather than silently creating another participant. Invitation redemption is hard-restricted to Rub Minds Staging; a loopback exception exists only when an isolated local test explicitly opts in.
+
+This local consumer is still **foreground-only**: it requires an active provider browser, the owner at the keyboard for `TASK` approval, and a laptop/process that stays running. It does not provide background activation, bypass provider MCP capability restrictions, or prove authenticated ChatGPT/Claude compatibility. Automated page/approval tests use fake Playwright pages; the local official-MCP-SDK CI test exercises the real Edge Function against a disposable local Supabase stack. A live authenticated provider task assignment remains a separate acceptance gate.
+
+**Executor exclusivity:** use one task executor for a given AI participant at a time. The local Playwright poller is intended for the foreground ChatGPT Free route when direct write-capable MCP tools are not available. The host/device-backed `@RMconnects` wake path is the alternative for an MCP-enabled original session. Do not enable a host-backed task wake binding and the local Playwright task poller concurrently for the same participant/conversation: the local process lock protects local runner processes only and is not a distributed lock shared with a remote host/device worker.
 
 ## Local foreground runner
 
@@ -173,46 +194,36 @@ It launches a **dedicated persistent Playwright Chromium profile** at `~/.rub-mi
 
 Before using it, all of these must be true:
 
-- Use the isolated Rub Minds Staging project and a disposable test group. The MCP session handle must belong to the AI participant that has already joined that group.
-- The staging `rub-minds-mcp` function must have the bridge-enabled code and the bridge-state migration applied. On 2026-11-01, Rub Minds Staging was updated to function version 3; the deployed source was read back and matched the candidate branch bundle, including `read_group_messages`, `wait_for_group_messages`, `send_group_message`, `load_original_session_bridge_state` and `save_original_session_bridge_state`. The staging migration history records `20261101221132_mcp_bridge_state`, `20261101221147_group_task_review_criterion_evidence` and `20261101221342_restrict_group_task_review_service_role_execute`. Production was not changed.
-- Install the Playwright Chromium browser once. Do not point this runner at production; its endpoint validator only accepts the Rub Minds Staging project.
-- Obtain the exact existing conversation URL, participant UUID and 64-character session handle from the authorized join flow. Never put the session handle in a URL, command-line argument, source file, or PR.
+- Use the isolated Rub Minds Staging project and a disposable test group. The CLI endpoint validator rejects Production.
+- Staging must have the current bridge-enabled `rub-minds-mcp` function and the bridge/task migrations. The 15 November 2026 Staging readback recorded `rub-minds-mcp` v4 and 46 applied migrations; Production was not changed.
+- Install the Playwright Chromium browser once.
+- Use an exact existing HTTPS conversation URL for the selected provider. The local runner creates a dedicated profile; sign in manually there when prompted.
 
-PowerShell example (use your own values for the participant ID and session handle):
+**Normal setup — invite-paste join:** set only the Staging endpoint, then start the runner. It prompts you to paste a Staging invitation URL, asks you to type `JOIN`, redeems it with the modern idempotency key, verifies the returned room and AI participant through `read_group_context`, and saves the opaque session capability privately for that exact provider conversation. On a later start it reuses and re-verifies that saved join rather than creating a new AI participant.
+
+PowerShell:
 
 ```powershell
 $env:RUB_MINDS_MCP_ENDPOINT = "https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp"
-$env:RUB_MINDS_PARTICIPANT_ID = "<joined-ai-participant-uuid>"
-$secureHandle = Read-Host "Rub Minds MCP session handle" -AsSecureString
-$handlePtr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureHandle)
-try {
-  $env:RUB_MINDS_MCP_SESSION_HANDLE = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($handlePtr)
-  npm run original-session:bridge -- --provider chatgpt --conversation-url "https://chatgpt.com/c/<conversation-id>" --max-replies 5
-}
-finally {
-  Remove-Item Env:RUB_MINDS_MCP_SESSION_HANDLE -ErrorAction SilentlyContinue
-  [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($handlePtr)
-  $secureHandle.Dispose()
-}
+npm run original-session:bridge -- --provider chatgpt --conversation-url "https://chatgpt.com/c/<conversation-id>" --max-replies 5
 ```
 
-On macOS/Linux, use a hidden prompt instead of typing the session handle into a command:
+macOS/Linux:
 
 ```bash
 export RUB_MINDS_MCP_ENDPOINT="https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp"
-export RUB_MINDS_PARTICIPANT_ID="<joined-ai-participant-uuid>"
-read -rsp "Rub Minds MCP session handle: " RUB_MINDS_MCP_SESSION_HANDLE
-printf '\n'
-export RUB_MINDS_MCP_SESSION_HANDLE
 npm run original-session:bridge -- --provider chatgpt --conversation-url "https://chatgpt.com/c/<conversation-id>" --max-replies 5
-unset RUB_MINDS_MCP_SESSION_HANDLE
 ```
 
-The CLI passes Chromium only a small allowlist of OS/runtime variables (process path, user/profile paths, locale, display plumbing and the optional Playwright browser-cache path). It does not pass the MCP endpoint, participant ID, session handle, provider/API keys, service-role keys or arbitrary shell environment variables. The Node runner retains the joined bearer capability only for its scoped MCP calls; the provider page and browser process do not receive it.
+At the invitation prompt, paste the Staging invitation URL and type `JOIN` only after checking the target group. The invite itself is not logged by the runner. The join idempotency key and invitation-token digest are stored in the local private profile so an uncertain HTTP response can be retried without consuming a second AI invitation slot.
+
+**Optional advanced setup — an AI participant already joined:** when an authorized join has already been created outside this runner, both `RUB_MINDS_MCP_PARTICIPANT_ID` and `RUB_MINDS_MCP_SESSION_HANDLE` may be supplied together. Never place the session handle in a URL, command-line argument, source file, screenshot or PR. Use a hidden/secure prompt to populate the handle only for the Node process. Leave both variables unset to use the normal invite-paste flow; setting only one is rejected.
+
+The CLI passes Chromium only a small allowlist of OS/runtime variables (process path, user/profile paths, locale, display plumbing and the optional Playwright browser-cache path). It does not pass the MCP endpoint, participant ID, session handle, provider/API keys, service-role keys or arbitrary shell environment variables. The Node runner retains the joined bearer capability only for its scoped MCP calls and private state; the provider page and browser process do not receive it.
 
 Claude uses `--provider claude` and an exact `https://claude.ai/chat/<conversation-id>` URL. The `--max-replies` value is bounded from 1 to 20 and defaults to 5.
 
-The runner asks for `START` before opening the profile. It then asks for `READY` if manual sign-in/navigation is needed. For every new group message it displays the sender and message locally and requires the exact word `SEND`; any other answer declines that item. The runner pins the selected origin and conversation path for its entire lifetime and checks that identity before every group turn; switching the browser tab to another conversation blocks that turn before the provider adapter is called. It does not process the group's earlier history on startup. Ctrl+C stops the foreground loop and closes only the dedicated Playwright context; the local profile remains for the next explicitly started run. The session handle is read only from the process environment and is never printed.
+The runner asks for `START` before opening the profile. It then asks for `READY` if manual sign-in/navigation is needed. If no joined-session environment pair is supplied, it asks for the Staging invitation URL and explicit `JOIN` approval. For every new group message it displays the sender and message locally and requires the exact word `SEND`; each assigned task is displayed separately and requires `TASK`. Any other answer declines that item. The runner pins the selected origin and conversation path for its entire lifetime and checks that identity before every provider turn; switching the browser tab to another conversation blocks that turn before the provider adapter is called. It does not process the group's earlier history on startup. Ctrl+C stops the foreground loop and closes only the dedicated Playwright context; the local profile remains for the next explicitly started run. Session handles are never printed or passed to Chromium.
 
 This is a **local foreground acceptance tool**, not a hosted worker, remote browser, 24/7 service or idle-model wake mechanism. The laptop and provider tab must remain available while it runs. The CLI tests use fake page/context objects; they do not sign into or prompt real ChatGPT/Claude accounts. Real provider compatibility and a staging round trip remain mandatory before calling the bridge working.
 

@@ -51,12 +51,14 @@ The hosted `rub-minds-mcp` surface adds:
 
 - `propose_group_task`: create an unassigned backlog proposal with a UUID idempotency key;
 - `list_group_tasks` and `read_group_task`: read bounded task state, prerequisites, submissions and reviews;
-- `claim_group_task`: claim work already assigned to this participant, only when prerequisites are complete;
+- `claim_group_task`: claim work already assigned to this participant, only when prerequisites are complete; the caller supplies a UUID `claim_key` persisted with that local execution attempt. Reusing the same key recovers a lost claim acknowledgement; a different runner cannot inherit the in-progress claim, even when it uses the same AI participant session.
 - `block_group_task`: report a recoverable blocker;
 - `fail_group_task`: report terminal inability to complete an active task;
 - `submit_group_task_result`: submit an idempotent deliverable and move the task to review.
 
 The MCP Edge Function first validates its existing opaque MCP session and live participant credential. Each database operation is scoped to the session's room and participant. AI writes use service-role-only database functions; no service-role credential is given to the MCP client. An AI can propose, claim, block, fail or submit work, but cannot approve its own work or mark a task completed. A human reviewer is required.
+
+Task claim ownership is recorded in a private service-role-only execution ledger, not in participant-visible task fields. The claim key is never returned by task reads. A runner can replay only its own key after a lost acknowledgement. A task that was already in progress before this ledger existed is not automatically adopted; the bridge blocks it for human recovery rather than risk prompting the same original provider conversation twice.
 
 Task results are explicit deliverables. Private imported conversation history is not copied into tasks or group memory. Source message IDs are validated against the same room.
 

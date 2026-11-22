@@ -3,11 +3,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
 const migration = await readFile(new URL("../../supabase/migrations/20261101040000_group_task_coordination.sql", import.meta.url), "utf8");
+const claimKeyMigration = await readFile(new URL("../../supabase/migrations/20261122100000_room_task_execution_claim_keys.sql", import.meta.url), "utf8");
 const reviewEvidenceMigration = await readFile(new URL("../../supabase/migrations/20261101221147_group_task_review_criterion_evidence.sql", import.meta.url), "utf8");
 const reviewRoleMigration = await readFile(new URL("../../supabase/migrations/20261101221342_restrict_group_task_review_service_role_execute.sql", import.meta.url), "utf8");
 const vaultKeyMigration = await readFile(new URL("../../supabase/migrations/20261101165353_rub_minds_mcp_vault_encryption_key.sql", import.meta.url), "utf8");
 const vaultKeyAcceptance = await readFile(new URL("../../supabase/tests/rub_minds_mcp_vault_encryption_key.sql", import.meta.url), "utf8");
 const ciWorkflow = await readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+const taskSqlWorkflow = await readFile(new URL("../../.github/workflows/backroom-wake-queue.yml", import.meta.url), "utf8");
 const wakeQueueWorkflow = await readFile(new URL("../../.github/workflows/backroom-wake-queue.yml", import.meta.url), "utf8");
 const fkIndexesMigration = await readFile(new URL("../../supabase/migrations/20261101164016_group_task_fk_indexes.sql", import.meta.url), "utf8");
 const wakeMigration = await readFile(new URL("../../supabase/migrations/20261029090000_backroom_wake_queue.sql", import.meta.url), "utf8");
@@ -187,8 +189,27 @@ test("humans can revise a blocked dependency plan only through the scoped graph-
 });
 
 
+test("AI task claim replay is bound to one private per-run UUID and isolated from other runners", () => {
+  assert.match(claimKeyMigration, /create table if not exists public\.room_task_execution_claims/);
+  assert.match(claimKeyMigration, /alter table public\.room_task_execution_claims enable row level security/);
+  assert.match(claimKeyMigration, /revoke all on table public\.room_task_execution_claims from public, anon, authenticated/);
+  assert.match(claimKeyMigration, /p_claim_key uuid/);
+  assert.match(claimKeyMigration, /v_claim\.claim_key=p_claim_key/);
+  assert.match(claimKeyMigration, /claim_owned_by_another_runner/);
+  assert.match(claimKeyMigration, /claim_recovery_required/);
+  assert.match(claimKeyMigration, /drop function if exists public\.claim_room_task\(uuid,uuid,uuid\)/);
+  assert.match(claimKeyMigration, /grant execute on function public\.claim_room_task\(uuid,uuid,uuid,uuid\) to service_role/);
+  assert.match(mcpProtocol, /claim_key: \{ type: "string", format: "uuid" \}/);
+  assert.match(mcpEdge, /p_claim_key: args\.claim_key/);
+  assert.match(taskAcceptance, /different execution key must not replay another runner task claim/);
+  assert.match(sdkTaskE2e, /claim_owned_by_another_runner/);
+  assert.match(sdkTaskE2e, /lifecycleClaimReplay/);
+  assert.match(taskSqlWorkflow, /supabase\/tests\/group_task_coordination\.sql/);
+  assert.match(taskSqlWorkflow, /20261122100000_room_task_execution_claim_keys\.sql/);
+});
+
 test("AI task claiming requires an explicit human assignment before work begins", () => {
-  assert.match(mcpProtocol, /Claim a task that a human group member has assigned to this participant/);
+  assert.match(mcpProtocol, /Claim a human-assigned task for this exact execution attempt/);
   assert.match(migration, /A human group member must assign this task before an AI can claim it/);
   assert.match(migration, /v_task\.assigned_to_participant_id <> p_participant_id/);
   assert.match(taskAcceptance, /An AI task claim must not cancel its still-leased canonical wake/);

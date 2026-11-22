@@ -143,6 +143,7 @@ pub fn validate_send_control_candidate(
     enabled: bool,
     offscreen: bool,
     same_process: bool,
+    invoke_pattern_available: bool,
     name: &str,
     automation_id: &str,
     window_bounds: [i32; 4],
@@ -153,6 +154,7 @@ pub fn validate_send_control_candidate(
     if !enabled { return Err("disabled_control"); }
     if offscreen { return Err("offscreen_control"); }
     if !same_process { return Err("different_process"); }
+    if !invoke_pattern_available { return Err("invoke_pattern_unavailable"); }
     if !rect_is_valid(window_bounds) || !rect_is_valid(composer_bounds) || !rect_is_valid(candidate_bounds) {
         return Err("invalid_control_bounds");
     }
@@ -332,6 +334,7 @@ mod windows_impl {
         controls::{DocumentControl, EditControl},
         types::{ControlType, Point, TextAttribute, TreeScope, UIProperty},
         variants::Variant,
+        patterns::UIInvokePattern,
         UIAutomation, UIElement,
     };
 
@@ -636,12 +639,16 @@ mod windows_impl {
             let automation_id = element.get_automation_id()
                 .map_err(|_| "Could not read a candidate button's AutomationId".to_string())?;
             let bounds = half_open_bounds(&element)?;
+            // Discovery remains read-only: verify that this exact button exposes
+            // UIA InvokePattern, but never invoke it from inspection/recheck.
+            let invoke_pattern_available = element.get_pattern::<UIInvokePattern>().is_ok();
 
             if validate_send_control_candidate(
                 "Button",
                 enabled,
                 offscreen,
                 true,
+                invoke_pattern_available,
                 &name,
                 &automation_id,
                 window_bounds,
@@ -885,17 +892,18 @@ mod tests {
         let window = [0, 0, 1000, 1800];
         let composer = [100, 1450, 900, 1700];
         let send = [820, 1630, 960, 1700];
-        assert!(validate("Button", true, false, true, "Send", "", window, composer, send).is_ok());
-        assert_eq!(validate("Edit", true, false, true, "Send", "", window, composer, send), Err("not_button_control"));
-        assert_eq!(validate("Button", false, false, true, "Send", "", window, composer, send), Err("disabled_control"));
-        assert_eq!(validate("Button", true, true, true, "Send", "", window, composer, send), Err("offscreen_control"));
-        assert_eq!(validate("Button", true, false, false, "Send", "", window, composer, send), Err("different_process"));
-        assert_eq!(validate("Button", true, false, true, "Submit", "", window, composer, send), Err("unrecognized_send_control"));
-        assert_eq!(validate("Button", true, false, true, "Send", "", window, composer, [1001, 1630, 1080, 1700]), Err("outside_selected_app_window"));
-        assert_eq!(validate("Button", true, false, true, "Send", "", window, composer, [820, 100, 960, 160]), Err("send_control_not_near_composer"));
+        assert!(validate("Button", true, false, true, true, "Send", "", window, composer, send).is_ok());
+        assert_eq!(validate("Button", true, false, true, false, "Send", "", window, composer, send), Err("invoke_pattern_unavailable"));
+        assert_eq!(validate("Edit", true, false, true, true, "Send", "", window, composer, send), Err("not_button_control"));
+        assert_eq!(validate("Button", false, false, true, true, "Send", "", window, composer, send), Err("disabled_control"));
+        assert_eq!(validate("Button", true, true, true, true, "Send", "", window, composer, send), Err("offscreen_control"));
+        assert_eq!(validate("Button", true, false, false, true, "Send", "", window, composer, send), Err("different_process"));
+        assert_eq!(validate("Button", true, false, true, true, "Submit", "", window, composer, send), Err("unrecognized_send_control"));
+        assert_eq!(validate("Button", true, false, true, true, "Send", "", window, composer, [1001, 1630, 1080, 1700]), Err("outside_selected_app_window"));
+        assert_eq!(validate("Button", true, false, true, true, "Send", "", window, composer, [820, 100, 960, 160]), Err("send_control_not_near_composer"));
         let narrow_composer = [100, 1450, 400, 1700];
-        assert_eq!(validate("Button", true, false, true, "Send", "", window, narrow_composer, [900, 1630, 990, 1700]), Err("send_control_not_near_composer"));
-        assert_eq!(validate("Button", true, false, true, "Send", "", window, [10, 10, 10, 20], send), Err("invalid_control_bounds"));
+        assert_eq!(validate("Button", true, false, true, true, "Send", "", window, narrow_composer, [900, 1630, 990, 1700]), Err("send_control_not_near_composer"));
+        assert_eq!(validate("Button", true, false, true, true, "Send", "", window, [10, 10, 10, 20], send), Err("invalid_control_bounds"));
     }
 
     #[test]

@@ -4,19 +4,40 @@
  */
 import {createHash} from 'node:crypto';
 import {isCanonicalWakePrompt} from './coordination-core.mjs';
-const DEFAULT_ALLOWED_ORIGINS=new Set([
- 'https://claude.ai','https://claude.com','https://chatgpt.com','https://chat.openai.com',
-]);
+const PROVIDER_RESPONSE_CONFIG=Object.freeze({
+ 'https://claude.ai':Object.freeze({
+  assistantSelector:'[data-testid="assistant-message"],[data-is-streaming="false"] .font-claude-message',
+  generatingSelector:'button[aria-label*="Stop"],button[data-testid="stop-button"]',
+ }),
+ 'https://chatgpt.com':Object.freeze({
+  assistantSelector:'[data-message-author-role="assistant"]',
+  generatingSelector:'button[data-testid="stop-button"],button[aria-label*="Stop generating"],button[aria-label*="Stop response"]',
+ }),
+ 'https://chat.openai.com':Object.freeze({
+  assistantSelector:'[data-message-author-role="assistant"]',
+  generatingSelector:'button[data-testid="stop-button"],button[aria-label*="Stop generating"],button[aria-label*="Stop response"]',
+ }),
+});
+const DEFAULT_ALLOWED_ORIGINS=new Set(Object.keys(PROVIDER_RESPONSE_CONFIG));
 const sha256=text=>createHash('sha256').update(text,'utf8').digest('hex');
+const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 export class BrowserCanonicalWakeAdapter {
- constructor({page,origin,path,search='',hash='',selector,verificationSelector=selector,appId,sessionId,identityFingerprint,nodeHandle=null,allowedOrigins=[...DEFAULT_ALLOWED_ORIGINS]}={}){
+ constructor({page,origin,path,search='',hash='',selector,verificationSelector=selector,appId,sessionId,identityFingerprint,nodeHandle=null,allowedOrigins=[...DEFAULT_ALLOWED_ORIGINS],responseTimeoutMs=90000,responseSettleMs=1800,responsePollMs=250}={}){
   if(!page||typeof page.url!=='function'||typeof page.locator!=='function')throw new TypeError('Playwright page required');
   if([origin,path,selector,appId,sessionId,identityFingerprint].some(v=>typeof v!=='string'||!v))throw new TypeError('wake target binding incomplete');
   const parsed=new URL(origin);
   if(parsed.protocol!=='https:'||parsed.origin!==origin||!path.startsWith('/')||!Array.isArray(allowedOrigins)||!allowedOrigins.includes(origin))throw new TypeError('provider origin is not approved for canonical wake');
   if(nodeHandle!==null&&(!nodeHandle||typeof nodeHandle.evaluate!=='function'))throw new TypeError('exact DOM element handle required');
   if(typeof verificationSelector!=='string'||!verificationSelector)throw new TypeError('composer verification selector required');
-  Object.assign(this,{page,origin,path,search,hash,selector,verificationSelector,appId,sessionId,identityFingerprint,nodeHandle,allowedOrigins:new Set(allowedOrigins)});
+  const provider=PROVIDER_RESPONSE_CONFIG[origin];
+  if(!provider)throw new TypeError('provider response evidence is unavailable for this origin');
+  if(!Number.isSafeInteger(responseTimeoutMs)||responseTimeoutMs<250||responseTimeoutMs>180000||
+     !Number.isSafeInteger(responseSettleMs)||responseSettleMs<50||responseSettleMs>5000||
+     !Number.isSafeInteger(responsePollMs)||responsePollMs<10||responsePollMs>1000)
+   throw new RangeError('Invalid provider response detection bounds');
+  Object.assign(this,{page,origin,path,search,hash,selector,verificationSelector,appId,sessionId,identityFingerprint,nodeHandle,
+   allowedOrigins:new Set(allowedOrigins),assistantSelector:provider.assistantSelector,generatingSelector:provider.generatingSelector,
+   responseTimeoutMs,responseSettleMs,responsePollMs});
  }
  async #field(){
   if(this.page.isClosed?.())throw new Error('page closed');
@@ -37,12 +58,63 @@ export class BrowserCanonicalWakeAdapter {
   if(this.nodeHandle)return this.nodeHandle.evaluate(node=>node instanceof HTMLInputElement||node instanceof HTMLTextAreaElement?node.value:node instanceof HTMLElement&&node.isContentEditable?(node.textContent??''):null);
   try{return await field.inputValue();}catch{return await field.textContent();}
  }
+ async #sameConversation(){
+  try{
+   if(this.page.isClosed?.())return false;
+   const u=new URL(this.page.url());
+   return u.origin===this.origin&&u.pathname===this.path&&u.search===this.search&&u.hash===this.hash;
+  }catch{return false;}
+ }
+ async #isGenerating(){
+  const controls=this.page.locator(this.generatingSelector);
+  const count=await controls.count();
+  for(let index=0;index<count;index++){
+   if(await controls.nth(index).isVisible().catch(()=>false))return true;
+  }
+  return false;
+ }
+ async #waitForAssistantResponse(beforeCount){
+  const started=Date.now();
+  let previousText='',stableSince=0;
+  const messages=this.page.locator(this.assistantSelector);
+  while(Date.now()-started<this.responseTimeoutMs){
+   if(!await this.#sameConversation())return {ok:false,reason:'conversation-changed-before-response'};
+   const count=await messages.count().catch(()=>0);
+   if(count>beforeCount){
+    const response=messages.nth(beforeCount);
+    const visible=await response.isVisible().catch(()=>false);
+    const text=visible?(await response.innerText().catch(()=>'')).trim():'';
+    const generating=await this.#isGenerating().catch(()=>true);
+    if(text&&!generating){
+     if(text===previousText){
+      if(stableSince&&Date.now()-stableSince>=this.responseSettleMs){
+       if(!await this.#sameConversation())return {ok:false,reason:'conversation-changed-before-response'};
+       return {ok:true};
+      }
+     }else{
+      previousText=text;
+      stableSince=Date.now();
+     }
+    }else{
+     previousText='';
+     stableSince=0;
+    }
+   }
+   await wait(this.responsePollMs);
+  }
+  return {ok:false,reason:'assistant-response-unconfirmed'};
+ }
  async probe({target,operation}={}){
   if(operation!=='wake'||target?.surface!=='browser_tab'||target.locatorKind!=='dom'||target.locatorValue!==this.selector||
    target.appId!==this.appId||target.sessionId!==this.sessionId||target.identityFingerprint!==this.identityFingerprint)return {connected:false,focused:false};
   try{
    const field=await this.#field();
    if(await this.#read(field)!=='')return {connected:false,focused:false,reason:'composer_occupied'};
+   // Verify the provider-specific response observers before the host consumes
+   // the one-shot wake grant. A syntactically unsupported selector must fail
+   // during preflight, not after a provider action has already been sealed.
+   await this.page.locator(this.assistantSelector).count();
+   await this.page.locator(this.generatingSelector).count();
    const ready=await (this.nodeHandle??field).evaluate(node=>{
     if(!(node instanceof HTMLElement)||!node.isConnected)return false;
     const form=node instanceof HTMLInputElement||node instanceof HTMLTextAreaElement?node.form:node.closest('form');
@@ -52,12 +124,12 @@ export class BrowserCanonicalWakeAdapter {
       if(!button.isConnected||button.disabled||button.getAttribute('aria-disabled')==='true'||
         style.display==='none'||style.visibility!=='visible'||Number(style.opacity)===0||rect.width<=0||rect.height<=0)return false;
       const label=[button.getAttribute('aria-label'),button.getAttribute('title'),button.getAttribute('data-testid'),button.textContent].filter(Boolean).join(' ').trim();
-      return /(^|[\s_-])(send|submit|reply)([\s_-]|$)/i.test(label);
+      return /(^|[\s_-])send([\s_-]|$)/i.test(label);
     });
     return candidates.length===1;
    });
    return ready?{connected:true,focused:true,appId:this.appId,sessionId:this.sessionId,identityFingerprint:this.identityFingerprint,surface:'browser_tab',locatorKinds:['dom']}:{connected:false,focused:false,reason:'unique_send_control_unavailable'};
-  }catch{return {connected:false,focused:false};}
+  }catch{return {connected:false,focused:false,reason:'assistant-response-observer-unavailable'};}
  }
  async execute({command,target}={}){
   if(command?.operation!=='wake'||target?.surface!=='browser_tab'||target.locatorKind!=='dom'||
@@ -66,6 +138,9 @@ export class BrowserCanonicalWakeAdapter {
    throw new Error('Only the canonical, event-bound @RMconnects wake operation is permitted');
   }
   const field=await this.#field();
+  let assistantCountBefore;
+  try{assistantCountBefore=await this.page.locator(this.assistantSelector).count();}
+  catch{return {state:'needs_review',verified:false,result:{submitted:false,reason:'assistant-response-observer-unavailable'}};}
   const request={text:command.text,origin:this.origin,path:this.path,search:this.search,hash:this.hash,
    selector:this.selector,bindingMarker:/\[data-rm-backroom-binding="([a-f0-9-]{36})"\]$/i.exec(this.selector)?.[1]??null};
   const performWake=async(element,expected)=>{
@@ -96,7 +171,7 @@ export class BrowserCanonicalWakeAdapter {
      if(!button.isConnected||button.disabled||button.getAttribute('aria-disabled')==='true'||style.display==='none'||
        style.visibility!=='visible'||Number(style.opacity)===0||rect.width<=0||rect.height<=0)return false;
      const label=[button.getAttribute('aria-label'),button.getAttribute('title'),button.getAttribute('data-testid'),button.textContent].filter(Boolean).join(' ').trim();
-     return /(^|[\s_-])(send|submit|reply)([\s_-]|$)/i.test(label);
+     return /(^|[\s_-])send([\s_-]|$)/i.test(label);
     });
     return found.length===1?found[0]:null;
    };
@@ -148,6 +223,20 @@ export class BrowserCanonicalWakeAdapter {
   } catch {
    return {state:'needs_review',verified:false,result:{submitted:true,reason:'composer-clear-unconfirmed'}};
   }
-  return {state:'completed',verified:true,result:{triggerSubmitted:true,submitted:true,confirmation:'composer-cleared',eventId:command.eventId,textSha256:sha256(command.text)}};
+  // A cleared composer proves only that the provider accepted the input event.
+  // Completion also requires a new assistant message in this exact conversation
+  // whose text is non-empty, no longer streaming, and stable for the settle window.
+  const response=await this.#waitForAssistantResponse(assistantCountBefore);
+  if(!response.ok){
+   return {state:'needs_review',verified:false,result:{
+    triggerSubmitted:true,submitted:true,confirmation:'composer-cleared',
+    assistantResponseConfirmed:false,reason:response.reason
+   }};
+  }
+  return {state:'completed',verified:true,result:{
+   triggerSubmitted:true,submitted:true,confirmation:'assistant-response-stable',
+   assistantResponseConfirmed:true,
+   eventId:command.eventId,textSha256:sha256(command.text)
+  }};
  }
 }

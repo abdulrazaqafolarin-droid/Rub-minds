@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { PassThrough } from "node:stream";
 import { join } from "node:path";
@@ -8,15 +8,19 @@ import {
   bindAdapterToExactConversation,
   browserProcessEnvironment,
   conversationKey,
+  createPrivateJoinedSessionStore,
+  createPrivateTaskStateStore,
   isExactConversationPage,
   openExistingConversationPage,
   parseRunnerArgs,
+  parseStagingInviteToken,
   preparePrivateBrowserProfile,
   preview,
   runOriginalSessionBridge,
   validateRunnerEnvironment,
 } from "../../scripts/original-session-bridge.mjs";
 
+const VALID_JOIN_EXPIRY = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 const CHATGPT_URL = "https://chatgpt.com/c/conversation-123";
 const CLAUDE_URL = "https://claude.ai/chat/conversation-456";
 const ENV = {
@@ -24,6 +28,56 @@ const ENV = {
   RUB_MINDS_MCP_SESSION_HANDLE: "a".repeat(64),
   RUB_MINDS_PARTICIPANT_ID: "33333333-3333-4333-8333-333333333333",
 };
+
+function makeMemoryStateStore() {
+  let value = null;
+  return {
+    async prepare() {},
+    async load() { return structuredClone(value); },
+    async save(next) { value = structuredClone(next); },
+  };
+}
+
+function makeRunnerStateDependencies({
+  participantId = ENV.RUB_MINDS_PARTICIPANT_ID,
+  roomId = "550e8400-e29b-41d4-a716-446655440000",
+  savedBinding = null,
+  joinLockBusy = false,
+} = {}) {
+  let saved = structuredClone(savedBinding);
+  let joinLockAcquireCount = 0;
+  let joinLockReleaseCount = 0;
+  return {
+    createTaskStateStore: () => makeMemoryStateStore(),
+    createJoinedSessionStore: () => ({
+      async prepare() {},
+      async acquireLock() {
+        joinLockAcquireCount++;
+        if (joinLockBusy) return null;
+        return async () => { joinLockReleaseCount++; };
+      },
+      async load() { return saved && saved.sessionHandle ? structuredClone(saved) : null; },
+      async loadPendingJoin() { return saved && saved.pendingJoin ? structuredClone(saved.pendingJoin) : null; },
+      async savePendingJoin(value) { saved = { pendingJoin: structuredClone(value) }; },
+      async save(value) { saved = structuredClone(value); },
+      async clear() { saved = null; },
+    }),
+    readJoinLockAcquireCount: () => joinLockAcquireCount,
+    readJoinLockReleaseCount: () => joinLockReleaseCount,
+    readSavedBinding: () => structuredClone(saved?.sessionHandle ? saved : null),
+    readSavedPendingJoin: () => structuredClone(saved?.pendingJoin || null),
+    createSessionTransport: () => ({
+      async readGroupContext() {
+        return {
+          room: { id: roomId },
+          self: { participant_id: participantId },
+        };
+      },
+      async leaveGroup() { return { left: true }; },
+    }),
+  };
+}
+
 
 test("parses only bounded provider, conversation and reply options", () => {
   assert.deepEqual(parseRunnerArgs([
@@ -57,6 +111,169 @@ test("requires a clean HTTPS MCP endpoint and scoped session identity", () => {
     { ...ENV, RUB_MINDS_PARTICIPANT_ID: "not-a-uuid" },
   ]) {
     assert.throws(() => validateRunnerEnvironment(invalid, "chatgpt"));
+  }
+});
+
+test("parses only opaque HTTPS Staging invite tokens without logging or fetching the pasted URL", () => {
+  const token = "b".repeat(64);
+  assert.equal(parseStagingInviteToken("https://rub-minds.vercel.app/?invite=" + token), token);
+  assert.equal(parseStagingInviteToken("https://rub-minds.vercel.app/invite=" + token), token);
+  assert.throws(() => parseStagingInviteToken("http://rub-minds.vercel.app/?invite=" + token), /HTTPS/);
+  assert.throws(() => parseStagingInviteToken("https://user:pass@rub-minds.vercel.app/?invite=" + token), /credentials/);
+  assert.throws(() => parseStagingInviteToken("https://rub-minds.vercel.app/?invite=" + token + "#secret"), /fragment/);
+  assert.throws(() => parseStagingInviteToken("https://rub-minds.vercel.app/?invite=short"), /64-character/);
+});
+
+test("permits an explicit Staging invitation join when no prejoined session is configured", () => {
+  const config = validateRunnerEnvironment({
+    RUB_MINDS_MCP_ENDPOINT: ENV.RUB_MINDS_MCP_ENDPOINT,
+  }, "chatgpt");
+  assert.equal(config.joinRequired, true);
+  assert.equal(config.sessionHandle, null);
+  assert.equal(config.participantId, null);
+  assert.throws(() => validateRunnerEnvironment({
+    RUB_MINDS_MCP_ENDPOINT: ENV.RUB_MINDS_MCP_ENDPOINT,
+    RUB_MINDS_MCP_SESSION_HANDLE: "a".repeat(64),
+  }, "chatgpt"), /Set both/);
+});
+
+test("private task state store survives restart but keeps results separate from joined-session capabilities", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rub-minds-task-state-"));
+  const participantId = ENV.RUB_MINDS_PARTICIPANT_ID;
+  try {
+    const store = createPrivateTaskStateStore({ provider: "chatgpt", participantId, baseDirectory: root });
+    await store.prepare();
+    assert.equal(await store.load(), null);
+    const pending = {
+      schema: 1,
+      phase: "result_ready",
+      participantId,
+      taskId: "550e8400-e29b-41d4-a716-446655440000",
+      taskVersion: 5,
+      submissionKey: "650e8400-e29b-41d4-a716-446655440000",
+      result: "Private pending result",
+    };
+    await store.save(pending);
+    assert.deepEqual(await store.load(), pending);
+    const fileStats = await stat(store.path);
+    assert.equal(fileStats.isFile(), true);
+    if (process.platform !== "win32") {
+      assert.equal(fileStats.mode & 0o777, 0o600);
+    }
+    await store.save(null);
+    assert.equal(await store.load(), null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("private task state admits only one local runner and fails closed on a stale process lock", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rub-minds-task-lock-"));
+  try {
+    const store = createPrivateTaskStateStore({
+      provider: "chatgpt",
+      participantId: ENV.RUB_MINDS_PARTICIPANT_ID,
+      baseDirectory: root,
+    });
+    await store.prepare();
+    const releaseFirst = await store.acquireLock();
+    assert.equal(typeof releaseFirst, "function");
+    assert.equal(await store.acquireLock(), null, "a second process must not enter the same participant task loop");
+    await releaseFirst();
+    const releaseSecond = await store.acquireLock();
+    assert.equal(typeof releaseSecond, "function", "the lock must be available after a clean release");
+    await releaseSecond();
+
+    const lockPath = store.path + ".lock";
+    await writeFile(lockPath, JSON.stringify({
+      pid: 2147483647,
+      token: "123e4567-e89b-42d3-a456-426614174000",
+      acquiredAt: "2026-11-19T00:00:00.000Z",
+    }), { mode: 0o600 });
+    await assert.rejects(() => store.acquireLock(), /stale Rub Minds task lock/);
+    assert.equal((await stat(lockPath)).isFile(), true, "stale lock must not be silently deleted");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("private pending join state survives restart and reuses the same idempotency key without storing the invite token", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rub-minds-pending-join-"));
+  const inviteToken = "b".repeat(64);
+  const inviteTokenDigest = (await import("node:crypto")).createHash("sha256").update(inviteToken).digest("hex");
+  try {
+    const store = createPrivateJoinedSessionStore({
+      provider: "chatgpt",
+      conversationUrl: CHATGPT_URL,
+      baseDirectory: root,
+    });
+    const joinRequestKey = "c".repeat(64);
+    await store.prepare();
+    assert.equal(await store.load(), null);
+    assert.equal(await store.loadPendingJoin(), null);
+    await store.savePendingJoin({ joinRequestKey, inviteTokenDigest });
+    assert.equal(await store.load(), null);
+    assert.deepEqual(
+      { ...(await store.loadPendingJoin()), joinRequestKey, inviteTokenDigest },
+      { ...(await store.loadPendingJoin()), joinRequestKey, inviteTokenDigest },
+    );
+    assert.equal((await store.loadPendingJoin()).joinRequestKey, joinRequestKey);
+    const diskText = await (await import("node:fs/promises")).readFile(store.path, "utf8");
+    assert.equal(diskText.includes(inviteToken), false);
+    assert.equal(diskText.includes("invite_token"), false);
+    assert.equal(diskText.includes(inviteTokenDigest), true);
+    const savedStats = await stat(store.path);
+    if (process.platform !== "win32") assert.equal(savedStats.mode & 0o777, 0o600);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("private joined-session store keys by provider and exact conversation and stores no invite token", async () => {
+  const root = await mkdtemp(join(tmpdir(), "rub-minds-join-state-"));
+  try {
+    const store = createPrivateJoinedSessionStore({
+      provider: "chatgpt",
+      conversationUrl: CHATGPT_URL,
+      baseDirectory: root,
+    });
+    const second = createPrivateJoinedSessionStore({
+      provider: "chatgpt",
+      conversationUrl: "https://chatgpt.com/c/a-different-conversation",
+      baseDirectory: root,
+    });
+    const sameConversationStore = createPrivateJoinedSessionStore({
+      provider: "chatgpt",
+      conversationUrl: CHATGPT_URL,
+      baseDirectory: root,
+    });
+    const inviteToken = "b".repeat(64);
+    const binding = {
+      sessionHandle: "c".repeat(64),
+      participantId: ENV.RUB_MINDS_PARTICIPANT_ID,
+      roomId: "550e8400-e29b-41d4-a716-446655440000",
+      expiresAt: VALID_JOIN_EXPIRY,
+    };
+    await store.prepare();
+    const releaseJoinLock = await store.acquireLock();
+    assert.equal(typeof releaseJoinLock, "function");
+    assert.equal(await sameConversationStore.acquireLock(), null,
+      "a second process must not start another join for the same exact provider conversation");
+    await releaseJoinLock();
+    const releaseAgain = await sameConversationStore.acquireLock();
+    assert.equal(typeof releaseAgain, "function", "the join lock must release cleanly");
+    await releaseAgain();
+    assert.equal(await store.load(), null);
+    await store.save(binding);
+    assert.deepEqual(await store.load(), binding);
+    assert.notEqual(store.path, second.path);
+    const diskText = await (await import("node:fs/promises")).readFile(store.path, "utf8");
+    assert.equal(diskText.includes(inviteToken), false);
+    assert.equal(diskText.includes("invite_token"), false);
+    const fileStats = await stat(store.path);
+    if (process.platform !== "win32") assert.equal(fileStats.mode & 0o777, 0o600);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -176,6 +393,7 @@ test("declining startup consent never launches a browser or exposes the session 
       input,
       output,
       errorOutput: output,
+      ...makeRunnerStateDependencies(),
       prompt: async () => false,
       playwright: {
         chromium: {
@@ -273,6 +491,7 @@ test("local runner starts with consent, approves one new group message, and clos
       input,
       output,
       errorOutput: output,
+      ...makeRunnerStateDependencies(),
       playwright: {
         chromium: {
           async launchPersistentContext(profileDirectory, options) {
@@ -329,6 +548,229 @@ test("local runner starts with consent, approves one new group message, and clos
   }
 });
 
+test("refuses a second local runner for the same provider conversation before opening another browser", async () => {
+  const input = makeTtyStream();
+  const output = makeTtyStream();
+  output.write = () => true;
+  const stateDependencies = makeRunnerStateDependencies({ joinLockBusy: true });
+  let browserLaunches = 0;
+  let inviteReads = 0;
+  const context = makeRunnerContext({ isClosed: () => false, url: () => CHATGPT_URL }, {
+    contextClosed: 0, runtimeStopped: 0, providerInteractions: 0,
+  });
+  try {
+    await assert.rejects(() => runOriginalSessionBridge({
+      argv: ["--provider", "chatgpt", "--conversation-url", CHATGPT_URL],
+      env: ENV,
+      input,
+      output,
+      errorOutput: output,
+      ...stateDependencies,
+      prompt: async () => true,
+      readInput: async () => { inviteReads++; return "https://rub-minds.vercel.app/?invite=" + "b".repeat(64); },
+      playwright: { chromium: { async launchPersistentContext() { browserLaunches++; return context; } } },
+      prepareProfile: async value => value,
+    }), /Another original-session runner is already active/);
+    assert.equal(browserLaunches, 0, "the second pre-joined runner must not open another provider browser");
+    assert.equal(inviteReads, 0, "a busy pre-joined runner must not prompt for an invitation");
+    assert.equal(stateDependencies.readJoinLockAcquireCount(), 1,
+      "pre-joined sessions must acquire the same exact-conversation lock before launching Chromium");
+    assert.equal(stateDependencies.readJoinLockReleaseCount(), 0, "a process that did not own the lock must not release it");
+  } finally {
+    input.destroy();
+    output.destroy();
+  }
+});
+
+test("local runner explicitly redeems a Staging invite and binds the returned AI session to the exact browser conversation", async () => {
+  const input = makeTtyStream();
+  const output = makeTtyStream();
+  const writes = [];
+  output.write = value => { writes.push(String(value)); return true; };
+  const inviteToken = "b".repeat(64);
+  const sessionHandle = "c".repeat(64);
+  const participantId = "650e8400-e29b-41d4-a716-446655440000";
+  const roomId = "550e8400-e29b-41d4-a716-446655440000";
+  const inviteUrl = "https://rub-minds.vercel.app/?invite=" + inviteToken;
+  const env = { RUB_MINDS_MCP_ENDPOINT: ENV.RUB_MINDS_MCP_ENDPOINT };
+  const stats = { contextClosed: 0, runtimeStopped: 0, providerInteractions: 0 };
+  const page = { isClosed: () => false, url: () => CHATGPT_URL };
+  const context = makeRunnerContext(page, stats);
+  const approvals = [];
+  const stateDependencies = makeRunnerStateDependencies({ participantId, roomId });
+  let joinedInput;
+  let runtimeOptions;
+
+  try {
+    const result = await runOriginalSessionBridge({
+      argv: ["--provider", "chatgpt", "--conversation-url", CHATGPT_URL],
+      env,
+      input,
+      output,
+      errorOutput: output,
+      ...stateDependencies,
+      playwright: {
+        chromium: {
+          async launchPersistentContext(_profileDirectory, options) {
+            assert.equal(options.headless, false);
+            assert.equal(Object.hasOwn(options.env, "RUB_MINDS_MCP_SESSION_HANDLE"), false);
+            assert.equal(Object.hasOwn(options.env, "RUB_MINDS_MCP_ENDPOINT"), false);
+            return context;
+          },
+        },
+      },
+      prepareProfile: async value => value,
+      readInput: async (_rl, message) => {
+        assert.match(message, /invitation URL/);
+        return inviteUrl;
+      },
+      prompt: async (_rl, message, expected) => {
+        approvals.push({ message, expected });
+        return true;
+      },
+      joinInvite: async options => {
+        joinedInput = options;
+        return { joined: true, sessionHandle, roomId, participantId, expiresAt: VALID_JOIN_EXPIRY };
+      },
+      createAdapter: (_provider, { approval }) => ({
+        async ask(_page, body, metadata) {
+          const approved = await approval({ ...metadata, prompt: body });
+          assert.equal(approved, true);
+          stats.providerInteractions += 1;
+          return "provider answer";
+        },
+      }),
+      createRuntime: options => {
+        runtimeOptions = options;
+        return {
+          async run({ approved }) {
+            assert.equal(approved, true);
+            const answer = await options.adapter.ask(options.page, "Staging group message", {
+              messageId: "message-join-1",
+              senderName: "Human collaborator",
+              senderKind: "human",
+            });
+            assert.equal(answer, "provider answer");
+            return { status: "limit_reached", replies: 1 };
+          },
+          stop() { stats.runtimeStopped += 1; },
+        };
+      },
+    });
+
+    assert.deepEqual(result, { status: "limit_reached", replies: 1 });
+    assert.deepEqual(approvals.map(item => item.expected), ["START", "JOIN", "SEND"]);
+    assert.equal(joinedInput.endpoint, ENV.RUB_MINDS_MCP_ENDPOINT);
+    assert.equal(joinedInput.inviteToken, inviteToken);
+    assert.equal(joinedInput.agentLabel, "ChatGPT original session");
+    assert.equal(joinedInput.signal instanceof AbortSignal, true);
+    assert.equal(runtimeOptions.sessionHandle, sessionHandle);
+    assert.equal(runtimeOptions.participantId, participantId);
+    assert.match(joinedInput.joinRequestKey, /^[a-f0-9]{64}$/i);
+    assert.equal(stateDependencies.readSavedPendingJoin(), null);
+    assert.deepEqual(stateDependencies.readSavedBinding(), { sessionHandle, participantId, roomId, expiresAt: VALID_JOIN_EXPIRY });
+    assert.equal(stateDependencies.readJoinLockReleaseCount(), 1, "conversation lock is released after the runner exits");
+    assert.equal(stats.providerInteractions, 1);
+    assert.equal(stats.contextClosed, 1);
+    assert.ok(!writes.join("").includes(inviteToken), "invite token must not be printed");
+    assert.ok(!writes.join("").includes(sessionHandle), "session handle must not be printed");
+  } finally {
+    input.destroy();
+    output.destroy();
+  }
+});
+
+test("local runner reuses a verified saved join for the exact provider conversation without redeeming another invite", async () => {
+  const input = makeTtyStream();
+  const output = makeTtyStream();
+  const writes = [];
+  output.write = value => { writes.push(String(value)); return true; };
+  const participantId = "650e8400-e29b-41d4-a716-446655440000";
+  const roomId = "550e8400-e29b-41d4-a716-446655440000";
+  const sessionHandle = "c".repeat(64);
+  const savedBinding = {
+    sessionHandle,
+    participantId,
+    roomId,
+    expiresAt: VALID_JOIN_EXPIRY,
+  };
+  const stateDependencies = makeRunnerStateDependencies({ participantId, roomId, savedBinding });
+  const stats = { contextClosed: 0, runtimeStopped: 0, providerInteractions: 0 };
+  const context = makeRunnerContext({ isClosed: () => false, url: () => CHATGPT_URL }, stats);
+  let joinCalls = 0;
+  let inputCalls = 0;
+  const approvals = [];
+
+  try {
+    const result = await runOriginalSessionBridge({
+      argv: ["--provider", "chatgpt", "--conversation-url", CHATGPT_URL],
+      env: { RUB_MINDS_MCP_ENDPOINT: ENV.RUB_MINDS_MCP_ENDPOINT },
+      input,
+      output,
+      errorOutput: output,
+      ...stateDependencies,
+      playwright: { chromium: { async launchPersistentContext() { return context; } } },
+      prepareProfile: async value => value,
+      readInput: async () => { inputCalls++; throw new Error("saved join must not ask for another invite"); },
+      prompt: async (_rl, _message, expected) => { approvals.push(expected); return true; },
+      joinInvite: async () => { joinCalls++; throw new Error("saved join must not redeem another invite"); },
+      createRuntime: () => ({
+        async run({ approved }) {
+          assert.equal(approved, true);
+          return { status: "source_closed", replies: 0 };
+        },
+        stop() { stats.runtimeStopped++; },
+      }),
+    });
+
+    assert.deepEqual(result, { status: "source_closed", replies: 0 });
+    assert.deepEqual(approvals, ["START"]);
+    assert.equal(joinCalls, 0);
+    assert.equal(inputCalls, 0);
+    assert.deepEqual(stateDependencies.readSavedBinding(), savedBinding);
+    assert.equal(stateDependencies.readJoinLockReleaseCount(), 1, "conversation lock is released after a reused join exits");
+    assert.ok(writes.join("").includes("Verifying it before reuse"));
+    assert.ok(!writes.join("").includes(sessionHandle), "saved session capability must not be printed");
+    assert.equal(stats.contextClosed, 1);
+  } finally {
+    input.destroy();
+    output.destroy();
+  }
+});
+
+test("declining explicit Staging invitation redemption stops before MCP join or runtime creation", async () => {
+  const input = makeTtyStream();
+  const output = makeTtyStream();
+  output.write = () => true;
+  const stats = { contextClosed: 0, runtimeStopped: 0, providerInteractions: 0 };
+  const context = makeRunnerContext({ isClosed: () => false, url: () => CHATGPT_URL }, stats);
+  let joinCalls = 0;
+  let runtimeCalls = 0;
+  try {
+    const result = await runOriginalSessionBridge({
+      argv: ["--provider", "chatgpt", "--conversation-url", CHATGPT_URL],
+      env: { RUB_MINDS_MCP_ENDPOINT: ENV.RUB_MINDS_MCP_ENDPOINT },
+      input,
+      output,
+      errorOutput: output,
+      ...makeRunnerStateDependencies(),
+      playwright: { chromium: { async launchPersistentContext() { return context; } } },
+      prepareProfile: async value => value,
+      readInput: async () => "https://rub-minds.vercel.app/?invite=" + "d".repeat(64),
+      prompt: async (_rl, _message, expected) => expected !== "JOIN",
+      joinInvite: async () => { joinCalls++; throw new Error("join must not execute"); },
+      createRuntime: () => { runtimeCalls++; throw new Error("runtime must not start"); },
+    });
+    assert.deepEqual(result, { status: "not_started", replies: 0 });
+    assert.equal(joinCalls, 0);
+    assert.equal(runtimeCalls, 0);
+    assert.equal(stats.contextClosed, 1);
+  } finally {
+    input.destroy();
+    output.destroy();
+  }
+});
+
 test("declining a per-message SEND approval prevents provider interaction and still closes the owned context", async () => {
   const input = makeTtyStream();
   const output = makeTtyStream();
@@ -345,6 +787,7 @@ test("declining a per-message SEND approval prevents provider interaction and st
         input,
         output,
         errorOutput: output,
+      ...makeRunnerStateDependencies(),
         playwright: {
           chromium: {
             async launchPersistentContext() { return context; },
@@ -399,6 +842,7 @@ test("Ctrl+C while awaiting START returns stopped without opening a browser", as
       input,
       output,
       errorOutput: output,
+      ...makeRunnerStateDependencies(),
       prompt: async () => {
         process.emit("SIGINT");
         const error = new Error("interactive prompt aborted");
@@ -437,6 +881,7 @@ test("Ctrl+C while awaiting SEND stops without provider interaction and closes t
       input,
       output,
       errorOutput: output,
+      ...makeRunnerStateDependencies(),
       playwright: {
         chromium: {
           async launchPersistentContext() { return context; },

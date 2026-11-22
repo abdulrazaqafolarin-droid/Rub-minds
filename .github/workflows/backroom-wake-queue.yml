@@ -35,7 +35,16 @@ jobs:
         with:
           persist-credentials: false
       - name: Install PostgreSQL client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+        run: |
+          for attempt in 1 2 3; do
+            if sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update &&
+               sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y postgresql-client; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then sleep "$((attempt * 10))"; fi
+          done
+          echo "Could not install postgresql-client after bounded mirror retries." >&2
+          exit 1
       - name: Create isolated service roles
         env:
           PGPASSWORD: postgres
@@ -229,6 +238,10 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261101221342_restrict_group_task_review_service_role_execute.sql
+      - name: Add private per-execution task claim ownership
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f supabase/migrations/20261122100000_room_task_execution_claim_keys.sql
       - name: Exercise task lifecycle, dependencies, MCP-scoped AI actions and existing Backroom wake queue
         env:
           PGPASSWORD: postgres

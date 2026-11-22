@@ -32,6 +32,8 @@ declare
   v_job_new uuid;
   v_claimed_task_job uuid;
   v_repaired_job uuid;
+  v_claim_key uuid := '55000000-0000-4000-8000-000000000001';
+  v_other_claim_key uuid := '55000000-0000-4000-8000-000000000002';
   v_dependency_result jsonb;
   v_task_version_before integer;
   v_task_version_after integer;
@@ -389,7 +391,18 @@ begin
     and event_id='task_'||v_fail_parent::text||'_v1'
   order by created_at desc limit 1;
   if v_claimed_task_job is null then raise exception 'Assigned AI task must enqueue its wake'; end if;
-  perform public.claim_room_task(v_room,v_fail_parent,v_ai_one);
+  v_claim := public.claim_room_task(v_room,v_fail_parent,v_ai_one,v_claim_key);
+  if v_claim->>'claimed'<>'true' or v_claim->>'replayed'<>'false' then
+    raise exception 'The first execution key must acquire the AI task claim exactly once';
+  end if;
+  v_claim := public.claim_room_task(v_room,v_fail_parent,v_ai_one,v_other_claim_key);
+  if v_claim->>'claimed'<>'false' or v_claim->>'reason'<>'claim_owned_by_another_runner' then
+    raise exception 'A different execution key must not replay another runner task claim';
+  end if;
+  v_claim := public.claim_room_task(v_room,v_fail_parent,v_ai_one,v_claim_key);
+  if v_claim->>'claimed'<>'true' or v_claim->>'replayed'<>'true' then
+    raise exception 'The same execution key must recover its own committed task claim';
+  end if;
   select state into v_status from public.backroom_wake_jobs where id=v_claimed_task_job;
   if v_status='cancelled' then
     raise exception 'An AI task claim must not cancel its still-leased canonical wake before host acknowledgement';
@@ -474,7 +487,11 @@ begin
      or has_table_privilege('authenticated','public.room_task_reviews','INSERT')
      or has_table_privilege('authenticated','public.room_task_reviews','UPDATE')
      or has_table_privilege('authenticated','public.room_task_reviews','DELETE')
-     or has_table_privilege('authenticated','public.room_task_reviews','TRUNCATE') then
+     or has_table_privilege('authenticated','public.room_task_reviews','TRUNCATE')
+     or has_table_privilege('authenticated','public.room_task_execution_claims','SELECT')
+     or has_table_privilege('authenticated','public.room_task_execution_claims','INSERT')
+     or has_table_privilege('authenticated','public.room_task_execution_claims','UPDATE')
+     or has_table_privilege('authenticated','public.room_task_execution_claims','DELETE') then
     raise exception 'Authenticated clients must use scoped task RPCs rather than direct table writes';
   end if;
   if not has_table_privilege('authenticated','public.room_tasks','SELECT')
@@ -490,10 +507,11 @@ begin
      or to_regclass('public.room_task_submissions_room_task_fk_idx') is null
      or to_regclass('public.room_task_submissions_submitter_fk_idx') is null
      or to_regclass('public.room_task_reviews_room_task_fk_idx') is null
-     or to_regclass('public.room_task_reviews_reviewer_fk_idx') is null then
+     or to_regclass('public.room_task_reviews_reviewer_fk_idx') is null
+     or to_regclass('public.room_task_execution_claims_participant_fk_idx') is null then
     raise exception 'Every group-task foreign key must have a supporting index';
   end if;
-  if has_function_privilege('authenticated','public.claim_room_task(uuid,uuid,uuid)','EXECUTE')
+  if has_function_privilege('authenticated','public.claim_room_task(uuid,uuid,uuid,uuid)','EXECUTE')
      or has_function_privilege('authenticated','public.fail_room_task(uuid,uuid,uuid,text)','EXECUTE') then
     raise exception 'AI-only task functions must not be executable by authenticated clients';
   end if;

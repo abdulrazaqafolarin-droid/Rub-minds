@@ -4,8 +4,9 @@
  * against the disposable local Supabase Edge Function.
  */
 import assert from "node:assert/strict";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { joinRubMindsInvite, McpSessionMessageTransport } from "../integrations/playwright/mcp-session-message-transport.mjs";
 
 const endpoint = process.env.LOCAL_MCP_ENDPOINT;
 const apiUrl = process.env.LOCAL_SUPABASE_URL;
@@ -190,6 +191,11 @@ try {
   assert.ok(names.includes("forget_memory"), "official client did not discover forget_memory");
   assert.ok(names.includes("load_original_session_bridge_state"), "official client did not discover bridge-state load");
   assert.ok(names.includes("save_original_session_bridge_state"), "official client did not discover bridge-state save");
+  assert.ok(names.includes("list_group_tasks"), "official client did not discover group task listing");
+  assert.ok(names.includes("read_group_task"), "official client did not discover group task reads");
+  assert.ok(names.includes("claim_group_task"), "official client did not discover group task claim");
+  assert.ok(names.includes("block_group_task"), "official client did not discover group task block");
+  assert.ok(names.includes("submit_group_task_result"), "official client did not discover group task submission");
   console.log("SAFE_MCP_E2E_STAGE: MCP tool catalog discovery passed");
 
   for (const entry of rejectedInvites) {
@@ -264,6 +270,216 @@ try {
   assert.notEqual(one.participant_id, two.participant_id, "independent clients must have distinct participants");
   assert.notEqual(one.session_handle, two.session_handle, "independent clients must have distinct session handles");
   console.log("SAFE_MCP_E2E_STAGE: two independent AI participants joined the same group");
+
+  // Exercise human-assigned task discovery, AI claim, result submission,
+  // same-key idempotent replay, cross-participant denial and visible blocking
+  // through the actual official MCP SDK and local Edge Function.
+  let taskOwnerParticipants = await request(
+    "/rest/v1/participants?select=id,kind,user_id&room_id=eq." + room.id + "&user_id=eq." + owner.id,
+  );
+  let taskOwnerHuman = taskOwnerParticipants.find(row => row.kind === "human");
+  if (!taskOwnerHuman) {
+    // This is a disposable service-role-only fixture. Production human
+    // membership remains created by the authenticated onboarding flow.
+    const seededTaskOwnerParticipants = await request("/rest/v1/participants", {
+      method: "POST",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({
+        room_id: room.id,
+        user_id: owner.id,
+        display_name: "Official MCP E2E owner",
+        kind: "human",
+        status: "connected",
+      }),
+    });
+    assert.equal(seededTaskOwnerParticipants.length, 1, "could not seed local human task assigner");
+    taskOwnerHuman = seededTaskOwnerParticipants[0];
+  }
+  assert.ok(taskOwnerHuman?.id, "the local task fixture must have a human creator identity");
+
+  async function createTaskAssignedFixture({ title, assigneeId, description = "Disposable local MCP task", priority = 2 }) {
+    const rows = await request("/rest/v1/room_tasks", {
+      method: "POST",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({
+        room_id: room.id,
+        created_by_participant_id: taskOwnerHuman.id,
+        assigned_to_participant_id: assigneeId,
+        title,
+        description,
+        expected_output: "A concise deliverable",
+        acceptance_criteria: ["Return a useful result"],
+        priority,
+        status: "assigned",
+      }),
+    });
+    assert.equal(rows.length, 1, "could not create assigned task " + title);
+    return rows[0];
+  }
+
+  const lifecycleTaskForOne = await createTaskAssignedFixture({
+    title: "Official MCP task for AI one",
+    assigneeId: one.participant_id,
+  });
+  const lifecycleTaskForTwo = await createTaskAssignedFixture({
+    title: "Official MCP task for AI two",
+    assigneeId: two.participant_id,
+  });
+  const lifecycleDependencyTask = await createTaskAssignedFixture({
+    title: "Official MCP prerequisite",
+    assigneeId: two.participant_id,
+    priority: 3,
+  });
+  const lifecycleDependentTask = await createTaskAssignedFixture({
+    title: "Official MCP dependent task",
+    assigneeId: one.participant_id,
+    priority: 4,
+  });
+  await request("/rest/v1/room_task_dependencies", {
+    method: "POST",
+    body: JSON.stringify({
+      room_id: room.id,
+      task_id: lifecycleDependentTask.id,
+      depends_on_task_id: lifecycleDependencyTask.id,
+      created_by_participant_id: taskOwnerHuman.id,
+    }),
+  });
+
+  const lifecycleTaskList = await first.callTool({ name: "list_group_tasks", arguments: { session_handle: one.session_handle } });
+  assert.notEqual(lifecycleTaskList.isError, true, "AI one could not list group tasks: " + JSON.stringify(lifecycleTaskList));
+  assert.ok(lifecycleTaskList.structuredContent?.tasks?.some(task => task.id === lifecycleTaskForOne.id),
+    "AI one did not see its assigned task");
+  assert.ok(lifecycleTaskList.structuredContent?.tasks?.some(task => task.id === lifecycleDependentTask.id),
+    "AI one did not see its dependent task");
+  const lifecycleTaskDetail = await first.callTool({
+    name: "read_group_task",
+    arguments: { session_handle: one.session_handle, task_id: lifecycleTaskForOne.id },
+  });
+  assert.notEqual(lifecycleTaskDetail.isError, true, "AI one could not read its task: " + JSON.stringify(lifecycleTaskDetail));
+  assert.equal(lifecycleTaskDetail.structuredContent?.task?.version, 1);
+  assert.deepEqual(lifecycleTaskDetail.structuredContent?.prerequisites, []);
+
+  const lifecycleWrongAssigneeClaim = await second.callTool({
+    name: "claim_group_task",
+    arguments: { session_handle: two.session_handle, task_id: lifecycleTaskForOne.id, claim_key: randomUUID() },
+  });
+  assert.equal(lifecycleWrongAssigneeClaim.isError, true,
+    "an AI participant must not claim another participant's assigned task");
+
+  const lifecycleBlockedDependencyClaim = await first.callTool({
+    name: "claim_group_task",
+    arguments: { session_handle: one.session_handle, task_id: lifecycleDependentTask.id, claim_key: randomUUID() },
+  });
+  assert.notEqual(lifecycleBlockedDependencyClaim.isError, true,
+    "an incomplete prerequisite should return a non-error blocked claim result");
+  assert.equal(lifecycleBlockedDependencyClaim.structuredContent?.claimed, false);
+  assert.equal(lifecycleBlockedDependencyClaim.structuredContent?.reason, "dependencies_incomplete");
+
+  const lifecycleClaimKey = randomUUID();
+  const lifecycleClaim = await first.callTool({
+    name: "claim_group_task",
+    arguments: { session_handle: one.session_handle, task_id: lifecycleTaskForOne.id, claim_key: lifecycleClaimKey },
+  });
+  assert.notEqual(lifecycleClaim.isError, true, "assigned AI could not claim its task: " + JSON.stringify(lifecycleClaim));
+  assert.equal(lifecycleClaim.structuredContent?.claimed, true);
+  assert.equal(lifecycleClaim.structuredContent?.status, "in_progress");
+  const lifecycleClaimReplay = await first.callTool({
+    name: "claim_group_task",
+    arguments: { session_handle: one.session_handle, task_id: lifecycleTaskForOne.id, claim_key: lifecycleClaimKey },
+  });
+  assert.notEqual(lifecycleClaimReplay.isError, true, "the owning runner must recover its exact claim after a lost acknowledgement");
+  assert.equal(lifecycleClaimReplay.structuredContent?.claimed, true);
+  assert.equal(lifecycleClaimReplay.structuredContent?.replayed, true);
+  const lifecycleForeignClaim = await first.callTool({
+    name: "claim_group_task",
+    arguments: { session_handle: one.session_handle, task_id: lifecycleTaskForOne.id, claim_key: randomUUID() },
+  });
+  assert.notEqual(lifecycleForeignClaim.isError, true, "a different runner should receive a structured claim conflict");
+  assert.equal(lifecycleForeignClaim.structuredContent?.claimed, false);
+  assert.equal(lifecycleForeignClaim.structuredContent?.reason, "claim_owned_by_another_runner");
+  const lifecycleClaimedDetail = await first.callTool({
+    name: "read_group_task",
+    arguments: { session_handle: one.session_handle, task_id: lifecycleTaskForOne.id },
+  });
+  assert.equal(lifecycleClaimedDetail.structuredContent?.task?.status, "in_progress");
+  assert.equal(lifecycleClaimedDetail.structuredContent?.task?.version, 2,
+    "claim should advance task version exactly once");
+
+  const lifecycleSubmissionKey = randomUUID();
+  const lifecycleTaskResult = "Official MCP SDK task result with a stable idempotency key.";
+  const lifecycleSubmission = await first.callTool({
+    name: "submit_group_task_result",
+    arguments: {
+      session_handle: one.session_handle,
+      task_id: lifecycleTaskForOne.id,
+      result: lifecycleTaskResult,
+      submission_key: lifecycleSubmissionKey,
+      source_message_ids: [],
+    },
+  });
+  assert.notEqual(lifecycleSubmission.isError, true, "assigned AI could not submit its result: " + JSON.stringify(lifecycleSubmission));
+  assert.equal(lifecycleSubmission.structuredContent?.submitted, true);
+  assert.equal(lifecycleSubmission.structuredContent?.status, "review");
+  const lifecycleSubmissionRetry = await first.callTool({
+    name: "submit_group_task_result",
+    arguments: {
+      session_handle: one.session_handle,
+      task_id: lifecycleTaskForOne.id,
+      result: lifecycleTaskResult,
+      submission_key: lifecycleSubmissionKey,
+      source_message_ids: [],
+    },
+  });
+  assert.notEqual(lifecycleSubmissionRetry.isError, true, "same-key task result replay was rejected");
+  assert.equal(lifecycleSubmissionRetry.structuredContent?.submitted, true);
+  assert.equal(lifecycleSubmissionRetry.structuredContent?.replayed, true);
+  const lifecycleConflictingRetry = await first.callTool({
+    name: "submit_group_task_result",
+    arguments: {
+      session_handle: one.session_handle,
+      task_id: lifecycleTaskForOne.id,
+      result: lifecycleTaskResult + " changed",
+      submission_key: lifecycleSubmissionKey,
+      source_message_ids: [],
+    },
+  });
+  assert.equal(lifecycleConflictingRetry.isError, true, "the same idempotency key must not accept different task content");
+
+  const lifecycleWrongAssigneeBlock = await first.callTool({
+    name: "block_group_task",
+    arguments: {
+      session_handle: one.session_handle,
+      task_id: lifecycleTaskForTwo.id,
+      reason: "This participant must not block another AI's task.",
+    },
+  });
+  assert.equal(lifecycleWrongAssigneeBlock.isError, true,
+    "an AI participant must not block another participant's task");
+  const lifecycleBlockedResult = await second.callTool({
+    name: "block_group_task",
+    arguments: {
+      session_handle: two.session_handle,
+      task_id: lifecycleTaskForTwo.id,
+      reason: "The original provider turn requires human inspection.",
+    },
+  });
+  assert.notEqual(lifecycleBlockedResult.isError, true, "assigned AI could not block its own task: " + JSON.stringify(lifecycleBlockedResult));
+  assert.equal(lifecycleBlockedResult.structuredContent?.blocked, true);
+  assert.equal(lifecycleBlockedResult.structuredContent?.status, "blocked");
+
+  const lifecycleFinalTasks = await first.callTool({
+    name: "list_group_tasks",
+    arguments: { session_handle: one.session_handle },
+  });
+  const lifecycleFinalOne = lifecycleFinalTasks.structuredContent.tasks.find(task => task.id === lifecycleTaskForOne.id);
+  const lifecycleFinalTwo = lifecycleFinalTasks.structuredContent.tasks.find(task => task.id === lifecycleTaskForTwo.id);
+  assert.equal(lifecycleFinalOne.status, "review");
+  assert.equal(lifecycleFinalTwo.status, "blocked");
+  const lifecycleSubmissionRows = await request(
+    "/rest/v1/room_task_submissions?select=id,idempotency_key&task_id=eq." + lifecycleTaskForOne.id,
+  );
+  assert.equal(lifecycleSubmissionRows.length, 1, "same-key retries must create exactly one task submission");
+  console.log("SAFE_MCP_E2E_STAGE: official MCP task discovery, dependency guard, claim, submit/replay and block passed");
 
   // Create a disposable desktop frame using the existing privileged registration RPC.
   // The challenge is scoped to one exact AI participant AND its MCP session digest.
@@ -1193,7 +1409,7 @@ try {
 
   const unassignedClaim = await second.callTool({
     name: "claim_group_task",
-    arguments: { session_handle: two.session_handle, task_id: taskId },
+    arguments: { session_handle: two.session_handle, task_id: taskId, claim_key: randomUUID() },
   });
   assert.equal(unassignedClaim.isError, true, "AI participants must not claim an unassigned proposal");
 
@@ -1210,13 +1426,14 @@ try {
 
   const wrongAssigneeClaim = await second.callTool({
     name: "claim_group_task",
-    arguments: { session_handle: two.session_handle, task_id: taskId },
+    arguments: { session_handle: two.session_handle, task_id: taskId, claim_key: randomUUID() },
   });
   assert.equal(wrongAssigneeClaim.isError, true, "a different AI must not claim work assigned to AI one");
 
+  const proposalClaimKey = randomUUID();
   const claimed = await first.callTool({
     name: "claim_group_task",
-    arguments: { session_handle: one.session_handle, task_id: taskId },
+    arguments: { session_handle: one.session_handle, task_id: taskId, claim_key: proposalClaimKey },
   });
   assert.notEqual(claimed.isError, true, "the assigned AI could not claim its task: " + JSON.stringify(claimed));
   assert.equal(claimed.structuredContent?.claimed, true);
@@ -1508,4 +1725,102 @@ try {
   console.log("SAFE_MCP_E2E_STAGE: full official MCP SDK collaboration and leave/rejoin lifecycle passed");
 } finally {
   await Promise.allSettled([first.close(), second.close()]);
+}
+
+// This local script has already exercised multiple negative, concurrent,
+// independent and rebind joins. Reset only the disposable CI join-limit bucket
+// before the separate Playwright helper acceptance; Production is not touched.
+await request("/rest/v1/public_request_rate_limits?bucket=eq.rub-minds-mcp-join", {
+  method: "DELETE",
+  headers: { Prefer: "return=minimal" },
+});
+
+// Exercise the exact local Playwright runner join helper against the real Edge
+// Function. It redeems through modern MCP with a durable join_request_key,
+// verifies the returned joined identity, reads tasks, retries idempotently,
+// and revokes the session. Loopback is explicitly enabled only in this test.
+const runnerRoomRows = await request("/rest/v1/rooms", {
+  method: "POST",
+  headers: { Prefer: "return=representation" },
+  body: JSON.stringify({
+    owner_id: owner.id,
+    title: "Local Playwright join handshake",
+    objective: "Verify the local original-session runner invite handshake",
+  }),
+});
+assert.equal(runnerRoomRows.length, 1);
+const runnerRoom = runnerRoomRows[0];
+const runnerInviteToken = randomBytes(32).toString("hex");
+const runnerInviteRows = await request("/rest/v1/room_invites", {
+  method: "POST",
+  headers: { Prefer: "return=representation" },
+  body: JSON.stringify({
+    room_id: runnerRoom.id,
+    created_by: owner.id,
+    token_hash: createHash("sha256").update(runnerInviteToken, "utf8").digest("hex"),
+    expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    max_uses: 1,
+    uses: 0,
+    allow_ai: true,
+    max_ai_uses: 1,
+    ai_uses: 0,
+  }),
+});
+assert.equal(runnerInviteRows.length, 1);
+let runnerJoin;
+let runnerTransport;
+const runnerJoinRequestKey = randomBytes(32).toString("hex");
+try {
+  runnerJoin = await joinRubMindsInvite({
+    endpoint,
+    inviteToken: runnerInviteToken,
+    joinRequestKey: runnerJoinRequestKey,
+    agentLabel: "Local Playwright original session",
+    allowLocalTestEndpoint: true,
+  });
+  assert.equal(runnerJoin.joined, true);
+  assert.equal(runnerJoin.roomId, runnerRoom.id);
+  assert.match(runnerJoin.sessionHandle, /^[a-f0-9]{64}$/i);
+  assert.match(runnerJoin.participantId, /^[0-9a-f-]{36}$/i);
+  assert.ok(Date.parse(runnerJoin.expiresAt) > Date.now());
+  const replayedRunnerJoin = await joinRubMindsInvite({
+    endpoint,
+    inviteToken: runnerInviteToken,
+    joinRequestKey: runnerJoinRequestKey,
+    agentLabel: "Local Playwright original session",
+    allowLocalTestEndpoint: true,
+  });
+  assert.equal(replayedRunnerJoin.sessionHandle, runnerJoin.sessionHandle,
+    "same join_request_key must return the original opaque handle");
+  assert.equal(replayedRunnerJoin.participantId, runnerJoin.participantId,
+    "same join_request_key must return the same AI participant");
+  assert.equal(Date.parse(replayedRunnerJoin.expiresAt), Date.parse(runnerJoin.expiresAt),
+    "idempotent replay must preserve the existing participant expiry instant");
+  runnerTransport = new McpSessionMessageTransport({
+    endpoint,
+    sessionHandle: runnerJoin.sessionHandle,
+  });
+  const context = await runnerTransport.readGroupContext();
+  assert.equal(context.room.id, runnerRoom.id);
+  assert.equal(context.self.participant_id, runnerJoin.participantId);
+  const tasks = await runnerTransport.listTasks();
+  assert.deepEqual(tasks.tasks, [], "newly joined runner must only see tasks in its own group");
+  await runnerTransport.leaveGroup();
+  const sessionDigest = createHash("sha256").update(runnerJoin.sessionHandle, "utf8").digest("hex");
+  const tombstone = await request(
+    "/rest/v1/rub_minds_mcp_sessions?select=participant_id,terminated_at&session_digest=eq." + sessionDigest,
+  );
+  assert.equal(tombstone.length, 1, "the original-session runner join must leave a retained session tombstone");
+  assert.equal(tombstone[0].participant_id, null);
+  assert.ok(tombstone[0].terminated_at);
+  const inviteUsage = await request(
+    "/rest/v1/room_invites?select=ai_uses&id=eq." + runnerInviteRows[0].id,
+  );
+  assert.equal(inviteUsage[0]?.ai_uses, 1, "an original-session runner retry with the same join_request_key must consume exactly one AI invite slot");
+  console.log("SAFE_MCP_E2E_STAGE: local Playwright runner initialize/join/identity/task-read/leave handshake passed");
+} catch (error) {
+  if (runnerTransport) {
+    await runnerTransport.leaveGroup().catch(() => {});
+  }
+  throw error;
 }

@@ -1,9 +1,8 @@
 /**
- * HTTP transport adapter for the hosted Rub Minds MCP message tools.
- *
- * Pass createBridgeAdapters() into PlaywrightSessionBridge. It sends only the
- * scoped Rub Minds session handle in the JSON-RPC tool arguments. It never
- * reads provider cookies, browser storage, or model-provider credentials.
+ * HTTP transport adapter for the hosted Rub Minds MCP message, task and
+ * joined-session identity tools. Message and task cursors remain separate.
+ * It sends only the scoped Rub Minds session handle in JSON-RPC arguments.
+ * It never reads provider cookies, browser storage or provider credentials.
  */
 const SESSION_HANDLE_RE = /^[0-9a-f]{64}$/i;
 const DEFAULT_PROTOCOL_VERSION = "2026-07-28";
@@ -17,6 +16,13 @@ const MESSAGE_TOOL_NAMES = new Set([
   "send_group_message",
   "load_original_session_bridge_state",
   "save_original_session_bridge_state",
+  "list_group_tasks",
+  "read_group_task",
+  "claim_group_task",
+  "block_group_task",
+  "submit_group_task_result",
+  "read_group_context",
+  "leave_group",
 ]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
@@ -59,6 +65,179 @@ function extractStructuredContent(payload, requestId, toolName) {
   return data;
 }
 
+
+/**
+ * Redeem an AI invitation through the Staging MCP endpoint. The idempotency
+ * key is reused for one bounded retry so an ambiguous network timeout cannot
+ * create a second participant. The returned handle is a secret capability.
+ */
+export async function joinRubMindsInvite({
+  endpoint,
+  inviteToken,
+  joinRequestKey,
+  agentLabel,
+  allowLocalTestEndpoint = false,
+  fetchImpl = globalThis.fetch,
+  requestTimeoutMs = 20000,
+  signal,
+} = {}) {
+  const target = validateEndpoint(endpoint);
+  const targetUrl = new URL(target);
+  const functionPath = targetUrl.pathname.replace(/\/$/, "");
+  const stagingTarget = targetUrl.protocol === "https:" &&
+    targetUrl.hostname === "tzcuuynmviiuactafpld.supabase.co" &&
+    functionPath === "/functions/v1/rub-minds-mcp";
+  const localTestTarget = allowLocalTestEndpoint === true &&
+    targetUrl.protocol === "http:" &&
+    targetUrl.hostname === "127.0.0.1" &&
+    targetUrl.port === "54321" &&
+    functionPath === "/functions/v1/rub-minds-mcp";
+  if (!stagingTarget && !localTestTarget) {
+    throw new TypeError("invite redemption is restricted to the Rub Minds Staging MCP endpoint; loopback is allowed only in explicit local tests");
+  }
+  if (typeof inviteToken !== "string" || !/^[0-9a-f]{64}$/i.test(inviteToken)) {
+    throw new TypeError("inviteToken must be a 64-character hexadecimal Staging invitation");
+  }
+  if (typeof joinRequestKey !== "string" || !/^[0-9a-f]{64}$/i.test(joinRequestKey)) {
+    throw new TypeError("joinRequestKey must be a 64-character hexadecimal idempotency key");
+  }
+  if (typeof agentLabel !== "string" || !agentLabel.trim() || agentLabel.trim().length > 80) {
+    throw new TypeError("agentLabel must contain 1-80 characters");
+  }
+  if (typeof fetchImpl !== "function") throw new TypeError("fetchImpl must be a function");
+  if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1000 || requestTimeoutMs > 60000) {
+    throw new RangeError("requestTimeoutMs must be an integer from 1000 to 60000");
+  }
+  if (signal?.aborted) throw new Error("Rub Minds invitation join was cancelled");
+
+  const protocolVersion = DEFAULT_PROTOCOL_VERSION;
+  const requestId = 1;
+  const body = {
+    jsonrpc: "2.0",
+    id: requestId,
+    method: "tools/call",
+    params: {
+      _meta: {
+        "io.modelcontextprotocol/protocolVersion": protocolVersion,
+        "io.modelcontextprotocol/clientCapabilities": {},
+      },
+      name: "join_group",
+      arguments: {
+        invite_token: inviteToken.toLowerCase(),
+        agent_label: agentLabel.trim(),
+        confirm_join: true,
+        join_request_key: joinRequestKey.toLowerCase(),
+      },
+    },
+  };
+
+  const request = async (attempt) => {
+    const controller = new AbortController();
+    const forwardAbort = () => controller.abort();
+    signal?.addEventListener("abort", forwardAbort, { once: true });
+    const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
+    try {
+      const response = await fetchImpl(target, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json, text/event-stream",
+          "MCP-Protocol-Version": protocolVersion,
+          "Mcp-Method": "tools/call",
+          "Mcp-Name": "join_group",
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      if (!response || typeof response.ok !== "boolean" ||
+          typeof response.json !== "function") {
+        const error = new Error("Rub Minds MCP returned an invalid HTTP response");
+        error.retryable = attempt === 0;
+        throw error;
+      }
+      if (!response.ok) {
+        const error = new Error("Rub Minds Staging invitation request failed (HTTP " + response.status + ")");
+        error.retryable = response.status >= 500 && attempt === 0;
+        throw error;
+      }
+      let payload;
+      try {
+        payload = await response.json();
+      } catch {
+        const error = new Error("Rub Minds MCP returned invalid JSON");
+        error.retryable = attempt === 0;
+        throw error;
+      }
+      if (!payload || typeof payload !== "object" || Array.isArray(payload) ||
+          payload.jsonrpc !== "2.0" || payload.id !== requestId) {
+        const error = new Error("Rub Minds MCP returned an invalid JSON-RPC response");
+        error.retryable = attempt === 0;
+        throw error;
+      }
+      if (payload.error) throw new Error("Rub Minds MCP invitation request was rejected");
+      return payload;
+    } catch (error) {
+      if (signal?.aborted) throw new Error("Rub Minds invitation join was cancelled");
+      if (controller.signal.aborted && attempt === 0) {
+        const timeout = new Error("Rub Minds Staging invitation request timed out");
+        timeout.retryable = true;
+        throw timeout;
+      }
+      if (error?.retryable === true) throw error;
+      if (error instanceof TypeError && attempt === 0) {
+        const retry = new Error("Rub Minds Staging invitation request failed");
+        retry.retryable = true;
+        throw retry;
+      }
+      if (error instanceof Error) throw error;
+      throw new Error("Rub Minds Staging invitation request failed");
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", forwardAbort);
+    }
+  };
+
+  let response;
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      response = await request(attempt);
+      break;
+    } catch (error) {
+      if (attempt === 0 && error?.retryable === true) {
+        lastError = error;
+        continue;
+      }
+      throw error;
+    }
+  }
+  if (!response) {
+    throw lastError || new Error("Rub Minds Staging invitation outcome is unknown; retry with the same joinRequestKey");
+  }
+  const toolResult = response.result;
+  if (!toolResult || typeof toolResult !== "object" || Array.isArray(toolResult) ||
+      toolResult.isError === true) {
+    throw new Error("Rub Minds Staging invitation redemption failed");
+  }
+  const joined = toolResult.structuredContent;
+  if (!joined || typeof joined !== "object" || Array.isArray(joined) ||
+      joined.joined !== true ||
+      typeof joined.session_handle !== "string" || !SESSION_HANDLE_RE.test(joined.session_handle) ||
+      typeof joined.room_id !== "string" || !UUID_RE.test(joined.room_id) ||
+      typeof joined.participant_id !== "string" || !UUID_RE.test(joined.participant_id) ||
+      typeof joined.expires_at !== "string" || !Number.isFinite(Date.parse(joined.expires_at)) ||
+      Date.parse(joined.expires_at) <= Date.now()) {
+    throw new Error("Rub Minds returned an incomplete invitation join; no provider browser session was started");
+  }
+  return Object.freeze({
+    joined: true,
+    sessionHandle: joined.session_handle.toLowerCase(),
+    roomId: joined.room_id,
+    participantId: joined.participant_id,
+    expiresAt: joined.expires_at,
+  });
+}
+
 export class McpSessionMessageTransport {
   constructor({
     endpoint,
@@ -92,7 +271,7 @@ export class McpSessionMessageTransport {
 
   async callTool(name, args = {}, { signal } = {}) {
     if (typeof name !== "string" || !MESSAGE_TOOL_NAMES.has(name)) {
-      throw new TypeError("this transport only supports Rub Minds group-message and bridge-state tools");
+      throw new TypeError("this transport only supports scoped Rub Minds group, task, session and bridge-state tools");
     }
     if (!args || typeof args !== "object" || Array.isArray(args)) throw new TypeError("tool arguments must be an object");
     if (signal?.aborted) throw new Error("Rub Minds MCP call aborted");
@@ -314,10 +493,106 @@ export class McpSessionMessageTransport {
     }, { signal });
   }
 
+  async readGroupContext({ signal } = {}) {
+    const result = await this.callTool("read_group_context", {}, { signal });
+    if (!result.room || !UUID_RE.test(result.room.id || "") ||
+        !result.self || !UUID_RE.test(result.self.participant_id || "")) {
+      throw new Error("Rub Minds MCP returned an incomplete joined-session identity");
+    }
+    return result;
+  }
+
+  async leaveGroup({ signal } = {}) {
+    const result = await this.callTool("leave_group", { confirm_leave: true }, { signal });
+    if (result.left !== true) throw new Error("Rub Minds did not confirm this AI session was revoked");
+    return result;
+  }
+
+  async listTasks({ signal } = {}) {
+    const result = await this.callTool("list_group_tasks", {}, { signal });
+    if (!Array.isArray(result.tasks)) throw new Error("Rub Minds MCP task list returned no task list");
+    return result;
+  }
+
+  async readTask(taskId, { signal } = {}) {
+    if (typeof taskId !== "string" || !UUID_RE.test(taskId)) {
+      throw new TypeError("taskId must be a UUID");
+    }
+    const result = await this.callTool("read_group_task", { task_id: taskId }, { signal });
+    if (!result.task || result.task.id !== taskId) {
+      throw new Error("Rub Minds MCP returned the wrong task identity");
+    }
+    return result;
+  }
+
+  async claimTask(taskId, { claimKey, signal } = {}) {
+    if (typeof taskId !== "string" || !UUID_RE.test(taskId)) {
+      throw new TypeError("taskId must be a UUID");
+    }
+    if (typeof claimKey !== "string" || !UUID_RE.test(claimKey)) {
+      throw new TypeError("claimKey must be a UUID");
+    }
+    return await this.callTool("claim_group_task", {
+      task_id: taskId,
+      claim_key: claimKey,
+    }, { signal });
+  }
+
+  async blockTask(taskId, reason, { signal } = {}) {
+    if (typeof taskId !== "string" || !UUID_RE.test(taskId)) {
+      throw new TypeError("taskId must be a UUID");
+    }
+    if (typeof reason !== "string" || !reason.trim() || reason.trim().length > 2000) {
+      throw new TypeError("block reason must contain 1-2000 characters");
+    }
+    return await this.callTool("block_group_task", {
+      task_id: taskId,
+      reason: reason.trim(),
+    }, { signal });
+  }
+
+  async submitTaskResult({
+    taskId,
+    result,
+    submissionKey,
+    sourceMessageIds = [],
+  } = {}, { signal } = {}) {
+    if (typeof taskId !== "string" || !UUID_RE.test(taskId)) {
+      throw new TypeError("taskId must be a UUID");
+    }
+    if (typeof result !== "string" || !result.trim() || result.length > 20000) {
+      throw new TypeError("task result must contain 1-20000 characters");
+    }
+    if (typeof submissionKey !== "string" || !UUID_RE.test(submissionKey)) {
+      throw new TypeError("submissionKey must be a UUID");
+    }
+    if (!Array.isArray(sourceMessageIds) || sourceMessageIds.length > 50 ||
+        sourceMessageIds.some(id => typeof id !== "string" || !UUID_RE.test(id)) ||
+        new Set(sourceMessageIds).size !== sourceMessageIds.length) {
+      throw new TypeError("sourceMessageIds must contain at most 50 unique UUIDs");
+    }
+    return await this.callTool("submit_group_task_result", {
+      task_id: taskId,
+      result,
+      submission_key: submissionKey,
+      source_message_ids: sourceMessageIds,
+    }, { signal });
+  }
+
   createBridgeAdapters() {
     return {
       readMessages: this.readMessages.bind(this),
       sendMessage: this.sendMessage.bind(this),
+    };
+  }
+
+  createTaskAdapters() {
+    return {
+      listTasks: this.listTasks.bind(this),
+      readTask: this.readTask.bind(this),
+      claimTask: this.claimTask.bind(this),
+      blockTask: this.blockTask.bind(this),
+      submitTaskResult: this.submitTaskResult.bind(this),
     };
   }
 }

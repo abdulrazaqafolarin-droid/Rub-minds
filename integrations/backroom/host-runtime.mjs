@@ -8,6 +8,24 @@ const OPS = new Set(["draft","wake","submit","read_result"]);
 const NATIVE_WAKE_SURFACES = new Set(["desktop_app","windows_app","android_app"]);
 const isText = value => typeof value === "string" && value.length > 0;
 import {isCanonicalWakePrompt} from "./coordination-core.mjs";
+const SAFE_BROWSER_WAKE_REVIEW_REASONS=new Set([
+ "assistant-response-observer-unavailable",
+ "assistant-response-unconfirmed",
+ "conversation-changed-before-response",
+ "composer-clear-unconfirmed",
+ "send_unconfirmed",
+]);
+const SAFE_BROWSER_WAKE_REVIEW_CONFIRMATIONS=new Set(["composer-cleared"]);
+function browserWakeReviewMetadata(value){
+ if(!value||typeof value!=="object"||Array.isArray(value))return null;
+ const safe={};
+ for(const key of ["submitted","triggerSubmitted","assistantResponseConfirmed"]){
+  if(typeof value[key]==="boolean")safe[key]=value[key];
+ }
+ if(SAFE_BROWSER_WAKE_REVIEW_CONFIRMATIONS.has(value.confirmation))safe.confirmation=value.confirmation;
+ if(SAFE_BROWSER_WAKE_REVIEW_REASONS.has(value.reason))safe.reason=value.reason;
+ return Object.keys(safe).length?safe:null;
+}
 function denyBeforeEffect(message) {
   const error = new Error(message);
   error.code = "BACKROOM_PREFLIGHT";
@@ -87,7 +105,13 @@ export class LocalExecutionGuard {
       command, target, verifiedProbe: live, executionSealReserved,
     });
     if (!outcome || outcome.state !== "completed" || outcome.verified !== true) {
-      return { state: "needs_review", result: null };
+      // A managed-browser wake may return a bounded reason for an uncertain
+      // post-submit outcome. Preserve only allowlisted booleans/reason codes;
+      // page text, response text and other adapter data never leave the adapter.
+      const result = command.operation === "wake" && target.surface === "browser_tab"
+        ? browserWakeReviewMetadata(outcome?.result)
+        : null;
+      return { state: "needs_review", result };
     }
     return { state: "completed", result: outcome.result ?? null };
   }
