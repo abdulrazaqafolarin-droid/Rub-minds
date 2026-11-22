@@ -64,7 +64,7 @@ test("tool discovery and calls are forwarded without mutating the existing MCP c
   const mock = upstream();
   const proxy = createMcpStdioProxy({
     endpoint: ENDPOINT,
-    apiKey: "public-publishable-key",
+    apiKey: "sb_publishable_test_key",
     fetchImpl: mock.fetch,
   });
   const list = await proxy.handle({ jsonrpc: "2.0", id: "list", method: "tools/list" });
@@ -93,7 +93,7 @@ test("tool discovery and calls are forwarded without mutating the existing MCP c
     },
   });
   assert.equal(mock.requests[1].init.headers["Mcp-Name"], "join_group");
-  assert.equal(mock.requests[1].init.headers.apikey, "public-publishable-key");
+  assert.equal(mock.requests[1].init.headers.apikey, "sb_publishable_test_key");
   assert.equal(mock.requests.every(item => item.init.redirect === "error" && item.init.cache === "no-store"), true);
 });
 
@@ -184,7 +184,7 @@ test("declared oversized upstream responses are rejected before body reads", asy
 });
 
 test("upstream HTTP and JSON-RPC failures never leak credentials into the response", async () => {
-  const apiKey = "DO_NOT_LEAK_THIS_KEY";
+  const apiKey = "sb_publishable_DO_NOT_LEAK_THIS_KEY";
   const credential = "DO_NOT_LEAK_INVITE_TOKEN";
   const proxy = createMcpStdioProxy({
     endpoint: ENDPOINT,
@@ -200,15 +200,25 @@ test("upstream HTTP and JSON-RPC failures never leak credentials into the respon
   assert.equal(result.error.code, -32000);
 });
 
-test("rejects Supabase secret and legacy service-role API keys before any network request", () => {
+test("accepts current publishable keys and legacy anon JWT keys", () => {
+  const publishable = "sb_publishable_test_key";
+  const anonPayload = Buffer.from(JSON.stringify({ role: "anon" })).toString("base64url");
+  const anonJwt = "e30." + anonPayload + ".signature";
+  assert.doesNotThrow(() => createMcpStdioProxy({ endpoint: ENDPOINT, apiKey: publishable }));
+  assert.doesNotThrow(() => createMcpStdioProxy({ endpoint: ENDPOINT, apiKey: anonJwt }));
+});
+
+test("rejects secret, service-role, authenticated and malformed API keys before any network request", () => {
   const serviceRole = Buffer.from(JSON.stringify({ role: "service_role" })).toString("base64url");
-  const jwt = "e30." + serviceRole + ".signature";
-  for (const apiKey of ["sb_secret_do_not_use", jwt]) {
+  const authenticated = Buffer.from(JSON.stringify({ role: "authenticated" })).toString("base64url");
+  const serviceRoleJwt = "e30." + serviceRole + ".signature";
+  const authenticatedJwt = "e30." + authenticated + ".signature";
+  for (const apiKey of ["sb_secret_do_not_use", "not-a-supabase-key", serviceRoleJwt, authenticatedJwt, "e30.not-json.signature"]) {
     assert.throws(() => createMcpStdioProxy({
       endpoint: ENDPOINT,
       apiKey,
       fetchImpl: async () => { throw new Error("must not be called"); },
-    }), /not allowed|forbidden/);
+    }), /not allowed|Only a legacy Supabase anon|must be a public Supabase/);
   }
 });
 
