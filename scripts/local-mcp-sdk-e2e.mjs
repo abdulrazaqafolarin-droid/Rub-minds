@@ -361,23 +361,24 @@ try {
 
   const lifecycleWrongAssigneeClaim = await second.callTool({
     name: "claim_group_task",
-    arguments: { session_handle: two.session_handle, task_id: lifecycleTaskForOne.id },
+    arguments: { session_handle: two.session_handle, task_id: lifecycleTaskForOne.id, claim_key: randomUUID() },
   });
   assert.equal(lifecycleWrongAssigneeClaim.isError, true,
     "an AI participant must not claim another participant's assigned task");
 
   const lifecycleBlockedDependencyClaim = await first.callTool({
     name: "claim_group_task",
-    arguments: { session_handle: one.session_handle, task_id: lifecycleDependentTask.id },
+    arguments: { session_handle: one.session_handle, task_id: lifecycleDependentTask.id, claim_key: randomUUID() },
   });
   assert.notEqual(lifecycleBlockedDependencyClaim.isError, true,
     "an incomplete prerequisite should return a non-error blocked claim result");
   assert.equal(lifecycleBlockedDependencyClaim.structuredContent?.claimed, false);
   assert.equal(lifecycleBlockedDependencyClaim.structuredContent?.reason, "dependencies_incomplete");
 
+  const lifecycleClaimKey = randomUUID();
   const lifecycleClaim = await first.callTool({
     name: "claim_group_task",
-    arguments: { session_handle: one.session_handle, task_id: lifecycleTaskForOne.id },
+    arguments: { session_handle: one.session_handle, task_id: lifecycleTaskForOne.id, claim_key: lifecycleClaimKey },
   });
   assert.notEqual(lifecycleClaim.isError, true, "assigned AI could not claim its task: " + JSON.stringify(lifecycleClaim));
   assert.equal(lifecycleClaim.structuredContent?.claimed, true);
