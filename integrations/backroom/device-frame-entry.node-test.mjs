@@ -122,6 +122,20 @@ test("Windows computer-frame input requires exact Backroom-launched HWND and ful
   assert.match(frame, /launch the selected app from Backroom[\s\S]*make it fill the shared monitor/);
 });
 
+test("Desktop screen and terminal sessions allow bounded WebRTC reconnect", async () => {
+  const control = await read("src/BackroomDesktopControl.tsx");
+  assert.match(control, /const disconnectTimerRef=useRef<number\|null>\(null\)/);
+  assert.match(control, /const watchPeerConnection=useCallback/);
+  assert.match(control, /pc\.connectionState==='connected'[\s\S]*?clearDisconnectTimer\(\)/);
+  assert.match(control, /pc\.connectionState==='disconnected'[\s\S]*?Trying to reconnect for 20 seconds/);
+  assert.match(control, /},20_000\)/);
+  assert.match(control, /pc\.connectionState==='failed'\|\|pc\.connectionState==='closed'/);
+  assert.match(control, /watchPeerConnection\(pc,peerId,'Terminal'\)/);
+  assert.match(control, /watchPeerConnection\(pc,sessionId,'Screen'\)/);
+  assert.match(control, /if\(disconnectTimerRef\.current!==null\)[\s\S]*?clearTimeout\(disconnectTimerRef\.current\)/);
+  assert.match(control, /if\(current\)\{peerRef\.current=null;current\.close\(\);\}/);
+});
+
 test("Android Phone Frame wires a consented WebRTC stream and a separate touch grant", async () => {
   const control = await read("src/BackroomAndroidControl.tsx");
   const phone = await read("src/BackroomDevicesApp.tsx");
