@@ -23,11 +23,12 @@ The script detects one authorized adb device automatically. When multiple device
 ### Manual alternative
 
 1. Open a disposable conversation called **RM identity test A**.
-2. Capture the accessibility hierarchy:
+2. Capture the accessibility hierarchy, pull it locally, then remove the temporary phone copy immediately:
    `adb shell uiautomator dump --compressed /sdcard/rm-provider.xml`
    `adb pull /sdcard/rm-provider.xml chat-a1.xml`
-3. Switch to a different disposable conversation called **RM identity test B**. Do not send anything. Capture chat-b.xml using the same two commands.
-4. Return to conversation A without sending anything. Capture chat-a2.xml.
+   `adb shell rm -f /sdcard/rm-provider.xml`
+3. Switch to a different disposable conversation called **RM identity test B**. Do not send anything. Run the same three commands, changing the local destination to `chat-b.xml`.
+4. Return to conversation A without sending anything. Run the same three commands again, changing the local destination to `chat-a2.xml`.
 5. Analyse the three captures. ChatGPT:
    `python android-companion/scripts/provider-conversation-probe.py --package com.openai.chatgpt --delete-inputs chat-a1.xml chat-b.xml chat-a2.xml`
    Claude:
