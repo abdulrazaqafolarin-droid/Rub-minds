@@ -84,12 +84,15 @@ def read_snapshot_bytes(raw_xml: bytes, package: str, key: bytes) -> Snapshot:
 
     if root.tag != "hierarchy":
         raise ValueError("Input is not an Android UIAutomator hierarchy.")
-    nodes = list(root.iter("node"))
-    if not nodes:
+    all_nodes = list(root.iter("node"))
+    if not all_nodes:
         raise ValueError("Snapshot contains no accessibility nodes.")
-    packages = {node.attrib.get("package", "") for node in nodes if node.attrib.get("package")}
-    if package not in packages or any(found != package for found in packages):
-        raise ValueError("Snapshot package does not match the requested provider.")
+    # Android can include system-bar, navigation, IME or accessibility-overlay
+    # nodes in the same hierarchy. They are not provider conversation evidence:
+    # consider only nodes explicitly owned by the expected provider package.
+    nodes = [node for node in all_nodes if node.attrib.get("package") == package]
+    if not nodes:
+        raise ValueError("Snapshot contains no nodes for the requested provider package.")
 
     screen_bottom = max(
         (bounds[3] for node in nodes if (bounds := _bounds(node.attrib.get("bounds", "")))),
@@ -130,6 +133,10 @@ def read_snapshot_bytes(raw_xml: bytes, package: str, key: bytes) -> Snapshot:
         if bounds[1] > screen_bottom * 0.28:
             continue
 
+        # One accessibility node may expose the same title in both text and
+        # content-desc. Treat the node as one evidence unit so duplicated
+        # attributes cannot satisfy the two-signal threshold.
+        node_labels: list[str] = []
         for attribute in ("text", "content-desc"):
             value = attrs.get(attribute, "").strip()
             if len(value) < 2 or len(value) > 160:
@@ -138,7 +145,10 @@ def read_snapshot_bytes(raw_xml: bytes, package: str, key: bytes) -> Snapshot:
                 continue
             if any(ord(char) < 32 for char in value):
                 continue
-            header_signals.add(_digest(key, "header:" + attribute, value))
+            node_labels.append(attribute + "\0" + value)
+        if node_labels:
+            signature = "\0".join((class_name, resource_id, *node_labels))
+            header_signals.add(_digest(key, "header-node", signature))
 
     return Snapshot(
         header_signals=frozenset(header_signals),

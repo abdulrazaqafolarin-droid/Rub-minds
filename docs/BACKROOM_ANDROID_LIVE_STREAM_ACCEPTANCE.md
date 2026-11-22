@@ -203,4 +203,13 @@ Use the disposable A → B → A probe on the actual Android handset. Run it sep
 - A title, a list of header labels, a composer hash, a Send hash, app package, signer, WebView session, group ID or Rub Minds AI session ID is not a substitute for a provider conversation ID.
 - If the app does not expose an exact stable identifier through an approved local interface, record the result as **not supported**. Keep native Send and autonomous Off / On / Auto disabled; draft insertion remains a separate feature.
 
+On Windows, the repository also includes a PowerShell capture wrapper that checks the selected official provider package is installed and positively foregrounded before each A1/B/A2 capture. Use it as an alternative capture path (do not run both tools for the same sequence):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\\android-companion\\scripts\\run-provider-conversation-probe.ps1 -Provider chatgpt
+powershell -ExecutionPolicy Bypass -File .\\android-companion\\scripts\\run-provider-conversation-probe.ps1 -Provider claude
+```
+
+This wrapper still produces candidate-only evidence; it does not establish a stable provider thread ID or authorize native Send.
+
 The ADB capture and parser suites are automated in the Android companion workflow. Only a report produced from the actual handset can establish provider-specific observations. Unit tests with synthetic XML are test-harness checks, not physical acceptance.

@@ -103,7 +103,11 @@ class AdbCaptureTests(unittest.TestCase):
       resource-id="com.openai.chatgpt:id/conversation_title"
       class="android.widget.TextView" package="com.openai.chatgpt"
       bounds="[20,80][900,170]" visible-to-user="true" />
-    <node index="1" text="" resource-id="com.openai.chatgpt:id/prompt"
+    <node index="1" text="Conversation: {title}" content-desc="Conversation: {title}"
+      resource-id="com.openai.chatgpt:id/conversation_subtitle"
+      class="android.widget.TextView" package="com.openai.chatgpt"
+      bounds="[20,180][900,240]" visible-to-user="true" />
+    <node index="2" text="" resource-id="com.openai.chatgpt:id/prompt"
       class="android.widget.EditText" package="com.openai.chatgpt"
       bounds="[20,2100][900,2280]" visible-to-user="true" enabled="true" editable="true" />
   </node>

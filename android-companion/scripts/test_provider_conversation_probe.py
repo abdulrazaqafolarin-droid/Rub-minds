@@ -10,18 +10,29 @@ from unittest.mock import patch
 from provider_conversation_probe import analyse, analyse_snapshots
 
 
-def make_xml(title: str, package: str = "com.openai.chatgpt") -> str:
+def make_xml(
+    title: str,
+    package: str = "com.openai.chatgpt",
+    include_secondary_header: bool = True,
+) -> str:
+    secondary_header = (
+        f'''    <node index="3" text="Workspace" content-desc="Workspace"
+      resource-id="{package}:id/workspace_header" class="android.widget.TextView"
+      package="{package}" bounds="[20,180][900,240]" visible-to-user="true" />'''
+        if include_secondary_header else ""
+    )
     return f'''<?xml version="1.0" encoding="UTF-8"?>
 <hierarchy rotation="0">
   <node index="0" text="" resource-id="" class="android.widget.FrameLayout"
     package="{package}" bounds="[0,0][1080,2400]" visible-to-user="true">
-    <node index="0" text="{title}" content-desc="Selected conversation: {title}" resource-id="com.openai.chatgpt:id/conversation_title"
+    <node index="0" text="{title}" content-desc="Selected conversation: {title}" resource-id="{package}:id/conversation_title"
       class="android.widget.TextView" package="{package}" bounds="[20,80][900,170]"
       visible-to-user="true" />
-    <node index="1" text="" content-desc="" resource-id="com.openai.chatgpt:id/prompt"
+{secondary_header}
+    <node index="1" text="" content-desc="" resource-id="{package}:id/prompt"
       class="android.widget.EditText" package="{package}" bounds="[20,2100][900,2280]"
       visible-to-user="true" enabled="true" editable="true" />
-    <node index="2" text="" content-desc="Send message" resource-id="com.openai.chatgpt:id/send"
+    <node index="2" text="" content-desc="Send message" resource-id="{package}:id/send"
       class="android.widget.ImageButton" package="{package}" bounds="[920,2130][1060,2270]"
       visible-to-user="true" clickable="true" />
   </node>
@@ -60,6 +71,12 @@ class ProviderConversationProbeTests(unittest.TestCase):
         self.assertFalse(report["native_send_enabled"])
         self.assertFalse(report["stable_provider_conversation_id_exposed"])
 
+    def test_text_and_content_description_on_one_node_count_as_one_signal(self) -> None:
+        xml = make_xml("Research chat A", include_secondary_header=False).encode("utf-8")
+        report = analyse_snapshots("com.openai.chatgpt", [xml, xml, xml])
+        self.assertEqual(report["header_candidate_counts"], [1, 1, 1])
+        self.assertFalse(report["repeatable_distinct_header_signal"])
+
     def test_in_memory_analysis_matches_file_analysis_without_exposing_raw_titles(self) -> None:
         report = analyse_snapshots(
             "com.openai.chatgpt",
@@ -91,7 +108,7 @@ class ProviderConversationProbeTests(unittest.TestCase):
 
     def test_provider_package_mismatch_fails_closed(self) -> None:
         self.b.write_text(make_xml("Claude chat", "com.anthropic.claude"), encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "package does not match"):
+        with self.assertRaisesRegex(ValueError, "no nodes for the requested provider package"):
             analyse("com.openai.chatgpt", self.a1, self.b, self.a2)
 
     def test_only_supported_provider_packages_are_accepted(self) -> None:
