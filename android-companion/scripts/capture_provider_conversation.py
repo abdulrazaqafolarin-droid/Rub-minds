@@ -19,6 +19,7 @@ from provider_conversation_probe import analyse_snapshots
 MAX_CAPTURE_BYTES = 8_000_000
 CAPTURE_TIMEOUT_SECONDS = 30
 DEVICE_LIST_TIMEOUT_SECONDS = 15
+FOREGROUND_TIMEOUT_SECONDS = 12
 ALLOWED_PACKAGES = {"com.openai.chatgpt", "com.anthropic.claude"}
 
 
@@ -64,11 +65,56 @@ def resolve_device_serial(
     raise RuntimeError("More than one Android device is connected. Select one explicitly with --serial.")
 
 
+def assert_provider_foreground(
+    serial: str,
+    package: str,
+    adb: str = "adb",
+    runner: Callable = subprocess.run,
+) -> None:
+    if package not in ALLOWED_PACKAGES:
+        raise ValueError("Only the official ChatGPT and Claude Android packages are supported.")
+
+    window = _run(
+        [adb, "-s", serial, "shell", "dumpsys", "window"],
+        runner=runner,
+        capture_output=True,
+        text=True,
+        timeout=FOREGROUND_TIMEOUT_SECONDS,
+        check=False,
+    )
+    activity = _run(
+        [adb, "-s", serial, "shell", "dumpsys", "activity", "activities"],
+        runner=runner,
+        capture_output=True,
+        text=True,
+        timeout=FOREGROUND_TIMEOUT_SECONDS,
+        check=False,
+    )
+    if window.returncode != 0 or activity.returncode != 0:
+        raise RuntimeError("Could not positively verify the foreground provider app.")
+
+    focus_lines = [
+        line for line in (window.stdout or "").splitlines()
+        if re.search(r"mCurrentFocus=|mFocusedApp=", line)
+    ]
+    focus_lines.extend(
+        line for line in (activity.stdout or "").splitlines()
+        if re.search(r"mResumedActivity|ResumedActivity", line)
+    )
+    package_pattern = re.compile(rf"(?<![A-Za-z0-9_.]){re.escape(package)}(?:/|\s|$)")
+    if not any(package_pattern.search(line) for line in focus_lines):
+        raise RuntimeError(
+            "The selected provider app is not positively identified as the foreground/resumed app. "
+            "Bring the intended provider conversation to the foreground and retry."
+        )
+
+
 def capture_snapshot(
     serial: str,
     remote_path: str,
     adb: str = "adb",
     runner: Callable = subprocess.run,
+    expected_package: str | None = None,
 ) -> bytes:
     if not re.fullmatch(r"/sdcard/rm-provider-identity-[a-f0-9]{16}\.xml", remote_path):
         raise ValueError("The temporary device capture path is invalid.")
@@ -76,6 +122,10 @@ def capture_snapshot(
     primary_error: Exception | None = None
     raw_xml: bytes | None = None
     try:
+        if expected_package is not None and expected_package not in ALLOWED_PACKAGES:
+            raise ValueError("Only the official ChatGPT and Claude Android packages are supported.")
+        if expected_package is not None:
+            assert_provider_foreground(serial, expected_package, adb=adb, runner=runner)
         dump = _run(
             [adb, "-s", serial, "shell", "uiautomator", "dump", "--compressed", remote_path],
             runner=runner,
@@ -86,6 +136,8 @@ def capture_snapshot(
         )
         if dump.returncode != 0:
             raise RuntimeError("Android UIAutomator could not capture the current provider screen.")
+        if expected_package is not None:
+            assert_provider_foreground(serial, expected_package, adb=adb, runner=runner)
 
         captured = _run(
             [adb, "-s", serial, "exec-out", "head", "-c", str(MAX_CAPTURE_BYTES + 1), remote_path],
@@ -101,6 +153,8 @@ def capture_snapshot(
             raise RuntimeError("Android returned an empty accessibility capture.")
         if len(raw_xml) > MAX_CAPTURE_BYTES:
             raise ValueError("Accessibility snapshot exceeds the 8 MB local safety limit.")
+        if expected_package is not None:
+            assert_provider_foreground(serial, expected_package, adb=adb, runner=runner)
     except Exception as exc:
         primary_error = exc
     finally:
@@ -149,7 +203,9 @@ def capture_provider_sequence(
     )
     for label, instruction in steps:
         input_fn(f"\n[{label}] {instruction}\nPress Enter to capture this screen (Ctrl+C to stop): ")
-        captures.append(capture_snapshot(device, remote_path, adb=adb, runner=runner))
+        captures.append(capture_snapshot(
+            device, remote_path, adb=adb, runner=runner, expected_package=package,
+        ))
 
     return analyse_snapshots(package, captures)
 

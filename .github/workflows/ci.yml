@@ -310,6 +310,8 @@ jobs:
         run: npm run test:backroom
       - name: Test Android provider-conversation probe against mixed app/system XML
         run: python3 -m unittest android-companion/scripts/provider_conversation_probe_test.py
+      - name: Test Android provider-conversation ADB capture foreground and cleanup
+        run: python3 -m unittest discover -s android-companion/scripts -p 'test_provider_conversation_capture.py'
       - name: Set up Deno for Supabase Edge Functions
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
         with:
