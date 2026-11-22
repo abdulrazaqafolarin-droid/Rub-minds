@@ -50,6 +50,9 @@ test("Device Frame refreshes visible device state without stale room overwrites"
   assert.match(devices, /onChange=\{event => changeRoom\(event\.target\.value\)\}/);
   assert.match(devices, /if \(roomIdRef\.current === targetRoom\) setError/);
   assert.match(devices, /const targetRoom = roomIdRef\.current;[\s\S]*?refresh\(targetRoom\)\.catch/);
+  assert.match(devices, /if \(roomIdRef\.current !== targetRoom\) return;[\s\S]*?window\.prompt/);
+  assert.match(devices, /Device refresh failed\./);
+  assert.match(devices, /const targetRoom = roomIdRef\.current;[\s\S]*?refresh\(targetRoom\)\.catch/);
   assert.match(devices, /if \(roomIdRef\.current !== targetRoom\) return/);
   assert.match(devices, /if \(roomIdRef\.current === targetRoom\) setNotice/);
   assert.match(devices, /lastUpdatedAt/);
