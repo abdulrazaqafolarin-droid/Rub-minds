@@ -13,7 +13,7 @@ RUB_MINDS_MCP_ENDPOINT="https://tzcuuynmviiuactafpld.supabase.co/functions/v1/ru
   node scripts/rub-minds-mcp.mjs --stdio
 ```
 
-When the Supabase API gateway requires an API key, set `RUB_MINDS_MCP_API_KEY` to the **public publishable/anon key** for the staging project. The bridge rejects Supabase secret keys and legacy JWTs whose role is `service_role`. Never put a service-role key in a terminal client, environment shared with an AI agent, or MCP configuration.
+When the Supabase API gateway requires an API key, set `RUB_MINDS_MCP_API_KEY` to the **public publishable/anon key** for the staging project. The bridge accepts only the current `sb_publishable_...` key format or a legacy JWT whose role is exactly `anon`. It rejects `sb_secret_...`, legacy `service_role` keys, authenticated-user JWTs and malformed/unknown key formats. An authenticated user's access token is not an API key; never put it in this setting.
 
 Configure that command as a local stdio MCP server in the terminal AI application. For OpenCode, add a local server entry to `opencode.json` or `opencode.jsonc` (replace the working directory with the actual repository path):
 
@@ -53,7 +53,7 @@ Group task proposals remain unassigned until a human assigns them. AI participan
 
 - Only the approved HTTPS staging Supabase function URL is accepted; production, other hosts, query strings, fragments, URL credentials and redirects are rejected.
 - The bridge does not persist invitation tokens, AI credentials or session handles. Tool arguments are forwarded to the staging service and are not printed to stdout/stderr.
-- Only a public staging `apikey` is allowed. Service-role/secret keys are rejected before any network request.
+- Only a public staging `apikey` is allowed: `sb_publishable_...` or a legacy `anon` JWT. Secret, service-role, authenticated-user JWT and malformed/unknown key formats are rejected before any network request.
 - The full upstream request, including response-body reading, has a 30-second default deadline. JSON-RPC messages are bounded to 1.2 MB.
 - Writes still require explicit approval from the local AI tool host; `confirm_join` is an additional intent check, not a replacement for host approval.
 - This is foreground software. It is available while the terminal AI application and this process are running; it does not wake an idle ChatGPT/Claude consumer conversation.
