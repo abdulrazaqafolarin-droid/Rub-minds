@@ -38,18 +38,24 @@ function validateApiKey(value) {
   if (value.startsWith("sb_secret_")) {
     throw new TypeError("Secret Supabase API keys are not allowed in the terminal bridge.");
   }
+  // Supabase's current public API key is an opaque sb_publishable_* value.
+  // The legacy public key is a JWT whose role is exactly "anon". An
+  // authenticated user JWT is not an API key and must never be forwarded here.
+  if (value.startsWith("sb_publishable_")) return value;
+
   const parts = value.split(".");
-  if (parts.length === 3) {
-    try {
-      const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
-      if (payload?.role === "service_role") {
-        throw new TypeError("The Supabase service-role key is forbidden in the terminal bridge.");
-      }
-    } catch (error) {
-      if (error instanceof TypeError && /service-role key is forbidden/.test(error.message)) throw error;
-      // Public key formats may change. A malformed token is rejected by the
-      // upstream gateway, but a confirmed elevated role is always blocked.
-    }
+  if (parts.length !== 3) {
+    throw new TypeError("RUB_MINDS_MCP_API_KEY must be a public Supabase publishable key or legacy anon JWT.");
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+  } catch {
+    throw new TypeError("RUB_MINDS_MCP_API_KEY must be a public Supabase publishable key or legacy anon JWT.");
+  }
+  if (!isRecord(payload) || payload.role !== "anon") {
+    throw new TypeError("Only a legacy Supabase anon API key is allowed in the terminal bridge.");
   }
   return value;
 }
