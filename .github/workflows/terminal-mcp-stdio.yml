@@ -63,7 +63,7 @@ jobs:
                   ],
                   "environment": {
                     "RUB_MINDS_MCP_ENDPOINT": "https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp",
-                    "RUB_MINDS_MCP_API_KEY": "rub-minds-public-test-key",
+                    "RUB_MINDS_MCP_API_KEY": "sb_publishable_test_key",
                     "RUB_MINDS_STDIO_E2E_FIXTURE": "1",
                     "NODE_OPTIONS": "--import=$GITHUB_WORKSPACE/integrations/mcp/stdio-proxy-test-upstream.mjs"
                   },
@@ -120,7 +120,7 @@ jobs:
           claude --version
           claude mcp add --scope user \
             --env "RUB_MINDS_MCP_ENDPOINT=https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp" \
-            --env "RUB_MINDS_MCP_API_KEY=rub-minds-public-test-key" \
+            --env "RUB_MINDS_MCP_API_KEY=sb_publishable_test_key" \
             --env "RUB_MINDS_STDIO_E2E_FIXTURE=1" \
             --env "NODE_OPTIONS=--import=$GITHUB_WORKSPACE/integrations/mcp/stdio-proxy-test-upstream.mjs" \
             --transport stdio rub_minds -- node "$GITHUB_WORKSPACE/scripts/rub-minds-mcp.mjs" --stdio
