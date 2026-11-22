@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { McpSessionMessageTransport, joinRubMindsInvite } from "./mcp-session-message-transport.mjs";
 
+const VALID_JOIN_EXPIRY = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 const SESSION = "a".repeat(64);
 const ENDPOINT = "https://rub-minds.example/functions/v1/rub-minds-mcp";
 const BASE_TIME = "2026-10-24T17:00:00.000000+00:00";
@@ -47,7 +48,7 @@ test("redeems a Staging invitation through modern MCP with a returned opaque ses
       session_handle: sessionHandle,
       room_id: roomId,
       participant_id: participantId,
-      expires_at: "2027-11-20T00:00:00.000Z",
+      expires_at: VALID_JOIN_EXPIRY,
     } },
   }));
   const joined = await joinRubMindsInvite({
@@ -58,7 +59,7 @@ test("redeems a Staging invitation through modern MCP with a returned opaque ses
     fetchImpl: fake.fetch,
   });
   assert.deepEqual(joined, {
-    joined: true, sessionHandle, roomId, participantId, expiresAt: "2027-11-20T00:00:00.000Z",
+    joined: true, sessionHandle, roomId, participantId, expiresAt: VALID_JOIN_EXPIRY,
   });
   assert.equal(fake.requests.length, 1);
   const request = fake.requests[0];
@@ -98,7 +99,7 @@ test("retries an ambiguous modern join with the identical durable idempotency ke
         session_handle: sessionHandle,
         room_id: "550e8400-e29b-41d4-a716-446655440000",
         participant_id: "650e8400-e29b-41d4-a716-446655440000",
-        expires_at: "2027-11-20T00:00:00.000Z",
+        expires_at: VALID_JOIN_EXPIRY,
       } },
     });
   };
@@ -148,7 +149,7 @@ test("explicit local loopback testing is opt-in and cannot redirect invite redem
       session_handle: sessionHandle,
       room_id: "550e8400-e29b-41d4-a716-446655440000",
       participant_id: "650e8400-e29b-41d4-a716-446655440000",
-      expires_at: "2027-11-20T00:00:00.000Z",
+      expires_at: VALID_JOIN_EXPIRY,
     } },
   }));
   const input = {
@@ -177,7 +178,7 @@ test("rejects malformed modern join identity without exposing opaque bearer hand
       session_handle: secret,
       room_id: "not-a-uuid",
       participant_id: "650e8400-e29b-41d4-a716-446655440000",
-      expires_at: "2027-11-20T00:00:00.000Z",
+      expires_at: VALID_JOIN_EXPIRY,
     } },
   }));
   await assert.rejects(
