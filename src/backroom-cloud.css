@@ -108,3 +108,5 @@
 
 .br-cloud-refresh-wrap{display:flex;align-items:center;gap:9px;margin-left:8px}.br-cloud-refresh-wrap>small{color:#8292b4;font-size:10px;white-space:nowrap}
 @media(max-width:540px){.br-cloud-refresh-wrap{margin-left:0}.br-cloud-refresh-wrap>small{display:none}}
+
+.br-cloud-device-copy .br-cloud-device-last-seen{font-size:9px;color:#8292b4;margin-top:5px;line-height:1.4}
