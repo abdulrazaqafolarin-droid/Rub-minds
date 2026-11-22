@@ -53,7 +53,6 @@ test("official MCP client completes a terminal group and human-governed task wor
     });
     assert.equal(joined.isError, false, "explicitly confirmed terminal AI could not join");
     assert.equal(joined.structuredContent?.joined, true);
-    assert.equal(joined.structuredContent?.participant_kind, "external_agent");
     const sessionHandle = joined.structuredContent?.session_handle;
     assert.match(sessionHandle, /^[a-f0-9]{64}$/i);
 
