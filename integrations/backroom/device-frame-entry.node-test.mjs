@@ -15,6 +15,7 @@ test("Backroom exposes only authenticated real device frames", async () => {
   assert.match(wrapper, /return <BackroomDevicesApp \/>/);
   assert.doesNotMatch(wrapper, /BackroomSimulatorApp|Browser runtime|browserView|br-mode-nav/);
   assert.match(entry, /isBackroom \? <BackroomApp \/>/);
+  assert.doesNotMatch(entry, /BackroomSimulatorApp|Browser runtime/);
   assert.match(devices, /Device connections/);
   assert.match(devices, /Android phone/);
   assert.match(devices, /Computer/);
