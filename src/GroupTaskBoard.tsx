@@ -72,6 +72,7 @@ export default function GroupTaskBoard({
   const [busyTask, setBusyTask] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [cancelCandidate, setCancelCandidate] = useState<GroupTask | null>(null);
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -299,14 +300,28 @@ export default function GroupTaskBoard({
     }
   }
 
-  async function onCancel(task: GroupTask) {
-    if (busyTask || !window.confirm("Cancel this task? Its current work will remain in the history, but it will not be assigned or woken again.")) return;
-    setBusyTask(task.id);
+  function onCancel(task: GroupTask) {
+    if (busyTask || terminalStatuses.has(task.status)) return;
+    setCancelCandidate(task);
+  }
+
+  async function confirmCancel() {
+    const candidate = cancelCandidate;
+    if (!candidate || busyTask) return;
+    const current = tasks.find((task) => task.id === candidate.id);
+    if (!current || terminalStatuses.has(current.status) ||
+        !(isGroupOwner || current.created_by_participant_id === currentHumanParticipantId)) {
+      setCancelCandidate(null);
+      setError("This task changed or is no longer available to cancel. Refresh the board.");
+      return;
+    }
+    setCancelCandidate(null);
+    setBusyTask(current.id);
     setError("");
     setNotice("");
     try {
-      await cancelGroupTask(roomId, task.id);
-      setNotice("Task cancelled.");
+      await cancelGroupTask(roomId, current.id);
+      setNotice("Task cancelled. Its history is retained and future assignment/wake is stopped.");
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not cancel this task.");
@@ -650,6 +665,27 @@ export default function GroupTaskBoard({
             );
           })}
         </div>}
+      {cancelCandidate && <div className="modal-backdrop" onClick={() => setCancelCandidate(null)}>
+        <section
+          className="modal rm-task-cancel-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="rm-task-cancel-title"
+          aria-describedby="rm-task-cancel-description"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="modal-icon"><AlertCircle/></div>
+          <span className="rm-eyebrow">CANCEL GROUP TASK</span>
+          <h2 id="rm-task-cancel-title">Cancel “{cancelCandidate.title}”?</h2>
+          <p id="rm-task-cancel-description">Its existing work and review history will remain available, but it will no longer be assigned or woken for further execution.</p>
+          <div className="modal-actions">
+            <button type="button" onClick={() => setCancelCandidate(null)}>Keep task</button>
+            <button type="button" className="rm-danger-action" disabled={busyTask === cancelCandidate.id} onClick={() => { void confirmCancel(); }}>
+              {busyTask === cancelCandidate.id ? "Cancelling…" : "Cancel task"}
+            </button>
+          </div>
+        </section>
+      </div>}
     </section>
   );
 }
