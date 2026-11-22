@@ -205,14 +205,19 @@ fn validate_public_supabase_key(
     Ok(())
 }
 
-fn validate_user_access_token(value: &str) -> Result<(), String> {
+fn validate_user_access_token(value: &str, expected_issuer: &str) -> Result<(), String> {
     let invalid = || "A valid signed-in Rub Minds user session is required.".to_string();
     if value.len() < 80 || value.len() > 8192 || value.trim() != value || value.chars().any(char::is_whitespace) {
         return Err(invalid());
     }
     let claims = decode_jwt_claims(value).ok_or_else(invalid)?;
-    if claims.get("iss").and_then(Value::as_str) != Some("supabase")
+    let authenticated_audience = claims.get("aud").map(|audience| {
+        audience.as_str() == Some("authenticated")
+            || audience.as_array().map(|values| values.iter().any(|value| value.as_str() == Some("authenticated"))).unwrap_or(false)
+    }).unwrap_or(false);
+    if claims.get("iss").and_then(Value::as_str) != Some(expected_issuer)
         || claims.get("role").and_then(Value::as_str) != Some("authenticated")
+        || !authenticated_audience
         || claims.get("sub").and_then(Value::as_str).and_then(|subject| Uuid::parse_str(subject).ok()).is_none()
     {
         return Err(invalid());
@@ -273,7 +278,7 @@ async fn register_desktop_device(app: AppHandle, args: RegisterDeviceArgs) -> Re
         "Register this computer as a Backroom device for group {}. The selected application inventory will share labels and executable fingerprints, not file contents or application sessions.", args.room_id
     )).await?;
     let base = validate_supabase_config(&args.supabase_url, &args.publishable_key)?;
-    validate_user_access_token(&args.access_token)?;
+    validate_user_access_token(&args.access_token, &format!("{base}/auth/v1"))?;
     if Uuid::parse_str(&args.room_id).is_err() || args.device_label.trim().is_empty() ||
        args.device_label.len() > 80 || args.os_version.len() > 40 ||
        args.app_version.trim().is_empty() || args.app_version.len() > 40 {
@@ -374,7 +379,7 @@ async fn revoke_desktop_device(
         return Err("This computer is not registered".into());
     }
     let base = validate_supabase_config(&supabase_url, &publishable_key)?;
-    validate_user_access_token(&access_token)?;
+    validate_user_access_token(&access_token, &format!("{base}/auth/v1"))?;
     if Uuid::parse_str(&room_id).is_err() || Uuid::parse_str(&device_id).is_err() {
         return Err("Invalid group or device identity".into());
     }
@@ -1958,10 +1963,11 @@ mod native_input_tests {
         format!("e30.{payload}.test-signature")
     }
 
-    fn test_access_token() -> String {
+    fn test_access_token(issuer: &str) -> String {
         let expires_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64 + 3600;
         test_jwt(json!({
-            "iss": "supabase",
+            "iss": issuer,
+            "aud": "authenticated",
             "role": "authenticated",
             "sub": Uuid::new_v4().to_string(),
             "exp": expires_at
@@ -2036,14 +2042,21 @@ mod native_input_tests {
     }
 
     #[test]
-    fn native_supabase_access_token_requires_an_unexpired_authenticated_user_jwt() {
-        assert!(validate_user_access_token(&test_access_token()).is_ok());
-        assert!(validate_user_access_token(&test_anon_key("project-ref")).is_err());
-        assert!(validate_user_access_token(&test_jwt(json!({"iss":"supabase","role":"service_role"}))).is_err());
+    fn native_supabase_access_token_requires_project_issuer_and_unexpired_authenticated_user_jwt() {
+        let issuer = "https://project-ref.supabase.co/auth/v1";
+        assert!(validate_user_access_token(&test_access_token(issuer), issuer).is_ok());
+        assert!(validate_user_access_token(&test_anon_key("project-ref"), issuer).is_err());
         assert!(validate_user_access_token(&test_jwt(json!({
-            "iss":"supabase","role":"authenticated","sub":Uuid::new_v4().to_string(),"exp":1
-        }))).is_err());
-        assert!(validate_user_access_token("not-a-jwt").is_err());
+            "iss":issuer,"aud":"authenticated","role":"service_role","sub":Uuid::new_v4().to_string(),"exp":i64::MAX
+        })), issuer).is_err());
+        assert!(validate_user_access_token(&test_jwt(json!({
+            "iss":issuer,"aud":"authenticated","role":"authenticated","sub":Uuid::new_v4().to_string(),"exp":1
+        })), issuer).is_err());
+        assert!(validate_user_access_token(&test_jwt(json!({
+            "iss":issuer,"aud":"anon","role":"authenticated","sub":Uuid::new_v4().to_string(),"exp":i64::MAX
+        })), issuer).is_err());
+        assert!(validate_user_access_token(&test_access_token("https://other-project.supabase.co/auth/v1"), issuer).is_err());
+        assert!(validate_user_access_token("not-a-jwt", issuer).is_err());
     }
 
     #[test]
