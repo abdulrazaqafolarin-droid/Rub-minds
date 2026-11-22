@@ -31,6 +31,16 @@ test("physical A-B-A helper confirms package focus and deletes temporary snapsho
   assert.match(runner, /uiautomator', 'dump', '--compressed'/);
   assert.match(runner, /--delete-inputs/);
   assert.match(runner, /Remove-Item -LiteralPath \$tempDirectory -Recurse -Force/);
+  assert.match(runner, /function Remove-RemoteCaptureChecked/);
+  assert.match(runner, /shell', 'test', '!', '-e', \$RemotePath/);
+  assert.match(runner, /Assert-ProviderForeground/);
+  const captureBody = runner.slice(runner.indexOf("function Capture-ProviderSnapshot"), runner.indexOf("New-Item -ItemType Directory"));
+  assert.equal((captureBody.match(/Assert-ProviderForeground/g) || []).length, 3, "foreground identity must be checked before dump, after dump and after pull");
+  assert.match(runner, /Could not verify the temporary handset snapshot was removed/);
+  assert.match(runner, /test', '!', '-e'/);
+  assert.match(runner, /Remove-Item -LiteralPath \$tempDirectory -Recurse -Force -ErrorAction Stop/);
+  assert.match(runner, /PROVIDER PROBE CLEANUP INCOMPLETE/);
+  assert.match(runner, /Could not remove local accessibility snapshots/);
   assert.match(runner, /adb -s \$Serial shell rm -f \$remotePath/);
   assert.match(runner, /does not send messages, tap Send, or enable native Send/);
 });

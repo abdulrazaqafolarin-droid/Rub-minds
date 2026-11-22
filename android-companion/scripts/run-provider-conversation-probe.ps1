@@ -59,6 +59,18 @@ if (-not (($packagePaths -join [Environment]::NewLine) -match '^package:')) {
     throw ("The selected provider package is not installed for this Android user: " + $packageName)
 }
 
+function Remove-RemoteCaptureChecked {
+    param([Parameter(Mandatory = $true)][string]$RemotePath)
+
+    $manualCommand = "adb -s $Serial shell rm -f $RemotePath"
+    try {
+        $null = Invoke-AdbChecked -Arguments @('-s', $Serial, 'shell', 'rm', '-f', $RemotePath) -FailureMessage 'Could not remove the temporary handset snapshot.'
+        $null = Invoke-AdbChecked -Arguments @('-s', $Serial, 'shell', 'test', '!', '-e', $RemotePath) -FailureMessage 'Could not verify the temporary handset snapshot was removed.'
+    } catch {
+        throw ("Could not confirm deletion of the temporary accessibility XML on the phone. Before continuing, run: " + $manualCommand)
+    }
+}
+
 function Assert-ProviderForeground {
     $windowOutput = Invoke-AdbChecked -Arguments @('-s', $Serial, 'shell', 'dumpsys', 'window') -FailureMessage 'Could not read Android window focus metadata.'
     $activityOutput = Invoke-AdbChecked -Arguments @('-s', $Serial, 'shell', 'dumpsys', 'activity', 'activities') -FailureMessage 'Could not read Android resumed-activity metadata.'
@@ -78,7 +90,9 @@ function Capture-ProviderSnapshot {
     $script:remotePaths += $remotePath
 
     $null = Invoke-AdbChecked -Arguments @('-s', $Serial, 'shell', 'uiautomator', 'dump', '--compressed', $remotePath) -FailureMessage ("Android UIAutomator could not capture snapshot " + $Label + ".")
+    Assert-ProviderForeground
     $null = Invoke-AdbChecked -Arguments @('-s', $Serial, 'pull', $remotePath, $localPath) -FailureMessage ("Could not retrieve local snapshot " + $Label + ".")
+    Assert-ProviderForeground
     if (-not (Test-Path -LiteralPath $localPath -PathType Leaf)) {
         throw ("Android did not produce snapshot " + $Label + ".")
     }
@@ -86,7 +100,7 @@ function Capture-ProviderSnapshot {
     if ($item.Length -gt 8000000) {
         throw ("Snapshot " + $Label + " exceeds the 8 MB local safety limit.")
     }
-    $null = Invoke-AdbChecked -Arguments @('-s', $Serial, 'shell', 'rm', '-f', $remotePath) -FailureMessage ("Could not remove temporary handset snapshot " + $Label + ".")
+    Remove-RemoteCaptureChecked -RemotePath $remotePath
     return $localPath
 }
 
@@ -123,10 +137,25 @@ try {
     Write-Host ''
     Write-Host 'The report is only an accessibility candidate. Manual provider-adapter review and a physical A-to-B-to-A regression are still required.'
 } finally {
+    $cleanupFailures = @()
     foreach ($remotePath in $remotePaths) {
-        try { & adb -s $Serial shell rm -f $remotePath | Out-Null } catch {}
+        try {
+            Remove-RemoteCaptureChecked -RemotePath $remotePath
+        } catch {
+            $cleanupFailures += $_.Exception.Message
+        }
     }
-    if (Test-Path -LiteralPath $tempDirectory) {
-        Remove-Item -LiteralPath $tempDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    try {
+        if (Test-Path -LiteralPath $tempDirectory) {
+            Remove-Item -LiteralPath $tempDirectory -Recurse -Force -ErrorAction Stop
+        }
+        if (Test-Path -LiteralPath $tempDirectory) {
+            throw "Local temporary snapshot directory still exists: $tempDirectory"
+        }
+    } catch {
+        $cleanupFailures += ("Could not remove local accessibility snapshots. Manually remove: " + $tempDirectory)
+    }
+    if ($cleanupFailures.Count -gt 0) {
+        throw ("PROVIDER PROBE CLEANUP INCOMPLETE. Do not share or continue until all raw snapshots are deleted. " + ($cleanupFailures -join " | "))
     }
 }
