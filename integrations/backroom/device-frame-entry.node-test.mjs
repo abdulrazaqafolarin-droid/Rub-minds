@@ -61,7 +61,7 @@ test("Switching groups clears prior device state and remounts active runtime con
   assert.match(devices, /roomIdRef\.current = nextRoomId/);
   assert.match(devices, /const \[busyRoomIds, setBusyRoomIds\] = useState<Set<string>>/);
   assert.match(devices, /const busy = busyRoomIds\.has\(roomId\)/);
-  assert.match(devices, /roomActionLocksRef\.current\.has\(targetRoom\)/);
+  assert.match(devices, /roomActionLocksRef\.current\.isBusy\(targetRoom\)/);
   assert.match(devices, /beginRoomAction\(targetRoom\)/);
   assert.match(devices, /endRoomAction\(targetRoom\)/);
   assert.doesNotMatch(devices, /const \[busy, setBusy\]|setBusy\(/);
