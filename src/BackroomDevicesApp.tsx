@@ -37,6 +37,7 @@ function eventLabel(event: BackroomDeviceEvent, devices: BackroomDevice[]) {
 
 export default function BackroomApp() {
   const [rooms, setRooms] = useState<CloudRoom[]>([]);
+  const [roomsLoading, setRoomsLoading] = useState(Boolean(supabase));
   const [userId, setUserId] = useState<string | null>(null);
   const [roomId, setRoomId] = useState(() => new URLSearchParams(location.search).get('room') ?? '');
   const [devices, setDevices] = useState<BackroomDevice[]>([]);
@@ -70,16 +71,24 @@ export default function BackroomApp() {
   }
 
   const loadRooms = useCallback(async () => {
-    if (!supabase) return;
-    const { data: authData, error: authError } = await supabase.auth.getUser();
-    if (authError) throw authError;
-    setUserId(authData.user?.id ?? null);
-    const next = await listCloudRooms();
-    setRooms(next);
-    const nextRoomId = roomIdRef.current && next.some(room => room.id === roomIdRef.current)
-      ? roomIdRef.current : next[0]?.id ?? '';
-    if (nextRoomId !== roomIdRef.current) changeRoom(nextRoomId);
-    else setRoomId(nextRoomId);
+    if (!supabase) {
+      setRoomsLoading(false);
+      return;
+    }
+    setRoomsLoading(true);
+    try {
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError) throw authError;
+      setUserId(authData.user?.id ?? null);
+      const next = await listCloudRooms();
+      setRooms(next);
+      const nextRoomId = roomIdRef.current && next.some(room => room.id === roomIdRef.current)
+        ? roomIdRef.current : next[0]?.id ?? '';
+      if (nextRoomId !== roomIdRef.current) changeRoom(nextRoomId);
+      else setRoomId(nextRoomId);
+    } finally {
+      setRoomsLoading(false);
+    }
   }, []);
 
   const refresh = useCallback(async (targetRoom = roomId) => {
@@ -223,7 +232,7 @@ export default function BackroomApp() {
       <div className="br-cloud-room">
         <label htmlFor="br-cloud-room-select">Group</label>
         <select id="br-cloud-room-select" value={roomId} onChange={event => changeRoom(event.target.value)}>
-          {rooms.length ? rooms.map(room => <option key={room.id} value={room.id}>{room.title}</option>) : <option value="">No groups yet</option>}
+          {rooms.length ? rooms.map(room => <option key={room.id} value={room.id}>{room.title}</option>) : <option value="">{roomsLoading ? 'Loading groups…' : 'No groups yet'}</option>}
         </select>
       </div>
       <div className="br-cloud-refresh-wrap">
@@ -246,7 +255,9 @@ export default function BackroomApp() {
       <div className="br-cloud-security"><ShieldCheck size={19}/><span>Owner approval required<br/><small>Pairing codes are one-use and expire in 5 minutes.</small></span></div>
     </section>
 
-    {!selectedRoom ? <section className="br-cloud-empty"><Smartphone size={32}/><h2>Create or join a group first</h2><p>Backroom devices are scoped to a Rub Minds group.</p><a className="br-cloud-primary" href="/">Open Rub Minds groups</a></section> : <>
+    {!selectedRoom ? roomsLoading
+      ? <section className="br-cloud-empty" role="status"><RefreshCw size={32}/><h2>Loading your groups</h2><p>Checking the groups available to this account.</p></section>
+      : <section className="br-cloud-empty"><Smartphone size={32}/><h2>Create or join a group first</h2><p>Backroom devices are scoped to a Rub Minds group.</p><a className="br-cloud-primary" href="/">Open Rub Minds groups</a></section> : <>
       <section className="br-cloud-layout">
         <div className="br-cloud-sidebar">
           <div className="br-cloud-panel-head"><div><span className="br-cloud-eyebrow">YOUR DEVICES</span><h2>Device connections</h2></div><span className="br-cloud-count">{devices.length}</span></div>
