@@ -73,6 +73,8 @@ export default function GroupTaskBoard({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [cancelCandidate, setCancelCandidate] = useState<GroupTask | null>(null);
+  const [taskFilter, setTaskFilter] = useState<"all" | "assigned" | "created" | "review" | "open" | "completed">("all");
+  const [taskSearch, setTaskSearch] = useState("");
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -160,6 +162,21 @@ export default function GroupTaskBoard({
     review: tasks.filter((task) => task.status === "review").length,
     completed: tasks.filter((task) => task.status === "completed").length,
   }), [tasks]);
+  const visibleTasks = useMemo(() => {
+    const query = taskSearch.trim().toLocaleLowerCase();
+    return tasks.filter((task) => {
+      if (taskFilter === "assigned" && task.assigned_to_participant_id !== currentHumanParticipantId) return false;
+      if (taskFilter === "created" && task.created_by_participant_id !== currentHumanParticipantId) return false;
+      if (taskFilter === "review" && task.status !== "review") return false;
+      if (taskFilter === "open" && terminalStatuses.has(task.status)) return false;
+      if (taskFilter === "completed" && task.status !== "completed") return false;
+      if (!query) return true;
+      const creator = participantById.get(task.created_by_participant_id);
+      const assignee = task.assigned_to_participant_id ? participantById.get(task.assigned_to_participant_id) : undefined;
+      return [task.title, task.description, task.expected_output, creator?.display_name, assignee?.display_name, statusLabels[task.status]]
+        .some((value) => value?.toLocaleLowerCase().includes(query));
+    });
+  }, [tasks, taskFilter, taskSearch, currentHumanParticipantId, participantById]);
 
   async function onCreate(e: FormEvent) {
     e.preventDefault();
@@ -469,11 +486,30 @@ export default function GroupTaskBoard({
         </div>
       </form>
 
-      <div className="rm-task-list-heading"><strong>Group task board</strong><span>{tasks.length} tasks</span></div>
+      <div className="rm-task-list-heading"><strong>Group task board</strong><span>{visibleTasks.length} of {tasks.length} tasks</span></div>
+      <div className="rm-task-board-filters" aria-label="Filter group tasks">
+        <label>
+          Search tasks
+          <input type="search" value={taskSearch} onChange={(e) => setTaskSearch(e.target.value)} placeholder="Search titles, details or people…"/>
+        </label>
+        <label>
+          Show
+          <select value={taskFilter} onChange={(e) => setTaskFilter(e.target.value as typeof taskFilter)}>
+            <option value="all">All tasks</option>
+            <option value="assigned">Assigned to me</option>
+            <option value="created">Created by me</option>
+            <option value="review">Needs review</option>
+            <option value="open">Open tasks</option>
+            <option value="completed">Completed</option>
+          </select>
+        </label>
+        <button type="button" className="rm-task-secondary" disabled={!taskSearch && taskFilter === "all"} onClick={() => { setTaskSearch(""); setTaskFilter("all"); }}>Clear filters</button>
+      </div>
       {loading ? <p className="rm-task-empty">Loading group tasks…</p>
         : tasks.length === 0 ? <p className="rm-task-empty">No tasks yet. Create one above or ask a connected AI to propose a task through MCP.</p>
+        : visibleTasks.length === 0 ? <p className="rm-task-empty" role="status">No tasks match this search and view. Clear the filters to see the full group board.</p>
         : <div className="rm-task-list">
-          {tasks.map((task) => {
+          {visibleTasks.map((task) => {
             const creator = participantById.get(task.created_by_participant_id);
             const assignee = task.assigned_to_participant_id ? participantById.get(task.assigned_to_participant_id) : undefined;
             const taskDependencies = dependencies.filter((dependency) => dependency.task_id === task.id);
