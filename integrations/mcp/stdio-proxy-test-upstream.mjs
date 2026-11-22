@@ -72,8 +72,9 @@ if (process.env.RUB_MINDS_STDIO_E2E_FIXTURE === "1") {
               joined: true,
               room_id: ROOM_ID,
               participant_id: PARTICIPANT_ID,
+              expires_at: "2026-12-31T00:00:00.000Z",
+              post_join_next_step: "Ask the session owner for consent before requesting a private session export.",
               session_handle: SESSION_HANDLE,
-              forwarded_agent_label: args.agent_label,
             },
             isError: false,
           };
@@ -105,20 +106,23 @@ if (process.env.RUB_MINDS_STDIO_E2E_FIXTURE === "1") {
         } else result = {
           content: [{ type: "text", text: "Returned one message from the mocked Rub Minds group." }],
           structuredContent: {
-            room_id: ROOM_ID,
-            messages: [{ id: MESSAGE_ID, sender_name: "Group member", body: "Please inspect the Windows device-frame identity gate." }],
-            forwarded_session_handle: args.session_handle,
+            messages: [{
+              id: MESSAGE_ID,
+              room_id: ROOM_ID,
+              sender_id: PARTICIPANT_ID,
+              sender_name: "Group member",
+              sender_kind: "human",
+              body: "Please inspect the Windows device-frame identity gate.",
+              created_at: "2026-11-22T00:00:00.000Z",
+            }],
+            next_cursor: { after_created_at: "2026-11-22T00:00:00.000Z", after_message_id: MESSAGE_ID },
+            has_more: false,
           },
           isError: false,
         };
       } else if (name === "send_group_message") {
         result = {
-          content: [{ type: "text", text: "Group message sent." }],
-          structuredContent: {
-            sent: true,
-            message: { id: SENT_MESSAGE_ID, body: args.body },
-            forwarded_session_handle: args.session_handle,
-          },
+          content: [{ type: "text", text: "Mock group-message write accepted by the isolated fixture." }],
           isError: false,
         };
       } else if (name === "propose_group_task") {
@@ -128,8 +132,10 @@ if (process.env.RUB_MINDS_STDIO_E2E_FIXTURE === "1") {
           description: args.description || "",
           expected_output: args.expected_output || "",
           acceptance_criteria: args.acceptance_criteria || [],
-          status: "proposed",
-          assigned_to_participant_id: null,
+          room_id: ROOM_ID,
+          priority: args.priority || 3,
+          status: "backlog",
+          created_at: "2026-11-22T00:00:00.000Z",
         };
         result = {
           content: [{ type: "text", text: "Task proposal created for human review." }],
@@ -138,8 +144,6 @@ if (process.env.RUB_MINDS_STDIO_E2E_FIXTURE === "1") {
             replayed: false,
             task: proposedTask,
             next_step: "A human group member must review and assign this proposal before it can execute.",
-            forwarded_session_handle: args.session_handle,
-            forwarded_idempotency_key: args.idempotency_key,
           },
           isError: false,
         };
@@ -151,7 +155,7 @@ if (process.env.RUB_MINDS_STDIO_E2E_FIXTURE === "1") {
         };
       } else if (name === "read_group_task") {
         const task = args.task_id === assignedTask.id ? { ...assignedTask, status: assignedTaskStatus } :
-          args.task_id === proposedTask?.id ? proposedTask : null;
+          args.task_id === proposedTask?.id ? { ...proposedTask, assigned_to_participant_id: null } : null;
         result = {
           content: [{ type: "text", text: task ? "Read group task." : "Task not found." }],
           structuredContent: task ? { task, submissions: [], reviews: [] } : { error: "not_found" },
@@ -160,8 +164,8 @@ if (process.env.RUB_MINDS_STDIO_E2E_FIXTURE === "1") {
       } else if (name === "claim_group_task") {
         if (args.task_id !== assignedTask.id || assignedTaskStatus !== "assigned") {
           result = {
-            content: [{ type: "text", text: "A task must be assigned to this participant and eligible before it can be claimed." }],
-            structuredContent: { claimed: false, reason: "not_assigned_or_not_eligible" },
+            content: [{ type: "text", text: "A human group member must assign this task before an AI can claim it." }],
+            structuredContent: { error: "A human group member must assign this task before an AI can claim it." },
             isError: true,
           };
         } else {
@@ -180,10 +184,10 @@ if (process.env.RUB_MINDS_STDIO_E2E_FIXTURE === "1") {
             isError: true,
           };
         } else {
-          assignedTaskStatus = "submitted";
+          assignedTaskStatus = "review";
           result = {
             content: [{ type: "text", text: "Task result submitted for human review." }],
-            structuredContent: { submitted: true, status: assignedTaskStatus, task_id: assignedTask.id },
+            structuredContent: { submitted: true, replayed: false, status: assignedTaskStatus, task_id: assignedTask.id },
             isError: false,
           };
         }
