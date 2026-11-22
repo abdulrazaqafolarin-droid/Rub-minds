@@ -89,7 +89,7 @@ export class BrowserCanonicalWakeAdapter {
      if(text===previousText){
       if(stableSince&&Date.now()-stableSince>=this.responseSettleMs){
        if(!await this.#sameConversation())return {ok:false,reason:'conversation-changed-before-response'};
-       return {ok:true,responseSha256:sha256(text)};
+       return {ok:true};
       }
      }else{
       previousText=text;
@@ -230,7 +230,7 @@ export class BrowserCanonicalWakeAdapter {
   }
   return {state:'completed',verified:true,result:{
    triggerSubmitted:true,submitted:true,confirmation:'assistant-response-stable',
-   assistantResponseConfirmed:true,responseSha256:response.responseSha256,
+   assistantResponseConfirmed:true,
    eventId:command.eventId,textSha256:sha256(command.text)
   }};
  }

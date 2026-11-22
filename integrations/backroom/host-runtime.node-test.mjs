@@ -43,6 +43,49 @@ test("host offline or permission denied block all side effects", async () => {
     assert.equal(calls(), 0);
   }
 });
+test("managed-browser wake review preserves only allowlisted response evidence", async () => {
+  const browserHost = { hostId: "h", deviceLabel: "Local browser", surfaces: ["browser_tab"], operations: ["wake"] };
+  const browserTarget = { ...target, surface: "browser_tab", locatorKind: "dom" };
+  const wakeCommand = { ...command, operation: "wake", eventId: "event-1", text: buildCanonicalWakePrompt("event-1") };
+  const browserProbe = {
+    ...probe,
+    surface: "browser_tab",
+    locatorKinds: ["dom"],
+  };
+  const guard = new LocalExecutionGuard({
+    host: browserHost,
+    isConnected: async () => true,
+    permission: async () => true,
+    adapter: {
+      probe: async () => browserProbe,
+      execute: async () => ({
+        state: "needs_review",
+        verified: false,
+        result: {
+          submitted: true,
+          triggerSubmitted: true,
+          confirmation: "composer-cleared",
+          assistantResponseConfirmed: false,
+          reason: "assistant-response-unconfirmed",
+          responseText: "PRIVATE PROVIDER RESPONSE",
+          responseSha256: "do-not-expose",
+          credentials: "do-not-expose",
+        },
+      }),
+    },
+  });
+  const result = await guard.execute({ command: wakeCommand, target: browserTarget });
+  assert.deepEqual(result, {
+    state: "needs_review",
+    result: {
+      submitted: true,
+      triggerSubmitted: true,
+      confirmation: "composer-cleared",
+      assistantResponseConfirmed: false,
+      reason: "assistant-response-unconfirmed",
+    },
+  });
+});
 test("unverified outcome requires human review", async () => {
   const { guard } = configured({ outcome: { state: "completed", verified: false } });
   assert.equal((await guard.execute({ command, target })).state, "needs_review");

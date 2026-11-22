@@ -88,8 +88,8 @@ test('completion waits for a new stable assistant response, not only composer cl
  assert.equal(result.state,'completed');
  assert.equal(result.result.assistantResponseConfirmed,true);
  assert.equal(result.result.confirmation,'assistant-response-stable');
- assert.match(result.result.responseSha256,/^[a-f0-9]{64}$/);
  assert.equal('responseText' in result.result,false);
+ assert.equal('responseSha256' in result.result,false);
  assert.equal(f.submitted(),1);
 });
 test('a composer-clear with no new assistant response remains needs_review and is never resent',async()=>{
