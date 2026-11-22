@@ -28,6 +28,10 @@ test("Switching groups clears prior device state and remounts active runtime con
   const devices = await read("src/BackroomDevicesApp.tsx");
   assert.match(devices, /function changeRoom\(nextRoomId: string\)/);
   assert.match(devices, /roomIdRef\.current = nextRoomId/);
+  assert.match(devices, /setDevicesLoading\(Boolean\(nextRoomId\)\)/);
+  assert.match(devices, /Loading device connections/);
+  assert.match(devices, /Loading phone availability/);
+  assert.match(devices, /finally \{[\s\S]*?requestId === refreshRequestRef\.current[\s\S]*?setDevicesLoading\(false\)/);
   assert.match(devices, /setDevices\(\[\]\)/);
   assert.match(devices, /setEvents\(\[\]\)/);
   assert.match(devices, /setSelectedDeviceId\(\x27\x27\)/);
