@@ -56,6 +56,10 @@ test("Device Frame refreshes visible device state without stale room overwrites"
   assert.match(devices, /if \(roomIdRef\.current !== targetRoom\) return/);
   assert.match(devices, /if \(roomIdRef\.current === targetRoom\) setNotice/);
   assert.match(devices, /lastUpdatedAt/);
+  assert.match(devices, /Last seen ' \+ formatTime\(device\.last_seen_at\)/);
+  assert.match(devices, /No device heartbeat yet/);
+  assert.match(devices, /device\.status === 'active' \? 'Approved'/);
+  assert.doesNotMatch(devices, /'Online'|>online</i);
 });
 
 test("Backroom frame layout contract excludes simulated screens and separates permissions", async () => {
