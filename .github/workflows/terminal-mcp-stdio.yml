@@ -49,10 +49,15 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/rub-minds-opencode-workspace"
           cd "$RUNNER_TEMP/rub-minds-opencode-workspace"
+          opencode --version
           opencode mcp add rub_minds \
             --env "RUB_MINDS_MCP_ENDPOINT=https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp" \
             --env "RUB_MINDS_MCP_API_KEY=rub-minds-public-test-key" \
             -- "$GITHUB_WORKSPACE/scripts/rub-minds-mcp.mjs" --stdio
+          echo "Generated OpenCode config:"
+          cat opencode.json
+          echo "OpenCode MCP list help:"
+          opencode mcp list --help
       - name: Verify OpenCode reports the spawned Rub Minds MCP server connected
         env:
           RUB_MINDS_STDIO_E2E_FIXTURE: "1"
