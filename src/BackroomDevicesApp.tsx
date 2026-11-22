@@ -257,13 +257,13 @@ export default function BackroomApp() {
           </div>
           <div className={'br-cloud-device-frame ' + surface}>
             {surface === 'phone' ? activeDevice
-              ? <BackroomAndroidControl device={activeDevice} roomId={roomId}/>
+              ? <BackroomAndroidControl key={roomId + ':' + activeDevice.device_id} device={activeDevice} roomId={roomId}/>
               : <div className="br-cloud-frame-empty">
                   <Smartphone size={34}/><b>No approved Android phone</b>
                   <p>Pair an Android phone, approve it, then open the selected app from the phone frame.</p>
                   {canManageDevices ? <button className="br-cloud-primary" disabled={busy} onClick={() => void createPairing()}>Pair Android phone</button> : null}
                 </div>
-              : <BackroomDesktopControl roomId={roomId}/>}
+              : <BackroomDesktopControl key={roomId} roomId={roomId}/>}
           </div>
           <section className="br-cloud-frame-note" aria-label="Native AI action availability">
             <div>
