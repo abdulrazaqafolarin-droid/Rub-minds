@@ -68,6 +68,10 @@ test("Backroom frame layout contract excludes simulated screens and separates pe
   const styles = await read("src/backroom-cloud.css");
   const android = await read("src/BackroomAndroidControl.tsx");
   assert.match(ux, /not a simulator/i);
+  assert.match(ux, /Approved \/ Pending approval \/ Revoked/);
+  assert.match(ux, /"Approved" is not presented as "Online"/);
+  assert.match(devices, /Last seen ' \+ formatTime\(device\.last_seen_at\)/);
+  assert.match(devices, /No device heartbeat yet/);
   assert.match(ux, /screen share, touch, draft insertion and native Send remain separately authorized/i);
   assert.match(ux, /never enables native Send/);
   assert.match(devices, /AI-directed sending \/ native Off · On · Auto/);
