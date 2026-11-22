@@ -61,8 +61,10 @@ function buildGroupTaskPrompt(prompt, metadata = {}) {
   ].join(String.fromCharCode(10));
 }
 
-function isValidConversationPath(pathname, provider) {
-  const match = PROVIDERS[provider].conversationPath.exec(pathname);
+export function isValidProviderConversationPath(pathname, provider) {
+  const providerConfig = PROVIDERS[provider];
+  if (!providerConfig || typeof pathname !== "string") return false;
+  const match = providerConfig.conversationPath.exec(pathname);
   if (!match || typeof match[1] !== "string") return false;
 
   let conversationId;
@@ -100,7 +102,7 @@ function assertPage(page, provider) {
   if (url.protocol !== "https:" || !PROVIDERS[provider].hosts.has(url.hostname)) {
     throw new Error("Page is not on the expected AI provider origin");
   }
-  if (!isValidConversationPath(url.pathname, provider)) {
+  if (!isValidProviderConversationPath(url.pathname, provider)) {
     throw new Error(provider === "chatgpt"
       ? "Open the existing ChatGPT conversation first"
       : "Open the existing Claude conversation first");
