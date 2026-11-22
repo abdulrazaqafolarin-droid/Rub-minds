@@ -39,3 +39,8 @@ An opt-in userscript for continuing work inside an existing ChatGPT or Claude br
 ## Android guest-runtime release gate
 
 The Android companion keeps guest virtualization behind a provider-neutral contract. A guest engine is not considered available merely because an installed app can be launched on the phone. The release build audits the **actual merged Android host manifest** (including components and permissions contributed by dependencies), records its SHA-256 digest, and blocks APK/AAB packaging when the host permission or exported-component allowlist is violated. Physical-device evidence is still required before any guest provider can be admitted.
+
+
+## Terminal AI agents (draft)
+
+A source-branch MCP stdio bridge lets local terminal AI applications connect to the same Rub Minds group, memory and task tools without a Backroom browser host. It is pinned to the dedicated Staging endpoint and is not yet merged or released. The official MCP SDK test, OpenCode V2 connection check and Claude Code CLI connection check pass in CI using an isolated mock upstream; live authenticated Staging group acceptance remains outstanding. See [Terminal MCP bridge setup and limits](docs/TERMINAL_MCP_BRIDGE.md).
