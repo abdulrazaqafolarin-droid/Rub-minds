@@ -46,7 +46,8 @@ export default function BackroomApp() {
   const [surface, setSurface] = useState<Surface>('phone');
   const [pairCode, setPairCode] = useState('');
   const [pairExpires, setPairExpires] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [busyRoomIds, setBusyRoomIds] = useState<Set<string>>(() => new Set());
+  const busyRoomIdsRef = useRef(new Set<string>());
   const [devicesLoading, setDevicesLoading] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -55,6 +56,20 @@ export default function BackroomApp() {
   const refreshRequestRef = useRef(0);
   const roomsLoadRequestRef = useRef(0);
   const roomIdRef = useRef(roomId);
+
+  const busy = busyRoomIds.has(roomId);
+
+  function beginRoomAction(targetRoom: string): boolean {
+    if (busyRoomIdsRef.current.has(targetRoom)) return false;
+    busyRoomIdsRef.current.add(targetRoom);
+    setBusyRoomIds(new Set(busyRoomIdsRef.current));
+    return true;
+  }
+
+  function endRoomAction(targetRoom: string) {
+    busyRoomIdsRef.current.delete(targetRoom);
+    setBusyRoomIds(new Set(busyRoomIdsRef.current));
+  }
 
   function changeRoom(nextRoomId: string) {
     roomIdRef.current = nextRoomId;
@@ -175,8 +190,8 @@ export default function BackroomApp() {
 
   async function createPairing() {
     const targetRoom = roomId;
-    if (!targetRoom || !canManageDevices || busy) return;
-    setBusy(true); setError(''); setNotice('');
+    if (!targetRoom || !canManageDevices || !beginRoomAction(targetRoom)) return;
+    setError(''); setNotice('');
     try {
       const result = await createBackroomDevicePairing(targetRoom);
       if (roomIdRef.current !== targetRoom) return;
@@ -186,7 +201,7 @@ export default function BackroomApp() {
       await refresh(targetRoom);
     } catch (e) {
       if (roomIdRef.current === targetRoom) setError(e instanceof Error ? e.message : 'Could not create pairing code.');
-    } finally { setBusy(false); }
+    } finally { endRoomAction(targetRoom); }
   }
 
   async function copyPairCode() {
@@ -205,8 +220,8 @@ export default function BackroomApp() {
 
   async function approve(deviceId: string) {
     const targetRoom = roomId;
-    if (!canManageDevices || !targetRoom) return;
-    setBusy(true); setError(''); setNotice('');
+    if (!canManageDevices || !targetRoom || !beginRoomAction(targetRoom)) return;
+    setError(''); setNotice('');
     try {
       await approveBackroomDevice(deviceId, targetRoom);
       if (roomIdRef.current !== targetRoom) return;
@@ -214,14 +229,15 @@ export default function BackroomApp() {
       setNotice('Device approved. It can now sync the apps you selected on the phone.');
     } catch (e) {
       if (roomIdRef.current === targetRoom) setError(e instanceof Error ? e.message : 'Device approval failed.');
-    } finally { setBusy(false); }
+    } finally { endRoomAction(targetRoom); }
   }
 
   async function revoke(deviceId: string) {
     const targetRoom = roomId;
-    if (!canManageDevices || !targetRoom) return;
+    if (!canManageDevices || !targetRoom || busyRoomIdsRef.current.has(targetRoom)) return;
     if (!window.confirm('Revoke this device? It will lose access to this Rub Minds group.')) return;
-    setBusy(true); setError(''); setNotice('');
+    if (!beginRoomAction(targetRoom)) return;
+    setError(''); setNotice('');
     try {
       await revokeBackroomDevice(deviceId, targetRoom);
       if (roomIdRef.current !== targetRoom) return;
@@ -229,7 +245,7 @@ export default function BackroomApp() {
       setNotice('Device revoked.');
     } catch (e) {
       if (roomIdRef.current === targetRoom) setError(e instanceof Error ? e.message : 'Device revocation failed.');
-    } finally { setBusy(false); }
+    } finally { endRoomAction(targetRoom); }
   }
 
   return <main className="br-cloud-shell">
