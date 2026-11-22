@@ -20,6 +20,12 @@ test('unknown screen source does not silently become a window', () => {
   assert.match(companion, /displaySurface:settings\.displaySurface\|\|'unknown'/);
   assert.match(capture, /if display_surface != "monitor"/);
 });
+
+test('native capture binds to the physical monitor origin, not taskbar-adjusted work-area origin', () => {
+  assert.match(companion, /originXCss:screen\.left\|\|0/);
+  assert.match(companion, /originYCss:screen\.top\|\|0/);
+  assert.doesNotMatch(companion, /origin(?:X|Y)Css:screen\.avail(?:Left|Top)/);
+});
 test('monitor input requires a selected Backroom-launched app and an exact foreground HWND', () => {
   assert.match(capture, /frame_width\.abs_diff\(screen_width\) > tolerance_x/);
   assert.match(capture, /frame_height\.abs_diff\(screen_height\) > tolerance_y/);
