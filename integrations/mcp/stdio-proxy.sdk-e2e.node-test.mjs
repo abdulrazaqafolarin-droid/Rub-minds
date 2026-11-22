@@ -42,6 +42,23 @@ test("official MCP client completes a terminal group and human-governed task wor
       assert.ok(names.has(name), "terminal MCP client did not discover " + name);
     }
 
+    let unconfirmedJoinError = null;
+    try {
+      await client.callTool({
+        name: "join_group",
+        arguments: {
+          invite_token: "c".repeat(64),
+          agent_label: "Unconfirmed terminal AI",
+          confirm_join: false,
+          join_request_key: "f".repeat(64),
+        },
+      });
+    } catch (error) {
+      unconfirmedJoinError = error;
+    }
+    assert.equal(unconfirmedJoinError?.code, -32602,
+      "join_group must reject a request without explicit confirmation at the MCP protocol layer");
+
     const joined = await client.callTool({
       name: "join_group",
       arguments: {
@@ -53,6 +70,8 @@ test("official MCP client completes a terminal group and human-governed task wor
     });
     assert.equal(joined.isError, false, "explicitly confirmed terminal AI could not join");
     assert.equal(joined.structuredContent?.joined, true);
+    assert.match(joined.structuredContent?.room_id, /^[0-9a-f-]{36}$/i);
+    assert.match(joined.structuredContent?.participant_id, /^[0-9a-f-]{36}$/i);
     const sessionHandle = joined.structuredContent?.session_handle;
     assert.match(sessionHandle, /^[a-f0-9]{64}$/i);
 
@@ -61,8 +80,8 @@ test("official MCP client completes a terminal group and human-governed task wor
       arguments: { session_handle: sessionHandle },
     });
     assert.equal(messages.isError, false);
-    assert.equal(messages.structuredContent?.room_id, "room-stdio-fixture");
-    assert.equal(messages.structuredContent?.messages?.[0]?.id, "message-stdio-fixture");
+    assert.match(messages.structuredContent?.room_id, /^[0-9a-f-]{36}$/i);
+    assert.match(messages.structuredContent?.messages?.[0]?.id, /^[0-9a-f-]{36}$/i);
     assert.equal(messages.structuredContent?.forwarded_session_handle, sessionHandle);
 
     const sent = await client.callTool({
@@ -78,7 +97,7 @@ test("official MCP client completes a terminal group and human-governed task wor
       "Terminal AI connected and can participate in the Rub Minds group.");
     assert.equal(sent.structuredContent?.forwarded_session_handle, sessionHandle);
 
-    const proposalKey = "b".repeat(64);
+    const proposalKey = "77777777-7777-4777-8777-777777777777";
     const proposal = await client.callTool({
       name: "propose_group_task",
       arguments: {
@@ -106,7 +125,7 @@ test("official MCP client completes a terminal group and human-governed task wor
     });
     assert.equal(tasks.isError, false);
     assert.ok(tasks.structuredContent?.tasks?.some(task => task.id === proposal.structuredContent.task.id));
-    assert.ok(tasks.structuredContent?.tasks?.some(task => task.id === "task-human-assigned-fixture"));
+    assert.ok(tasks.structuredContent?.tasks?.some(task => task.id === "44444444-4444-4444-8444-444444444444"));
 
     const proposedRead = await client.callTool({
       name: "read_group_task",
@@ -126,7 +145,7 @@ test("official MCP client completes a terminal group and human-governed task wor
     // allow the AI participant to approve or assign its own proposed task.
     const assignedTask = await client.callTool({
       name: "read_group_task",
-      arguments: { session_handle: sessionHandle, task_id: "task-human-assigned-fixture" },
+      arguments: { session_handle: sessionHandle, task_id: "44444444-4444-4444-8444-444444444444" },
     });
     assert.equal(assignedTask.isError, false);
     assert.equal(assignedTask.structuredContent?.task?.status, "assigned");
@@ -147,18 +166,23 @@ test("official MCP client completes a terminal group and human-governed task wor
         session_handle: sessionHandle,
         task_id: "task-human-assigned-fixture",
         result: "The selected Backroom-launched app HWND was checked against process and monitor bounds.",
-        submission_key: "e".repeat(64),
+        submission_key: "88888888-8888-4888-8888-888888888888",
       },
     });
     assert.equal(submitted.isError, false);
     assert.equal(submitted.structuredContent?.submitted, true);
     assert.equal(submitted.structuredContent?.status, "submitted");
-    const leftWithoutConfirmation = await client.callTool({
-      name: "leave_group",
-      arguments: { session_handle: sessionHandle, confirm_leave: false },
-    });
-    assert.equal(leftWithoutConfirmation.isError, true,
-      "leaving a terminal AI group session must require explicit confirmation");
+    let unconfirmedLeaveError = null;
+    try {
+      await client.callTool({
+        name: "leave_group",
+        arguments: { session_handle: sessionHandle, confirm_leave: false },
+      });
+    } catch (error) {
+      unconfirmedLeaveError = error;
+    }
+    assert.equal(unconfirmedLeaveError?.code, -32602,
+      "leave_group must reject a request without explicit confirmation at the MCP protocol layer");
 
     const left = await client.callTool({
       name: "leave_group",
