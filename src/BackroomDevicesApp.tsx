@@ -51,6 +51,21 @@ export default function BackroomApp() {
   const [showHelp, setShowHelp] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   const refreshRequestRef = useRef(0);
+  const roomIdRef = useRef(roomId);
+
+  function changeRoom(nextRoomId: string) {
+    roomIdRef.current = nextRoomId;
+    refreshRequestRef.current++;
+    setDevices([]);
+    setEvents([]);
+    setSelectedDeviceId('');
+    setPairCode('');
+    setPairExpires('');
+    setLastUpdatedAt(null);
+    setError('');
+    setNotice('');
+    setRoomId(nextRoomId);
+  }
 
   const loadRooms = useCallback(async () => {
     if (!supabase) return;
@@ -59,10 +74,14 @@ export default function BackroomApp() {
     setUserId(authData.user?.id ?? null);
     const next = await listCloudRooms();
     setRooms(next);
-    setRoomId(current => current && next.some(room => room.id === current) ? current : next[0]?.id ?? '');
+    const nextRoomId = roomIdRef.current && next.some(room => room.id === roomIdRef.current)
+      ? roomIdRef.current : next[0]?.id ?? '';
+    if (nextRoomId !== roomIdRef.current) changeRoom(nextRoomId);
+    else setRoomId(nextRoomId);
   }, []);
 
   const refresh = useCallback(async (targetRoom = roomId) => {
+    if (targetRoom !== roomIdRef.current) return;
     const requestId = ++refreshRequestRef.current;
     if (!targetRoom) {
       setDevices([]); setEvents([]); setLastUpdatedAt(Date.now());
@@ -71,9 +90,9 @@ export default function BackroomApp() {
     const [nextDevices, nextEvents] = await Promise.all([
       listBackroomDevices(targetRoom), listBackroomDeviceEvents(targetRoom),
     ]);
-    // A slow response for the previous group or an older overlapping refresh
-    // must never overwrite the active group's device frame state.
-    if (requestId !== refreshRequestRef.current || targetRoom !== roomId) return;
+    // A slow response, older overlapping refresh, or stale callback from a
+    // previous group must never overwrite the currently selected group's state.
+    if (requestId !== refreshRequestRef.current || targetRoom !== roomIdRef.current) return;
     setDevices(nextDevices);
     setEvents(nextEvents);
     setLastUpdatedAt(Date.now());
@@ -95,13 +114,17 @@ export default function BackroomApp() {
     };
   }, [refresh]);
   useEffect(() => {
-    if (!roomId) {
-      refreshRequestRef.current++;
-      setDevices([]); setEvents([]); setLastUpdatedAt(null);
-      return;
-    }
+    refreshRequestRef.current++;
+    setDevices([]);
+    setEvents([]);
+    setSelectedDeviceId('');
     setPairCode('');
-    void refresh(roomId).catch(e => setError(e.message));
+    setPairExpires('');
+    setLastUpdatedAt(null);
+    if (!roomId) return;
+    void refresh(roomId).catch(e => {
+      if (roomIdRef.current === roomId) setError(e instanceof Error ? e.message : 'Device refresh failed.');
+    });
     const params = new URLSearchParams(location.search);
     params.set('backroom', '1');
     params.set('room', roomId);
@@ -121,16 +144,19 @@ export default function BackroomApp() {
   }, [activePhones, selectedDeviceId]);
 
   async function createPairing() {
-    if (!roomId || !canManageDevices || busy) return;
+    const targetRoom = roomId;
+    if (!targetRoom || !canManageDevices || busy) return;
     setBusy(true); setError(''); setNotice('');
     try {
-      const result = await createBackroomDevicePairing(roomId);
+      const result = await createBackroomDevicePairing(targetRoom);
+      if (roomIdRef.current !== targetRoom) return;
       setPairCode(result.pairingCode);
       setPairExpires(result.expiresAt);
       setNotice('Pairing code created. It expires in five minutes and can be used once.');
-      await refresh();
-    } catch (e) { setError(e instanceof Error ? e.message : 'Could not create pairing code.'); }
-    finally { setBusy(false); }
+      await refresh(targetRoom);
+    } catch (e) {
+      if (roomIdRef.current === targetRoom) setError(e instanceof Error ? e.message : 'Could not create pairing code.');
+    } finally { setBusy(false); }
   }
 
   async function copyPairCode() {
@@ -139,20 +165,32 @@ export default function BackroomApp() {
   }
 
   async function approve(deviceId: string) {
-    if (!canManageDevices) return;
+    const targetRoom = roomId;
+    if (!canManageDevices || !targetRoom) return;
     setBusy(true); setError(''); setNotice('');
-    try { await approveBackroomDevice(deviceId, roomId); await refresh(); setNotice('Device approved. It can now sync the apps you selected on the phone.'); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Device approval failed.'); }
-    finally { setBusy(false); }
+    try {
+      await approveBackroomDevice(deviceId, targetRoom);
+      if (roomIdRef.current !== targetRoom) return;
+      await refresh(targetRoom);
+      setNotice('Device approved. It can now sync the apps you selected on the phone.');
+    } catch (e) {
+      if (roomIdRef.current === targetRoom) setError(e instanceof Error ? e.message : 'Device approval failed.');
+    } finally { setBusy(false); }
   }
 
   async function revoke(deviceId: string) {
-    if (!canManageDevices) return;
+    const targetRoom = roomId;
+    if (!canManageDevices || !targetRoom) return;
     if (!window.confirm('Revoke this device? It will lose access to this Rub Minds group.')) return;
     setBusy(true); setError(''); setNotice('');
-    try { await revokeBackroomDevice(deviceId, roomId); await refresh(); setNotice('Device revoked.'); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Device revocation failed.'); }
-    finally { setBusy(false); }
+    try {
+      await revokeBackroomDevice(deviceId, targetRoom);
+      if (roomIdRef.current !== targetRoom) return;
+      await refresh(targetRoom);
+      setNotice('Device revoked.');
+    } catch (e) {
+      if (roomIdRef.current === targetRoom) setError(e instanceof Error ? e.message : 'Device revocation failed.');
+    } finally { setBusy(false); }
   }
 
   return <main className="br-cloud-shell">
@@ -160,7 +198,7 @@ export default function BackroomApp() {
       <div className="br-cloud-brand"><div className="br-cloud-mark"><Smartphone size={21}/></div><div><b>Backroom</b><small>Device frames</small></div></div>
       <div className="br-cloud-room">
         <label htmlFor="br-cloud-room-select">Group</label>
-        <select id="br-cloud-room-select" value={roomId} onChange={event => setRoomId(event.target.value)}>
+        <select id="br-cloud-room-select" value={roomId} onChange={event => changeRoom(event.target.value)}>
           {rooms.length ? rooms.map(room => <option key={room.id} value={room.id}>{room.title}</option>) : <option value="">No groups yet</option>}
         </select>
       </div>
