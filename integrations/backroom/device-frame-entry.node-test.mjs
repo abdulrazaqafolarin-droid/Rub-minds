@@ -86,6 +86,7 @@ test("Device Frame shows one selected Android phone at a time", async () => {
 
 test("Device Frame renders the real live app surface without a decorative phone simulator", async () => {
   const devices = await read("src/BackroomDevicesApp.tsx");
+  const styles = await read("src/backroom-cloud.css");
   assert.match(devices, /<BackroomAndroidControl key=\{roomId \+ ':' \+ activeDevice\.device_id\} device=\{activeDevice\} roomId=\{roomId\}\/>/);
   assert.match(devices, /<BackroomDesktopControl key=\{roomId\} roomId=\{roomId\}\s*\/>/);
   assert.match(devices, /Original Android app screen/);
