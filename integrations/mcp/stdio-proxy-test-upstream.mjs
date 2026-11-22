@@ -7,7 +7,6 @@ const PARTICIPANT_ID = "22222222-2222-4222-8222-222222222222";
 const PROPOSED_TASK_ID = "33333333-3333-4333-8333-333333333333";
 const ASSIGNED_TASK_ID = "44444444-4444-4444-8444-444444444444";
 const MESSAGE_ID = "55555555-5555-4555-8555-555555555555";
-const SENT_MESSAGE_ID = "66666666-6666-4666-8666-666666666666";
 let proposedTask = null;
 let assignedTaskStatus = "assigned";
 let joinedActive = false;
@@ -150,12 +149,18 @@ if (process.env.RUB_MINDS_STDIO_E2E_FIXTURE === "1") {
       } else if (name === "list_group_tasks") {
         result = {
           content: [{ type: "text", text: "Listed the group tasks." }],
-          structuredContent: { room_id: ROOM_ID, tasks: [assignedTask, ...(proposedTask ? [proposedTask] : [])] },
+          structuredContent: {
+            room_id: ROOM_ID,
+            tasks: [
+              { ...assignedTask, created_by: { id: PARTICIPANT_ID }, assigned_to: { id: PARTICIPANT_ID } },
+              ...(proposedTask ? [{ ...proposedTask, assigned_to_participant_id: null, created_by: { id: PARTICIPANT_ID }, assigned_to: null }] : []),
+            ],
+          },
           isError: false,
         };
       } else if (name === "read_group_task") {
         const task = args.task_id === assignedTask.id ? { ...assignedTask, status: assignedTaskStatus } :
-          args.task_id === proposedTask?.id ? { ...proposedTask, assigned_to_participant_id: null } : null;
+          args.task_id === proposedTask?.id ? { ...proposedTask, assigned_to_participant_id: null, created_by: { id: PARTICIPANT_ID }, assigned_to: null } : null;
         result = {
           content: [{ type: "text", text: task ? "Read group task." : "Task not found." }],
           structuredContent: task ? { task, submissions: [], reviews: [] } : { error: "not_found" },
@@ -165,14 +170,14 @@ if (process.env.RUB_MINDS_STDIO_E2E_FIXTURE === "1") {
         if (args.task_id !== assignedTask.id || assignedTaskStatus !== "assigned") {
           result = {
             content: [{ type: "text", text: "A human group member must assign this task before an AI can claim it." }],
-            structuredContent: { error: "A human group member must assign this task before an AI can claim it." },
+            structuredContent: { error: "Could not claim this task. It may be assigned elsewhere, blocked by prerequisites, or no longer available." },
             isError: true,
           };
         } else {
           assignedTaskStatus = "in_progress";
           result = {
             content: [{ type: "text", text: "Assigned task claimed." }],
-            structuredContent: { claimed: true, status: assignedTaskStatus, task_id: assignedTask.id },
+            structuredContent: { claimed: true, replayed: false, status: assignedTaskStatus, task_id: assignedTask.id },
             isError: false,
           };
         }
@@ -187,7 +192,13 @@ if (process.env.RUB_MINDS_STDIO_E2E_FIXTURE === "1") {
           assignedTaskStatus = "review";
           result = {
             content: [{ type: "text", text: "Task result submitted for human review." }],
-            structuredContent: { submitted: true, replayed: false, status: assignedTaskStatus, task_id: assignedTask.id },
+            structuredContent: {
+              submitted: true,
+              replayed: false,
+              submission_id: "99999999-9999-4999-8999-999999999999",
+              task_id: assignedTask.id,
+              status: assignedTaskStatus,
+            },
             isError: false,
           };
         }
