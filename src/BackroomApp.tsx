@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Monitor, Smartphone } from 'lucide-react';
+import { ThemeToggle } from './UiPreferences';
 import CloudApp from './CloudApp';
 import BackroomDevicesApp from './BackroomDevicesApp';
 import BackroomSimulatorApp from './BackroomSimulatorApp';
@@ -51,7 +52,7 @@ export default function BackroomApp() {
   if (!authenticated) return <CloudApp />;
 
   const browserView = new URLSearchParams(window.location.search).get('browser') === '1';
-  return <div className="br-workspace-root">
+  return <div className="br-workspace-root rm-backroom-shell">
     <nav className="br-mode-nav" aria-label="Backroom workspaces">
       <a
         className={!browserView ? 'active' : ''}
@@ -67,6 +68,7 @@ export default function BackroomApp() {
       >
         <Monitor size={15}/> Browser runtime
       </a>
+      <ThemeToggle compact/>
     </nav>
     {browserView ? <BackroomSimulatorApp/> : <BackroomDevicesApp/>}
   </div>;
