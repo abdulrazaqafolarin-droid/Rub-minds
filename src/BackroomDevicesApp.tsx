@@ -49,6 +49,8 @@ export default function BackroomApp() {
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [showHelp, setShowHelp] = useState(false);
+  const [revokeCandidate, setRevokeCandidate] = useState<{ deviceId: string; roomId: string } | null>(null);
+  const [copyPairCodeOpen, setCopyPairCodeOpen] = useState(false);
 
   const loadRooms = useCallback(async () => {
     if (!supabase) return;
@@ -110,7 +112,10 @@ export default function BackroomApp() {
 
   async function copyPairCode() {
     try { await navigator.clipboard.writeText(pairCode); setNotice('Pairing code copied.'); }
-    catch { window.prompt('Copy this one-use pairing code to the Android companion:', pairCode); }
+    catch {
+      setCopyPairCodeOpen(true);
+      setNotice('Clipboard access is unavailable. Select the one-use code in the dialog and copy it manually.');
+    }
   }
 
   async function approve(deviceId: string) {
@@ -121,11 +126,23 @@ export default function BackroomApp() {
     finally { setBusy(false); }
   }
 
-  async function revoke(deviceId: string) {
-    if (!canManageDevices) return;
-    if (!window.confirm('Revoke this phone? It will lose access to this Rub Minds group.')) return;
+  function revoke(deviceId: string) {
+    if (!canManageDevices || busy) return;
+    setRevokeCandidate({ deviceId, roomId });
+  }
+
+  async function confirmRevoke() {
+    const candidate = revokeCandidate;
+    if (!candidate || busy) return;
+    const device = devices.find(item => item.device_id === candidate.deviceId);
+    if (candidate.roomId !== roomId || !canManageDevices || !device || device.status === 'revoked') {
+      setRevokeCandidate(null);
+      setError('This device or group changed. Refresh the device list before trying again.');
+      return;
+    }
+    setRevokeCandidate(null);
     setBusy(true); setError(''); setNotice('');
-    try { await revokeBackroomDevice(deviceId, roomId); await refresh(); setNotice('Device revoked.'); }
+    try { await revokeBackroomDevice(candidate.deviceId, candidate.roomId); await refresh(candidate.roomId); setNotice('Device revoked.'); }
     catch (e) { setError(e instanceof Error ? e.message : 'Device revocation failed.'); }
     finally { setBusy(false); }
   }
@@ -231,5 +248,29 @@ export default function BackroomApp() {
       </section>
     </>}
     <footer className="br-cloud-footer"><LockKeyhole size={14}/> Private device credentials · Outbound HTTPS only · No local port listener · No automatic access to private app data</footer>
+    {copyPairCodeOpen && <div className="br-cloud-modal-backdrop" onClick={() => setCopyPairCodeOpen(false)}>
+      <section className="br-cloud-modal" role="dialog" aria-modal="true" aria-labelledby="br-copy-pair-title" aria-describedby="br-copy-pair-description" onClick={event => event.stopPropagation()}>
+        <div className="br-cloud-modal-icon"><Copy size={19}/></div>
+        <h2 id="br-copy-pair-title">Copy your pairing code</h2>
+        <p id="br-copy-pair-description">This code can pair one Android companion and expires after five minutes. Keep it private and enter it only in the intended Rub Minds Companion app.</p>
+        <label htmlFor="br-copy-pair-value">One-use pairing code</label>
+        <textarea id="br-copy-pair-value" rows={2} readOnly autoFocus value={pairCode} onFocus={event => event.currentTarget.select()} onClick={event => event.currentTarget.select()}/>
+        <div className="br-cloud-modal-actions">
+          <button type="button" onClick={() => { const field = document.getElementById('br-copy-pair-value') as HTMLTextAreaElement | null; field?.focus(); field?.select(); }}>Select code</button>
+          <button type="button" className="primary" onClick={() => setCopyPairCodeOpen(false)}>Done</button>
+        </div>
+      </section>
+    </div>}
+    {revokeCandidate && <div className="br-cloud-modal-backdrop" onClick={() => setRevokeCandidate(null)}>
+      <section className="br-cloud-modal" role="dialog" aria-modal="true" aria-labelledby="br-revoke-device-title" aria-describedby="br-revoke-device-description" onClick={event => event.stopPropagation()}>
+        <div className="br-cloud-modal-icon danger"><CircleAlert size={19}/></div>
+        <h2 id="br-revoke-device-title">Revoke this phone?</h2>
+        <p id="br-revoke-device-description">The selected device will lose access to this Rub Minds group. This stops future device API access; it does not delete the group's activity history.</p>
+        <div className="br-cloud-modal-actions">
+          <button type="button" onClick={() => setRevokeCandidate(null)}>Keep device</button>
+          <button type="button" className="danger" disabled={busy} onClick={() => void confirmRevoke()}>Revoke device</button>
+        </div>
+      </section>
+    </div>}
   </main>;
 }

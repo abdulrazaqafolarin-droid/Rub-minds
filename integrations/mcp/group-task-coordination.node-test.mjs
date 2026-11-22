@@ -17,6 +17,7 @@ const mcpProtocol = await readFile(new URL("./protocol.mjs", import.meta.url), "
 const mcpEdge = await readFile(new URL("../../supabase/functions/rub-minds-mcp/index.ts", import.meta.url), "utf8");
 const cloudApp = await readFile(new URL("../../src/CloudApp.tsx", import.meta.url), "utf8");
 const taskBoard = await readFile(new URL("../../src/GroupTaskBoard.tsx", import.meta.url), "utf8");
+const deviceWorkspace = await readFile(new URL("../../src/BackroomDevicesApp.tsx", import.meta.url), "utf8");
 const cloudRooms = await readFile(new URL("../../src/cloudRooms.ts", import.meta.url), "utf8");
 const taskAcceptance = await readFile(new URL("../../supabase/tests/group_task_coordination.sql", import.meta.url), "utf8");
 const sdkTaskE2e = await readFile(new URL("../../scripts/local-mcp-sdk-e2e.mjs", import.meta.url), "utf8");
@@ -266,8 +267,17 @@ test("MCP exposes bounded task tools only after its existing participant-session
 
 test("the existing cloud group UI owns the task board and uses the current Realtime room channel", () => {
   assert.match(cloudApp, /import GroupTaskBoard from '\.\/GroupTaskBoard'/);
-  assert.match(cloudApp, /setShowTasks/);
+  assert.match(cloudApp, /activePanel === 'tasks'/);
+  assert.match(cloudApp, /openPanel\('tasks'\)/);
   assert.match(cloudApp, /<GroupTaskBoard[\s\S]*?key=\{room\.id\}[\s\S]*?roomId=\{room\.id\}/);
+  assert.match(taskBoard, /rm-task-board-filters/);
+  assert.match(taskBoard, /Assigned to me/);
+  assert.match(taskBoard, /Created by me/);
+  assert.match(taskBoard, /Needs review/);
+  assert.match(taskBoard, /visibleTasks\.map/);
+  assert.doesNotMatch(taskBoard, /window\.confirm\s*\(/);
+  assert.match(taskBoard, /role="dialog"[\s\S]*?aria-modal="true"/);
+  assert.match(taskBoard, /rm-task-cancel-dialog/);
   assert.match(taskBoard, /onSaveDependencies/);
   assert.match(taskBoard, /Revise prerequisites/);
   for (const operation of ["listGroupTasks", "createGroupTask", "assignGroupTask", "replaceGroupTaskDependencies", "reviewGroupTask", "cancelGroupTask", "claimGroupTaskAsHuman", "submitGroupTaskResultAsHuman"]) {
@@ -324,6 +334,14 @@ test("human task approvals require persisted evidence for every acceptance crite
   assert.match(sdkTaskE2e, /p_criterion_evidence/);
   assert.match(sdkTaskE2e, /all task criteria must retain review evidence/);
   assert.match(wakeQueueWorkflow, /20261101221147_group_task_review_criterion_evidence\.sql/);
+});
+
+test("default Backroom device frame uses accessible in-app copy and revoke dialogs", () => {
+  assert.doesNotMatch(deviceWorkspace, /window\.(prompt|confirm|alert)\s*\(/);
+  assert.match(deviceWorkspace, /copyPairCodeOpen/);
+  assert.match(deviceWorkspace, /revokeCandidate/);
+  assert.match(deviceWorkspace, /role="dialog"[\s\S]*?aria-modal="true"/);
+  assert.match(deviceWorkspace, /aria-labelledby="br-revoke-device-title"/);
 });
 
 test("Realtime task refreshes reject stale snapshots and stale errors", () => {

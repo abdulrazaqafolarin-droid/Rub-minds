@@ -51,3 +51,18 @@
 .br-android-native-binding button:disabled{opacity:.45;cursor:not-allowed}
 .br-android-native-binding p{margin:0;padding:6px 7px;border-radius:6px;background:#e8eef9;color:#465675;font-size:10px;line-height:1.4}
 .br-android-native-binding small{color:#71809d;font-size:9px;line-height:1.45}
+
+
+.br-cloud-modal-backdrop{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:18px;background:#050b18cc}
+.br-cloud-modal{box-sizing:border-box;width:min(100%,440px);display:grid;gap:12px;padding:22px;border:1px solid #354665;border-radius:16px;background:#101a30;color:#edf3ff;box-shadow:0 24px 80px #0009}
+.br-cloud-modal-icon{width:38px;height:38px;display:grid;place-items:center;border-radius:11px;background:#20365d;color:#b7ccff}
+.br-cloud-modal-icon.danger{background:#482b38;color:#ffc3cd}
+.br-cloud-modal h2{margin:0;font-size:19px}
+.br-cloud-modal p{margin:0;color:#aab8d4;font-size:12px;line-height:1.65}
+.br-cloud-modal label{color:#c2cde2;font-size:11px;font-weight:700}
+.br-cloud-modal textarea{box-sizing:border-box;width:100%;min-width:0;resize:vertical;border:1px solid #465878;border-radius:9px;padding:10px;background:#091326;color:#f5f7ff;font:inherit;font-size:13px;letter-spacing:.04em}
+.br-cloud-modal-actions{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px;margin-top:3px}
+.br-cloud-modal-actions button{min-height:36px;padding:8px 12px;border:1px solid #465878;border-radius:8px;background:#192944;color:#e7edff;font:inherit;font-size:11px;font-weight:700;cursor:pointer}
+.br-cloud-modal-actions button.primary{border-color:#4568ab;background:#2d4f8a;color:#fff}
+.br-cloud-modal-actions button.danger{border-color:#8b4658;background:#612f40;color:#fff}
+.br-cloud-modal-actions button:disabled{opacity:.55;cursor:not-allowed}
