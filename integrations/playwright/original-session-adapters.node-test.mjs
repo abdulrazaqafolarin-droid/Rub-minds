@@ -22,6 +22,7 @@ test("rejects provider routes that only contain a conversation marker in a neste
     ["chatgpt", "https://chatgpt.com/c/", /existing ChatGPT conversation/],
     ["claude", "https://claude.ai/chat/", /existing Claude conversation/],
     ["chatgpt", "https://chatgpt.com/c/%2Fother-thread", /existing ChatGPT conversation/],
+    ["chatgpt", "https://chatgpt.com/c/%252Fother-thread", /existing ChatGPT conversation/],
     ["claude", "https://claude.ai/chat/%5Cother-thread", /existing Claude conversation/],
   ];
 
