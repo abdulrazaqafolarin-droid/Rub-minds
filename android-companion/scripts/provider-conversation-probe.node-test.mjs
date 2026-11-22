@@ -27,6 +27,10 @@ test("physical A-B-A helper confirms package focus and deletes temporary snapsho
   assert.match(runner, /Exactly one authorized ADB device is required/);
   assert.match(runner, /mCurrentFocus=\|mFocusedApp=/);
   assert.match(runner, /mResumedActivity\|ResumedActivity/);
+  assert.match(runner, /windowFocusMatches/);
+  assert.match(runner, /resumedActivityMatches/);
+  assert.match(runner, /both the foreground window and resumed activity/);
+  assert.ok(runner.includes("(?<![A-Za-z0-9_.])"));
   assert.match(runner, /ValidateSet\('A1', 'B', 'A2'\)/);
   assert.match(runner, /uiautomator', 'dump', '--compressed'/);
   assert.match(runner, /--delete-inputs/);

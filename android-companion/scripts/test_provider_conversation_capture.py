@@ -14,14 +14,19 @@ from capture_provider_conversation import (
 
 class AdbCaptureTests(unittest.TestCase):
     @staticmethod
-    def focus_results(package: str | None = "com.openai.chatgpt") -> list[subprocess.CompletedProcess]:
+    def focus_results(
+        focus_package: str | None = "com.openai.chatgpt",
+        resumed_package: str | None = None,
+    ) -> list[subprocess.CompletedProcess]:
+        if resumed_package is None:
+            resumed_package = focus_package
         focused = (
-            f"mCurrentFocus=Window{{123 u0 {package}/.MainActivity}}\n"
-            if package else "mCurrentFocus=Window{123 u0 com.example.other/.MainActivity}\n"
+            f"mCurrentFocus=Window{{123 u0 {focus_package}/.MainActivity}}\n"
+            if focus_package else "mCurrentFocus=Window{123 u0 com.example.other/.MainActivity}\n"
         )
         resumed = (
-            f"mResumedActivity: ActivityRecord{{123 u0 {package}/.MainActivity t1}}\n"
-            if package else "mResumedActivity: ActivityRecord{123 u0 com.example.other/.MainActivity t1}\n"
+            f"mResumedActivity: ActivityRecord{{123 u0 {resumed_package}/.MainActivity t1}}\n"
+            if resumed_package else "mResumedActivity: ActivityRecord{123 u0 com.example.other/.MainActivity t1}\n"
         )
         return [
             subprocess.CompletedProcess(["adb", "shell", "dumpsys", "window"], 0, stdout=focused, stderr=""),
@@ -51,6 +56,19 @@ class AdbCaptureTests(unittest.TestCase):
             runner.call_args_list[0].args[0][-3:],
             ["rm", "-f", "/sdcard/rm-provider-identity-0123456789abcdef.xml"],
         )
+
+    def test_foreground_check_requires_both_window_focus_and_resumed_activity(self) -> None:
+        focus_wrong = Mock(side_effect=self.focus_results(
+            "com.android.systemui", "com.openai.chatgpt",
+        ))
+        with self.assertRaisesRegex(RuntimeError, "not positively identified"):
+            assert_provider_foreground("phone-1", "com.openai.chatgpt", runner=focus_wrong)
+
+        resumed_wrong = Mock(side_effect=self.focus_results(
+            "com.openai.chatgpt", "com.example.other",
+        ))
+        with self.assertRaisesRegex(RuntimeError, "not positively identified"):
+            assert_provider_foreground("phone-1", "com.openai.chatgpt", runner=resumed_wrong)
 
     def test_capture_refuses_wrong_foreground_app_and_still_cleans_remote_file(self) -> None:
         runner = Mock(side_effect=[

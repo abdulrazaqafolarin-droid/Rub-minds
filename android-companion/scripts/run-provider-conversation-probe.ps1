@@ -74,10 +74,15 @@ function Remove-RemoteCaptureChecked {
 function Assert-ProviderForeground {
     $windowOutput = Invoke-AdbChecked -Arguments @('-s', $Serial, 'shell', 'dumpsys', 'window') -FailureMessage 'Could not read Android window focus metadata.'
     $activityOutput = Invoke-AdbChecked -Arguments @('-s', $Serial, 'shell', 'dumpsys', 'activity', 'activities') -FailureMessage 'Could not read Android resumed-activity metadata.'
-    $focusLines = @($windowOutput | Where-Object { [string]$_ -match 'mCurrentFocus=|mFocusedApp=' })
-    $focusLines += @($activityOutput | Where-Object { [string]$_ -match 'mResumedActivity|ResumedActivity' })
-    if (($focusLines -join [Environment]::NewLine) -notmatch [regex]::Escape($packageName)) {
-        throw ("The intended provider app is not positively identified as the foreground/resumed app. Bring " + $packageName + " to the foreground and retry.")
+    $windowFocusLines = @($windowOutput | Where-Object { [string]$_ -match 'mCurrentFocus=|mFocusedApp=' })
+    $resumedActivityLines = @($activityOutput | Where-Object { [string]$_ -match 'mResumedActivity|ResumedActivity' })
+    $packagePattern = '(?<![A-Za-z0-9_.])' + [regex]::Escape($packageName) + '(?:/|\s|$)'
+    $windowFocusMatches = ($windowFocusLines.Count -gt 0) -and
+        (@($windowFocusLines | Where-Object { [string]$_ -notmatch $packagePattern }).Count -eq 0)
+    $resumedActivityMatches = ($resumedActivityLines.Count -gt 0) -and
+        (@($resumedActivityLines | Where-Object { [string]$_ -notmatch $packagePattern }).Count -eq 0)
+    if (-not $windowFocusMatches -or -not $resumedActivityMatches) {
+        throw ("The intended provider app is not positively identified as both the foreground window and resumed activity. Bring " + $packageName + " to the foreground and retry.")
     }
 }
 

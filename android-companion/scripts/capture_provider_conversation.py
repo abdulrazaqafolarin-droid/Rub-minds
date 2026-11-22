@@ -93,16 +93,27 @@ def assert_provider_foreground(
     if window.returncode != 0 or activity.returncode != 0:
         raise RuntimeError("Could not positively verify the foreground provider app.")
 
-    focus_lines = [
+    window_focus_lines = [
         line for line in (window.stdout or "").splitlines()
         if re.search(r"mCurrentFocus=|mFocusedApp=", line)
     ]
-    focus_lines.extend(
+    resumed_activity_lines = [
         line for line in (activity.stdout or "").splitlines()
         if re.search(r"mResumedActivity|ResumedActivity", line)
-    )
+    ]
     package_pattern = re.compile(rf"(?<![A-Za-z0-9_.]){re.escape(package)}(?:/|\s|$)")
-    if not any(package_pattern.search(line) for line in focus_lines):
+    # A background resumed activity is not enough: a system dialog or another
+    # app may own the actual window focus. Both independent ADB views must
+    # identify the same official provider package, with no conflicting entries.
+    focus_matches = (
+        bool(window_focus_lines) and
+        all(package_pattern.search(line) for line in window_focus_lines)
+    )
+    resumed_matches = (
+        bool(resumed_activity_lines) and
+        all(package_pattern.search(line) for line in resumed_activity_lines)
+    )
+    if not focus_matches or not resumed_matches:
         raise RuntimeError(
             "The selected provider app is not positively identified as the foreground/resumed app. "
             "Bring the intended provider conversation to the foreground and retry."
