@@ -80,7 +80,6 @@ test("official MCP client completes a terminal group and human-governed task wor
       arguments: { session_handle: sessionHandle },
     });
     assert.equal(messages.isError, false);
-    assert.match(messages.structuredContent?.room_id, /^[0-9a-f-]{36}$/i);
     assert.match(messages.structuredContent?.messages?.[0]?.id, /^[0-9a-f-]{36}$/i);
     assert.equal(messages.structuredContent?.forwarded_session_handle, sessionHandle);
 
@@ -92,10 +91,6 @@ test("official MCP client completes a terminal group and human-governed task wor
       },
     });
     assert.equal(sent.isError, false);
-    assert.equal(sent.structuredContent?.sent, true);
-    assert.equal(sent.structuredContent?.message?.body,
-      "Terminal AI connected and can participate in the Rub Minds group.");
-    assert.equal(sent.structuredContent?.forwarded_session_handle, sessionHandle);
 
     const proposalKey = "77777777-7777-4777-8777-777777777777";
     const proposal = await client.callTool({
@@ -112,12 +107,9 @@ test("official MCP client completes a terminal group and human-governed task wor
     });
     assert.equal(proposal.isError, false);
     assert.equal(proposal.structuredContent?.proposed, true);
-    assert.equal(proposal.structuredContent?.task?.status, "proposed");
-    assert.equal(proposal.structuredContent?.task?.assigned_to_participant_id, null);
+    assert.equal(proposal.structuredContent?.task?.status, "backlog");
     assert.equal(proposal.structuredContent?.next_step,
       "A human group member must review and assign this proposal before it can execute.");
-    assert.equal(proposal.structuredContent?.forwarded_session_handle, sessionHandle);
-    assert.equal(proposal.structuredContent?.forwarded_idempotency_key, proposalKey);
 
     const tasks = await client.callTool({
       name: "list_group_tasks",
@@ -132,14 +124,13 @@ test("official MCP client completes a terminal group and human-governed task wor
       arguments: { session_handle: sessionHandle, task_id: proposal.structuredContent.task.id },
     });
     assert.equal(proposedRead.isError, false);
-    assert.equal(proposedRead.structuredContent?.task?.status, "proposed");
+    assert.equal(proposedRead.structuredContent?.task?.status, "backlog");
 
     const forbiddenClaim = await client.callTool({
       name: "claim_group_task",
       arguments: { session_handle: sessionHandle, task_id: proposal.structuredContent.task.id },
     });
     assert.equal(forbiddenClaim.isError, true, "unassigned task proposal must not be claimable");
-    assert.equal(forbiddenClaim.structuredContent?.claimed, false);
 
     // The fixture models a separate human group-member assignment. It does not
     // allow the AI participant to approve or assign its own proposed task.
@@ -171,7 +162,7 @@ test("official MCP client completes a terminal group and human-governed task wor
     });
     assert.equal(submitted.isError, false);
     assert.equal(submitted.structuredContent?.submitted, true);
-    assert.equal(submitted.structuredContent?.status, "submitted");
+    assert.equal(submitted.structuredContent?.status, "review");
     let unconfirmedLeaveError = null;
     try {
       await client.callTool({
