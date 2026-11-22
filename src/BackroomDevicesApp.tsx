@@ -104,7 +104,12 @@ export default function BackroomApp() {
     // but avoid background polling when the tab is hidden.
     const poll = () => {
       if (document.visibilityState !== 'visible') return;
-      void refresh().catch(e => setError(e instanceof Error ? e.message : 'Device status refresh failed.'));
+      const targetRoom = roomIdRef.current;
+      void refresh(targetRoom).catch(e => {
+        if (roomIdRef.current === targetRoom) {
+          setError(e instanceof Error ? e.message : 'Device status refresh failed.');
+        }
+      });
     };
     const timer = window.setInterval(poll, 20_000);
     document.addEventListener('visibilitychange', poll);
@@ -160,8 +165,16 @@ export default function BackroomApp() {
   }
 
   async function copyPairCode() {
-    try { await navigator.clipboard.writeText(pairCode); setNotice('Pairing code copied.'); }
-    catch { window.prompt('Copy this one-use pairing code to the Android companion:', pairCode); }
+    const targetRoom = roomId;
+    const code = pairCode;
+    if (!code) return;
+    try {
+      await navigator.clipboard.writeText(code);
+      if (roomIdRef.current === targetRoom) setNotice('Pairing code copied.');
+    } catch {
+      window.prompt('Copy this one-use pairing code to the Android companion:', code);
+      if (roomIdRef.current === targetRoom) setNotice('Copy the one-use pairing code from the prompt.');
+    }
   }
 
   async function approve(deviceId: string) {
