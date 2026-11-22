@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { ArrowRight, ArrowUpRight, BrainCircuit, Bot, Cable, ChevronRight, CircleAlert, Copy, Layers3, Link2, ListChecks, LockKeyhole, LogOut, Monitor, MessageCircle, Plus, RefreshCw, Send, Sparkles, SquareTerminal, Smartphone, UserPlus, Users } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, BrainCircuit, Bot, Cable, ChevronRight, CircleAlert, Copy, Layers3, Link2, ListChecks, LockKeyhole, House, LogOut, Monitor, MessageCircle, Plus, RefreshCw, Send, Sparkles, SquareTerminal, Smartphone, UserPlus, Users } from 'lucide-react';
 import { buildExistingAiJoinPrompt, buildGroupRelayPrompt, buildRestorePrompt, parseSessionMemoryDocument } from './aiRelay';
 import type { User } from '@supabase/supabase-js';
 import { supabase, supabaseUrl } from './supabase';
@@ -555,6 +555,7 @@ export default function CloudApp() {
       <div className="brand"><div className="brand-icon"><Sparkles size={21}/></div><div><strong>Rub Minds</strong><small>Collective intelligence</small></div></div>
       <div className="rm-sidebar-top"><span className="rm-sidebar-kicker">YOUR WORKSPACE</span><ThemeToggle/></div>
       <button className="new-room" onClick={() => setCreating(true)}><Plus size={17}/> Create a group</button>
+      <button type="button" className={'rm-home-shortcut' + (!selected ? ' active' : '')} onClick={() => navigate('')} aria-current={!selected ? 'page' : undefined}><House size={16}/> Home</button>
       <button className="rm-join-shortcut" onClick={() => setJoinLinkOpen(true)}><Link2 size={16}/> Join with invitation</button>
       <div className="section-label">YOUR GROUPS <span>{rooms.length}</span></div>
       <nav className="room-list" aria-label="Your groups">
