@@ -70,7 +70,6 @@ if (process.env.RUB_MINDS_STDIO_E2E_FIXTURE === "1") {
               joined: true,
               room_id: ROOM_ID,
               participant_id: PARTICIPANT_ID,
-              participant_kind: "external_agent",
               session_handle: SESSION_HANDLE,
               forwarded_agent_label: args.agent_label,
             },
