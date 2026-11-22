@@ -72,7 +72,7 @@ jobs:
               },
             },
           };
-          writeFileSync("opencode.json", JSON.stringify(config, null, 2) + "\\n");
+          writeFileSync("opencode.json", JSON.stringify(config, null, 2) + "\n");
           NODE
           git add opencode.json
           git commit -m "Add isolated Rub Minds MCP server configuration"
@@ -85,6 +85,6 @@ jobs:
           set -euo pipefail
           cd "$RUNNER_TEMP/rub-minds-opencode-workspace"
           output="$(opencode --standalone mcp list --print-logs 2>&1)"
-          printf '%s\\n' "$output"
+          printf '%s\n' "$output"
           grep -Fq "rub_minds" <<<"$output"
           grep -Eqi "connected|ready" <<<"$output"
