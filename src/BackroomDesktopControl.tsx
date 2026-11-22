@@ -709,7 +709,10 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   return <section className="br-panel br-desktop-control">
     <div className="br-desktop-head">
       <div><span className="br-eyebrow"><Monitor size={13}/> ACTUAL COMPUTER</span><h2>Desktop & terminal execution</h2><p>Run installed apps on the registered computer. Requests always require approval on that computer.</p></div>
-      <button type="button" className="br-desktop-refresh" onClick={()=>void refresh()} disabled={loading}><RefreshCw size={14}/>{loading?'Checking…':'Refresh'}</button>
+      <div className="br-desktop-refresh-wrap">
+        {lastUpdatedAt!==null&&<small className="br-desktop-refresh-time" aria-live="polite">Updated {new Date(lastUpdatedAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</small>}
+        <button type="button" className="br-desktop-refresh" onClick={()=>void refresh()} disabled={loading}><RefreshCw size={14}/>{loading?'Checking…':'Refresh'}</button>
+      </div>
     </div>
     {!activeDevices.length?<div className="br-desktop-empty"><Monitor size={27}/><b>No connected desktop companion</b><p>Install and open Rub Minds Backroom Companion on the actual Windows computer. Sign in using the same account and select the group. You do not need a localhost address or pairing code.</p></div>:
       <>
