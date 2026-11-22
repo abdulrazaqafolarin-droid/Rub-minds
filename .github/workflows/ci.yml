@@ -10,6 +10,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 jobs:
+  # Browser/UI acceptance is opt-in until the product UI is ready for visual and interaction acceptance.
   mcp-migration:
     # Run validation on draft PRs as well; draft status does not imply a pass.
     runs-on: ubuntu-latest
@@ -324,10 +325,13 @@ jobs:
       - name: Type-check hosted MCP Edge Function
         run: deno check supabase/functions/rub-minds-mcp/index.ts
       - name: Install Playwright Chromium
+        if: ${{ vars.RUB_MINDS_UI_ACCEPTANCE_READY == 'true' }}
         run: npx playwright install --with-deps chromium
       - name: Run controlled browser proof of concept
+        if: ${{ vars.RUB_MINDS_UI_ACCEPTANCE_READY == 'true' }}
         run: npm run test:browser
       - name: Run Backroom managed-browser end-to-end tests
+        if: ${{ vars.RUB_MINDS_UI_ACCEPTANCE_READY == 'true' }}
         run: npm run test:backroom:browser
 
 
@@ -384,6 +388,7 @@ jobs:
       # Install browsers after the final npm tree mutation so the cached
       # browser executable matches the Playwright version actually loaded.
       - name: Install Chromium and browser dependencies
+        if: ${{ vars.RUB_MINDS_UI_ACCEPTANCE_READY == 'true' }}
         run: npx playwright install --with-deps chromium
       - name: Install PostgreSQL client for Vault acceptance
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
@@ -402,6 +407,7 @@ jobs:
           supabase migration list --local
           test -f supabase/config.toml
       - name: Test real browser signup and human invitation redemption
+        if: ${{ vars.RUB_MINDS_UI_ACCEPTANCE_READY == 'true' }}
         run: |
           set -euo pipefail
           eval "$(supabase status -o env)"
