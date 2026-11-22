@@ -46,6 +46,7 @@ test("Switching groups clears prior device state and remounts active runtime con
   assert.match(devices, /setDevicesLoading\(Boolean\(nextRoomId\)\)/);
   assert.match(devices, /Loading device connections/);
   assert.match(devices, /devicesLoadError/);
+  assert.match(devices, /catch \(error\) \{[\s\S]*?requestId !== refreshRequestRef\.current \|\| targetRoom !== roomIdRef\.current\) return/);
   assert.match(devices, /Could not load devices/);
   assert.match(devices, /Phone availability could not be checked/);
   assert.match(devices, /Retry device loading/);
