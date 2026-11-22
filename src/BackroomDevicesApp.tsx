@@ -172,6 +172,7 @@ export default function BackroomApp() {
       await navigator.clipboard.writeText(code);
       if (roomIdRef.current === targetRoom) setNotice('Pairing code copied.');
     } catch {
+      if (roomIdRef.current !== targetRoom) return;
       window.prompt('Copy this one-use pairing code to the Android companion:', code);
       if (roomIdRef.current === targetRoom) setNotice('Copy the one-use pairing code from the prompt.');
     }
@@ -217,7 +218,12 @@ export default function BackroomApp() {
       </div>
       <div className="br-cloud-refresh-wrap">
         {lastUpdatedAt !== null ? <small aria-live="polite">Updated {new Date(lastUpdatedAt).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</small> : null}
-        <button className="br-cloud-quiet" onClick={() => void refresh().catch(e => setError(e.message))} disabled={!roomId || busy}><RefreshCw size={16}/> Refresh</button>
+        <button className="br-cloud-quiet" onClick={() => {
+          const targetRoom = roomIdRef.current;
+          void refresh(targetRoom).catch(e => {
+            if (roomIdRef.current === targetRoom) setError(e instanceof Error ? e.message : 'Device refresh failed.');
+          });
+        }} disabled={!roomId || busy}><RefreshCw size={16}/> Refresh</button>
       </div>
     </header>
 
