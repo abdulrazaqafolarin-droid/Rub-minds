@@ -146,6 +146,21 @@ test("Windows computer-frame input requires exact Backroom-launched HWND and ful
   assert.match(frame, /launch the selected app from Backroom[\s\S]*make it fill the shared monitor/);
 });
 
+test("Computer inventory refreshes while visible and rejects stale responses", async () => {
+  const control = await read("src/BackroomDesktopControl.tsx");
+  assert.match(control, /const refreshRequestRef=useRef\(0\)/);
+  assert.match(control, /const requestId=\+\+refreshRequestRef\.current/);
+  assert.match(control, /if\(requestId!==refreshRequestRef\.current\)return/);
+  assert.match(control, /if\(requestId===refreshRequestRef\.current\)setLoading\(false\)/);
+  assert.match(control, /setLastUpdatedAt\(Date\.now\(\)\)/);
+  assert.match(control, /window\.setInterval\(poll,20_000\)/);
+  assert.match(control, /document\.visibilityState!=='visible'/);
+  assert.match(control, /document\.addEventListener\('visibilitychange',poll\)/);
+  assert.match(control, /window\.clearInterval\(timer\)/);
+  assert.match(control, /br-desktop-refresh-wrap/);
+  assert.match(control, /br-desktop-refresh-time/);
+});
+
 test("Desktop screen and terminal sessions allow bounded WebRTC reconnect", async () => {
   const control = await read("src/BackroomDesktopControl.tsx");
   assert.match(control, /const disconnectTimerRef=useRef<number\|null>\(null\)/);
