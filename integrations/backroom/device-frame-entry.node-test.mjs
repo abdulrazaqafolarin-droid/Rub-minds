@@ -1,8 +1,28 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { createRoomActionLocks } from "./room-action-lock.mjs";
 
 const read = path => readFile(new URL("../../" + path, import.meta.url), "utf8");
+
+test("device mutation locks are isolated by group and reject duplicate actions within one group", () => {
+  const locks = createRoomActionLocks();
+
+  assert.equal(locks.isBusy("group-a"), false);
+  assert.equal(locks.begin("group-a"), true);
+  assert.equal(locks.begin("group-a"), false, "a second mutation in the same group must be blocked");
+  assert.equal(locks.isBusy("group-a"), true);
+
+  assert.equal(locks.begin("group-b"), true, "another group must remain independently usable");
+  assert.deepEqual([...locks.snapshot()].sort(), ["group-a", "group-b"]);
+
+  assert.equal(locks.end("group-a"), true);
+  assert.equal(locks.isBusy("group-a"), false);
+  assert.equal(locks.isBusy("group-b"), true, "finishing group A must not clear group B's lock");
+  assert.equal(locks.end("group-b"), true);
+  assert.equal(locks.snapshot().size, 0);
+  assert.throws(() => locks.begin(""), /non-empty/);
+});
 
 test("Backroom exposes only authenticated real device frames", async () => {
   const wrapper = await read("src/BackroomApp.tsx");
@@ -41,7 +61,7 @@ test("Switching groups clears prior device state and remounts active runtime con
   assert.match(devices, /roomIdRef\.current = nextRoomId/);
   assert.match(devices, /const \[busyRoomIds, setBusyRoomIds\] = useState<Set<string>>/);
   assert.match(devices, /const busy = busyRoomIds\.has\(roomId\)/);
-  assert.match(devices, /busyRoomIdsRef\.current\.has\(targetRoom\)/);
+  assert.match(devices, /roomActionLocksRef\.current\.has\(targetRoom\)/);
   assert.match(devices, /beginRoomAction\(targetRoom\)/);
   assert.match(devices, /endRoomAction\(targetRoom\)/);
   assert.doesNotMatch(devices, /const \[busy, setBusy\]|setBusy\(/);
