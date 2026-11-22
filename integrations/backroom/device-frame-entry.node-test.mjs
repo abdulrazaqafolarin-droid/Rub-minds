@@ -34,7 +34,7 @@ test("Switching groups clears prior device state and remounts active runtime con
   assert.match(devices, /setPairCode\(\x27\x27\)/);
   assert.match(devices, /setPairExpires\(\x27\x27\)/);
   assert.match(devices, /if \(roomIdRef\.current !== targetRoom\) return/);
-  assert.match(devices, /BackroomAndroidControl key=\{roomId \+ \':\\x27 \+ activeDevice\.device_id\}/);
+  assert.match(devices, /BackroomAndroidControl key=\{roomId \+ ':' \+ activeDevice\.device_id\}/);
   assert.match(devices, /BackroomDesktopControl key=\{roomId\}/);
 });
 
