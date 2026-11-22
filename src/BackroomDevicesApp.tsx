@@ -46,6 +46,7 @@ export default function BackroomApp() {
   const [pairCode, setPairCode] = useState('');
   const [pairExpires, setPairExpires] = useState('');
   const [busy, setBusy] = useState(false);
+  const [devicesLoading, setDevicesLoading] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [showHelp, setShowHelp] = useState(false);
@@ -58,6 +59,7 @@ export default function BackroomApp() {
     refreshRequestRef.current++;
     setDevices([]);
     setEvents([]);
+    setDevicesLoading(Boolean(nextRoomId));
     setSelectedDeviceId('');
     setPairCode('');
     setPairExpires('');
@@ -84,18 +86,25 @@ export default function BackroomApp() {
     if (targetRoom !== roomIdRef.current) return;
     const requestId = ++refreshRequestRef.current;
     if (!targetRoom) {
-      setDevices([]); setEvents([]); setLastUpdatedAt(Date.now());
+      setDevices([]); setEvents([]); setDevicesLoading(false); setLastUpdatedAt(Date.now());
       return;
     }
-    const [nextDevices, nextEvents] = await Promise.all([
-      listBackroomDevices(targetRoom), listBackroomDeviceEvents(targetRoom),
-    ]);
-    // A slow response, older overlapping refresh, or stale callback from a
-    // previous group must never overwrite the currently selected group's state.
-    if (requestId !== refreshRequestRef.current || targetRoom !== roomIdRef.current) return;
-    setDevices(nextDevices);
-    setEvents(nextEvents);
-    setLastUpdatedAt(Date.now());
+    setDevicesLoading(true);
+    try {
+      const [nextDevices, nextEvents] = await Promise.all([
+        listBackroomDevices(targetRoom), listBackroomDeviceEvents(targetRoom),
+      ]);
+      // A slow response, older overlapping refresh, or stale callback from a
+      // previous group must never overwrite the currently selected group's state.
+      if (requestId !== refreshRequestRef.current || targetRoom !== roomIdRef.current) return;
+      setDevices(nextDevices);
+      setEvents(nextEvents);
+      setLastUpdatedAt(Date.now());
+    } finally {
+      if (requestId === refreshRequestRef.current && targetRoom === roomIdRef.current) {
+        setDevicesLoading(false);
+      }
+    }
   }, [roomId]);
 
   useEffect(() => { void loadRooms().catch(e => setError(e.message)); }, [loadRooms]);
@@ -122,6 +131,7 @@ export default function BackroomApp() {
     refreshRequestRef.current++;
     setDevices([]);
     setEvents([]);
+    setDevicesLoading(Boolean(roomId));
     setSelectedDeviceId('');
     setPairCode('');
     setPairExpires('');
@@ -249,7 +259,9 @@ export default function BackroomApp() {
             <button onClick={() => void copyPairCode()}><Copy size={15}/> Copy code</button>
             <small>Enter this code in Rub Minds Companion on the phone. Expires {formatTime(pairExpires)}.</small>
           </div> : null}
-          {devices.length ? devices.map(device => <article className="br-cloud-device" key={device.device_id}>
+          {devicesLoading && devices.length === 0
+            ? <div className="br-cloud-empty-mini" role="status"><RefreshCw size={21}/><b>Loading device connections</b><span>Checking this group's paired phones and computers.</span></div>
+            : devices.length ? devices.map(device => <article className="br-cloud-device" key={device.device_id}>
             <div className="br-cloud-device-icon">{device.platform === 'android' ? <Smartphone size={19}/> : <Monitor size={19}/>}</div>
             <div className="br-cloud-device-copy">
               <b>{device.device_label}</b>
@@ -284,7 +296,9 @@ export default function BackroomApp() {
           <div className={'br-cloud-device-frame ' + surface}>
             {surface === 'phone' ? activeDevice
               ? <BackroomAndroidControl key={roomId + ':' + activeDevice.device_id} device={activeDevice} roomId={roomId}/>
-              : <div className="br-cloud-frame-empty">
+              : devicesLoading
+                ? <div className="br-cloud-frame-empty" role="status"><RefreshCw size={30}/><b>Loading phone availability</b><p>Checking approved Android devices in this group.</p></div>
+                : <div className="br-cloud-frame-empty">
                   <Smartphone size={34}/><b>No approved Android phone</b>
                   <p>Pair an Android phone, approve it, then open the selected app from the phone frame.</p>
                   {canManageDevices ? <button className="br-cloud-primary" disabled={busy} onClick={() => void createPairing()}>Pair Android phone</button> : null}
