@@ -41,10 +41,9 @@ jobs:
           node-version: "22"
       - name: Install official OpenCode V2 CLI
         run: npm install --global @opencode/cli
-      - name: Register the bridge as a local stdio MCP server
+      - name: Write documented OpenCode V2 project MCP configuration
         env:
-          RUB_MINDS_STDIO_E2E_FIXTURE: "1"
-          NODE_OPTIONS: --import=${{ github.workspace }}/integrations/mcp/stdio-proxy-test-upstream.mjs
+          GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/rub-minds-opencode-workspace"
@@ -52,15 +51,32 @@ jobs:
           git init --quiet
           git config user.name "Rub Minds CI"
           git config user.email "rub-minds-ci@example.invalid"
-          opencode --version
-          opencode mcp add rub_minds \
-            --env "RUB_MINDS_MCP_ENDPOINT=https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp" \
-            --env "RUB_MINDS_MCP_API_KEY=rub-minds-public-test-key" \
-            -- "$GITHUB_WORKSPACE/scripts/rub-minds-mcp.mjs" --stdio
-          echo "Generated OpenCode config:"
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from "node:fs";
+          const workspace = process.env.GITHUB_WORKSPACE;
+          const config = {
+            "$schema": "https://opencode.ai/config.json",
+            mcp: {
+              servers: {
+                rub_minds: {
+                  type: "local",
+                  command: ["node", workspace + "/scripts/rub-minds-mcp.mjs", "--stdio"],
+                  cwd: workspace,
+                  environment: {
+                    RUB_MINDS_MCP_ENDPOINT: "https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp",
+                    RUB_MINDS_MCP_API_KEY: "rub-minds-public-test-key",
+                  },
+                  protocol: "legacy",
+                  codemode: false,
+                },
+              },
+            },
+          };
+          writeFileSync("opencode.json", JSON.stringify(config, null, 2) + "\\n");
+          NODE
+          git add opencode.json
+          git commit -m "Add isolated Rub Minds MCP server configuration"
           cat opencode.json
-          echo "OpenCode MCP list help:"
-          opencode mcp list --help
       - name: Verify OpenCode reports the spawned Rub Minds MCP server connected
         env:
           RUB_MINDS_STDIO_E2E_FIXTURE: "1"
