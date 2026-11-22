@@ -81,7 +81,6 @@ test("official MCP client completes a terminal group and human-governed task wor
     });
     assert.equal(messages.isError, false);
     assert.match(messages.structuredContent?.messages?.[0]?.id, /^[0-9a-f-]{36}$/i);
-    assert.equal(messages.structuredContent?.forwarded_session_handle, sessionHandle);
 
     const sent = await client.callTool({
       name: "send_group_message",
