@@ -6,6 +6,7 @@
 const PROVIDERS = {
   chatgpt: {
     hosts: new Set(["chatgpt.com", "chat.openai.com"]),
+    conversationPath: /^\/c\/([^/]+)(?:\/.*)?$/,
     composer: ['#prompt-textarea', '[contenteditable="true"][data-testid="composer-input"]'],
     send: ['button[data-testid="send-button"]', 'button[aria-label="Send prompt"]'],
     assistant: ['[data-message-author-role="assistant"]'],
@@ -13,6 +14,7 @@ const PROVIDERS = {
   },
   claude: {
     hosts: new Set(["claude.ai"]),
+    conversationPath: /^\/chat\/([^/]+)(?:\/.*)?$/,
     composer: ['[contenteditable="true"].ProseMirror', '[contenteditable="true"][data-placeholder]'],
     send: ['button[aria-label="Send message"]', 'button[data-testid="send-button"]'],
     assistant: ['[data-testid="assistant-message"]', '[data-is-streaming="false"] .font-claude-message'],
@@ -59,6 +61,27 @@ function buildGroupTaskPrompt(prompt, metadata = {}) {
   ].join(String.fromCharCode(10));
 }
 
+function isValidConversationPath(pathname, provider) {
+  const match = PROVIDERS[provider].conversationPath.exec(pathname);
+  if (!match || typeof match[1] !== "string") return false;
+
+  let conversationId;
+  try {
+    conversationId = decodeURIComponent(match[1]);
+  } catch {
+    return false;
+  }
+
+  // Treat the provider's first route segment as the exact conversation ID.
+  // Encoded separators, whitespace and control characters are not valid IDs:
+  // accepting them could make a nested route look like a real conversation.
+  return conversationId.length > 0 &&
+    conversationId.length <= 200 &&
+    conversationId !== "." &&
+    conversationId !== ".." &&
+    !/[\\s/\\\\?#\\u0000-\\u001f\\u007f]/u.test(conversationId);
+}
+
 function assertPage(page, provider) {
   if (!page || typeof page.url !== "function" || typeof page.locator !== "function") {
     throw new TypeError("A real Playwright Page is required");
@@ -67,11 +90,10 @@ function assertPage(page, provider) {
   if (url.protocol !== "https:" || !PROVIDERS[provider].hosts.has(url.hostname)) {
     throw new Error("Page is not on the expected AI provider origin");
   }
-  if (!url.pathname.includes("/c/") && provider === "chatgpt") {
-    throw new Error("Open the existing ChatGPT conversation first");
-  }
-  if (!url.pathname.includes("/chat/") && provider === "claude") {
-    throw new Error("Open the existing Claude conversation first");
+  if (!isValidConversationPath(url.pathname, provider)) {
+    throw new Error(provider === "chatgpt"
+      ? "Open the existing ChatGPT conversation first"
+      : "Open the existing Claude conversation first");
   }
   // Query/hash changes do not switch the provider thread; origin + pathname do.
   return url.origin + url.pathname;
