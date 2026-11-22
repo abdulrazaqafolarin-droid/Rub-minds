@@ -1,4 +1,16 @@
 const ENDPOINT = "https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp";
+const SESSION_HANDLE = "a".repeat(64);
+const ROOM_ID = "room-stdio-fixture";
+const PARTICIPANT_ID = "participant-stdio-fixture";
+let proposedTask = null;
+let assignedTaskStatus = "assigned";
+const assignedTask = {
+  id: "task-human-assigned-fixture",
+  room_id: ROOM_ID,
+  title: "Human-assigned acceptance task",
+  status: "assigned",
+  assigned_to_participant_id: PARTICIPANT_ID,
+};
 
 if (process.env.RUB_MINDS_STDIO_E2E_FIXTURE === "1") {
   globalThis.fetch = async (input, init = {}) => {
@@ -25,13 +37,13 @@ if (process.env.RUB_MINDS_STDIO_E2E_FIXTURE === "1") {
         resultType: "complete",
         supportedVersions: ["2026-07-28"],
         capabilities: { tools: { listChanged: false } },
-        instructions: "Use the joined group session handle. Group writes and task proposals remain subject to the group's permissions and human assignment/review.",
+        instructions: "Use the joined group session handle. Group messages are group-visible. Task proposals require human review and assignment; assigned tasks must pass the group task lifecycle.",
       };
     } else if (method === "tools/list") {
       result = {
         resultType: "complete",
         tools: [
-          { name: "join_group", description: "Join an invited Rub Minds group after explicit confirmation.", inputSchema: { type: "object", properties: { invite_token: { type: "string" }, confirm_join: { type: "boolean" }, join_request_key: { type: "string" } }, required: ["invite_token", "confirm_join", "join_request_key"] } },
+          { name: "join_group", description: "Join an invited Rub Minds group after explicit confirmation.", inputSchema: { type: "object", properties: { invite_token: { type: "string" }, agent_label: { type: "string" }, confirm_join: { type: "boolean" }, join_request_key: { type: "string" } }, required: ["invite_token", "agent_label", "confirm_join", "join_request_key"] } },
           { name: "read_group_messages", description: "Read messages from the joined group.", inputSchema: { type: "object", properties: { session_handle: { type: "string" } }, required: ["session_handle"] } },
           { name: "send_group_message", description: "Send a message to the joined group.", inputSchema: { type: "object", properties: { session_handle: { type: "string" }, body: { type: "string" } }, required: ["session_handle", "body"] } },
           { name: "propose_group_task", description: "Propose a task for human review and assignment.", inputSchema: { type: "object", properties: { session_handle: { type: "string" }, title: { type: "string" }, description: { type: "string" }, expected_output: { type: "string" }, acceptance_criteria: { type: "array", items: { type: "string" } }, priority: { type: "integer" }, idempotency_key: { type: "string" } }, required: ["session_handle", "title", "idempotency_key"] } },
@@ -44,34 +56,118 @@ if (process.env.RUB_MINDS_STDIO_E2E_FIXTURE === "1") {
     } else if (method === "tools/call") {
       const name = request.params?.name;
       const args = request.params?.arguments || {};
-      if (name === "read_group_messages") {
+      if (name === "join_group") {
+        if (args.confirm_join !== true || !args.invite_token || !args.agent_label || !/^[a-f0-9]{64}$/i.test(args.join_request_key || "")) {
+          result = {
+            content: [{ type: "text", text: "Explicit join confirmation and valid invitation fields are required." }],
+            structuredContent: { joined: false },
+            isError: true,
+          };
+        } else {
+          result = {
+            content: [{ type: "text", text: "Joined the invited Rub Minds group." }],
+            structuredContent: {
+              joined: true,
+              room_id: ROOM_ID,
+              participant_id: PARTICIPANT_ID,
+              participant_kind: "external_agent",
+              session_handle: SESSION_HANDLE,
+              forwarded_agent_label: args.agent_label,
+            },
+            isError: false,
+          };
+        }
+      } else if (name === "read_group_messages") {
         result = {
           content: [{ type: "text", text: "Returned one message from the mocked Rub Minds group." }],
           structuredContent: {
-            room_id: "room-stdio-fixture",
+            room_id: ROOM_ID,
             messages: [{ id: "message-stdio-fixture", sender_name: "Group member", body: "Please inspect the Windows device-frame identity gate." }],
             forwarded_session_handle: args.session_handle,
           },
           isError: false,
         };
+      } else if (name === "send_group_message") {
+        result = {
+          content: [{ type: "text", text: "Group message sent." }],
+          structuredContent: {
+            sent: true,
+            message: { id: "message-sent-stdio-fixture", body: args.body },
+            forwarded_session_handle: args.session_handle,
+          },
+          isError: false,
+        };
       } else if (name === "propose_group_task") {
+        proposedTask = {
+          id: "task-proposed-stdio-fixture",
+          title: args.title,
+          description: args.description || "",
+          expected_output: args.expected_output || "",
+          acceptance_criteria: args.acceptance_criteria || [],
+          status: "proposed",
+          assigned_to_participant_id: null,
+        };
         result = {
           content: [{ type: "text", text: "Task proposal created for human review." }],
           structuredContent: {
             proposed: true,
             replayed: false,
-            task: { id: "task-stdio-fixture", title: args.title, status: "proposed" },
+            task: proposedTask,
             next_step: "A human group member must review and assign this proposal before it can execute.",
             forwarded_session_handle: args.session_handle,
             forwarded_idempotency_key: args.idempotency_key,
           },
           isError: false,
         };
+      } else if (name === "list_group_tasks") {
+        result = {
+          content: [{ type: "text", text: "Listed the group tasks." }],
+          structuredContent: { room_id: ROOM_ID, tasks: [assignedTask, ...(proposedTask ? [proposedTask] : [])] },
+          isError: false,
+        };
+      } else if (name === "read_group_task") {
+        const task = args.task_id === assignedTask.id ? { ...assignedTask, status: assignedTaskStatus } :
+          args.task_id === proposedTask?.id ? proposedTask : null;
+        result = {
+          content: [{ type: "text", text: task ? "Read group task." : "Task not found." }],
+          structuredContent: task ? { task, submissions: [], reviews: [] } : { error: "not_found" },
+          isError: !task,
+        };
+      } else if (name === "claim_group_task") {
+        if (args.task_id !== assignedTask.id || assignedTaskStatus !== "assigned") {
+          result = {
+            content: [{ type: "text", text: "A task must be assigned to this participant and eligible before it can be claimed." }],
+            structuredContent: { claimed: false, reason: "not_assigned_or_not_eligible" },
+            isError: true,
+          };
+        } else {
+          assignedTaskStatus = "in_progress";
+          result = {
+            content: [{ type: "text", text: "Assigned task claimed." }],
+            structuredContent: { claimed: true, status: assignedTaskStatus, task_id: assignedTask.id },
+            isError: false,
+          };
+        }
+      } else if (name === "submit_group_task_result") {
+        if (args.task_id !== assignedTask.id || assignedTaskStatus !== "in_progress" || !String(args.result || "").trim()) {
+          result = {
+            content: [{ type: "text", text: "Only an in-progress task assigned to this participant can accept a result." }],
+            structuredContent: { submitted: false, reason: "task_not_in_progress_for_participant" },
+            isError: true,
+          };
+        } else {
+          assignedTaskStatus = "submitted";
+          result = {
+            content: [{ type: "text", text: "Task result submitted for human review." }],
+            structuredContent: { submitted: true, status: assignedTaskStatus, task_id: assignedTask.id },
+            isError: false,
+          };
+        }
       } else {
         result = {
-          content: [{ type: "text", text: "Mock tool call: " + String(name) }],
-          structuredContent: { called: name, arguments: args },
-          isError: false,
+          content: [{ type: "text", text: "Unknown fixture tool: " + String(name) }],
+          structuredContent: { error: "unknown_tool" },
+          isError: true,
         };
       }
     } else {
