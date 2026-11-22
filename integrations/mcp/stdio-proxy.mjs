@@ -54,6 +54,50 @@ function validateApiKey(value) {
   return value;
 }
 
+const RESPONSE_TOO_LARGE_CODE = "ERR_RUB_MINDS_MCP_RESPONSE_TOO_LARGE";
+
+function responseTooLargeError() {
+  const error = new Error("Rub Minds MCP response exceeds the supported message size.");
+  error.code = RESPONSE_TOO_LARGE_CODE;
+  return error;
+}
+
+async function readResponseTextBounded(response) {
+  const declaredLength = Number(response.headers?.get?.("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_MESSAGE_BYTES) {
+    try { await response.body?.cancel(); } catch { /* best-effort early cancellation */ }
+    throw responseTooLargeError();
+  }
+
+  // Real Fetch responses expose a ReadableStream. Enforce the limit while
+  // reading so an upstream response cannot force unbounded buffering.
+  if (typeof response.body?.getReader !== "function") {
+    const raw = await response.text();
+    if (Buffer.byteLength(raw, "utf8") > MAX_MESSAGE_BYTES) throw responseTooLargeError();
+    return raw;
+  }
+
+  const reader = response.body.getReader();
+  const chunks = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = Buffer.from(value);
+      totalBytes += chunk.byteLength;
+      if (totalBytes > MAX_MESSAGE_BYTES) {
+        try { await reader.cancel(); } catch { /* best-effort stream cancellation */ }
+        throw responseTooLargeError();
+      }
+      chunks.push(chunk);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, totalBytes).toString("utf8");
+}
+
 function jsonRpcError(id, code, message) {
   return { jsonrpc: "2.0", id: id ?? null, error: { code, message } };
 }
@@ -124,14 +168,12 @@ export function createMcpStdioProxy({
         cache: "no-store",
         signal: controller.signal,
       });
-      raw = await response.text();
-    } catch {
+      raw = await readResponseTextBounded(response);
+    } catch (error) {
+      if (error?.code === RESPONSE_TOO_LARGE_CODE) throw error;
       throw new Error("Could not reach or read the configured Rub Minds MCP endpoint. Check the network and endpoint, then retry.");
     } finally {
       clearTimeout(timer);
-    }
-    if (Buffer.byteLength(raw, "utf8") > MAX_MESSAGE_BYTES) {
-      throw new Error("Rub Minds MCP response exceeds the supported message size.");
     }
     let parsed;
     try {
