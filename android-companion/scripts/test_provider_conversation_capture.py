@@ -111,7 +111,7 @@ class AdbCaptureTests(unittest.TestCase):
 
         snapshots = [xml("Disposable chat A"), xml("Disposable chat B"), xml("Disposable chat A")]
         responses = [subprocess.CompletedProcess(["adb"], 0,
-            stdout="List of devices attached\\nphone-1 device\\n", stderr="")]
+            stdout="List of devices attached\nphone-1 device\n", stderr="")]
         for snapshot in snapshots:
             responses.extend([
                 subprocess.CompletedProcess(["adb"], 0, stdout="UI hierarchy dumped", stderr=""),
@@ -140,7 +140,7 @@ class AdbCaptureTests(unittest.TestCase):
         self.assertEqual(runner.call_count, 10)
 
         commands = [call.args[0] for call in runner.call_args_list]
-        cleanup_commands = [command for command in commands if command[2:5] == ["shell", "rm", "-f"]]
+        cleanup_commands = [command for command in commands if command[3:6] == ["shell", "rm", "-f"]]
         self.assertEqual(len(cleanup_commands), 3)
         self.assertEqual(len({command[-1] for command in cleanup_commands}), 1)
 
