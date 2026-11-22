@@ -290,11 +290,13 @@ export default function BackroomApp() {
       <div className="br-cloud-security"><ShieldCheck size={19}/><span>Owner approval required<br/><small>Pairing codes are one-use and expire in 5 minutes.</small></span></div>
     </section>
 
-    {!selectedRoom ? roomsLoading
-      ? <section className="br-cloud-empty" role="status"><RefreshCw size={32}/><h2>Loading your groups</h2><p>Checking the groups available to this account.</p></section>
-      : roomsLoadError
-        ? <section className="br-cloud-empty" role="alert"><CircleAlert size={32}/><h2>Could not load your groups</h2><p>{roomsLoadError}</p><button className="br-cloud-primary" onClick={() => void loadRooms().catch(e => setError(e instanceof Error ? e.message : 'Could not load your groups.'))}>Retry group loading</button></section>
-        : <section className="br-cloud-empty"><Smartphone size={32}/><h2>Create or join a group first</h2><p>Backroom devices are scoped to a Rub Minds group.</p><a className="br-cloud-primary" href="/">Open Rub Minds groups</a></section> : <>
+    {!supabase
+      ? <section className="br-cloud-empty" role="alert"><CircleAlert size={32}/><h2>Backroom cloud is not configured</h2><p>This deployment does not have an authenticated Supabase connection, so device groups cannot be loaded.</p></section>
+      : !selectedRoom ? roomsLoading
+        ? <section className="br-cloud-empty" role="status"><RefreshCw size={32}/><h2>Loading your groups</h2><p>Checking the groups available to this account.</p></section>
+        : roomsLoadError
+          ? <section className="br-cloud-empty" role="alert"><CircleAlert size={32}/><h2>Could not load your groups</h2><p>{roomsLoadError}</p><button className="br-cloud-primary" onClick={() => void loadRooms().catch(e => setError(e instanceof Error ? e.message : 'Could not load your groups.'))}>Retry group loading</button></section>
+          : <section className="br-cloud-empty"><Smartphone size={32}/><h2>Create or join a group first</h2><p>Backroom devices are scoped to a Rub Minds group.</p><a className="br-cloud-primary" href="/">Open Rub Minds groups</a></section> : <>
       <section className="br-cloud-layout">
         <div className="br-cloud-sidebar">
           <div className="br-cloud-panel-head"><div><span className="br-cloud-eyebrow">YOUR DEVICES</span><h2>Device connections</h2></div><span className="br-cloud-count">{devices.length}</span></div>
