@@ -300,7 +300,15 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
             throw new Error("Could not safely backfill this MCP session's invitation credential identity. Refresh the session and retry.");
           }
         }
-        return { joined: true, room_id: session.room_id, participant_id: session.participant_id, note: "This MCP session is already joined to an active group.", post_join_next_step: "The exact invitation credential identity has been verified for Backroom's owner-authorized session features. Ask the session owner for consent unless already explicitly authorized. If consent is given, call prepare_session_export with confirm_export=true; otherwise do not capture. Never post raw session history to the group." };
+        return {
+          joined: true,
+          room_id: session.room_id,
+          participant_id: session.participant_id,
+          expires_at: session.expires_at,
+          replayed: true,
+          note: "This MCP session is already joined to an active group.",
+          post_join_next_step: "The exact invitation credential identity has been verified for Backroom's owner-authorized session features. Ask the session owner for consent unless already explicitly authorized. If consent is given, call prepare_session_export with confirm_export=true; otherwise do not capture. Never post raw session history to the group.",
+        };
       }
       // The previous provider credential is no longer live. Remove its private
       // cursor/pending reply before allowing this same MCP handle to join again,
@@ -475,8 +483,14 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
   }
 
   if (name === "read_group_context") {
-    // Validate the credential (including revocation/expiry) before exposing room metadata.
-    await invokeAgent(credential, "read");
+    // Validate the credential and the exact MCP-session-to-participant identity
+    // before exposing room metadata. The client uses self.participant_id to
+    // verify that a saved local browser profile has not crossed session identities.
+    const identity = await invokeAgent(credential, "read");
+    if (!isRecord(identity) || identity.room_id !== session.room_id ||
+        identity.participant_id !== session.participant_id) {
+      throw new Error("This MCP session no longer matches the AI participant it joined.");
+    }
     const { data: room, error: roomError } = await db.from("rooms")
       .select("id, title, objective, created_at")
       .eq("id", session.room_id as string).maybeSingle();
@@ -486,7 +500,11 @@ async function runTool(name: string, args: Record<string, unknown>, session: Rec
       .eq("room_id", session.room_id as string)
       .order("created_at", { ascending: true }).limit(100);
     if (participantError) throw new Error("Could not load group participants.");
-    return { room, participants: participants || [] };
+    return {
+      room,
+      self: { participant_id: session.participant_id },
+      participants: participants || [],
+    };
   }
 
   if (name === "send_group_message") {

@@ -4,14 +4,16 @@
  * It launches a dedicated persistent Playwright browser profile; it does not
  * attach to or shut down the user's normal browser profile.
  */
-import { chmod, lstat, mkdir } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { resolve, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout, stderr } from "node:process";
 import { createOriginalSessionAdapter } from "../integrations/playwright/original-session-adapters.mjs";
 import { createOriginalSessionWakeRuntime } from "../integrations/playwright/original-session-wake-runtime.mjs";
+import { joinRubMindsInvite, McpSessionMessageTransport } from "../integrations/playwright/mcp-session-message-transport.mjs";
 
 const SESSION_HANDLE_RE = /^[a-f0-9]{64}$/i;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -29,6 +31,280 @@ const PROVIDERS = Object.freeze({
 
 function fail(message) {
   throw new Error(message);
+}
+
+async function ensurePrivateDirectory(directory) {
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const details = await lstat(directory);
+  if (details.isSymbolicLink() || !details.isDirectory()) {
+    fail("Rub Minds private state path must be a real directory, not a symlink or file.");
+  }
+  try {
+    await chmod(directory, 0o700);
+  } catch (error) {
+    if (process.platform !== "win32") throw error;
+  }
+  return directory;
+}
+
+async function acquirePrivateProcessLock(lockPath) {
+  const token = randomUUID();
+  let handle;
+  try {
+    handle = await open(lockPath, "wx", 0o600);
+    await handle.writeFile(JSON.stringify({
+      pid: process.pid,
+      token,
+      acquiredAt: new Date().toISOString(),
+    }), "utf8");
+    await handle.sync();
+  } catch (error) {
+    try { await handle?.close(); } catch { /* best-effort cleanup */ }
+    if (error?.code !== "EEXIST") throw error;
+    let saved;
+    try {
+      saved = JSON.parse(await readFile(lockPath, "utf8"));
+    } catch {
+      throw new Error("Rub Minds task lock is unreadable or corrupt; refusing concurrent task execution. Inspect " + lockPath);
+    }
+    if (!saved || !Number.isInteger(saved.pid) || saved.pid < 1 ||
+        typeof saved.token !== "string" || !/^[0-9a-f-]{36}$/i.test(saved.token)) {
+      throw new Error("Rub Minds task lock is invalid; refusing concurrent task execution. Inspect " + lockPath);
+    }
+    try {
+      process.kill(saved.pid, 0);
+      return null;
+    } catch (processError) {
+      if (processError?.code === "EPERM") return null;
+      if (processError?.code === "ESRCH") {
+        throw new Error("A stale Rub Minds task lock remains at " + lockPath +
+          ". Confirm no original-session runner is active, then remove this lock file before restarting.");
+      }
+      throw processError;
+    }
+  }
+
+  try {
+    await chmod(lockPath, 0o600);
+  } catch (error) {
+    if (process.platform !== "win32") {
+      try { await handle.close(); } catch { /* best-effort cleanup */ }
+      try { await unlink(lockPath); } catch { /* best-effort cleanup */ }
+      throw error;
+    }
+  }
+  let released = false;
+  return async () => {
+    if (released) return;
+    released = true;
+    try { await handle.close(); } catch { /* best-effort cleanup */ }
+    try {
+      const current = JSON.parse(await readFile(lockPath, "utf8"));
+      if (current?.pid === process.pid && current?.token === token) {
+        await unlink(lockPath);
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT") {
+        // Never delete a lock that may now belong to another process.
+      }
+    }
+  };
+}
+
+function privateJsonStateStore({ directory, filename, maxBytes = 30000 }) {
+  const path = join(directory, filename);
+  async function prepare() {
+    await ensurePrivateDirectory(directory);
+    return path;
+  }
+  return Object.freeze({
+    path,
+    prepare,
+    async load() {
+      await prepare();
+      let details;
+      try {
+        details = await lstat(path);
+      } catch (error) {
+        if (error?.code === "ENOENT") return null;
+        throw error;
+      }
+      if (details.isSymbolicLink() || !details.isFile() || details.size > maxBytes) {
+        throw new Error("Rub Minds private state file is invalid or oversized.");
+      }
+      try {
+        await chmod(path, 0o600);
+      } catch (error) {
+        if (process.platform !== "win32") throw error;
+      }
+      const raw = await readFile(path, "utf8");
+      try {
+        return JSON.parse(raw);
+      } catch {
+        throw new Error("Rub Minds private state file contains invalid JSON.");
+      }
+    },
+    async save(value) {
+      await prepare();
+      if (value === null) {
+        try { await unlink(path); } catch (error) {
+          if (error?.code !== "ENOENT") throw error;
+        }
+        return;
+      }
+      const encoded = JSON.stringify(value);
+      if (Buffer.byteLength(encoded, "utf8") > maxBytes) {
+        throw new Error("Rub Minds private state exceeds its local storage limit.");
+      }
+      const temporary = path + "." + process.pid + "." + randomUUID() + ".tmp";
+      try {
+        await writeFile(temporary, encoded, { encoding: "utf8", flag: "wx", mode: 0o600 });
+        await rename(temporary, path);
+        try {
+          await chmod(path, 0o600);
+        } catch (error) {
+          if (process.platform !== "win32") throw error;
+        }
+      } catch (error) {
+        try { await unlink(temporary); } catch { /* best-effort cleanup */ }
+        throw error;
+      }
+    },
+  });
+}
+
+/** Private, restart-safe task-result storage. No provider credentials are persisted. */
+export function createPrivateTaskStateStore({
+  provider,
+  participantId,
+  baseDirectory = join(homedir(), ".rub-minds"),
+} = {}) {
+  if (!Object.hasOwn(PROVIDERS, provider || "") || !UUID_RE.test(participantId || "")) {
+    throw new TypeError("provider and participantId are required for private task state");
+  }
+  const store = privateJsonStateStore({
+    directory: join(resolve(baseDirectory), "original-session-task-state"),
+    filename: provider + "-" + participantId.toLowerCase() + ".json",
+  });
+  return Object.freeze({
+    path: store.path,
+    prepare: store.prepare,
+    load: store.load,
+    save: store.save,
+    acquireLock: () => acquirePrivateProcessLock(store.path + ".lock"),
+  });
+}
+
+/** Private join binding keyed to one exact provider conversation; contains no invitation token. */
+export function createPrivateJoinedSessionStore({
+  provider,
+  conversationUrl,
+  baseDirectory = join(homedir(), ".rub-minds"),
+} = {}) {
+  if (!Object.hasOwn(PROVIDERS, provider || "")) {
+    throw new TypeError("provider is required for private joined-session storage");
+  }
+  const pinnedConversation = conversationKey(provider, conversationUrl);
+  const digest = createHash("sha256").update(pinnedConversation, "utf8").digest("hex").slice(0, 32);
+  const store = privateJsonStateStore({
+    directory: join(resolve(baseDirectory), "original-session-joins"),
+    filename: provider + "-" + digest + ".json",
+    maxBytes: 4096,
+  });
+  return Object.freeze({
+    path: store.path,
+    prepare: store.prepare,
+    acquireLock: () => acquirePrivateProcessLock(store.path + ".runner.lock"),
+    async load() {
+      const saved = await store.load();
+      if (saved === null) return null;
+      if (!saved || saved.schema !== 1 ||
+          saved.provider !== provider ||
+          saved.conversation !== pinnedConversation) {
+        throw new Error("Saved Rub Minds join state is invalid; refusing to create another AI participant.");
+      }
+      if (saved.pendingJoin !== undefined) {
+        if (!saved.pendingJoin ||
+            !/^[a-f0-9]{64}$/i.test(saved.pendingJoin.joinRequestKey || "") ||
+            !/^[a-f0-9]{64}$/i.test(saved.pendingJoin.inviteTokenDigest || "") ||
+            typeof saved.pendingJoin.createdAt !== "string" ||
+            !Number.isFinite(Date.parse(saved.pendingJoin.createdAt))) {
+          throw new Error("Saved Rub Minds pending join state is invalid; refusing to create another AI participant.");
+        }
+        return null;
+      }
+      if (!SESSION_HANDLE_RE.test(saved.sessionHandle || "") ||
+          !UUID_RE.test(saved.participantId || "") ||
+          !UUID_RE.test(saved.roomId || "") ||
+          typeof saved.expiresAt !== "string" ||
+          !Number.isFinite(Date.parse(saved.expiresAt))) {
+        throw new Error("Saved Rub Minds join state is invalid; refusing to create another AI participant.");
+      }
+      if (Date.parse(saved.expiresAt) <= Date.now()) {
+        throw new Error("Saved Rub Minds AI session has expired. Ask the group owner to revoke or refresh it before joining again.");
+      }
+      return Object.freeze({
+        sessionHandle: saved.sessionHandle,
+        participantId: saved.participantId,
+        roomId: saved.roomId,
+        expiresAt: saved.expiresAt,
+      });
+    },
+    async loadPendingJoin() {
+      const saved = await store.load();
+      if (saved === null) return null;
+      if (!saved || saved.schema !== 1 ||
+          saved.provider !== provider ||
+          saved.conversation !== pinnedConversation) {
+        throw new Error("Saved Rub Minds join state belongs to another provider conversation.");
+      }
+      if (saved.pendingJoin === undefined) return null;
+      if (!saved.pendingJoin ||
+          !/^[a-f0-9]{64}$/i.test(saved.pendingJoin.joinRequestKey || "") ||
+          !/^[a-f0-9]{64}$/i.test(saved.pendingJoin.inviteTokenDigest || "") ||
+          typeof saved.pendingJoin.createdAt !== "string" ||
+          !Number.isFinite(Date.parse(saved.pendingJoin.createdAt))) {
+        throw new Error("Saved Rub Minds pending join state is invalid.");
+      }
+      return Object.freeze({ ...saved.pendingJoin });
+    },
+    async savePendingJoin({ joinRequestKey, inviteTokenDigest } = {}) {
+      if (!/^[a-f0-9]{64}$/i.test(joinRequestKey || "") ||
+          !/^[a-f0-9]{64}$/i.test(inviteTokenDigest || "")) {
+        throw new TypeError("A valid join idempotency key and invitation digest are required.");
+      }
+      await store.save({
+        schema: 1,
+        provider,
+        conversation: pinnedConversation,
+        pendingJoin: {
+          joinRequestKey: joinRequestKey.toLowerCase(),
+          inviteTokenDigest: inviteTokenDigest.toLowerCase(),
+          createdAt: new Date().toISOString(),
+        },
+      });
+    },
+    async save(binding) {
+      if (!binding || !SESSION_HANDLE_RE.test(binding.sessionHandle || "") ||
+          !UUID_RE.test(binding.participantId || "") ||
+          !UUID_RE.test(binding.roomId || "") ||
+          typeof binding.expiresAt !== "string" ||
+          !Number.isFinite(Date.parse(binding.expiresAt)) ||
+          Date.parse(binding.expiresAt) <= Date.now()) {
+        throw new TypeError("A live, verified Rub Minds joined-session binding is required.");
+      }
+      await store.save({
+        schema: 1,
+        provider,
+        conversation: pinnedConversation,
+        sessionHandle: binding.sessionHandle,
+        participantId: binding.participantId,
+        roomId: binding.roomId,
+        expiresAt: binding.expiresAt,
+      });
+    },
+    clear: async () => store.save(null),
+  });
 }
 
 export function parseRunnerArgs(argv = []) {
@@ -73,13 +349,16 @@ export function validateRunnerEnvironment(env = {}, provider = "chatgpt") {
       endpoint.pathname.replace(/\/$/, "") !== "/functions/v1/rub-minds-mcp") {
     fail("RUB_MINDS_MCP_ENDPOINT must point to the Rub Minds Staging MCP function (not production).");
   }
-  const sessionHandle = env.RUB_MINDS_MCP_SESSION_HANDLE;
-  if (typeof sessionHandle !== "string" || !SESSION_HANDLE_RE.test(sessionHandle)) {
-    fail("Set RUB_MINDS_MCP_SESSION_HANDLE to the 64-character session handle from the authorized AI join.");
+  const sessionHandle = env.RUB_MINDS_MCP_SESSION_HANDLE || null;
+  const participantId = env.RUB_MINDS_PARTICIPANT_ID || null;
+  if ((sessionHandle === null) !== (participantId === null)) {
+    fail("Set both RUB_MINDS_MCP_SESSION_HANDLE and RUB_MINDS_PARTICIPANT_ID, or leave both unset to join interactively.");
   }
-  const participantId = env.RUB_MINDS_PARTICIPANT_ID;
-  if (typeof participantId !== "string" || !UUID_RE.test(participantId)) {
-    fail("Set RUB_MINDS_PARTICIPANT_ID to the AI participant UUID returned by the authorized join.");
+  if (sessionHandle !== null && !SESSION_HANDLE_RE.test(sessionHandle)) {
+    fail("RUB_MINDS_MCP_SESSION_HANDLE must be a 64-character hexadecimal value.");
+  }
+  if (participantId !== null && !UUID_RE.test(participantId)) {
+    fail("RUB_MINDS_PARTICIPANT_ID must be the UUID returned by the authorized AI join.");
   }
   if (!Object.hasOwn(PROVIDERS, provider)) fail("Unsupported provider.");
   const profileDirectory = resolve(
@@ -89,10 +368,36 @@ export function validateRunnerEnvironment(env = {}, provider = "chatgpt") {
     endpoint: endpoint.toString(),
     sessionHandle,
     participantId,
+    joinRequired: sessionHandle === null,
     profileDirectory,
   });
 }
 
+export function parseStagingInviteToken(value) {
+  if (typeof value !== "string" || !value.trim() || value.length > 4096) {
+    fail("Paste a valid Rub Minds Staging invitation URL.");
+  }
+  let url;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    fail("The Rub Minds invitation URL is invalid.");
+  }
+  if (url.protocol !== "https:" || url.username || url.password || url.hash) {
+    fail("The Rub Minds invitation URL must be HTTPS and must not contain credentials or a fragment.");
+  }
+  const queryToken = new URLSearchParams(url.search).get("invite");
+  const pathToken = url.pathname.match(/^\/invite=([^/]+)\/?$/i)?.[1];
+  const token = queryToken || pathToken || "";
+  if (!/^[0-9a-f]{64}$/i.test(token)) {
+    fail("The invitation URL must contain a 64-character hexadecimal invite token.");
+  }
+  return token.toLowerCase();
+}
+
+async function readText(rl, message, signal) {
+  return (await rl.question(message, { signal })).trim();
+}
 export function conversationKey(provider, value) {
   const providerConfig = PROVIDERS[provider];
   if (!providerConfig) fail("Unsupported provider.");
@@ -223,7 +528,13 @@ export async function runOriginalSessionBridge({
   errorOutput = stderr,
   playwright = null,
   prompt = askExact,
+  readInput = readText,
+  joinInvite = joinRubMindsInvite,
   prepareProfile = preparePrivateBrowserProfile,
+  createJoinedSessionStore = createPrivateJoinedSessionStore,
+  createTaskStateStore = createPrivateTaskStateStore,
+  createSessionTransport = (endpoint, sessionHandle) =>
+    new McpSessionMessageTransport({ endpoint, sessionHandle }),
   createAdapter = createOriginalSessionAdapter,
   createRuntime = createOriginalSessionWakeRuntime,
 } = {}) {
@@ -234,6 +545,8 @@ export async function runOriginalSessionBridge({
   let context;
   let runtime;
   let runtimeStopRequested = false;
+  let joinedSessionStore = null;
+  let releaseJoinedSessionLock = null;
   const controller = new AbortController();
   const stopRuntime = () => {
     if (!runtime || runtimeStopRequested) return;
@@ -265,6 +578,18 @@ export async function runOriginalSessionBridge({
     }
     if (controller.signal.aborted) return { status: "stopped", replies: 0 };
 
+    // Lock the exact provider conversation in both join modes. An explicit
+    // pre-joined session handle must not bypass duplicate-runner protection.
+    joinedSessionStore = createJoinedSessionStore({
+      provider: options.provider,
+      conversationUrl: options.conversationUrl,
+    });
+    await joinedSessionStore.prepare?.();
+    releaseJoinedSessionLock = await joinedSessionStore.acquireLock?.();
+    if (typeof releaseJoinedSessionLock !== "function") {
+      fail("Another original-session runner is already active for this exact provider conversation. Stop that runner before starting another.");
+    }
+
     const browserApi = playwright || await import("playwright");
     const profileDirectory = await prepareProfile(config.profileDirectory);
     context = await browserApi.chromium.launchPersistentContext(profileDirectory, {
@@ -285,9 +610,111 @@ export async function runOriginalSessionBridge({
       }
     }
 
+    let sessionHandle = config.sessionHandle;
+    let participantId = config.participantId;
+    let expectedRoomId = null;
+    if (config.joinRequired) {
+      output.write("\nThis runner uses a local foreground Playwright browser; it does not install a provider MCP connector.\n");
+      output.write("Use an invitation created in Rub Minds Staging. Production invitations are not valid on this Staging endpoint.\n");
+      const savedBinding = await joinedSessionStore.load();
+      if (savedBinding) {
+        sessionHandle = savedBinding.sessionHandle;
+        participantId = savedBinding.participantId;
+        expectedRoomId = savedBinding.roomId;
+        output.write("Found a saved Rub Minds Staging join for this exact provider conversation. Verifying it before reuse.\n");
+      } else {
+        const inviteUrl = await readInput(
+          rl,
+          "Paste the Rub Minds Staging invitation URL (it will not be printed): ",
+          controller.signal,
+        );
+        const inviteToken = parseStagingInviteToken(inviteUrl);
+        const agentLabel = options.provider === "chatgpt"
+          ? "ChatGPT original session"
+          : "Claude original session";
+        if (!(await prompt(rl, "Redeem this invitation on Rub Minds Staging and add this conversation as an AI participant? Type JOIN to approve: ", "JOIN", controller.signal))) {
+          output.write("Invitation not redeemed. No group messages were accessed.\n");
+          return { status: "not_started", replies: 0 };
+        }
+        const inviteTokenDigest = createHash("sha256").update(inviteToken, "utf8").digest("hex");
+        const pendingJoin = await joinedSessionStore.loadPendingJoin?.();
+        let joinRequestKey;
+        if (pendingJoin) {
+          if (pendingJoin.inviteTokenDigest !== inviteTokenDigest) {
+            fail("A previous join attempt for this exact provider conversation is unresolved. Re-enter the same Staging invitation to retry it safely; do not switch invitations until the group owner has checked the AI participant list.");
+          }
+          joinRequestKey = pendingJoin.joinRequestKey;
+        } else {
+          joinRequestKey = randomBytes(32).toString("hex");
+          await joinedSessionStore.savePendingJoin?.({ joinRequestKey, inviteTokenDigest });
+        }
+        const joined = await joinInvite({
+          endpoint: config.endpoint,
+          inviteToken,
+          joinRequestKey,
+          agentLabel,
+          signal: controller.signal,
+        });
+        if (!joined || joined.joined !== true ||
+            !SESSION_HANDLE_RE.test(joined.sessionHandle || "") ||
+            !UUID_RE.test(joined.participantId || "") ||
+            !UUID_RE.test(joined.roomId || "") ||
+            typeof joined.expiresAt !== "string" ||
+            !Number.isFinite(Date.parse(joined.expiresAt)) ||
+            Date.parse(joined.expiresAt) <= Date.now()) {
+          fail("Rub Minds Staging did not confirm a complete, live AI participant join; the browser bridge was not started.");
+        }
+        sessionHandle = joined.sessionHandle;
+        participantId = joined.participantId;
+        expectedRoomId = joined.roomId;
+        const transport = createSessionTransport(config.endpoint, sessionHandle);
+        let identity;
+        try {
+          identity = await transport.readGroupContext({ signal: controller.signal });
+        } catch {
+          try { await transport.leaveGroup(); } catch { /* owner may need to revoke an unverified participant */ }
+          fail("The new Rub Minds join could not be independently verified. The runner did not start; check the group participant list and revoke the unverified participant before retrying.");
+        }
+        if (identity.room.id !== expectedRoomId || identity.self.participant_id !== participantId) {
+          try { await transport.leaveGroup(); } catch { /* owner can revoke the unmatched join */ }
+          fail("The returned Rub Minds join did not match the active session identity; the new participant was revoked or must be revoked by the group owner.");
+        }
+        try {
+          await joinedSessionStore.save({ sessionHandle, participantId, roomId: expectedRoomId, expiresAt: joined.expiresAt });
+        } catch {
+          try { await transport.leaveGroup(); } catch { /* don't hide a cleanup failure */ }
+          fail("The Rub Minds join could not be saved in the private local profile. The session was closed where possible; verify the group's AI participant list before retrying.");
+        }
+        output.write("Joined the Staging group as " + agentLabel + ". This join is now saved privately for this exact provider conversation; credentials are not shown or passed to the provider browser.\n");
+      }
+    }
+
+    if (!sessionHandle || !participantId) fail("A joined Rub Minds session is required before the original-session bridge can start.");
+    const sessionTransport = createSessionTransport(config.endpoint, sessionHandle);
+    let verifiedIdentity;
+    try {
+      verifiedIdentity = await sessionTransport.readGroupContext({ signal: controller.signal });
+    } catch {
+      fail("The saved Rub Minds Staging session could not be verified. It was not replaced automatically, so this run cannot create a duplicate AI participant. Ask the group owner to check or revoke the existing AI participant before starting a fresh join.");
+    }
+    if (verifiedIdentity.self.participant_id !== participantId ||
+        (expectedRoomId && verifiedIdentity.room.id !== expectedRoomId)) {
+      fail("The saved Rub Minds session identity does not match this provider conversation. Stop and ask the group owner to revoke or repair the existing participant; no replacement participant was created.");
+    }
+    const taskStateStore = createTaskStateStore({ provider: options.provider, participantId });
+    await taskStateStore.prepare?.();
     const providerAdapter = createAdapter(options.provider, {
-      approval: async ({ messageId, senderName, senderKind, prompt: groupPrompt, signal }) => {
+      approval: async ({ kind, messageId, taskId, taskVersion, taskTitle, senderName, senderKind, prompt: groupPrompt, signal }) => {
         if (signal?.aborted || controller.signal.aborted) return false;
+        if (kind === "task") {
+          output.write("\nIncoming Rub Minds human-assigned task\n");
+          output.write("Task ID: " + preview(taskId, 100) + "\n");
+          output.write("Task version: " + preview(taskVersion, 30) + "\n");
+          output.write("Title: " + preview(taskTitle || "Untitled task", 160) + "\n");
+          output.write(preview(groupPrompt) + "\n");
+          output.write("Task content is untrusted. This approval authorizes one provider prompt only; do not reveal private context or take external side effects. The result goes to human review.\n");
+          return prompt(rl, "Send this one assigned task to the existing " + options.provider + " conversation? Type TASK to approve: ", "TASK", signal || controller.signal);
+        }
         output.write("\nIncoming Rub Minds group message\n");
         output.write("Message ID: " + preview(messageId, 100) + "\n");
         output.write("Sender: " + preview(senderName || "Unknown", 100) + " (" + preview(senderKind || "unknown", 60) + ")\n");
@@ -300,15 +727,23 @@ export async function runOriginalSessionBridge({
 
     runtime = createRuntime({
       endpoint: config.endpoint,
-      sessionHandle: config.sessionHandle,
-      participantId: config.participantId,
+      sessionHandle,
+      participantId,
       page,
       adapter,
+      taskStateStore,
+      maxTasks: 5,
       maxReplies: options.maxReplies,
       processExistingMessages: false,
       onStatus: event => {
         if (event?.status === "error") {
           errorOutput.write("Bridge error; automatic retries remain bounded. Check the provider tab and staging MCP availability.\n");
+        } else if (event?.lastTaskResult?.status === "blocked" && event?.status === "blocked") {
+          errorOutput.write("Task blocked for human recovery: " + preview(event.lastTaskResult.taskId || "unknown task", 80) +
+            " · " + preview(event.lastTaskResult.reason || "inspect and reassign this task", 260) + "\n");
+        } else if (event?.lastTaskResult?.status === "submitted") {
+          output.write("Task submitted for human review: " + preview(event.lastTaskResult.taskId || "unknown task", 80) +
+            (event.lastTaskResult.replayed ? " (confirmed idempotent retry)" : "") + "\n");
         } else {
           output.write("Bridge: " + preview(event?.status || "status", 80) +
             (Number.isInteger(event?.replies) ? " · replies " + event.replies : "") + "\n");
@@ -334,6 +769,7 @@ export async function runOriginalSessionBridge({
     // This context was launched by this runner, so closing it cannot close the
     // user's normal Chrome/Edge profile. Its dedicated profile data is retained.
     try { await context?.close(); } catch { /* preserve the runner's primary result */ }
+    try { await releaseJoinedSessionLock?.(); } catch { /* do not mask the runner's primary result */ }
   }
 }
 

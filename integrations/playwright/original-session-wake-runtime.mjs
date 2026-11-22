@@ -9,6 +9,7 @@
 import { McpSessionMessageTransport } from "./mcp-session-message-transport.mjs";
 import { OriginalSessionWakeRunner } from "./wake-bridge-runner.mjs";
 import { PlaywrightSessionBridge } from "./session-bridge.mjs";
+import { OriginalSessionTaskBridge } from "./original-session-task-bridge.mjs";
 import { SupabaseRealtimeWakeSource } from "./supabase-realtime-wake-source.mjs";
 
 export function createOriginalSessionWakeRuntime({
@@ -33,6 +34,8 @@ export function createOriginalSessionWakeRuntime({
   maxConsecutiveErrors = 3,
   subscriptionTimeoutMs = 10000,
   maxQueuedWakes = 1,
+  maxTasks = 5,
+  taskStateStore = null,
   channelName,
   onStatus = () => {},
 } = {}) {
@@ -59,6 +62,14 @@ export function createOriginalSessionWakeRuntime({
       save: (snapshot, options) => transport.saveBridgeState(snapshot, options),
     },
   });
+  const taskBridge = new OriginalSessionTaskBridge({
+    page,
+    adapter,
+    participantId,
+    ...transport.createTaskAdapters(),
+    stateStore: taskStateStore,
+    maxTasks,
+  });
   const wakeSource = suppliedWakeSource ?? (
     supabaseClient
       ? new SupabaseRealtimeWakeSource({
@@ -72,6 +83,7 @@ export function createOriginalSessionWakeRuntime({
   );
   const runner = new OriginalSessionWakeRunner({
     bridge,
+    taskBridge,
     wakeSource,
     heartbeatMs,
     maxReplies,
@@ -82,6 +94,7 @@ export function createOriginalSessionWakeRuntime({
   return Object.freeze({
     transport,
     bridge,
+    taskBridge,
     wakeSource,
     runner,
     run: (options = {}) => runner.run(options),

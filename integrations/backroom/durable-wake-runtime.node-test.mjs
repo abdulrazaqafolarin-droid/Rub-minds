@@ -24,6 +24,28 @@ function setup(options={}) {
  return {registry,target,guard,dispatcher,store,calls,base,authority,grant,writes:()=>writes};
 }
 test('claimed lease resolves the exact identity fingerprint and builds only draft command',()=>{const s=setup();const m=commandFromClaimedWake({lease:s.base.lease,targetRegistry:s.registry,hostId:ids.hostId,binding,participant,sessionDigest:ids.sessionDigest,wakeGrantId:'grant-1'});assert.equal(m.target.identityFingerprint,ids.targetIdentityFingerprint);assert.equal(m.command.operation,'wake');assert.equal(m.command.roomId,ids.roomId);assert.equal(m.command.participantId,ids.participantId);assert.equal(m.command.bindingId,ids.bindingId);assert.ok(m.command.text.startsWith('@RMconnects\n'));});
+test('versioned task event survives the durable host wake path without being rewritten',async()=>{
+ const taskId='550e8400-e29b-41d4-a716-446655440000';
+ const eventId='task_'+taskId+'_v4';
+ const prompt=buildCanonicalWakePrompt(eventId);
+ const taskLease=lease({eventId,prompt,promptDigest:createHash('sha256').update(prompt,'utf8').digest('hex')});
+ const s=setup();
+ const mapped=commandFromClaimedWake({lease:taskLease,targetRegistry:s.registry,hostId:ids.hostId,binding,participant,sessionDigest:ids.sessionDigest,wakeGrantId:s.grant.grantId});
+ assert.equal(mapped.command.eventId,eventId);
+ assert.equal(mapped.job.eventId,eventId);
+ assert.equal(mapped.command.text,prompt);
+ let seals=0,consumes=0;
+ const result=await dispatchClaimedWake({...s.base,lease:taskLease,
+  executionSeal:async()=>{seals++;return true;},
+  consumeApproval:async(ticket,context)=>{consumes++;return s.authority.verify(ticket?.grantId,context,{consume:true});}
+ });
+ assert.deepEqual(result,{state:'completed',reason:null,acknowledged:true});
+ assert.equal(seals,1);
+ assert.equal(consumes,1);
+ assert.equal(s.writes(),1);
+ assert.equal(s.calls[0].name,'ack');
+ assert.equal(s.calls[0].a.outcome,'acknowledged');
+});
 test('native wake refuses a missing or mismatched provider conversation identity',()=>{
  const s=setup();
  assert.throws(()=>commandFromClaimedWake({lease:lease({providerConversationIdentityDigest:undefined}),
