@@ -52,7 +52,6 @@ jobs:
           opencode --version
           cat > opencode.json <<EOF
           {
-            "$schema": "https://opencode.ai/config.json",
             "mcp": {
               "servers": {
                 "rub_minds": {
@@ -89,7 +88,7 @@ jobs:
           output=""
           for attempt in 1 2 3 4 5; do
             output="$(opencode mcp list --print-logs 2>&1 || true)"
-            printf 'OpenCode MCP check %s:\\n%s\\n' "$attempt" "$output"
+            printf 'OpenCode MCP check %s:\n%s\n' "$attempt" "$output"
             if grep -Fq "rub_minds" <<<"$output" && grep -Eqi "connected|ready" <<<"$output"; then
               exit 0
             fi
