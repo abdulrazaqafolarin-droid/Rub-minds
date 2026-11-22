@@ -43,6 +43,7 @@ Prerequisites:
 - Visual Studio Build Tools with the Desktop development with C++ workload.
 - WebView2 Runtime.
 - A Rub Minds Supabase project and a publishable (or legacy anon) API key; **never use the service-role key in the companion**.
+- The native companion enforces this boundary itself: only a public `sb_publishable_...` key or a project-matched legacy `anon` JWT is accepted, and owner operations require a project-issued, unexpired authenticated-user JWT.
 
 From the repository root:
 1. Copy .env.example to .env.local.
@@ -108,3 +109,16 @@ It runs the source/manifest policy tests, Kotlin unit tests, the actual merged-h
 Do not claim the desktop companion is production-ready until the Windows integration matrix is completed and CI has a successful native build.
 
 Emergency Stop runs the native local shutdown before best-effort peer/network cleanup. Native launch and terminal approvals are generation-bound: an approval left open across Emergency Stop cannot create a process afterward. The focused ordering and stale-approval regression tests are included in `npm run test:companion` and the Windows CI lane.
+
+
+## Staging-connected Windows build
+
+The GitHub Windows CI artifact intentionally has empty backend configuration. It is not a sign-in or pairing build. For live device acceptance, use the separate physical-Windows builder from the repository root:
+
+    powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\backroom-windows-staging-build.ps1
+
+The script prompts for the Staging project's public sb_publishable key or legacy anon JWT and hard-locks the URL/project to https://tzcuuynmviiuactafpld.supabase.co / tzcuuynmviiuactafpld. Legacy JWTs must identify that project, have iss=supabase, role=anon, and a future expiry. Secret/service-role keys and unexpected formats are rejected. For opaque sb_publishable keys, source the value directly from the Staging project; the script validates its public-key format, while the Staging API validates that it belongs to this project.
+
+The key is held in process memory and passed to Vite via process environment only. The script does not create/edit .env.local, commit the key, print the value, include it in the manifest or deploy to Supabase/Vercel. It runs the full Windows build/test runner and Tauri MSI/NSIS packaging, then creates a ZIP with SHA-256 hashes and a non-secret acceptance manifest. The script refuses known service-role environment variables and restores any previous Vite build environment when it exits.
+
+This is a connected Staging-only build. Do not install it for ordinary use or point it at Production. Keep the CI empty-config executable separately for native launch testing.

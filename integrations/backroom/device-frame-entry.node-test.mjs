@@ -136,3 +136,57 @@ test("Android touch-control requests have a bounded pending state and exact requ
   assert.ok(control.includes("payload.requestId !== pendingControlRequestRef.current"));
   assert.ok(control.includes("pendingControlRequestRef.current === requestId"));
 });
+
+test("device-frame connector clears stale state and ignores responses from a previous runtime", async () => {
+  const connector = await read("src/BackroomFrameAIConnector.tsx");
+  assert.match(connector, /useLayoutEffect, useMemo, useRef/);
+  assert.match(connector, /const operationEpoch = useRef\(0\)/);
+
+  const frameReset = connector.match(
+    /useLayoutEffect\(\(\) => \{([\s\S]*?)\}, \[deviceId, ready, roomId, runtimeSessionId, surface\]\)/
+  );
+  assert.ok(frameReset, "frame identity changes must synchronously invalidate the previous UI state");
+  for (const state of [
+    "operationEpoch.current += 1",
+    "setCandidates([])",
+    "setParticipantId('')",
+    "setBinding(null)",
+    "setChallenge(null)",
+    "setBusy(false)",
+    "setError('')",
+    "setNotice('')",
+  ]) assert.ok(frameReset[1].includes(state), "frame reset is missing " + state);
+
+  assert.equal(
+    (connector.match(/const requestEpoch = \+\+operationEpoch.current/g) || []).length,
+    3,
+    "refresh, challenge creation and revoke must each own a request epoch",
+  );
+  assert.ok(
+    (connector.match(/requestEpoch !== operationEpoch.current/g) || []).length >= 3,
+    "late responses must not overwrite state for a newer frame or operation",
+  );
+  assert.match(connector, /result\.participantId !== selectedCandidate\.participantId/);
+  assert.match(connector, /result\.surface !== surface/);
+  assert.match(connector, /validUuid/);
+  assert.match(connector, /validNonce/);
+  assert.match(connector, /expiresAtMs <= Date\.now\(\)/);
+});
+
+test("device-frame connector invalidates pending work on unmount and clipboard completion", async () => {
+  const connector = await read("src/BackroomFrameAIConnector.tsx");
+  assert.match(connector.replace(/\r\n/g, "\n"), /return \(\) => \{\s*operationEpoch\.current \+= 1;\s*\};/,
+    "unmount cleanup must invalidate pending frame requests");
+
+  const copyStart = connector.indexOf("const copyToolCall = async () => {");
+  const revokeStart = connector.indexOf("const revoke = async () => {", copyStart);
+  assert.ok(copyStart >= 0 && revokeStart > copyStart, "clipboard handler must remain a bounded action");
+  const copyHandler = connector.slice(copyStart, revokeStart);
+  assert.ok(copyHandler.includes("const requestEpoch = operationEpoch.current;"));
+  assert.ok(copyHandler.includes("await navigator.clipboard.writeText(toolCall);"));
+  assert.equal(
+    copyHandler.split("if (requestEpoch !== operationEpoch.current) return;").length - 1,
+    2,
+    "both clipboard success and failure must ignore stale frame completions",
+  );
+});

@@ -116,8 +116,18 @@ test("Supabase config declares the device Edge Function exactly once with manual
 test("local Supabase CI exercises the complete cloud device lifecycle", async () => {
   const workflow = await read(".github/workflows/ci.yml");
   const script = await read("scripts/local-backroom-device-e2e.mjs");
-  assert.match(workflow, /Start Backroom device Edge Function/);
-  assert.match(workflow, /node scripts\/local-backroom-device-e2e\.mjs/);
+  const requiredActions = ["pair/create","pair/claim","device/status","owner/approve","device/inventory","device/event","room/devices","room/events","owner/revoke"];
+  console.log("SAFE_CLOUD_DEVICE_CI_DIAG", JSON.stringify({
+    startEdgeFunctionStep: workflow.includes("Start local Supabase Edge Functions (MCP + Backroom device)"),
+    deviceE2eCommand: workflow.includes("node scripts/local-backroom-device-e2e.mjs"),
+    stopSupabaseStep: workflow.includes("Stop isolated Supabase services"),
+    requiredActions: requiredActions.map(action => script.includes('"' + action + '"') || script.includes("'" + action + "'")),
+    pairingReplay: script.includes("pairing replay"),
+    revokedInventoryDenial: script.includes("revoked device inventory denial"),
+    groupMemberRead: script.includes("group members must be able to view")
+  }));
+  assert.ok(workflow.includes("Start local Supabase Edge Functions (MCP + Backroom device)"));
+  assert.ok(workflow.includes("node scripts/local-backroom-device-e2e.mjs"));
   assert.match(workflow, /Stop isolated Supabase services/);
   for (const action of ["pair/create","pair/claim","device/status","owner/approve","device/inventory","device/event","room/devices","room/events","owner/revoke"]) {
     assert.ok(script.includes('"' + action + '"') || script.includes("'" + action + "'"), "missing E2E action: " + action);

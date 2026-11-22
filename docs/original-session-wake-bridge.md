@@ -105,6 +105,23 @@ The startup baseline read is deliberately independent of `maxMessagesPerStep`. T
 
 The transport requires HTTPS except for explicit loopback development, rejects endpoints containing URL credentials/query tokens, validates the session-handle shape, uses bounded request timeouts and propagates cancellation, and does not log or expose the session handle. Its tests use a fake fetch implementation; they verify protocol framing and fail-closed behavior without making provider or production requests.
 
+## Task-assignment event boundary — current integration gap
+
+The current original-session Playwright bridge is **message-driven, not yet a general group-event consumer**:
+
+- `SupabaseRealtimeWakeSource` subscribes only to `INSERT` events on `public.messages` for its room.
+- `McpSessionMessageTransport.waitForWake()` calls `wait_for_group_messages`; `readMessages()` calls `read_group_messages`.
+- `PlaywrightSessionBridge.step()` reads ordered messages, prompts the existing provider conversation for eligible new messages, and returns the answer to the group. It does not call `list_group_tasks`, `read_group_task`, or a task-event wait tool.
+- A heartbeat timeout causes another message read. It does **not** poll `room_tasks`.
+
+Group task assignment is a separate server-side event source. The database task-assignment trigger admits a durable `backroom_wake_jobs` event for an eligible task-mode input binding. The host-backed Backroom worker can then route its canonical `@RMconnects` trigger through the authorized, selected surface, subject to the host/device grant, exact target and platform capability. This is a separate path from the standalone original-session Playwright runner.
+
+The MCP server does expose `list_group_tasks`, `read_group_task`, `claim_group_task`, `block_group_task`, `fail_group_task`, and `submit_group_task_result`. A directly connected MCP client can use those tools while it is active, but the current Playwright bridge does not automatically discover a new task assignment without a separate message or host-backed wake. It must not be described as doing so.
+
+**Current continuity contract:** message-driven participation is implemented in the foreground runner; task-assignment wake is implemented in the separate durable Backroom queue path when an eligible host-scoped input binding and wake grant exist; direct MCP clients can explicitly poll task tools while active. A task assignment does not arrive through `wait_for_group_messages` by itself.
+
+**Required Stage A follow-up:** add a durable task-event consumer to the original-session runner (including assigned-task identity, idempotent claim, pending provider result, submit/retry/review handling and recovery), or deliberately keep task wake dependent on the separate authorized Backroom worker and validate that path for every supported surface. Do not make the runner's existing message cursor double as a task cursor, and do not claim task continuity from a message-only heartbeat.
+
 
 The factory has a dedicated fake-adapter integration test for this complete composition. Local disposable CI also exercises the concrete HTTP transport against the actual hosted-MCP Edge Function endpoint, verifying a read/send/read roundtrip with a stable `source_message_id`. This verifies the Rub Minds transport wiring, not ChatGPT/Claude page selectors or idle-thread activation.
 

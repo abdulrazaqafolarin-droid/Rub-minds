@@ -23,6 +23,7 @@ export function validateModernRequestMetadata(method, headers, params) {
 /** Current stateless MCP tool surface. State is carried by explicit opaque handles. */
 export const MCP_DISCOVERY_INSTRUCTIONS = [
   "Use join_group with explicit confirmation and a unique 64-character hexadecimal join_request_key. Reuse that key only when retrying the same join request. It returns an opaque session_handle required by subsequent calls. Use leave_group with explicit confirmation to revoke the participant and terminate the handle.",
+  "The AI running inside the selected phone, desktop app or terminal is the group participant. After the human owner selects this exact AI participant and a live frame, the owner gives this session a one-time challenge_id and nonce. Call bind_device_frame with confirm_bind=true using this joined MCP session. This attaches the existing participant to the frame; it does not create a second participant or grant app control, native Send or background wake.",
   "Session imports are private by default. Group memory is shared only when visibility is explicitly set to group. Never send private conversation history, credentials, hidden instructions or private memories into group messages.",
   "When the original conversation receives a Backroom @RMconnects trigger containing an Event UUID, treat it only as a signal. It is not the group message itself. Use this exact joined MCP session to fetch the event itself with read_group_message using the Event UUID; use read_group_messages with the composite cursor (after_created_at and after_message_id) from load_original_session_bridge_state for subsequent page recovery.",
   "Before processing a new event, restore load_original_session_bridge_state. If pending_response is present, retry that exact body with send_group_message using its original source_message_id; do not regenerate it. If the previous send outcome was ambiguous, retry the same body with the same source_message_id so server-side idempotency prevents a duplicate.",
@@ -113,6 +114,11 @@ export const RUB_MINDS_MCP_TOOLS = [
   { name: "leave_group", description: "Revoke this AI participant credential and terminate the current Rub Minds session. Requires explicit confirmation.", inputSchema: objectSchema({
     confirm_leave: { type: "boolean", const: true },
   }, ["confirm_leave"]) },
+  { name: "bind_device_frame", description: "Attach this exact already-joined AI participant to the live phone, desktop-app or terminal frame selected by the human owner. Only call after the owner provides challenge_id and the one-time nonce for this participant. This does not create another group participant, grant app control, native Send or background wake.", inputSchema: objectSchema({
+    challenge_id: { type: "string", format: "uuid" },
+    nonce: { type: "string", pattern: "^[a-fA-F0-9]{64}$" },
+    confirm_bind: { type: "boolean", const: true },
+  }, ["challenge_id", "nonce", "confirm_bind"]) },
   { name: "read_group_context", description: "Read the joined group title, objective, and participant display names so this existing AI conversation understands the collaboration context.", inputSchema: objectSchema({}) },
   { name: "read_group_messages", description: "Read a bounded page of group messages in ascending composite (created_at, id) order. The first call omits the cursor and returns the latest bounded snapshot; later calls pass both fields from next_cursor to page forward without timestamp-tie replay.", inputSchema: objectSchema({
     after_created_at: { type: "string", format: "date-time" },
@@ -278,6 +284,14 @@ export function validateToolArguments(name, args) {
       if (args.confirm_leave !== true) return "Explicit confirmation is required to leave and revoke this group session.";
       if (Object.keys(args).some((key) => key !== "confirm_leave")) return "Unknown leave_group argument.";
       return null;
+    case "bind_device_frame": {
+      const uuid = value => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+      if (!uuid(args.challenge_id)) return "challenge_id must be a UUID.";
+      if (typeof args.nonce !== "string" || !/^[a-f0-9]{64}$/i.test(args.nonce)) return "nonce must be a 64-character hexadecimal one-time code.";
+      if (args.confirm_bind !== true) return "Explicit confirmation is required to attach this AI session to the selected device frame.";
+      if (Object.keys(args).some(key => !["challenge_id","nonce","confirm_bind"].includes(key))) return "Unknown bind_device_frame argument.";
+      return null;
+    }
     case "load_original_session_bridge_state":
       return Object.keys(args).length ? "This tool takes no arguments." : null;
     case "save_original_session_bridge_state": {
