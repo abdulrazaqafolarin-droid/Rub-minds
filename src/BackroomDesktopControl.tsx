@@ -60,6 +60,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const terminalActionRef=useRef<{requestId:string;action:'draft'|'submit';text?:string}|null>(null);
   const draftGrantTimerRef=useRef<number|null>(null);
   const terminalActionTimerRef=useRef<number|null>(null);
+  const disconnectTimerRef=useRef<number|null>(null);
   const devicesRef=useRef<BackroomDevice[]>([]);
   const pendingCandidatesRef=useRef(new Map<string,RTCIceCandidateInit[]>());
   const selectedDevice=devices.find(d=>d.device_id===deviceId);
@@ -169,6 +170,10 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   };
 
   const closePeer=useCallback(async()=>{
+    if(disconnectTimerRef.current!==null){
+      window.clearTimeout(disconnectTimerRef.current);
+      disconnectTimerRef.current=null;
+    }
     if(terminalActionTimerRef.current!==null){
       window.clearTimeout(terminalActionTimerRef.current);
       terminalActionTimerRef.current=null;
@@ -178,7 +183,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       draftGrantTimerRef.current=null;
     }
     const current=peerRef.current;
-    if(current){current.close();peerRef.current=null;}
+    if(current){peerRef.current=null;current.close();}
     dataRef.current=null;
     pendingCandidatesRef.current.clear();
     incomingStreamRef.current=null;
@@ -295,6 +300,41 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
     terminalActionRef.current=null;setTerminalDraftReady(false);setTerminalDraftSending(false);setTerminalInput('');
   },[sendCommand,abandonSession,clearSessionStartTimers,closePeer]);
 
+  const watchPeerConnection=useCallback((pc:RTCPeerConnection,sessionId:string,label:'Screen'|'Terminal')=>{
+    const clearDisconnectTimer=()=>{
+      if(disconnectTimerRef.current!==null){
+        window.clearTimeout(disconnectTimerRef.current);
+        disconnectTimerRef.current=null;
+      }
+    };
+    pc.onconnectionstatechange=()=>{
+      if(peerRef.current!==pc)return;
+      if(pc.connectionState==='connected'){
+        clearDisconnectTimer();
+        return;
+      }
+      if(pc.connectionState==='disconnected'){
+        if(disconnectTimerRef.current!==null)return;
+        flash(label+' connection interrupted. Trying to reconnect for 20 seconds…',true);
+        disconnectTimerRef.current=window.setTimeout(()=>{
+          disconnectTimerRef.current=null;
+          const stillThisSession=peerRef.current===pc&&
+            (screenSessionRef.current===sessionId||terminalPeerRef.current===sessionId);
+          if(stillThisSession&&pc.connectionState==='disconnected'){
+            flash(label+' connection did not recover within 20 seconds. The session was stopped.',true);
+            void stopActivePeer();
+          }
+        },20_000);
+        return;
+      }
+      if(pc.connectionState==='failed'||pc.connectionState==='closed'){
+        clearDisconnectTimer();
+        flash(label+' connection '+pc.connectionState+'. The session will stop.',true);
+        void stopActivePeer();
+      }
+    };
+  },[flash,stopActivePeer]);
+
   const launchApp=async()=>{
     if(!selectedApp)return flash('Select an installed application first.',true);
     try{await sendCommand('launch_app',{appId:selectedApp});flash('Launch request sent. Approve it on the computer to continue.');}
@@ -352,12 +392,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
           }
         }
       };
-      pc.onconnectionstatechange=()=>{
-        if(pc.connectionState==='failed'||pc.connectionState==='disconnected'){
-          flash('Terminal data connection interrupted. The local terminal will be stopped.',true);
-          void stopActivePeer();
-        }
-      };
+      watchPeerConnection(pc,peerId,'Terminal');
       const offer=await pc.createOffer();await pc.setLocalDescription(offer);
       await waitForIceGatheringComplete(pc);
       await sendCommand('terminal_start',{sessionId:peerId,offer:{sdp:pc.localDescription?.sdp}});
@@ -383,12 +418,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
       const video=videoRef.current;
       if(video&&video.srcObject!==stream)video.srcObject=stream;
     };
-    pc.onconnectionstatechange=()=>{
-      if(pc.connectionState==='failed'||pc.connectionState==='disconnected'){
-        flash('Screen connection interrupted. The local stream will be stopped.',true);
-        void stopActivePeer();
-      }
-    };
+    watchPeerConnection(pc,sessionId,'Screen');
     data.onmessage=event=>{
       let message:any;try{message=JSON.parse(event.data);}catch{return;}
       if(message.kind==='terminal_output'){
