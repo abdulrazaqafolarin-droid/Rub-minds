@@ -47,6 +47,8 @@ The phone keeps the raw device credential locally; the database stores its diges
 
 Use [the Android live-stream acceptance matrix](../docs/BACKROOM_ANDROID_LIVE_STREAM_ACCEPTANCE.md) for MediaProjection, WebRTC, touch and phone-keyboard acceptance on the handset. Use [the Android guest runtime acceptance matrix](../docs/BACKROOM_ANDROID_GUEST_RUNTIME_ACCEPTANCE.md) separately for virtualization-provider admission and guest-only frame/data-isolation checks. The target device's API level, ABI and display geometry must be read from the actual handset during the test.
 
+The read-only provider-conversation evidence helper is `scripts/run-provider-conversation-probe.ps1`. On Windows, run it with `-Provider chatgpt` or `-Provider claude` while the phone is connected through authorized ADB. It captures A→B→A accessibility snapshots locally, runs `provider_conversation_probe.py --delete-inputs`, and deletes the temporary files. The report is only an accessibility candidate; the resolver remains empty until provider-specific manual review and physical regression pass.
+
 ## Guest runtime integration gate
 
 The companion currently has **no app virtualization provider**. The code under `app/src/main/java/app/rubminds/companion/guest/` defines the future integration boundary only. It deliberately has no BlackBox, VirtualApp or NewBlackbox dependency.
