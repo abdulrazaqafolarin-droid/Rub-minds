@@ -41,7 +41,7 @@ test("physical A-B-A helper confirms package focus and deletes temporary snapsho
   assert.match(runner, /Remove-Item -LiteralPath \$tempDirectory -Recurse -Force -ErrorAction Stop/);
   assert.match(runner, /PROVIDER PROBE CLEANUP INCOMPLETE/);
   assert.match(runner, /Could not remove local accessibility snapshots/);
-  assert.match(runner, /adb -s \$Serial shell rm -f \$remotePath/);
+  assert.match(runner, /adb -s \$Serial shell rm -f \$RemotePath/);
   assert.match(runner, /does not send messages, tap Send, or enable native Send/);
 });
 
