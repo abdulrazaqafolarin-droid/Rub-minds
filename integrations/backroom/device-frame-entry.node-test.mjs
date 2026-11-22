@@ -78,8 +78,8 @@ test("Device Frame shows one selected Android phone at a time", async () => {
 
 test("Device Frame renders the real live app surface without a decorative phone simulator", async () => {
   const devices = await read("src/BackroomDevicesApp.tsx");
-  assert.match(devices, /<BackroomAndroidControl device=\{activeDevice\} roomId=\{roomId\}\/>/);
-  assert.match(devices, /<BackroomDesktopControl roomId=\{roomId\}\s*\/>/);
+  assert.match(devices, /<BackroomAndroidControl key=\{roomId \+ ':' \+ activeDevice\.device_id\} device=\{activeDevice\} roomId=\{roomId\}\/>/);
+  assert.match(devices, /<BackroomDesktopControl key=\{roomId\} roomId=\{roomId\}\s*\/>/);
   assert.match(devices, /Original Android app screen/);
   assert.match(devices, /Original computer screen and terminal/);
   assert.doesNotMatch(devices, /br-cloud-phone|br-cloud-phone-notch|Selected apps/);
@@ -112,7 +112,7 @@ test("Android Phone Frame wires a consented WebRTC stream and a separate touch g
   const control = await read("src/BackroomAndroidControl.tsx");
   const phone = await read("src/BackroomDevicesApp.tsx");
   assert.match(phone, /import BackroomAndroidControl/);
-  assert.ok(phone.includes("BackroomAndroidControl device={activeDevice}") && phone.includes("roomId={roomId}"));
+  assert.ok(phone.includes("BackroomAndroidControl key={roomId + ':' + activeDevice.device_id} device={activeDevice}") && phone.includes("roomId={roomId}"));
   assert.match(control, /RTCPeerConnection/);
   assert.ok(control.includes("addTransceiver('video', { direction: 'recvonly' })"));
   assert.match(control, /android\/session-start/);
