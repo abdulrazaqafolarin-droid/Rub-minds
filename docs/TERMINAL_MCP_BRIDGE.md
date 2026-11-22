@@ -13,7 +13,7 @@ $env:RUB_MINDS_MCP_ENDPOINT = "https://tzcuuynmviiuactafpld.supabase.co/function
 node .\scripts\rub-minds-mcp.mjs --stdio
 ```
 
-When the Supabase API gateway requires an API key, set `RUB_MINDS_MCP_API_KEY` to the **public publishable/anon key** for the Staging project. The bridge rejects Supabase secret keys and legacy JWTs whose role is `service_role`. Never put a service-role key in a terminal client, environment shared with an AI agent, or MCP configuration.
+When the Supabase API gateway requires an API key, set `RUB_MINDS_MCP_API_KEY` to the **public publishable/anon key** for the Staging project. The bridge accepts only the current `sb_publishable_...` key format or a legacy JWT whose role is exactly `anon`. It rejects `sb_secret_...`, legacy `service_role` keys, authenticated-user JWTs and malformed/unknown key formats. An authenticated user's access token is not an API key; never put it in this setting.
 
 The endpoint is pinned in the bridge to the dedicated Staging project. The environment variable must match that exact URL; Production, arbitrary hosts, query strings, fragments, URL credentials and redirects are rejected.
 
