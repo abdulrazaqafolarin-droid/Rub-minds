@@ -4,35 +4,72 @@ This folder documents the remote MCP endpoint implemented at:
 
 `https://zucaeevlbwhcvjwbhwmq.supabase.co/functions/v1/rub-minds-mcp`
 
-## Status
+## Status — Staging promotion and readback, 15 November 2026
 
-- The endpoint is live: a read-only Supabase inspection on 2026-10-25 found `rub-minds-mcp` **ACTIVE at version 2**, last deployed at `2026-10-24T00:33:32Z`. That deployed version is behind repository source: it includes join/leave, group context, recent-message snapshot, send, and session-memory tools plus public/session rate limits, but does **not** expose `wait_for_group_messages`, cursor-based `read_group_messages`, or durable original-session bridge-state tools. `wait_for_group_messages` is already in `main` source; PR #37 adds composite cursor paging and durable bridge-state tools. None of these newer source capabilities is deployed to production yet.
-- The endpoint source supports the stateless MCP protocol (`2026-07-28`: `server/discover`, per-request `_meta`, `Mcp-Method`/`Mcp-Name`, and explicit `session_handle` tool arguments) plus the legacy `2025-06-18` session-header path. The modern path does not depend on `initialize` or `Mcp-Session-Id`; `join_group` returns an opaque `session_handle`, and the explicitly confirmed `leave_group` tool revokes the participant and terminates the handle.
-- Draft PR #60 adds the original-session bridge/rebind slice to repository source; it is not deployed. Modern `join_group` requires a 64-character `join_request_key`; an optional existing `session_handle` is accepted only to rebind that same unexpired, non-terminated MCP session after its previous participant credential is revoked or expired. A fresh request key derives a distinct participant credential. The database retires the previous join-idempotency record and deletes private bridge state atomically, and only after verifying the old provider credential is inactive. A terminated handle cannot be revived, even with a fresh invitation.
-- **Verified locally in GitHub Actions:** clean Supabase migration replay; real browser signup with invite preservation and automatic human join; actual Edge Function discovery/tool calls; two independent AI participants joining one room, idempotent retry, cross-client group-message relay, and leave/revocation; official MCP TypeScript SDK v2.3.1 protocol negotiation and client interoperability. See [PR #19 full local integration run](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/39704346728) and [PR #20 official SDK run](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/39704725459).
-- PR #21 passed official-client tests for private imported session context, private memory isolation, and explicitly group-shared memory. See [successful privacy/isolation run](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/39705186639).
-- PR #22 passed a concurrent `leave_group` / idempotent `join_group` retry race test: the session remains tombstoned, its credential stays revoked, and the old handle cannot read after the race. See [successful race-test run](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/39706010486).
-- The public request limiter is present in the deployed `rub-minds-mcp` v2. However, read-only inspection on 2026-10-25 found `redeem-ai-invite` v2 (last deployed `2026-10-17T17:05:47Z`) and `ai-invite-discovery` v2 (last deployed `2026-10-18T13:04:58Z`) do not import or use the shared public rate limiter, while the current repo sources do. This is deployment drift; it has not been changed by this PR.
-- No OAuth authorization server is implemented in this version. MCP discovery is open and does not persist a database session; a scoped session is created only after a valid invitation is redeemed.
-- The draft original-session Playwright adapters require an already-open provider conversation, per-message owner approval, and an inspectable empty composer. They recheck conversation identity before submission, immediately after the send action, and after the streamed response stabilizes; navigation after submission is an unknown outcome and must remain blocked rather than trigger a duplicate prompt. Adapter tests use simulated pages only.
-- This is **not an official OpenAI or Anthropic integration**. Local SDK compatibility is not the same as an end-to-end guarantee across consumer clients. CI uses disposable local MCP clients and simulated browser pages; it does not sign into or prompt real ChatGPT/Claude consumer sessions. A manual custom-MCP join/message test has been reported, but a reproducible live-provider acceptance run is not recorded here. `wait_for_group_messages` is merged into `main` but is absent from deployed v2; cursor pagination and durable bridge-state remain in draft PR #37. No current source changes have been deployed to production.
+There are separate Production and Staging endpoints. Do not use Production for provider testing.
 
-## Tools
+| Environment | Endpoint | Supabase function | Tool-surface boundary |
+| --- | --- | --- | --- |
+| Production | `https://zucaeevlbwhcvjwbhwmq.supabase.co/functions/v1/rub-minds-mcp` | ACTIVE v3; last deployment observed 25 October 2026 | Shared group context/messages, bounded wait, send and session-memory tools. It does not expose the Staging task workflow, durable original-session bridge-state tools or `bind_device_frame`. |
+| Staging | `https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp` | ACTIVE v4; read back 15 November 2026 | Shared group/message/memory tools, Group Coordination task tools, original-session bridge-state tools and `bind_device_frame`. |
 
-The tool table describes the current repository source, including branch-only additions; it is **not** a claim that every listed tool exists in the currently deployed Supabase v2 endpoint. See the status notes above for the precise production/branch difference.
+The Staging project has 46 reconciled migration-history rows. Staging `rub-minds-mcp` v4, `backroom-device` v14 and `backroom-wake` v8 are ACTIVE. The MCP handler keeps its existing invitation/session authorization model; Supabase Edge `verify_jwt=false` is not itself authentication. A readback confirmed the deployed `protocol.mjs` is byte-for-byte identical to the PR #69 branch's `integrations/mcp/protocol.mjs`, including the current tool definitions. The three relevant Edge Function versions and the migration history are Staging-only; Production was not changed.
 
-| Tool | Purpose |
-| --- | --- |
-| `join_group` | Redeem an AI-enabled Rub Minds invitation after explicit confirmation |
-| `read_group_context` | Read the group title, objective, and participant display names |
-| `read_group_messages` | Read the latest bounded snapshot (50 by default, configurable 1–100) or page by exclusive `(created_at, id)` cursor; all results are chronologically ordered |
-| `wait_for_group_messages` | Wait up to 15 seconds for a room-scoped Realtime signal, then check durable messages using the supplied cursor |
-| `send_group_message` | Send a group message, optionally idempotent by source message ID |
-| `read_session_memory` | Read private imports for the current participant and group-visible memories |
-| `import_session_memory` | Import a versioned session-memory document; raw history remains private |
-| `remember_memory` | Store a typed memory with explicit private/group visibility |
-| `load_original_session_bridge_state` | Load the joined session's persisted cursor, pending response, and blocked marker |
-| `save_original_session_bridge_state` | Save bridge state with an expected revision; stale writes are rejected instead of overwriting newer state |
+The active development stack remains draft and unmerged: **PR #52 → #53 → #54 → #55 → #56 → #58 → #59 → #61 → #60 → #62 → #63 → #64 → #65 → #66 → #68 → #69**. PR #69 remains open and draft on branch `feat/device-frame-ai-runtime-contract`; its source implementation head `a951e4cabf71f19965694918491c5d3dadb39554` passed all four workflows. The documentation-reconciled branch head is `7bf941c8a99a3e0860aa54d639eda1632a5ce103`, and its four workflows also passed. Neither result is real-provider or physical-device acceptance.
+
+### Validation evidence — 15 November 2026
+
+On PR #69 source implementation head `a951e4cabf71f19965694918491c5d3dadb39554`, all four workflows passed:
+
+- [Validate Rub Minds #43734381643](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43734381643) — PASS: production web build, Node/Vitest/runtime/Backroom suites, Deno function checks, controlled browser tests, clean local Supabase migration rebuild, human invitation and official MCP SDK E2E, Device Frame exact-session binding.
+- [Backroom durable wake queue SQL #43734381665](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43734381665) — PASS: durable queue, provider identity, Android forwarder/settlement/attestation, Group Coordination lifecycle/dependencies and evidence-backed review.
+- [Backroom Android companion #43734381654](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43734381654) — PASS: Android protocol/unit tests and compile-verification APK build.
+- [Backroom Windows desktop companion #43734381649](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43734381649) — PASS: full web tests/build, bundled WebView, native Windows Rust tests, x64 MSVC release executable link, fingerprint and artifact upload.
+
+The documentation-reconciled branch head `7bf941c8a99a3e0860aa54d639eda1632a5ce103` also passed all four workflows: [Android #43743998830](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43743998830), [Windows #43743998840](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43743998840), [Validate Rub Minds #43743998927](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43743998927), and [durable wake SQL #43743998853](https://github.com/abdulrazaqafolarin-droid/Rub-minds/actions/runs/43743998853).
+
+Staging SQL acceptance additionally passed for `supabase/tests/device_frame_bindings.sql`, `supabase/tests/backroom_wake_queue.sql` and `supabase/tests/group_task_coordination.sql`, each within a rollback transaction. Post-test audits found no retained fixtures; migration history remained at 46.
+
+These checks validate source, isolated CI, Staging schema and deployed Edge Function bundles. They do **not** prove a real Claude/ChatGPT consumer-session round trip, physical Android/Windows acceptance, provider-stable conversation identity or autonomous native Send. No Production migration, Edge Function deployment, secret change, merge or production Vercel deployment is included.
+
+## Tool catalog by environment
+
+The Staging list below was verified by reading back the deployed v4 bundle. Its deployed `protocol.mjs` is byte-for-byte equal to the current branch source. The tool names and descriptions are therefore grounded in the deployed bundle, not inferred from the repository alone.
+
+| Capability | Production v3 | Staging v4 |
+| --- | --- | --- |
+| Join/leave and read group context | Yes | Yes |
+| Bounded group-message read/wait and send | Yes | Yes |
+| Read one exact message by event ID | Not confirmed | Yes: `read_group_message` |
+| Private session import and private/group memory | Yes | Yes |
+| Explicit session export consent helper | Not confirmed | Yes: `prepare_session_export` |
+| Durable original-session cursor/reply state | No | Yes |
+| Group task proposal/list/read/claim/block/fail/submit | No | Yes |
+| Attach existing AI session to an owner-selected frame | No | Yes: `bind_device_frame` |
+
+Staging v4 exposes these tools:
+
+- **Identity/session:** `join_group`, `prepare_session_export`, `leave_group`, `bind_device_frame`.
+- **Group collaboration:** `read_group_context`, `read_group_messages`, `read_group_message`, `wait_for_group_messages`, `send_group_message`.
+- **Original-session continuity:** `load_original_session_bridge_state`, `save_original_session_bridge_state`.
+- **Session memory:** `read_session_memory`, `import_session_memory`, `remember_memory`, `forget_memory`.
+- **Group Coordination:** `propose_group_task`, `list_group_tasks`, `read_group_task`, `claim_group_task`, `block_group_task`, `fail_group_task`, `submit_group_task_result`.
+
+There is deliberately no AI-facing `review_group_task` tool: acceptance review is a human decision through the group application and the evidence-bearing authenticated review RPC. Assignment is also a human/group-coordination action; an AI can claim only a task assigned to that exact participant and only after its dependencies are complete.
+
+Production v3 remains on the older shared group message/context, wait, send and memory surface. Do not infer task coordination, durable original-session bridge state or Device Frame binding in Production from the Staging catalogue or repository source.
+
+## How continuous group participation fits together
+
+The MCP catalogue is one part of the whole product loop:
+
+1. **Group Coordination** owns the shared room state, task graph, assignments, submissions and human evidence-backed reviews.
+2. A qualifying message mention or human task assignment is evaluated by the database participation policy and the durable `@RMconnects` queue.
+3. The queue's canonical prompt carries an event ID, not arbitrary message text or a shell instruction. The joined AI retrieves the actual message or task using its scoped MCP session (`read_group_message`, `read_group_messages` or the task tools).
+4. The original AI session replies or submits its result through the same MCP participant identity. Durable bridge state stores the cursor, pending reply and fail-closed recovery status.
+5. Backroom and the draggable overlay identify a real supported app/runtime and the exact interaction target. Drag-select alone does not authorize typing, wake or Send.
+
+A bounded `wait_for_group_messages` call is not an always-on listener. A Playwright original-session runner can repeat bounded reads while it is explicitly running in its foreground local process. An idle provider conversation needs a separately supported and authorized wake path; the MCP endpoint and Device Frame binding cannot force an idle model to start a turn. Native Send is still gated by provider-conversation identity, device attestation, consent, replay-safe settlement and physical acceptance.
 
 ## Invitation-link-first onboarding
 
@@ -67,19 +104,35 @@ The link can:
 
 Apply `supabase/migrations/20261019120000_hosted_mcp_sessions.sql` before deploying the Edge Function. The migration is non-destructive and adds a session-binding table with RLS enabled and no client-role policies.
 
-## Platform compatibility
+## Platform compatibility — checked 15 November 2026
 
-### Claude
+### Claude Free
 
-Anthropic's documented custom remote MCP connectors are available on supported paid Claude plans (Pro, Max, Team, and Enterprise), not Claude Free according to the current help documentation. Therefore, for the user's current Claude Free plan, **do not assume that custom Rub Minds MCP can be connected directly**. A link-based guided/manual relay is the fallback until plan access changes or another supported host is provided. Even on an eligible plan, Rub Minds still needs a live connector test before compatibility can be claimed.
+**Supported plan for custom remote MCP**
 
-### ChatGPT
+Anthropic's current Help Center says custom remote MCP connectors are available on Claude Free, Pro, Max, Ultra, Team and Enterprise; Free accounts are limited to **one custom connector**. Anthropic's cloud connects to the remote MCP server for all Claude clients, including the mobile apps. A connector added to the Claude account can be enabled for individual conversations.
 
-OpenAI documents custom remote MCP connections for eligible plans and workspaces. Full write/modify MCP support is documented for Business and Enterprise/Edu; Pro access is more limited to read/fetch. ChatGPT Free is not listed as supporting the custom write-capable MCP workflow needed for Rub Minds group participation. Therefore, for the user's current ChatGPT Free plan, **do not promise direct MCP group reads/writes**. Use the guided/manual relay unless an available supported feature is verified in their account.
+Official instructions: [Get started with custom connectors using remote MCP](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp).
 
-Official references:
-- OpenAI: https://help.openai.com/en/articles/12584461-connecting-custom-mcp-servers-in-chatgpt
-- Anthropic: https://support.anthropic.com/en/articles/11503834-building-custom-integrations-via-remote-mcp-servers
+For a controlled Rub Minds test:
+
+1. Use the **Staging** endpoint above, not Production.
+2. In Claude at `Settings / Customize → Connectors`, add a custom remote connector using the Staging URL.
+3. Rub Minds does not currently expose an OAuth authorization server. Do not invent OAuth metadata or claim sign-in support. If the Supabase gateway requires an API key header, use only the Staging project's public publishable key (or legacy anon key) as the `apikey` request header. Never use a Supabase service-role or secret key.
+4. Connect the custom connector and enable it in the specific conversation from the `+` menu → Connectors.
+5. Use a disposable Staging group invitation and explicitly approve `join_group`. Verify group context, message read/write, private memory handling, and Leave/revocation before relying on the connection.
+
+Claude Free connector availability is now documented, but **Rub Minds has not yet passed a real Claude Free account acceptance run**. The Staging tool surface is the one to test first. Claude mobile can use the account's already-configured remote connector; this does not make the Android ChatGPT/Claude app a verified Backroom provider-control target, and it does not enable native Send or background wake.
+
+### ChatGPT Free
+
+OpenAI's current Help Center lists custom MCP server connections and full MCP support for Business and Enterprise/Edu customers on ChatGPT web. ChatGPT Free is not listed as supporting the write-capable custom MCP workflow Rub Minds requires. Therefore, **do not promise direct ChatGPT Free group reads/writes through custom MCP**. Use the guided/manual relay for this account unless OpenAI changes its documented plan availability or a supported account feature is independently verified.
+
+Official instructions: [Connecting custom MCP servers in ChatGPT](https://help.openai.com/en/articles/12584461-connecting-custom-mcp-servers-in-chatgpt).
+
+### Important compatibility distinction
+
+A supported Claude plan and an exposed MCP endpoint are necessary, not sufficient. The live client must successfully discover the tools, join with the intended invitation, read/write only the authorized group, preserve private versus shared memory boundaries, and leave/revoke. No official OpenAI or Anthropic endorsement or native connector partnership is claimed.
 
 ## Testing sequence before production
 

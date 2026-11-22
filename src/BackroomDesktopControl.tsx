@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent, type KeyboardEvent } from 'react';
 import { Monitor, Play, Power, RefreshCw, ShieldCheck, SquareTerminal, TextCursorInput } from 'lucide-react';
 import { supabase } from './supabase';
+import BackroomFrameAIConnector from './BackroomFrameAIConnector';
 import { buildScopedDeviceMessage, classifyDeviceResponse, validateDeviceSignal, queueIceCandidate, takeIceCandidates } from '../integrations/backroom/desktop-realtime-protocol.mjs';
 import { waitForIceGatheringComplete } from '../integrations/backroom/ice-gathering.mjs';
 import { validateTerminalExitedMessage } from '../integrations/backroom/terminal-pty-protocol.mjs';
@@ -700,6 +701,9 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
             </div>}
             {controlGranted&&<div className="br-desktop-caption">The drag overlay is mapped to the visible video content and Windows UI Automation resolves it to one exact editable field inside the selected app window. A unique nearby Send control may be discovered and rechecked locally; this is read-only and never invokes it. Draft typing has a separate local approval and never sends or presses Enter. Native Windows app Auto wake is not enabled yet; Off / On / Auto currently applies to managed browser composers only.</div>}
           </div>}
+          {screenSession ? <BackroomFrameAIConnector roomId={roomId} deviceId={deviceId}
+            runtimeSessionId={screenSession} surface="desktop_app" ready={videoReady && Boolean(selectedApp)}
+            unavailableReason={selectedApp ? "Wait for the selected app screen to become live." : "Select an installed app before requesting the screen frame; whole-monitor capture has no exact app identity."}/> : null}
           {(terminalSession||terminalPeerId)&&<div className="br-terminal-remote">
             <div className="br-terminal-remote-head"><SquareTerminal size={15}/> Native terminal · actual computer</div>
             <pre>{terminalText||'Waiting for terminal output…'}</pre>
@@ -715,6 +719,9 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
             </p>
             {!controlGranted&&terminalSession&&<button type="button" onClick={()=>void sendCommand('request_control',{sessionId:terminalSession,peerSessionId:terminalPeerId})}>Request terminal control</button>}
           </div>}
+          {terminalSession ? <BackroomFrameAIConnector roomId={roomId} deviceId={deviceId}
+            runtimeSessionId={terminalPeerId || terminalSession} surface="terminal" ready={Boolean(terminalSession)}
+            unavailableReason="Wait for the native terminal session to be approved and connected."/ > : null}
         </div>}
       </>
     }

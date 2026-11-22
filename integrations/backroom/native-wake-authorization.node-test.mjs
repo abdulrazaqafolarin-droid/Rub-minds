@@ -138,6 +138,7 @@ test('durable journal reservation happens before one-shot local native grant con
     jobId:'70000000-0000-4000-8000-000000000001',
     hostId:ids.hostId,bindingId:ids.bindingId,
     sessionDigest:'b'.repeat(64),targetId:ids.targetId,
+    providerConversationIdentityDigest:ids.providerConversationIdentityDigest,
   };
   const c=command();
   c.id='wake_'+journalRecord.jobId.replaceAll('-','');
@@ -155,6 +156,7 @@ test('duplicate persistent seal blocks native grant consumption',async()=>{
   const journalRecord={
     jobKey:'c'.repeat(64),jobId:'70000000-0000-4000-8000-000000000001',
     hostId:ids.hostId,bindingId:ids.bindingId,sessionDigest:'d'.repeat(64),targetId:ids.targetId,
+    providerConversationIdentityDigest:ids.providerConversationIdentityDigest,
   };
   let consumes=0;
   const original=f.authority.verify.bind(f.authority);
@@ -178,7 +180,8 @@ test('invalid journal scope or mismatched command never reaches the journal',asy
   await assert.rejects(reserveNativeWakeExecution({
     authority:f.authority,grantId:f.grant.grantId,journal,
     journalRecord:{jobKey:'a'.repeat(64),jobId:'70000000-0000-4000-8000-000000000001',
-      hostId:ids.hostId,bindingId:ids.bindingId,sessionDigest:'b'.repeat(64),targetId:ids.targetId},
+      hostId:ids.hostId,bindingId:ids.bindingId,sessionDigest:'b'.repeat(64),targetId:ids.targetId,
+      providerConversationIdentityDigest:ids.providerConversationIdentityDigest},
     command:command({targetId:'other'}),target,
   }),/journal scope/);
   assert.equal(calls,0);
