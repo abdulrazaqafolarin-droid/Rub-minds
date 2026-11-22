@@ -58,6 +58,7 @@ test("Device Frame refreshes visible device state without stale room overwrites"
 test("Backroom frame layout contract excludes simulated screens and separates permissions", async () => {
   const ux = await read("docs/BACKROOM_DEVICE_FRAME_UX.md");
   const devices = await read("src/BackroomDevicesApp.tsx");
+  const styles = await read("src/backroom-cloud.css");
   const android = await read("src/BackroomAndroidControl.tsx");
   assert.match(ux, /not a simulator/i);
   assert.match(ux, /screen share, touch, draft insertion and native Send remain separately authorized/i);
@@ -83,6 +84,7 @@ test("Device Frame renders the real live app surface without a decorative phone 
   assert.match(devices, /Original Android app screen/);
   assert.match(devices, /Original computer screen and terminal/);
   assert.doesNotMatch(devices, /br-cloud-phone|br-cloud-phone-notch|Selected apps/);
+  assert.doesNotMatch(styles, /\.br-cloud-phone(?:[\s.#:{,]|$)|\.br-cloud-app-row|\.br-cloud-app-icon|\.br-cloud-capabilities|\.br-cloud-unavailable/);
   assert.doesNotMatch(devices, /'phone'\s*\|\s*'desktop'\s*\|\s*'terminal'/);
   assert.match(devices, /No approved Android phone/);
 });
