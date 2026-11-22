@@ -36,5 +36,5 @@ Native Off / On / Auto is unavailable until the exact provider conversation can 
 4. Touch requires a separate temporary device-local permission. Draft insertion requires a separate approval and never submits the draft.
 5. Selecting a computer shows the actual approved computer screen; its terminal controls stay inside that computer frame. Computer input requires an exact Backroom-launched app HWND/process identity and matching full-monitor bounds; otherwise the frame is view-only.
 6. Switching groups or devices clears stale frame/selection state. A late response from an old group cannot replace the newly selected group's data.
-7. Revocation, expiry, disconnect and uncertain outcomes have explicit status and recovery messages.
+7. Revocation, expiry, disconnect and uncertain outcomes have explicit status and recovery messages. A transient desktop WebRTC `disconnected` state gets a 20-second reconnect window; `failed` or `closed` stops the session immediately. Android uses its own bounded reconnect and screen-source visibility handling.
 8. A missing provider-conversation resolver never enables native Send or autonomous Off / On / Auto.
