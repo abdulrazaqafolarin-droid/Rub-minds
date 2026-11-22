@@ -75,11 +75,21 @@ function isValidConversationPath(pathname, provider) {
   // Treat the provider's first route segment as the exact conversation ID.
   // Encoded separators, whitespace and control characters are not valid IDs:
   // accepting them could make a nested route look like a real conversation.
+  const hasUnsafeCharacter = Array.from(conversationId).some(character => {
+    const codePoint = character.codePointAt(0);
+    return character === "/" ||
+      character === "\\" ||
+      character === "?" ||
+      character === "#" ||
+      character.trim().length === 0 ||
+      codePoint <= 0x1f ||
+      (codePoint >= 0x7f && codePoint <= 0x9f);
+  });
   return conversationId.length > 0 &&
     conversationId.length <= 200 &&
     conversationId !== "." &&
     conversationId !== ".." &&
-    !/[\\s/\\\\?#\\u0000-\\u001f\\u007f]/u.test(conversationId);
+    !hasUnsafeCharacter;
 }
 
 function assertPage(page, provider) {
