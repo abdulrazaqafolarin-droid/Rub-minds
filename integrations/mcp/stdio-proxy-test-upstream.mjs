@@ -35,6 +35,7 @@ if (process.env.RUB_MINDS_STDIO_E2E_FIXTURE === "1") {
     const request = JSON.parse(String(init.body || "{}"));
     const method = request.method;
     let result;
+    let protocolError = null;
 
     if (method === "server/discover") {
       if (request.params?._meta?.["io.modelcontextprotocol/protocolVersion"] !== "2026-07-28") {
