@@ -14,7 +14,7 @@ test("official MCP client completes a terminal group and human-governed task wor
   const env = {
     ...process.env,
     RUB_MINDS_MCP_ENDPOINT: endpoint,
-    RUB_MINDS_MCP_API_KEY: "rub-minds-public-test-key",
+    RUB_MINDS_MCP_API_KEY: "sb_publishable_test_key",
     RUB_MINDS_STDIO_E2E_FIXTURE: "1",
     NODE_OPTIONS: [process.env.NODE_OPTIONS, "--import=" + fixture].filter(Boolean).join(" "),
   };
