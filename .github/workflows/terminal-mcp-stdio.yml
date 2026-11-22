@@ -118,16 +118,16 @@ jobs:
           cd "$RUNNER_TEMP/rub-minds-claude-workspace"
           git init -q
           claude --version
-          claude mcp add --scope user --transport stdio \
+          claude mcp add --scope user \
             --env "RUB_MINDS_MCP_ENDPOINT=https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp" \
             --env "RUB_MINDS_MCP_API_KEY=rub-minds-public-test-key" \
             --env "RUB_MINDS_STDIO_E2E_FIXTURE=1" \
             --env "NODE_OPTIONS=--import=$GITHUB_WORKSPACE/integrations/mcp/stdio-proxy-test-upstream.mjs" \
-            rub_minds -- node "$GITHUB_WORKSPACE/scripts/rub-minds-mcp.mjs" --stdio
+            --transport stdio rub_minds -- node "$GITHUB_WORKSPACE/scripts/rub-minds-mcp.mjs" --stdio
           output=""
           for attempt in 1 2 3 4 5; do
             output="$(claude mcp get rub_minds 2>&1 || true)"
-            printf 'Claude Code MCP check %s:\\n%s\\n' "$attempt" "$output"
+            printf 'Claude Code MCP check %s:\n%s\n' "$attempt" "$output"
             if grep -Fq "rub_minds" <<<"$output" && grep -Eqi "Connected|connected" <<<"$output"; then
               exit 0
             fi
