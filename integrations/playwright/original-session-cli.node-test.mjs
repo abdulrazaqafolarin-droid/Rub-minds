@@ -251,7 +251,7 @@ test("private joined-session store keys by provider and exact conversation and s
       sessionHandle: "c".repeat(64),
       participantId: ENV.RUB_MINDS_PARTICIPANT_ID,
       roomId: "550e8400-e29b-41d4-a716-446655440000",
-      expiresAt: "2026-11-20T00:00:00.000Z",
+      expiresAt: "2027-11-20T00:00:00.000Z",
     };
     await store.prepare();
     const releaseJoinLock = await store.acquireLock();
@@ -629,7 +629,7 @@ test("local runner explicitly redeems a Staging invite and binds the returned AI
       },
       joinInvite: async options => {
         joinedInput = options;
-        return { joined: true, sessionHandle, roomId, participantId, expiresAt: "2026-11-20T00:00:00.000Z" };
+        return { joined: true, sessionHandle, roomId, participantId, expiresAt: "2027-11-20T00:00:00.000Z" };
       },
       createAdapter: (_provider, { approval }) => ({
         async ask(_page, body, metadata) {
@@ -667,7 +667,7 @@ test("local runner explicitly redeems a Staging invite and binds the returned AI
     assert.equal(runtimeOptions.participantId, participantId);
     assert.match(joinedInput.joinRequestKey, /^[a-f0-9]{64}$/i);
     assert.equal(stateDependencies.readSavedPendingJoin(), null);
-    assert.deepEqual(stateDependencies.readSavedBinding(), { sessionHandle, participantId, roomId, expiresAt: "2026-11-20T00:00:00.000Z" });
+    assert.deepEqual(stateDependencies.readSavedBinding(), { sessionHandle, participantId, roomId, expiresAt: "2027-11-20T00:00:00.000Z" });
     assert.equal(stateDependencies.readJoinLockReleaseCount(), 1, "conversation lock is released after the runner exits");
     assert.equal(stats.providerInteractions, 1);
     assert.equal(stats.contextClosed, 1);
@@ -691,7 +691,7 @@ test("local runner reuses a verified saved join for the exact provider conversat
     sessionHandle,
     participantId,
     roomId,
-    expiresAt: "2026-11-20T00:00:00.000Z",
+    expiresAt: "2027-11-20T00:00:00.000Z",
   };
   const stateDependencies = makeRunnerStateDependencies({ participantId, roomId, savedBinding });
   const stats = { contextClosed: 0, runtimeStopped: 0, providerInteractions: 0 };

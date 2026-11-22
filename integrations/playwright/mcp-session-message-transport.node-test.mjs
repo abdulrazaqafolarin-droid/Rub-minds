@@ -47,7 +47,7 @@ test("redeems a Staging invitation through modern MCP with a returned opaque ses
       session_handle: sessionHandle,
       room_id: roomId,
       participant_id: participantId,
-      expires_at: "2026-11-20T00:00:00.000Z",
+      expires_at: "2027-11-20T00:00:00.000Z",
     } },
   }));
   const joined = await joinRubMindsInvite({
@@ -58,7 +58,7 @@ test("redeems a Staging invitation through modern MCP with a returned opaque ses
     fetchImpl: fake.fetch,
   });
   assert.deepEqual(joined, {
-    joined: true, sessionHandle, roomId, participantId, expiresAt: "2026-11-20T00:00:00.000Z",
+    joined: true, sessionHandle, roomId, participantId, expiresAt: "2027-11-20T00:00:00.000Z",
   });
   assert.equal(fake.requests.length, 1);
   const request = fake.requests[0];
@@ -98,7 +98,7 @@ test("retries an ambiguous modern join with the identical durable idempotency ke
         session_handle: sessionHandle,
         room_id: "550e8400-e29b-41d4-a716-446655440000",
         participant_id: "650e8400-e29b-41d4-a716-446655440000",
-        expires_at: "2026-11-20T00:00:00.000Z",
+        expires_at: "2027-11-20T00:00:00.000Z",
       } },
     });
   };
@@ -148,7 +148,7 @@ test("explicit local loopback testing is opt-in and cannot redirect invite redem
       session_handle: sessionHandle,
       room_id: "550e8400-e29b-41d4-a716-446655440000",
       participant_id: "650e8400-e29b-41d4-a716-446655440000",
-      expires_at: "2026-11-20T00:00:00.000Z",
+      expires_at: "2027-11-20T00:00:00.000Z",
     } },
   }));
   const input = {
@@ -177,7 +177,7 @@ test("rejects malformed modern join identity without exposing opaque bearer hand
       session_handle: secret,
       room_id: "not-a-uuid",
       participant_id: "650e8400-e29b-41d4-a716-446655440000",
-      expires_at: "2026-11-20T00:00:00.000Z",
+      expires_at: "2027-11-20T00:00:00.000Z",
     } },
   }));
   await assert.rejects(
