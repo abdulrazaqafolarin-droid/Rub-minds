@@ -4,7 +4,7 @@ import subprocess
 import unittest
 from unittest.mock import Mock
 
-from capture_provider_conversation import capture_snapshot, resolve_device_serial
+from capture_provider_conversation import capture_provider_sequence, capture_snapshot, resolve_device_serial
 
 
 class AdbCaptureTests(unittest.TestCase):
@@ -93,9 +93,68 @@ class AdbCaptureTests(unittest.TestCase):
                 runner=runner,
             )
 
-    def test_rejects_unexpected_remote_path(self) -> None:
-        with self.assertRaisesRegex(ValueError, "path is invalid"):
-            capture_snapshot("phone-1", "/sdcard/private.xml", runner=Mock())
+    def test_provider_sequence_captures_a_b_a_and_deletes_every_remote_snapshot(self) -> None:
+        def xml(title: str) -> bytes:
+            return (f'''<?xml version="1.0" encoding="UTF-8"?>
+<hierarchy rotation="0">
+  <node index="0" text="" resource-id="" class="android.widget.FrameLayout"
+    package="com.openai.chatgpt" bounds="[0,0][1080,2400]" visible-to-user="true">
+    <node index="0" text="{title}" content-desc="Selected conversation: {title}"
+      resource-id="com.openai.chatgpt:id/conversation_title"
+      class="android.widget.TextView" package="com.openai.chatgpt"
+      bounds="[20,80][900,170]" visible-to-user="true" />
+    <node index="1" text="" resource-id="com.openai.chatgpt:id/prompt"
+      class="android.widget.EditText" package="com.openai.chatgpt"
+      bounds="[20,2100][900,2280]" visible-to-user="true" enabled="true" editable="true" />
+  </node>
+</hierarchy>''').encode("utf-8")
+
+        snapshots = [xml("Disposable chat A"), xml("Disposable chat B"), xml("Disposable chat A")]
+        responses = [subprocess.CompletedProcess(["adb"], 0,
+            stdout="List of devices attached\\nphone-1 device\\n", stderr="")]
+        for snapshot in snapshots:
+            responses.extend([
+                subprocess.CompletedProcess(["adb"], 0, stdout="UI hierarchy dumped", stderr=""),
+                subprocess.CompletedProcess(["adb"], 0, stdout=snapshot, stderr=b""),
+                subprocess.CompletedProcess(["adb"], 0, stdout="", stderr=""),
+            ])
+        runner = Mock(side_effect=responses)
+        prompts: list[str] = []
+
+        report = capture_provider_sequence(
+            "com.openai.chatgpt",
+            serial="phone-1",
+            input_fn=lambda prompt: prompts.append(prompt) or "",
+            runner=runner,
+        )
+
+        self.assertEqual(len(prompts), 3)
+        self.assertIn("[A1]", prompts[0])
+        self.assertIn("[B]", prompts[1])
+        self.assertIn("[A2]", prompts[2])
+        self.assertTrue(report["repeatable_distinct_header_signal"])
+        self.assertFalse(report["stable_provider_conversation_id_exposed"])
+        self.assertFalse(report["native_send_enabled"])
+        self.assertNotIn("Disposable chat A", str(report))
+        self.assertNotIn("Disposable chat B", str(report))
+        self.assertEqual(runner.call_count, 10)
+
+        commands = [call.args[0] for call in runner.call_args_list]
+        cleanup_commands = [command for command in commands if command[2:5] == ["shell", "rm", "-f"]]
+        self.assertEqual(len(cleanup_commands), 3)
+        self.assertEqual(len({command[-1] for command in cleanup_commands}), 1)
+
+    def test_invalid_provider_is_rejected_before_adb_or_prompt(self) -> None:
+        runner = Mock()
+        prompts: list[str] = []
+        with self.assertRaisesRegex(ValueError, "Only the official"):
+            capture_provider_sequence(
+                "com.example.fake",
+                input_fn=lambda prompt: prompts.append(prompt) or "",
+                runner=runner,
+            )
+        runner.assert_not_called()
+        self.assertEqual(prompts, [])
 
 
 if __name__ == "__main__":
