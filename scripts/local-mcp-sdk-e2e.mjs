@@ -692,6 +692,269 @@ try {
   console.log("SAFE_MCP_E2E_STAGE: revoked binding no longer appears in status");
   console.log("SAFE_MCP_E2E_STAGE: frame challenge, status and revoke owner boundaries passed");
 
+  // Cross-surface continuity: retain the same joined MCP participant and exact
+  // session handle while moving its owner-approved frame association from
+  // desktop -> Android -> terminal. Each previous binding is revoked first.
+  const firstDesktopStatusRequest = {
+    deviceId: frameDeviceId, roomId: room.id, runtimeSessionId: frameRuntimeId,
+  };
+  const firstDesktopStatus = await backroomEdge(
+    "device-frame/binding-status", firstDesktopStatusRequest,
+  );
+  assert.equal(firstDesktopStatus.status, 200);
+  assert.equal(firstDesktopStatus.body.binding?.participant_id, one.participant_id);
+  const firstDesktopRevoke = await backroomEdge("device-frame/binding-revoke", {
+    ...firstDesktopStatusRequest,
+    bindingId: firstDesktopStatus.body.binding.id,
+  });
+  assert.equal(firstDesktopRevoke.status, 200);
+  assert.equal(firstDesktopRevoke.body.revoked, true);
+  console.log("SAFE_MCP_E2E_STAGE: first AI desktop frame detached before cross-surface rebind");
+
+  // Enrol a disposable Android device through the same public device API that
+  // the handset uses. Credentials and fixtures exist only in local Supabase.
+  const androidPairing = await backroomEdge("pair/create", {
+    roomId: room.id,
+    deviceLabel: "CI Android cross-surface frame",
+  });
+  assert.equal(androidPairing.status, 201,
+    "owner could not create disposable Android pairing: " + JSON.stringify(androidPairing.body));
+  assert.ok(androidPairing.body?.pairingCode);
+  const androidDeviceId = randomUUID();
+  const androidDeviceToken = randomBytes(32).toString("hex");
+  const androidClaim = await backroomEdge("pair/claim", {
+    pairingCode: androidPairing.body.pairingCode,
+    deviceId: androidDeviceId,
+    deviceLabel: "CI Android cross-surface frame",
+    osVersion: "14-CI",
+    appVersion: "0.3.0",
+  }, androidDeviceToken);
+  assert.equal(androidClaim.status, 201,
+    "disposable Android device could not claim pairing: " + JSON.stringify(androidClaim.body));
+  assert.equal(androidClaim.body.status, "pending");
+  assert.equal(androidClaim.body.ownerApprovalRequired, true);
+
+  const androidApproval = await backroomEdge("owner/approve", {
+    deviceId: androidDeviceId, roomId: room.id,
+  });
+  assert.equal(androidApproval.status, 200,
+    "owner could not approve disposable Android device: " + JSON.stringify(androidApproval.body));
+  assert.equal(androidApproval.body.status, "active");
+
+  const androidPackage = "com.rubminds.ciframeprovider";
+  const androidSigner = "b".repeat(64);
+  const androidInventory = await backroomEdge("device/inventory", {
+    apps: [{
+      packageName: androidPackage,
+      label: "CI Provider App",
+      signingCertificateSha256: androidSigner,
+      versionName: "1.0.0",
+      draftInsertionAllowed: false,
+    }],
+  }, androidDeviceToken);
+  assert.equal(androidInventory.status, 200,
+    "disposable Android app inventory was rejected: " + JSON.stringify(androidInventory.body));
+  assert.equal(androidInventory.body.synced, 1);
+
+  const androidRuntimeId = randomUUID();
+  await request("/rest/v1/backroom_desktop_sessions", {
+    method: "POST",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      session_id: androidRuntimeId,
+      device_id: androidDeviceId,
+      room_id: room.id,
+      requested_by: owner.id,
+      session_type: "screen",
+      status: "active",
+      expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      target_app_id: androidPackage,
+      target_app_fingerprint: androidSigner,
+    }),
+  });
+
+  const androidFrameRequest = {
+    deviceId: androidDeviceId,
+    roomId: room.id,
+    requestId: randomUUID(),
+    issuedAt: Date.now(),
+    runtimeSessionId: androidRuntimeId,
+    participantId: one.participant_id,
+    surface: "android_app",
+  };
+  const androidChallenge = await backroomEdge(
+    "device-frame/binding-challenge", androidFrameRequest,
+  );
+  assert.equal(androidChallenge.status, 201,
+    "owner could not issue Android frame challenge: " + JSON.stringify(androidChallenge.body));
+  assert.equal(androidChallenge.body.participantId, one.participant_id);
+
+  const wrongAndroidSessionBind = await second.callTool({
+    name: "bind_device_frame",
+    arguments: {
+      session_handle: two.session_handle,
+      challenge_id: androidChallenge.body.challengeId,
+      nonce: androidChallenge.body.nonce,
+      confirm_bind: true,
+    },
+  });
+  assert.equal(wrongAndroidSessionBind.isError, true,
+    "Android frame challenge must reject a different joined AI session");
+
+  const androidFrameBind = await first.callTool({
+    name: "bind_device_frame",
+    arguments: {
+      session_handle: one.session_handle,
+      challenge_id: androidChallenge.body.challengeId,
+      nonce: androidChallenge.body.nonce,
+      confirm_bind: true,
+    },
+  });
+  assert.notEqual(androidFrameBind.isError, true,
+    "the original joined AI session could not bind to the Android frame: " + JSON.stringify(androidFrameBind));
+  assert.equal(androidFrameBind.structuredContent?.bound, true);
+  assert.equal(androidFrameBind.structuredContent?.participant_id, one.participant_id);
+  assert.equal(androidFrameBind.structuredContent?.surface, "android_app");
+  assert.equal(androidFrameBind.structuredContent?.capabilities?.group_collaboration, true);
+  assert.equal(androidFrameBind.structuredContent?.capabilities?.app_control, false);
+  assert.equal(androidFrameBind.structuredContent?.capabilities?.native_send, false);
+  assert.equal(androidFrameBind.structuredContent?.capabilities?.automatic_wake, false);
+
+  const androidFrameBindRetry = await first.callTool({
+    name: "bind_device_frame",
+    arguments: {
+      session_handle: one.session_handle,
+      challenge_id: androidChallenge.body.challengeId,
+      nonce: androidChallenge.body.nonce,
+      confirm_bind: true,
+    },
+  });
+  assert.notEqual(androidFrameBindRetry.isError, true);
+  assert.equal(androidFrameBindRetry.structuredContent?.binding_id,
+    androidFrameBind.structuredContent?.binding_id);
+  assert.equal(androidFrameBindRetry.structuredContent?.replayed, true);
+
+  const androidStatusRequest = {
+    deviceId: androidDeviceId, roomId: room.id, runtimeSessionId: androidRuntimeId,
+  };
+  const androidBindingStatus = await backroomEdge(
+    "device-frame/binding-status", androidStatusRequest,
+  );
+  assert.equal(androidBindingStatus.status, 200);
+  assert.equal(androidBindingStatus.body.binding?.participant_id, one.participant_id);
+  assert.equal(androidBindingStatus.body.binding?.surface, "android_app");
+  const androidBindingRevoke = await backroomEdge("device-frame/binding-revoke", {
+    ...androidStatusRequest,
+    bindingId: androidBindingStatus.body.binding.id,
+  });
+  assert.equal(androidBindingRevoke.status, 200);
+  assert.equal(androidBindingRevoke.body.revoked, true);
+  const androidAfterRevoke = await backroomEdge(
+    "device-frame/binding-status", androidStatusRequest,
+  );
+  assert.equal(androidAfterRevoke.status, 200);
+  assert.equal(androidAfterRevoke.body.binding, null);
+  console.log("SAFE_MCP_E2E_STAGE: same AI MCP session attached to and detached from an Android app frame");
+
+  // Attach that same AI participant/session to a terminal PTY runtime. A
+  // terminal frame is a collaboration association, not a provider composer;
+  // it receives no native Send or automatic wake capability.
+  const terminalRuntimeId = randomUUID();
+  await request("/rest/v1/backroom_desktop_sessions", {
+    method: "POST",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      session_id: terminalRuntimeId,
+      device_id: frameDeviceTwoId,
+      room_id: room.id,
+      requested_by: owner.id,
+      session_type: "terminal",
+      status: "active",
+      expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    }),
+  });
+  const terminalFrameRequest = {
+    deviceId: frameDeviceTwoId,
+    roomId: room.id,
+    requestId: randomUUID(),
+    issuedAt: Date.now(),
+    runtimeSessionId: terminalRuntimeId,
+    participantId: one.participant_id,
+    surface: "terminal",
+  };
+  const terminalChallenge = await backroomEdge(
+    "device-frame/binding-challenge", terminalFrameRequest,
+  );
+  assert.equal(terminalChallenge.status, 201,
+    "owner could not issue terminal frame challenge: " + JSON.stringify(terminalChallenge.body));
+  assert.equal(terminalChallenge.body.participantId, one.participant_id);
+
+  const wrongTerminalSessionBind = await second.callTool({
+    name: "bind_device_frame",
+    arguments: {
+      session_handle: two.session_handle,
+      challenge_id: terminalChallenge.body.challengeId,
+      nonce: terminalChallenge.body.nonce,
+      confirm_bind: true,
+    },
+  });
+  assert.equal(wrongTerminalSessionBind.isError, true,
+    "terminal frame challenge must reject a different joined AI session");
+
+  const terminalFrameBind = await first.callTool({
+    name: "bind_device_frame",
+    arguments: {
+      session_handle: one.session_handle,
+      challenge_id: terminalChallenge.body.challengeId,
+      nonce: terminalChallenge.body.nonce,
+      confirm_bind: true,
+    },
+  });
+  assert.notEqual(terminalFrameBind.isError, true,
+    "the original joined AI session could not bind to the terminal frame: " + JSON.stringify(terminalFrameBind));
+  assert.equal(terminalFrameBind.structuredContent?.bound, true);
+  assert.equal(terminalFrameBind.structuredContent?.participant_id, one.participant_id);
+  assert.equal(terminalFrameBind.structuredContent?.surface, "terminal");
+  assert.equal(terminalFrameBind.structuredContent?.capabilities?.group_collaboration, true);
+  assert.equal(terminalFrameBind.structuredContent?.capabilities?.app_control, false);
+  assert.equal(terminalFrameBind.structuredContent?.capabilities?.native_send, false);
+  assert.equal(terminalFrameBind.structuredContent?.capabilities?.automatic_wake, false);
+
+  const terminalStatusRequest = {
+    deviceId: frameDeviceTwoId, roomId: room.id, runtimeSessionId: terminalRuntimeId,
+  };
+  const terminalStatus = await backroomEdge(
+    "device-frame/binding-status", terminalStatusRequest,
+  );
+  assert.equal(terminalStatus.status, 200);
+  assert.equal(terminalStatus.body.binding?.participant_id, one.participant_id);
+  assert.equal(terminalStatus.body.binding?.surface, "terminal");
+  const terminalRevoke = await backroomEdge("device-frame/binding-revoke", {
+    ...terminalStatusRequest,
+    bindingId: terminalStatus.body.binding.id,
+  });
+  assert.equal(terminalRevoke.status, 200);
+  assert.equal(terminalRevoke.body.revoked, true);
+
+  const stillJoinedAfterSurfaceChanges = await first.callTool({
+    name: "read_group_messages",
+    arguments: { session_handle: one.session_handle },
+  });
+  assert.notEqual(stillJoinedAfterSurfaceChanges.isError, true,
+    "changing frame associations must not replace or revoke the original AI group session");
+
+  const participantRows = await request(
+    "/rest/v1/participants?select=id,kind&room_id=eq." + room.id,
+  );
+  const aiParticipantIds = participantRows
+    .filter(row => ["original_session", "model", "external_agent"].includes(row.kind))
+    .map(row => row.id)
+    .sort();
+  assert.deepEqual(aiParticipantIds, [one.participant_id, two.participant_id].sort(),
+    "moving one joined AI session across surfaces must not create another group participant");
+  console.log("SAFE_MCP_E2E_STAGE: desktop -> Android -> terminal used one unchanged AI participant/MCP session; group tools remained available");
+
+
 
 
   // Create a real baseline message and use its exact ID + timestamp as the
