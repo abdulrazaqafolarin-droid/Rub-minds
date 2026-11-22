@@ -1,12 +1,18 @@
+import { getModernMcpTools } from "./protocol.mjs";
+
 const ENDPOINT = "https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp";
 const SESSION_HANDLE = "a".repeat(64);
-const ROOM_ID = "room-stdio-fixture";
-const PARTICIPANT_ID = "participant-stdio-fixture";
+const ROOM_ID = "11111111-1111-4111-8111-111111111111";
+const PARTICIPANT_ID = "22222222-2222-4222-8222-222222222222";
+const PROPOSED_TASK_ID = "33333333-3333-4333-8333-333333333333";
+const ASSIGNED_TASK_ID = "44444444-4444-4444-8444-444444444444";
+const MESSAGE_ID = "55555555-5555-4555-8555-555555555555";
+const SENT_MESSAGE_ID = "66666666-6666-4666-8666-666666666666";
 let proposedTask = null;
 let assignedTaskStatus = "assigned";
-  let joinedActive = false;
+let joinedActive = false;
 const assignedTask = {
-  id: "task-human-assigned-fixture",
+  id: ASSIGNED_TASK_ID,
   room_id: ROOM_ID,
   title: "Human-assigned acceptance task",
   status: "assigned",
@@ -43,25 +49,17 @@ if (process.env.RUB_MINDS_STDIO_E2E_FIXTURE === "1") {
     } else if (method === "tools/list") {
       result = {
         resultType: "complete",
-        tools: [
-          { name: "join_group", description: "Join an invited Rub Minds group after explicit confirmation.", inputSchema: { type: "object", properties: { invite_token: { type: "string" }, agent_label: { type: "string" }, confirm_join: { type: "boolean" }, join_request_key: { type: "string" } }, required: ["invite_token", "agent_label", "confirm_join", "join_request_key"] } },
-          { name: "leave_group", description: "Leave the joined Rub Minds group and revoke this AI session.", inputSchema: { type: "object", properties: { session_handle: { type: "string" }, confirm_leave: { type: "boolean" } }, required: ["session_handle", "confirm_leave"] } },
-          { name: "read_group_messages", description: "Read messages from the joined group.", inputSchema: { type: "object", properties: { session_handle: { type: "string" } }, required: ["session_handle"] } },
-          { name: "send_group_message", description: "Send a message to the joined group.", inputSchema: { type: "object", properties: { session_handle: { type: "string" }, body: { type: "string" } }, required: ["session_handle", "body"] } },
-          { name: "propose_group_task", description: "Propose a task for human review and assignment.", inputSchema: { type: "object", properties: { session_handle: { type: "string" }, title: { type: "string" }, description: { type: "string" }, expected_output: { type: "string" }, acceptance_criteria: { type: "array", items: { type: "string" } }, priority: { type: "integer" }, idempotency_key: { type: "string" } }, required: ["session_handle", "title", "idempotency_key"] } },
-          { name: "list_group_tasks", description: "Read the group task board.", inputSchema: { type: "object", properties: { session_handle: { type: "string" } }, required: ["session_handle"] } },
-          { name: "read_group_task", description: "Read a task and its evidence.", inputSchema: { type: "object", properties: { session_handle: { type: "string" }, task_id: { type: "string" } }, required: ["session_handle", "task_id"] } },
-          { name: "claim_group_task", description: "Claim an assigned, eligible task.", inputSchema: { type: "object", properties: { session_handle: { type: "string" }, task_id: { type: "string" } }, required: ["session_handle", "task_id"] } },
-          { name: "submit_group_task_result", description: "Submit a completed assigned task for review.", inputSchema: { type: "object", properties: { session_handle: { type: "string" }, task_id: { type: "string" }, result: { type: "string" }, submission_key: { type: "string" } }, required: ["session_handle", "task_id", "result", "submission_key"] } },
-        ],
+        tools: getModernMcpTools(),
       };
     } else if (method === "tools/call") {
       const name = request.params?.name;
       const args = request.params?.arguments || {};
       if (name === "join_group") {
-        if (args.confirm_join !== true || !args.invite_token || !args.agent_label || !/^[a-f0-9]{64}$/i.test(args.join_request_key || "")) {
+        if (args.confirm_join !== true) {
+          protocolError = { code: -32602, message: "Explicit confirmation is required to join this group." };
+        } else if (!args.invite_token || !args.agent_label || !/^[a-f0-9]{64}$/i.test(args.join_request_key || "")) {
           result = {
-            content: [{ type: "text", text: "Explicit join confirmation and valid invitation fields are required." }],
+            content: [{ type: "text", text: "Valid invitation fields are required." }],
             structuredContent: { joined: false },
             isError: true,
           };
@@ -80,10 +78,12 @@ if (process.env.RUB_MINDS_STDIO_E2E_FIXTURE === "1") {
           };
         }
       } else if (name === "leave_group") {
-        if (!joinedActive || args.confirm_leave !== true) {
+        if (args.confirm_leave !== true) {
+          protocolError = { code: -32602, message: "Explicit confirmation is required to leave and revoke this group session." };
+        } else if (!joinedActive) {
           result = {
-            content: [{ type: "text", text: "Explicit confirmation is required to leave an active group session." }],
-            structuredContent: { left: false },
+            content: [{ type: "text", text: "This group session has already been revoked." }],
+            structuredContent: { left: false, already_terminated: true },
             isError: true,
           };
         } else {
@@ -105,7 +105,7 @@ if (process.env.RUB_MINDS_STDIO_E2E_FIXTURE === "1") {
           content: [{ type: "text", text: "Returned one message from the mocked Rub Minds group." }],
           structuredContent: {
             room_id: ROOM_ID,
-            messages: [{ id: "message-stdio-fixture", sender_name: "Group member", body: "Please inspect the Windows device-frame identity gate." }],
+            messages: [{ id: MESSAGE_ID, sender_name: "Group member", body: "Please inspect the Windows device-frame identity gate." }],
             forwarded_session_handle: args.session_handle,
           },
           isError: false,
@@ -115,14 +115,14 @@ if (process.env.RUB_MINDS_STDIO_E2E_FIXTURE === "1") {
           content: [{ type: "text", text: "Group message sent." }],
           structuredContent: {
             sent: true,
-            message: { id: "message-sent-stdio-fixture", body: args.body },
+            message: { id: SENT_MESSAGE_ID, body: args.body },
             forwarded_session_handle: args.session_handle,
           },
           isError: false,
         };
       } else if (name === "propose_group_task") {
         proposedTask = {
-          id: "task-proposed-stdio-fixture",
+          id: PROPOSED_TASK_ID,
           title: args.title,
           description: args.description || "",
           expected_output: args.expected_output || "",
@@ -197,7 +197,10 @@ if (process.env.RUB_MINDS_STDIO_E2E_FIXTURE === "1") {
       throw new Error("Unexpected upstream MCP method: " + String(method));
     }
 
-    return new Response(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }), {
+    const responseBody = protocolError
+      ? { jsonrpc: "2.0", id: request.id, error: protocolError }
+      : { jsonrpc: "2.0", id: request.id, result };
+    return new Response(JSON.stringify(responseBody), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
