@@ -184,7 +184,7 @@ test("declared oversized upstream responses are rejected before body reads", asy
 });
 
 test("upstream HTTP and JSON-RPC failures never leak credentials into the response", async () => {
-  const apiKey = "DO_NOT_LEAK_THIS_KEY";
+  const apiKey = "sb_publishable_DO_NOT_LEAK_THIS_KEY";
   const credential = "DO_NOT_LEAK_INVITE_TOKEN";
   const proxy = createMcpStdioProxy({
     endpoint: ENDPOINT,
