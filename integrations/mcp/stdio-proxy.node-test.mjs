@@ -18,7 +18,24 @@ function upstream(fetchImpl) {
         instructions: "Use invitations only with explicit approval.",
       };
     } else if (request.method === "tools/list") {
-      result = { resultType: "complete", tools: [{ name: "join_group", inputSchema: { type: "object" } }] };
+      result = {
+        resultType: "complete",
+        tools: [
+          { name: "join_group", inputSchema: { type: "object" } },
+          {
+            name: "bind_device_frame",
+            inputSchema: {
+              type: "object",
+              properties: {
+                challenge_id: { type: "string", format: "uuid" },
+                nonce: { type: "string", pattern: "^[a-fA-F0-9]{64}$" },
+                confirm_bind: { type: "boolean", const: true },
+              },
+              required: ["challenge_id", "nonce", "confirm_bind"],
+            },
+          },
+        ],
+      };
     } else {
       result = { content: [{ type: "text", text: JSON.stringify({ session_handle: "a".repeat(64) }) }] };
     }
@@ -95,6 +112,31 @@ test("tool discovery and calls are forwarded without mutating the existing MCP c
   assert.equal(mock.requests[1].init.headers["Mcp-Name"], "join_group");
   assert.equal(mock.requests[1].init.headers.apikey, "sb_publishable_test_key");
   assert.equal(mock.requests.every(item => item.init.redirect === "error" && item.init.cache === "no-store"), true);
+});
+
+test("terminal clients receive and forward the owner-confirmed Device Frame binding tool", async () => {
+  const mock = upstream();
+  const proxy = createMcpStdioProxy({ endpoint: ENDPOINT, fetchImpl: mock.fetch });
+  const listed = await proxy.handle({ jsonrpc: "2.0", id: "device-tools", method: "tools/list" });
+  const tool = listed.result.tools.find(item => item.name === "bind_device_frame");
+  assert.ok(tool, "the deployed Device Frame binding tool must remain visible through stdio");
+  assert.deepEqual(tool.inputSchema.required, ["challenge_id", "nonce", "confirm_bind"]);
+
+  const arguments_ = {
+    challenge_id: "123e4567-e89b-42d3-a456-426614174000",
+    nonce: "a".repeat(64),
+    confirm_bind: true,
+  };
+  const called = await proxy.handle({
+    jsonrpc: "2.0",
+    id: "bind-frame",
+    method: "tools/call",
+    params: { name: "bind_device_frame", arguments: arguments_ },
+  });
+  assert.equal(called.result.content[0].type, "text");
+  assert.equal(mock.requests[1].body.params.name, "bind_device_frame");
+  assert.deepEqual(mock.requests[1].body.params.arguments, arguments_);
+  assert.equal(mock.requests[1].init.headers["Mcp-Name"], "bind_device_frame");
 });
 
 test("notifications are ignored and malformed or unsupported calls fail safely", async () => {

@@ -393,7 +393,7 @@ export function createBackroomHostServer({
         }
         if (request.method === "POST" && [
           "/v1/browser/select", "/v1/browser/select/cancel", "/v1/browser/select-region", "/v1/browser/view/grant", "/v1/browser/view/revoke", "/v1/browser/targets", "/v1/browser/targets/unregister", "/v1/browser/draft",
-          "/v1/browser/wake/grants", "/v1/browser/wake/grants/revoke", "/v1/browser/wake",
+          "/v1/browser/wake/bindings/revoke", "/v1/browser/wake/grants", "/v1/browser/wake/grants/revoke", "/v1/browser/wake",
         ].includes(url.pathname)) {
           if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
             writeJson(response, 415, { error: "application_json_required" }, cors);
@@ -496,7 +496,6 @@ export function createBackroomHostServer({
             return;
           }
           if(url.pathname==="/v1/browser/wake/bindings/revoke"){
-            const input=await readJson(request);
             if(typeof input.bindingId!=="string"||!/^[a-f0-9-]{36}$/i.test(input.bindingId)||
               Object.keys(input).some(key=>key!=="bindingId")){
               writeJson(response,400,{error:"invalid_wake_binding_scope"},cors);return;

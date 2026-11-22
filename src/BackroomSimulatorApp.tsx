@@ -389,10 +389,10 @@ export default function BackroomApp() {
     target.id===selectedBrowserTarget && target.roomId===room?.id &&
     target.pageId===current?.pageId);
   const selectedWakeParticipationMode = participationModeForInteractionMode(selectedWakeMode);
-  const wakeBindingNeedsRebind = Boolean(hostedWakeBinding?.roomId===room?.id && selectedWakeParticipationMode &&
+  const wakeBindingNeedsRebind = Boolean(hostedWakeBinding && hostedWakeBinding.roomId===room?.id && selectedWakeParticipationMode &&
     needsWakeBindingRebind(selectedWakeMode, hostedWakeBinding.participationMode));
-  const frameWakeBinding = selectedFrameTarget && hostedWakeBinding?.roomId===room?.id &&
-    hostedWakeBinding.targetId===selectedFrameTarget.id ? hostedWakeBinding : null;
+  const frameWakeBinding = selectedFrameTarget && hostedWakeBinding &&
+    hostedWakeBinding.roomId===room?.id && hostedWakeBinding.targetId===selectedFrameTarget.id ? hostedWakeBinding : null;
   const frameWakeBindingState: FrameWakeBindingState = !wakeBindingStatusKnown ? 'unknown'
     : hostedWakeBinding && hostedWakeBinding.roomId!==room?.id ? 'other-group'
     : selectedBrowserTarget && !selectedFrameTarget ? 'other-target'
@@ -567,7 +567,7 @@ export default function BackroomApp() {
       let localStopConfirmed=false;
       try{
         if(hostToken){
-          const local=await hostApi<{revoked:boolean}>('/v1/browser/wake/bindings/revoke',{
+          const local=await hostApi<{revoked:boolean;localPollingStopped:boolean}>('/v1/browser/wake/bindings/revoke',{
             method:'POST',body:{bindingId:binding.bindingId}
           });
           localStopConfirmed=local.localPollingStopped===true;
@@ -893,30 +893,6 @@ export default function BackroomApp() {
     }
     setSelectedWakeMode(nextMode);
     setHostMessage(nextMode.toUpperCase() + ' selected. Register or arm the exact composer in the displayed browser frame to activate this mode.');
-  }
-
-  async function revokeHostedWake() {
-    const binding=hostedWakeBinding;
-    if(!binding||!hostedWakeGrantId)return;
-    setHostBusy(true);
-    try{
-      const result=await hostApi<{
-        revoked:boolean;localPollingStopped:boolean;
-        remoteDeactivationConfirmed?:boolean;remoteDeactivationPending?:boolean
-      }>('/v1/browser/wake/grants/revoke',{method:'POST',body:{
-        grantId:hostedWakeGrantId,targetId:binding.targetId,roomId:binding.roomId,bindingId:binding.bindingId
-      }});
-      if(result.revoked!==true || result.localPollingStopped!==true)
-        throw new Error('The local wake grant could not be confirmed revoked.');
-      setHostedWakeGrantId('');
-      setHostedWakeBinding(previous=>previous?{...previous,wakeEnabled:false}:previous);
-      setHostMessage(result.remoteDeactivationConfirmed===true
-        ? 'Wake grant revoked; local polling stopped and hosted consent deactivation confirmed.'
-        : 'Wake grant revoked locally and polling stopped, but the server did not confirm remote deactivation. The old consent expires within 24 hours. For immediate server-side cancellation, revoke this input binding.');
-
-    }catch(error){
-      setHostMessage(error instanceof Error?error.message:'Could not confirm wake revocation. Use Emergency Stop.');
-    }finally{setHostBusy(false);}
   }
 
   async function checkLocalHost() {

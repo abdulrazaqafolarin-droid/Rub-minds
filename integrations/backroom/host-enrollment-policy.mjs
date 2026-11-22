@@ -18,6 +18,7 @@ function uuid(value,name){if(typeof value!=='string'||!UUID.test(value))throw ne
 export function validateBindingStatusQuery(raw){
  const v=object(raw);
  keys(v,['roomId','participantId','sessionDigest']);
+ /** @type {{roomId:string;participantId?:string;sessionDigest?:string}} */
  const result={roomId:uuid(v.roomId,'roomId')};
  if((v.participantId===undefined)!==(v.sessionDigest===undefined))
   throw new TypeError('participantId and sessionDigest must be supplied together');
@@ -47,6 +48,12 @@ export function validatePendingWakeBinding(raw){
  if(providerConversationIdentityDigest!=null &&
   (typeof providerConversationIdentityDigest!=='string'||!HEX64.test(providerConversationIdentityDigest)))
   throw new TypeError('Invalid providerConversationIdentityDigest');
+ /** @type {{
+  roomId:string;participantId:string;hostId:string;sessionDigest:string;
+  spaceId:string;sessionId:string;targetId:string;targetIdentityFingerprint:string;
+  providerConversationIdentityDigest?:string;targetRevision:number;surface:string;
+  locatorKind:string;locatorValue:string;participationMode:string;maxWakesPerMinute:number;
+ }} */
  const result={
   roomId:uuid(v.roomId,'roomId'),participantId:uuid(v.participantId,'participantId'),
   hostId:uuid(v.hostId,'hostId'),

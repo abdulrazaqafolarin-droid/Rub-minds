@@ -2,7 +2,7 @@
 
 **Status:** source-branch implementation; not merged, deployed or live-provider accepted.
 
-The bridge lets a local MCP-compatible terminal agent access Rub Minds' existing group, memory and task tools. It connects directly to the approved Rub Minds Staging MCP endpoint over HTTPS. It does **not** require a browser host, open a network port, create a second group/message/task database, or run as an always-on service.
+The bridge lets a local MCP-compatible terminal agent access Rub Minds' existing group, memory, task and (when deployed on Staging) Device Frame binding tools. It connects directly to the approved Rub Minds Staging MCP endpoint over HTTPS. It does **not** require a browser host, open a network port, create a second group/message/task database, simulate a device frame, or run as an always-on service.
 
 ## Run against Staging only
 
@@ -75,7 +75,21 @@ The tool catalog comes from the deployed Staging Edge Function. Depending on the
 - joining/leaving a group and reading group context/messages;
 - sending group messages;
 - explicit private/group session-memory operations;
-- proposing, reading, claiming, blocking and submitting group tasks.
+- proposing, reading, claiming, blocking and submitting group tasks;
+- attaching the already-joined AI participant to a human-selected live Device Frame with `bind_device_frame`.
+
+### Attach the same terminal AI session to a live Device Frame
+
+When the Staging MCP catalog includes `bind_device_frame`, it connects the existing joined AI participant to an actual live runtime selected by the human owner in Backroom:
+
+1. The terminal AI joins the intended Rub Minds group through `join_group`. That joined MCP session is the participant identity.
+2. The human owner selects the exact live terminal/runtime frame and issues a one-time `challenge_id` and 64-character hexadecimal `nonce` for that participant and session.
+3. The same joined MCP client calls `bind_device_frame` with `challenge_id`, `nonce` and `confirm_bind: true`.
+4. The server checks the active MCP session and participant identity, verifies the owner-issued challenge and consumes it once. A different session, expired/revoked challenge or mismatched participant is rejected.
+
+This associates the existing participant with the selected live frame. It does not create a second AI participant, infer membership from an installed app or terminal inventory, or grant app control, native Send or automatic wake. Those are separate capabilities with separate identity and consent checks. A terminal binding describes the real selected runtime/process session; it is not a simulated phone or a decorative device bezel.
+
+The tool appears only when the deployed Staging Edge Function and its Device Frame migration expose it. The stdio proxy forwards the deployed catalog; it does not manufacture a missing binding tool.
 
 The bridge cannot expose source-only tools that are not present in the deployed Edge Function/schema. Apply Staging migrations and deploy updated Edge Functions only after their review and test gates pass. Production is explicitly rejected by endpoint validation.
 
@@ -85,7 +99,7 @@ Group task proposals remain unassigned until a human assigns them. AI participan
 
 - Only the approved HTTPS Staging Supabase function URL is accepted; Production, other hosts, query strings, fragments, URL credentials and redirects are rejected.
 - The bridge does not persist invitation tokens, AI credentials or session handles. Tool arguments are forwarded to the Staging service and are not printed to stdout/stderr.
-- Only a public Staging `apikey` is allowed. Service-role/secret keys are rejected before any network request.
+- Only a public Staging `apikey` is allowed: `sb_publishable_...` or a legacy JWT whose role is exactly `anon`. Secret, service-role, authenticated-user JWT and malformed/unknown key formats are rejected before any network request.
 - The full upstream request, including response-body reading, has a 30-second default deadline. JSON-RPC messages are bounded to 1.2 MB.
 - Writes still require explicit approval from the local AI tool host; `confirm_join` is an additional intent check, not a replacement for host approval.
 - This is foreground software. It is available while the terminal AI application and this process are running; it does not wake an idle ChatGPT/Claude consumer conversation.
@@ -94,7 +108,7 @@ Group task proposals remain unassigned until a human assigns them. AI participan
 
 ## Validation
 
-- `npm run test:mcp:stdio-proxy` runs an isolated mocked-upstream suite for protocol negotiation, string/numeric request IDs, exact headers, tool forwarding, endpoint pinning, service-role rejection, redirect/error handling, timeouts, request-size limits, response correlation and credential non-disclosure.
+- `npm run test:mcp:stdio-proxy` runs an isolated mocked-upstream suite for protocol negotiation, string/numeric request IDs, exact headers, tool forwarding, endpoint pinning, public-key role restrictions, redirect/error handling, streaming response-size limits, timeout liveness, response correlation and credential non-disclosure.
 - `npm run test:mcp:stdio-proxy:interop` launches the actual `rub-minds-mcp.mjs --stdio` child process and connects to it with the pinned official MCP TypeScript client. It verifies initialization, tool discovery, explicit group joining, message retrieval and sending, task proposal/list/read, rejection of a proposed-but-unassigned task claim, claim/submission of a separate fixture task that is already assigned to the test participant, explicit group leave, and denial of message reads after session revocation. A child-process-only fetch fixture intercepts the single pinned Staging URL and rejects every other network request. It does **not** call Staging or Production.
 - The GitHub Actions interoperability job installs the official MCP TypeScript client in its disposable runner and executes this test. It does not add that SDK to the runtime dependencies of Rub Minds.
 - A separate GitHub Actions job installs the **official OpenCode V2 CLI**, creates an isolated project-level `opencode.json` using the documented `mcp.servers` structure, then runs `opencode mcp list` until the server reports connected or the bounded retry window expires. The local bridge child process alone receives the isolated fetch fixture; the OpenCode CLI itself is not patched. No model provider or paid API key is used.

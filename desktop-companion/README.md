@@ -43,6 +43,7 @@ Prerequisites:
 - Visual Studio Build Tools with the Desktop development with C++ workload.
 - WebView2 Runtime.
 - A Rub Minds Supabase project and a publishable (or legacy anon) API key; **never use the service-role key in the companion**.
+- The native companion enforces this boundary itself: only a public `sb_publishable_...` key or a project-matched legacy `anon` JWT is accepted, and owner operations require a project-issued, unexpired authenticated-user JWT.
 
 From the repository root:
 1. Copy .env.example to .env.local.

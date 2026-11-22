@@ -108,3 +108,50 @@ export function revokeAndroidNativeBinding(args: {
 }) {
   return invoke<{ revoked: boolean }>('android/native-binding-revoke', args);
 }
+
+
+export type BackroomFrameAICandidate = {
+  participantId: string;
+  displayName: string;
+  kind: 'original_session' | 'model' | 'external_agent';
+};
+export type BackroomFrameSurface = 'android_app' | 'desktop_app' | 'terminal';
+export type BackroomFrameBinding = {
+  id: string;
+  participant_id: string;
+  surface: BackroomFrameSurface;
+  target_app_id: string | null;
+  expires_at: string;
+  created_at: string;
+};
+export type BackroomFrameBindingChallenge = {
+  challengeId: string;
+  nonce: string;
+  expiresAt: string;
+  participantId: string;
+  surface: BackroomFrameSurface;
+};
+
+export async function listBackroomFrameAICandidates(roomId: string) {
+  const data = await invoke<{ candidates: BackroomFrameAICandidate[] }>('device-frame/ai-candidates', { roomId });
+  return data.candidates;
+}
+export function createBackroomFrameBindingChallenge(args: {
+  deviceId: string; roomId: string; runtimeSessionId: string;
+  participantId: string; surface: BackroomFrameSurface;
+}) {
+  return invoke<BackroomFrameBindingChallenge>('device-frame/binding-challenge', {
+    ...args, requestId: crypto.randomUUID(), issuedAt: Date.now(),
+  });
+}
+export async function getBackroomFrameBindingStatus(args: {
+  deviceId: string; roomId: string; runtimeSessionId: string;
+}) {
+  const data = await invoke<{ binding: BackroomFrameBinding | null }>('device-frame/binding-status', args);
+  return data.binding;
+}
+export function revokeBackroomFrameBinding(args: {
+  deviceId: string; roomId: string; runtimeSessionId: string; bindingId: string;
+}) {
+  return invoke<{ revoked: boolean }>('device-frame/binding-revoke', args);
+}
