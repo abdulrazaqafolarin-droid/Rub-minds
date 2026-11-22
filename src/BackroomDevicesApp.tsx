@@ -9,6 +9,7 @@ import {
   approveBackroomDevice, createBackroomDevicePairing, listBackroomDeviceEvents,
   listBackroomDevices, revokeBackroomDevice, type BackroomDevice, type BackroomDeviceEvent,
 } from './backroomCloudDevices';
+import { createRoomActionLocks } from '../integrations/backroom/room-action-lock.mjs';
 import BackroomAndroidControl from './BackroomAndroidControl';
 import BackroomDesktopControl from './BackroomDesktopControl';
 import './backroom-cloud.css';
@@ -48,7 +49,7 @@ export default function BackroomApp() {
   const [pairCode, setPairCode] = useState('');
   const [pairExpires, setPairExpires] = useState('');
   const [busyRoomIds, setBusyRoomIds] = useState<Set<string>>(() => new Set());
-  const busyRoomIdsRef = useRef(new Set<string>());
+  const roomActionLocksRef = useRef(createRoomActionLocks());
   const [devicesLoading, setDevicesLoading] = useState(false);
   const [devicesLoadError, setDevicesLoadError] = useState('');
   const [notice, setNotice] = useState('');
@@ -62,15 +63,14 @@ export default function BackroomApp() {
   const busy = busyRoomIds.has(roomId);
 
   function beginRoomAction(targetRoom: string): boolean {
-    if (busyRoomIdsRef.current.has(targetRoom)) return false;
-    busyRoomIdsRef.current.add(targetRoom);
-    setBusyRoomIds(new Set(busyRoomIdsRef.current));
+    if (!roomActionLocksRef.current.begin(targetRoom)) return false;
+    setBusyRoomIds(roomActionLocksRef.current.snapshot());
     return true;
   }
 
   function endRoomAction(targetRoom: string) {
-    busyRoomIdsRef.current.delete(targetRoom);
-    setBusyRoomIds(new Set(busyRoomIdsRef.current));
+    roomActionLocksRef.current.end(targetRoom);
+    setBusyRoomIds(roomActionLocksRef.current.snapshot());
   }
 
   function changeRoom(nextRoomId: string) {
@@ -247,7 +247,7 @@ export default function BackroomApp() {
 
   async function revoke(deviceId: string) {
     const targetRoom = roomId;
-    if (!canManageDevices || !targetRoom || busyRoomIdsRef.current.has(targetRoom)) return;
+    if (!canManageDevices || !targetRoom || roomActionLocksRef.current.isBusy(targetRoom)) return;
     if (!window.confirm('Revoke this device? It will lose access to this Rub Minds group.')) return;
     if (!beginRoomAction(targetRoom)) return;
     setError(''); setNotice('');
