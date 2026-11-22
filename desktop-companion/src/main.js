@@ -449,7 +449,10 @@ async function startViewSession(payload){
     await invoke('set_capture_geometry',{
       sessionId,expectedGeneration,frameWidth:settings.width,frameHeight:settings.height,
       screenWidthCss:screen.width,screenHeightCss:screen.height,
-      deviceScaleFactor:devicePixelRatio,originXCss:screen.availLeft||0,originYCss:screen.availTop||0,
+      deviceScaleFactor:devicePixelRatio,
+      // Use the monitor's actual virtual-screen origin, not the work-area
+      // origin: a left/top taskbar changes availLeft/availTop but not screen.left/top.
+      originXCss:screen.left||0,originYCss:screen.top||0,
       displaySurface:settings.displaySurface||'unknown',
       appId
     });
