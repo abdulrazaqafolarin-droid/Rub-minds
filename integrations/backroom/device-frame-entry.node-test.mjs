@@ -24,6 +24,20 @@ test("Backroom exposes only authenticated real device frames", async () => {
   assert.doesNotMatch(devices, /'phone'\s*\|\s*'desktop'\s*\|\s*'terminal'/);
   assert.doesNotMatch(devices, /Browser runtime|BackroomSimulatorApp/);
 });
+test("Switching groups clears prior device state and remounts active runtime controllers", async () => {
+  const devices = await read("src/BackroomDevicesApp.tsx");
+  assert.match(devices, /function changeRoom\(nextRoomId: string\)/);
+  assert.match(devices, /roomIdRef\.current = nextRoomId/);
+  assert.match(devices, /setDevices\(\[\]\)/);
+  assert.match(devices, /setEvents\(\[\]\)/);
+  assert.match(devices, /setSelectedDeviceId\(\x27\x27\)/);
+  assert.match(devices, /setPairCode\(\x27\x27\)/);
+  assert.match(devices, /setPairExpires\(\x27\x27\)/);
+  assert.match(devices, /if \(roomIdRef\.current !== targetRoom\) return/);
+  assert.match(devices, /BackroomAndroidControl key=\{roomId \+ \':\\x27 \+ activeDevice\.device_id\}/);
+  assert.match(devices, /BackroomDesktopControl key=\{roomId\}/);
+});
+
 test("Device Frame refreshes visible device state without stale room overwrites", async () => {
   const devices = await read("src/BackroomDevicesApp.tsx");
   assert.match(devices, /setInterval\(poll, 20_000\)/);
