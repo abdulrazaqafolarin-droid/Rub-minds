@@ -9,6 +9,7 @@ const reviewRoleMigration = await readFile(new URL("../../supabase/migrations/20
 const vaultKeyMigration = await readFile(new URL("../../supabase/migrations/20261101165353_rub_minds_mcp_vault_encryption_key.sql", import.meta.url), "utf8");
 const vaultKeyAcceptance = await readFile(new URL("../../supabase/tests/rub_minds_mcp_vault_encryption_key.sql", import.meta.url), "utf8");
 const ciWorkflow = await readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+const taskSqlWorkflow = await readFile(new URL("../../.github/workflows/backroom-wake-queue.yml", import.meta.url), "utf8");
 const wakeQueueWorkflow = await readFile(new URL("../../.github/workflows/backroom-wake-queue.yml", import.meta.url), "utf8");
 const fkIndexesMigration = await readFile(new URL("../../supabase/migrations/20261101164016_group_task_fk_indexes.sql", import.meta.url), "utf8");
 const wakeMigration = await readFile(new URL("../../supabase/migrations/20261029090000_backroom_wake_queue.sql", import.meta.url), "utf8");
@@ -203,7 +204,8 @@ test("AI task claim replay is bound to one private per-run UUID and isolated fro
   assert.match(taskAcceptance, /different execution key must not replay another runner task claim/);
   assert.match(sdkTaskE2e, /claim_owned_by_another_runner/);
   assert.match(sdkTaskE2e, /lifecycleClaimReplay/);
-  assert.match(ciWorkflow, /supabase\/tests\/group_task_coordination\.sql/);
+  assert.match(taskSqlWorkflow, /supabase\/tests\/group_task_coordination\.sql/);
+  assert.match(taskSqlWorkflow, /20261122100000_room_task_execution_claim_keys\.sql/);
 });
 
 test("AI task claiming requires an explicit human assignment before work begins", () => {
