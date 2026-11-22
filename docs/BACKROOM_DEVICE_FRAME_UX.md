@@ -11,7 +11,7 @@ The Backroom route has one authenticated workspace. It opens the device frames d
 ## Layout and navigation
 
 - The group selector scopes the device inventory, activity history, pairing, approvals and device controls.
-- The device-connections panel shows paired devices, platform, last-known status and owner-only approve/revoke controls.
+- The device-connections panel shows paired devices, platform, owner-only approve/revoke controls, an **Approved / Pending approval / Revoked** enrollment label, and the last authenticated heartbeat time. "Approved" is not presented as "Online"; the live phone/computer controller reports the current channel and stream state separately.
 - The primary stage switches between **Android phone** and **Computer**. Each stage contains a real runtime controller.
 - The phone frame streams the original selected Android app from the paired phone. App selection, connection state and stream controls sit beside the stream rather than inside a decorative nested phone.
 - The computer frame shows the actual paired computer's approved screen session. Its terminal is a mode within that computer frame, not a separate simulated device.
