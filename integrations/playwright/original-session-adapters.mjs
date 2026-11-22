@@ -81,6 +81,7 @@ export function isValidProviderConversationPath(pathname, provider) {
     const codePoint = character.codePointAt(0);
     return character === "/" ||
       character === "\\" ||
+      character === "%" ||
       character === "?" ||
       character === "#" ||
       character.trim().length === 0 ||
