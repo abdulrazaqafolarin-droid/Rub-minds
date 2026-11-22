@@ -41,31 +41,59 @@ jobs:
           node-version: "22"
       - name: Install official OpenCode V2 CLI
         run: npm install --global @opencode/cli
-      - name: Register bridge in an isolated OpenCode global configuration
+      - name: Register bridge in an isolated OpenCode project configuration
         env:
           XDG_CONFIG_HOME: ${{ runner.temp }}/rub-minds-opencode-config
-          RUB_MINDS_STDIO_E2E_FIXTURE: "1"
-          NODE_OPTIONS: --import=${{ github.workspace }}/integrations/mcp/stdio-proxy-test-upstream.mjs
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/rub-minds-opencode-workspace"
           cd "$RUNNER_TEMP/rub-minds-opencode-workspace"
+          git init -q
           opencode --version
-          opencode mcp add rub_minds --global \
-            --env "RUB_MINDS_MCP_ENDPOINT=https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp" \
-            --env "RUB_MINDS_MCP_API_KEY=rub-minds-public-test-key" \
-            -- node "$GITHUB_WORKSPACE/scripts/rub-minds-mcp.mjs" --stdio
-          echo "Isolated OpenCode global config:"
-          cat "$XDG_CONFIG_HOME/opencode/opencode.json"
+          cat > opencode.json <<EOF
+          {
+            "$schema": "https://opencode.ai/config.json",
+            "mcp": {
+              "servers": {
+                "rub_minds": {
+                  "type": "local",
+                  "command": [
+                    "node",
+                    "$GITHUB_WORKSPACE/scripts/rub-minds-mcp.mjs",
+                    "--stdio"
+                  ],
+                  "environment": {
+                    "RUB_MINDS_MCP_ENDPOINT": "https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp",
+                    "RUB_MINDS_MCP_API_KEY": "rub-minds-public-test-key",
+                    "RUB_MINDS_STDIO_E2E_FIXTURE": "1",
+                    "NODE_OPTIONS": "--import=$GITHUB_WORKSPACE/integrations/mcp/stdio-proxy-test-upstream.mjs"
+                  },
+                  "timeout": {
+                    "startup": 45000,
+                    "catalog": 30000
+                  },
+                  "protocol": "legacy"
+                }
+              }
+            }
+          }
+          EOF
+          node -e "const c=JSON.parse(require('fs').readFileSync('opencode.json','utf8'));if(c.mcp?.servers?.rub_minds?.type!=='local')process.exit(1)"
+          echo "Project-level OpenCode MCP server definition validated."
       - name: Verify OpenCode reports the spawned Rub Minds MCP server connected
         env:
           XDG_CONFIG_HOME: ${{ runner.temp }}/rub-minds-opencode-config
-          RUB_MINDS_STDIO_E2E_FIXTURE: "1"
-          NODE_OPTIONS: --import=${{ github.workspace }}/integrations/mcp/stdio-proxy-test-upstream.mjs
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP/rub-minds-opencode-workspace"
-          output="$(opencode mcp list --print-logs 2>&1)"
-          printf '%s\n' "$output"
-          grep -Fq "rub_minds" <<<"$output"
-          grep -Eqi "connected|ready" <<<"$output"
+          output=""
+          for attempt in 1 2 3 4 5; do
+            output="$(opencode mcp list --print-logs 2>&1 || true)"
+            printf 'OpenCode MCP check %s:\\n%s\\n' "$attempt" "$output"
+            if grep -Fq "rub_minds" <<<"$output" && grep -Eqi "connected|ready" <<<"$output"; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "OpenCode did not report the Rub Minds stdio bridge connected after five checks." >&2
+          exit 1
