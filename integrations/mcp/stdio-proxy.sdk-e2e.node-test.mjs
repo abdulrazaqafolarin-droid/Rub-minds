@@ -154,7 +154,7 @@ test("official MCP client completes a terminal group and human-governed task wor
 
     const claimed = await client.callTool({
       name: "claim_group_task",
-      arguments: { session_handle: sessionHandle, task_id: "task-human-assigned-fixture" },
+      arguments: { session_handle: sessionHandle, task_id: "44444444-4444-4444-8444-444444444444" },
     });
     assert.equal(claimed.isError, false);
     assert.equal(claimed.structuredContent?.claimed, true);
@@ -164,7 +164,7 @@ test("official MCP client completes a terminal group and human-governed task wor
       name: "submit_group_task_result",
       arguments: {
         session_handle: sessionHandle,
-        task_id: "task-human-assigned-fixture",
+        task_id: "44444444-4444-4444-8444-444444444444",
         result: "The selected Backroom-launched app HWND was checked against process and monitor bounds.",
         submission_key: "88888888-8888-4888-8888-888888888888",
       },
