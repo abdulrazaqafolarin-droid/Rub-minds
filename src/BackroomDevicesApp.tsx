@@ -251,7 +251,14 @@ export default function BackroomApp() {
           </div> : null}
           {devices.length ? devices.map(device => <article className="br-cloud-device" key={device.device_id}>
             <div className="br-cloud-device-icon">{device.platform === 'android' ? <Smartphone size={19}/> : <Monitor size={19}/>}</div>
-            <div className="br-cloud-device-copy"><b>{device.device_label}</b><small>{device.platform === 'android' ? 'Android phone' : device.platform + ' computer'} · {device.os_version || 'version unknown'}</small><span className={'br-cloud-status ' + device.status}>{device.status}</span></div>
+            <div className="br-cloud-device-copy">
+              <b>{device.device_label}</b>
+              <small>{device.platform === 'android' ? 'Android phone' : device.platform + ' computer'} · {device.os_version || 'version unknown'}</small>
+              <small className="br-cloud-device-last-seen">{device.last_seen_at ? 'Last seen ' + formatTime(device.last_seen_at) : 'No device heartbeat yet'}</small>
+              <span className={'br-cloud-status ' + device.status}>
+                {device.status === 'active' ? 'Approved' : device.status === 'pending' ? 'Pending approval' : 'Revoked'}
+              </span>
+            </div>
             <div className="br-cloud-device-actions">
               {canManageDevices && device.status === 'pending' ? <button disabled={busy} onClick={() => void approve(device.device_id)}>Approve</button> : null}
               {canManageDevices && device.status !== 'revoked' ? <button className="danger" disabled={busy} onClick={() => void revoke(device.device_id)}>Revoke</button> : null}
