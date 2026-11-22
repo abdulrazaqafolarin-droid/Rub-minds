@@ -122,3 +122,7 @@
   font-weight: 650;
 }
 .rm-task-dependency-editor[open] > summary { margin-bottom: 2px; }
+
+.rm-task-cancel-dialog { max-width: 440px; }
+.rm-task-cancel-dialog h2 { margin: 4px 0; font-size: 21px; }
+.rm-task-cancel-dialog p { color: var(--rm-muted, var(--muted, #697586)); font-size: 13px; line-height: 1.65; }
