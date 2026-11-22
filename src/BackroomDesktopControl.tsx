@@ -320,7 +320,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
           disconnectTimerRef.current=null;
           const stillThisSession=peerRef.current===pc&&
             (screenSessionRef.current===sessionId||terminalPeerRef.current===sessionId);
-          if(stillThisSession&&pc.connectionState==='disconnected'){
+          if(stillThisSession&&pc.connectionState!=='connected'){
             flash(label+' connection did not recover within 20 seconds. The session was stopped.',true);
             void stopActivePeer();
           }
