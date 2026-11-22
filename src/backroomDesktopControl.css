@@ -39,3 +39,5 @@
 .br-desktop-notice{margin-top:12px;border-radius:9px;background:#e8f6ef;color:#196342;padding:9px 11px;font-size:11px;line-height:1.5}
 .br-desktop-notice.error{background:#fff0f0;color:#a33340}
 @media(max-width:720px){.br-desktop-head{flex-direction:column}.br-desktop-actions{display:grid;grid-template-columns:1fr}.br-desktop-draft{flex-direction:column}.br-desktop-draft button{flex-basis:auto}.br-desktop-toolbar button{flex:1}}
+
+.br-desktop-refresh-wrap{display:flex;align-items:center;gap:10px}.br-desktop-refresh-time{font-size:10px;color:#8292b4;white-space:nowrap}@media(max-width:520px){.br-desktop-refresh-time{display:none}}
