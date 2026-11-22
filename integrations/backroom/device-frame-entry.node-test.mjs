@@ -129,6 +129,8 @@ test("Desktop screen and terminal sessions allow bounded WebRTC reconnect", asyn
   assert.match(control, /pc\.connectionState==='connected'[\s\S]*?clearDisconnectTimer\(\)/);
   assert.match(control, /pc\.connectionState==='disconnected'[\s\S]*?Trying to reconnect for 20 seconds/);
   assert.match(control, /},20_000\)/);
+  assert.match(control, /if\(stillThisSession&&pc\.connectionState!=='connected'\)/);
+  assert.match(control, /pc\.connectionState==='connected'[\s\S]*?clearDisconnectTimer\(\)/);
   assert.match(control, /pc\.connectionState==='failed'\|\|pc\.connectionState==='closed'/);
   assert.match(control, /watchPeerConnection\(pc,peerId,'Terminal'\)/);
   assert.match(control, /watchPeerConnection\(pc,sessionId,'Screen'\)/);
