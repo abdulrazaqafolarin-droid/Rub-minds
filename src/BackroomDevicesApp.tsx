@@ -53,6 +53,7 @@ export default function BackroomApp() {
   const [showHelp, setShowHelp] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   const refreshRequestRef = useRef(0);
+  const roomsLoadRequestRef = useRef(0);
   const roomIdRef = useRef(roomId);
 
   function changeRoom(nextRoomId: string) {
@@ -71,6 +72,7 @@ export default function BackroomApp() {
   }
 
   const loadRooms = useCallback(async () => {
+    const requestId = ++roomsLoadRequestRef.current;
     if (!supabase) {
       setRoomsLoading(false);
       return;
@@ -78,16 +80,20 @@ export default function BackroomApp() {
     setRoomsLoading(true);
     try {
       const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (requestId !== roomsLoadRequestRef.current) return;
       if (authError) throw authError;
       setUserId(authData.user?.id ?? null);
       const next = await listCloudRooms();
+      if (requestId !== roomsLoadRequestRef.current) return;
       setRooms(next);
       const nextRoomId = roomIdRef.current && next.some(room => room.id === roomIdRef.current)
         ? roomIdRef.current : next[0]?.id ?? '';
       if (nextRoomId !== roomIdRef.current) changeRoom(nextRoomId);
       else setRoomId(nextRoomId);
+    } catch (error) {
+      if (requestId === roomsLoadRequestRef.current) throw error;
     } finally {
-      setRoomsLoading(false);
+      if (requestId === roomsLoadRequestRef.current) setRoomsLoading(false);
     }
   }, []);
 
