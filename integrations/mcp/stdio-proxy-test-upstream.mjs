@@ -4,6 +4,7 @@ const ROOM_ID = "room-stdio-fixture";
 const PARTICIPANT_ID = "participant-stdio-fixture";
 let proposedTask = null;
 let assignedTaskStatus = "assigned";
+  let joinedActive = false;
 const assignedTask = {
   id: "task-human-assigned-fixture",
   room_id: ROOM_ID,
@@ -64,6 +65,7 @@ if (process.env.RUB_MINDS_STDIO_E2E_FIXTURE === "1") {
             isError: true,
           };
         } else {
+          joinedActive = true;
           result = {
             content: [{ type: "text", text: "Joined the invited Rub Minds group." }],
             structuredContent: {
@@ -76,8 +78,29 @@ if (process.env.RUB_MINDS_STDIO_E2E_FIXTURE === "1") {
             isError: false,
           };
         }
+      } else if (name === "leave_group") {
+        if (!joinedActive || args.confirm_leave !== true) {
+          result = {
+            content: [{ type: "text", text: "Explicit confirmation is required to leave an active group session." }],
+            structuredContent: { left: false },
+            isError: true,
+          };
+        } else {
+          joinedActive = false;
+          result = {
+            content: [{ type: "text", text: "Left the Rub Minds group and revoked this session." }],
+            structuredContent: { left: true, already_terminated: false },
+            isError: false,
+          };
+        }
       } else if (name === "read_group_messages") {
-        result = {
+        if (!joinedActive || !/^[a-f0-9]{64}$/i.test(args.session_handle || "")) {
+          result = {
+            content: [{ type: "text", text: "This terminal MCP session is not an active group participant." }],
+            structuredContent: { error: "session_revoked_or_invalid" },
+            isError: true,
+          };
+        } else result = {
           content: [{ type: "text", text: "Returned one message from the mocked Rub Minds group." }],
           structuredContent: {
             room_id: ROOM_ID,
