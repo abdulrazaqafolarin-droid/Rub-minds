@@ -43,4 +43,4 @@ The Android companion keeps guest virtualization behind a provider-neutral contr
 
 ## Terminal AI agents (draft)
 
-A source-branch MCP stdio bridge is being developed so local terminal AI applications can join the same Rub Minds groups and use the existing group, memory and task tools without a Backroom browser host. It is staging-pinned and not yet merged or released. See [Terminal MCP bridge setup and limits](docs/TERMINAL_MCP_BRIDGE.md). The source tests are wired through `npm run test:mcp:stdio-proxy`; actual terminal-client interoperability and staging acceptance are still required.
+A source-branch MCP stdio bridge lets local terminal AI applications connect to the same Rub Minds group, memory and task tools without a Backroom browser host. It is pinned to the dedicated Staging endpoint and is not yet merged or released. The official MCP SDK test, OpenCode V2 connection check and Claude Code CLI connection check pass in CI using an isolated mock upstream; live authenticated Staging group acceptance remains outstanding. See [Terminal MCP bridge setup and limits](docs/TERMINAL_MCP_BRIDGE.md).
