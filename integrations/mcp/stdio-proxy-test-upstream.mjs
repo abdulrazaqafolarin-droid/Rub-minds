@@ -28,7 +28,7 @@ if (process.env.RUB_MINDS_STDIO_E2E_FIXTURE === "1") {
       throw new Error("The stdio MCP bridge changed its upstream POST safety settings.");
     }
     const headers = new Headers(init.headers);
-    if (headers.get("apikey") !== "rub-minds-public-test-key") {
+    if (headers.get("apikey") !== "sb_publishable_test_key") {
       throw new Error("The stdio MCP bridge did not forward the configured public test key.");
     }
     const request = JSON.parse(String(init.body || "{}"));
