@@ -52,10 +52,12 @@ Claude Code supports local stdio MCP servers. From the repository root, register
 
 ```powershell
 $repo = (Get-Location).Path
-claude mcp add --scope user --transport stdio rub-minds -- node "$repo\scripts\rub-minds-mcp.mjs" --stdio
+claude mcp add --scope user --env "RUB_MINDS_MCP_ENDPOINT=https://tzcuuynmviiuactafpld.supabase.co/functions/v1/rub-minds-mcp" --transport stdio rub-minds -- node "$repo\scripts\rub-minds-mcp.mjs" --stdio
 ```
 
 Set `RUB_MINDS_MCP_ENDPOINT` in the environment used to launch Claude Code. If the Staging gateway requires an API key, also set `RUB_MINDS_MCP_API_KEY` there to the public Staging publishable/anon key. Restart Claude Code after changing the process environment so the local MCP child process inherits the values.
+
+The ordering above matches the tested CLI syntax: flags and environment options come before `--transport stdio`, then the server name and `--` separator. In CI, the actual Claude Code CLI successfully reports the spawned Rub Minds bridge as `✔ Connected` against a mock-only upstream. This verifies CLI registration/connection, not a live authenticated group session.
 
 Verify the registration with:
 
