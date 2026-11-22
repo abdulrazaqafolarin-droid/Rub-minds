@@ -35,7 +35,7 @@ test("official MCP client completes a terminal group and human-governed task wor
     const catalog = await client.listTools();
     const names = new Set(catalog.tools.map(tool => tool.name));
     for (const name of [
-      "join_group", "read_group_messages", "send_group_message",
+      "join_group", "leave_group", "read_group_messages", "send_group_message",
       "propose_group_task", "list_group_tasks", "read_group_task",
       "claim_group_task", "submit_group_task_result",
     ]) {
@@ -153,6 +153,27 @@ test("official MCP client completes a terminal group and human-governed task wor
     assert.equal(submitted.isError, false);
     assert.equal(submitted.structuredContent?.submitted, true);
     assert.equal(submitted.structuredContent?.status, "submitted");
+    const leftWithoutConfirmation = await client.callTool({
+      name: "leave_group",
+      arguments: { session_handle: sessionHandle, confirm_leave: false },
+    });
+    assert.equal(leftWithoutConfirmation.isError, true,
+      "leaving a terminal AI group session must require explicit confirmation");
+
+    const left = await client.callTool({
+      name: "leave_group",
+      arguments: { session_handle: sessionHandle, confirm_leave: true },
+    });
+    assert.equal(left.isError, false);
+    assert.equal(left.structuredContent?.left, true);
+
+    const afterLeaveRead = await client.callTool({
+      name: "read_group_messages",
+      arguments: { session_handle: sessionHandle },
+    });
+    assert.equal(afterLeaveRead.isError, true,
+      "a revoked terminal group session must no longer read group messages");
+
   } finally {
     await client.close();
   }
