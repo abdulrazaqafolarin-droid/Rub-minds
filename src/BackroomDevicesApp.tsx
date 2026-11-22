@@ -139,9 +139,8 @@ export default function BackroomApp() {
       setEvents(nextEvents);
       setLastUpdatedAt(Date.now());
     } catch (error) {
-      if (requestId === refreshRequestRef.current && targetRoom === roomIdRef.current) {
-        setDevicesLoadError(error instanceof Error ? error.message : 'Could not load this group’s devices.');
-      }
+      if (requestId !== refreshRequestRef.current || targetRoom !== roomIdRef.current) return;
+      setDevicesLoadError(error instanceof Error ? error.message : 'Could not load this group’s devices.');
       throw error;
     } finally {
       if (requestId === refreshRequestRef.current && targetRoom === roomIdRef.current) {
