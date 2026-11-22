@@ -269,6 +269,11 @@ test("the existing cloud group UI owns the task board and uses the current Realt
   assert.match(cloudApp, /activePanel === 'tasks'/);
   assert.match(cloudApp, /openPanel\('tasks'\)/);
   assert.match(cloudApp, /<GroupTaskBoard[\s\S]*?key=\{room\.id\}[\s\S]*?roomId=\{room\.id\}/);
+  assert.match(taskBoard, /rm-task-board-filters/);
+  assert.match(taskBoard, /Assigned to me/);
+  assert.match(taskBoard, /Created by me/);
+  assert.match(taskBoard, /Needs review/);
+  assert.match(taskBoard, /visibleTasks\.map/);
   assert.doesNotMatch(taskBoard, /window\.confirm\s*\(/);
   assert.match(taskBoard, /role="dialog"[\s\S]*?aria-modal="true"/);
   assert.match(taskBoard, /rm-task-cancel-dialog/);
