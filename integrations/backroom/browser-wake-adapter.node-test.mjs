@@ -26,6 +26,7 @@ function fixture(options={}){
    if(options.switchConversationAfterSend)currentUrl='https://chatgpt.com/c/another-chat';
    return {state:'submitted_pending_confirmation',submitted:true};
   }
+  if(src.includes('node instanceof HTMLInputElement')&&src.includes('node.value'))return text;
   if(src.includes('const form=node instanceof'))return options.ready!==false;
   return true;
  },dispose:async()=>{}};
