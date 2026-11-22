@@ -18,6 +18,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const [deviceId,setDeviceId] = useState('');
   const [selectedApp,setSelectedApp] = useState('');
   const [loading,setLoading] = useState(false);
+  const [lastUpdatedAt,setLastUpdatedAt] = useState<number|null>(null);
   const [channelReady,setChannelReady] = useState(false);
   const [notice,setNotice] = useState('');
   const [noticeError,setNoticeError] = useState(false);
@@ -62,6 +63,7 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
   const terminalActionTimerRef=useRef<number|null>(null);
   const disconnectTimerRef=useRef<number|null>(null);
   const devicesRef=useRef<BackroomDevice[]>([]);
+  const refreshRequestRef=useRef(0);
   const pendingCandidatesRef=useRef(new Map<string,RTCIceCandidateInit[]>());
   const selectedDevice=devices.find(d=>d.device_id===deviceId);
   const apps=(selectedDevice?.desktopApps||[]) as DesktopApp[];
@@ -69,18 +71,42 @@ export default function BackroomDesktopControl({ roomId }: { roomId: string }) {
 
   const flash=useCallback((message:string,isError=false)=>{setNotice(message);setNoticeError(isError);},[]);
   const refresh=useCallback(async()=>{
-    if(!roomId)return;
+    const requestId=++refreshRequestRef.current;
+    if(!roomId){
+      devicesRef.current=[];setDevices([]);setLastUpdatedAt(null);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try{
       const list=await listBackroomDevices(roomId);
-      devicesRef.current=list;setDevices(list);
+      // An older response must never replace a newer computer inventory.
+      if(requestId!==refreshRequestRef.current)return;
+      devicesRef.current=list;setDevices(list);setLastUpdatedAt(Date.now());
       const active=list.filter(d=>d.status==='active'&&['windows','macos','linux'].includes(d.platform));
       if(!deviceId&&active[0])setDeviceId(active[0].device_id);
       if(deviceId&&!active.some(d=>d.device_id===deviceId))setDeviceId(active[0]?.device_id||'');
-    }catch(error){flash(error instanceof Error?error.message:'Could not load connected computers.',true);}
-    finally{setLoading(false);}
+    }catch(error){
+      if(requestId===refreshRequestRef.current)
+        flash(error instanceof Error?error.message:'Could not load connected computers.',true);
+    }finally{
+      if(requestId===refreshRequestRef.current)setLoading(false);
+    }
   },[roomId,deviceId,flash]);
   useEffect(()=>{void refresh();},[refresh]);
+  useEffect(()=>{
+    const poll=()=>{
+      if(document.visibilityState!=='visible')return;
+      void refresh();
+    };
+    const timer=window.setInterval(poll,20_000);
+    document.addEventListener('visibilitychange',poll);
+    return ()=>{
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange',poll);
+    };
+  },[refresh]);
+  useEffect(()=>()=>{refreshRequestRef.current++;},[]);
 
   const publish=useCallback(async(event:'command'|'signal',payload:Record<string,unknown>)=>{
     if(!supabase||!deviceId)throw new Error('The authenticated private device channel is not connected.');
