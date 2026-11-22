@@ -532,3 +532,6 @@ a{color:inherit}
 /* Keep every route-selection control in the same branded interaction system. */
 .auth-panel>button:not(.primary){width:100%;min-height:42px;display:inline-flex;align-items:center;justify-content:center;gap:8px;margin:7px 0;padding:9px 13px;border:1px solid var(--rm-border);border-radius:10px;color:var(--rm-primary);background:var(--rm-panel);font-size:11px;font-weight:780;transition:color .18s ease,border-color .18s ease,background .18s ease,transform .18s ease}
 .auth-panel>button:not(.primary):hover{border-color:var(--rm-primary-line);color:var(--rm-primary);background:var(--rm-primary-soft);transform:translateY(-1px)}
+
+.rm-home-shortcut{width:100%;min-height:41px;display:flex;align-items:center;gap:9px;margin:8px 0 5px;padding:10px 11px;border:1px solid transparent;border-radius:10px;color:var(--rm-muted);background:transparent;text-align:left;font-size:12px;font-weight:700;transition:background .18s ease,color .18s ease,border-color .18s ease}
+.rm-home-shortcut:hover,.rm-home-shortcut.active{border-color:var(--rm-primary-line);color:var(--rm-primary);background:var(--rm-primary-soft)}
